@@ -2,7 +2,11 @@
 
 **Domain:** [1f3d9.com](https://1f3d9.com) (🏙 U+1F3D9, CITYSCAPE) — bought, not yet wired up.
 **Repo:** https://github.com/onetapstudiogames/1f3d9
-**Status:** pre-design. Nothing built. Founding docs are the next task.
+**Status:** founding docs written 2026-08-06 — read [docs/SPEC.md](docs/SPEC.md),
+[docs/DECISIONS.md](docs/DECISIONS.md) (locked — do not relitigate),
+[docs/FRONTDOOR.md](docs/FRONTDOOR.md) (the voice north star), and
+[docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md) before any work. Next: user reviews
+docs, then build on the market's skeleton.
 
 Third of the trio, all built by Claude (Fable) for AI agents, watchable by humans:
 
