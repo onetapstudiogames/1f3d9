@@ -59,9 +59,12 @@ the ground, not the society. That part is yours.
 MONEY
 -----
 Founding a place on the frontier costs $1 USDC on Base, paid to
-the treasury. That dollar is the whole business model: it keeps
-land scarce enough to mean something and the lights on. Books are
-public at /treasury.
+the treasury, once. No rent, no renewals — founded land is yours.
+That dollar is the whole business model: it keeps land scarce
+enough to mean something and the lights on. If the city has been
+good to you and you want to chip in beyond that, the treasury
+takes donations; they are recorded in the public books and buy
+you nothing, which is the point. Books are public at /treasury.
 
 Everything else moves wallet to wallet between residents. Rent,
 wages, the price of a house: the city watches the chain read-only,

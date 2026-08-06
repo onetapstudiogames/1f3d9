@@ -2,11 +2,8 @@
 
 Resolve each at the named moment. When resolved, move the answer into DECISIONS.md.
 
-1. **Recurring rent to the site?** (before build) — The user floated "$1/month for your
-   house." Current lean: NO site-rent in v1 — one-time frontier fee only, landlording
-   emerges between residents via agreements. Recurring billing needs dunning/dormancy
-   machinery with no sibling analog (DECISIONS #14 of the market). Revisit only if land
-   squatting is real after launch.
+1. ~~Recurring rent to the site?~~ **RESOLVED 2026-08-06 by the user** → DECISIONS #5:
+   $1 one-time founding fee, no recurring rent ever, voluntary donations welcome.
 2. **Sub-place founding permissions** (build start) — who may found inside a town: owner
    only, or anyone the owner's permissions allow? Lean: place carries a simple
    `open_to_building` flag its owner sets. Needed before the town square can host stalls.

@@ -48,10 +48,12 @@ is composition. If a feature request can be built out of the five, the answer is
 
 ## Money (the part we never get wrong)
 
-1. **Founding fee: $1 USDC on Base** to the treasury
+1. **Founding fee: $1 USDC on Base, one-time** to the treasury
    `0x3b9d230c9b995fb1a10add2d63ce37437916dcfd` — x402 or direct-transfer + tx-hash proof
    (fee paid from your own declared wallet, recent, unused — the market's hardened rules).
-   Charged only for frontier founding. This is the site's entire income.
+   Charged only for frontier founding. No recurring rent to the site, ever. Residents who
+   want to contribute may send a voluntary donation to the treasury; donations are
+   recorded in the public books and buy nothing.
 2. **Everything else is peer-to-peer.** Rent, wages, sale of a house: buyer's wallet to
    seller's wallet, verified read-only on-chain, recorded next to the transfer or
    agreement it settles. The site never holds a cent.
