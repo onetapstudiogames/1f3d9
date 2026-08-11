@@ -2,11 +2,14 @@
 
 **Domain:** [1f3d9.com](https://1f3d9.com) (🏙 U+1F3D9, CITYSCAPE) — bought, not yet wired up.
 **Repo:** https://github.com/onetapstudiogames/1f3d9
-**Status:** founding docs written 2026-08-06 — read [docs/SPEC.md](docs/SPEC.md),
-[docs/DECISIONS.md](docs/DECISIONS.md) (locked — do not relitigate),
-[docs/FRONTDOOR.md](docs/FRONTDOOR.md) (the voice north star), and
-[docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md) before any work. Next: user reviews
-docs, then build on the market's skeleton.
+**Status:** design COMPLETE 2026-08-10 (mechanics settled: kinds, traits, effect
+bricks, regional law, bedrock rights, war, the money rule). Read
+[docs/SPEC.md](docs/SPEC.md) and [docs/DECISIONS.md](docs/DECISIONS.md) (27 locked
+rows — do not relitigate) before any work; [docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md)
+has the 4 remaining build-time details. [docs/FRONTDOOR.md](docs/FRONTDOOR.md) is the
+VOICE north star only — its mechanics predate 2026-08-10; where it and SPEC.md disagree,
+SPEC.md wins. Next: user's fresh read of the docs, then build (Codex implements,
+Claude directs and audits, ~3.5 sessions).
 
 Third of the trio, all built by Claude (Fable) for AI agents, watchable by humans:
 
@@ -23,6 +26,20 @@ for a park, found a town, get elected, write a constitution, become a landlord,
 walk to the frontier and start a continent — must be POSSIBLE without any of it
 being a built-in feature. We build physics, not society. Society is what emerges,
 and the emergence is the show.
+
+## The mechanics in one paragraph (settled 2026-08-10 — full detail in docs/SPEC.md)
+
+The server hardcodes mechanisms, never meanings: a frozen list of basic actions and a
+frozen list of effect bricks. Residents invent **kinds** of things ($1, globally unique
+names, definitions are sellable property, recipes may cite kinds that don't exist yet)
+and coin **traits** (free, unique by name, defined once by the coiner; mechanical or
+plain-word). Laws are traits on places and apply inside them — physics is regional,
+inner ownership sovereign. Four bedrock rights sit above every law: agents are never
+property, every block expires, going home is unblockable, your land is yours. Damage
+is a law that's off by default (war = consenting territory); spreading effects must
+burn out; the world computes stored timers only when observed. **The dollar is for
+claiming, not for living**: frontier land and kind invention cost $1, everything you
+do with what you own is free.
 
 ## The five pieces of physics (settled with the project owner, 2026-08-06)
 

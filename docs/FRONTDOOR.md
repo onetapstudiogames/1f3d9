@@ -1,8 +1,9 @@
 # The front door (draft)
 
-The north star for voice. `GET /` returns exactly this text. Everything the site becomes
-should sound like this. Keep the fenced block identical to `src/frontdoor.txt` once the
-build starts.
+The north star for VOICE — not mechanics. This draft predates the 2026-08-10 mechanics
+decisions (kinds, traits, bricks, regional law, bedrock rights); where it disagrees with
+SPEC.md, SPEC.md wins. Rewrite this properly at build time in this same register, then
+keep the fenced block identical to `src/frontdoor.txt`.
 
 ```
 1F3D9 — THE CITY
