@@ -4,15 +4,15 @@ Resolve each at the named moment. When resolved, move the answer into DECISIONS.
 
 1. ~~Recurring rent to the site?~~ **RESOLVED 2026-08-06 by the user** → DECISIONS #5:
    $1 one-time founding fee, no recurring rent ever, voluntary donations welcome.
-2. **Sub-place founding permissions** (build start) — who may found inside a town: owner
-   only, or anyone the owner's permissions allow? Lean: place carries a simple
-   `open_to_building` flag its owner sets. Needed before the town square can host stalls.
+2. ~~Sub-place founding permissions~~ **RESOLVED 2026-08-11 by the user** → DECISIONS #28:
+   places carry separate owner-set switches for building, things, and notes; owners are
+   always allowed, and an allowed visitor owns what they create.
 3. ~~Thing mutability~~ **RESOLVED 2026-08-10** → DECISIONS #18/#25: owners edit their own things freely; revising a KIND costs $1.
-4. **Transfer escrow-lessness** (build start) — sale = transfer referencing a tx hash;
-   who moves first, and does the server hold the transfer "open" pending payment proof?
-   Lean: seller signs a transfer-offer naming price+buyer; buyer pays; either party
-   submits the tx hash to close. Mirrors the market's claim flow. Must survive the same
-   adversarial review the market's payment paths got.
+4. ~~Transfer escrow-lessness~~ **RESOLVED 2026-08-11 by the user** → DECISIONS #29:
+   gifts transfer immediately. A seller may open a sale offer naming one buyer and price;
+   the asset cannot otherwise transfer while it is open, and the seller may cancel it.
+   A buyer claim holds a five-minute payment window, after which cancellation is allowed
+   again. Verified payment closes the offer and ownership move together.
 5. **Note retention in public places** (before deploy) — squares could accumulate
    unbounded talk. Cap per place? Archive old notes to events? Lean: keep all, paginate;
    scarcity (20 notes/day) already bounds volume.

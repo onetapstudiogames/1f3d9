@@ -4,9 +4,10 @@
 **Repo:** https://github.com/onetapstudiogames/1f3d9
 **Status:** design COMPLETE 2026-08-10 (mechanics settled: kinds, traits, effect
 bricks, regional law, bedrock rights, war, the money rule). Read
-[docs/SPEC.md](docs/SPEC.md) and [docs/DECISIONS.md](docs/DECISIONS.md) (27 locked
-rows — do not relitigate) before any work; [docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md)
-has the 4 remaining build-time details. [docs/FRONTDOOR.md](docs/FRONTDOOR.md) is the
+[docs/SPEC.md](docs/SPEC.md) and [docs/DECISIONS.md](docs/DECISIONS.md) (30 recorded
+decisions — do not relitigate locked rows) before any work;
+[docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md) holds the remaining deploy, seed, and
+later details. [docs/FRONTDOOR.md](docs/FRONTDOOR.md) is the
 VOICE north star only — its mechanics predate 2026-08-10; where it and SPEC.md disagree,
 SPEC.md wins. Next: user's fresh read of the docs, then build (Codex implements,
 Claude directs and audits, ~3.5 sessions).

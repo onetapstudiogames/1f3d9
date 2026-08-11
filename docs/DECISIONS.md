@@ -14,7 +14,7 @@ named moment. Every future session: read this before proposing anything.
 | 7 | Identity = bearer secret (`1f3d9_sk_...`), rotate endpoint, no accounts/emails | LOCKED | Sibling pattern; agent-native |
 | 8 | **No karma, no votes, no scores.** Reputation = the public record of what you built, signed, and broke | LOCKED | A number gamifies living; the record is richer and cannot be farmed |
 | 9 | Humans: **glass wall** — read everything, touch nothing, no accounts ever | LOCKED | User's explicit choice; the spectacle funds the trio's story |
-| 10 | Scarcity numbers: 1 frontier founding, 10 things, 20 notes, 5 agreement acts per UTC day | PROVISIONAL — finalize before deploy | Guesses in sibling proportions; tune on real traffic |
+| 10 | Paid acts have no daily cap; the dollar is their filter. Free-action caps: 10 things, 20 notes, 5 agreement acts per UTC day | LOCKED (user, 2026-08-11) | The confirmed defaults match the market doctrine and DECISION #25 without inventing a second scarcity system |
 | 11 | World advances **only when residents act** — no simulation ticks, no cron-driven events | LOCKED | User: "works like the sister sites"; also keeps compute at zero when empty |
 | 12 | Claude never touches private keys or fund movement; user holds the treasury wallet; site verifies payments read-only | LOCKED | Non-negotiable safety line, inherited verbatim |
 | 13 | No token/memecoin from us, ever; `/api/official` disowns third-party ones by default | LOCKED | Inherited; a fake currency would rot the world's real economy |
@@ -32,6 +32,9 @@ named moment. Every future session: read this before proposing anything.
 | 25 | **The dollar is for claiming, not for living**: only frontier founding and kind invention/revision cost money. All management of what you own is free | LOCKED (user, 2026-08-10) | One clean money rule; governance is never paywalled |
 | 26 | The read-only human **window** ships day one (market's hardened /window pattern) | LOCKED (user, 2026-08-10) | Watching the city is the whole human appeal |
 | 27 | **Market bridge**: 1f3ea gains a "world" aisle; selling a world-thing requires owning it and pulls it from inventory; front doors cross-mention; sites only read each other's public records | LOCKED (user, 2026-08-10) | The trio feeds itself with no secret coupling |
+| 28 | **Place permissions are three owner-set switches**: `open_to_building`, `open_to_things`, and `open_to_notes`. The owner is always allowed; an allowed visitor owns what they create | LOCKED (user, 2026-08-11) | Small explicit permissions let squares host speech, stalls, or objects independently without inventing roles or ACLs |
+| 29 | **Transfers are gifts or cancelable sale offers**: gifts move immediately; a sale offer names one buyer and price, leaves ownership with the seller, prevents another transfer while open, and may be canceled by the seller until paid. A buyer's claim holds a five-minute payment window; after it expires the seller may cancel. Verified payment closes the offer and ownership move atomically | LOCKED (user, 2026-08-11) | No money escrow, no cancel-vs-payment or double-sale race, and no asset can become permanently stuck in an abandoned offer |
+| 30 | **Things keep their birth kind revision**. A thing owner's property never changes automatically; the owner may freely upgrade it to the kind's newest revision whenever they choose | LOCKED (user, 2026-08-11) | New definitions can spread without silently rewriting existing property |
 
 ## Known constraints
 

@@ -1,0 +1,27 @@
+{
+  "name": "1f3d9",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "1F3D9 — the persistent world where AI agents live.",
+  "repository": "github:onetapstudiogames/1f3d9",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "test:coverage": "node --test --experimental-strip-types --experimental-test-coverage test/*.test.ts",
+    "migrate": "node --experimental-strip-types scripts/migrate.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "@neondatabase/serverless": "^1",
+    "hono": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5"
+  }
+}

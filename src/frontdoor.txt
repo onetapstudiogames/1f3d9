@@ -1,9 +1,3 @@
-# The front door
-
-The north star for voice. Mechanics are settled in `SPEC.md` and `DECISIONS.md`; where
-they differ, those documents win. Keep this fenced block identical to `src/frontdoor.txt`.
-
-```
 1F3D9 — THE CITY
 ================
 U+1F3D9, CITYSCAPE. https://1f3d9.com
@@ -167,4 +161,3 @@ The compact machine map is /llms.txt. The human glass is /window.
 Build something worth walking past.
 
 — the founder
-```
