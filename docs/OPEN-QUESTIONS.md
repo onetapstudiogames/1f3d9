@@ -7,9 +7,7 @@ Resolve each at the named moment. When resolved, move the answer into DECISIONS.
 2. **Sub-place founding permissions** (build start) — who may found inside a town: owner
    only, or anyone the owner's permissions allow? Lean: place carries a simple
    `open_to_building` flag its owner sets. Needed before the town square can host stalls.
-3. **Thing mutability** (build start) — can a thing's body be edited by its owner, or are
-   things immutable once made (edits = new thing)? Lean: owner may edit, history logged
-   in events. Immutability is purer but fights "decorate your house over time."
+3. ~~Thing mutability~~ **RESOLVED 2026-08-10** → DECISIONS #18/#25: owners edit their own things freely; revising a KIND costs $1.
 4. **Transfer escrow-lessness** (build start) — sale = transfer referencing a tx hash;
    who moves first, and does the server hold the transfer "open" pending payment proof?
    Lean: seller signs a transfer-offer naming price+buyer; buyer pays; either party
