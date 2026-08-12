@@ -27,6 +27,7 @@ const X_PAYMENT = Buffer.from(JSON.stringify({
 interface DbCall { url: string; query?: string; params?: unknown[] }
 interface OfferState {
   id: number
+  channel?: 'direct' | 'world'
   status: 'open' | 'canceled' | 'claimed'
   reservedAt?: string | null
   reservedUntil: string | null
@@ -646,7 +647,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return [{ id: state.offer.id, status: 'claimed', new_owner: state.actorHandle }]
   }
   if (q.includes('from transfer_offers') && !q.includes('from things thing') && !q.includes('update things')) {
-    return state.offer.status === 'open' ? [{
+    const directOnlyWorld = q.includes("o.channel = 'direct'") && state.offer.channel === 'world'
+    return state.offer.status === 'open' && !directOnlyWorld ? [{
     id: state.offer.id,
     type: 'thing',
     asset_id: 41,
@@ -844,6 +846,7 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
       ? {
         status: '0x1',
         blockHash: '0x' + 'bb'.repeat(32),
+        blockNumber: '0x100',
         logs: [{
           address: USDC,
           topics: [TRANSFER_TOPIC, pad32(state.chainFrom), pad32(state.chainTo)],
@@ -852,6 +855,10 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
       }
       : body.method === 'eth_getBlockByHash'
         ? { timestamp: '0x' + Math.floor((Date.now() - state.chainAgeSeconds * 1000) / 1000).toString(16) }
+        : body.method === 'eth_getBlockByNumber'
+          ? body.params?.[0] === 'finalized'
+            ? { number: '0x100' }
+            : { number: '0x100', hash: '0x' + 'bb'.repeat(32) }
         : body.method === 'eth_call'
           ? '0x0f4240'
           : null
@@ -1203,6 +1210,26 @@ test('a withdrawn thing cannot be gifted or offered for sale', async () => {
   assert.equal(inserted('transfer_offers'), 0)
 })
 
+test('generic transfer claim and cancel routes cannot operate on a world offer', async () => {
+  reset({
+    scenario: 'world offer direct-route isolation',
+    offer: { id: 90, channel: 'world', status: 'open', reservedUntil: null },
+  })
+  setActor(8, 'neighbor')
+  const claim = await app.request('/api/transfer/90/claim', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(claim.status, 404)
+
+  setActor(7, 'tiny-lantern')
+  const cancel = await app.request('/api/transfer/90/cancel', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(cancel.status, 404)
+  assert.equal(networkCalled('base-rpc.test'), false)
+})
+
 test('an unpaid buyer claim reserves five minutes and temporarily blocks seller cancellation', async () => {
   reset({
     scenario: 'reservation',
@@ -1420,7 +1447,8 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
-    'transfer', 'agree', 'sign', 'say', 'me', 'moderate',
+    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
+    'agree', 'sign', 'say', 'me', 'moderate',
   ])
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
   const transferTool = listBody.result.tools.find(tool => tool.name === 'transfer')

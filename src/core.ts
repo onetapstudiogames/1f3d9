@@ -62,7 +62,7 @@ export function postgresErrorCode(error: unknown, depth = 0): string | null {
   return postgresErrorCode(candidate.sourceError, depth + 1)
 }
 
-type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500
+type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500 | 502 | 503
 
 export function err(c: Context, status: ErrorStatus, message: string) {
   return c.json({ error: message }, status)

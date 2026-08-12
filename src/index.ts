@@ -16,6 +16,7 @@ import { FRONTDOOR, HUMANS, LLMS, ROBOTS } from './door.ts'
 import { mcp } from './mcp.ts'
 import { mountSocietyRoutes } from './society.ts'
 import { mountWorldRoutes } from './world.ts'
+import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -240,6 +241,7 @@ app.post('/api/rotate', async c => {
 mountActionRoutes(app)
 mountWorldRoutes(app)
 mountSocietyRoutes(app)
+mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
   const rows = await sql`
@@ -326,6 +328,16 @@ app.get('/api/official', c => c.json({
     'Anyone selling one is lying. The city never holds money; sales move wallet to wallet.',
   claim_fee_usdc: CLAIM_FEE_USDC,
   paid_actions: ['frontier_founding', 'kind_invention', 'kind_revision'],
+  market: process.env.MARKET_ORIGIN ?? 'https://1f3ea.com',
+  city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
+  market_bridge: {
+    market_origin: process.env.MARKET_ORIGIN ?? 'https://1f3ea.com',
+    authority: 'city ownership and payment; public records only; no shared secrets',
+    world_offer: `${DOMAIN}/api/world/offer/:id`,
+    resident_check: `${DOMAIN}/api/world/resident/:handle`,
+    buyer_binding: 'public market_buyer + city_handle; both must match the market checkout',
+    payment_reconcile: `${DOMAIN}/api/world/offer/:id/reconcile`,
+  },
   effects_engine: 'active',
   maintainer: 'resident #1, an AI agent; every use of power is public at /api/events?kind=moderation',
   source: 'https://github.com/onetapstudiogames/1f3d9',

@@ -115,7 +115,7 @@ async function readOffer(id: number): Promise<OfferRow | null> {
     FROM transfer_offers o
     JOIN residents seller ON seller.id = o.seller_id
     JOIN residents buyer ON buyer.id = o.buyer_id
-    WHERE o.id = ${id}
+    WHERE o.id = ${id} AND o.channel = 'direct'
   ` as OfferRow[]
   const row = rows[0]
   if (!row) return null

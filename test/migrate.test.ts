@@ -51,6 +51,76 @@ test('schema migration reconnects valid legacy open offers to their asset mutex'
   }
 })
 
+test('world offers extend direct transfers without weakening their buyer binding', () => {
+  const offers = schemaStatement('transfer_offers')
+
+  assert.match(offers, /channel\s+TEXT\s+NOT NULL\s+DEFAULT\s+'direct'/i)
+  assert.match(offers, /channel\s+IN\s*\(\s*'direct'\s*,\s*'world'\s*\)/i)
+  assert.doesNotMatch(offers, /buyer_id\s+INTEGER\s+NOT NULL/i)
+  assert.match(offers, /market_origin\s+TEXT\s+NOT NULL\s+DEFAULT\s+'https:\/\/1f3ea\.com'/i)
+  for (const column of ['market_draft_id', 'market_listing_id', 'market_checkout_id']) {
+    assert.match(offers, new RegExp(`\\b${column}\\b`, 'i'))
+  }
+  assert.match(offers, /channel\s*=\s*'direct'[\s\S]*buyer_id\s+IS\s+NOT\s+NULL/i)
+  assert.match(offers, /channel\s*=\s*'world'[\s\S]*asset_type\s*=\s*'thing'/i)
+  assert.match(schemaDdl, /ALTER\s+TABLE\s+transfer_offers\s+ALTER\s+COLUMN\s+buyer_id\s+DROP\s+NOT\s+NULL/i)
+  assert.match(offers, /market_buyer\s+TEXT/i)
+  assert.match(schemaDdl, /NEW\.market_buyer\s+IS\s+DISTINCT\s+FROM\s+OLD\.market_buyer/i)
+})
+
+test('world market identifiers are unique public bindings, not arbitrary origins', () => {
+  assert.match(
+    schemaDdl,
+    /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+transfer_offers_world_draft[\s\S]*market_draft_id[\s\S]*channel\s*=\s*'world'/i,
+  )
+  assert.match(
+    schemaDdl,
+    /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+transfer_offers_world_checkout[\s\S]*market_checkout_id[\s\S]*IS\s+NOT\s+NULL/i,
+  )
+  assert.match(schemaDdl, /market_origin\s*=\s*'https:\/\/1f3ea\.com'/i)
+})
+
+test('offer history trigger rejects claims without an active buyer reservation', () => {
+  assert.match(
+    schemaDdl,
+    /NEW\.status\s*=\s*'claimed'[\s\S]*OLD\.reserved_by\s+IS\s+DISTINCT\s+FROM\s+OLD\.buyer_id[\s\S]*OLD\.reserved_until\s*<=\s*clock_timestamp\(\)/i,
+  )
+  assert.match(
+    schemaDdl,
+    /NEW\.status\s*=\s*'canceled'[\s\S]*OLD\.reserved_until\s*[^\n]*>\s*clock_timestamp\(\)/i,
+  )
+  assert.match(
+    schemaDdl,
+    /OLD\.pending_x402_tx_hash\s+IS\s+NOT\s+NULL\s+AND\s+reservation_changed[\s\S]*pending x402 reservation is immutable/i,
+  )
+  assert.match(
+    schemaDdl,
+    /CREATE\s+TRIGGER\s+sale_payments_match_world_offer\s+BEFORE\s+INSERT\s+ON\s+sale_payments/i,
+  )
+  assert.match(
+    schemaDdl,
+    /NEW\.block_time\s+IS\s+NULL[\s\S]*NEW\.block_time\s+<\s+world_offer\.reserved_at[\s\S]*NEW\.block_time\s+>\s+world_offer\.reserved_until/i,
+  )
+})
+
+test('fresh and upgraded world constraints use one stable set of names', () => {
+  for (const name of [
+    'transfer_offers_channel_allowed',
+    'transfer_offers_market_origin_fixed',
+    'transfer_offers_market_ids_positive',
+    'transfer_offers_reservation_complete',
+    'transfer_offers_distinct_parties',
+    'transfer_offers_reserved_buyer',
+    'transfer_offers_five_minute_reservation',
+    'transfer_offers_status_timestamps',
+    'transfer_offers_reservation_wallet_state',
+    'transfer_offers_channel_state',
+    'transfer_offers_pending_x402_state',
+  ]) {
+    assert.match(schemaDdl, new RegExp(`CONSTRAINT\\s+${name}\\b`, 'i'))
+  }
+})
+
 test('round-two state tables are created idempotently', () => {
   for (const table of [
     'resident_presence',

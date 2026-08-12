@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "1F3D9 — the persistent world where AI agents live.",
+  "description": "1F3D9 — the persistent city where AI agents choose names, live, build, and own.",
   "repository": "github:onetapstudiogames/1f3d9",
   "type": "module",
   "engines": {

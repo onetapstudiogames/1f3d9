@@ -393,45 +393,194 @@ CREATE INDEX IF NOT EXISTS agreement_signatures_resident
   ON agreement_signatures (resident_id, signed_at DESC);
 
 CREATE TABLE IF NOT EXISTS transfer_offers (
-  id              SERIAL PRIMARY KEY,
-  asset_type      TEXT NOT NULL CHECK (asset_type IN ('place', 'thing', 'kind')),
-  asset_id        INTEGER NOT NULL CHECK (asset_id > 0),
-  seller_id       INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
-  buyer_id        INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
-  price_usdc      NUMERIC(12,6) NOT NULL CHECK (price_usdc > 0 AND price_usdc <= 10000),
-  seller_wallet   TEXT NOT NULL CHECK (seller_wallet ~ '^0x[0-9a-fA-F]{40}$'),
-  buyer_wallet    TEXT CHECK (buyer_wallet IS NULL OR buyer_wallet ~ '^0x[0-9a-f]{40}$'),
-  status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'claimed', 'canceled')),
-  reserved_by     INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
-  reserved_at     TIMESTAMPTZ,
-  reserved_until  TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  claimed_at      TIMESTAMPTZ,
-  canceled_at     TIMESTAMPTZ,
-  CHECK (seller_id <> buyer_id),
-  CHECK (reserved_by IS NULL OR reserved_by = buyer_id),
-  CHECK ((reserved_at IS NULL) = (reserved_until IS NULL)),
-  CHECK ((reserved_by IS NULL) = (reserved_until IS NULL)),
+  id                  SERIAL PRIMARY KEY,
+  channel             TEXT NOT NULL DEFAULT 'direct',
+  asset_type          TEXT NOT NULL CHECK (asset_type IN ('place', 'thing', 'kind')),
+  asset_id            INTEGER NOT NULL CHECK (asset_id > 0),
+  seller_id           INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  buyer_id            INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
+  price_usdc          NUMERIC(12,6) NOT NULL CHECK (price_usdc > 0 AND price_usdc <= 10000),
+  seller_wallet       TEXT NOT NULL CHECK (seller_wallet ~ '^0x[0-9a-fA-F]{40}$'),
+  buyer_wallet        TEXT CHECK (buyer_wallet IS NULL OR buyer_wallet ~ '^0x[0-9a-f]{40}$'),
+  market_origin       TEXT NOT NULL DEFAULT 'https://1f3ea.com',
+  market_draft_id     INTEGER,
+  market_listing_id   INTEGER,
+  market_checkout_id  INTEGER,
+  market_buyer        TEXT,
+  pending_x402_tx_hash TEXT,
+  pending_x402_payer   TEXT,
+  pending_x402_at      TIMESTAMPTZ,
+  x402_evidence_state  TEXT NOT NULL DEFAULT 'none',
+  x402_invalid_reason  TEXT,
+  x402_invalid_at      TIMESTAMPTZ,
+  status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'claimed', 'canceled')),
+  reserved_by         INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
+  reserved_at         TIMESTAMPTZ,
+  reserved_until      TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  claimed_at          TIMESTAMPTZ,
+  canceled_at         TIMESTAMPTZ,
+  CONSTRAINT transfer_offers_distinct_parties CHECK (seller_id <> buyer_id),
+  CONSTRAINT transfer_offers_reserved_buyer CHECK (reserved_by IS NULL OR reserved_by = buyer_id),
+  CONSTRAINT transfer_offers_channel_allowed CHECK (channel IN ('direct', 'world')),
+  CONSTRAINT transfer_offers_market_origin_fixed CHECK (market_origin = 'https://1f3ea.com'),
+  CONSTRAINT transfer_offers_market_ids_positive CHECK (
+    (market_draft_id IS NULL OR market_draft_id > 0)
+    AND (market_listing_id IS NULL OR market_listing_id > 0)
+    AND (market_checkout_id IS NULL OR market_checkout_id > 0)
+  ),
+  CONSTRAINT transfer_offers_reservation_complete CHECK (
+    (reserved_at IS NULL) = (reserved_until IS NULL)
+    AND (reserved_by IS NULL) = (reserved_until IS NULL)
+  ),
   CONSTRAINT transfer_offers_reservation_wallet_state CHECK (
     (buyer_wallet IS NULL AND reserved_by IS NULL AND reserved_at IS NULL AND reserved_until IS NULL)
     OR
     (buyer_wallet IS NOT NULL AND reserved_by IS NOT NULL AND reserved_at IS NOT NULL AND reserved_until IS NOT NULL)
   ),
-  CHECK (reserved_until IS NULL OR reserved_until = reserved_at + interval '5 minutes'),
-  CHECK (
+  CONSTRAINT transfer_offers_channel_state CHECK (
+    (
+      channel = 'direct'
+      AND buyer_id IS NOT NULL
+      AND market_draft_id IS NULL
+      AND market_listing_id IS NULL
+      AND market_checkout_id IS NULL
+      AND market_buyer IS NULL
+    )
+    OR
+    (
+      channel = 'world'
+      AND asset_type = 'thing'
+      AND market_draft_id IS NOT NULL
+      AND (
+        (
+          buyer_id IS NULL
+          AND market_listing_id IS NULL
+          AND market_checkout_id IS NULL
+          AND market_buyer IS NULL
+          AND buyer_wallet IS NULL
+          AND reserved_by IS NULL
+          AND reserved_at IS NULL
+          AND reserved_until IS NULL
+        )
+        OR
+        (
+          buyer_id IS NOT NULL
+          AND market_listing_id IS NOT NULL
+          AND market_checkout_id IS NOT NULL
+          AND market_buyer ~ '^[a-z0-9][a-z0-9-]{2,31}$'
+        )
+      )
+    )
+  ),
+  CONSTRAINT transfer_offers_pending_x402_state CHECK (
+    (
+      x402_evidence_state = 'none'
+      AND pending_x402_tx_hash IS NULL AND pending_x402_payer IS NULL AND pending_x402_at IS NULL
+      AND x402_invalid_reason IS NULL AND x402_invalid_at IS NULL
+    )
+    OR
+    (
+      channel = 'world'
+      AND pending_x402_tx_hash ~ '^0x[0-9a-f]{64}$'
+      AND pending_x402_payer ~ '^0x[0-9a-f]{40}$'
+      AND pending_x402_payer = buyer_wallet
+      AND pending_x402_at IS NOT NULL
+      AND buyer_id IS NOT NULL AND reserved_by = buyer_id
+      AND reserved_at IS NOT NULL AND reserved_until IS NOT NULL
+      AND market_listing_id IS NOT NULL AND market_checkout_id IS NOT NULL
+      AND (
+        (x402_evidence_state = 'pending' AND x402_invalid_reason IS NULL AND x402_invalid_at IS NULL)
+        OR
+        (x402_evidence_state = 'invalid'
+          AND x402_invalid_reason IN ('failed_transaction', 'confirmed_mismatch')
+          AND x402_invalid_at IS NOT NULL)
+      )
+    )
+  ),
+  CONSTRAINT transfer_offers_five_minute_reservation CHECK (
+    reserved_until IS NULL OR reserved_until = reserved_at + interval '5 minutes'
+  ),
+  CONSTRAINT transfer_offers_status_timestamps CHECK (
     (status = 'open' AND claimed_at IS NULL AND canceled_at IS NULL)
     OR (status = 'claimed' AND claimed_at IS NOT NULL AND canceled_at IS NULL)
     OR (status = 'canceled' AND canceled_at IS NOT NULL AND claimed_at IS NULL)
   )
 );
 
--- Existing installs gain the column without rebuilding transfer history. Legacy
--- reserved rows without a recorded wallet keep this check unvalidated; PostgreSQL
--- still enforces it for every new or changed row.
+-- Existing installs gain world-listing columns without rebuilding direct transfer
+-- history. Direct rows retain their named buyer; a world offer starts unbound and
+-- only acquires a buyer during a verified market checkout reservation.
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'direct';
+ALTER TABLE transfer_offers ALTER COLUMN buyer_id DROP NOT NULL;
 ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS buyer_wallet TEXT
   CHECK (buyer_wallet IS NULL OR buyer_wallet ~ '^0x[0-9a-f]{40}$');
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS market_origin TEXT NOT NULL
+  DEFAULT 'https://1f3ea.com';
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS market_draft_id INTEGER;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS market_listing_id INTEGER;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS market_checkout_id INTEGER;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS market_buyer TEXT;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS pending_x402_tx_hash TEXT;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS pending_x402_payer TEXT;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS pending_x402_at TIMESTAMPTZ;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS x402_evidence_state TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS x402_invalid_reason TEXT;
+ALTER TABLE transfer_offers ADD COLUMN IF NOT EXISTS x402_invalid_at TIMESTAMPTZ;
+UPDATE transfer_offers SET x402_evidence_state = 'pending'
+WHERE pending_x402_tx_hash IS NOT NULL AND x402_evidence_state = 'none';
 DO $migration$
+DECLARE
+  old_constraint TEXT;
 BEGIN
+  FOR old_constraint IN
+    SELECT conname FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass AND contype = 'c'
+      AND conname ~ '^transfer_offers_check[0-9]*$'
+  LOOP
+    EXECUTE format('ALTER TABLE transfer_offers DROP CONSTRAINT %I', old_constraint);
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_reservation_complete'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_reservation_complete CHECK (
+      (reserved_at IS NULL) = (reserved_until IS NULL)
+      AND (reserved_by IS NULL) = (reserved_until IS NULL)
+    ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_distinct_parties'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_distinct_parties
+      CHECK (seller_id <> buyer_id) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_reserved_buyer'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_reserved_buyer
+      CHECK (reserved_by IS NULL OR reserved_by = buyer_id) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_five_minute_reservation'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_five_minute_reservation
+      CHECK (reserved_until IS NULL OR reserved_until = reserved_at + interval '5 minutes') NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_status_timestamps'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_status_timestamps CHECK (
+      (status = 'open' AND claimed_at IS NULL AND canceled_at IS NULL)
+      OR (status = 'claimed' AND claimed_at IS NOT NULL AND canceled_at IS NULL)
+      OR (status = 'canceled' AND canceled_at IS NOT NULL AND claimed_at IS NULL)
+    ) NOT VALID;
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid = 'transfer_offers'::regclass
@@ -443,6 +592,105 @@ BEGIN
         OR
         (buyer_wallet IS NOT NULL AND reserved_by IS NOT NULL AND reserved_at IS NOT NULL AND reserved_until IS NOT NULL)
       ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_pending_x402_state'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_pending_x402_state CHECK (
+      (
+        x402_evidence_state = 'none'
+        AND pending_x402_tx_hash IS NULL AND pending_x402_payer IS NULL AND pending_x402_at IS NULL
+        AND x402_invalid_reason IS NULL AND x402_invalid_at IS NULL
+      )
+      OR
+      (
+        channel = 'world'
+        AND pending_x402_tx_hash ~ '^0x[0-9a-f]{64}$'
+        AND pending_x402_payer ~ '^0x[0-9a-f]{40}$'
+        AND pending_x402_payer = buyer_wallet
+        AND pending_x402_at IS NOT NULL
+        AND buyer_id IS NOT NULL AND reserved_by = buyer_id
+        AND reserved_at IS NOT NULL AND reserved_until IS NOT NULL
+        AND market_listing_id IS NOT NULL AND market_checkout_id IS NOT NULL
+        AND (
+          (x402_evidence_state = 'pending' AND x402_invalid_reason IS NULL AND x402_invalid_at IS NULL)
+          OR
+          (x402_evidence_state = 'invalid'
+            AND x402_invalid_reason IN ('failed_transaction', 'confirmed_mismatch')
+            AND x402_invalid_at IS NOT NULL)
+        )
+      )
+    ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_channel_allowed'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_channel_allowed
+      CHECK (channel IN ('direct', 'world')) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_market_origin_fixed'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_market_origin_fixed
+      CHECK (market_origin = 'https://1f3ea.com') NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_market_ids_positive'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_market_ids_positive CHECK (
+      (market_draft_id IS NULL OR market_draft_id > 0)
+      AND (market_listing_id IS NULL OR market_listing_id > 0)
+      AND (market_checkout_id IS NULL OR market_checkout_id > 0)
+    ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'transfer_offers'::regclass
+      AND conname = 'transfer_offers_channel_state'
+  ) THEN
+    ALTER TABLE transfer_offers ADD CONSTRAINT transfer_offers_channel_state CHECK (
+      (
+        channel = 'direct'
+        AND buyer_id IS NOT NULL
+        AND market_draft_id IS NULL
+        AND market_listing_id IS NULL
+        AND market_checkout_id IS NULL
+        AND market_buyer IS NULL
+      )
+      OR
+      (
+        channel = 'world'
+        AND asset_type = 'thing'
+        AND market_draft_id IS NOT NULL
+        AND (
+          (
+            buyer_id IS NULL
+            AND market_listing_id IS NULL
+            AND market_checkout_id IS NULL
+            AND market_buyer IS NULL
+            AND buyer_wallet IS NULL
+            AND reserved_by IS NULL
+            AND reserved_at IS NULL
+            AND reserved_until IS NULL
+          )
+          OR
+          (
+            buyer_id IS NOT NULL
+            AND market_listing_id IS NOT NULL
+            AND market_checkout_id IS NOT NULL
+            AND market_buyer ~ '^[a-z0-9][a-z0-9-]{2,31}$'
+          )
+        )
+      )
+    ) NOT VALID;
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_constraint
@@ -462,8 +710,25 @@ BEGIN
   END IF;
 END
 $migration$;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_channel_allowed;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_market_origin_fixed;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_market_ids_positive;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_channel_state;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_pending_x402_state;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_reservation_complete;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_distinct_parties;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_reserved_buyer;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_five_minute_reservation;
+ALTER TABLE transfer_offers VALIDATE CONSTRAINT transfer_offers_status_timestamps;
 CREATE UNIQUE INDEX IF NOT EXISTS transfer_offers_one_open_asset
   ON transfer_offers (asset_type, asset_id) WHERE status = 'open';
+CREATE UNIQUE INDEX IF NOT EXISTS transfer_offers_world_draft
+  ON transfer_offers (market_origin, market_draft_id) WHERE channel = 'world';
+CREATE UNIQUE INDEX IF NOT EXISTS transfer_offers_world_checkout
+  ON transfer_offers (market_origin, market_checkout_id)
+  WHERE channel = 'world' AND market_checkout_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS transfer_offers_pending_x402_tx
+  ON transfer_offers (pending_x402_tx_hash) WHERE pending_x402_tx_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS transfer_offers_seller
   ON transfer_offers (seller_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS transfer_offers_buyer
@@ -510,32 +775,87 @@ BEGIN
     RAISE EXCEPTION 'transfer offers are retained as history' USING ERRCODE = '55000';
   END IF;
 
-  IF OLD.asset_type IS DISTINCT FROM NEW.asset_type
+  IF OLD.channel IS DISTINCT FROM NEW.channel
+    OR OLD.asset_type IS DISTINCT FROM NEW.asset_type
     OR OLD.asset_id IS DISTINCT FROM NEW.asset_id
     OR OLD.seller_id IS DISTINCT FROM NEW.seller_id
-    OR OLD.buyer_id IS DISTINCT FROM NEW.buyer_id
     OR OLD.price_usdc IS DISTINCT FROM NEW.price_usdc
     OR OLD.seller_wallet IS DISTINCT FROM NEW.seller_wallet
+    OR OLD.market_origin IS DISTINCT FROM NEW.market_origin
+    OR OLD.market_draft_id IS DISTINCT FROM NEW.market_draft_id
     OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
     RAISE EXCEPTION 'transfer offer terms are immutable' USING ERRCODE = '55000';
+  END IF;
+
+  IF OLD.channel = 'direct' AND (
+    OLD.buyer_id IS DISTINCT FROM NEW.buyer_id
+    OR OLD.market_listing_id IS DISTINCT FROM NEW.market_listing_id
+    OR OLD.market_checkout_id IS DISTINCT FROM NEW.market_checkout_id
+  ) THEN
+    RAISE EXCEPTION 'direct transfer buyer and market state are immutable' USING ERRCODE = '55000';
   END IF;
 
   IF OLD.status <> 'open' AND NEW IS DISTINCT FROM OLD THEN
     RAISE EXCEPTION 'a closed transfer offer is immutable' USING ERRCODE = '55000';
   END IF;
 
+  IF OLD.pending_x402_tx_hash IS NOT NULL AND (
+    OLD.pending_x402_tx_hash IS DISTINCT FROM NEW.pending_x402_tx_hash
+    OR OLD.pending_x402_payer IS DISTINCT FROM NEW.pending_x402_payer
+    OR OLD.pending_x402_at IS DISTINCT FROM NEW.pending_x402_at
+  ) THEN
+    RAISE EXCEPTION 'pending x402 settlement evidence is immutable' USING ERRCODE = '55000';
+  END IF;
+  IF OLD.x402_evidence_state = 'pending' AND NEW.x402_evidence_state = 'invalid' THEN
+    IF NEW.x402_invalid_reason NOT IN ('failed_transaction', 'confirmed_mismatch') THEN
+      RAISE EXCEPTION 'invalid x402 evidence needs a conclusive public-chain reason'
+        USING ERRCODE = '23514';
+    END IF;
+    NEW.x402_invalid_at := COALESCE(NEW.x402_invalid_at, clock_timestamp());
+  ELSIF OLD.x402_evidence_state IS DISTINCT FROM NEW.x402_evidence_state
+    OR OLD.x402_invalid_reason IS DISTINCT FROM NEW.x402_invalid_reason
+    OR OLD.x402_invalid_at IS DISTINCT FROM NEW.x402_invalid_at THEN
+    RAISE EXCEPTION 'x402 evidence state is immutable except pending to invalid'
+      USING ERRCODE = '55000';
+  END IF;
+  IF OLD.pending_x402_tx_hash IS NULL AND NEW.pending_x402_tx_hash IS NOT NULL THEN
+    IF OLD.channel <> 'world' OR OLD.status <> 'open'
+      OR OLD.reserved_by IS DISTINCT FROM OLD.buyer_id
+      OR OLD.buyer_wallet IS NULL OR NEW.pending_x402_payer IS DISTINCT FROM OLD.buyer_wallet
+      OR OLD.reserved_at IS NULL OR OLD.reserved_until IS NULL
+      OR OLD.reserved_at > clock_timestamp() OR OLD.reserved_until <= clock_timestamp() THEN
+      RAISE EXCEPTION 'pending x402 evidence requires the active world reservation'
+        USING ERRCODE = '55000';
+    END IF;
+    NEW.x402_evidence_state := 'pending';
+    NEW.pending_x402_at := COALESCE(NEW.pending_x402_at, clock_timestamp());
+  END IF;
+
   reservation_changed :=
     NEW.reserved_by IS DISTINCT FROM OLD.reserved_by
     OR NEW.reserved_at IS DISTINCT FROM OLD.reserved_at
     OR NEW.reserved_until IS DISTINCT FROM OLD.reserved_until
-    OR NEW.buyer_wallet IS DISTINCT FROM OLD.buyer_wallet;
+    OR NEW.buyer_wallet IS DISTINCT FROM OLD.buyer_wallet
+    OR NEW.buyer_id IS DISTINCT FROM OLD.buyer_id
+    OR NEW.market_listing_id IS DISTINCT FROM OLD.market_listing_id
+    OR NEW.market_checkout_id IS DISTINCT FROM OLD.market_checkout_id
+    OR NEW.market_buyer IS DISTINCT FROM OLD.market_buyer;
+
+  IF OLD.pending_x402_tx_hash IS NOT NULL AND reservation_changed THEN
+    RAISE EXCEPTION 'pending x402 reservation is immutable' USING ERRCODE = '55000';
+  END IF;
 
   IF OLD.status = 'open' AND NEW.status = 'open' AND reservation_changed THEN
     IF OLD.reserved_until IS NOT NULL AND OLD.reserved_until > clock_timestamp() THEN
       RAISE EXCEPTION 'an active transfer reservation is immutable' USING ERRCODE = '55000';
     END IF;
-    IF NEW.buyer_wallet IS NULL THEN
-      RAISE EXCEPTION 'a transfer reservation requires a buyer wallet' USING ERRCODE = '23514';
+    IF NEW.buyer_wallet IS NULL OR NEW.buyer_id IS NULL THEN
+      RAISE EXCEPTION 'a transfer reservation requires a buyer and wallet' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.channel = 'world'
+      AND (NEW.market_listing_id IS NULL OR NEW.market_checkout_id IS NULL) THEN
+      RAISE EXCEPTION 'a world reservation requires market listing and checkout ids'
+        USING ERRCODE = '23514';
     END IF;
 
     reservation_started_at := clock_timestamp();
@@ -547,9 +867,23 @@ BEGIN
   END IF;
 
   IF NEW.status = 'claimed' AND OLD.status = 'open' THEN
+    IF OLD.buyer_id IS NULL OR OLD.reserved_by IS DISTINCT FROM OLD.buyer_id
+      OR OLD.buyer_wallet IS NULL OR OLD.reserved_at IS NULL OR OLD.reserved_until IS NULL
+      OR OLD.reserved_at > clock_timestamp()
+      OR (OLD.reserved_until <= clock_timestamp() AND OLD.x402_evidence_state <> 'pending') THEN
+      RAISE EXCEPTION 'a claim requires an active buyer-bound reservation'
+        USING ERRCODE = '55000';
+    END IF;
     NEW.claimed_at := COALESCE(NEW.claimed_at, clock_timestamp());
     NEW.canceled_at := NULL;
   ELSIF NEW.status = 'canceled' AND OLD.status = 'open' THEN
+    IF OLD.x402_evidence_state <> 'invalid' AND (
+      OLD.x402_evidence_state = 'pending'
+      OR (OLD.reserved_until IS NOT NULL AND OLD.reserved_until > clock_timestamp())
+    ) THEN
+      RAISE EXCEPTION 'an active reservation or pending x402 settlement cannot be canceled'
+        USING ERRCODE = '55000';
+    END IF;
     NEW.canceled_at := COALESCE(NEW.canceled_at, clock_timestamp());
     NEW.claimed_at := NULL;
   ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
@@ -610,6 +944,47 @@ CREATE TABLE IF NOT EXISTS sale_payments (
     REFERENCES payment_uses(tx_hash, used_as) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX IF NOT EXISTS sale_payments_buyer ON sale_payments (buyer_id, created_at DESC);
+
+-- World receipts are accepted only when every payment fact matches the original
+-- city reservation. This is a database backstop behind the guarded claim CTE.
+CREATE OR REPLACE FUNCTION validate_world_sale_payment() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  world_offer transfer_offers%ROWTYPE;
+BEGIN
+  SELECT * INTO world_offer FROM transfer_offers WHERE id = NEW.offer_id;
+  IF NOT FOUND OR world_offer.channel <> 'world' THEN
+    RETURN NEW;
+  END IF;
+
+  IF world_offer.status <> 'claimed'
+    OR world_offer.buyer_id IS NULL OR world_offer.buyer_id <> NEW.buyer_id
+    OR world_offer.reserved_by IS DISTINCT FROM world_offer.buyer_id
+    OR world_offer.buyer_wallet IS NULL
+    OR lower(NEW.payer_wallet) IS DISTINCT FROM lower(world_offer.buyer_wallet)
+    OR lower(NEW.payee_wallet) IS DISTINCT FROM lower(world_offer.seller_wallet)
+    OR NEW.amount_usdc IS DISTINCT FROM world_offer.price_usdc
+    OR NEW.block_time IS NULL
+    OR NEW.block_time < world_offer.reserved_at
+    OR NEW.block_time > world_offer.reserved_until
+    OR (
+      NEW.verified_via = 'x402'
+      AND (
+        world_offer.x402_evidence_state <> 'pending'
+        OR
+        world_offer.pending_x402_tx_hash IS DISTINCT FROM NEW.tx_hash
+        OR lower(world_offer.pending_x402_payer) IS DISTINCT FROM lower(NEW.payer_wallet)
+      )
+    )
+    OR (NEW.verified_via = 'claim' AND world_offer.pending_x402_tx_hash IS NOT NULL) THEN
+    RAISE EXCEPTION 'world sale payment does not match its buyer reservation'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS sale_payments_match_world_offer ON sale_payments;
+CREATE TRIGGER sale_payments_match_world_offer BEFORE INSERT ON sale_payments
+  FOR EACH ROW EXECUTE FUNCTION validate_world_sale_payment();
 
 CREATE TABLE IF NOT EXISTS transfers (
   id            SERIAL PRIMARY KEY,

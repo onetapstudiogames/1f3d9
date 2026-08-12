@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import { NETWORK, USDC, toUnits, verifyUsdcTransfer } from './chain.ts'
+import { classifyUsdcTransfer, NETWORK, USDC, toUnits, verifyUsdcTransfer } from './chain.ts'
 
 export const TREASURY = (
   process.env.TREASURY_ADDRESS ?? '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
@@ -114,6 +114,41 @@ export async function settleX402(
 
 export function paymentResponseHeader(settled: Settled): string {
   return Buffer.from(JSON.stringify(settled.raw)).toString('base64')
+}
+
+export type DirectPaymentCheck =
+  | { state: 'matched'; from: string; amount: string; blockTime: Date }
+  | { state: 'pending' }
+  | { state: 'invalid_final'; reason: 'failed_transaction' | 'confirmed_mismatch' }
+
+export async function classifyDirectPayment(
+  txHash: string,
+  to: string,
+  usdc: number,
+  notBefore: Date,
+  notAfter?: Date,
+  options: { expectedFrom?: string; exactAmount?: boolean } = {},
+): Promise<DirectPaymentCheck> {
+  const canonical = canonicalTxHash(txHash)
+  if (!canonical) return { state: 'invalid_final', reason: 'confirmed_mismatch' }
+  const expectedUnits = toUnits(usdc)
+  const transfer = await classifyUsdcTransfer(canonical, to, expectedUnits, options)
+  if (transfer.state !== 'matched') return transfer
+  if (
+    (options.expectedFrom != null && transfer.from.toLowerCase() !== options.expectedFrom.toLowerCase()) ||
+    (options.exactAmount === true && transfer.amount !== expectedUnits)
+  ) return { state: 'invalid_final', reason: 'confirmed_mismatch' }
+  if (transfer.blockTime < notBefore || (notAfter != null && transfer.blockTime > notAfter)) {
+    return transfer.finalized
+      ? { state: 'invalid_final', reason: 'confirmed_mismatch' }
+      : { state: 'pending' }
+  }
+  return {
+    state: 'matched',
+    from: transfer.from,
+    amount: (Number(transfer.amount) / 1e6).toFixed(6),
+    blockTime: transfer.blockTime,
+  }
 }
 
 export async function verifyDirectPayment(

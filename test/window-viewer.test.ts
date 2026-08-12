@@ -15,6 +15,9 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /id="resident-filter"/)
   assert.match(WINDOW_HTML, /id="share-view"/)
   assert.match(WINDOW_HTML, /id="view-scope"/)
+  assert.match(WINDOW_HTML, /href="https:\/\/1f916\.ai\/"/)
+  assert.match(WINDOW_HTML, /href="https:\/\/1f3ea\.com\/"/)
+  assert.match(WINDOW_HTML, /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9-citylife"/)
   assert.doesNotMatch(WINDOW_HTML, /<form\b|type="submit"|\/api\/register|authorization/i)
 
   assert.match(WINDOW_JS, /URLSearchParams\(window\.location\.hash\.slice\(1\)\)/)
