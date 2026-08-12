@@ -51,6 +51,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS places_frontier_name
 CREATE INDEX IF NOT EXISTS places_parent ON places (parent_id, created_at, id);
 CREATE INDEX IF NOT EXISTS places_owner ON places (owner_id, created_at DESC);
 
+-- Presence is the only mutable round-two state. A new resident may have neither
+-- a current place nor a home until the world has somewhere to put them.
+CREATE TABLE IF NOT EXISTS resident_presence (
+  resident_id       INTEGER PRIMARY KEY REFERENCES residents(id) ON DELETE RESTRICT,
+  current_place_id  INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  home_place_id     INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS resident_presence_current
+  ON resident_presence (current_place_id) WHERE current_place_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS resident_presence_home
+  ON resident_presence (home_place_id) WHERE home_place_id IS NOT NULL;
+
 -- The generic transfer table cannot cleanly own three circular foreign keys.
 -- Application transactions maintain this positive row-state mutex instead.
 ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
@@ -150,6 +163,173 @@ CREATE INDEX IF NOT EXISTS things_kind ON things (kind_id, current_revision)
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
+
+-- A place's current laws are the latest change for each trait. Reordering is a
+-- fresh `add`; removing a law never erases the earlier public record.
+CREATE TABLE IF NOT EXISTS place_law_changes (
+  id           BIGSERIAL PRIMARY KEY,
+  place_id     INTEGER NOT NULL REFERENCES places(id) ON DELETE RESTRICT,
+  trait_id     INTEGER NOT NULL REFERENCES traits(id) ON DELETE RESTRICT,
+  actor_id     INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  change_type  TEXT NOT NULL CHECK (change_type IN ('add', 'remove')),
+  position     SMALLINT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (
+    (change_type = 'add' AND position IS NOT NULL AND position >= 0)
+    OR (change_type = 'remove' AND position IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS place_law_changes_current
+  ON place_law_changes (place_id, trait_id, id DESC);
+CREATE INDEX IF NOT EXISTS place_law_changes_place
+  ON place_law_changes (place_id, created_at DESC, id DESC);
+
+-- Labels and blocks remain in the public record after they expire. "Active" is
+-- derived from expires_at, so resolution never requires deleting a row.
+CREATE TABLE IF NOT EXISTS active_labels (
+  id               BIGSERIAL PRIMARY KEY,
+  target_type      TEXT NOT NULL CHECK (target_type IN ('resident', 'place', 'thing', 'kind')),
+  target_id        INTEGER NOT NULL CHECK (target_id > 0),
+  label            TEXT NOT NULL CHECK (label ~ '^[a-z0-9][a-z0-9_-]{0,63}$'),
+  actor_id         INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  source_trait_id  INTEGER REFERENCES traits(id) ON DELETE RESTRICT,
+  source_place_id  INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  source_thing_id  INTEGER REFERENCES things(id) ON DELETE RESTRICT,
+  expires_at       TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (expires_at IS NULL OR expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS active_labels_target
+  ON active_labels (target_type, target_id, label, expires_at, id DESC);
+
+CREATE TABLE IF NOT EXISTS active_blocks (
+  id               BIGSERIAL PRIMARY KEY,
+  resident_id      INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  action_name      TEXT NOT NULL CHECK (action_name IN ('talk', 'move', 'use', 'give', 'consume', 'make')),
+  actor_id         INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  source_trait_id  INTEGER REFERENCES traits(id) ON DELETE RESTRICT,
+  source_place_id  INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  source_thing_id  INTEGER REFERENCES things(id) ON DELETE RESTRICT,
+  expires_at       TIMESTAMPTZ NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (expires_at > created_at),
+  CHECK (expires_at <= created_at + INTERVAL '24 hours')
+);
+CREATE INDEX IF NOT EXISTS active_blocks_resident
+  ON active_blocks (resident_id, action_name, expires_at, id DESC);
+
+-- An action is immutable intent plus one immutable resolution. Failed and
+-- blocked attempts remain inspectable instead of disappearing into server logs.
+CREATE TABLE IF NOT EXISTS action_runs (
+  id               BIGSERIAL PRIMARY KEY,
+  actor_id         INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  action_name      TEXT NOT NULL CHECK (action_name IN ('talk', 'move', 'use', 'give', 'consume', 'make', 'go_home')),
+  place_id         INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  source_thing_id  INTEGER REFERENCES things(id) ON DELETE RESTRICT,
+  target_type      TEXT CHECK (target_type IN ('resident', 'place', 'thing', 'kind')),
+  target_id        INTEGER CHECK (target_id IS NULL OR target_id > 0),
+  destination_place_id INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  recipient_id     INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
+  payload          JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(payload) = 'object'),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((target_type IS NULL) = (target_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS action_runs_actor
+  ON action_runs (actor_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS action_runs_place
+  ON action_runs (place_id, created_at DESC, id DESC) WHERE place_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS action_resolutions (
+  id             BIGSERIAL PRIMARY KEY,
+  action_run_id  BIGINT NOT NULL UNIQUE REFERENCES action_runs(id) ON DELETE RESTRICT,
+  status         TEXT NOT NULL CHECK (status IN ('applied', 'blocked', 'noop', 'failed')),
+  detail         JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(detail) = 'object'),
+  resolved_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS action_resolutions_time
+  ON action_resolutions (resolved_at DESC, id DESC);
+
+-- Wait-then-do stores a frozen payload. Resolution adds a second row; it never
+-- edits or deletes the pending effect. A repeated effect cites its parent and
+-- increments generation until the hard ceiling of eight.
+CREATE TABLE IF NOT EXISTS pending_effects (
+  id                BIGSERIAL PRIMARY KEY,
+  action_id         BIGINT REFERENCES action_runs(id) ON DELETE RESTRICT,
+  parent_effect_id  BIGINT REFERENCES pending_effects(id) ON DELETE RESTRICT,
+  place_id          INTEGER NOT NULL REFERENCES places(id) ON DELETE RESTRICT,
+  actor_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  source_trait_id   INTEGER REFERENCES traits(id) ON DELETE RESTRICT,
+  source_thing_id   INTEGER REFERENCES things(id) ON DELETE RESTRICT,
+  target_type       TEXT CHECK (target_type IN ('resident', 'place', 'thing', 'kind')),
+  target_id         INTEGER CHECK (target_id IS NULL OR target_id > 0),
+  destination_place_id INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  recipient_id      INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
+  payload           JSONB NOT NULL CHECK (jsonb_typeof(payload) IN ('array', 'object')),
+  due_at            TIMESTAMPTZ NOT NULL,
+  generation        SMALLINT NOT NULL DEFAULT 0 CHECK (generation BETWEEN 0 AND 8),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((target_type IS NULL) = (target_id IS NULL)),
+  CHECK (due_at >= created_at),
+  CHECK (parent_effect_id IS NULL OR generation > 0)
+);
+CREATE INDEX IF NOT EXISTS pending_effects_due
+  ON pending_effects (place_id, due_at, id);
+CREATE INDEX IF NOT EXISTS pending_effects_parent
+  ON pending_effects (parent_effect_id, id) WHERE parent_effect_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION enforce_pending_effect_generation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  parent_generation SMALLINT;
+BEGIN
+  IF NEW.parent_effect_id IS NULL THEN
+    IF NEW.generation <> 0 THEN
+      RAISE EXCEPTION 'a root effect must start at generation zero' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  SELECT generation INTO parent_generation
+  FROM pending_effects
+  WHERE id = NEW.parent_effect_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'parent effect does not exist' USING ERRCODE = '23503';
+  END IF;
+  IF NEW.generation <> parent_generation + 1 THEN
+    RAISE EXCEPTION 'an effect must advance exactly one generation from its parent'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS pending_effects_check_generation ON pending_effects;
+CREATE TRIGGER pending_effects_check_generation BEFORE INSERT ON pending_effects
+  FOR EACH ROW EXECUTE FUNCTION enforce_pending_effect_generation();
+
+CREATE TABLE IF NOT EXISTS effect_resolutions (
+  id                 BIGSERIAL PRIMARY KEY,
+  pending_effect_id  BIGINT NOT NULL UNIQUE REFERENCES pending_effects(id) ON DELETE RESTRICT,
+  status             TEXT NOT NULL CHECK (status IN ('applied', 'skipped', 'failed')),
+  detail             JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(detail) = 'object'),
+  resolved_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS effect_resolutions_time
+  ON effect_resolutions (resolved_at DESC, id DESC);
+
+-- The maintainer can hide illegal public content and later restore it, but can
+-- never rewrite or delete it. The actor check anchors that narrow power to #1.
+CREATE TABLE IF NOT EXISTS moderation_actions (
+  id           BIGSERIAL PRIMARY KEY,
+  target_type  TEXT NOT NULL CHECK (target_type IN ('place', 'thing', 'kind', 'trait', 'note', 'agreement')),
+  target_id    INTEGER NOT NULL CHECK (target_id > 0),
+  action       TEXT NOT NULL CHECK (action IN ('remove', 'restore')),
+  actor_id     INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT CHECK (actor_id = 1),
+  reason       TEXT NOT NULL CHECK (octet_length(reason) BETWEEN 1 AND 4000),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS moderation_actions_target
+  ON moderation_actions (target_type, target_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS moderation_actions_time
+  ON moderation_actions (created_at DESC, id DESC);
 
 CREATE OR REPLACE FUNCTION protect_thing_history() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'things are retained as history; set withdrawn_at instead' USING ERRCODE = '55000'; END IF; IF NEW.kind_id IS DISTINCT FROM OLD.kind_id OR NEW.birth_revision IS DISTINCT FROM OLD.birth_revision OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN RAISE EXCEPTION 'a thing birth revision is immutable' USING ERRCODE = '55000'; END IF; IF OLD.withdrawn_at IS NOT NULL AND NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'a withdrawn thing is immutable' USING ERRCODE = '55000'; END IF; IF NEW.withdrawn_at IS NOT NULL AND NEW.withdrawn_at < NEW.created_at THEN RAISE EXCEPTION 'withdrawn_at cannot predate creation' USING ERRCODE = '22007'; END IF; RETURN NEW; END$$;
 DROP TRIGGER IF EXISTS things_keep_birth_history ON things;
@@ -462,6 +642,22 @@ CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,
 -- their changes are represented by immutable revisions, transfers, and events.
 CREATE OR REPLACE FUNCTION deny_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '55000'; END$$;
+DROP TRIGGER IF EXISTS place_law_changes_append_only ON place_law_changes;
+CREATE TRIGGER place_law_changes_append_only BEFORE UPDATE OR DELETE ON place_law_changes FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS active_labels_append_only ON active_labels;
+CREATE TRIGGER active_labels_append_only BEFORE UPDATE OR DELETE ON active_labels FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS active_blocks_append_only ON active_blocks;
+CREATE TRIGGER active_blocks_append_only BEFORE UPDATE OR DELETE ON active_blocks FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS action_runs_append_only ON action_runs;
+CREATE TRIGGER action_runs_append_only BEFORE UPDATE OR DELETE ON action_runs FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS action_resolutions_append_only ON action_resolutions;
+CREATE TRIGGER action_resolutions_append_only BEFORE UPDATE OR DELETE ON action_resolutions FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS pending_effects_append_only ON pending_effects;
+CREATE TRIGGER pending_effects_append_only BEFORE UPDATE OR DELETE ON pending_effects FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS effect_resolutions_append_only ON effect_resolutions;
+CREATE TRIGGER effect_resolutions_append_only BEFORE UPDATE OR DELETE ON effect_resolutions FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS moderation_actions_append_only ON moderation_actions;
+CREATE TRIGGER moderation_actions_append_only BEFORE UPDATE OR DELETE ON moderation_actions FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS kind_revisions_append_only ON kind_revisions;
 CREATE TRIGGER kind_revisions_append_only BEFORE UPDATE OR DELETE ON kind_revisions FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS kind_revision_traits_append_only ON kind_revision_traits;

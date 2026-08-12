@@ -12,6 +12,9 @@ import {
   settleX402,
   verifyDirectPayment,
 } from './pay.ts'
+import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
+import { moderatePublicRows } from './moderation-store.ts'
+import { runTalkNoteAction } from './note-action.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const NOTE_CHARACTERS = 4_000
@@ -161,35 +164,21 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!place) return err(c, 404, 'no such place')
     if (place.owner_id !== resident.id && !place.open_to_notes)
       return err(c, 403, 'this place is not open to notes')
+    await resolveDueEffects(placeId)
     // This fast rejection avoids presenting an INSERT to the database when the
     // caller is already known to be capped. The CTE below still rechecks the
     // counter so concurrent requests cannot overspend it.
     if (resident.notes_today >= QUOTAS.notes)
       return err(c, 429, `${QUOTAS.notes} notes per UTC day`)
 
-    const rows = await sql`
-      WITH permitted_place AS (
-        SELECT id FROM places
-        WHERE id = ${placeId} AND (owner_id = ${resident.id} OR open_to_notes)
-      ), spent_quota AS (
-        UPDATE residents SET notes_today = notes_today + 1
-        WHERE id = ${resident.id} AND notes_today < ${QUOTAS.notes}
-          AND EXISTS (SELECT 1 FROM permitted_place)
-        RETURNING id
-      ), new_note AS (
-        INSERT INTO notes (place_id, author_id, body)
-        SELECT p.id, q.id, ${text} FROM permitted_place p CROSS JOIN spent_quota q
-        RETURNING id, place_id, author_id, body, created_at
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'note', ${resident.handle}, jsonb_build_object('note_id', id, 'place_id', place_id)
-        FROM new_note
-      )
-      SELECT n.id, n.place_id, ${resident.handle}::text AS author, n.body, n.created_at
-      FROM new_note n
-    ` as { id: number; place_id?: number; author?: string; body?: string; created_at?: string }[]
-    const note = rows[0]
-    if (!note) return err(c, 429, `${QUOTAS.notes} notes per UTC day`)
+    const talk = await runTalkNoteAction({
+      placeId,
+      residentId: resident.id,
+      residentHandle: resident.handle,
+      text,
+    })
+    if (!talk.ok) return err(c, talk.status, talk.error)
+    const { note } = talk
     return c.json({
       note: {
         id: note.id,
@@ -344,7 +333,8 @@ export function mountSocietyRoutes(app: Hono): void {
         AND (${open}::boolean IS NULL OR (NOT complete) = ${open})
       ORDER BY created_at DESC, id DESC LIMIT 200
     ` as Record<string, unknown>[]
-    return c.json({ agreements: rows.map(agreementState) })
+    const agreements = rows.map(agreementState)
+    return c.json({ agreements: await moderatePublicRows('agreement', agreements) })
   })
 
   app.post('/api/transfer', async c => {
@@ -368,35 +358,54 @@ export function mountSocietyRoutes(app: Hono): void {
     const recipient = await residentId(toHandle)
     if (!recipient) return err(c, 404, 'no such recipient')
     if (recipient === resident.id) return err(c, 400, 'you already own this asset')
-
+    const presence = await residentPresence(resident.id)
+    if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
     const { table, transferable } = ASSETS[type]
-    const rows = await sql.query(`
-      WITH recipient AS (
-        SELECT r.id, r.handle FROM residents r WHERE r.id = $3
-      ), moved_asset AS (
-        UPDATE ${table} SET owner_id = recipient.id
-        FROM recipient
-        WHERE ${table}.id = $2 AND ${table}.owner_id = $4
-          AND ${table}.active_offer_id IS NULL${transferable}
-        RETURNING ${table}.id
-      ), new_transfer AS (
-        INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
-        SELECT $1, id, $4, $3 FROM moved_asset
-        RETURNING id, created_at
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'transfer', $5, jsonb_build_object(
-          'transfer_id', t.id, 'asset_type', $1::text, 'asset_id', $2,
-          'from', $5::text, 'to', $6::text, 'mode', 'gift'
-        ) FROM new_transfer t
-      )
-      SELECT id, created_at FROM new_transfer
-    `, [type, id, recipient, resident.id, resident.handle, toHandle]) as {
-      id: number
-      created_at?: string
-    }[]
-    const transfer = rows[0]
-    if (!transfer) return err(c, 409, 'ownership or offer state changed; re-read the asset')
+    let transfer: { id: number; created_at?: string } | undefined
+    const actionGate = await runAction({
+      actorId: resident.id,
+      actorHandle: resident.handle,
+      action: 'give',
+      sourceThingId: type === 'thing' ? id : null,
+      target: { type, id },
+      recipientId: recipient,
+      payload: { mode: 'gift' },
+      primitiveHandledByCaller: true,
+      performPrimitive: async transaction => {
+        if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
+        const rows = await transaction.query(`
+          WITH recipient AS (
+            SELECT r.id, r.handle FROM residents r WHERE r.id = $3
+          ), moved_asset AS (
+            UPDATE ${table} SET owner_id = recipient.id
+            FROM recipient
+            WHERE ${table}.id = $2 AND ${table}.owner_id = $4
+              AND ${table}.active_offer_id IS NULL${transferable}
+            RETURNING ${table}.id
+          ), new_transfer AS (
+            INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
+            SELECT $1, id, $4, $3 FROM moved_asset
+            RETURNING id, created_at
+          ), new_event AS (
+            INSERT INTO events (kind, actor, detail)
+            SELECT 'transfer', $5, jsonb_build_object(
+              'transfer_id', t.id, 'asset_type', $1::text, 'asset_id', $2,
+              'from', $5::text, 'to', $6::text, 'mode', 'gift'
+            ) FROM new_transfer t
+          )
+          SELECT id, created_at FROM new_transfer
+        `, [type, id, recipient, resident.id, resident.handle, toHandle]) as {
+          id: number
+          created_at?: string
+        }[]
+        transfer = rows[0]
+        if (!transfer) throw new EngineError(409, 'ownership or offer state changed; re-read the asset')
+      },
+    })
+    if (actionGate.error) {
+      return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
+    }
+    if (!transfer) return err(c, 500, 'transfer result is unavailable')
     return c.json({ transfer: {
       id: transfer.id,
       type,
@@ -434,52 +443,74 @@ export function mountSocietyRoutes(app: Hono): void {
     const buyerId = await residentId(toHandle)
     if (!buyerId) return err(c, 404, 'no such buyer')
     if (buyerId === resident.id) return err(c, 400, 'you cannot sell an asset to yourself')
-
+    const presence = await residentPresence(resident.id)
+    if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
     const { table, transferable } = ASSETS[type]
-    try {
-      const rows = await sql.query(`
-        WITH next_offer AS MATERIALIZED (
-          SELECT nextval(pg_get_serial_sequence('transfer_offers', 'id'))::int AS id
-        ), locked_asset AS (
-          UPDATE ${table} SET active_offer_id = next_offer.id
-          FROM next_offer
-          WHERE ${table}.id = $1 AND ${table}.owner_id = $2
-            AND ${table}.active_offer_id IS NULL${transferable}
-          RETURNING ${table}.id, ${table}.active_offer_id
-        ), new_offer AS (
-          INSERT INTO transfer_offers (
-            id, asset_type, asset_id, seller_id, buyer_id, price_usdc, seller_wallet, status
-          )
-          SELECT a.active_offer_id, $3, a.id, $2, $4, $5, $6, 'open' FROM locked_asset a
-          RETURNING id, asset_type AS type, asset_id, price_usdc::float8 AS price_usdc,
-            seller_wallet, status, reserved_until, created_at
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'transfer_offer', $7, jsonb_build_object(
-            'offer_id', id, 'asset_type', type, 'asset_id', asset_id,
-            'buyer', $8::text, 'price_usdc', price_usdc
-          ) FROM new_offer
-        )
-        SELECT o.*, $7::text AS seller, $8::text AS buyer
-        FROM new_offer o
-      `, [id, resident.id, type, buyerId, price, wallet, resident.handle, toHandle]) as Record<string, unknown>[]
-      const offer = rows[0]
-      if (!offer) return err(c, 409, 'ownership or offer state changed; re-read the asset')
-      return c.json({ offer: {
-        ...offer,
-        type: offer.type ?? type,
-        asset_id: offer.asset_id ?? id,
-        seller: offer.seller ?? resident.handle,
-        buyer: offer.buyer ?? toHandle,
-        price_usdc: offer.price_usdc ?? price,
-        seller_wallet: offer.seller_wallet ?? wallet,
-        status: offer.status ?? 'open',
-        reserved_until: offer.reserved_until ?? null,
-      } }, 201)
-    } catch (error) {
-      if (postgresErrorCode(error) === '23505') return err(c, 409, 'this asset already has an open transfer offer')
-      throw error
+    let offer: Record<string, unknown> | undefined
+    const actionGate = await runAction({
+      actorId: resident.id,
+      actorHandle: resident.handle,
+      action: 'give',
+      sourceThingId: type === 'thing' ? id : null,
+      target: { type, id },
+      recipientId: buyerId,
+      payload: { mode: 'offer' },
+      primitiveHandledByCaller: true,
+      performPrimitive: async transaction => {
+        if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
+        try {
+          const rows = await transaction.query(`
+            WITH next_offer AS MATERIALIZED (
+              SELECT nextval(pg_get_serial_sequence('transfer_offers', 'id'))::int AS id
+            ), locked_asset AS (
+              UPDATE ${table} SET active_offer_id = next_offer.id
+              FROM next_offer
+              WHERE ${table}.id = $1 AND ${table}.owner_id = $2
+                AND ${table}.active_offer_id IS NULL${transferable}
+              RETURNING ${table}.id, ${table}.active_offer_id
+            ), new_offer AS (
+              INSERT INTO transfer_offers (
+                id, asset_type, asset_id, seller_id, buyer_id, price_usdc, seller_wallet, status
+              )
+              SELECT a.active_offer_id, $3, a.id, $2, $4, $5, $6, 'open' FROM locked_asset a
+              RETURNING id, asset_type AS type, asset_id, price_usdc::float8 AS price_usdc,
+                seller_wallet, status, reserved_until, created_at
+            ), new_event AS (
+              INSERT INTO events (kind, actor, detail)
+              SELECT 'transfer_offer', $7, jsonb_build_object(
+                'offer_id', id, 'asset_type', type, 'asset_id', asset_id,
+                'buyer', $8::text, 'price_usdc', price_usdc
+              ) FROM new_offer
+            )
+            SELECT o.*, $7::text AS seller, $8::text AS buyer
+            FROM new_offer o
+          `, [id, resident.id, type, buyerId, price, wallet, resident.handle, toHandle]) as Record<string, unknown>[]
+          offer = rows[0]
+          if (!offer) throw new EngineError(409, 'ownership or offer state changed; re-read the asset')
+        } catch (error) {
+          if (error instanceof EngineError) throw error
+          if (postgresErrorCode(error) === '23505') {
+            throw new EngineError(409, 'this asset already has an open transfer offer')
+          }
+          throw error
+        }
+      },
+    })
+    if (actionGate.error) {
+      return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
     }
+    if (!offer) return err(c, 500, 'transfer offer result is unavailable')
+    return c.json({ offer: {
+      ...offer,
+      type: offer.type ?? type,
+      asset_id: offer.asset_id ?? id,
+      seller: offer.seller ?? resident.handle,
+      buyer: offer.buyer ?? toHandle,
+      price_usdc: offer.price_usdc ?? price,
+      seller_wallet: offer.seller_wallet ?? wallet,
+      status: offer.status ?? 'open',
+      reserved_until: offer.reserved_until ?? null,
+    } }, 201)
   })
 
   app.post('/api/transfer/:offerId/claim', async c => {

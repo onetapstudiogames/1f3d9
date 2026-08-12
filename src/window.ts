@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import { HANDLE_RE } from './core.ts'
 import { sql } from './db.ts'
+import { moderatePublicEvents } from './moderation-store.ts'
 import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS, WINDOW_JS } from './window-client.ts'
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
@@ -38,6 +39,10 @@ const SAFE_DETAIL_IDS = [
   'target_id',
   'asset_id',
   'parent_id',
+  'action_id',
+  'effect_id',
+  'pending_effect_id',
+  'moderation_id',
 ] as const
 
 interface PublicPlace {
@@ -48,8 +53,11 @@ interface PublicPlace {
   places: number
   things: number
   notes: number
+  moderated: boolean
   children: PublicPlace[]
 }
+
+const MODERATED_PLACE_NAME = '[removed by maintainer]'
 
 function harden(c: Context) {
   c.header('X-Content-Type-Options', 'nosniff')
@@ -81,7 +89,10 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
   const row = value as Record<string, unknown>
   const id = positiveInteger(row.id)
   const parentId = row.parent_id == null ? null : positiveInteger(row.parent_id)
-  const name = typeof row.name === 'string' ? row.name.slice(0, 120) : ''
+  const moderated = row.moderated === true
+  const name = moderated
+    ? MODERATED_PLACE_NAME
+    : (typeof row.name === 'string' ? row.name.slice(0, 120) : '')
   const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : ''
   if (!id || !name || !owner || (row.parent_id != null && !parentId)) return null
   return {
@@ -92,10 +103,11 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     places: count(row.places),
     things: count(row.things),
     notes: count(row.notes),
+    moderated,
   }
 }
 
-function publicPlaceTree(values: unknown[]): PublicPlace[] {
+export function publicPlaceTree(values: unknown[]): PublicPlace[] {
   const rows = values.map(publicPlaceRow).filter(row => row !== null)
   const ids = new Set(rows.map(row => row.id))
   const build = (
@@ -138,7 +150,7 @@ function publicWindowEvent(value: unknown) {
   }))
   if (
     kind === 'moderation' &&
-    ['remove', 'restore', 'pin', 'unpin'].includes(String(rawDetail.action))
+    ['remove', 'restore'].includes(String(rawDetail.action))
   ) {
     detail.action = String(rawDetail.action)
   }
@@ -160,8 +172,16 @@ async function readWindowSnapshot() {
         (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
-        (SELECT count(*)::int FROM notes note WHERE note.place_id = world.id) AS notes
+        (SELECT count(*)::int FROM notes note WHERE note.place_id = world.id) AS notes,
+        coalesce(moderation.action = 'remove', false) AS moderated
       FROM world JOIN residents ON residents.id = world.owner_id
+      LEFT JOIN LATERAL (
+        SELECT action
+        FROM moderation_actions
+        WHERE target_type = 'place' AND target_id = world.id
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      ) moderation ON true
       ORDER BY world.path
       LIMIT 1000
     `),
@@ -174,7 +194,8 @@ async function readWindowSnapshot() {
     `,
   ])
   const places = publicPlaceTree(placeRows as unknown[])
-  const events = (eventRows as unknown[]).map(publicWindowEvent).filter(event => event !== null)
+  const publicEvents = await moderatePublicEvents(eventRows as Record<string, unknown>[])
+  const events = publicEvents.map(publicWindowEvent).filter(event => event !== null)
   return {
     places,
     events,
