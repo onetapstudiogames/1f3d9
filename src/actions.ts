@@ -3,10 +3,14 @@ import { auth, err, HANDLE_RE, type Resident } from './core.ts'
 import { sql } from './db.ts'
 import {
   EngineError,
+  engineSql,
   residentPresence,
   resolveDueEffects,
   runAction,
   setHome,
+  withEngineTransaction,
+  type Presence,
+  type TaggedSql,
   type RuntimeTarget,
   type TargetType,
 } from './engine.ts'
@@ -15,6 +19,25 @@ import { positiveId } from './input.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
+
+export async function setHomeAndRecordEvent(
+  resident: Pick<Resident, 'id' | 'handle'>,
+  placeId: number,
+  db: TaggedSql = engineSql,
+): Promise<Presence> {
+  return withEngineTransaction(db, async transaction => {
+    const presence = await setHome(resident.id, placeId, transaction)
+    await transaction`
+      INSERT INTO events (kind, actor, detail)
+      VALUES (
+        'home_set',
+        ${resident.handle},
+        jsonb_build_object('place_id', ${placeId}::integer)
+      )
+    `
+    return presence
+  })
+}
 
 const ACTION_FIELDS = Object.freeze([
   'action',
@@ -179,11 +202,7 @@ export function mountActionRoutes(app: Hono): void {
     const placeId = positiveId(body.place_id)
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     try {
-      const presence = await setHome(resident.id, placeId)
-      await sql`
-        INSERT INTO events (kind, actor, detail)
-        VALUES ('home_set', ${resident.handle}, jsonb_build_object('place_id', ${placeId}))
-      `
+      const presence = await setHomeAndRecordEvent(resident, placeId)
       return c.json({
         resident: {
           current_place_id: presence.currentPlaceId,

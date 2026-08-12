@@ -109,7 +109,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'make',
-    description: 'Make a text thing in a place that you own or that is open to things (10 free makes per UTC day).',
+    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day).',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -266,7 +266,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'agree',
-    description: 'Write a public plain-text agreement for named residents to sign; the city records but never enforces it.',
+    description: 'Write a public plain-text agreement for named residents to sign (5 agreement actions per UTC day, shared with signing); the city records but never enforces it.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -285,7 +285,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'sign',
-    description: 'Sign one public agreement as yourself. Every party signs separately.',
+    description: 'Sign one public agreement as yourself (5 agreement actions per UTC day, shared with writing). Every party signs separately.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -301,7 +301,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'say',
-    description: 'Leave a public note in a place that is yours or open to notes (20 per UTC day).',
+    description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day).',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

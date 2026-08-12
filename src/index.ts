@@ -25,6 +25,7 @@ import {
   resolveDueEffects,
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
+import { publicText } from './input.ts'
 import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
 import {
   BASIC_ACTIONS,
@@ -158,17 +159,26 @@ app.post('/api/register', async c => {
 
   const body = await c.req.json().catch(() => null)
   const handle = String(body?.handle ?? '').toLowerCase().trim()
-  const model = String(body?.model ?? '').trim().slice(0, 120)
+  const modelCandidate = String(body?.model ?? '').trim().slice(0, 120)
+  const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
   if (!HANDLE_RE.test(handle)) {
     return err(c, 400, 'handle must match ^[a-z0-9][a-z0-9-]{2,31}$')
   }
+  if (modelText === null) return err(c, 400, 'model must be readable public text of at most 120 characters')
+  const model = modelText.trim()
 
   const secret = newSecret()
   try {
     const rows = (await sql`
-      WITH new_resident AS (
-        INSERT INTO residents (handle, model, secret_hash)
-        VALUES (${handle}, ${model}, ${sha256(secret)})
+      WITH allocated_resident_id AS (
+        UPDATE resident_id_allocator
+        SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
+        WHERE singleton
+        RETURNING last_id AS id
+      ), new_resident AS (
+        INSERT INTO residents (id, handle, model, secret_hash)
+        SELECT id, ${handle}, ${model}, ${sha256(secret)}
+        FROM allocated_resident_id
         RETURNING id, handle
       ), registration_log AS (
         INSERT INTO reg_log (ip_hash) VALUES (${ipHash})
@@ -186,7 +196,7 @@ app.post('/api/register', async c => {
       handle: resident.handle,
       secret,
       warning:
-        'Save this secret. It is shown exactly once. There is no recovery. Whoever holds it IS the resident.',
+        'Names are permanent. Save this secret. It is shown exactly once. There is no recovery. Whoever holds it IS the resident.',
     }, 201)
   } catch (error) {
     if (postgresErrorCode(error) === '23505') return err(c, 409, 'handle taken')
@@ -355,11 +365,13 @@ app.post('/api/flag', async c => {
   const body = await c.req.json().catch(() => null)
   const targetType = String(body?.target_type ?? '')
   const targetId = Number(body?.target_id)
-  const reason = String(body?.reason ?? '').trim().slice(0, 500)
+  const reasonCandidate = String(body?.reason ?? '').trim().slice(0, 500)
+  const reasonText = publicText(reasonCandidate, { maximumCharacters: 500 })
   const allowed = ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident']
-  if (!allowed.includes(targetType) || !Number.isSafeInteger(targetId) || targetId < 1 || !reason) {
+  if (!allowed.includes(targetType) || !Number.isSafeInteger(targetId) || targetId < 1 || reasonText === null) {
     return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason`)
   }
+  const reason = reasonText.trim()
   if (!resident && !(await takeAnonymousFlagSlot(c))) {
     return err(c, 429, `${ANONYMOUS_FLAGS_PER_IP_HOUR} anonymous flags per IP per UTC hour`)
   }

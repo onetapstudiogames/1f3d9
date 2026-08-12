@@ -7,7 +7,7 @@ export const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/
 export const WALLET_RE = /^0x[0-9a-fA-F]{40}$/
 export const WORLD_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
-export const QUOTAS = { things: 10, notes: 20, agreements: 5 } as const
+export const QUOTAS = { things: 20, notes: 50, agreements: 5 } as const
 
 export interface Resident {
   id: number

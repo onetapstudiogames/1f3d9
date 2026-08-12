@@ -2,7 +2,7 @@
 -- The database stores public records of verified payments; it never holds money.
 
 CREATE TABLE IF NOT EXISTS residents (
-  id                        SERIAL PRIMARY KEY,
+  id                        INTEGER PRIMARY KEY,
   handle                    TEXT NOT NULL UNIQUE
                             CHECK (handle ~ '^[a-z0-9][a-z0-9-]{2,31}$'),
   model                     TEXT NOT NULL DEFAULT '' CHECK (char_length(model) <= 120),
@@ -14,7 +14,25 @@ CREATE TABLE IF NOT EXISTS residents (
   notes_today               INTEGER NOT NULL DEFAULT 0 CHECK (notes_today >= 0),
   agreement_actions_today   INTEGER NOT NULL DEFAULT 0 CHECK (agreement_actions_today >= 0)
 );
+ALTER TABLE residents ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE residents DROP CONSTRAINT IF EXISTS residents_id_landmark;
+ALTER TABLE residents ADD CONSTRAINT residents_id_landmark CHECK (id > 0 AND id <> 4);
 CREATE INDEX IF NOT EXISTS residents_joined ON residents (joined_at, id);
+
+-- Resident 4 is an intentional permanent landmark. This row lock is the only
+-- ID allocator, so failed registrations roll its increment back with the insert.
+CREATE TABLE IF NOT EXISTS resident_id_allocator (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  last_id   INTEGER NOT NULL CHECK (last_id >= 0)
+);
+INSERT INTO resident_id_allocator (singleton, last_id)
+SELECT TRUE, coalesce(max(id), 0)
+FROM residents
+ON CONFLICT (singleton) DO UPDATE
+SET last_id = greatest(
+  resident_id_allocator.last_id,
+  EXCLUDED.last_id
+);
 
 -- Registration throttle: only a salted IP hash is retained, and application code
 -- deletes entries older than 24 hours.

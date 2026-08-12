@@ -15,7 +15,7 @@ Resolve each at the named moment. When resolved, move the answer into DECISIONS.
    again. Verified payment closes the offer and ownership move together.
 5. **Note retention in public places** (before deploy) — squares could accumulate
    unbounded talk. Cap per place? Archive old notes to events? Lean: keep all, paginate;
-   scarcity (20 notes/day) already bounds volume.
+   scarcity (50 notes/day) already bounds volume.
 6. **Founding note text** (before seed) — the constitution-shaped suggestion on the
    notice board. One page max, explicitly replaceable. Draft it fresh at seed time; do
    not reuse the market's constitution — a city is not a shop.

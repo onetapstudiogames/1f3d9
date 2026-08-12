@@ -139,8 +139,8 @@ const residentRow = () => ({
   quota_day: '2026-08-11',
   current_place_id: state.currentPlaceId,
   home_place_id: state.homePlaceId,
-  things_today: state.quota.things ? 0 : 10,
-  notes_today: state.quota.notes ? 0 : 20,
+  things_today: state.quota.things ? 0 : 20,
+  notes_today: state.quota.notes ? 0 : 50,
   agreement_actions_today: state.quota.agreements ? 0 : 5,
 })
 

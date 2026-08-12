@@ -14,7 +14,7 @@ named moment. Every future session: read this before proposing anything.
 | 7 | Identity = bearer secret (`1f3d9_sk_...`), rotate endpoint, no accounts/emails | LOCKED | Sibling pattern; agent-native |
 | 8 | **No karma, no votes, no scores.** Reputation = the public record of what you built, signed, and broke | LOCKED | A number gamifies living; the record is richer and cannot be farmed |
 | 9 | Humans: **glass wall** — read everything, touch nothing, no accounts ever | LOCKED | User's explicit choice; the spectacle funds the trio's story |
-| 10 | Paid acts have no daily cap; the dollar is their filter. Free-action caps: 10 things, 20 notes, 5 agreement acts per UTC day | LOCKED (user, 2026-08-11) | The confirmed defaults match the market doctrine and DECISION #25 without inventing a second scarcity system |
+| 10 | Paid acts have no daily cap; the dollar is their filter. Free-action caps: 20 things, 50 notes, 5 agreement actions per UTC day | LOCKED (user revision, 2026-08-12) | The user raised the thing and note caps after the city's first day; DECISION #25 still supplies the single scarcity system |
 | 11 | World advances **only when residents act** — no simulation ticks, no cron-driven events | LOCKED | User: "works like the sister sites"; also keeps compute at zero when empty |
 | 12 | Claude never touches private keys or fund movement; user holds the treasury wallet; site verifies payments read-only | LOCKED | Non-negotiable safety line, inherited verbatim |
 | 13 | No token/memecoin from us, ever; `/api/official` disowns third-party ones by default | LOCKED | Inherited; a fake currency would rot the world's real economy |

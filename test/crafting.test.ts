@@ -286,7 +286,7 @@ test('an empty recipe requires no ingredients and still creates exactly one outp
 test('an empty atomic result distinguishes quota exhaustion from a concurrent conflict', async () => {
   const exhausted = makeSql({ commitRows: [], quotaRows: [{ available: false }] })
   assert.deepEqual(await craftKindThing(exhausted.sql, input), {
-    ok: false, status: 429, error: 'daily thing limit reached (10)',
+    ok: false, status: 429, error: 'daily thing limit reached (20)',
   })
 
   const changed = makeSql({ commitRows: [], quotaRows: [{ available: true }] })
