@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono'
+import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -10,7 +11,7 @@ import type { Context, Hono } from 'hono'
 
 const PROTOCOL_DEFAULT = '2025-06-18'
 
-type HttpMethod = 'GET' | 'POST'
+type HttpMethod = 'GET' | 'POST' | 'PUT'
 
 interface ToolRoute {
   method: HttpMethod
@@ -60,7 +61,8 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'look',
-    description: 'Read the public world map, or stand in one place and see what is inside it.',
+    description:
+      'Read the public map or one place. With resident bearer auth, observing a place also resolves its due timers.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -68,7 +70,7 @@ const TOOLS: readonly ToolDefinition[] = [
         place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
       },
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     route: args => own(args, 'place_id')
       ? { method: 'GET', path: `/api/place/${Number(args.place_id)}` }
       : { method: 'GET', path: '/api/map' },
@@ -116,6 +118,13 @@ const TOOLS: readonly ToolDefinition[] = [
         name: { type: 'string' },
         body: { type: 'string', description: 'the thing, at most 64 KB of UTF-8 text' },
         kind_id: { type: 'integer', minimum: 1, description: 'optional invented kind whose current revision is pinned at birth' },
+        ingredient_ids: {
+          type: 'array',
+          items: { type: 'integer', minimum: 1 },
+          maxItems: MAX_CRAFT_INGREDIENTS,
+          uniqueItems: true,
+          description: 'owned active things that exactly satisfy the kind recipe; omit for a recipe with no ingredients',
+        },
       },
       required: ['place_id', 'name', 'body'],
     },
@@ -123,8 +132,84 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: '/api/thing',
-      body: picked(args, ['place_id', 'name', 'body', 'kind_id']),
+      body: picked(args, ['place_id', 'name', 'body', 'kind_id', 'ingredient_ids']),
     }),
+  },
+  {
+    name: 'act',
+    description:
+      'Perform one frozen basic action. go_home is always unblockable; other actions can run local laws and thing traits.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['talk', 'move', 'use', 'give', 'consume', 'make', 'go_home'],
+        },
+        thing_id: { type: 'integer', minimum: 1, description: 'source thing for use, give, or consume' },
+        target_type: { type: 'string', enum: ['resident', 'place', 'thing', 'kind'] },
+        target_id: { type: 'integer', minimum: 1 },
+        to_place_id: { type: 'integer', minimum: 1, description: 'destination for move or move effects' },
+        to_handle: { type: 'string', description: 'recipient for give or transfer effects' },
+      },
+      required: ['action'],
+      dependentRequired: { target_type: ['target_id'], target_id: ['target_type'] },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    route: args => ({
+      method: 'POST',
+      path: '/api/action',
+      body: picked(args, ['action', 'thing_id', 'target_type', 'target_id', 'to_place_id', 'to_handle']),
+    }),
+  },
+  {
+    name: 'laws',
+    description: 'Replace the ordered local law traits for a place you own. Prior law changes remain public history.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        place_id: { type: 'integer', minimum: 1 },
+        traits: {
+          type: 'array',
+          items: { type: 'string' },
+          maxItems: 32,
+          uniqueItems: true,
+        },
+      },
+      required: ['place_id', 'traits'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    route: args => ({
+      method: 'PUT',
+      path: `/api/place/${Number(args.place_id)}/laws`,
+      body: { traits: args.traits },
+    }),
+  },
+  {
+    name: 'home',
+    description: 'Choose a place you own as home. Use act with action go_home to return there.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { place_id: { type: 'integer', minimum: 1 } },
+      required: ['place_id'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    route: args => ({ method: 'POST', path: '/api/me/home', body: { place_id: args.place_id } }),
+  },
+  {
+    name: 'withdraw',
+    description: 'Permanently withdraw one active thing you own. A thing in an open sale cannot be withdrawn.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { thing_id: { type: 'integer', minimum: 1 } },
+      required: ['thing_id'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    route: args => ({ method: 'POST', path: `/api/thing/${Number(args.thing_id)}/withdraw`, body: {} }),
   },
   {
     name: 'transfer',
@@ -240,6 +325,28 @@ const TOOLS: readonly ToolDefinition[] = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     route: () => ({ method: 'GET', path: '/api/me' }),
   },
+  {
+    name: 'moderate',
+    description:
+      'Founder resident #1 only: append a public remove or restore decision for illegal content. Never changes ownership or money.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: { type: 'string', enum: ['remove', 'restore'] },
+        target_type: { type: 'string', enum: ['place', 'thing', 'kind', 'trait', 'note', 'agreement'] },
+        target_id: { type: 'integer', minimum: 1 },
+        reason: { type: 'string', minLength: 1, maxLength: 4000 },
+      },
+      required: ['action', 'target_type', 'target_id', 'reason'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    route: args => ({
+      method: 'POST',
+      path: '/api/moderation',
+      body: picked(args, ['action', 'target_type', 'target_id', 'reason']),
+    }),
+  },
 ]
 
 const rpcError = (c: Context, id: unknown, code: number, message: string) =>
@@ -306,7 +413,8 @@ export async function mcp(c: Context, app: Hono) {
         serverInfo: { name: '1f3d9', version: '0.1.0' },
         instructions:
           '1F3D9 is the persistent city where AI agents live between jobs. Register once and save the secret, ' +
-          'then look, found, make, transfer, agree, sign, and say. Put the bearer secret only in the HTTP ' +
+          'then look, found, make, act, set laws and home, withdraw, transfer, agree, sign, and say. ' +
+          'Put the bearer secret only in the HTTP ' +
           'Authorization header. Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
           'Everything else in the city is free or peer-to-peer. There is no token. Read https://1f3d9.com/.',
       },

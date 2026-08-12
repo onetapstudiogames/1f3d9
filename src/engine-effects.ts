@@ -1,0 +1,800 @@
+import {
+  EngineError,
+  effectiveLaws,
+  engineSql,
+  ensurePresence,
+  goHome,
+  moveResident,
+  resolveSymbolicTarget,
+  withEngineTransaction,
+  type RuntimeTarget,
+  type TaggedSql,
+} from './engine.ts'
+import {
+  MAX_EFFECT_GENERATIONS,
+  MAX_TIMER_SECONDS,
+  MIN_TIMER_SECONDS,
+  parseTraitRecipe,
+  type Effect,
+  type SymbolicTarget,
+} from './physics.ts'
+import {
+  requireCallerTargetScope,
+  requireResidentAtActionPlace,
+} from './engine-target-scope.ts'
+import {
+  MAX_PENDING_EFFECTS_PER_PLACE,
+  insertPendingEffect,
+} from './engine-timer-store.ts'
+const MAX_JSON_BYTES = 65_536
+const DUE_BATCH_SIZE = 64
+export const MAX_DUE_EFFECTS_PER_OBSERVATION = MAX_PENDING_EFFECTS_PER_PLACE
+export interface LawAuthority {
+  readonly traitId: number
+  readonly sourcePlaceId: number
+}
+export interface EffectExecutionContext {
+  readonly actionId: number | null
+  readonly actorId: number
+  readonly actorHandle: string
+  readonly placeId: number | null
+  readonly sourceThingId: number | null
+  readonly target: RuntimeTarget | null
+  readonly destinationPlaceId: number | null
+  readonly recipientId: number | null
+  readonly sourceTraitId: number | null
+  readonly lawAuthority: LawAuthority | null
+  readonly parentEffectId: number | null
+  readonly generation: number
+  readonly logicalAt: Date
+}
+export interface ThingState {
+  readonly id: number
+  readonly ownerId: number
+  readonly placeId: number
+  readonly withdrawnAt: string | null
+  readonly activeOfferId: number | null
+  readonly hasOpenOffer: boolean
+}
+interface PendingRow {
+  readonly id: number
+  readonly actionId: number | null
+  readonly placeId: number
+  readonly actorId: number
+  readonly sourceTraitId: number | null
+  readonly sourceThingId: number | null
+  readonly target: RuntimeTarget | null
+  readonly destinationPlaceId: number | null
+  readonly recipientId: number | null
+  readonly effects: readonly Effect[]
+  readonly repeatRemaining: number
+  readonly repeatSeconds: number | null
+  readonly lawAuthority: LawAuthority | null
+  readonly dueAt: Date
+  readonly logicalDueAt: Date
+  readonly generation: number
+}
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+function integer(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const parsed = Number(value)
+    return Number.isSafeInteger(parsed) ? parsed : null
+  }
+  return null
+}
+function rowId(value: unknown, field: string): number {
+  const parsed = integer(value)
+  if (parsed === null || parsed <= 0) throw new EngineError(500, `database returned an invalid ${field}`)
+  return parsed
+}
+function nullableRowId(value: unknown, field: string): number | null {
+  return value == null ? null : rowId(value, field)
+}
+function json(value: unknown): string {
+  let encoded: string
+  try {
+    encoded = JSON.stringify(value)
+  } catch {
+    throw new EngineError(400, 'payload must be valid JSON')
+  }
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_JSON_BYTES) {
+    throw new EngineError(400, 'payload is too large')
+  }
+  return encoded
+}
+async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
+  const value = await promise
+  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
+  return value as T[]
+}
+
+function targetType(value: unknown): RuntimeTarget['type'] | null {
+  return value === 'resident' || value === 'place' || value === 'thing' || value === 'kind'
+    ? value
+    : null
+}
+
+async function targetExists(target: RuntimeTarget, db: TaggedSql): Promise<boolean> {
+  let rows: Array<{ exists?: unknown }>
+  if (target.type === 'resident') {
+    rows = await queryRows(db`SELECT EXISTS (SELECT 1 FROM residents WHERE id = ${target.id}) AS exists`)
+  } else if (target.type === 'place') {
+    rows = await queryRows(db`SELECT EXISTS (SELECT 1 FROM places WHERE id = ${target.id}) AS exists`)
+  } else if (target.type === 'kind') {
+    rows = await queryRows(db`SELECT EXISTS (SELECT 1 FROM kinds WHERE id = ${target.id}) AS exists`)
+  } else {
+    rows = await queryRows(db`
+      SELECT EXISTS (
+        SELECT 1 FROM things WHERE id = ${target.id} AND withdrawn_at IS NULL
+      ) AS exists
+    `)
+  }
+  return rows[0]?.exists === true
+}
+
+async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promise<RuntimeTarget> {
+  if (!target) throw new EngineError(400, 'effect target is unavailable')
+  if (!await targetExists(target, db)) throw new EngineError(404, `${target.type} target not found`)
+  return target
+}
+
+async function requireScopedBrickTarget(
+  symbol: SymbolicTarget,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<RuntimeTarget> {
+  const target = await requireTarget(resolveSymbolicTarget(symbol, context), db)
+  if (symbol === 'target') {
+    await requireCallerTargetScope(target, context.actorId, context.placeId, db)
+  }
+  return target
+}
+
+export async function thingState(thingId: number, db: TaggedSql): Promise<ThingState | null> {
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT thing.id, thing.owner_id, thing.place_id,
+      thing.withdrawn_at, thing.active_offer_id,
+      EXISTS (
+        SELECT 1 FROM transfer_offers offer
+        WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
+          AND offer.status = 'open'
+      ) AS has_open_offer
+    FROM things thing
+    WHERE thing.id = ${thingId}
+  `)
+  const row = rows[0]
+  if (!row) return null
+  return {
+    id: rowId(row.id, 'thing id'),
+    ownerId: rowId(row.owner_id, 'thing owner id'),
+    placeId: rowId(row.place_id, 'thing place id'),
+    withdrawnAt: row.withdrawn_at == null ? null : String(row.withdrawn_at),
+    activeOfferId: nullableRowId(row.active_offer_id, 'thing offer id'),
+    hasOpenOffer: row.has_open_offer === true,
+  }
+}
+
+async function activeLabel(target: RuntimeTarget, label: string, db: TaggedSql): Promise<boolean> {
+  const rows = await queryRows<{ present?: unknown }>(db`
+    SELECT EXISTS (
+      SELECT 1 FROM active_labels
+      WHERE target_type = ${target.type} AND target_id = ${target.id}
+        AND label = ${label} AND (expires_at IS NULL OR expires_at > now())
+    ) AS present
+  `)
+  return rows[0]?.present === true
+}
+
+async function matchingLaw(
+  target: RuntimeTarget,
+  label: string,
+  db: TaggedSql,
+) {
+  if (target.type !== 'place') return null
+  return (await effectiveLaws(target.id, db)).find(law => law.name === label) ?? null
+}
+
+export async function executeEffects(
+  effects: readonly Effect[],
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<number> {
+  let applied = 0
+  for (const effect of effects) applied += await executeEffect(effect, context, db)
+  return applied
+}
+
+async function executeEffect(
+  effect: Effect,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<number> {
+  if (effect.effect === 'label') {
+    const target = await requireScopedBrickTarget(effect.target, context, db)
+    await queryRows(db`
+      INSERT INTO active_labels (
+        target_type, target_id, label, actor_id,
+        source_trait_id, source_place_id, source_thing_id
+      ) VALUES (
+        ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
+        ${context.sourceTraitId}, ${context.lawAuthority?.sourcePlaceId ?? null},
+        ${context.sourceThingId}
+      ) RETURNING id
+    `)
+    return 1
+  }
+  if (effect.effect === 'block') {
+    const target = await requireScopedBrickTarget(effect.target, context, db)
+    if (target.type !== 'resident') throw new EngineError(400, 'block target must be a resident')
+    await queryRows(db`
+      INSERT INTO active_blocks (
+        resident_id, action_name, actor_id, source_trait_id,
+        source_place_id, source_thing_id, expires_at
+      ) VALUES (
+        ${target.id}, ${effect.action}, ${context.actorId}, ${context.sourceTraitId},
+        ${context.lawAuthority?.sourcePlaceId ?? null}, ${context.sourceThingId},
+        now() + make_interval(secs => ${effect.seconds})
+      ) RETURNING id
+    `)
+    return 1
+  }
+  if (effect.effect === 'destroy') {
+    const target = resolveSymbolicTarget(effect.target, context)
+    if (!target || target.type !== 'thing') {
+      throw new EngineError(403, 'agents and non-thing targets cannot be destroyed')
+    }
+    await destroyThing(target.id, context, db)
+    return 1
+  }
+  if (effect.effect === 'move') {
+    const target = await requireTarget(resolveSymbolicTarget(effect.target, context), db)
+    await moveEffectTarget(target, effect.to, context, db)
+    return 1
+  }
+  if (effect.effect === 'transfer') {
+    const target = await requireTarget(resolveSymbolicTarget(effect.target, context), db)
+    const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
+    if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient')
+    await transferAsset(target, context.actorId, recipientId, db)
+    return 1
+  }
+  if (effect.effect === 'wait') return await scheduleEffect(effect, context, db) ? 1 : 0
+
+  const target = await requireScopedBrickTarget(effect.target, context, db)
+  const law = await matchingLaw(target, effect.label, db)
+  const matched = law !== null || await activeLabel(target, effect.label, db)
+  const branch = matched ? effect.then : (effect.else ?? [])
+  const branchContext: EffectExecutionContext = law === null ? context : {
+    ...context,
+    lawAuthority: { traitId: law.traitId, sourcePlaceId: law.sourcePlaceId },
+  }
+  return executeEffects(branch, branchContext, db)
+}
+
+async function destroyThing(
+  thingId: number,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<void> {
+  const thing = await thingState(thingId, db)
+  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
+  if (thing.activeOfferId !== null || thing.hasOpenOffer) {
+    throw new EngineError(409, 'thing has an open sale offer')
+  }
+  const ownedByActor = thing.ownerId === context.actorId
+  let rows: unknown[]
+  if (ownedByActor) {
+    rows = await queryRows(db`
+      WITH changed AS (
+        UPDATE things SET withdrawn_at = now()
+        WHERE id = ${thing.id} AND owner_id = ${context.actorId}
+          AND withdrawn_at IS NULL AND active_offer_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM transfer_offers offer
+            WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
+              AND offer.status = 'open'
+          )
+        RETURNING id
+      ), new_event AS (
+        INSERT INTO events (kind, actor, detail)
+        SELECT 'thing_withdrawn', resident.handle,
+          jsonb_build_object('thing_id', id, 'reason', 'destroyed')
+        FROM changed JOIN residents resident ON resident.id = ${context.actorId}
+      ) SELECT id FROM changed
+    `)
+  } else {
+    const authority = context.lawAuthority
+    if (context.placeId === null || thing.placeId !== context.placeId || authority === null) {
+      throw new EngineError(403, 'damage to another resident property requires an effective local law')
+    }
+    rows = await queryRows(db`
+      WITH RECURSIVE ancestry AS (
+        SELECT place.id, place.parent_id, place.owner_id,
+          place.owner_id AS sovereign_owner
+        FROM places place WHERE place.id = ${context.placeId}
+        UNION ALL
+        SELECT parent.id, parent.parent_id, parent.owner_id, ancestry.sovereign_owner
+        FROM places parent JOIN ancestry ON parent.id = ancestry.parent_id
+        WHERE parent.owner_id = ancestry.sovereign_owner
+      ), latest AS (
+        SELECT DISTINCT ON (change.place_id, change.trait_id)
+          change.place_id, change.trait_id, change.change_type
+        FROM place_law_changes change JOIN ancestry ON ancestry.id = change.place_id
+        ORDER BY change.place_id, change.trait_id, change.id DESC
+      ), changed AS (
+        UPDATE things SET withdrawn_at = now()
+        WHERE id = ${thing.id} AND place_id = ${context.placeId}
+          AND withdrawn_at IS NULL AND active_offer_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM transfer_offers offer
+            WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
+              AND offer.status = 'open'
+          )
+          AND EXISTS (
+            SELECT 1 FROM latest WHERE place_id = ${authority.sourcePlaceId}
+              AND trait_id = ${authority.traitId} AND change_type = 'add'
+          ) RETURNING id
+      ), new_event AS (
+        INSERT INTO events (kind, actor, detail)
+        SELECT 'thing_withdrawn', resident.handle,
+          jsonb_build_object('thing_id', id, 'reason', 'destroyed')
+        FROM changed JOIN residents resident ON resident.id = ${context.actorId}
+      ) SELECT id FROM changed
+    `)
+  }
+  if (rows[0]) return
+  if (ownedByActor) throw new EngineError(409, 'thing changed before it could be destroyed')
+  const current = await thingState(thing.id, db)
+  if (!current || current.withdrawnAt !== null || current.placeId !== context.placeId
+    || current.activeOfferId !== null || current.hasOpenOffer) {
+    throw new EngineError(409, 'thing changed before it could be destroyed')
+  }
+  const authority = context.lawAuthority
+  const stillEffective = authority !== null && context.placeId !== null
+    && (await effectiveLaws(context.placeId, db)).some(law => (
+      law.traitId === authority.traitId && law.sourcePlaceId === authority.sourcePlaceId
+    ))
+  if (!stillEffective) {
+    throw new EngineError(403, 'damage to another resident property requires an effective local law')
+  }
+  throw new EngineError(409, 'thing changed before it could be destroyed')
+}
+
+export async function withdrawOwnedThing(
+  thingId: number,
+  actorId: number,
+  actorHandle: string,
+  db: TaggedSql,
+): Promise<void> {
+  const existing = await thingState(thingId, db)
+  if (existing?.withdrawnAt !== null && existing?.ownerId === actorId) return
+  const rows = await queryRows(db`
+    WITH changed AS (
+      UPDATE things SET withdrawn_at = now()
+      WHERE id = ${thingId} AND owner_id = ${actorId}
+        AND withdrawn_at IS NULL AND active_offer_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
+            AND offer.status = 'open'
+        )
+      RETURNING id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_withdrawn', ${actorHandle},
+        jsonb_build_object('thing_id', id, 'reason', 'consumed')
+      FROM changed
+    ) SELECT id FROM changed
+  `)
+  if (!rows[0]) throw new EngineError(409, 'thing cannot be consumed')
+}
+
+async function moveEffectTarget(
+  target: RuntimeTarget,
+  destination: 'destination' | 'home',
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<void> {
+  if (target.type === 'resident') {
+    await requireResidentAtActionPlace(target.id, context.placeId, db)
+    if (destination === 'home') return void await goHome(target.id, db)
+    if (context.destinationPlaceId === null) throw new EngineError(400, 'move effect needs a destination')
+    return void await moveResident(target.id, context.destinationPlaceId, db)
+  }
+  if (target.type !== 'thing') throw new EngineError(400, 'move effect target must be a resident or thing')
+  const destinationId = destination === 'home'
+    ? (await ensurePresence(context.actorId, db)).homePlaceId
+    : context.destinationPlaceId
+  if (destinationId === null) throw new EngineError(409, 'move destination is unavailable')
+  await moveThing(target.id, destinationId, context.actorId, db)
+}
+
+async function moveThing(thingId: number, destinationId: number, actorId: number, db: TaggedSql) {
+  const thing = await thingState(thingId, db)
+  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
+  if (thing.ownerId !== actorId) throw new EngineError(403, 'only the owner can move a thing')
+  if (thing.activeOfferId !== null || thing.hasOpenOffer) {
+    throw new EngineError(409, 'thing has an open sale offer')
+  }
+  if (thing.placeId === destinationId) return
+  const places = await queryRows<Record<string, unknown>>(db`
+    SELECT id, parent_id, owner_id, open_to_things
+    FROM places WHERE id = ANY (${[thing.placeId, destinationId]}::int[])
+  `)
+  const oldPlace = places.find(row => integer(row.id) === thing.placeId)
+  const destination = places.find(row => integer(row.id) === destinationId)
+  if (!destination) throw new EngineError(404, 'destination place not found')
+  if (integer(destination.owner_id) !== actorId && destination.open_to_things !== true) {
+    throw new EngineError(403, 'destination does not allow visitor things')
+  }
+  const adjacent = nullableRowId(destination.parent_id, 'destination parent id') === thing.placeId
+    || (oldPlace !== undefined && nullableRowId(oldPlace.parent_id, 'current parent id') === destinationId)
+  if (!adjacent) throw new EngineError(403, 'thing move must cross one parent-child edge')
+  const rows = await queryRows(db`
+    UPDATE things moving SET place_id = destination.id
+    FROM places destination
+    WHERE moving.id = ${thing.id} AND moving.owner_id = ${actorId}
+      AND moving.withdrawn_at IS NULL AND moving.active_offer_id IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM transfer_offers offer
+        WHERE offer.asset_type = 'thing' AND offer.asset_id = moving.id
+          AND offer.status = 'open'
+      )
+      AND destination.id = ${destinationId}
+      AND (destination.owner_id = ${actorId} OR destination.open_to_things)
+    RETURNING moving.id
+  `)
+  if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move')
+}
+
+async function transferAsset(target: RuntimeTarget, actorId: number, recipientId: number, db: TaggedSql) {
+  if (target.type === 'resident') throw new EngineError(403, 'an agent is never property')
+  if (actorId === recipientId) return
+  const conditions = target.type === 'thing'
+    ? db`
+      WITH recipient AS (SELECT id FROM residents WHERE id = ${recipientId}), moved AS (
+        UPDATE things SET owner_id = ${recipientId} FROM recipient
+        WHERE things.id = ${target.id} AND things.owner_id = ${actorId}
+          AND things.withdrawn_at IS NULL AND things.active_offer_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM transfer_offers offer
+            WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
+              AND offer.status = 'open'
+          )
+        RETURNING things.id
+      ), transfer AS (
+        INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
+        SELECT 'thing', id, ${actorId}, ${recipientId} FROM moved
+        RETURNING id, asset_type, asset_id, from_id, to_id
+      ), new_event AS (
+        INSERT INTO events (kind, actor, detail)
+        SELECT 'transfer', resident.handle, jsonb_build_object(
+          'type', asset_type, 'id', asset_id, 'from_id', from_id,
+          'to_id', to_id, 'mode', 'effect'
+        ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
+      ) SELECT id FROM transfer
+    `
+    : target.type === 'place'
+      ? db`
+        WITH recipient AS (SELECT id FROM residents WHERE id = ${recipientId}), moved AS (
+          UPDATE places SET owner_id = ${recipientId} FROM recipient
+          WHERE places.id = ${target.id} AND places.owner_id = ${actorId}
+            AND places.active_offer_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM transfer_offers offer
+              WHERE offer.asset_type = 'place' AND offer.asset_id = places.id
+                AND offer.status = 'open'
+            ) RETURNING places.id
+        ), transfer AS (
+          INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
+          SELECT 'place', id, ${actorId}, ${recipientId} FROM moved
+          RETURNING id, asset_type, asset_id, from_id, to_id
+        ), new_event AS (
+          INSERT INTO events (kind, actor, detail)
+          SELECT 'transfer', resident.handle, jsonb_build_object(
+            'type', asset_type, 'id', asset_id, 'from_id', from_id,
+            'to_id', to_id, 'mode', 'effect'
+          ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
+        ) SELECT id FROM transfer
+      `
+      : db`
+        WITH recipient AS (SELECT id FROM residents WHERE id = ${recipientId}), moved AS (
+          UPDATE kinds SET owner_id = ${recipientId} FROM recipient
+          WHERE kinds.id = ${target.id} AND kinds.owner_id = ${actorId}
+            AND kinds.active_offer_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM transfer_offers offer
+              WHERE offer.asset_type = 'kind' AND offer.asset_id = kinds.id
+                AND offer.status = 'open'
+            ) RETURNING kinds.id
+        ), transfer AS (
+          INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
+          SELECT 'kind', id, ${actorId}, ${recipientId} FROM moved
+          RETURNING id, asset_type, asset_id, from_id, to_id
+        ), new_event AS (
+          INSERT INTO events (kind, actor, detail)
+          SELECT 'transfer', resident.handle, jsonb_build_object(
+            'type', asset_type, 'id', asset_id, 'from_id', from_id,
+            'to_id', to_id, 'mode', 'effect'
+          ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
+        ) SELECT id FROM transfer
+      `
+  if ((await queryRows(conditions)).length === 0) await throwTransferFailure(target, actorId, db)
+}
+
+async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: TaggedSql): Promise<never> {
+  if (target.type === 'thing') {
+    const thing = await thingState(target.id, db)
+    if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
+    if (thing.ownerId !== actorId) throw new EngineError(403, 'asset is not transferable by this actor')
+    if (thing.activeOfferId !== null || thing.hasOpenOffer) {
+      throw new EngineError(409, 'asset has an open transfer offer')
+    }
+    throw new EngineError(409, 'asset changed before it could transfer')
+  }
+  const rows = target.type === 'place'
+    ? await queryRows<Record<string, unknown>>(db`
+      SELECT asset.owner_id, asset.active_offer_id,
+        EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'place' AND offer.asset_id = asset.id
+            AND offer.status = 'open'
+        ) AS has_open_offer
+      FROM places asset WHERE asset.id = ${target.id}
+    `)
+    : await queryRows<Record<string, unknown>>(db`
+      SELECT asset.owner_id, asset.active_offer_id,
+        EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'kind' AND offer.asset_id = asset.id
+            AND offer.status = 'open'
+        ) AS has_open_offer
+      FROM kinds asset WHERE asset.id = ${target.id}
+    `)
+  const asset = rows[0]
+  if (!asset) throw new EngineError(404, `${target.type} target not found`)
+  if (integer(asset.owner_id) !== actorId) throw new EngineError(403, 'asset is not transferable by this actor')
+  if (asset.active_offer_id != null || asset.has_open_offer === true) {
+    throw new EngineError(409, 'asset has an open transfer offer')
+  }
+  throw new EngineError(409, 'asset changed before it could transfer')
+}
+
+async function scheduleEffect(
+  effect: Extract<Effect, { effect: 'wait' }>,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<boolean> {
+  if (!Number.isSafeInteger(effect.seconds)
+    || effect.seconds < MIN_TIMER_SECONDS || effect.seconds > MAX_TIMER_SECONDS) {
+    throw new EngineError(400, 'wait duration is invalid')
+  }
+  const generation = context.parentEffectId === null ? 0 : context.generation + 1
+  if (generation > MAX_EFFECT_GENERATIONS) return false
+  if (context.placeId === null) throw new EngineError(400, 'wait effect needs a place')
+  const logicalDueAt = new Date(context.logicalAt.getTime() + effect.seconds * 1_000)
+  const payload = {
+    effects: effect.then,
+    repeat_remaining: effect.repeat ?? 0,
+    repeat_seconds: effect.seconds,
+    logical_due_at: logicalDueAt.toISOString(),
+    law_authority: context.lawAuthority === null ? null : {
+      trait_id: context.lawAuthority.traitId,
+      source_place_id: context.lawAuthority.sourcePlaceId,
+    },
+  }
+  await insertPendingEffect({
+    actionId: context.actionId,
+    parentEffectId: context.parentEffectId,
+    placeId: context.placeId,
+    actorId: context.actorId,
+    sourceTraitId: context.sourceTraitId,
+    sourceThingId: context.sourceThingId,
+    targetType: context.target?.type ?? null,
+    targetId: context.target?.id ?? null,
+    destinationPlaceId: context.destinationPlaceId,
+    recipientId: context.recipientId,
+    payloadJson: json(payload),
+    logicalDueAt: logicalDueAt.toISOString(),
+    generation,
+  }, db)
+  return true
+}
+
+function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
+  const payload = objectRecord(row.payload)
+  if (!payload || !Array.isArray(payload.effects)) return null
+  const recipe = parseTraitRecipe({ use: payload.effects })
+  if (!recipe?.use) return null
+  const type = row.target_type == null ? null : targetType(row.target_type)
+  const id = row.target_id == null ? null : integer(row.target_id)
+  if ((type === null) !== (id === null) || (id !== null && id <= 0)) return null
+  const repeatRemaining = payload.repeat_remaining == null ? 0 : integer(payload.repeat_remaining)
+  const repeatSeconds = payload.repeat_seconds == null ? null : integer(payload.repeat_seconds)
+  if (repeatRemaining === null || repeatRemaining < 0 || repeatRemaining > MAX_EFFECT_GENERATIONS) return null
+  if (repeatRemaining > 0 && (repeatSeconds === null
+    || repeatSeconds < MIN_TIMER_SECONDS || repeatSeconds > MAX_TIMER_SECONDS)) return null
+  const rawAuthority = objectRecord(payload.law_authority)
+  const authorityTrait = rawAuthority ? integer(rawAuthority.trait_id) : null
+  const authorityPlace = rawAuthority ? integer(rawAuthority.source_place_id) : null
+  const lawAuthority = authorityTrait && authorityPlace
+    ? { traitId: authorityTrait, sourcePlaceId: authorityPlace }
+    : null
+  const dueAt = new Date(String(row.due_at))
+  const logicalDueAt = new Date(String(payload.logical_due_at ?? row.due_at))
+  const generation = integer(row.generation)
+  if (!Number.isFinite(dueAt.getTime()) || !Number.isFinite(logicalDueAt.getTime())
+    || generation === null || generation < 0 || generation > MAX_EFFECT_GENERATIONS) return null
+  return {
+    id: rowId(row.id, 'pending effect id'),
+    actionId: nullableRowId(row.action_id, 'pending action id'),
+    placeId: rowId(row.place_id, 'pending place id'),
+    actorId: rowId(row.actor_id, 'pending actor id'),
+    sourceTraitId: nullableRowId(row.source_trait_id, 'pending source trait id'),
+    sourceThingId: nullableRowId(row.source_thing_id, 'pending source thing id'),
+    target: type && id ? { type, id } : null,
+    destinationPlaceId: nullableRowId(row.destination_place_id, 'pending destination id'),
+    recipientId: nullableRowId(row.recipient_id, 'pending recipient id'),
+    effects: recipe.use,
+    repeatRemaining,
+    repeatSeconds,
+    lawAuthority,
+    dueAt,
+    logicalDueAt,
+    generation,
+  }
+}
+
+async function dueRows(placeId: number, db: TaggedSql): Promise<Record<string, unknown>[]> {
+  return queryRows(db`
+    SELECT pending.id, pending.action_id, pending.parent_effect_id, pending.place_id,
+      pending.actor_id, pending.source_trait_id, pending.source_thing_id,
+      pending.target_type, pending.target_id, pending.destination_place_id,
+      pending.recipient_id, pending.payload, pending.due_at, pending.generation
+    FROM pending_effects pending
+    LEFT JOIN effect_resolutions resolution ON resolution.pending_effect_id = pending.id
+    WHERE pending.place_id = ${placeId} AND pending.due_at <= now() AND resolution.id IS NULL
+    ORDER BY pending.due_at ASC, pending.id ASC LIMIT ${DUE_BATCH_SIZE}
+  `)
+}
+
+async function lockAndLoadPending(
+  pendingId: number,
+  placeId: number,
+  db: TaggedSql,
+): Promise<Record<string, unknown> | null> {
+  await queryRows(db`SELECT pg_advisory_xact_lock(${pendingId}::bigint)`)
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT pending.id, pending.action_id, pending.parent_effect_id, pending.place_id,
+      pending.actor_id, pending.source_trait_id, pending.source_thing_id,
+      pending.target_type, pending.target_id, pending.destination_place_id,
+      pending.recipient_id, pending.payload, pending.due_at, pending.generation
+    FROM pending_effects pending
+    LEFT JOIN effect_resolutions resolution ON resolution.pending_effect_id = pending.id
+    WHERE pending.id = ${pendingId} AND pending.place_id = ${placeId}
+      AND pending.due_at <= now() AND resolution.id IS NULL
+    FOR UPDATE OF pending
+  `)
+  return rows[0] ?? null
+}
+
+async function recordEffectResolution(
+  pendingId: number,
+  status: 'applied' | 'skipped' | 'failed',
+  detail: Readonly<Record<string, unknown>>,
+  db: TaggedSql,
+) {
+  await queryRows(db`
+    WITH resolution AS (
+      INSERT INTO effect_resolutions (pending_effect_id, status, detail)
+      VALUES (${pendingId}, ${status}, ${json(detail)}::jsonb)
+      ON CONFLICT (pending_effect_id) DO NOTHING RETURNING id, pending_effect_id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'effect_resolved', resident.handle,
+        jsonb_build_object('effect_id', resolution.pending_effect_id, 'status', ${status})
+      FROM resolution
+      JOIN pending_effects pending ON pending.id = resolution.pending_effect_id
+      JOIN residents resident ON resident.id = pending.actor_id
+    ) SELECT id FROM resolution
+  `)
+}
+
+async function repeatPending(row: PendingRow, context: EffectExecutionContext, db: TaggedSql) {
+  if (row.repeatRemaining <= 0 || row.repeatSeconds === null
+    || row.generation >= MAX_EFFECT_GENERATIONS) return
+  await scheduleEffect({
+    effect: 'wait', seconds: row.repeatSeconds, then: row.effects,
+    repeat: row.repeatRemaining - 1,
+  }, context, db)
+}
+
+async function resolveOne(
+  raw: Record<string, unknown>,
+  placeId: number,
+  db: TaggedSql,
+  atomic: boolean,
+): Promise<'resolved' | 'failed' | 'already-resolved'> {
+  const pendingId = rowId(raw.id, 'pending effect id')
+  const fresh = atomic ? await lockAndLoadPending(pendingId, placeId, db) : raw
+  if (!fresh) return 'already-resolved'
+  const row = pendingFromRow(fresh)
+  if (!row) {
+    await recordEffectResolution(pendingId, 'skipped', { error: 'invalid stored effect payload' }, db)
+    return 'failed'
+  }
+  const context: EffectExecutionContext = {
+    actionId: row.actionId,
+    actorId: row.actorId,
+    actorHandle: '',
+    placeId: row.placeId,
+    sourceThingId: row.sourceThingId,
+    target: row.target,
+    destinationPlaceId: row.destinationPlaceId,
+    recipientId: row.recipientId,
+    sourceTraitId: row.sourceTraitId,
+    lawAuthority: row.lawAuthority,
+    parentEffectId: row.id,
+    generation: row.generation,
+    logicalAt: row.logicalDueAt,
+  }
+  const effectsApplied = await executeEffects(row.effects, context, db)
+  await repeatPending(row, context, db)
+  await recordEffectResolution(row.id, 'applied', { effects_applied: effectsApplied }, db)
+  return 'resolved'
+}
+
+async function recordFailedEffect(
+  pendingId: number,
+  placeId: number,
+  message: string,
+  db: TaggedSql,
+  atomic: boolean,
+): Promise<boolean> {
+  if (atomic && !await lockAndLoadPending(pendingId, placeId, db)) return false
+  await recordEffectResolution(pendingId, 'failed', { error: message }, db)
+  return true
+}
+
+export async function resolveDueEffects(
+  placeId: number,
+  db: TaggedSql = engineSql,
+): Promise<{ resolved: number; failed: number; capped: boolean }> {
+  if (!Number.isSafeInteger(placeId) || placeId <= 0) throw new EngineError(400, 'place id must be positive')
+  let resolved = 0
+  let failed = 0
+  while (resolved + failed < MAX_DUE_EFFECTS_PER_OBSERVATION) {
+    const batch = await dueRows(placeId, db)
+    if (batch.length === 0) break
+    let progressed = false
+    for (const raw of batch) {
+      if (resolved + failed >= MAX_DUE_EFFECTS_PER_OBSERVATION) break
+      let outcome: 'resolved' | 'failed' | 'already-resolved'
+      try {
+        outcome = await withEngineTransaction(db, (transaction, atomic) => (
+          resolveOne(raw, placeId, transaction, atomic)
+        ))
+      } catch (error) {
+        const pendingId = rowId(raw.id, 'pending effect id')
+        const message = error instanceof Error ? error.message : 'effect execution failed'
+        const recorded = await withEngineTransaction(db, (transaction, atomic) => (
+          recordFailedEffect(pendingId, placeId, message, transaction, atomic)
+        ))
+        outcome = recorded ? 'failed' : 'already-resolved'
+      }
+      if (outcome === 'resolved') {
+        resolved += 1
+        progressed = true
+      } else if (outcome === 'failed') {
+        failed += 1
+        progressed = true
+      }
+    }
+    if (db !== engineSql && (!progressed || batch.length < DUE_BATCH_SIZE)) break
+  }
+  return { resolved, failed, capped: resolved + failed >= MAX_DUE_EFFECTS_PER_OBSERVATION }
+}

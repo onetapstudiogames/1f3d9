@@ -1,8 +1,7 @@
 import type { Hono } from 'hono'
-import { err, QUOTAS } from './core.ts'
+import { auth, err } from './core.ts'
 import { sql } from './db.ts'
 import {
-  jsonDocument,
   optionalBoolean,
   positiveId,
   publicLabel,
@@ -13,6 +12,12 @@ import {
 import {
   CLAIM_FEE_USDC,
 } from './pay.ts'
+import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
+import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
+import { effectiveLaws, resolveDueEffects } from './engine.ts'
+import { withdrawThing } from './withdrawal.ts'
+import { lawNames, replacePlaceLaws } from './laws.ts'
+import { makeThingThroughEngine } from './thing-making.ts'
 import {
   buildPlaceTree,
   conflictMessage,
@@ -31,6 +36,17 @@ import {
   type PlaceRow,
   type ThingRow,
 } from './world-support.ts'
+
+async function activePlaceLabels(placeId: number): Promise<string[]> {
+  const rows = await sql`
+    SELECT DISTINCT label
+    FROM active_labels
+    WHERE target_type = 'place' AND target_id = ${placeId}
+      AND (expires_at IS NULL OR expires_at > now())
+    ORDER BY label
+  ` as Array<{ label: string }>
+  return rows.map(row => row.label)
+}
 
 export function mountWorldRoutes(app: Hono): void {
   app.get('/api/map', async c => {
@@ -60,12 +76,15 @@ export function mountWorldRoutes(app: Hono): void {
       JOIN residents owner ON owner.id = tree.owner_id
       ORDER BY tree.path
     `) as PlaceRow[]
-    return c.json({ places: buildPlaceTree(rows, null) })
+    const publicRows = await moderatePublicRows('place', rows)
+    return c.json({ places: buildPlaceTree(publicRows as PlaceRow[], null) })
   })
 
   app.get('/api/place/:id', async c => {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
+    const observer = await auth(c)
+    if (observer) await resolveDueEffects(id)
 
     const places = (await sql`
       SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
@@ -77,7 +96,7 @@ export function mountWorldRoutes(app: Hono): void {
     const place = places[0]
     if (!place) return err(c, 404, 'place not found')
 
-    const [subplaces, things, notes] = await Promise.all([
+    const [subplaces, things, notes, labels, laws] = await Promise.all([
       sql`
         SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
           p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
@@ -96,10 +115,24 @@ export function mountWorldRoutes(app: Hono): void {
       sql`
         SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at
         FROM notes n JOIN residents author ON author.id = n.author_id
-        WHERE n.place_id = ${id} ORDER BY n.created_at, n.id LIMIT 200
+        WHERE n.place_id = ${id}
+        ORDER BY n.created_at, n.id LIMIT 200
       `,
+      activePlaceLabels(id),
+      effectiveLaws(id),
     ])
-    return c.json({ place, subplaces, things, notes })
+    const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
+      moderatePublicRows('place', [place]),
+      moderatePublicRows('place', subplaces as Array<PlaceRow & { id: number }>),
+      moderatePlaceDetails(things as ThingRow[], laws),
+      moderatePublicRows('note', notes as Array<Record<string, unknown> & { id: number }>),
+    ])
+    return c.json({
+      place: { ...publicPlace, labels, laws: publicDetails.laws },
+      subplaces: publicSubplaces,
+      things: publicDetails.things,
+      notes: publicNotes,
+    })
   })
 
   app.post('/api/place', async c => {
@@ -165,6 +198,16 @@ export function mountWorldRoutes(app: Hono): void {
               ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
             FROM permitted_parent
             RETURNING *
+          ), new_presence AS (
+            INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+            SELECT ${resident.id}, id, id FROM new_place
+            ON CONFLICT (resident_id) DO UPDATE SET
+              current_place_id = coalesce(resident_presence.current_place_id, EXCLUDED.current_place_id),
+              home_place_id = coalesce(resident_presence.home_place_id, EXCLUDED.home_place_id),
+              updated_at = CASE
+                WHEN resident_presence.current_place_id IS NULL OR resident_presence.home_place_id IS NULL
+                THEN now() ELSE resident_presence.updated_at
+              END
           ), new_event AS (
             INSERT INTO events (kind, actor, detail)
             SELECT 'place_created', ${resident.handle}, jsonb_build_object(
@@ -199,6 +242,16 @@ export function mountWorldRoutes(app: Hono): void {
             ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
           FROM payment_use
           RETURNING *
+        ), new_presence AS (
+          INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+          SELECT ${resident.id}, id, id FROM new_place
+          ON CONFLICT (resident_id) DO UPDATE SET
+            current_place_id = coalesce(resident_presence.current_place_id, EXCLUDED.current_place_id),
+            home_place_id = coalesce(resident_presence.home_place_id, EXCLUDED.home_place_id),
+            updated_at = CASE
+              WHEN resident_presence.current_place_id IS NULL OR resident_presence.home_place_id IS NULL
+              THEN now() ELSE resident_presence.updated_at
+            END
         ), new_fee AS (
           INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
           SELECT ${resident.id}, 'frontier', ${CLAIM_FEE_USDC}, payment_use.tx_hash
@@ -293,6 +346,24 @@ export function mountWorldRoutes(app: Hono): void {
     return c.json({ place: rows[0] })
   })
 
+  app.put('/api/place/:id/laws', async c => {
+    const resident = await requireResident(c)
+    if (isResponse(resident)) return resident
+    const id = positiveId(c.req.param('id'))
+    if (!id) return err(c, 400, 'place id must be a positive integer')
+    const body = await jsonBody(c)
+    if (!body || !hasOnly(body, ['traits'])) {
+      return err(c, 400, 'laws body accepts only traits')
+    }
+    const traits = lawNames(body.traits)
+    if (!traits) return err(c, 400, 'traits must be unique valid world names')
+    const updated = await replacePlaceLaws(resident, id, traits)
+    if (!('error' in updated)) {
+      return c.json({ place_id: id, laws: updated })
+    }
+    return err(c, updated.status, updated.error)
+  })
+
   app.get('/api/kinds', async c => {
     const kinds = (await sql`
       SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
@@ -304,7 +375,7 @@ export function mountWorldRoutes(app: Hono): void {
         ON revision.kind_id = k.id AND revision.revision = k.current_revision
       ORDER BY k.created_at, k.id
     `) as KindRow[]
-    return c.json({ kinds })
+    return c.json({ kinds: await moderatePublicKinds(kinds) })
   })
 
   app.post('/api/kind', async c => {
@@ -321,14 +392,16 @@ export function mountWorldRoutes(app: Hono): void {
       allowEmpty: true,
     })
     const traits = stringList(body.traits ?? [])
-    const recipe = jsonDocument(body.recipe ?? [])
+    const recipe = parseKindRecipe(body.recipe ?? [])
     if (!name) return err(c, 400, 'kind name must use lowercase letters, numbers, hyphens, or underscores')
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
     if (!traits) return err(c, 400, 'traits must be a list of at most 32 valid trait names')
     if (hasDuplicateNames(body.traits ?? [], traits)) {
       return err(c, 400, 'traits must not contain duplicate names')
     }
-    if (recipe == null) return err(c, 400, 'recipe must be JSON no larger than 64 KB')
+    if (recipe == null) {
+      return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
+    }
 
     const fee = await treasuryFee(c, body, `${DOMAIN}/api/kind`, '1F3D9 kind invention fee')
     if (fee instanceof Response) return fee
@@ -415,9 +488,11 @@ export function mountWorldRoutes(app: Hono): void {
       ? current.description
       : publicText(body.description, { maximumCharacters: DESCRIPTION_MAX, allowEmpty: true })
     const traits = suppliedTraits ?? current.traits
-    const recipe = body.recipe === undefined ? current.recipe : jsonDocument(body.recipe)
+    const recipe = parseKindRecipe(body.recipe === undefined ? current.recipe : body.recipe)
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
-    if (recipe == null) return err(c, 400, 'recipe must be JSON no larger than 64 KB')
+    if (recipe == null) {
+      return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
+    }
 
     const fee = await treasuryFee(c, body, `${DOMAIN}/api/kind/${id}/revise`, '1F3D9 kind revision fee')
     if (fee instanceof Response) return fee
@@ -483,7 +558,12 @@ export function mountWorldRoutes(app: Hono): void {
       JOIN residents coiner ON coiner.id = trait.coiner_id
       ORDER BY trait.created_at, trait.id
     `
-    return c.json({ traits })
+    return c.json({
+      traits: await moderatePublicRows(
+        'trait',
+        traits as Array<Record<string, unknown> & { id: number }>,
+      ),
+    })
   })
 
   app.post('/api/trait', async c => {
@@ -500,10 +580,12 @@ export function mountWorldRoutes(app: Hono): void {
       allowEmpty: true,
     })
     const hasRecipe = Object.hasOwn(body, 'recipe') && body.recipe !== null
-    const recipe = hasRecipe ? jsonDocument(body.recipe) : null
+    const recipe = hasRecipe ? parseTraitRecipe(body.recipe) : null
     if (!name) return err(c, 400, 'trait name must use lowercase letters, numbers, hyphens, or underscores')
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
-    if (hasRecipe && recipe == null) return err(c, 400, 'recipe must be JSON no larger than 64 KB')
+    if (hasRecipe && recipe == null) {
+      return err(c, 400, 'recipe must use only the frozen actions and effect bricks within the hard limits')
+    }
 
     try {
       const rows = await sql`
@@ -535,17 +617,21 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['place_id', 'name', 'body', 'kind_id'])) {
-      return err(c, 400, 'thing accepts place_id, name, body, and optional kind_id')
+    if (!hasOnly(body, ['place_id', 'name', 'body', 'kind_id', 'ingredient_ids'])) {
+      return err(c, 400, 'thing accepts place_id, name, body, optional kind_id, and ingredient_ids')
     }
     const placeId = positiveId(body.place_id)
     const name = publicLabel(body.name)
     const thingBody = publicText(body.body ?? '', { maximumBytes: THING_BODY_MAX_BYTES, allowEmpty: true })
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
+    const ingredientIds = body.ingredient_ids ?? []
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (!name) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody == null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
     if (body.kind_id != null && !kindId) return err(c, 400, 'kind_id must be a positive integer')
+    if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
+      return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
+    }
 
     const placeRows = (await sql`
       SELECT id, owner_id, open_to_things FROM places WHERE id = ${placeId}
@@ -555,66 +641,20 @@ export function mountWorldRoutes(app: Hono): void {
     if (place.owner_id !== resident.id && !place.open_to_things) {
       return err(c, 403, 'this place does not permit visitors to make things')
     }
+    await resolveDueEffects(placeId)
 
-    if (kindId != null) {
-      const kindRows = (await sql`
-        SELECT id, current_revision AS revision FROM kinds WHERE id = ${kindId}
-      `) as Array<{ id: number; revision: number }>
-      const kind = kindRows[0]
-      if (!kind) return err(c, 404, 'kind not found')
-    }
-
-    const rows = (await sql`
-      WITH permitted_place AS (
-        SELECT place.id
-        FROM places place
-        WHERE place.id = ${placeId}
-          AND (place.owner_id = ${resident.id} OR place.open_to_things)
-        FOR UPDATE
-      ), selected_kind AS (
-        SELECT kind.id, kind.current_revision
-        FROM kinds kind
-        WHERE kind.id = ${kindId}
-        FOR SHARE
-      ), quota_spend AS (
-        UPDATE residents SET things_today = things_today + 1
-        WHERE id = ${resident.id}
-          AND things_today < ${QUOTAS.things}
-          AND EXISTS (SELECT 1 FROM permitted_place)
-          AND (${kindId}::integer IS NULL OR EXISTS (SELECT 1 FROM selected_kind))
-        RETURNING id
-      ), new_thing AS (
-        INSERT INTO things (
-          place_id, name, body, owner_id, kind_id, birth_revision, current_revision
-        )
-        SELECT permitted_place.id, ${name}, ${thingBody}, ${resident.id}, selected_kind.id,
-          selected_kind.current_revision, selected_kind.current_revision
-        FROM permitted_place CROSS JOIN quota_spend
-        LEFT JOIN selected_kind ON true
-        RETURNING *
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'thing_created', ${resident.handle}, jsonb_build_object(
-          'thing_id', id, 'place_id', place_id, 'name', name,
-          'kind_id', kind_id, 'birth_revision', birth_revision
-        ) FROM new_thing
-      )
-      SELECT new_thing.*, ${resident.handle}::text AS owner,
-        kind_definition.name AS kind
-      FROM new_thing
-      LEFT JOIN kinds kind_definition ON kind_definition.id = new_thing.kind_id
-    `) as ThingRow[]
-    if (!rows[0]) {
-      const quotaRows = (await sql`
-        SELECT things_today < ${QUOTAS.things} AS available
-        FROM residents WHERE id = ${resident.id}
-      `) as Array<{ available: boolean }>
-      if (quotaRows[0]?.available === false) {
-        return err(c, 429, `daily thing limit reached (${QUOTAS.things})`)
-      }
-      return err(c, 409, 'place or kind changed before the thing could be made; retry')
-    }
-    return c.json({ thing: rows[0] }, 201)
+    const made = await makeThingThroughEngine({
+      actor: resident,
+      placeId,
+      name,
+      body: thingBody,
+      kindId,
+      ingredientIds,
+    })
+    if (!made.ok) return err(c, made.status, made.error)
+    return c.json(made.consumedIngredientIds === null
+      ? { thing: made.thing }
+      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds }, 201)
   })
 
   app.patch('/api/thing/:id', async c => {
@@ -744,4 +784,15 @@ export function mountWorldRoutes(app: Hono): void {
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
     return c.json({ thing: rows[0] })
   })
+
+  app.post('/api/thing/:id/withdraw', async c => {
+    const resident = await requireResident(c)
+    if (isResponse(resident)) return resident
+    const id = positiveId(c.req.param('id'))
+    if (!id) return err(c, 400, 'thing id must be a positive integer')
+    const withdrawn = await withdrawThing(resident, id)
+    if ('error' in withdrawn) return err(c, withdrawn.status as 403 | 404 | 409, withdrawn.error)
+    return c.json({ thing: withdrawn })
+  })
+
 }

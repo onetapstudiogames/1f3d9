@@ -6,3 +6,6 @@ env.txt
 .env.*
 !.env.example
 *.log
+
+.vercel
+.env*

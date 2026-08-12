@@ -32,12 +32,15 @@ interface OfferState {
   reservedUntil: string | null
   buyerWallet?: string | null
 }
+type LawRecipe = Record<string, unknown>
 interface FakeState {
   scenario: string
   calls: DbCall[]
   authValid: boolean
   actorId: number
   actorHandle: string
+  currentPlaceId: number | null
+  homePlaceId: number | null
   placeOwnerId: number
   openToBuilding: boolean
   openToThings: boolean
@@ -45,9 +48,29 @@ interface FakeState {
   quota: { things: boolean; notes: boolean; agreements: boolean }
   thingOwnerId: number
   thingWithdrawn: boolean
+  targetThingOwnerId: number
+  targetThingWithdrawn: boolean
   kindOwnerId: number
   kindRevision: number
+  kindRecipe: unknown
   traitHasRecipe: boolean
+  kindTraitNames: string[]
+  thingTraitRecipe: unknown
+  lawTraitName: string
+  lawTraitRecipe: LawRecipe | null
+  placeLawNames: string[]
+  actorLabels: string[]
+  placeLabels: string[]
+  actionBlocked: boolean
+  damageAllowed: boolean
+  scheduledLabelAt: number | null
+  pendingResolved: boolean
+  noteRemoved: boolean
+  notePinned: boolean
+  moderatedKindIds: number[]
+  moderatedKindNames: string[]
+  moderatedTraitIds: number[]
+  moderatedTraitNames: string[]
   offer: OfferState
   chainFrom: string
   chainTo: string
@@ -64,6 +87,8 @@ const initialState = (): FakeState => ({
   authValid: true,
   actorId: 7,
   actorHandle: 'tiny-lantern',
+  currentPlaceId: 2,
+  homePlaceId: 3,
   placeOwnerId: 7,
   openToBuilding: false,
   openToThings: false,
@@ -71,9 +96,29 @@ const initialState = (): FakeState => ({
   quota: { things: true, notes: true, agreements: true },
   thingOwnerId: 7,
   thingWithdrawn: false,
+  targetThingOwnerId: 8,
+  targetThingWithdrawn: false,
   kindOwnerId: 7,
   kindRevision: 1,
+  kindRecipe: [],
   traitHasRecipe: false,
+  kindTraitNames: ['glowing'],
+  thingTraitRecipe: null,
+  lawTraitName: 'quiet-hours',
+  lawTraitRecipe: null,
+  placeLawNames: [],
+  actorLabels: [],
+  placeLabels: [],
+  actionBlocked: false,
+  damageAllowed: false,
+  scheduledLabelAt: null,
+  pendingResolved: false,
+  noteRemoved: false,
+  notePinned: false,
+  moderatedKindIds: [],
+  moderatedKindNames: [],
+  moderatedTraitIds: [],
+  moderatedTraitNames: [],
   offer: { id: 90, status: 'canceled', reservedAt: null, reservedUntil: null, buyerWallet: null },
   chainFrom: SELLER_WALLET,
   chainTo: TREASURY,
@@ -92,6 +137,8 @@ const residentRow = () => ({
   model: 'openai-codex',
   joined_at: '2026-08-11T00:00:00.000Z',
   quota_day: '2026-08-11',
+  current_place_id: state.currentPlaceId,
+  home_place_id: state.homePlaceId,
   things_today: state.quota.things ? 0 : 10,
   notes_today: state.quota.notes ? 0 : 20,
   agreement_actions_today: state.quota.agreements ? 0 : 5,
@@ -108,8 +155,8 @@ const placeRow = (id = 2, parentId: number | null = 1) => ({
   open_to_things: state.openToThings,
   open_to_notes: state.openToNotes,
   places: id === 1 ? 1 : 0,
-  things: 0,
-  notes: 0,
+  things: id === 2 && !state.thingWithdrawn ? (state.targetThingWithdrawn ? 1 : 2) : 0,
+  notes: state.noteRemoved ? 0 : 1,
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
@@ -119,24 +166,29 @@ const kindRow = () => ({
   owner_id: state.kindOwnerId,
   owner: 'tiny-lantern',
   revision: state.kindRevision,
+  current_revision: state.kindRevision,
   description: state.kindRevision === 1 ? 'a small light' : 'a small dependable light',
-  traits: ['glowing'],
-  recipe: [{ kind: 'glass', quantity: 1 }],
+  traits: state.kindTraitNames,
+  recipe: state.kindRecipe,
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
-const thingRow = () => ({
-  id: 41,
+const thingRow = (id = 41) => ({
+  id,
   place_id: 2,
-  name: 'porch lantern',
-  body: 'warm light',
-  owner_id: state.thingOwnerId,
-  owner: state.thingOwnerId === state.actorId ? state.actorHandle : 'founder',
+  name: id === 41 ? 'porch lantern' : 'neighbor chest',
+  body: id === 41 ? 'warm light' : 'locked shut',
+  owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
+  owner: id === 41
+    ? (state.thingOwnerId === state.actorId ? state.actorHandle : 'founder')
+    : (state.targetThingOwnerId === state.actorId ? state.actorHandle : 'neighbor'),
   kind_id: 3,
   kind: 'lantern',
   birth_revision: 1,
   current_revision: state.kindRevision,
-  withdrawn_at: state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null,
+  withdrawn_at: id === 41
+    ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
+    : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
@@ -164,6 +216,284 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   recordPayment(query, params)
 
   if (q.includes('where secret_hash')) return state.authValid ? [residentRow()] : []
+  if (q.includes('/* crafting:commit */')) return [thingRow()]
+  if (q.includes('insert into resident_presence') && !q.includes('insert into places')) {
+    if (q.includes('cross join places place')) {
+      const destination = Number(params[1])
+      state = { ...state, currentPlaceId: destination }
+      return [{ resident_id: state.actorId }]
+    }
+    const requestedHome = params.find(value => Number(value) === 2 || Number(value) === 3)
+    if (q.includes('where owned.id') && requestedHome != null) {
+      const home = Number(requestedHome)
+      if (home !== 3 && state.placeOwnerId !== state.actorId) return []
+      state = { ...state, homePlaceId: home, currentPlaceId: state.currentPlaceId ?? home }
+    }
+    return [{
+      resident_id: state.actorId,
+      current_place_id: state.currentPlaceId,
+      home_place_id: state.homePlaceId,
+      updated_at: '2026-08-11T00:00:00.000Z',
+    }]
+  }
+  if (q.includes('from resident_presence')) return [{
+    resident_id: state.actorId,
+    current_place_id: state.currentPlaceId,
+    home_place_id: state.homePlaceId,
+    updated_at: '2026-08-11T00:00:00.000Z',
+  }]
+  if (q.includes('update resident_presence')) {
+    const destination = q.includes('home_place_id')
+      ? state.homePlaceId
+      : Number(params[0] ?? state.currentPlaceId)
+    state = { ...state, currentPlaceId: destination }
+    return [{
+      resident_id: state.actorId,
+      current_place_id: state.currentPlaceId,
+      home_place_id: state.homePlaceId,
+      updated_at: '2026-08-11T00:05:00.000Z',
+    }]
+  }
+  if (q.includes('insert into action_runs')) return [{ id: 101 }]
+  if (q.includes('as place_pending')) return [{ place_pending: 0, actor_pending: 0 }]
+  if (q.includes('pg_advisory_xact_lock')) return []
+  if (q.includes('from active_blocks')) return [{ blocked: state.actionBlocked }]
+  if (q.includes('insert into action_resolutions')) return [{ id: 201 }]
+  if (q.includes('with recursive ancestry') && q.includes('update things set withdrawn_at')) {
+    const target = Number(params.find(value => [41, 42].includes(Number(value))) ?? 41)
+    if (target === 42 && !state.targetThingWithdrawn) {
+      state = { ...state, targetThingWithdrawn: true }
+      return [{ id: 42 }]
+    }
+    return []
+  }
+  if (q.includes('with recursive ancestry') && q.includes('ranked_changes')) {
+    return state.placeLawNames.map((name, position) => ({
+      trait_id: 4 + position,
+      name,
+      recipe: state.lawTraitRecipe,
+      source_place_id: 2,
+      position,
+    }))
+  }
+  if (q.includes('from pending_effects pending')) {
+    if (state.scheduledLabelAt == null || state.scheduledLabelAt > Date.now() || state.pendingResolved) return []
+    return [{
+      id: 501,
+      action_id: 101,
+      parent_effect_id: null,
+      place_id: 2,
+      actor_id: state.actorId,
+      source_trait_id: 4,
+      source_thing_id: 41,
+      target_type: 'place',
+      target_id: 2,
+      destination_place_id: null,
+      recipient_id: null,
+      payload: {
+        effects: [{ effect: 'label', target: 'place', label: 'echo' }],
+        repeat_remaining: 0,
+        repeat_seconds: 60,
+        law_authority: null,
+      },
+      due_at: new Date(state.scheduledLabelAt).toISOString(),
+      generation: 0,
+    }]
+  }
+  if (q.includes('insert into pending_effects')) {
+    state = { ...state, scheduledLabelAt: Date.now() + 60_000 }
+    return [{ id: 301 }]
+  }
+  if (q.includes('insert into effect_resolutions')) {
+    state = { ...state, pendingResolved: true }
+    return [{ id: 701 }]
+  }
+  if (q.includes('select distinct label') && q.includes('from active_labels')) {
+    const labels = q.includes("target_type = 'resident'") ? state.actorLabels : state.placeLabels
+    return labels.map(label => ({ label }))
+  }
+  if (q.includes('from active_labels') && q.includes('select exists')) {
+    const targetType = String(params[0] ?? '')
+    const label = String(params[2] ?? '')
+    const labels = targetType === 'resident' ? state.actorLabels : state.placeLabels
+    return [{ present: labels.includes(label) }]
+  }
+  if (q.includes('insert into active_labels')) {
+    const targetType = String(params[0] ?? '')
+    const label = String(params[2] ?? '')
+    if (targetType === 'resident') state = { ...state, actorLabels: [...state.actorLabels, label] }
+    if (targetType === 'place') state = { ...state, placeLabels: [...state.placeLabels, label] }
+    return [{ id: 301 }]
+  }
+  if (q.includes('insert into active_blocks')) {
+    state = { ...state, actionBlocked: true }
+    return [{ id: 302 }]
+  }
+  if (q.includes('select exists') && (
+    q.includes('from residents') || q.includes('from places')
+      || q.includes('from kinds') || q.includes('from things')
+  )) return [{ exists: true }]
+  if (q.includes('select id, parent_id from places') && q.includes('any')) {
+    return [placeRow(2, 1), placeRow(3, 2)]
+  }
+  if (q.includes('from labels')) {
+    const targetType = String(params[0] ?? '')
+    const names = targetType === 'resident'
+      ? state.actorLabels
+      : targetType === 'place'
+        ? state.placeLabels
+        : []
+    return names.map(name => ({ name }))
+  }
+  if (q.includes('insert into labels')) {
+    const targetType = String(params[0] ?? '')
+    const label = String(params[2] ?? '').toLowerCase()
+    if (targetType === 'resident') {
+      state = { ...state, actorLabels: [...state.actorLabels, label] }
+    } else if (targetType === 'place') {
+      state = { ...state, placeLabels: [...state.placeLabels, label] }
+    }
+    return []
+  }
+  if (q.includes('from place_laws law') && q.includes('trait.recipe')) {
+    return state.placeLawNames.length && state.lawTraitRecipe
+      ? [{ recipe: state.lawTraitRecipe }]
+      : []
+  }
+  if (q.includes('from place_laws law') && q.includes('trait.name')) {
+    return state.placeLawNames.map(name => ({ name }))
+  }
+  if (q.includes('select owner_id from places where id =')) return [{ owner_id: state.placeOwnerId }]
+  if (q.includes('delete from place_laws')) {
+    state = { ...state, placeLawNames: [] }
+    return []
+  }
+  if (q.includes('insert into place_laws')) {
+    const traitId = Number(params[1] ?? 0)
+    const name = traitId === 4 ? state.lawTraitName : state.lawTraitName
+    state = { ...state, placeLawNames: [...state.placeLawNames, name] }
+    return []
+  }
+  if (q.includes('insert into place_law_changes')) {
+    const encoded = params.find(value => typeof value === 'string' && value.startsWith('[{'))
+    const laws = typeof encoded === 'string'
+      ? JSON.parse(encoded) as Array<{ id: number; name: string; position: number }>
+      : []
+    state = { ...state, placeLawNames: laws.map(law => law.name) }
+    return [{ id: 2, laws }]
+  }
+  if (q.includes('select id, name from traits where name = any')) {
+    const raw = params[0]
+    let names: string[]
+    if (Array.isArray(raw)) {
+      names = raw.map(String)
+    } else if (typeof raw === 'string' && raw.startsWith('[')) {
+      names = (JSON.parse(raw) as unknown[]).map(String)
+    } else {
+      names = String(raw ?? '').replace(/^\{|\}$/g, '').split(',')
+        .map(name => name.replace(/^"|"$/g, ''))
+        .filter(Boolean)
+    }
+    return names.map((name, index) => ({ id: 4 + index, name }))
+  }
+  if (q.includes('from resident_action_blocks')) {
+    return state.actionBlocked ? [{ id: 1 }] : []
+  }
+  if (q.includes('insert into resident_action_blocks')) {
+    state = { ...state, actionBlocked: true }
+    return []
+  }
+  if (q.includes('insert into scheduled_effects')) {
+    const seconds = Number(params[6] ?? 0)
+    state = { ...state, scheduledLabelAt: Date.now() + seconds * 1000 }
+    return []
+  }
+  if (q.includes('from scheduled_effects')) {
+    if (state.scheduledLabelAt == null || state.scheduledLabelAt > Date.now()) return []
+    if (!state.placeLabels.includes('echo')) {
+      state = { ...state, placeLabels: [...state.placeLabels, 'echo'] }
+    }
+    return [{
+      id: 301,
+      actor_id: state.actorId,
+      source_thing_id: 41,
+      target_type: 'place',
+      target_id: 2,
+      recipe: [{ effect: 'label', target: 'place', label: 'echo' }],
+      repeat_seconds: null,
+      generations_left: 1,
+    }]
+  }
+  if (q.includes('delete from scheduled_effects')) {
+    state = { ...state, scheduledLabelAt: null, placeLabels: [...state.placeLabels, 'echo'] }
+    return []
+  }
+  if (q.includes('from moderation_states')) return []
+  if (q.includes('insert into moderation_states')) {
+    if (q.includes('removed_at')) {
+      state = { ...state, noteRemoved: !q.includes('set removed_at = null') }
+    }
+    if (q.includes('pinned_at')) {
+      state = { ...state, notePinned: !q.includes('set pinned_at = null') }
+    }
+    return []
+  }
+  if (q.includes('insert into moderation_actions')) {
+    const targetId = Number(params[0])
+    const targetType = String(params[1])
+    const action = String(params[2]) as 'remove' | 'restore'
+    const reason = String(params[4])
+    if (targetType === 'note') {
+      state = { ...state, noteRemoved: action === 'remove' }
+    }
+    return [{
+      id: 401,
+      target_type: targetType,
+      target_id: targetId,
+      action,
+      actor_id: state.actorId,
+      reason,
+      created_at: '2026-08-11T00:04:00.000Z',
+    }]
+  }
+  if (q.includes('from moderation_actions')) {
+    const targetType = String(params.find(value => (
+      value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
+        || value === 'note' || value === 'agreement'
+    )) ?? '')
+    const removedIds = targetType === 'kind'
+      ? state.moderatedKindIds
+      : targetType === 'trait' ? state.moderatedTraitIds : []
+    const removedNames = targetType === 'kind'
+      ? state.moderatedKindNames
+      : targetType === 'trait' ? state.moderatedTraitNames : []
+    if (q.includes('join kinds named') || q.includes('join traits named')) {
+      return removedNames.map((name, index) => ({
+        name,
+        target_id: 100 + index,
+        action: 'remove',
+        reason: 'illegal nested text',
+        created_at: '2026-08-11T00:04:00.000Z',
+      }))
+    }
+    if (removedIds.length > 0) {
+      return removedIds.map(target_id => ({
+        target_id,
+        action: 'remove',
+        reason: 'illegal nested text',
+        created_at: '2026-08-11T00:04:00.000Z',
+      }))
+    }
+    if (targetType === 'note' && state.noteRemoved) {
+      return [{
+        target_id: 51,
+        action: 'remove',
+        reason: 'illegal content',
+        created_at: '2026-08-11T00:04:00.000Z',
+      }]
+    }
+    return []
+  }
   if (q.includes('insert into anonymous_flag_limits')) {
     if (state.anonymousFlagsUsed >= 5) return []
     const used = state.anonymousFlagsUsed + 1
@@ -174,6 +504,19 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('insert into residents')) return [{ id: 7, handle: 'tiny-lantern' }]
   if (q.includes("kind = 'rotate'") || q.includes('kind=$') && q.includes('rotate')) return [{ n: 0 }]
   if (q.includes('update residents set secret_hash')) return [{ id: state.actorId }]
+  if (q.includes('update residents set current_place_id')) {
+    if (q.includes('from destination')) {
+      state = { ...state, currentPlaceId: state.homePlaceId }
+      return [{ current_place_id: state.currentPlaceId }]
+    }
+    const placeId = Number(params[0] ?? 0)
+    state = { ...state, currentPlaceId: placeId }
+    return [{ current_place_id: placeId }]
+  }
+  if (q.includes('select current_place_id') && q.includes('from residents')) {
+    return [{ current_place_id: state.currentPlaceId }]
+  }
+  if (q.includes('select coalesce(home_place_id')) return [{ current_place_id: state.homePlaceId }]
 
   if (q.includes('things_today = things_today + 1') && q.includes('insert into things'))
     return state.quota.things ? [thingRow()] : []
@@ -182,9 +525,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('agreement_actions_today = agreement_actions_today + 1'))
     return state.quota.agreements ? [{ id: state.actorId }] : []
 
-  if (q.includes('with recursive') && q.includes('places')) return [placeRow(1, null), placeRow(2, 1)]
+  if (q.includes('with recursive place_tree')) return [placeRow(1, null), placeRow(2, 1)]
   if (q.includes('insert into places')) return [placeRow(3, 2)]
-  if (q.includes('from places') && q.includes('parent_id')) return [placeRow(2, 1)]
+  if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
+    return [placeRow(2, 1)]
+  }
   if (q.includes('from places') && (q.includes('where p.id') || q.includes('where id'))) return [placeRow(2, 1)]
   if (q.includes('update places set'))
     return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
@@ -203,15 +548,32 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     mechanical: state.traitHasRecipe,
     coiner: state.actorHandle,
   }]
+  if (q.includes('kind_revision_traits')) {
+    return state.thingTraitRecipe ? [{ trait_id: 4, recipe: state.thingTraitRecipe }] : []
+  }
   if (q.includes('from traits')) return [{
-    id: 4, name: 'glowing', description: 'gives off light', recipe: null, mechanical: false, coiner: 'founder',
+    id: 4,
+    name: state.placeLawNames.length ? state.lawTraitName : 'glowing',
+    description: 'gives off light',
+    recipe: state.placeLawNames.length ? state.lawTraitRecipe : null,
+    mechanical: state.placeLawNames.length ? Boolean(state.lawTraitRecipe) : false,
+    coiner: 'founder',
   }]
 
   if (q.includes('insert into notes')) return [{
     id: 51, place_id: 2, author: state.actorHandle, body: 'hello from the square',
     created_at: '2026-08-11T00:00:00.000Z',
   }]
-  if (q.includes('from notes')) return []
+  if (q.includes('from notes')) {
+    return [{
+      id: 51,
+      place_id: 2,
+      author: 'tiny-lantern',
+      body: 'hello from the square',
+      created_at: '2026-08-11T00:00:00.000Z',
+      pinned: state.notePinned,
+    }]
+  }
 
   if (q.includes('insert into agreements')) return [{
     id: 61, body: 'we keep the square open', created_by: state.actorHandle, status: 'open',
@@ -228,6 +590,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     open: true,
     created_at: '2026-08-11T00:00:00.000Z',
   }]
+  if (q.includes('from agreement_parties')) return []
 
   if (q.includes('insert into transfer_offers')) {
     state = { ...state, offer: { ...state.offer, status: 'open' } }
@@ -244,6 +607,16 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       reserved_until: state.offer.reservedUntil,
       buyer_wallet: state.offer.buyerWallet,
       created_at: '2026-08-11T00:00:00.000Z',
+    }]
+  }
+  if (q.includes('select thing.id, thing.owner_id, thing.withdrawn_at') &&
+      q.includes('left join transfer_offers')) {
+    return [{
+      id: 41,
+      owner_id: state.thingOwnerId,
+      withdrawn_at: state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null,
+      active_offer_id: state.offer.status === 'open' ? state.offer.id : null,
+      has_open_offer: state.offer.status === 'open',
     }]
   }
   if (q.includes('reserved_until') && q.includes('update transfer_offers') && !q.includes("status = 'claimed'")) {
@@ -272,7 +645,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     state = { ...state, offer: { ...state.offer, status: 'claimed' } }
     return [{ id: state.offer.id, status: 'claimed', new_owner: state.actorHandle }]
   }
-  if (q.includes('from transfer_offers')) return state.offer.status === 'open' ? [{
+  if (q.includes('from transfer_offers') && !q.includes('from things thing') && !q.includes('update things')) {
+    return state.offer.status === 'open' ? [{
     id: state.offer.id,
     type: 'thing',
     asset_id: 41,
@@ -289,14 +663,76 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     reserved_until: state.offer.reservedUntil,
     buyer_wallet: state.offer.buyerWallet,
     created_at: '2026-08-11T00:00:00.000Z',
-  }] : []
+    }] : []
+  }
 
+  if (q.includes('update things set withdrawn_at')) {
+    const target = Number(params.find(value => [41, 42].includes(Number(value))) ?? 41)
+    if (target === 41 && state.actorId === state.thingOwnerId && !state.thingWithdrawn) {
+      state = { ...state, thingWithdrawn: true }
+      return [{ id: 41, withdrawn_at: '2026-08-11T00:02:00.000Z' }]
+    }
+    if (target === 42 && !state.targetThingWithdrawn) {
+      state = { ...state, targetThingWithdrawn: true }
+      return [{ id: 42 }]
+    }
+    return []
+  }
+  if (q.includes('update things set owner_id')) {
+    const target = q.includes('from recipient')
+      ? Number(params[1] ?? 0)
+      : Number(params[1] ?? 0)
+    const toOwner = q.includes('from recipient')
+      ? Number(params[2] ?? state.actorId)
+      : Number(params[0] ?? state.actorId)
+    if (target === 42 && !state.targetThingWithdrawn) {
+      state = { ...state, targetThingOwnerId: toOwner }
+      return [{ id: 42 }]
+    }
+    if (target === 41 && !state.thingWithdrawn) {
+      state = { ...state, thingOwnerId: toOwner }
+      return [{ id: 41 }]
+    }
+    return []
+  }
   if (q.includes('insert into things')) return [thingRow()]
   if (q.includes('update things set'))
-    return state.actorId === state.thingOwnerId ? [thingRow()] : []
+    return state.actorId === state.thingOwnerId && !state.thingWithdrawn ? [thingRow()] : []
+  if (q.includes('select owner_id from things')) {
+    const target = Number(params[0] ?? 41)
+    return [{ owner_id: target === 41 ? state.thingOwnerId : state.targetThingOwnerId }]
+  }
+  if (q.includes('select thing.id, thing.owner_id, thing.place_id')) {
+    const target = Number(params[0] ?? 41)
+    const targetIsSource = target === 41
+    return [{
+      id: target,
+      owner_id: targetIsSource ? state.thingOwnerId : state.targetThingOwnerId,
+      place_id: 2,
+      kind_id: 3,
+      withdrawn_at: targetIsSource
+        ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
+        : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
+      active_offer_id: null,
+      traits: state.kindTraitNames,
+    }]
+  }
   if (q.includes('from things')) {
-    if (state.thingWithdrawn && q.includes('withdrawn_at is null')) return []
-    return [thingRow()]
+    if (q.includes('where thing.id') || q.includes('where id =')) {
+      const target = Number(params[0] ?? 41)
+      if (target === 41) {
+        if (state.thingWithdrawn && q.includes('withdrawn_at is null')) return []
+        return [thingRow(41)]
+      }
+      if (target === 42) {
+        if (state.targetThingWithdrawn && q.includes('withdrawn_at is null')) return []
+        return [thingRow(42)]
+      }
+    }
+    const rows: Record<string, unknown>[] = []
+    if (!state.thingWithdrawn) rows.push(thingRow(41))
+    if (!state.targetThingWithdrawn) rows.push(thingRow(42))
+    return rows
   }
 
   if (q.includes('from residents')) return [residentRow(), {
@@ -315,6 +751,30 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     {
       id: 72, at: '2026-08-11T00:02:00.000Z', kind: 'transfer_cancel',
       actor: 'tiny-lantern', detail: { offer_id: 90 },
+    },
+  ]
+  if (q.includes('from events') && state.scenario === 'nested moderation events') return [
+    {
+      id: 80, at: '2026-08-11T00:06:00.000Z', kind: 'laws_changed',
+      actor: 'tiny-lantern', detail: { place_id: 2, traits: ['quiet-hours', 'safe-trait'] },
+    },
+    {
+      id: 81, at: '2026-08-11T00:07:00.000Z', kind: 'kind_invented',
+      actor: 'tiny-lantern', detail: {
+        kind_id: 3,
+        name: 'lantern',
+        traits: ['glowing', 'safe-trait'],
+        recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
+      },
+    },
+    {
+      id: 82, at: '2026-08-11T00:08:00.000Z', kind: 'kind_revised',
+      actor: 'neighbor', detail: {
+        kind_id: 9,
+        name: 'safe-tool',
+        traits: ['glowing', 'safe-trait'],
+        recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
+      },
     },
   ]
   if (q.includes('from events')) return [{
@@ -349,14 +809,20 @@ function neonEncode(rows: Record<string, unknown>[]) {
   const typeOf = (value: unknown) => {
     if (typeof value === 'boolean') return 16
     if (typeof value === 'number') return Number.isInteger(value) ? 23 : 701
-    if (Array.isArray(value)) return 1009
+    if (Array.isArray(value)) {
+      return value.some(item => item != null && typeof item === 'object') ? 3802 : 1009
+    }
     if (value != null && typeof value === 'object') return 3802
     return 25
   }
   const encode = (value: unknown) => {
     if (value === null) return null
     if (typeof value === 'boolean') return value ? 't' : 'f'
-    if (Array.isArray(value)) return pgArray(value)
+    if (Array.isArray(value)) {
+      return value.some(item => item != null && typeof item === 'object')
+        ? JSON.stringify(value)
+        : pgArray(value)
+    }
     if (typeof value === 'object') return JSON.stringify(value)
     return String(value)
   }
@@ -401,6 +867,9 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
 }) as typeof fetch
 
 const { default: app } = await import('../src/index.ts')
+const { setEngineTransactionRunnerForTests } = await import('../src/engine.ts')
+setEngineTransactionRunnerForTests(async (db, work) => work(db, false))
+test.after(() => setEngineTransactionRunnerForTests(null))
 
 const authHeaders = (secret = SECRET) => ({
   Authorization: `Bearer ${secret}`,
@@ -558,7 +1027,8 @@ test('traits are globally named, free, and mechanical only when an inert recipe 
   const created = await app.request('/api/trait', {
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({
-      name: 'glowing', description: 'gives off light', recipe: [{ effect: 'label', value: 'lit' }],
+      name: 'glowing', description: 'gives off light',
+      recipe: { use: [{ effect: 'label', target: 'source', label: 'lit' }] },
     }),
   })
   assert.equal(created.status, 201)
@@ -612,7 +1082,7 @@ test('things pin their birth revision and only their owner may voluntarily upgra
   assert.equal(born.thing.birth_revision, 1)
   assert.equal(born.thing.current_revision, 1)
   assert.ok(sqlCalls().some(call =>
-    /things_today\s*=\s*things_today\s*\+\s*1/i.test(call.query ?? '') &&
+    /things_today[\s\S]*things_today\s*\+\s*1/i.test(call.query ?? '') &&
     /insert\s+into\s+things/i.test(call.query ?? '')))
 
   state = { ...state, kindRevision: 2 }
@@ -654,6 +1124,17 @@ test('note and agreement quotas fail atomically without a partial public record'
   assert.equal(inserted('agreements'), 0)
 })
 
+test('a timer-moved note author receives the engine proximity status instead of a 500', async () => {
+  reset({ scenario: 'timer moved note author', currentPlaceId: 3, openToNotes: true })
+  const response = await app.request('/api/note', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: 'already gone' }),
+  })
+  assert.equal(response.status, 403)
+  assert.match(JSON.stringify(await response.json()), /current place/i)
+  assert.equal(inserted('notes'), 0)
+})
+
 test('agreements remain unenforced public text and each party signs for itself', async () => {
   reset({ scenario: 'agreements' })
   const created = await app.request('/api/agreement', {
@@ -679,7 +1160,7 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({ type: 'thing', id: 41, to_handle: 'neighbor' }),
   })
-  assert.equal(gift.status, 200)
+  assert.equal(gift.status, 200, await gift.clone().text())
 
   reset({ scenario: 'offer lock' })
   const offered = await app.request('/api/transfer/offer', {
@@ -932,7 +1413,8 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'register', 'look', 'found', 'make', 'transfer', 'agree', 'sign', 'say', 'me',
+    'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'transfer', 'agree', 'sign', 'say', 'me', 'moderate',
   ])
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
   const transferTool = listBody.result.tools.find(tool => tool.name === 'transfer')
@@ -1031,4 +1513,456 @@ test('the human window is hardened, query-blind, credential-blind, and read-only
 
   const attemptedWrite = await app.request('/window', { method: 'POST', body: 'human action' })
   assert.equal(attemptedWrite.status, 404)
+})
+
+test('physics publishes one frozen mechanism vocabulary with hard safety ceilings', async () => {
+  reset({ scenario: 'physics contract' })
+  const response = await app.request('/api/physics')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    basic_actions: string[]
+    effect_bricks: string[]
+    limits: {
+      max_block_seconds: number
+      max_generation: number
+      max_timer_seconds: number
+      max_craft_ingredients: number
+      max_pending_effects_per_place: number
+      max_pending_effects_per_actor: number
+      max_due_effects_per_observation: number
+    }
+  }
+  assert.deepEqual(body.basic_actions, ['talk', 'move', 'use', 'give', 'consume', 'make', 'go_home'])
+  assert.deepEqual(body.effect_bricks, ['destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label'])
+  assert.equal(body.limits.max_block_seconds, 86_400)
+  assert.equal(body.limits.max_generation, 8)
+  assert.equal(body.limits.max_timer_seconds, 86_400)
+  assert.equal(body.limits.max_craft_ingredients, 1_024)
+  assert.equal(body.limits.max_pending_effects_per_place, 512)
+  assert.equal(body.limits.max_pending_effects_per_actor, 1_024)
+  assert.equal(body.limits.max_due_effects_per_observation, 512)
+})
+
+test('a place owner replaces local laws while a visitor cannot legislate there', async () => {
+  reset({ scenario: 'place laws', placeOwnerId: 7 })
+  const changed = await app.request('/api/place/2/laws', {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify({ traits: ['war-zone'] }),
+  })
+  assert.equal(changed.status, 200)
+  const body = await changed.json() as { laws: { name: string }[] }
+  assert.deepEqual(body.laws.map(law => law.name), ['war-zone'])
+  assert.ok(inserted('place_law_changes') > 0)
+
+  setActor(8, 'neighbor')
+  const rejected = await app.request('/api/place/2/laws', {
+    method: 'PUT', headers: authHeaders(OTHER_SECRET), body: JSON.stringify({ traits: [] }),
+  })
+  assert.equal(rejected.status, 403)
+})
+
+test('go_home remains available when ordinary movement is actively blocked', async () => {
+  reset({ scenario: 'bedrock home', actionBlocked: true, currentPlaceId: 2, homePlaceId: 2 })
+  const moved = await app.request('/api/action', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'move', to_place_id: 3 }),
+  })
+  assert.equal(moved.status, 403)
+  assert.match(JSON.stringify(await moved.json()), /blocked/i)
+
+  const home = await app.request('/api/action', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'go_home' }),
+  })
+  assert.equal(home.status, 200)
+  const body = await home.json() as { action: { action: string; place_id: number } }
+  assert.equal(body.action.action, 'go_home')
+  assert.equal(body.action.place_id, 2)
+})
+
+test('thing withdrawal is owner-only, one-way, and refused during an open sale', async () => {
+  reset({ scenario: 'thing withdrawal' })
+  const withdrawn = await app.request('/api/thing/41/withdraw', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(withdrawn.status, 200)
+  const body = await withdrawn.json() as { thing: { id: number; withdrawn_at: string } }
+  assert.equal(body.thing.id, 41)
+  assert.ok(Number.isFinite(Date.parse(body.thing.withdrawn_at)))
+  assert.ok(sqlCalls().some(call =>
+    /update\s+things\s+set\s+withdrawn_at/i.test(call.query ?? '') &&
+    /insert\s+into\s+events/i.test(call.query ?? '')))
+
+  reset({ scenario: 'thing withdrawal sale', offer: { ...initialState().offer, status: 'open' } })
+  const locked = await app.request('/api/thing/41/withdraw', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(locked.status, 409)
+})
+
+test('only resident one can remove or restore public content and every use is logged', async () => {
+  reset({ scenario: 'maintainer moderation' })
+  const denied = await app.request('/api/moderation', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ action: 'remove', target_type: 'thing', target_id: 41, reason: 'illegal content' }),
+  })
+  assert.equal(denied.status, 403)
+  assert.equal(inserted('moderation_actions'), 0)
+
+  setActor(1, 'founder')
+  const removed = await app.request('/api/moderation', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ action: 'remove', target_type: 'thing', target_id: 41, reason: 'illegal content' }),
+  })
+  assert.equal(removed.status, 201)
+  assert.ok(inserted('moderation_actions') > 0)
+  assert.ok(sqlCalls().some(call =>
+    /insert\s+into\s+events/i.test(call.query ?? '') && /'moderation'/i.test(call.query ?? '')))
+})
+
+test('withdrawing a thing hides it from the street and freezes further edits', async () => {
+  reset({ scenario: 'withdraw thing' })
+  const withdrawn = await app.request('/api/thing/41/withdraw', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(withdrawn.status, 200)
+  const withdrawnBody = await withdrawn.json() as { thing: { id: number; withdrawn_at: string } }
+  assert.equal(withdrawnBody.thing.id, 41)
+  assert.match(withdrawnBody.thing.withdrawn_at, /2026-08-11T/)
+
+  state = { ...state, calls: [] }
+  const place = await app.request('/api/place/2')
+  assert.equal(place.status, 200)
+  const placeBody = await place.json() as { things: { id: number }[] }
+  assert.equal(placeBody.things.some(thing => thing.id === 41), false)
+
+  const edited = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ body: 'too late' }),
+  })
+  assert.equal(edited.status, 404)
+})
+
+test('use composes effects, local laws act on talk, and going home stays unblockable', async () => {
+  reset({
+    scenario: 'effects and laws',
+    actorId: 8,
+    actorHandle: 'neighbor',
+    thingOwnerId: 8,
+    openToNotes: true,
+    currentPlaceId: 2,
+    homePlaceId: 3,
+    thingTraitRecipe: {
+      use: [
+        { effect: 'label', target: 'actor', label: 'authorized' },
+        {
+          effect: 'check_label', target: 'actor', label: 'authorized', then: [
+            { effect: 'move', target: 'actor', to: 'destination' },
+            { effect: 'wait', seconds: 60, then: [
+              { effect: 'label', target: 'place', label: 'echo' },
+            ] },
+          ],
+        },
+      ],
+    },
+    placeLawNames: ['quiet-hours'],
+    lawTraitRecipe: { talk: [{ effect: 'block', action: 'talk', target: 'actor', seconds: 60 }] },
+  })
+  const used = await app.request('/api/action', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ action: 'use', thing_id: 41, to_place_id: 3 }),
+  })
+  assert.equal(used.status, 200, await used.clone().text())
+  const usedBody = await used.json() as {
+    action: { place_id: number | null; effects_applied: number }
+  }
+  assert.equal(usedBody.action.place_id, 3)
+  assert.ok(usedBody.action.effects_applied >= 3)
+  assert.deepEqual(state.actorLabels, ['authorized'])
+  assert.notEqual(state.scheduledLabelAt, null)
+
+  state = { ...state, calls: [], currentPlaceId: 2, actionBlocked: false }
+  const firstTalk = await app.request('/api/note', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ place_id: 2, body: 'one last word' }),
+  })
+  assert.equal(firstTalk.status, 201)
+  assert.equal(state.actionBlocked, true)
+
+  const blocked = await app.request('/api/note', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ place_id: 2, body: 'temporarily blocked' }),
+  })
+  assert.equal(blocked.status, 403)
+  assert.match(JSON.stringify(await blocked.json()), /blocked/i)
+
+  const home = await app.request('/api/go-home', {
+    method: 'POST',
+    headers: { ...authHeaders(OTHER_SECRET), 'Content-Length': '0' },
+  })
+  assert.equal(home.status, 200)
+  const homeBody = await home.json() as { action: { place_id: number | null } }
+  assert.equal(homeBody.action.place_id, 3)
+})
+
+test('damage stays off unless the place consents, and stored timers resolve on observation', async () => {
+  const originalNow = Date.now
+  try {
+    const startedAt = Date.parse('2026-08-11T00:00:00.000Z')
+    Date.now = () => startedAt
+    reset({
+      scenario: 'damage and timers',
+      actorId: 8,
+      actorHandle: 'neighbor',
+      thingOwnerId: 8,
+      targetThingOwnerId: 7,
+      thingTraitRecipe: {
+        use: [{ effect: 'destroy', target: 'target' }],
+      },
+    })
+    const peaceful = await app.request('/api/action', {
+      method: 'POST', headers: authHeaders(OTHER_SECRET),
+      body: JSON.stringify({ action: 'use', thing_id: 41, target_type: 'thing', target_id: 42 }),
+    })
+    assert.equal(peaceful.status, 403, await peaceful.clone().text())
+    assert.equal(state.targetThingWithdrawn, false)
+
+    reset({
+      scenario: 'damage and timers',
+      actorId: 8,
+      actorHandle: 'neighbor',
+      thingOwnerId: 8,
+      targetThingOwnerId: 7,
+      thingTraitRecipe: {
+        use: [
+          {
+            effect: 'check_label', target: 'place', label: 'war-zone', then: [
+              { effect: 'destroy', target: 'target' },
+            ],
+          },
+          { effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'place', label: 'echo' }] },
+        ],
+      },
+      placeLawNames: ['war-zone'],
+      lawTraitRecipe: null,
+    })
+    const violent = await app.request('/api/action', {
+      method: 'POST', headers: authHeaders(OTHER_SECRET),
+      body: JSON.stringify({ action: 'use', thing_id: 41, target_type: 'thing', target_id: 42 }),
+    })
+    assert.equal(violent.status, 200)
+    assert.equal(state.targetThingWithdrawn, true, JSON.stringify(sqlCalls()))
+    assert.equal(state.placeLabels.includes('echo'), false)
+
+    Date.now = () => startedAt + 61_000
+    const humanLook = await app.request('/api/place/2')
+    const humanBody = await humanLook.json() as { place: { labels?: string[] } }
+    assert.deepEqual(humanBody.place.labels, [])
+    assert.equal(state.pendingResolved, false)
+
+    const observed = await app.request('/api/place/2', { headers: authHeaders(OTHER_SECRET) })
+    assert.equal(observed.status, 200)
+    const observedBody = await observed.json() as { place: { labels?: string[] } }
+    assert.deepEqual(observedBody.place.labels, ['echo'])
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('founder moderation is remove-or-restore tombstoning, never governance', async () => {
+  reset({ scenario: 'moderation' })
+  setActor(1, 'founder')
+  const removed = await app.request('/api/moderation', {
+    method: 'POST',
+    headers: authHeaders('1f3d9_sk_' + 'ef'.repeat(24)),
+    body: JSON.stringify({ action: 'remove', target_type: 'note', target_id: 51, reason: 'illegal content' }),
+  })
+  assert.equal(removed.status, 201)
+
+  state = { ...state, calls: [] }
+  const tombstoned = await app.request('/api/place/2')
+  assert.equal(tombstoned.status, 200)
+  const tombstonedBody = await tombstoned.json() as {
+    notes: Array<{ id: number; body: string; moderated?: boolean; moderation?: { reason: string } }>
+  }
+  assert.equal(tombstonedBody.notes[0]?.id, 51, JSON.stringify(tombstonedBody))
+  assert.equal(tombstonedBody.notes[0]?.body, '[removed by maintainer]')
+  assert.equal(tombstonedBody.notes[0]?.moderated, true)
+  assert.equal(tombstonedBody.notes[0]?.moderation?.reason, 'illegal content')
+
+  const pinned = await app.request('/api/moderation', {
+    method: 'POST',
+    headers: authHeaders('1f3d9_sk_' + 'ef'.repeat(24)),
+    body: JSON.stringify({ action: 'pin', target_type: 'note', target_id: 51, reason: 'town notice' }),
+  })
+  assert.equal(pinned.status, 400)
+
+  setActor(8, 'neighbor')
+  const forbidden = await app.request('/api/moderation', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ action: 'restore', target_type: 'note', target_id: 51, reason: 'no power' }),
+  })
+  assert.equal(forbidden.status, 403)
+
+  setActor(1, 'founder')
+  const restored = await app.request('/api/moderation', {
+    method: 'POST',
+    headers: authHeaders('1f3d9_sk_' + 'ef'.repeat(24)),
+    body: JSON.stringify({ action: 'restore', target_type: 'note', target_id: 51, reason: 'restored' }),
+  })
+  assert.equal(restored.status, 201)
+  assert.equal(state.noteRemoved, false)
+
+  const visible = await app.request('/api/place/2')
+  const visibleBody = await visible.json() as { notes: Array<{ body: string; moderated?: boolean }> }
+  assert.equal(visibleBody.notes[0]?.body, 'hello from the square')
+  assert.equal(visibleBody.notes[0]?.moderated, undefined)
+})
+
+test('removed kind and trait names cannot leak through place laws or nested kind references', async () => {
+  const lawRecipe = { talk: [{ effect: 'label', target: 'place', label: 'secret-law-effect' }] }
+  reset({
+    scenario: 'nested moderation references',
+    placeLawNames: ['quiet-hours'],
+    lawTraitRecipe: lawRecipe,
+    kindTraitNames: ['glowing', 'safe-trait'],
+    kindRecipe: [
+      { kind: 'banned-material', quantity: 1 },
+      { kind: 'safe-material', quantity: 2 },
+    ],
+    moderatedKindIds: [3],
+    moderatedKindNames: ['banned-material'],
+    moderatedTraitIds: [4],
+    moderatedTraitNames: ['glowing', 'quiet-hours'],
+  })
+
+  const placeResponse = await app.request('/api/place/2')
+  assert.equal(placeResponse.status, 200)
+  const place = await placeResponse.json() as {
+    place: { id: number; owner_id: number; laws: Array<Record<string, unknown>> }
+    things: Array<Record<string, unknown>>
+  }
+  assert.equal(place.place.id, 2)
+  assert.equal(place.things[0]?.id, 41)
+  assert.equal(place.things[0]?.owner_id, state.thingOwnerId)
+  assert.equal(place.things[0]?.kind_id, 3)
+  assert.equal(place.things[0]?.kind, '[removed by maintainer]')
+  assert.equal(place.place.laws[0]?.traitId, 4)
+  assert.equal(place.place.laws[0]?.name, '[removed by maintainer]')
+  assert.equal(place.place.laws[0]?.recipe, null)
+  assert.equal(JSON.stringify(place).includes('secret-law-effect'), false)
+  assert.deepEqual(state.lawTraitRecipe, lawRecipe, 'stored law recipe remains unchanged')
+
+  state = { ...state, calls: [], moderatedKindIds: [] }
+  const kindsResponse = await app.request('/api/kinds')
+  assert.equal(kindsResponse.status, 200)
+  const kindsBody = await kindsResponse.json() as { kinds: Array<Record<string, unknown>> }
+  const kind = kindsBody.kinds[0]!
+  assert.equal(kind.id, 3)
+  assert.equal(kind.owner_id, state.kindOwnerId)
+  assert.deepEqual(kind.traits, ['[removed by maintainer]', 'safe-trait'])
+  assert.deepEqual(kind.recipe, [
+    { kind: '[removed by maintainer]', quantity: 1 },
+    { kind: 'safe-material', quantity: 2 },
+  ])
+  const moderationReads = sqlCalls().filter(call => /from moderation_actions/i.test(call.query ?? ''))
+  assert.ok(moderationReads.length <= 3, `nested moderation must stay batched: ${moderationReads.length}`)
+  assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+})
+
+test('removed authored names are tombstoned inside append-only event details', async () => {
+  reset({
+    scenario: 'nested moderation events',
+    moderatedKindIds: [3],
+    moderatedKindNames: ['banned-material'],
+    moderatedTraitNames: ['glowing', 'quiet-hours'],
+  })
+  const response = await app.request('/api/events')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { events: Array<Record<string, unknown>> }
+  assert.deepEqual(body.events.map(event => event.id), [80, 81, 82])
+  assert.deepEqual(body.events.map(event => event.at), [
+    '2026-08-11T00:06:00.000Z', '2026-08-11T00:07:00.000Z', '2026-08-11T00:08:00.000Z',
+  ])
+  const details = body.events.map(event => event.detail) as Array<Record<string, unknown>>
+  assert.deepEqual(details[0]?.traits, ['[removed by maintainer]', 'safe-trait'])
+  assert.equal(details[1]?.name, '[removed by maintainer]')
+  assert.deepEqual(details[1]?.traits, [])
+  assert.equal(details[1]?.recipe, null)
+  assert.deepEqual(details[2]?.traits, ['[removed by maintainer]', 'safe-trait'])
+  assert.deepEqual(details[2]?.recipe, [
+    { kind: '[removed by maintainer]', quantity: 1 },
+    { kind: 'safe-material', quantity: 2 },
+  ])
+  const encodedDetails = JSON.stringify(details)
+  for (const removed of ['lantern', 'quiet-hours', 'glowing', 'banned-material']) {
+    assert.equal(encodedDetails.includes(removed), false, `${removed} leaked through event detail`)
+  }
+  assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+})
+
+test('anonymous window batches event moderation without advancing timers', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow + 60_000
+    reset({
+      scenario: 'nested moderation events',
+      scheduledLabelAt: realNow - 1,
+      moderatedKindIds: [3],
+      moderatedKindNames: ['banned-material'],
+      moderatedTraitNames: ['glowing', 'quiet-hours'],
+    })
+    const response = await app.request('/api/window')
+    assert.equal(response.status, 200)
+    const body = await response.json() as { events: Array<Record<string, unknown>> }
+    assert.deepEqual(body.events.map(event => event.id), [80, 81, 82])
+    const queries = sqlCalls().map(call => call.query ?? '')
+    assert.ok(queries.some(query => /from moderation_actions[\s\S]*join traits named/i.test(query)))
+    assert.ok(queries.some(query => /from moderation_actions[\s\S]*join kinds named/i.test(query)))
+    assert.equal(queries.some(query => /pending_effects|effect_resolutions/i.test(query)), false)
+    assert.equal(queries.some(query => /insert|update|delete/i.test(query)), false)
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('removed kind and trait records expose identity and history but no authored mechanics', async () => {
+  reset({
+    scenario: 'top-level moderation payloads',
+    traitHasRecipe: true,
+    kindTraitNames: ['glowing'],
+    kindRecipe: [{ kind: 'banned-material', quantity: 1 }],
+    moderatedKindIds: [3],
+    moderatedTraitIds: [4],
+  })
+  const kindsResponse = await app.request('/api/kinds')
+  const kinds = await kindsResponse.json() as { kinds: Array<Record<string, unknown>> }
+  assert.equal(kindsResponse.status, 200)
+  assert.equal(kinds.kinds[0]?.id, 3)
+  assert.equal(kinds.kinds[0]?.owner_id, state.kindOwnerId)
+  assert.equal(kinds.kinds[0]?.revision, state.kindRevision)
+  assert.equal(kinds.kinds[0]?.name, '[removed by maintainer]')
+  assert.equal(kinds.kinds[0]?.description, '[removed by maintainer]')
+  assert.deepEqual(kinds.kinds[0]?.traits, [])
+  assert.equal(kinds.kinds[0]?.recipe, null)
+
+  const traitsResponse = await app.request('/api/traits')
+  const traits = await traitsResponse.json() as { traits: Array<Record<string, unknown>> }
+  assert.equal(traitsResponse.status, 200)
+  assert.equal(traits.traits[0]?.id, 4)
+  assert.equal(traits.traits[0]?.coiner, 'founder')
+  assert.equal(traits.traits[0]?.name, '[removed by maintainer]')
+  assert.equal(traits.traits[0]?.description, '[removed by maintainer]')
+  assert.equal(traits.traits[0]?.recipe, null)
+  assert.equal(traits.traits[0]?.mechanical, false)
+})
+
+test('/api/me refreshes presence after observation resolves due effects', async () => {
+  reset({ scenario: 'me timer refresh', scheduledLabelAt: Date.now() - 1 })
+
+  const response = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(response.status, 200)
+
+  const presenceReads = sqlCalls().filter(call =>
+    (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
+      .includes('with first_owned as'))
+  assert.equal(presenceReads.length, 2, JSON.stringify(sqlCalls().map(call => call.query)))
 })

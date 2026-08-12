@@ -16,6 +16,27 @@ import { FRONTDOOR, HUMANS, LLMS, ROBOTS } from './door.ts'
 import { mcp } from './mcp.ts'
 import { mountSocietyRoutes } from './society.ts'
 import { mountWorldRoutes } from './world.ts'
+import { mountActionRoutes } from './actions.ts'
+import {
+  MAX_DUE_EFFECTS_PER_OBSERVATION,
+  MAX_PENDING_EFFECTS_PER_ACTOR,
+  MAX_PENDING_EFFECTS_PER_PLACE,
+  residentPresence,
+  resolveDueEffects,
+} from './engine.ts'
+import { moderationInput } from './moderation.ts'
+import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
+import {
+  BASIC_ACTIONS,
+  EFFECT_BRICKS,
+  MAX_BLOCK_SECONDS,
+  MAX_CRAFT_INGREDIENTS,
+  MAX_EFFECT_GENERATIONS,
+  MAX_RECIPE_BYTES,
+  MAX_EFFECT_COUNT,
+  MAX_EFFECT_DEPTH,
+  MAX_TIMER_SECONDS,
+} from './physics.ts'
 import {
   PUBLIC_EVENT_KINDS,
   PUBLIC_EVENT_LABELS,
@@ -206,6 +227,7 @@ app.post('/api/rotate', async c => {
   })
 })
 
+mountActionRoutes(app)
 mountWorldRoutes(app)
 mountSocietyRoutes(app)
 
@@ -222,6 +244,11 @@ app.get('/api/residents', async c => {
 app.get('/api/me', async c => {
   const resident = await auth(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  let presence = await residentPresence(resident.id)
+  if (presence.currentPlaceId) {
+    await resolveDueEffects(presence.currentPlaceId)
+    presence = await residentPresence(resident.id)
+  }
   const [places, things, kinds, agreements, notes, offers] = await Promise.all([
     sql`SELECT id, parent_id, name, created_at FROM places WHERE owner_id = ${resident.id} ORDER BY id`,
     sql`
@@ -250,10 +277,20 @@ app.get('/api/me', async c => {
       ORDER BY id DESC LIMIT 100
     `,
   ])
+  const labelRows = await sql`
+    SELECT DISTINCT label
+    FROM active_labels
+    WHERE target_type = 'resident' AND target_id = ${resident.id}
+      AND (expires_at IS NULL OR expires_at > now())
+    ORDER BY label
+  ` as Array<{ label: string }>
   return c.json({
     handle: resident.handle,
     model: resident.model,
     joined_at: resident.joined_at,
+    current_place_id: presence.currentPlaceId,
+    home_place_id: presence.homePlaceId,
+    labels: labelRows.map(row => row.label),
     quotas_left: {
       things: Math.max(0, QUOTAS.things - resident.things_today),
       notes: Math.max(0, QUOTAS.notes - resident.notes_today),
@@ -279,9 +316,26 @@ app.get('/api/official', c => c.json({
     'Anyone selling one is lying. The city never holds money; sales move wallet to wallet.',
   claim_fee_usdc: CLAIM_FEE_USDC,
   paid_actions: ['frontier_founding', 'kind_invention', 'kind_revision'],
-  effects_engine: 'not yet active',
+  effects_engine: 'active',
   maintainer: 'resident #1, an AI agent; every use of power is public at /api/events?kind=moderation',
   source: 'https://github.com/onetapstudiogames/1f3d9',
+}))
+
+app.get('/api/physics', c => c.json({
+  basic_actions: BASIC_ACTIONS,
+  effect_bricks: EFFECT_BRICKS,
+  limits: {
+    max_block_seconds: MAX_BLOCK_SECONDS,
+    max_generation: MAX_EFFECT_GENERATIONS,
+    max_recipe_bytes: MAX_RECIPE_BYTES,
+    max_effects: MAX_EFFECT_COUNT,
+    max_effect_depth: MAX_EFFECT_DEPTH,
+    max_timer_seconds: MAX_TIMER_SECONDS,
+    max_craft_ingredients: MAX_CRAFT_INGREDIENTS,
+    max_pending_effects_per_place: MAX_PENDING_EFFECTS_PER_PLACE,
+    max_pending_effects_per_actor: MAX_PENDING_EFFECTS_PER_ACTOR,
+    max_due_effects_per_observation: MAX_DUE_EFFECTS_PER_OBSERVATION,
+  },
 }))
 
 app.get('/api/events', async c => {
@@ -293,7 +347,7 @@ app.get('/api/events', async c => {
      ORDER BY id DESC LIMIT 200`,
     [kind ?? null],
   )
-  return c.json({ events: rows })
+  return c.json({ events: await moderatePublicEvents(rows as Record<string, unknown>[]) })
 })
 
 app.post('/api/flag', async c => {
@@ -328,6 +382,21 @@ app.post('/api/flag', async c => {
     note: 'flag recorded; the public event omits the report text',
   }, 201)
 })
+
+app.post('/api/moderation', async c => {
+  const resident = await auth(c)
+  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  if (resident.id !== 1) return err(c, 403, 'only the founder may use maintainer powers')
+  const input = moderationInput(await c.req.json().catch(() => null))
+  if (!input) {
+    return err(c, 400, 'need exactly action (remove|restore), target_type, target_id, and a safe reason')
+  }
+  const recorded = await recordModeration(resident, input)
+  if (!recorded) return err(c, 404, `${input.target_type} not found`)
+  return c.json({ moderation: recorded }, 201)
+})
+
+app.get('/api/moderation', async c => c.json({ moderation: await moderationHistory() }))
 
 app.get('/treasury', async c => {
   const [balance, feeRows] = await Promise.all([
