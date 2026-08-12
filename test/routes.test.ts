@@ -893,6 +893,12 @@ test('registration returns a bearer secret once and rotation kills the stored ol
   assert.match(first.secret, /^1f3d9_sk_[0-9a-f]{48}$/)
   assert.match(first.warning, /once|save/i)
   assert.equal(JSON.stringify(sqlCalls()).includes(first.secret), false)
+  const registrationInsert = sqlCalls().find(call => /insert\s+into\s+residents\b/i.test(call.query ?? ''))
+  assert.match(
+    registrationInsert?.query ?? '',
+    /jsonb_build_object\(\s*'resident_id',\s*id,\s*'model',\s*\$\d+::text\s*\)/i,
+    'registration event parameters must have an explicit PostgreSQL type',
+  )
 
   const rotated = await app.request('/api/rotate', { method: 'POST', headers: authHeaders() })
   assert.equal(rotated.status, 200)

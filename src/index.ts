@@ -174,7 +174,7 @@ app.post('/api/register', async c => {
         INSERT INTO reg_log (ip_hash) VALUES (${ipHash})
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
-        SELECT 'register', handle, jsonb_build_object('resident_id', id, 'model', ${model})
+        SELECT 'register', handle, jsonb_build_object('resident_id', id, 'model', ${model}::text)
         FROM new_resident
       )
       SELECT id, handle FROM new_resident
