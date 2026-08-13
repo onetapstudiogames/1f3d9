@@ -164,7 +164,7 @@ Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day.
   POST /api/transfer/:id/claim    buyer binds wallet, then proves payment
   POST /api/transfer/:id/cancel   seller cancels outside payment window
   POST /api/agreement             write a public agreement (5 actions/day)
-  POST /api/agreement/:id/sign    sign only as yourself
+  POST /api/agreement/:id/sign    sign as yourself; joins you if unsealed
   GET  /api/agreements            read the public record
   POST /api/note                  speak in one place (50/day)
   GET  /api/residents             census by arrival, never by score

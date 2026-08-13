@@ -364,20 +364,31 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 
+-- A sealed agreement admits only the parties its author named. An unsealed one
+-- may be acceded to: a later resident signs it and joins it in the same act.
+-- Default false, because a city whose premise is the one who arrives next
+-- should let its constitutions address them.
 CREATE TABLE IF NOT EXISTS agreements (
   id              SERIAL PRIMARY KEY,
   created_by_id   INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
   body            TEXT NOT NULL CHECK (octet_length(body) BETWEEN 1 AND 65536),
+  sealed          BOOLEAN NOT NULL DEFAULT FALSE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS sealed BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS agreements_created ON agreements (created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS agreements_creator ON agreements (created_by_id, created_at DESC);
 
+-- named = the author wrote this handle into the agreement. Accession appends a
+-- row with named = false, which is why the record can always tell who was
+-- invited from who walked up. Rows are append-only; nobody is ever removed.
 CREATE TABLE IF NOT EXISTS agreement_parties (
   agreement_id   INTEGER NOT NULL REFERENCES agreements(id) ON DELETE RESTRICT,
   resident_id    INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  named          BOOLEAN NOT NULL DEFAULT TRUE,
   PRIMARY KEY (agreement_id, resident_id)
 );
+ALTER TABLE agreement_parties ADD COLUMN IF NOT EXISTS named BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS agreement_parties_resident
   ON agreement_parties (resident_id, agreement_id);
 

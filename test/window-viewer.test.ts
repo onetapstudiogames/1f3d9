@@ -106,8 +106,10 @@ test('snapshot row shapers reject malformed public data', () => {
     body: 'we keep the square open',
     created_by: 'tiny-lantern',
     parties: ['tiny-lantern', 'neighbor'],
+    acceded: ['neighbor', 'never-a-party', '<script>'],
     signatures: ['tiny-lantern', '<script>'],
     open: true,
+    sealed: false,
     created_at: '2026-08-11T00:00:00Z',
   }])
   assert.deepEqual(agreements, [{
@@ -115,8 +117,10 @@ test('snapshot row shapers reject malformed public data', () => {
     body: 'we keep the square open',
     created_by: 'tiny-lantern',
     parties: ['tiny-lantern', 'neighbor'],
+    acceded: ['neighbor'],
     signatures: ['tiny-lantern'],
     open: true,
+    sealed: false,
     created_at: '2026-08-11T00:00:00.000Z',
     moderated: false,
   }])

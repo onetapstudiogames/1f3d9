@@ -47,6 +47,9 @@ interface FakeState {
   openToThings: boolean
   openToNotes: boolean
   quota: { things: boolean; notes: boolean; agreements: boolean }
+  agreementParties: string[]
+  agreementAcceded: string[]
+  agreementSealed: boolean
   thingOwnerId: number
   thingWithdrawn: boolean
   targetThingOwnerId: number
@@ -95,6 +98,9 @@ const initialState = (): FakeState => ({
   openToThings: false,
   openToNotes: false,
   quota: { things: true, notes: true, agreements: true },
+  agreementParties: ['tiny-lantern', 'neighbor'],
+  agreementAcceded: [],
+  agreementSealed: false,
   thingOwnerId: 7,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
@@ -586,8 +592,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('from agreements')) return [{
     id: 61,
     body: 'we keep the square open',
-    parties: ['tiny-lantern', 'neighbor'],
+    parties: state.agreementParties,
+    acceded: state.agreementAcceded,
     signatures: ['tiny-lantern'],
+    sealed: state.agreementSealed,
     open: true,
     created_at: '2026-08-11T00:00:00.000Z',
   }]
@@ -1165,6 +1173,59 @@ test('agreements remain unenforced public text and each party signs for itself',
   assert.equal(body.agreements[0]?.body, 'we keep the square open')
   assert.deepEqual(body.agreements[0]?.signatures, ['tiny-lantern'])
   assert.equal(body.agreements[0]?.open, true)
+})
+
+test('a later arrival accedes to an unsealed agreement by signing it', async () => {
+  reset({ scenario: 'agreements', agreementParties: ['neighbor'] })
+  setActor(9, 'latecomer')
+
+  const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(signed.status, 200, await signed.clone().text())
+  const body = await signed.json() as { signature: { handle: string; acceded: boolean } }
+  assert.equal(body.signature.handle, 'latecomer')
+  assert.equal(body.signature.acceded, true)
+  // One statement carries both inserts, so this asserts the accession path was
+  // taken at all -- whether its WHERE clause suppresses the party row for a
+  // named signer is Postgres semantics no fake can decide.
+  assert.equal(inserted('agreement_parties'), 1)
+  assert.equal(inserted('agreement_signatures'), 1)
+})
+
+test('a named party signs without acceding', async () => {
+  reset({ scenario: 'agreements' })
+
+  const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(signed.status, 200, await signed.clone().text())
+  const body = await signed.json() as { signature: { acceded: boolean } }
+  assert.equal(body.signature.acceded, false)
+  assert.equal(inserted('agreement_signatures'), 1)
+})
+
+test('a sealed agreement admits only the parties its author named', async () => {
+  reset({ scenario: 'agreements', agreementParties: ['neighbor'], agreementSealed: true })
+  setActor(9, 'latecomer')
+
+  const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(signed.status, 403)
+  assert.equal(inserted('agreement_parties'), 0)
+  assert.equal(inserted('agreement_signatures'), 0)
+})
+
+test('the public record separates the parties an author named from those who acceded', async () => {
+  reset({
+    scenario: 'agreements',
+    agreementParties: ['neighbor', 'tiny-lantern'],
+    agreementAcceded: ['tiny-lantern'],
+  })
+
+  const record = await app.request('/api/agreements?party=tiny-lantern')
+  assert.equal(record.status, 200)
+  const body = await record.json() as {
+    agreements: { parties: string[]; acceded: string[]; sealed: boolean }[]
+  }
+  assert.deepEqual(body.agreements[0]?.parties, ['neighbor', 'tiny-lantern'])
+  assert.deepEqual(body.agreements[0]?.acceded, ['tiny-lantern'])
+  assert.equal(body.agreements[0]?.sealed, false)
 })
 
 test('a gift moves immediately, while an open sale offer locks the asset', async () => {

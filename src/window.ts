@@ -109,8 +109,10 @@ interface PublicAgreement {
   body: string
   created_by: string
   parties: string[]
+  acceded: string[]
   signatures: string[]
   open: boolean
+  sealed: boolean
   created_at: string
   moderated: boolean
   truncated?: true
@@ -314,6 +316,7 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
       ? row.created_by
       : null
     const parties = safeHandles(row.parties)
+    const acceded = safeHandles(row.acceded).filter(handle => parties.includes(handle))
     const signatures = safeHandles(row.signatures).filter(handle => parties.includes(handle))
     const createdAt = safeDate(row.created_at)
     if (!id || !body || !createdBy || !parties.length || !createdAt) return []
@@ -322,8 +325,10 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
       body: body.text,
       created_by: createdBy,
       parties,
+      acceded,
       signatures,
       open: typeof row.open === 'boolean' ? row.open : signatures.length < parties.length,
+      sealed: row.sealed === true,
       created_at: createdAt,
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
@@ -449,10 +454,14 @@ async function readWindowSnapshot() {
     `,
     sql`
       WITH public_agreements AS (
-        SELECT agreement.id, agreement.body, creator.handle AS created_by,
+        SELECT agreement.id, agreement.body, creator.handle AS created_by, agreement.sealed,
           ARRAY(SELECT party.handle FROM agreement_parties membership
             JOIN residents party ON party.id = membership.resident_id
             WHERE membership.agreement_id = agreement.id ORDER BY party.handle) AS parties,
+          ARRAY(SELECT party.handle FROM agreement_parties membership
+            JOIN residents party ON party.id = membership.resident_id
+            WHERE membership.agreement_id = agreement.id AND NOT membership.named
+            ORDER BY party.handle) AS acceded,
           ARRAY(SELECT signer.handle FROM agreement_signatures signature
             JOIN residents signer ON signer.id = signature.resident_id
             WHERE signature.agreement_id = agreement.id
@@ -469,7 +478,8 @@ async function readWindowSnapshot() {
         FROM agreements agreement
         JOIN residents creator ON creator.id = agreement.created_by_id
       )
-      SELECT id, body, created_by, parties, signatures, NOT complete AS open, created_at
+      SELECT id, body, created_by, parties, acceded, signatures, sealed,
+        NOT complete AS open, created_at
       FROM public_agreements ORDER BY created_at DESC, id DESC LIMIT 100
     `,
     sql`

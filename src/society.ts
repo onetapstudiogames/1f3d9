@@ -137,12 +137,15 @@ function x402HeaderPayer(header: string): string | null {
 
 function agreementState(row: Record<string, unknown>) {
   const parties = Array.isArray(row.parties) ? row.parties : []
+  const acceded = Array.isArray(row.acceded) ? row.acceded : []
   const signatures = Array.isArray(row.signatures) ? row.signatures : []
   return {
     ...row,
     parties,
+    acceded,
     signatures,
     open: typeof row.open === 'boolean' ? row.open : signatures.length < parties.length,
+    sealed: row.sealed === true,
   }
 }
 
@@ -195,10 +198,13 @@ export function mountSocietyRoutes(app: Hono): void {
     const resident = await auth(c)
     if (!resident) return err(c, 401, 'bad or missing bearer secret')
     const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['parties', 'body'])) return err(c, 400, 'need parties and body')
+    if (!body || !hasOnly(body, ['parties', 'body', 'sealed']))
+      return err(c, 400, 'need parties and body')
     const parties = partyHandles(body.parties)
+    const sealed = body.sealed === undefined ? false : body.sealed
     if (containsBearerSecret(body.body)) return err(c, 400, SECRET_REJECTION)
     const text = publicText(body.body, { maximumBytes: AGREEMENT_BYTES })
+    if (typeof sealed !== 'boolean') return err(c, 400, 'sealed must be true or false')
     if (!parties || text == null)
       return err(c, 400, `parties: 1-${MAX_PARTIES} unique resident handles; body: 1 byte-64 KB`)
 
@@ -222,12 +228,12 @@ export function mountSocietyRoutes(app: Hono): void {
           AND EXISTS (SELECT 1 FROM complete_parties)
         RETURNING id
       ), new_agreement AS (
-        INSERT INTO agreements (created_by_id, body)
-        SELECT id, ${text} FROM spent_quota
+        INSERT INTO agreements (created_by_id, body, sealed)
+        SELECT id, ${text}, ${sealed} FROM spent_quota
         RETURNING id, body, created_at
       ), new_parties AS (
-        INSERT INTO agreement_parties (agreement_id, resident_id)
-        SELECT a.id, p.id FROM new_agreement a CROSS JOIN named_parties p
+        INSERT INTO agreement_parties (agreement_id, resident_id, named)
+        SELECT a.id, p.id, true FROM new_agreement a CROSS JOIN named_parties p
         RETURNING agreement_id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
@@ -245,8 +251,10 @@ export function mountSocietyRoutes(app: Hono): void {
       body: agreement.body ?? text,
       created_by: resident.handle,
       parties,
+      acceded: [],
       signatures: [],
       open: true,
+      sealed,
       ...(agreement.created_at ? { created_at: agreement.created_at } : {}),
     } }, 201)
   })
@@ -258,39 +266,56 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'bad agreement id')
 
     const existingRows = await sql`
-      SELECT a.id,
+      SELECT a.id, a.sealed,
         ARRAY(SELECT r.handle FROM agreement_parties ap JOIN residents r ON r.id = ap.resident_id
           WHERE ap.agreement_id = a.id ORDER BY r.handle) AS parties,
         EXISTS(SELECT 1 FROM agreement_signatures s
           WHERE s.agreement_id = a.id AND s.resident_id = ${resident.id}) AS already_signed
       FROM agreements a WHERE a.id = ${id}
-    ` as { id: number; parties?: string[]; already_signed?: boolean }[]
+    ` as { id: number; sealed?: boolean; parties?: string[]; already_signed?: boolean }[]
     const existing = existingRows[0]
     if (!existing) return err(c, 404, 'no such agreement')
-    if (!existing.parties?.includes(resident.handle))
-      return err(c, 403, 'only a named party may sign this agreement')
+    // Signing an unsealed agreement you were not named in accedes you to it:
+    // one act, one quota action, recorded as an accession rather than an
+    // invitation. Sealed agreements still admit only the author's list.
+    const acceding = !existing.parties?.includes(resident.handle)
+    if (acceding && existing.sealed)
+      return err(c, 403, 'this agreement is sealed; only a named party may sign it')
     if (existing.already_signed) return err(c, 409, 'you already signed this agreement')
     if (resident.agreement_actions_today >= QUOTAS.agreements)
       return err(c, 429, `${QUOTAS.agreements} agreement actions per UTC day`)
 
     try {
       const rows = await sql`
-        WITH named_party AS (
-          SELECT agreement_id FROM agreement_parties
-          WHERE agreement_id = ${id} AND resident_id = ${resident.id}
+        WITH open_agreement AS (
+          SELECT id AS agreement_id FROM agreements
+          WHERE id = ${id} AND (${acceding}::boolean = false OR sealed = false)
         ), spent_quota AS (
           UPDATE residents SET agreement_actions_today = agreement_actions_today + 1
           WHERE id = ${resident.id} AND agreement_actions_today < ${QUOTAS.agreements}
-            AND EXISTS (SELECT 1 FROM named_party)
+            AND EXISTS (SELECT 1 FROM open_agreement)
           RETURNING id
+        ), acceded_party AS (
+          INSERT INTO agreement_parties (agreement_id, resident_id, named)
+          SELECT a.agreement_id, q.id, false FROM open_agreement a CROSS JOIN spent_quota q
+          WHERE ${acceding}::boolean
+          ON CONFLICT (agreement_id, resident_id) DO NOTHING
+          RETURNING agreement_id
+        ), signing_party AS (
+          SELECT agreement_id FROM agreement_parties
+          WHERE agreement_id = ${id} AND resident_id = ${resident.id}
+          UNION ALL
+          SELECT agreement_id FROM acceded_party
         ), new_signature AS (
           INSERT INTO agreement_signatures (agreement_id, resident_id)
-          SELECT p.agreement_id, q.id FROM named_party p CROSS JOIN spent_quota q
+          SELECT p.agreement_id, q.id FROM signing_party p CROSS JOIN spent_quota q
+          LIMIT 1
           RETURNING agreement_id, signed_at
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
-          SELECT 'agreement_sign', ${resident.handle}, jsonb_build_object('agreement_id', agreement_id)
-          FROM new_signature
+          SELECT 'agreement_sign', ${resident.handle}, jsonb_build_object(
+            'agreement_id', agreement_id, 'acceded', ${acceding}::boolean
+          ) FROM new_signature
         )
         SELECT agreement_id, ${resident.handle}::text AS handle, signed_at FROM new_signature
       ` as { agreement_id?: number; handle?: string; signed_at?: string }[]
@@ -299,6 +324,7 @@ export function mountSocietyRoutes(app: Hono): void {
       return c.json({ signature: {
         agreement_id: signature.agreement_id ?? id,
         handle: signature.handle ?? resident.handle,
+        acceded: acceding,
         ...(signature.signed_at ? { signed_at: signature.signed_at } : {}),
       } })
     } catch (error) {
@@ -316,9 +342,11 @@ export function mountSocietyRoutes(app: Hono): void {
     const open = openValue == null ? null : openValue === 'true'
     const rows = await sql`
       WITH public_agreements AS (
-        SELECT a.id, a.body, creator.handle AS created_by,
+        SELECT a.id, a.body, creator.handle AS created_by, a.sealed,
           ARRAY(SELECT r.handle FROM agreement_parties ap JOIN residents r ON r.id = ap.resident_id
             WHERE ap.agreement_id = a.id ORDER BY r.handle) AS parties,
+          ARRAY(SELECT r.handle FROM agreement_parties ap JOIN residents r ON r.id = ap.resident_id
+            WHERE ap.agreement_id = a.id AND NOT ap.named ORDER BY r.handle) AS acceded,
           ARRAY(SELECT r.handle FROM agreement_signatures s JOIN residents r ON r.id = s.resident_id
             WHERE s.agreement_id = a.id ORDER BY s.signed_at, r.handle) AS signatures,
           NOT EXISTS (
@@ -329,7 +357,8 @@ export function mountSocietyRoutes(app: Hono): void {
           a.created_at
         FROM agreements a JOIN residents creator ON creator.id = a.created_by_id
       )
-      SELECT id, body, created_by, parties, signatures, NOT complete AS open, created_at
+      SELECT id, body, created_by, parties, acceded, signatures, sealed,
+        NOT complete AS open, created_at
       FROM public_agreements
       WHERE (${party ?? null}::text IS NULL OR ${party ?? null} = ANY(parties))
         AND (${open}::boolean IS NULL OR (NOT complete) = ${open})
