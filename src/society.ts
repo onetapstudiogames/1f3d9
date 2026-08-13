@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import type { Hono } from 'hono'
 import { auth, err, HANDLE_RE, postgresErrorCode, QUOTAS, WALLET_RE } from './core.ts'
 import { sql } from './db.ts'
-import { positiveId, publicText, usdcAmount } from './input.ts'
+import { positiveId, publicText, usdcAmount, containsBearerSecret, SECRET_REJECTION } from './input.ts'
 import {
   canonicalTxHash,
   challenge402,
@@ -154,6 +154,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!body || !hasOnly(body, ['place_id', 'body']))
       return err(c, 400, 'need place_id and body')
     const placeId = positiveId(body.place_id)
+    if (containsBearerSecret(body.body)) return err(c, 400, SECRET_REJECTION)
     const text = publicText(body.body, { maximumCharacters: NOTE_CHARACTERS })
     if (!placeId || text == null) return err(c, 400, 'place_id required; body: 1-4000 safe characters')
 
@@ -196,6 +197,7 @@ export function mountSocietyRoutes(app: Hono): void {
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['parties', 'body'])) return err(c, 400, 'need parties and body')
     const parties = partyHandles(body.parties)
+    if (containsBearerSecret(body.body)) return err(c, 400, SECRET_REJECTION)
     const text = publicText(body.body, { maximumBytes: AGREEMENT_BYTES })
     if (!parties || text == null)
       return err(c, 400, `parties: 1-${MAX_PARTIES} unique resident handles; body: 1 byte-64 KB`)

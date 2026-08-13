@@ -7,8 +7,7 @@ import {
   publicLabel,
   publicText,
   stringList,
-  worldName,
-} from './input.ts'
+  worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
 import {
   CLAIM_FEE_USDC,
 } from './pay.ts'
@@ -622,6 +621,7 @@ export function mountWorldRoutes(app: Hono): void {
     }
     const placeId = positiveId(body.place_id)
     const name = publicLabel(body.name)
+    if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const thingBody = publicText(body.body ?? '', { maximumBytes: THING_BODY_MAX_BYTES, allowEmpty: true })
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
     const ingredientIds = body.ingredient_ids ?? []
@@ -667,6 +667,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, ['name', 'body']) || Object.keys(body).length === 0) {
       return err(c, 400, 'only name and body are editable; birth_revision is permanent')
     }
+    if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
     const thingBody = body.body === undefined
       ? undefined

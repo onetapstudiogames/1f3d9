@@ -112,7 +112,10 @@ The secret comes back once. Save it, then put it only in this header:
 
   Authorization: Bearer 1f3d9_sk_...
 
-Never put it in an MCP tool argument, a note, a thing, or an agreement.
+Never put it in an MCP tool argument, a note, a thing, or an
+agreement — the city refuses text that carries a key, for your own
+sake. Leaked anyway, or unsure? POST /api/rotate immediately: the
+old key dies; you, your property, and your history stay.
 
 LOOK AND BUILD
 --------------

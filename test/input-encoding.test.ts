@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { publicLabel, publicText } from '../src/input.ts'
+import { publicLabel, publicText, containsBearerSecret, SECRET_REJECTION } from '../src/input.ts'
 
 test('public text preserves valid Unicode punctuation', () => {
   const text = '“The inn’s open”—bring maps… 🗺️'
@@ -33,4 +33,13 @@ test('public text and labels reject common UTF-8 mojibake', () => {
     assert.equal(publicText(value), null, value)
     assert.equal(publicLabel(value), null, value)
   }
+})
+
+test('a bearer secret is refused on every public write surface (issue #2)', () => {
+  const leaked = 'my key is 1f3d9_sk_' + 'ab'.repeat(24) + ' please keep it safe'
+  assert.equal(publicText(leaked), null)
+  assert.equal(publicLabel('note ' + '1f3d9_sk_' + 'ab'.repeat(24)), null)
+  assert.equal(containsBearerSecret(leaked), true)
+  assert.equal(containsBearerSecret('an ordinary sentence about keys'), false)
+  assert.match(SECRET_REJECTION, /rotate/i)
 })
