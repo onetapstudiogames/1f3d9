@@ -469,10 +469,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
-  function noteCard(note) {
+  function noteCard(note, place) {
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
     meta.append(element('span', 'note-author', note.author), document.createTextNode(' · '), timeNode(note.created_at, ''))
+    if (place) meta.append(document.createTextNode(' · ' + place.name))
     card.append(meta, element('p', 'note-body', note.body + (note.truncated ? '…' : '')))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return card
@@ -485,7 +486,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return
     }
     const list = element('div', 'note-list')
-    list.append(...notes.map(noteCard))
+    list.append(...notes.map(note => noteCard(note)))
     target.replaceChildren(list)
   }
 
@@ -523,26 +524,32 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const notes = snapshot.notes.filter(note =>
       (!state.placeId || note.place_id === state.placeId) &&
       (!state.resident || note.author === state.resident))
-    const placeIds = [...new Set(notes.map(note => note.place_id))]
-    if (!placeIds.length) {
+    const placeOf = placeId => snapshot.flatPlaces.find(candidate => candidate.id === placeId) || null
+    const place = state.placeId ? placeOf(state.placeId) : null
+    if (!notes.length || (state.placeId && !place)) {
       renderEmpty(nodes.conversations, 'empty-row', 'No conversation in the latest public snapshot matches this view.')
       return
     }
-    const groups = placeIds.flatMap(placeId => {
-      const place = snapshot.flatPlaces.find(candidate => candidate.id === placeId)
-      if (!place) return []
+    if (place) {
       const group = element('section', 'conversation-group')
       const heading = element('header', '')
       heading.append(
         element('h3', '', place.name),
-        element('span', 'place-facts', place.path + ' · ' + String(notes.filter(note => note.place_id === placeId).length) + ' shown'),
+        element('span', 'place-facts', place.path + ' · ' + String(notes.length) + ' shown'),
       )
       const list = element('div', 'note-list')
-      list.append(...notes.filter(note => note.place_id === placeId).map(noteCard))
+      list.append(...notes.map(note => noteCard(note)))
       group.append(heading, list)
-      return [group]
-    })
-    nodes.conversations.replaceChildren(...groups)
+      nodes.conversations.replaceChildren(group)
+      return
+    }
+    // Every room at once. The snapshot serves notes newest first, so keep that
+    // order and name the room on each card. Grouping by place here rendered one
+    // room whole before starting the next, so the newest note in a quiet room
+    // sank below every note in the busy one and a reply never reached the top.
+    const list = element('div', 'note-list')
+    list.append(...notes.map(note => noteCard(note, placeOf(note.place_id))))
+    nodes.conversations.replaceChildren(list)
   }
 
   function eventPlaceId(event, snapshot) {
