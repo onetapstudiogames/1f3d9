@@ -1,0 +1,971 @@
+import { createHash } from 'node:crypto'
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { Hono } from 'hono'
+import { auth, setOAuthResidentResolver, sha256, type Resident } from '../src/core.ts'
+import { mcp } from '../src/mcp.ts'
+import {
+  mountOAuthRoutes,
+  residentByOAuthAccessToken,
+} from '../src/oauth.ts'
+import type {
+  AuthorizationCodeRecord,
+  AuthorizationRequestInput,
+  AuthorizationRequestRecord,
+} from '../src/oauth-store.ts'
+
+type OAuthStore = typeof import('../src/oauth-store.ts').postgresOAuthStore
+type TestOAuthStore = OAuthStore & {
+  cancelAuthorizationRequest(input: {
+    sessionHash: string
+    csrfHash: string
+  }): Promise<{ redirectUri: string; state: string } | null>
+}
+
+const ORIGIN = 'https://1f3d9.com'
+const RESOURCE = `${ORIGIN}/mcp/connect`
+const CLIENT_ID = 'hosted-chat-flow-test'
+const CALLBACK = 'https://chat.example.test/oauth/callback'
+const STATE = 'client-state-that-must-survive'
+const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+const CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
+const EXISTING_KEY = `1f3d9_sk_${'ab'.repeat(24)}`
+
+const environment = {
+  PUBLIC_ORIGIN: ORIGIN,
+  HOSTED_CHAT_SIGNIN_ENABLED: 'true',
+  HOSTED_CHAT_OAUTH_CLIENTS: JSON.stringify([{
+    client_id: CLIENT_ID,
+    client_name: 'Hosted Chat Flow Test',
+    redirect_uris: [CALLBACK],
+  }]),
+  HOSTED_CHAT_CIMD_ORIGINS: '',
+} as const
+
+interface MemoryAuthorizationRequest extends AuthorizationRequestRecord {
+  sessionHash: string
+  csrfHash: string
+  pendingSecretHash: string | null
+  expiresAt: number
+  used: boolean
+}
+
+interface MemoryAuthorizationCode extends AuthorizationCodeRecord {
+  codeHash: string
+  expiresAt: number
+  used: boolean
+}
+
+interface MemoryFamily {
+  id: number
+  residentId: number
+  clientId: string
+  resource: string
+  scope: string
+  expiresAt: number
+  revoked: boolean
+}
+
+interface MemoryToken {
+  tokenHash: string
+  tokenType: 'access' | 'refresh'
+  familyId: number
+  expiresAt: number
+  used: boolean
+  revoked: boolean
+}
+
+const existingResident = (): Resident => ({
+  id: 49,
+  handle: 'chatty',
+  model: 'hosted-chat',
+  joined_at: '2026-08-13T00:00:00.000Z',
+  quota_day: '2026-08-13',
+  things_today: 0,
+  notes_today: 0,
+  agreement_actions_today: 0,
+})
+
+class MemoryOAuthStore {
+  private readonly requests = new Map<string, MemoryAuthorizationRequest>()
+  private readonly codes = new Map<string, MemoryAuthorizationCode>()
+  private readonly families = new Map<number, MemoryFamily>()
+  private readonly tokens = new Map<string, MemoryToken>()
+  private readonly residents = new Map<number, Resident>([[49, existingResident()]])
+  private readonly residentSecretHashes = new Map<string, number>([[sha256(EXISTING_KEY), 49]])
+  private readonly events: { kind: string; actor: string; residentId: number }[] = []
+  private nextRequestId = 1
+  private nextResidentId = 50
+  private nextFamilyId = 1
+  private duplicateHandleRollbacks = 0
+
+  readonly api = {
+    createAuthorizationRequest: async (input: AuthorizationRequestInput): Promise<void> => {
+      for (const pending of this.requests.values()) {
+        if (
+          pending.resident_id === null && !pending.used && pending.expiresAt <= Date.now() &&
+          (pending.intent !== null || pending.new_handle !== null || pending.new_model !== null ||
+            pending.pendingSecretHash !== null)
+        ) {
+          pending.used = true
+          pending.intent = null
+          pending.new_handle = null
+          pending.new_model = null
+          pending.pendingSecretHash = null
+        }
+      }
+      this.requests.set(input.sessionHash, {
+        id: this.nextRequestId++,
+        sessionHash: input.sessionHash,
+        csrfHash: input.csrfHash,
+        client_id: input.clientId,
+        client_display_name: input.clientName,
+        redirect_uri: input.redirectUri,
+        resource: input.resource,
+        scope: input.scope,
+        state: input.state,
+        code_challenge: input.codeChallenge,
+        intent: null,
+        resident_id: null,
+        new_handle: null,
+        new_model: null,
+        root_key_confirmed_at: null,
+        pendingSecretHash: null,
+        expiresAt: Date.now() + 15 * 60_000,
+        used: false,
+      })
+    },
+
+    getAuthorizationRequest: async (
+      sessionHash: string,
+    ): Promise<AuthorizationRequestRecord | null> => {
+      const request = this.validRequest(sessionHash)
+      return request ? { ...request } : null
+    },
+
+    approveExistingResidentAndIssueAuthorizationCode: async (
+      input: Parameters<OAuthStore['approveExistingResidentAndIssueAuthorizationCode']>[0],
+    ) => {
+      const request = this.validRequest(input.sessionHash)
+      const residentId = this.residentSecretHashes.get(input.residentSecretHash)
+      if (
+        !request || request.csrfHash !== input.csrfHash || request.intent !== null ||
+        request.resident_id !== null || residentId === undefined
+      ) return null
+      const resident = this.residents.get(residentId)
+      if (!resident) return null
+      request.intent = 'existing'
+      request.resident_id = resident.id
+      request.used = true
+      this.codes.set(input.authorizationCodeHash, {
+        codeHash: input.authorizationCodeHash,
+        residentId: resident.id,
+        clientId: request.client_id,
+        redirectUri: request.redirect_uri,
+        resource: request.resource,
+        scope: request.scope,
+        codeChallenge: request.code_challenge,
+        expiresAt: Date.now() + 5 * 60_000,
+        used: false,
+      })
+      return { redirectUri: request.redirect_uri, state: request.state }
+    },
+
+    stageNewResidentRegistration: async (
+      input: Parameters<OAuthStore['stageNewResidentRegistration']>[0],
+    ) => {
+      const request = this.validRequest(input.sessionHash)
+      if (
+        !request || request.csrfHash !== input.csrfHash || request.intent !== null ||
+        request.resident_id !== null
+      ) return null
+      if ([...this.residents.values()].some(resident => resident.handle === input.handle)) {
+        return { status: 'handle_taken' as const }
+      }
+      request.intent = 'new'
+      request.new_handle = input.handle
+      request.new_model = input.model
+      request.pendingSecretHash = input.residentSecretHash
+      return { status: 'staged' as const, handle: input.handle }
+    },
+
+    cancelAuthorizationRequest: async (input: {
+      sessionHash: string
+      csrfHash: string
+    }) => {
+      const request = this.validRequest(input.sessionHash)
+      if (!request || request.csrfHash !== input.csrfHash || request.resident_id !== null) return null
+      request.used = true
+      request.intent = null
+      request.new_handle = null
+      request.new_model = null
+      request.pendingSecretHash = null
+      return { redirectUri: request.redirect_uri, state: request.state }
+    },
+
+    confirmNewResidentAndIssueAuthorizationCode: async (
+      input: Parameters<OAuthStore['confirmNewResidentAndIssueAuthorizationCode']>[0],
+    ) => {
+      const request = this.validRequest(input.sessionHash)
+      if (
+        !request || request.csrfHash !== input.csrfHash || request.intent !== 'new' ||
+        request.resident_id !== null || request.new_handle === null || request.new_model === null ||
+        request.pendingSecretHash === null || request.root_key_confirmed_at !== null
+      ) return null
+      const allocatedResidentId = this.nextResidentId++
+      if ([...this.residents.values()].some(resident => resident.handle === request.new_handle)) {
+        // Mirror PostgreSQL statement rollback: the allocator update happens before
+        // the unique-handle insert fails, then the whole statement is restored.
+        this.nextResidentId = allocatedResidentId
+        this.duplicateHandleRollbacks++
+        return null
+      }
+      const resident: Resident = {
+        id: allocatedResidentId,
+        handle: request.new_handle,
+        model: request.new_model,
+        joined_at: '2026-08-13T00:00:00.000Z',
+        quota_day: '2026-08-13',
+        things_today: 0,
+        notes_today: 0,
+        agreement_actions_today: 0,
+      }
+      this.residents.set(resident.id, resident)
+      this.residentSecretHashes.set(request.pendingSecretHash, resident.id)
+      this.events.push({ kind: 'register', actor: resident.handle, residentId: resident.id })
+      request.resident_id = resident.id
+      request.pendingSecretHash = null
+      const residentId = request.resident_id
+      request.used = true
+      request.root_key_confirmed_at = new Date().toISOString()
+      this.codes.set(input.authorizationCodeHash, {
+        codeHash: input.authorizationCodeHash,
+        residentId,
+        clientId: request.client_id,
+        redirectUri: request.redirect_uri,
+        resource: request.resource,
+        scope: request.scope,
+        codeChallenge: request.code_challenge,
+        expiresAt: Date.now() + 5 * 60_000,
+        used: false,
+      })
+      return { redirectUri: request.redirect_uri, state: request.state }
+    },
+
+    getAuthorizationCode: async (codeHash: string): Promise<AuthorizationCodeRecord | null> => {
+      const code = this.codes.get(codeHash)
+      return code && !code.used && code.expiresAt > Date.now() ? { ...code } : null
+    },
+
+    exchangeAuthorizationCode: async (
+      input: Parameters<OAuthStore['exchangeAuthorizationCode']>[0],
+    ): Promise<boolean> => {
+      const code = this.codes.get(input.codeHash)
+      if (
+        !code || code.used || code.expiresAt <= Date.now() || code.clientId !== input.clientId ||
+        code.redirectUri !== input.redirectUri || code.resource !== input.resource
+      ) return false
+      code.used = true
+      const family: MemoryFamily = {
+        id: this.nextFamilyId++,
+        residentId: code.residentId,
+        clientId: code.clientId,
+        resource: code.resource,
+        scope: code.scope,
+        expiresAt: Date.now() + 30 * 24 * 60 * 60_000,
+        revoked: false,
+      }
+      this.families.set(family.id, family)
+      this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + 10 * 60_000)
+      this.addToken(input.refreshTokenHash, 'refresh', family.id, family.expiresAt)
+      return true
+    },
+
+    rotateRefreshToken: async (
+      input: Parameters<OAuthStore['rotateRefreshToken']>[0],
+    ) => {
+      const token = this.tokens.get(input.presentedRefreshTokenHash)
+      const family = token ? this.families.get(token.familyId) : undefined
+      if (
+        token?.tokenType === 'refresh' && token.used && family &&
+        family.clientId === input.clientId && family.resource === input.resource
+      ) {
+        this.revokeFamily(family.id)
+        return 'reused' as const
+      }
+      if (
+        !token || token.tokenType !== 'refresh' || token.used || token.revoked ||
+        token.expiresAt <= Date.now() || !family || family.revoked ||
+        family.expiresAt <= Date.now() || family.clientId !== input.clientId ||
+        family.resource !== input.resource
+      ) return 'invalid' as const
+      token.used = true
+      this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + 10 * 60_000)
+      this.addToken(input.newRefreshTokenHash, 'refresh', family.id, family.expiresAt)
+      return 'rotated' as const
+    },
+
+    revokeTokenFamilyByToken: async (
+      input: Parameters<OAuthStore['revokeTokenFamilyByToken']>[0],
+    ): Promise<void> => {
+      const token = this.tokens.get(input.tokenHash)
+      const family = token ? this.families.get(token.familyId) : undefined
+      if (family?.clientId === input.clientId) this.revokeFamily(family.id)
+    },
+
+    resolveOAuthAccessToken: async (
+      input: Parameters<OAuthStore['resolveOAuthAccessToken']>[0],
+    ): Promise<Resident | null> => {
+      const token = this.tokens.get(input.accessTokenHash)
+      const family = token ? this.families.get(token.familyId) : undefined
+      if (
+        !token || token.tokenType !== 'access' || token.used || token.revoked ||
+        token.expiresAt <= Date.now() || !family || family.revoked ||
+        family.expiresAt <= Date.now() || family.resource !== input.resource ||
+        family.scope !== input.scope
+      ) return null
+      return this.residents.get(family.residentId) ?? null
+    },
+
+    consumeOAuthRateLimit: async (): Promise<boolean> => true,
+  } satisfies TestOAuthStore
+
+  expireBrowserSession(rawSession: string): void {
+    const request = this.requests.get(sha256(rawSession))
+    if (request) request.expiresAt = Date.now() - 1
+  }
+
+  expireAuthorizationCode(rawCode: string): void {
+    const code = this.codes.get(sha256(rawCode))
+    if (code) code.expiresAt = Date.now() - 1
+  }
+
+  safeState(): string {
+    return JSON.stringify({
+      requests: [...this.requests.values()],
+      codes: [...this.codes.values()],
+      families: [...this.families.values()],
+      tokens: [...this.tokens.values()],
+      residents: [...this.residents.values()],
+      residentSecretHashes: [...this.residentSecretHashes.entries()],
+      events: [...this.events],
+      nextResidentId: this.nextResidentId,
+      duplicateHandleRollbacks: this.duplicateHandleRollbacks,
+    })
+  }
+
+  private validRequest(sessionHash: string): MemoryAuthorizationRequest | null {
+    const request = this.requests.get(sessionHash)
+    return request && !request.used && request.expiresAt > Date.now() ? request : null
+  }
+
+  private addToken(
+    tokenHash: string,
+    tokenType: MemoryToken['tokenType'],
+    familyId: number,
+    expiresAt: number,
+  ): void {
+    this.tokens.set(tokenHash, {
+      tokenHash,
+      tokenType,
+      familyId,
+      expiresAt,
+      used: false,
+      revoked: false,
+    })
+  }
+
+  private revokeFamily(familyId: number): void {
+    const family = this.families.get(familyId)
+    if (family) family.revoked = true
+    for (const token of this.tokens.values()) {
+      if (token.familyId === familyId) token.revoked = true
+    }
+  }
+}
+
+interface BrowserSession {
+  cookie: string
+  rawSession: string
+  csrf: string
+  html: string
+}
+
+interface TokenPair {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
+  scope: string
+}
+
+function appFor(memory: MemoryOAuthStore): Hono {
+  const app = new Hono()
+  mountOAuthRoutes(app, {
+    environment,
+    store: memory.api,
+    fetcher: (async input => {
+      throw new Error(`unexpected network call: ${String(input)}`)
+    }) as typeof fetch,
+  })
+  return app
+}
+
+function fixture() {
+  const memory = new MemoryOAuthStore()
+  const app = appFor(memory)
+  return { app, memory }
+}
+
+function authorizationUrl(patch: Record<string, string> = {}): string {
+  const values = {
+    response_type: 'code',
+    client_id: CLIENT_ID,
+    redirect_uri: CALLBACK,
+    resource: RESOURCE,
+    scope: 'city:resident',
+    state: STATE,
+    code_challenge: CHALLENGE,
+    code_challenge_method: 'S256',
+    ...patch,
+  }
+  return `/oauth/authorize?${new URLSearchParams(values)}`
+}
+
+async function begin(app: Hono, url = authorizationUrl()): Promise<BrowserSession> {
+  const response = await app.request(url)
+  assert.equal(response.status, 200)
+  assertPrivate(response, true)
+  const setCookie = response.headers.get('set-cookie') ?? ''
+  assert.match(setCookie, /^__Host-1f3d9_oauth=[^;]+;/)
+  assert.match(setCookie, /; Path=\//i)
+  assert.match(setCookie, /; Secure/i)
+  assert.match(setCookie, /; HttpOnly/i)
+  assert.match(setCookie, /; SameSite=Lax/i)
+  const cookie = setCookie.split(';', 1)[0]!
+  const rawSession = cookie.split('=', 2)[1]!
+  const html = await response.text()
+  const csrf = html.match(/name="csrf" value="([^"]+)"/)?.[1]
+  assert.ok(csrf)
+  return { cookie, rawSession, csrf, html }
+}
+
+function assertPrivate(response: Response, html = false): void {
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/i)
+  assert.equal(response.headers.get('access-control-allow-origin'), null)
+  assert.equal(response.headers.get('referrer-policy'), html ? 'same-origin' : 'no-referrer')
+  assert.equal(response.headers.get('x-frame-options'), 'DENY')
+  if (html) assert.match(response.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/i)
+}
+
+async function browserPost(
+  app: Hono,
+  session: BrowserSession,
+  fields: Record<string, string> | URLSearchParams,
+  origin = ORIGIN,
+): Promise<Response> {
+  return app.request('/oauth/authorize', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      cookie: session.cookie,
+      origin,
+    },
+    body: fields instanceof URLSearchParams ? fields : new URLSearchParams(fields),
+  })
+}
+
+function authorizationCode(response: Response): string {
+  assert.equal(response.status, 303)
+  assertPrivate(response)
+  const location = new URL(response.headers.get('location') ?? '')
+  assert.equal(`${location.origin}${location.pathname}`, CALLBACK)
+  assert.equal(location.searchParams.get('state'), STATE)
+  const code = location.searchParams.get('code')
+  assert.match(code ?? '', /^1f3d9_ac_[0-9a-f]{64}$/)
+  return code!
+}
+
+async function exchangeCode(app: Hono, code: string, patch: Record<string, string> = {}) {
+  return app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+      resource: RESOURCE,
+      code,
+      code_verifier: VERIFIER,
+      ...patch,
+    }),
+  })
+}
+
+async function readTokenPair(response: Response): Promise<TokenPair> {
+  assert.equal(response.status, 200)
+  assertPrivate(response)
+  const pair = await response.json() as TokenPair
+  assert.match(pair.access_token, /^1f3d9_at_[0-9a-f]{64}$/)
+  assert.match(pair.refresh_token, /^1f3d9_rt_[0-9a-f]{64}$/)
+  assert.equal(pair.token_type, 'Bearer')
+  assert.equal(pair.scope, 'city:resident')
+  return pair
+}
+
+async function authorizeExisting(app: Hono): Promise<{ code: string; session: BrowserSession }> {
+  const session = await begin(app)
+  const response = await browserPost(app, session, {
+    action: 'link',
+    csrf: session.csrf,
+    resident_key: EXISTING_KEY,
+  })
+  const responseBody = await response.clone().text()
+  const responseSurface = `${responseBody}\n${[...response.headers].flat().join('\n')}`
+  assert.doesNotMatch(responseSurface, new RegExp(EXISTING_KEY, 'i'))
+  return { code: authorizationCode(response), session }
+}
+
+async function initialPair(app: Hono): Promise<TokenPair> {
+  const { code } = await authorizeExisting(app)
+  return readTokenPair(await exchangeCode(app, code))
+}
+
+test('existing resident completes browser proof, PKCE exchange, resolver, replay rejection, and revocation', async () => {
+  const { app, memory } = fixture()
+  const { code } = await authorizeExisting(app)
+
+  assert.doesNotMatch(memory.safeState(), new RegExp(EXISTING_KEY, 'i'))
+  const pair = await readTokenPair(await exchangeCode(app, code))
+  assert.doesNotMatch(JSON.stringify(pair), new RegExp(EXISTING_KEY, 'i'))
+
+  const replay = await exchangeCode(app, code)
+  assert.equal(replay.status, 400)
+  assert.deepEqual(await replay.json(), { error: 'invalid_grant' })
+
+  const resident = await residentByOAuthAccessToken(pair.access_token, environment, memory.api)
+  assert.equal(resident?.id, 49)
+  assert.equal(resident?.handle, 'chatty')
+  assert.doesNotMatch(JSON.stringify(resident), /1f3d9_(?:sk|at|rt|ac)_/i)
+
+  const revoked = await app.request('/oauth/revoke', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token: pair.refresh_token, client_id: CLIENT_ID }),
+  })
+  assert.equal(revoked.status, 200)
+  assertPrivate(revoked)
+  assert.equal(await residentByOAuthAccessToken(pair.access_token, environment, memory.api), null)
+})
+
+test('a redeemed access token reaches city actions only through the hosted connector', async () => {
+  const { app, memory } = fixture()
+  app.get('/api/me', async c => {
+    const resident = await auth(c)
+    return resident ? c.json({ handle: resident.handle }) : c.json({ error: 'sign in required' }, 401)
+  })
+  app.post('/mcp', c => mcp(c, app))
+  app.post('/mcp/connect', c => mcp(c, app, { hostedChat: true }))
+
+  const previousFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+  process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+  setOAuthResidentResolver(token => residentByOAuthAccessToken(token, environment, memory.api))
+
+  try {
+    const pair = await initialPair(app)
+    const headers = { authorization: `Bearer ${pair.access_token}` }
+
+    const rawApi = await app.request('/api/me', {
+      headers: { ...headers, 'x-1f3d9-internal-connector': 'true' },
+    })
+    assert.equal(rawApi.status, 401)
+
+    const call = (path: '/mcp' | '/mcp/connect') => app.request(path, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'me', arguments: {} },
+      }),
+    })
+
+    const legacy = await call('/mcp')
+    assert.equal(legacy.status, 200)
+    const legacyPayload = await legacy.json() as { result: { isError: boolean } }
+    assert.equal(legacyPayload.result.isError, true)
+
+    const hosted = await call('/mcp/connect')
+    assert.equal(hosted.status, 200)
+    const hostedPayload = await hosted.json() as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+    assert.equal(hostedPayload.result.isError, false)
+    assert.match(hostedPayload.result.content[0]?.text ?? '', /chatty/)
+  } finally {
+    setOAuthResidentResolver(null)
+    if (previousFlag === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousFlag
+  }
+})
+
+test('new resident sees its root key once, must confirm saved=yes, then receives only OAuth credentials', async () => {
+  const { app, memory } = fixture()
+  const session = await begin(app)
+  const created = await browserPost(app, session, {
+    action: 'register',
+    csrf: session.csrf,
+    handle: 'goldfish-agent',
+    model: 'hosted-chat',
+  })
+  assert.equal(created.status, 200)
+  assertPrivate(created, true)
+  const privatePage = await created.text()
+  const rootKey = privatePage.match(/<code>(1f3d9_sk_[0-9a-f]{48})<\/code>/)?.[1]
+  assert.ok(rootKey)
+  assert.match(privatePage, /name="saved"[^>]*value="yes"/i)
+  assert.match(privatePage, /has not been created yet/i)
+  assert.match(privatePage, /Cancel without creating a resident/i)
+  assert.doesNotMatch(memory.safeState(), new RegExp(rootKey, 'i'))
+  const pendingState = JSON.parse(memory.safeState()) as {
+    residents: Resident[]
+    residentSecretHashes: [string, number][]
+    events: unknown[]
+  }
+  assert.deepEqual(
+    pendingState.residents.map(resident => resident.id),
+    [49],
+    'a new resident must not exist before the one-time key is confirmed saved',
+  )
+  assert.equal(
+    pendingState.residentSecretHashes.length,
+    1,
+    'the pending key hash must not be attached to a resident before confirmation',
+  )
+  assert.equal(pendingState.events.length, 0, 'registration history starts only after confirmation')
+
+  const repeatedRegistration = await browserPost(app, session, {
+    action: 'register',
+    csrf: session.csrf,
+    handle: 'goldfish-agent-two',
+    model: 'hosted-chat',
+  })
+  assert.equal(repeatedRegistration.status, 403)
+  assert.doesNotMatch(await repeatedRegistration.text(), /1f3d9_sk_[0-9a-f]{48}/i)
+
+  const missingConfirmation = await browserPost(app, session, {
+    action: 'confirm',
+    csrf: session.csrf,
+  })
+  assert.equal(missingConfirmation.status, 403)
+  assert.equal(missingConfirmation.headers.get('location'), null)
+
+  const confirmed = await browserPost(app, session, {
+    action: 'confirm',
+    csrf: session.csrf,
+    saved: 'yes',
+  })
+  const code = authorizationCode(confirmed)
+  const redirectSurface = `${confirmed.headers.get('location')}\n${await confirmed.clone().text()}`
+  assert.doesNotMatch(redirectSurface, new RegExp(rootKey, 'i'))
+
+  const pair = await readTokenPair(await exchangeCode(app, code))
+  assert.doesNotMatch(JSON.stringify(pair), new RegExp(rootKey, 'i'))
+  const resident = await residentByOAuthAccessToken(pair.access_token, environment, memory.api)
+  assert.equal(resident?.handle, 'goldfish-agent')
+  assert.doesNotMatch(JSON.stringify(resident), new RegExp(rootKey, 'i'))
+  assert.doesNotMatch(memory.safeState(), new RegExp(rootKey, 'i'))
+  const confirmedState = JSON.parse(memory.safeState()) as { events: { actor: string }[] }
+  assert.deepEqual(confirmedState.events.map(event => event.actor), ['goldfish-agent'])
+})
+
+test('cancelling or abandoning key confirmation creates no resident, event, or handle claim', async () => {
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'cancelled-agent', model: 'hosted-chat',
+    })
+    assert.equal(staged.status, 200)
+
+    const cancelled = await browserPost(app, session, {
+      action: 'cancel', csrf: session.csrf,
+    })
+    assert.equal(cancelled.status, 303)
+    const state = JSON.parse(memory.safeState()) as {
+      residents: Resident[]
+      residentSecretHashes: [string, number][]
+      events: unknown[]
+    }
+    assert.deepEqual(state.residents.map(resident => resident.id), [49])
+    assert.equal(state.residentSecretHashes.length, 1)
+    assert.equal(state.events.length, 0)
+  }
+
+  {
+    const { app, memory } = fixture()
+    const abandoned = await begin(app)
+    const staged = await browserPost(app, abandoned, {
+      action: 'register', csrf: abandoned.csrf, handle: 'abandoned-agent', model: 'hosted-chat',
+    })
+    assert.equal(staged.status, 200)
+    memory.expireBrowserSession(abandoned.rawSession)
+
+    const state = JSON.parse(memory.safeState()) as { residents: Resident[]; events: unknown[] }
+    assert.deepEqual(state.residents.map(resident => resident.id), [49])
+    assert.equal(state.events.length, 0)
+
+    const retry = await begin(app)
+    const cleanedState = JSON.parse(memory.safeState()) as {
+      requests: { used: boolean; new_handle: string | null; pendingSecretHash: string | null }[]
+    }
+    assert.ok(cleanedState.requests.some(request =>
+      request.used && request.new_handle === null && request.pendingSecretHash === null))
+    const reusedHandle = await browserPost(app, retry, {
+      action: 'register', csrf: retry.csrf, handle: 'abandoned-agent', model: 'hosted-chat',
+    })
+    assert.equal(reusedHandle.status, 200, 'an abandoned pending name must remain available')
+  }
+})
+
+test('same-name pending registrations stay harmless and only one confirmation can create the resident', async () => {
+  const { app, memory } = fixture()
+  const first = await begin(app)
+  const second = await begin(app)
+  const stage = (session: BrowserSession) => browserPost(app, session, {
+    action: 'register', csrf: session.csrf, handle: 'same-pending-name', model: 'hosted-chat',
+  })
+
+  const firstPage = await stage(first)
+  const secondPage = await stage(second)
+  assert.equal(firstPage.status, 200)
+  assert.equal(secondPage.status, 200)
+  const firstKey = (await firstPage.text()).match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+  const secondKey = (await secondPage.text()).match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+  assert.ok(firstKey)
+  assert.ok(secondKey)
+  assert.notEqual(firstKey, secondKey)
+
+  // A separate app instance proves confirmation needs only the shared hashed store,
+  // not process memory or another copy of the displayed key.
+  const otherInstance = appFor(memory)
+  const winner = await browserPost(otherInstance, first, {
+    action: 'confirm', csrf: first.csrf, saved: 'yes',
+  })
+  assert.equal(winner.status, 303)
+
+  const beforeLoser = JSON.parse(memory.safeState()) as { nextResidentId: number }
+  const loser = await browserPost(app, second, {
+    action: 'confirm', csrf: second.csrf, saved: 'yes',
+  })
+  assert.equal(loser.status, 403)
+  assert.equal(loser.headers.get('location'), null)
+  const loserSurface = `${await loser.text()}\n${[...loser.headers].flat().join('\n')}`
+  assert.doesNotMatch(loserSurface, new RegExp(`${firstKey}|${secondKey}`, 'i'))
+
+  const cancelledLoser = await browserPost(app, second, {
+    action: 'cancel', csrf: second.csrf,
+  })
+  assert.equal(cancelledLoser.status, 303)
+
+  const state = JSON.parse(memory.safeState()) as {
+    residents: Resident[]
+    residentSecretHashes: [string, number][]
+    events: { actor: string }[]
+    nextResidentId: number
+    duplicateHandleRollbacks: number
+  }
+  assert.equal(state.residents.filter(resident => resident.handle === 'same-pending-name').length, 1)
+  assert.equal(state.events.filter(event => event.actor === 'same-pending-name').length, 1)
+  assert.equal(state.residentSecretHashes.length, 2)
+  assert.equal(state.nextResidentId, beforeLoser.nextResidentId)
+  assert.equal(state.duplicateHandleRollbacks, 1)
+  assert.doesNotMatch(memory.safeState(), new RegExp(`${firstKey}|${secondKey}`, 'i'))
+})
+
+test('refresh tokens rotate once; reuse revokes the whole token family', async () => {
+  const { app, memory } = fixture()
+  const first = await initialPair(app)
+  const rotate = () => app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: first.refresh_token,
+    }),
+  })
+
+  const second = await readTokenPair(await rotate())
+  assert.notEqual(second.access_token, first.access_token)
+  assert.notEqual(second.refresh_token, first.refresh_token)
+
+  const reuse = await rotate()
+  assert.equal(reuse.status, 400)
+  assert.deepEqual(await reuse.json(), { error: 'invalid_grant' })
+  assert.equal(await residentByOAuthAccessToken(first.access_token, environment, memory.api), null)
+  assert.equal(await residentByOAuthAccessToken(second.access_token, environment, memory.api), null)
+
+  const descendant = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: second.refresh_token,
+    }),
+  })
+  assert.equal(descendant.status, 400)
+  assert.deepEqual(await descendant.json(), { error: 'invalid_grant' })
+})
+
+test('authorization query rejects wrong return addresses, resources, duplicates, and unknown fields', async () => {
+  const { app } = fixture()
+  for (const patch of [
+    { redirect_uri: `${CALLBACK}/near-match` },
+    { resource: ORIGIN },
+  ]) {
+    const response = await app.request(authorizationUrl(patch))
+    assert.equal(response.status, 400)
+    assertPrivate(response, true)
+  }
+  const duplicate = await app.request(`${authorizationUrl()}&state=duplicate`)
+  assert.equal(duplicate.status, 400)
+  const unknown = await app.request(`${authorizationUrl()}&resident_key=forbidden`)
+  assert.equal(unknown.status, 400)
+})
+
+test('browser approval rejects wrong origin and CSRF without reflecting the resident key', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const wrongOrigin = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  }, 'https://evil.example')
+  assert.equal(wrongOrigin.status, 403)
+  assert.doesNotMatch(await wrongOrigin.text(), new RegExp(EXISTING_KEY, 'i'))
+  const wrongCsrf = await browserPost(app, session, {
+    action: 'link', csrf: 'wrong-csrf', resident_key: EXISTING_KEY,
+  })
+  assert.equal(wrongCsrf.status, 403)
+  assert.doesNotMatch(await wrongCsrf.text(), new RegExp(EXISTING_KEY, 'i'))
+})
+
+test('browser approval rejects unknown and duplicate fields instead of guessing intent', async () => {
+  {
+    const { app } = fixture()
+    const session = await begin(app)
+    const unexpected = await browserPost(app, session, {
+      action: 'link',
+      csrf: session.csrf,
+      resident_key: EXISTING_KEY,
+      access_token: 'unexpected-field',
+    })
+    assert.equal(unexpected.status, 403)
+    assert.equal(unexpected.headers.get('location'), null)
+  }
+
+  {
+    const { app } = fixture()
+    const session = await begin(app)
+    const duplicateFields = new URLSearchParams({
+      action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+    })
+    duplicateFields.append('csrf', session.csrf)
+    const duplicate = await browserPost(app, session, duplicateFields)
+    assert.equal(duplicate.status, 403)
+  }
+})
+
+test('token exchange rejects wrong verifier, resource, unknown fields, and duplicate parameters', async () => {
+  {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const wrongVerifier = await exchangeCode(app, code, { code_verifier: 'x'.repeat(43) })
+    assert.equal(wrongVerifier.status, 400)
+    assert.deepEqual(await wrongVerifier.json(), { error: 'invalid_grant' })
+    const wrongResource = await exchangeCode(app, code, { resource: ORIGIN })
+    assert.equal(wrongResource.status, 400)
+  }
+
+  {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const unknown = await exchangeCode(app, code, { unexpected: 'field' })
+    assert.equal(unknown.status, 400)
+    assert.deepEqual(await unknown.json(), { error: 'invalid_request' })
+  }
+
+  {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const fields = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: CLIENT_ID,
+      redirect_uri: CALLBACK,
+      resource: RESOURCE,
+      code,
+      code_verifier: VERIFIER,
+    })
+    fields.append('code', code)
+    const duplicate = await app.request('/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: fields,
+    })
+    assert.equal(duplicate.status, 400)
+    assert.deepEqual(await duplicate.json(), { error: 'invalid_request' })
+  }
+})
+
+test('cancel atomically consumes the request before returning access_denied', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const cancelled = await browserPost(app, session, {
+    action: 'cancel',
+    csrf: session.csrf,
+  })
+  assert.equal(cancelled.status, 303)
+  const location = new URL(cancelled.headers.get('location') ?? '')
+  assert.equal(`${location.origin}${location.pathname}`, CALLBACK)
+  assert.equal(location.searchParams.get('error'), 'access_denied')
+  assert.equal(location.searchParams.get('state'), STATE)
+  assert.equal(location.searchParams.get('code'), null)
+  assert.doesNotMatch(location.href, /1f3d9_(?:sk|at|rt|ac)_/i)
+
+  const replay = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  })
+  assert.equal(replay.status, 403)
+  assert.equal(replay.headers.get('location'), null)
+})
+
+test('expired browser sessions and authorization codes cannot be used', async () => {
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    memory.expireBrowserSession(session.rawSession)
+    const expired = await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+    })
+    assert.equal(expired.status, 403)
+    assert.equal(expired.headers.get('location'), null)
+    assert.doesNotMatch(await expired.text(), new RegExp(EXISTING_KEY, 'i'))
+  }
+
+  {
+    const { app, memory } = fixture()
+    const { code } = await authorizeExisting(app)
+    memory.expireAuthorizationCode(code)
+    const expired = await exchangeCode(app, code)
+    assert.equal(expired.status, 400)
+    assert.deepEqual(await expired.json(), { error: 'invalid_grant' })
+  }
+})
+
+test('PKCE fixture is the RFC S256 vector used by the browser-flow tests', () => {
+  const derived = createHash('sha256').update(VERIFIER, 'ascii').digest('base64url')
+  assert.equal(derived, CHALLENGE)
+})

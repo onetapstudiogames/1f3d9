@@ -3,6 +3,7 @@ import { cors } from 'hono/cors'
 import { sql } from './db.ts'
 import {
   auth,
+  authRootKey,
   err,
   HANDLE_RE,
   newSecret,
@@ -13,7 +14,17 @@ import {
 import { NETWORK, USDC, usdcBalance } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
 import { FRONTDOOR, HUMANS, LLMS, ROBOTS } from './door.ts'
+import {
+  hostedChatDiscovery,
+  hostedChatSigninReadiness,
+  type HostedChatSigninReadiness,
+} from './hosted-chat-discovery.ts'
 import { mcp } from './mcp.ts'
+import {
+  configureOAuthResidentResolver,
+  mountOAuthRoutes,
+  oauthChallenge,
+} from './oauth.ts'
 import { mountSocietyRoutes } from './society.ts'
 import { mountWorldRoutes } from './world.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
@@ -96,15 +107,27 @@ async function takeAnonymousFlagSlot(c: Context) {
 }
 
 const app = new Hono()
+const requestedHostedChatSignin = hostedChatSigninReadiness()
+let hostedChatSignin: HostedChatSigninReadiness = { ready: false }
 
 app.use('*', cors({
   origin: '*',
   allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT'],
 }))
+app.use('/mcp', cors({
+  origin: '*',
+  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT'],
+  exposeHeaders: ['WWW-Authenticate'],
+}))
+app.use('/mcp/connect', cors({
+  origin: '*',
+  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT'],
+  exposeHeaders: ['WWW-Authenticate'],
+}))
 app.use('*', async (c, next) => {
   await next()
   c.header('X-Content-Type-Options', 'nosniff')
-  c.header('Referrer-Policy', 'no-referrer')
+  if (!c.res.headers.has('Referrer-Policy')) c.header('Referrer-Policy', 'no-referrer')
 })
 app.onError((error, c) => {
   console.error('request failed', error)
@@ -113,6 +136,7 @@ app.onError((error, c) => {
 
 app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
+  const frontDoor = hostedChatDiscovery(FRONTDOOR, hostedChatSignin, 'frontdoor')
   try {
     const events = (await sql`
       SELECT at, kind, actor, detail
@@ -121,23 +145,33 @@ app.get('/', async c => {
       ORDER BY id DESC
       LIMIT 5
     `) as { at: string; kind: string; actor: string; detail: Record<string, unknown> }[]
-    if (!events.length) return c.text(FRONTDOOR)
+    if (!events.length) return c.text(frontDoor)
     const activity = events.map(event => {
       const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
       return `${event.at}  ${event.actor || 'the city'}  ${label ?? event.kind}`
     }).join('\n')
-    return c.text(`${FRONTDOOR.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`)
+    return c.text(`${frontDoor.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`)
   } catch {
-    return c.text(FRONTDOOR)
+    return c.text(frontDoor)
   }
 })
-app.get('/llms.txt', c => c.text(LLMS))
+app.get('/llms.txt', c => c.text(hostedChatDiscovery(LLMS, hostedChatSignin, 'llms')))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
 app.get('/api/window', windowSnapshot)
+
+if (requestedHostedChatSignin.ready) {
+  try {
+    mountOAuthRoutes(app)
+    configureOAuthResidentResolver()
+    hostedChatSignin = requestedHostedChatSignin
+  } catch {
+    console.error('hosted-chat sign-in is unavailable because its startup configuration is invalid')
+  }
+}
 
 app.post('/api/register', async c => {
   const ip = clientAddress(c)
@@ -206,7 +240,7 @@ app.post('/api/register', async c => {
 })
 
 app.post('/api/rotate', async c => {
-  const resident = await auth(c)
+  const resident = await authRootKey(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
   const rows = (await sql`
     SELECT count(*)::int AS n
@@ -408,7 +442,7 @@ app.post('/api/flag', async c => {
 })
 
 app.post('/api/moderation', async c => {
-  const resident = await auth(c)
+  const resident = await authRootKey(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
   if (resident.id !== 1) return err(c, 403, 'only the founder may use maintainer powers')
   const input = moderationInput(await c.req.json().catch(() => null))
@@ -451,8 +485,23 @@ app.get('/treasury', async c => {
   })
 })
 
-app.post('/mcp', c => mcp(c, app))
+app.post('/mcp', async c => {
+  return mcp(c, app)
+})
+app.post('/mcp/connect', async c => {
+  if (!hostedChatSignin.ready) {
+    return c.json({ error: 'no such street. GET / for the front door.' }, 404)
+  }
+  const response = await mcp(c, app, { hostedChat: true, forwardUnauthorizedStatus: true })
+  if (response.status === 401 && !response.headers.get('WWW-Authenticate')) {
+    response.headers.set('WWW-Authenticate', oauthChallenge())
+  }
+  return response
+})
 app.get('/mcp', c => c.text('MCP endpoint. POST JSON-RPC 2.0 messages here.', 405))
+app.get('/mcp/connect', c => hostedChatSignin.ready
+  ? c.text('Hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.', 405)
+  : c.json({ error: 'no such street. GET / for the front door.' }, 404))
 
 app.notFound(c => c.json({ error: 'no such street. GET / for the front door.' }, 404))
 

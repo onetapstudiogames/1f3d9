@@ -13,7 +13,11 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "test:coverage": "node --test --experimental-strip-types --experimental-test-coverage test/*.test.ts",
-    "migrate": "node --experimental-strip-types scripts/migrate.ts"
+    "test:e2e": "playwright test",
+    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts",
+    "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
+    "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview",
+    "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",
@@ -21,7 +25,10 @@
     "hono": "^4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24",
+    "@types/pg": "^8.21.0",
+    "pg": "^8.23.0",
     "typescript": "^5"
   }
 }

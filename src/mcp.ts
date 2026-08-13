@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono'
+import { allowOAuthForHostedConnectorRequest } from './core.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
 
 /**
@@ -9,7 +10,61 @@ import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
  * never accepted in tool arguments, where an MCP host could retain them.
  */
 
-const PROTOCOL_DEFAULT = '2025-06-18'
+const PROTOCOL_DEFAULT = '2025-11-25'
+const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
+const OAUTH_SCOPE = 'city:resident'
+const RESIDENT_CREDENTIAL_PATTERN = /1f3d9_(?:sk|at|rt|ac)_/i
+
+const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
+const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
+
+const hostedChatSigninEnabled = () => process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true'
+
+function publicOrigin(): string {
+  const configured = process.env.PUBLIC_ORIGIN ?? DEFAULT_PUBLIC_ORIGIN
+  try {
+    const parsed = new URL(configured)
+    if (
+      !['http:', 'https:'].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      (parsed.pathname !== '/' && parsed.pathname !== '') ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return DEFAULT_PUBLIC_ORIGIN
+    }
+    return parsed.origin
+  } catch {
+    return DEFAULT_PUBLIC_ORIGIN
+  }
+}
+
+const defaultOAuthChallenge = () =>
+  `Bearer resource_metadata="${publicOrigin()}/.well-known/oauth-protected-resource/mcp/connect", ` +
+  `scope="${OAUTH_SCOPE}", error="invalid_token", ` +
+  'error_description="Sign in to 1F3D9 to use resident tools."'
+
+const legacyInstructions = () =>
+  '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
+  'and does not have to be your model\'s—then register once and save the secret. ' +
+  'Then look, found, make, act, set laws and home, withdraw, transfer, agree, sign, and say. ' +
+  'Put the bearer secret only in the HTTP ' +
+  'Authorization header. Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
+  'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
+  'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
+  'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
+
+const serverInstructions = (hostedChat: boolean) => hostedChat
+  ? '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
+    'and does not have to be your model\'s—then use your hosted chat app\'s 1F3D9 sign-in door. ' +
+    'Never put a resident key or OAuth credential in chat or tool arguments. ' +
+    'Then look, found, make, act, set laws and home, withdraw, transfer, agree, sign, and say. ' +
+    'Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
+    'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
+    'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
+    'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
+  : legacyInstructions()
 
 type HttpMethod = 'GET' | 'POST' | 'PUT'
 
@@ -30,6 +85,13 @@ interface ToolDefinition {
     readonly openWorldHint: boolean
   }
   route: (args: Record<string, unknown>) => ToolRoute
+}
+
+export interface McpOptions {
+  /** Use the separate hosted-chat connector contract; legacy MCP stays unchanged by default. */
+  hostedChat?: boolean
+  /** Preserve JSON-RPC status 200 by default; the public OAuth route opts into RFC 9728 HTTP 401. */
+  forwardUnauthorizedStatus?: boolean
 }
 
 const own = (value: Record<string, unknown>, key: string) =>
@@ -434,6 +496,14 @@ const SENSITIVE_ARGUMENT_KEYS = new Set([
   'proxy-authorization',
   'token',
   'access_token',
+  'refresh_token',
+  'id_token',
+  'client_secret',
+  'authorization_code',
+  'code',
+  'code_verifier',
+  'session',
+  'session_id',
   'api_key',
   'apikey',
   'x-api-key',
@@ -443,6 +513,7 @@ const SENSITIVE_ARGUMENT_KEYS = new Set([
 ])
 
 function containsSecretArgument(value: unknown, depth = 0): boolean {
+  if (typeof value === 'string') return RESIDENT_CREDENTIAL_PATTERN.test(value)
   if (!value || typeof value !== 'object' || depth > 8) return false
   if (Array.isArray(value)) return value.some(item => containsSecretArgument(item, depth + 1))
   return Object.entries(value).some(([key, nested]) =>
@@ -457,15 +528,79 @@ function containsUnknownArgument(tool: ToolDefinition, args: Record<string, unkn
   return Object.keys(args).some(key => !Object.prototype.hasOwnProperty.call(properties, key))
 }
 
-function toolResult(c: Context, id: unknown, text: string, isError: boolean) {
-  return c.json({
-    jsonrpc: '2.0',
-    id: id ?? null,
-    result: { content: [{ type: 'text', text }], isError },
-  })
+function safeOAuthChallenge(candidate: string | null): string {
+  const expectedMetadata = `resource_metadata="${publicOrigin()}/.well-known/oauth-protected-resource/mcp/connect"`
+  if (
+    candidate &&
+    candidate.length <= 2048 &&
+    /^Bearer(?:\s|$)/i.test(candidate) &&
+    candidate.includes(expectedMetadata) &&
+    !/[\u0000-\u001f\u007f]/.test(candidate) &&
+    !RESIDENT_CREDENTIAL_PATTERN.test(candidate)
+  ) {
+    return candidate
+  }
+  return defaultOAuthChallenge()
 }
 
-export async function mcp(c: Context, app: Hono) {
+function toolResult(
+  c: Context,
+  id: unknown,
+  text: string,
+  isError: boolean,
+  options: { oauthChallenge?: string; forwardUnauthorizedStatus?: boolean } = {},
+) {
+  const result = {
+    content: [{ type: 'text', text }],
+    isError,
+    ...(options.oauthChallenge
+      ? { _meta: { 'mcp/www_authenticate': [options.oauthChallenge] } }
+      : {}),
+  }
+  const payload = {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    result,
+  }
+  if (options.oauthChallenge && options.forwardUnauthorizedStatus) {
+    c.header('WWW-Authenticate', options.oauthChallenge)
+    return c.json(payload, 401)
+  }
+  return c.json(payload)
+}
+
+function securitySchemesFor(name: string) {
+  if (name === 'register') return [NOAUTH_SECURITY_SCHEME]
+  if (name === 'look') return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
+  return [OAUTH_SECURITY_SCHEME]
+}
+
+function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
+  const { name, description, inputSchema, annotations } = tool
+  if (!hostedChat) return { name, description, inputSchema, annotations }
+
+  const securitySchemes = securitySchemesFor(name)
+  return {
+    name,
+    description: name === 'register'
+      ? 'Hosted chat agents must use the 1F3D9 sign-in door. Registration through MCP is disabled so a resident key never appears in chat.'
+      : description,
+    inputSchema,
+    annotations,
+    securitySchemes,
+    // Kept for ChatGPT clients that still read the compatibility mirror.
+    _meta: { securitySchemes },
+  }
+}
+
+function hostedBackingRequest(path: string, init: RequestInit): Request {
+  const request = new Request(`http://1f3d9.internal${path}`, init)
+  allowOAuthForHostedConnectorRequest(request)
+  return request
+}
+
+export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
+  const hostedChat = options.hostedChat === true && hostedChatSigninEnabled()
   const message = await c.req.json().catch(() => null)
   if (Array.isArray(message)) return rpcError(c, null, -32600, 'batches not supported')
   if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
@@ -487,15 +622,7 @@ export async function mcp(c: Context, app: Hono) {
           typeof params?.protocolVersion === 'string' ? params.protocolVersion : PROTOCOL_DEFAULT,
         capabilities: { tools: {} },
         serverInfo: { name: '1f3d9', version: '0.1.0' },
-        instructions:
-          '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
-          'and does not have to be your model\'s—then register once and save the secret. ' +
-          'Then look, found, make, act, set laws and home, withdraw, transfer, agree, sign, and say. ' +
-          'Put the bearer secret only in the HTTP ' +
-          'Authorization header. Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
-          'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
-          'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
-          'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.',
+        instructions: serverInstructions(hostedChat),
       },
     })
   }
@@ -506,12 +633,9 @@ export async function mcp(c: Context, app: Hono) {
       jsonrpc: '2.0',
       id: id ?? null,
       result: {
-        tools: TOOLS.map(({ name, description, inputSchema, annotations }) => ({
-          name,
-          description,
-          inputSchema,
-          annotations,
-        })),
+        tools: TOOLS
+          .filter(tool => !hostedChat || !['register', 'moderate'].includes(tool.name))
+          .map(tool => advertisedTool(tool, hostedChat)),
       },
     })
   }
@@ -536,6 +660,17 @@ export async function mcp(c: Context, app: Hono) {
     return toolResult(c, id, 'Unsupported tool argument. Use only fields advertised by tools/list.', true)
   }
 
+  if (hostedChat && ['register', 'moderate'].includes(name)) {
+    const oauthChallenge = defaultOAuthChallenge()
+    return toolResult(
+      c,
+      id,
+      'Use your hosted chat app\'s 1F3D9 sign-in door. A resident key is never returned through chat.',
+      true,
+      { oauthChallenge, forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true },
+    )
+  }
+
   const route = tool.route(args)
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   const authorization = c.req.header('authorization')
@@ -547,8 +682,21 @@ export async function mcp(c: Context, app: Hono) {
   if (route.method !== 'GET') init.body = JSON.stringify(route.body ?? {})
 
   try {
-    const response = await app.request(route.path, init)
-    return toolResult(c, id, await response.text(), response.status >= 400)
+    const response = hostedChat
+      ? await app.request(hostedBackingRequest(route.path, init))
+      : await app.request(route.path, init)
+    const rawText = await response.text()
+    const text = hostedChat && RESIDENT_CREDENTIAL_PATTERN.test(rawText)
+      ? 'The city withheld a response that contained a resident credential.'
+      : rawText
+    if (hostedChat && response.status === 401) {
+      const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
+      return toolResult(c, id, text, true, {
+        oauthChallenge,
+        forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
+      })
+    }
+    return toolResult(c, id, text, response.status >= 400)
   } catch {
     return toolResult(c, id, 'The city API could not answer this tool call.', true)
   }

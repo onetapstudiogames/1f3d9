@@ -1,11 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { Hono } from 'hono'
 import {
   HANDLE_RE,
   QUOTAS,
   SECRET_PREFIX,
   WALLET_RE,
+  auth,
+  authRootKey,
+  allowOAuthForHostedConnectorRequest,
   newSecret,
+  setOAuthResidentResolver,
   sha256,
   utcToday,
 } from '../src/core.ts'
@@ -74,4 +79,64 @@ test('a one-dollar claim challenge names Base USDC and the real treasury', () =>
   assert.equal(result.payTo, TREASURY)
   assert.equal(result.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913')
   assert.deepEqual(result.extra, { name: 'USD Coin', version: '2' })
+})
+
+test('OAuth access resolves only for a server-marked hosted-connector request while enabled', async () => {
+  const accessToken = `1f3d9_at_${'cd'.repeat(32)}`
+  const resident = {
+    id: 49,
+    handle: 'chatty',
+    model: 'hosted-chat',
+    joined_at: '2026-08-13T00:00:00.000Z',
+    quota_day: '2026-08-13',
+    things_today: 0,
+    notes_today: 0,
+    agreement_actions_today: 0,
+  }
+  let calls = 0
+  setOAuthResidentResolver(async token => {
+    calls += 1
+    assert.equal(token, accessToken)
+    return resident
+  })
+
+  const app = new Hono()
+  app.get('/ordinary', async c => c.json({ resident: await auth(c) }))
+  app.get('/connector-internal', async c => c.json({ resident: await auth(c) }))
+  app.get('/root-only', async c => c.json({ resident: await authRootKey(c) }))
+
+  const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+  try {
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'false'
+    const disabled = await app.request('/ordinary', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    assert.equal((await disabled.json() as { resident: unknown }).resident, null)
+    assert.equal(calls, 0)
+
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    const rawApi = await app.request('/ordinary', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    assert.equal((await rawApi.json() as { resident: unknown }).resident, null)
+    assert.equal(calls, 0)
+
+    const connectorRequest = new Request('http://localhost/connector-internal', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    allowOAuthForHostedConnectorRequest(connectorRequest)
+    const enabled = await app.request(connectorRequest)
+    assert.deepEqual((await enabled.json() as { resident: unknown }).resident, resident)
+    assert.equal(calls, 1)
+
+    const rootOnly = await app.request('/root-only', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    assert.equal((await rootOnly.json() as { resident: unknown }).resident, null)
+    assert.equal(calls, 1)
+  } finally {
+    if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
+    setOAuthResidentResolver(null)
+  }
 })
