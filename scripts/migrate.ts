@@ -6,13 +6,17 @@ import { neon } from '@neondatabase/serverless'
 
 type SqlMode = 'normal' | 'single-quote' | 'double-quote' | 'line-comment' | 'block-comment' | 'dollar-quote'
 type MigrationTarget = 'local' | 'preview' | 'production'
+type MigrationFile =
+  | 'db/schema.sql'
+  | 'db/migrations/20260813_hosted_chat_signin.sql'
+  | 'db/migrations/20260814_agreement_accession.sql'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 
 export type MigrationRun = Readonly<{
   target: MigrationTarget
   databaseUrl: string
-  migrationFile: 'db/schema.sql' | 'db/migrations/20260813_hosted_chat_signin.sql'
+  migrationFiles: readonly MigrationFile[]
   preview?: Readonly<{
     projectId: string
     branchId: string
@@ -99,7 +103,7 @@ export function resolveMigrationRun(
           'LOCAL_DATABASE_URL_UNPOOLED',
         ),
       ),
-      migrationFile: 'db/schema.sql',
+      migrationFiles: ['db/schema.sql'],
     }
   }
 
@@ -128,7 +132,10 @@ export function resolveMigrationRun(
         environment.PREVIEW_DATABASE_URL_UNPOOLED,
         'PREVIEW_DATABASE_URL_UNPOOLED',
       ),
-      migrationFile: 'db/migrations/20260813_hosted_chat_signin.sql',
+      migrationFiles: [
+        'db/migrations/20260813_hosted_chat_signin.sql',
+        'db/migrations/20260814_agreement_accession.sql',
+      ],
       preview: { projectId, branchId, productionBranchId },
     }
   }
@@ -150,7 +157,10 @@ export function resolveMigrationRun(
       environment.PRODUCTION_DATABASE_URL_UNPOOLED,
       'PRODUCTION_DATABASE_URL_UNPOOLED',
     ),
-    migrationFile: 'db/migrations/20260813_hosted_chat_signin.sql',
+    migrationFiles: [
+      'db/migrations/20260813_hosted_chat_signin.sql',
+      'db/migrations/20260814_agreement_accession.sql',
+    ],
     snapshot: {
       projectId: requiredIdentifier(environment.NEON_PROJECT_ID, 'NEON_PROJECT_ID'),
       branchId: requiredIdentifier(environment.NEON_PRODUCTION_BRANCH_ID, 'NEON_PRODUCTION_BRANCH_ID'),
@@ -488,9 +498,13 @@ async function main(): Promise<void> {
     console.log(`verified production snapshot ${snapshotId}`)
   }
 
-  const ddl = readFileSync(new URL(`../${run.migrationFile}`, import.meta.url), 'utf8')
+  const ddl = run.migrationFiles
+    .map(migrationFile => readFileSync(new URL(`../${migrationFile}`, import.meta.url), 'utf8'))
+    .join('\n\n')
   const statementCount = await applyMigration(run.databaseUrl, ddl)
-  console.log(`applied ${statementCount} statements from ${run.migrationFile} to ${run.target}`)
+  console.log(
+    `applied ${statementCount} statements from ${run.migrationFiles.join(', ')} to ${run.target}`,
+  )
 }
 
 const entrypoint = process.argv[1]

@@ -27,8 +27,12 @@ const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { scripts: Record<string, string> }
 const fullSchema = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
-const releaseMigration = readFileSync(
+const oauthMigration = readFileSync(
   new URL('../db/migrations/20260813_hosted_chat_signin.sql', import.meta.url),
+  'utf8',
+)
+const agreementAccessionMigration = readFileSync(
+  new URL('../db/migrations/20260814_agreement_accession.sql', import.meta.url),
   'utf8',
 )
 
@@ -122,7 +126,10 @@ test('preview migration requires exact acknowledgement and named isolated Neon t
     branchId: 'branch-preview',
     productionBranchId: 'branch-production',
   })
-  assert.equal(run.migrationFile, 'db/migrations/20260813_hosted_chat_signin.sql')
+  assert.deepEqual(run.migrationFiles, [
+    'db/migrations/20260813_hosted_chat_signin.sql',
+    'db/migrations/20260814_agreement_accession.sql',
+  ])
 })
 
 test('preview database host must match its exact read-write Neon endpoint and not production', async () => {
@@ -398,7 +405,10 @@ test('production migration requires a real Neon snapshot configuration and exact
     branchId: 'branch-one',
     name: 'oauth-release-1',
   })
-  assert.equal(run.migrationFile, 'db/migrations/20260813_hosted_chat_signin.sql')
+  assert.deepEqual(run.migrationFiles, [
+    'db/migrations/20260813_hosted_chat_signin.sql',
+    'db/migrations/20260814_agreement_accession.sql',
+  ])
 })
 
 test('the full local schema can run only against an acknowledged loopback database', () => {
@@ -416,10 +426,10 @@ test('the full local schema can run only against an acknowledged loopback databa
     }),
     /CONFIRM_LOCAL_SCHEMA/,
   )
-  assert.equal(resolveMigrationRun(['--target', 'local'], {
+  assert.deepEqual(resolveMigrationRun(['--target', 'local'], {
     ...acknowledged,
     LOCAL_DATABASE_URL_UNPOOLED: 'postgres://role@127.0.0.1/db',
-  }).migrationFile, 'db/schema.sql')
+  }).migrationFiles, ['db/schema.sql'])
 })
 
 test('production snapshot must be created and confirmed before migration can proceed', async () => {
@@ -579,11 +589,11 @@ test('migration target must be named explicitly', () => {
   )
 })
 
-test('the reviewed release migration is additive and OAuth-only', () => {
-  const uncommented = releaseMigration.replace(/^\s*--.*$/gm, '')
+test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
+  const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
   assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
 
-  const statements = splitSqlStatements(releaseMigration)
+  const statements = splitSqlStatements(oauthMigration)
   assert.ok(statements.length > 0)
   for (const statement of statements) {
     const executable = statement.replace(/^\s*--.*$/gm, '').trim()
@@ -595,18 +605,50 @@ test('the reviewed release migration is additive and OAuth-only', () => {
   assert.doesNotMatch(fullSchema, /CREATE\s+TRIGGER\s+oauth_\w+_append_only/i)
 })
 
-test('fresh installs contain every reviewed OAuth migration statement', () => {
+test('the agreement-accession migration is additive, idempotent, and leaves old agreements closed', () => {
+  const uncommented = agreementAccessionMigration.replace(/^\s*--.*$/gm, '')
+  assert.doesNotMatch(uncommented, /^\s*(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/im)
+  assert.doesNotMatch(uncommented, /\bsealed\b/i)
+  assert.doesNotMatch(uncommented, /DROP\s+(?:TABLE|COLUMN|INDEX)\b/i)
+  assert.match(
+    uncommented,
+    /ALTER\s+TABLE\s+agreement_parties\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+named\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+TRUE/i,
+  )
+  assert.match(
+    uncommented,
+    /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+agreements_id_creator\s+ON\s+agreements\s*\(id,\s*created_by_id\)/i,
+  )
+  assert.match(
+    uncommented,
+    /FOREIGN\s+KEY\s*\(agreement_id,\s*opened_by_id\)\s+REFERENCES\s+agreements\s*\(id,\s*created_by_id\)\s+ON\s+DELETE\s+RESTRICT/i,
+  )
+  assert.match(
+    uncommented,
+    /DROP\s+TRIGGER\s+IF\s+EXISTS\s+agreement_accession_openings_append_only/i,
+  )
+  assert.match(
+    uncommented,
+    /CREATE\s+TRIGGER\s+agreement_accession_openings_append_only[\s\S]*EXECUTE\s+FUNCTION\s+deny_history_mutation\(\)/i,
+  )
+})
+
+test('fresh installs contain every reviewed release migration statement', () => {
   const normalize = (statement: string) => statement
     .replace(/^\s*--.*$/gm, '')
     .replace(/\s+/g, ' ')
     .trim()
 
   const freshInstallStatements = new Set(splitSqlStatements(fullSchema).map(normalize))
-  for (const statement of splitSqlStatements(releaseMigration)) {
-    assert.ok(
-      freshInstallStatements.has(normalize(statement)),
-      'db/schema.sql drifted from the reviewed hosted-chat migration',
-    )
+  for (const [migration, label] of [
+    [oauthMigration, 'hosted-chat'],
+    [agreementAccessionMigration, 'agreement-accession'],
+  ] as const) {
+    for (const statement of splitSqlStatements(migration)) {
+      assert.ok(
+        freshInstallStatements.has(normalize(statement)),
+        `db/schema.sql drifted from the reviewed ${label} migration`,
+      )
+    }
   }
 })
 

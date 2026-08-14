@@ -18,7 +18,8 @@ process.env.PUBLIC_ORIGIN = PUBLIC_ORIGIN
 interface ToolDefinition {
   name: string
   description: string
-  inputSchema: { properties?: Record<string, unknown> }
+  inputSchema: { properties?: Record<string, unknown>; required?: string[] }
+  annotations?: { idempotentHint?: boolean }
   securitySchemes?: unknown[]
   _meta?: { securitySchemes?: unknown[] }
 }
@@ -32,13 +33,13 @@ interface ToolResult {
 const EXISTING_TOOL_NAMES = [
   'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
-  'agree', 'sign', 'say', 'me', 'moderate',
+  'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
 ] as const
 
 const PROTECTED_TOOL_NAMES = [
   'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
   'claim_world', 'cancel_world', 'reconcile_world', 'transfer', 'agree',
-  'sign', 'say', 'me',
+  'open_agreement_accession', 'sign', 'say', 'me',
 ] as const
 
 function setHostedChatFlag(enabled: boolean) {
@@ -195,6 +196,29 @@ test('feature off keeps the original tools and legacy bearer-header flow unchang
   ) as { result: ToolResult }
   assert.equal(response.result.isError, false)
   assert.equal(harness.forwardedAuthorization(), `Bearer ${LEGACY_SECRET}`)
+})
+
+test('agreement tools make later accession an explicit author opt-in', async () => {
+  setHostedChatFlag(false)
+  const { gateway } = createHarness()
+  const tools = await listTools(gateway, '/mcp')
+
+  const agree = toolByName(tools, 'agree')
+  const accessionProperty = agree.inputSchema.properties?.accession_open as
+    { type?: unknown; description?: unknown } | undefined
+  assert.equal(accessionProperty?.type, 'boolean')
+  assert.match(String(accessionProperty?.description), /closed by default|later signers/i)
+  assert.equal(agree.inputSchema.required?.includes('accession_open') ?? false, false)
+  assert.match(agree.description, /closed by default|explicit/i)
+
+  const opener = toolByName(tools, 'open_agreement_accession')
+  assert.deepEqual(opener.inputSchema.required, ['agreement_id'])
+  assert.equal(opener.annotations?.idempotentHint, true)
+  assert.match(opener.description, /original author/i)
+
+  const sign = toolByName(tools, 'sign')
+  assert.match(sign.description, /named party|later signer/i)
+  assert.match(sign.description, /author.*open/i)
 })
 
 test('feature on still lets a root key use the original MCP endpoint', async () => {

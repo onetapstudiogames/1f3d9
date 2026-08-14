@@ -49,7 +49,9 @@ interface FakeState {
   quota: { things: boolean; notes: boolean; agreements: boolean }
   agreementParties: string[]
   agreementAcceded: string[]
-  agreementSealed: boolean
+  agreementAccessionOpen: boolean
+  agreementCreatorId: number
+  agreementExists: boolean
   thingOwnerId: number
   thingWithdrawn: boolean
   targetThingOwnerId: number
@@ -100,7 +102,9 @@ const initialState = (): FakeState => ({
   quota: { things: true, notes: true, agreements: true },
   agreementParties: ['tiny-lantern', 'neighbor'],
   agreementAcceded: [],
-  agreementSealed: false,
+  agreementAccessionOpen: false,
+  agreementCreatorId: 7,
+  agreementExists: true,
   thingOwnerId: 7,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
@@ -538,8 +542,43 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return state.quota.things ? [thingRow()] : []
   if (q.includes('things_today = things_today + 1')) return state.quota.things ? [{ id: state.actorId }] : []
   if (q.includes('notes_today = notes_today + 1')) return state.quota.notes ? [{ id: state.actorId }] : []
-  if (q.includes('agreement_actions_today = agreement_actions_today + 1'))
-    return state.quota.agreements ? [{ id: state.actorId }] : []
+  if (q.includes('agreement_actions_today = agreement_actions_today + 1')) {
+    if (!state.quota.agreements) return []
+    if (q.includes('insert into agreement_signatures')) {
+      const acceded = !state.agreementParties.includes(state.actorHandle)
+      state = {
+        ...state,
+        agreementParties: acceded
+          ? [...state.agreementParties, state.actorHandle]
+          : state.agreementParties,
+        agreementAcceded: acceded
+          ? [...state.agreementAcceded, state.actorHandle]
+          : state.agreementAcceded,
+      }
+      return [{
+        agreement_id: 61,
+        handle: state.actorHandle,
+        acceded,
+        signed_at: '2026-08-11T00:00:00.000Z',
+      }]
+    }
+    if (q.includes('insert into agreement_accession_openings')) {
+      if (q.includes('insert into agreements')) {
+        const accessionOpen = params.some(value => value === true || value === 'true' || value === 't')
+        state = { ...state, agreementAccessionOpen: accessionOpen }
+        return [{
+          id: 61,
+          body: 'we keep the square open',
+          accession_open: accessionOpen,
+          created_at: '2026-08-11T00:00:00.000Z',
+        }]
+      }
+      if (state.agreementAccessionOpen) return []
+      state = { ...state, agreementAccessionOpen: true }
+      return [{ agreement_id: 61, opened_at: '2026-08-11T00:00:00.000Z' }]
+    }
+    return [{ id: state.actorId }]
+  }
 
   if (q.includes('with recursive place_tree')) return [placeRow(1, null), placeRow(2, 1)]
   if (q.includes('insert into places')) return [placeRow(3, 2)]
@@ -609,6 +648,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }]
   }
 
+  if (q.includes('insert into agreement_accession_openings')) return []
   if (q.includes('insert into agreements')) return [{
     id: 61, body: 'we keep the square open', created_by: state.actorHandle, status: 'open',
   }]
@@ -616,16 +656,28 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('insert into agreement_signatures')) return [{
     agreement_id: 61, handle: state.actorHandle, signed_at: '2026-08-11T00:00:00.000Z',
   }]
-  if (q.includes('from agreements')) return [{
+  if (q.includes('as created_by_me') && q.includes('from agreements')) return [{
     id: 61,
+    body: 'we keep the square open',
+    created_by_me: true,
+    acceded: false,
+    accession_open: state.agreementAccessionOpen,
+    signed: false,
+    created_at: '2026-08-11T00:00:00.000Z',
+  }]
+  if (q.includes('from agreements')) return state.agreementExists ? [{
+    id: 61,
+    created_by_id: state.agreementCreatorId,
     body: 'we keep the square open',
     parties: state.agreementParties,
     acceded: state.agreementAcceded,
     signatures: ['tiny-lantern'],
-    sealed: state.agreementSealed,
+    accession_open: state.agreementAccessionOpen,
+    opened_at: state.agreementAccessionOpen ? '2026-08-11T00:00:00.000Z' : null,
+    already_signed: false,
     open: true,
     created_at: '2026-08-11T00:00:00.000Z',
-  }]
+  }] : []
   if (q.includes('from agreement_parties')) return []
 
   if (q.includes('insert into transfer_offers')) {
@@ -1325,6 +1377,8 @@ test('agreements remain unenforced public text and each party signs for itself',
     body: JSON.stringify({ parties: ['tiny-lantern', 'neighbor'], body: 'we keep the square open' }),
   })
   assert.equal(created.status, 201)
+  const createdBody = await created.json() as { agreement: { accession_open: boolean } }
+  assert.equal(createdBody.agreement.accession_open, false)
 
   const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
   assert.equal(signed.status, 200)
@@ -1337,8 +1391,40 @@ test('agreements remain unenforced public text and each party signs for itself',
   assert.equal(body.agreements[0]?.open, true)
 })
 
-test('a later arrival accedes to an unsealed agreement by signing it', async () => {
-  reset({ scenario: 'agreements', agreementParties: ['neighbor'] })
+test('a new agreement may explicitly open itself to later accession', async () => {
+  reset({ scenario: 'agreements' })
+
+  const created = await app.request('/api/agreement', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      parties: ['tiny-lantern', 'neighbor'],
+      body: 'we keep the square open',
+      accession_open: true,
+    }),
+  })
+
+  assert.equal(created.status, 201, await created.clone().text())
+  const body = await created.json() as { agreement: { accession_open: boolean } }
+  assert.equal(body.agreement.accession_open, true)
+  assert.equal(inserted('agreement_accession_openings'), 1)
+})
+
+test('a later arrival cannot accede until the author explicitly opens the agreement', async () => {
+  reset({ scenario: 'agreements', agreementParties: ['neighbor'], agreementAccessionOpen: false })
+  setActor(9, 'latecomer')
+
+  const blocked = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(blocked.status, 403)
+  assert.equal(inserted('agreement_parties'), 0)
+  assert.equal(inserted('agreement_signatures'), 0)
+})
+
+test('a later arrival accedes and signs atomically after author opt-in', async () => {
+  reset({
+    scenario: 'agreements',
+    agreementParties: ['neighbor'],
+    agreementAccessionOpen: true,
+  })
   setActor(9, 'latecomer')
 
   const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
@@ -1363,14 +1449,49 @@ test('a named party signs without acceding', async () => {
   assert.equal(inserted('agreement_signatures'), 1)
 })
 
-test('a sealed agreement admits only the parties its author named', async () => {
-  reset({ scenario: 'agreements', agreementParties: ['neighbor'], agreementSealed: true })
-  setActor(9, 'latecomer')
+test('only the original author may permanently open an existing agreement to accession', async () => {
+  reset({ scenario: 'agreements', agreementCreatorId: 7, agreementAccessionOpen: false })
 
-  const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
-  assert.equal(signed.status, 403)
-  assert.equal(inserted('agreement_parties'), 0)
-  assert.equal(inserted('agreement_signatures'), 0)
+  setActor(8, 'neighbor')
+  const denied = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+  })
+  assert.equal(denied.status, 403)
+  assert.equal(inserted('agreement_accession_openings'), 0)
+
+  setActor(7, 'tiny-lantern')
+  const opened = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(opened.status, 201, await opened.clone().text())
+  const body = await opened.json() as { agreement: { id: number; accession_open: boolean } }
+  assert.deepEqual(body.agreement, {
+    id: 61,
+    accession_open: true,
+    opened_at: '2026-08-11T00:00:00.000Z',
+  })
+  assert.equal(inserted('agreement_accession_openings'), 1)
+
+  const retried = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(retried.status, 200, await retried.clone().text())
+  assert.equal(inserted('agreement_accession_openings'), 1)
+})
+
+test('opening accession distinguishes missing agreements and exhausted quota', async () => {
+  reset({ scenario: 'agreements', agreementExists: false })
+  const missing = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(missing.status, 404)
+
+  reset({ scenario: 'agreements', quota: { things: true, notes: true, agreements: false } })
+  const capped = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(capped.status, 429)
+  assert.equal(inserted('agreement_accession_openings'), 0)
 })
 
 test('the public record separates the parties an author named from those who acceded', async () => {
@@ -1383,11 +1504,11 @@ test('the public record separates the parties an author named from those who acc
   const record = await app.request('/api/agreements?party=tiny-lantern')
   assert.equal(record.status, 200)
   const body = await record.json() as {
-    agreements: { parties: string[]; acceded: string[]; sealed: boolean }[]
+    agreements: { parties: string[]; acceded: string[]; accession_open: boolean }[]
   }
   assert.deepEqual(body.agreements[0]?.parties, ['neighbor', 'tiny-lantern'])
   assert.deepEqual(body.agreements[0]?.acceded, ['tiny-lantern'])
-  assert.equal(body.agreements[0]?.sealed, false)
+  assert.equal(body.agreements[0]?.accession_open, false)
 })
 
 test('a gift moves immediately, while an open sale offer locks the asset', async () => {
@@ -1671,7 +1792,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
-    'agree', 'sign', 'say', 'me', 'moderate',
+    'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
   ])
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
   const transferTool = listBody.result.tools.find(tool => tool.name === 'transfer')
@@ -2249,14 +2370,33 @@ test('removed kind and trait records expose identity and history but no authored
   assert.equal(traits.traits[0]?.mechanical, false)
 })
 
-test('/api/me refreshes presence after observation resolves due effects', async () => {
-  reset({ scenario: 'me timer refresh', scheduledLabelAt: Date.now() - 1 })
+test('/api/me refreshes presence and includes agreements the resident authored without joining', async () => {
+  reset({
+    scenario: 'me timer refresh',
+    scheduledLabelAt: Date.now() - 1,
+    agreementParties: ['neighbor'],
+  })
 
   const response = await app.request('/api/me', { headers: authHeaders() })
   assert.equal(response.status, 200)
+  const body = await response.json() as { agreements: Array<Record<string, unknown>> }
+  assert.deepEqual(body.agreements[0], {
+    id: 61,
+    body: 'we keep the square open',
+    created_by_me: true,
+    acceded: false,
+    accession_open: false,
+    signed: false,
+    created_at: '2026-08-11T00:00:00.000Z',
+  })
 
   const presenceReads = sqlCalls().filter(call =>
     (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
       .includes('with first_owned as'))
   assert.equal(presenceReads.length, 2, JSON.stringify(sqlCalls().map(call => call.query)))
+  assert.ok(sqlCalls().some(call => {
+    const query = (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
+    return query.includes('from agreements a') &&
+      query.includes('a.created_by_id =') && query.includes('or p.resident_id is not null')
+  }))
 })

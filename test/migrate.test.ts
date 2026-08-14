@@ -247,3 +247,28 @@ test('cursor-paged public history has matching keyset indexes', () => {
   assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+notes_place_id\s+ON\s+notes\s*\(place_id,\s*id\s+DESC\)/i)
   assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+events_kind_id\s+ON\s+events\s*\(kind,\s*id\s+DESC\)/i)
 })
+
+test('agreement accession is an append-only opt-in by the original author', () => {
+  const agreements = schemaStatement('agreements')
+  const parties = schemaStatement('agreement_parties')
+  const openings = schemaStatement('agreement_accession_openings')
+
+  assert.doesNotMatch(agreements, /\bsealed\b/i)
+  assert.match(parties, /\bnamed\s+BOOLEAN\s+NOT NULL\s+DEFAULT\s+TRUE\b/i)
+  assert.match(openings, /agreement_id\s+INTEGER\s+PRIMARY KEY/i)
+  assert.match(openings, /opened_by_id\s+INTEGER\s+NOT NULL/i)
+  assert.match(openings, /opened_at\s+TIMESTAMPTZ\s+NOT NULL\s+DEFAULT\s+now\(\)/i)
+  assert.match(
+    openings,
+    /FOREIGN\s+KEY\s*\(agreement_id,\s*opened_by_id\)\s*REFERENCES\s+agreements\s*\(id,\s*created_by_id\)/i,
+  )
+  assert.match(
+    schemaDdl,
+    /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+agreements_id_creator\s+ON\s+agreements\s*\(id,\s*created_by_id\)/i,
+  )
+  assert.match(
+    schemaDdl,
+    /CREATE\s+TRIGGER\s+agreement_accession_openings_append_only\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+agreement_accession_openings/i,
+  )
+  assert.doesNotMatch(schemaDdl, /INSERT\s+INTO\s+agreement_accession_openings/i)
+})

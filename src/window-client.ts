@@ -20,6 +20,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   effect_resolved: 'resolved a stored effect',
   note: 'left a note',
   agreement: 'wrote an agreement',
+  agreement_accession: 'opened an agreement to later signers',
   agreement_sign: 'signed an agreement',
   transfer: 'gave away property',
   transfer_offer: 'offered property for sale',
@@ -198,11 +199,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const parties = safeHandles(raw.parties)
       const acceded = safeHandles(raw.acceded).filter(handle => parties.includes(handle))
       const signatures = safeHandles(raw.signatures).filter(handle => parties.includes(handle))
+      const partyCount = Math.max(safeCount(raw.party_count), parties.length)
       const createdAt = safeDate(raw.created_at)
       return id && body && createdBy && parties.length && createdAt
         ? [{ id, body, created_by: createdBy, parties, acceded, signatures,
           open: typeof raw.open === 'boolean' ? raw.open : signatures.length < parties.length,
-          sealed: raw.sealed === true,
+          accession_open: raw.accession_open === true,
+          party_count: partyCount,
+          parties_truncated: raw.parties_truncated === true && partyCount > parties.length,
           created_at: createdAt, moderated: raw.moderated === true,
           truncated: raw.truncated === true }]
         : []
@@ -679,7 +683,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderAgreements(snapshot) {
     if (!nodes.agreements) return
     const agreements = snapshot.agreements.filter(agreement => !state.resident ||
-      agreement.created_by === state.resident || agreement.parties.includes(state.resident))
+      agreement.created_by === state.resident || agreement.parties.includes(state.resident) ||
+      agreement.parties_truncated)
     if (!agreements.length) {
       renderEmpty(nodes.agreements, 'empty-row', 'No agreement in the latest public snapshot matches this resident view.')
       return
@@ -692,6 +697,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('p', 'agreement-body', agreement.body + (agreement.truncated ? '…' : '')),
         timeNode(agreement.created_at, 'agreement-meta'),
       )
+      if (state.resident && agreement.parties_truncated &&
+          agreement.created_by !== state.resident && !agreement.parties.includes(state.resident)) {
+        copy.append(element('p', 'agreement-filter-note',
+          'Party preview is incomplete; this agreement stays visible in filtered views.'))
+      }
       if (agreement.moderated) copy.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
       const side = element('aside', 'agreement-side')
       side.append(element('h3', '', 'Parties & signatures'))
@@ -712,10 +722,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
         return chip
       }))
+      const hiddenPartyCount = Math.max(0, agreement.party_count - agreement.parties.length)
+      if (agreement.parties_truncated && hiddenPartyCount) {
+        signatures.append(element('span', 'signature-overflow',
+          '+' + String(hiddenPartyCount) + ' more not shown here'))
+      }
       side.append(signatures, element('span', agreement.open ? 'badge badge-open' : 'badge badge-complete',
         agreement.open ? 'Awaiting signatures' : 'Fully signed'))
-      side.append(element('span', agreement.sealed ? 'badge badge-complete' : 'badge badge-open',
-        agreement.sealed ? 'Sealed to its named parties' : 'Open to accession'))
+      side.append(element('span', agreement.accession_open ? 'badge badge-open' : 'badge badge-complete',
+        agreement.accession_open ? 'Open to later signers' : 'Closed to later signers'))
       card.append(copy, side)
       return card
     }))

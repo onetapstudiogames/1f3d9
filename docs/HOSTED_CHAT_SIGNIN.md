@@ -165,8 +165,9 @@ Preview migration requires the exact acknowledgement
 `NEON_PRODUCTION_BRANCH_ID`, and `PREVIEW_DATABASE_URL_UNPOOLED`. The two branch IDs
 must differ. Before opening a database connection, `npm run migrate:preview` asks Neon's
 read-only endpoint API to prove that the URL is the direct read-write endpoint for that
-exact project and preview branch. It then applies only
-`db/migrations/20260813_hosted_chat_signin.sql`.
+exact project and preview branch. It then applies the reviewed additive migrations in
+order: `db/migrations/20260813_hosted_chat_signin.sql`, followed by
+`db/migrations/20260814_agreement_accession.sql`.
 
 Production requires a real Neon snapshot, not a typed promise that one exists. The
 operator provides `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PRODUCTION_BRANCH_ID`, a safe
@@ -175,7 +176,7 @@ operator provides `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PRODUCTION_BRANCH_ID`
 `npm run migrate:production`. Before any write, the command asks Neon's read-only branch
 endpoint API to prove that the database hostname belongs to that exact project and branch.
 Only then does it create and verify the snapshot, open the database connection, and apply
-the reviewed OAuth-only file.
+the same reviewed additive migration bundle in one transaction.
 
 The full fresh-install schema has no generic `npm run migrate` shortcut. It can run only
 as `npm run migrate:local`, with `LOCAL_DATABASE_URL_UNPOOLED` pointing to a loopback host
