@@ -39,6 +39,14 @@ const WINDOW_LIMITS = Object.freeze({
   events: 100,
 })
 
+// How many characters of a body survive the glass. WINDOW_LIMITS counts items;
+// these count characters, and the two used to share names without saying so.
+const WINDOW_BODY_LIMITS = Object.freeze({
+  notes: 2_000,
+  things: 1_000,
+  agreements: 4_000,
+})
+
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
 const SAFE_DETAIL_IDS = [
@@ -65,6 +73,7 @@ interface PublicPlace {
   id: number
   parent_id: number | null
   name: string
+  description: string
   owner: string
   places: number
   things: number
@@ -201,12 +210,16 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
   const name = moderated
     ? MODERATED_PLACE_NAME
     : safePublicText(row.name, 120)?.text ?? ''
+  const description = moderated
+    ? ''
+    : safePublicText(row.description, 4_000, true)?.text ?? ''
   const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : ''
   if (!id || !name || !owner || (row.parent_id != null && !parentId)) return null
   return {
     id,
     parent_id: parentId,
     name,
+    description,
     owner,
     places: count(row.places),
     things: count(row.things),
@@ -260,7 +273,7 @@ export function publicWindowNotes(values: unknown[]): PublicNote[] {
     const id = positiveInteger(row.id)
     const placeId = positiveInteger(row.place_id)
     const author = typeof row.author === 'string' && HANDLE_RE.test(row.author) ? row.author : null
-    const body = safePublicText(row.body, 2_000)
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.notes)
     const createdAt = safeDate(row.created_at)
     if (!id || !placeId || !author || !body || !createdAt) return []
     return [{
@@ -282,7 +295,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
     const id = positiveInteger(row.id)
     const placeId = positiveInteger(row.place_id)
     const name = safePublicText(row.name, 120)
-    const body = safePublicText(row.body, 1_000, true)
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.things, true)
     const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : null
     const kind = row.kind == null ? null : safeWorldName(row.kind)
     const createdAt = safeDate(row.created_at)
@@ -311,7 +324,7 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
     if (!value || typeof value !== 'object') return []
     const row = value as Record<string, unknown>
     const id = positiveInteger(row.id)
-    const body = safePublicText(row.body, 4_000)
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.agreements)
     const createdBy = typeof row.created_by === 'string' && HANDLE_RE.test(row.created_by)
       ? row.created_by
       : null
@@ -400,14 +413,15 @@ async function readWindowSnapshot() {
   const [placeRows, residentRows, thingRows, noteRows, agreementRows, eventRows, totalRows] = await Promise.all([
     sql.query(`
       WITH RECURSIVE world AS (
-        SELECT id, parent_id, name, owner_id, ARRAY[id] AS path
+        SELECT id, parent_id, name, description, owner_id, ARRAY[id] AS path
         FROM places WHERE parent_id IS NULL
         UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.owner_id, world.path || child.id
+        SELECT child.id, child.parent_id, child.name, child.description,
+          child.owner_id, world.path || child.id
         FROM places child JOIN world ON child.parent_id = world.id
         WHERE NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
       )
-      SELECT world.id, world.parent_id, world.name, residents.handle AS owner,
+      SELECT world.id, world.parent_id, world.name, world.description, residents.handle AS owner,
         (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
@@ -539,6 +553,7 @@ async function readWindowSnapshot() {
     ),
     shown,
     limits: WINDOW_LIMITS,
+    body_limits: WINDOW_BODY_LIMITS,
     refreshed_at: new Date().toISOString(),
   }
 }

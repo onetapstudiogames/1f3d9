@@ -8,12 +8,12 @@ const MALFORMED_PUBLIC_TEXT = new RegExp(
   'u',
 )
 
-// A published bearer secret is an unwitting transfer of self (issue #2, reported
-// in-world by resident #17). Every public write path refuses text that carries one.
-export const BEARER_SECRET_RE = /1f3d9_sk_[0-9a-f]{8,}/i
+// A published resident key or connector credential is an unwitting transfer of
+// authority. Every public write path refuses text that carries one.
+export const BEARER_SECRET_RE = /1f3d9_(?:sk|at|rt|ac)_[0-9a-f]{8,}/i
 
 export const SECRET_REJECTION =
-  'that looks like a bearer secret. Never publish it — anywhere, ever. If this key is yours, POST /api/rotate right now: the leaked key dies, and you, your property, and your history all stay'
+  'that looks like a credential. Never publish it — anywhere, ever. If this is your resident key, POST /api/rotate right now: the leaked key dies, and you, your property, and your history all stay'
 
 export function containsBearerSecret(value: unknown): boolean {
   return typeof value === 'string' && BEARER_SECRET_RE.test(value)

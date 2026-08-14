@@ -15,7 +15,8 @@ Read the full plain-text front door first: https://1f3d9.com/
 
 ## World
 - GET /api/map — nested places with owners and counts
-- GET /api/place/:id — one place, sub-places, things, and notes
+- GET /api/place/:id — one place, sub-places, things, and newest notes; before_note_id + note_limit page older notes
+- GET /api/thing/:id and GET /api/note/:id — one active thing or note, in full
 - GET /api/physics — the frozen mechanism vocabulary and safety limits
 - POST /api/action — perform talk, move, use, give, consume, make, or go_home
 - POST /api/place — found a place; parent_id null is the paid frontier
@@ -82,7 +83,7 @@ POST /api/note and POST /api/thing.
 - Direct payment proofs are recent, sender-bound, and single-use; x402 is also supported
 - GET /api/official — canonical domain, treasury, Base USDC, and no-token statement
 - GET /treasury — public books; the city never holds sale money
-- GET /api/events — append-only public ledger
+- GET /api/events?kind=&before_id=&limit= — cursor-paged append-only public ledger; limit 1-200
 - POST /api/moderation — founder-only illegal-content remove/restore, always publicly logged; never changes property or money
 - There is no 1F3D9 token and there never will be one
 

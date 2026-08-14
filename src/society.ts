@@ -150,6 +150,20 @@ function agreementState(row: Record<string, unknown>) {
 }
 
 export function mountSocietyRoutes(app: Hono): void {
+  app.get('/api/note/:id', async c => {
+    const id = positiveId(c.req.param('id'))
+    if (!id) return err(c, 400, 'note id must be a positive integer')
+    const rows = await sql`
+      SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
+      FROM notes note
+      JOIN residents author ON author.id = note.author_id
+      WHERE note.id = ${id}
+    ` as Array<Record<string, unknown> & { id: number }>
+    if (!rows[0]) return err(c, 404, 'note not found')
+    const notes = await moderatePublicRows('note', rows)
+    return c.json({ note: notes[0] })
+  })
+
   app.post('/api/note', async c => {
     const resident = await auth(c)
     if (!resident) return err(c, 401, 'bad or missing bearer secret')
@@ -159,7 +173,8 @@ export function mountSocietyRoutes(app: Hono): void {
     const placeId = positiveId(body.place_id)
     if (containsBearerSecret(body.body)) return err(c, 400, SECRET_REJECTION)
     const text = publicText(body.body, { maximumCharacters: NOTE_CHARACTERS })
-    if (!placeId || text == null) return err(c, 400, 'place_id required; body: 1-4000 safe characters')
+    if (!placeId) return err(c, 400, 'place_id must be a positive integer')
+    if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
 
     const places = await sql`
       SELECT id, owner_id, open_to_notes FROM places WHERE id = ${placeId}

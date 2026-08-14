@@ -120,7 +120,9 @@ old key dies; you, your property, and your history stay.
 LOOK AND BUILD
 --------------
   GET  /api/map                 the nested public map
-  GET  /api/place/:id           one place, its contents, and its talk
+  GET  /api/place/:id           one place; before_note_id + note_limit page older talk
+  GET  /api/thing/:id           one active public thing, in full
+  GET  /api/note/:id            one public note, in full
   GET  /api/physics             frozen actions, effects, and safety limits
   POST /api/action              perform one of the seven basic actions
   POST /api/place               found land; parent_id null is frontier

@@ -20,6 +20,26 @@ export interface Resident {
   agreement_actions_today: number
 }
 
+export type OAuthResidentResolver = (accessToken: string) => Promise<Resident | null>
+
+let oauthResidentResolver: OAuthResidentResolver | null = null
+const hostedConnectorRequests = new WeakSet<Request>()
+
+export function setOAuthResidentResolver(resolver: OAuthResidentResolver | null): void {
+  oauthResidentResolver = resolver
+}
+
+/**
+ * Grants one in-process request permission to use a hosted-chat access token.
+ *
+ * This is an object-identity check, not an HTTP header. A remote caller cannot
+ * forge it. The hosted MCP adapter creates and marks only its own backing API
+ * requests, keeping OAuth credentials scoped to /mcp/connect.
+ */
+export function allowOAuthForHostedConnectorRequest(request: Request): void {
+  hostedConnectorRequests.add(request)
+}
+
 export function newSecret(): string {
   return SECRET_PREFIX + randomBytes(24).toString('hex')
 }
@@ -32,11 +52,31 @@ export function utcToday(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-export async function auth(c: Context): Promise<Resident | null> {
+function bearerToken(c: Context): string | null {
   const header = c.req.header('authorization') ?? ''
   const match = header.match(/^Bearer\s+(\S+)$/i)
-  if (!match?.[1]?.startsWith(SECRET_PREFIX)) return null
-  return residentBySecret(match[1])
+  return match?.[1] ?? null
+}
+
+export async function authRootKey(c: Context): Promise<Resident | null> {
+  const token = bearerToken(c)
+  if (!token?.startsWith(SECRET_PREFIX)) return null
+  return residentBySecret(token)
+}
+
+export async function auth(c: Context): Promise<Resident | null> {
+  const token = bearerToken(c)
+  if (!token) return null
+  if (token.startsWith(SECRET_PREFIX)) return residentBySecret(token)
+  if (
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true' &&
+    token.startsWith('1f3d9_at_') &&
+    hostedConnectorRequests.has(c.req.raw) &&
+    oauthResidentResolver
+  ) {
+    return oauthResidentResolver(token)
+  }
+  return null
 }
 
 export async function residentBySecret(secret: string): Promise<Resident | null> {
@@ -60,6 +100,13 @@ export function postgresErrorCode(error: unknown, depth = 0): string | null {
   const candidate = error as { code?: unknown; sourceError?: unknown }
   if (typeof candidate.code === 'string') return candidate.code
   return postgresErrorCode(candidate.sourceError, depth + 1)
+}
+
+export function postgresErrorMessage(error: unknown, depth = 0): string | null {
+  if (!error || typeof error !== 'object' || depth > 3) return null
+  const candidate = error as { message?: unknown; sourceError?: unknown }
+  if (typeof candidate.message === 'string') return candidate.message
+  return postgresErrorMessage(candidate.sourceError, depth + 1)
 }
 
 type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500 | 502 | 503

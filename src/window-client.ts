@@ -56,11 +56,13 @@ export const WINDOW_JS = `(() => {
     share: document.getElementById('share-view'),
     placeTitle: document.getElementById('place-focus-title'),
     placeSummary: document.getElementById('place-focus-summary'),
+    placeDescription: document.getElementById('place-focus-description'),
     occupants: document.getElementById('place-occupants'),
     placeThings: document.getElementById('place-things'),
     placeConversation: document.getElementById('place-conversation'),
     conversations: document.getElementById('conversation-stream'),
     activity: document.getElementById('activity-list'),
+    loadOlderEvents: document.getElementById('load-older-events'),
     agreements: document.getElementById('agreement-list'),
   }
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
@@ -71,6 +73,9 @@ export const WINDOW_JS = `(() => {
     hasSnapshot: false,
     pollTimer: 0,
     snapshot: null,
+    eventHistory: [],
+    eventHasMore: false,
+    loadingOlderEvents: false,
     view: 'map',
     placeId: null,
     resident: null,
@@ -114,12 +119,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const id = safeId(rawPlace.id)
       const owner = safeHandle(rawPlace.owner)
       const name = safeText(rawPlace.name, '', 120, false)
+      const description = safeText(rawPlace.description, '', 4000, true)
       if (!id || !owner || !name || seen.has(id)) return []
       const nextSeen = new Set([...seen, id])
       return [{
         id,
         parent_id: rawPlace.parent_id == null ? null : safeId(rawPlace.parent_id),
         name,
+        description,
         owner,
         places: safeCount(rawPlace.places),
         things: safeCount(rawPlace.things),
@@ -202,9 +209,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
-  function normalizeEvents(values) {
+  function normalizeEvents(values, maximum = 100) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 100).flatMap(raw => {
+    return values.slice(0, maximum).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const actor = safeHandle(raw.actor)
@@ -221,6 +228,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }))
       return [{ id, actor, kind: raw.kind, verb, at, detail }]
     })
+  }
+
+  function mergeEvents(...collections) {
+    const byId = new Map()
+    for (const event of collections.flat()) byId.set(event.id, event)
+    return [...byId.values()].sort((left, right) => right.id - left.id)
   }
 
   function flattenPlaces(values, ancestors) {
@@ -252,6 +265,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       key,
       Math.max(safeCount(rawTotals[key]), visible),
     ]))
+    const rawBodyLimits = payload.body_limits && typeof payload.body_limits === 'object'
+      ? payload.body_limits
+      : {}
+    const bodyLimits = Object.freeze({
+      notes: safeId(rawBodyLimits.notes),
+      things: safeId(rawBodyLimits.things),
+      agreements: safeId(rawBodyLimits.agreements),
+    })
+    const hasBodyLimits = bodyLimits.notes && bodyLimits.things && bodyLimits.agreements
     return Object.freeze({
       places,
       flatPlaces: flattenPlaces(places, []),
@@ -262,6 +284,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       events,
       shown,
       totals,
+      bodyLimits: hasBodyLimits ? bodyLimits : null,
       refreshedAt: safeDate(payload.refreshed_at),
     })
   }
@@ -437,6 +460,52 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
+  async function getPublicDetail(kind, id) {
+    const url = new URL('/api/' + kind + '/' + String(id), window.location.origin)
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const response = await fetch(url.pathname, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('public detail unavailable')
+      const payload = await response.json()
+      if (!payload || typeof payload !== 'object') throw new Error('invalid public detail')
+      const detail = payload[kind]
+      if (!detail || typeof detail !== 'object' || safeId(detail.id) !== id) {
+        throw new Error('invalid public detail')
+      }
+      return detail
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
+  function readFullButton(kind, id, bodyNode, maximum, allowEmpty) {
+    const button = element('button', 'read-full', 'Read full')
+    button.type = 'button'
+    button.addEventListener('click', async () => {
+      button.disabled = true
+      button.textContent = 'Loading…'
+      try {
+        const detail = await getPublicDetail(kind, id)
+        const body = safeText(detail.body, null, maximum, allowEmpty)
+        if (body === null) throw new Error('unsafe public detail')
+        bodyNode.textContent = body
+        button.remove()
+      } catch {
+        button.disabled = false
+        button.textContent = 'Could not load · try again'
+      }
+    })
+    return button
+  }
+
   function renderThings(target, things) {
     if (!target) return
     if (!things.length) {
@@ -451,7 +520,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('p', 'thing-meta', 'kept by ' + thing.owner +
           (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind')),
       )
-      if (thing.body) item.append(element('p', 'thing-body', thing.body + (thing.truncated ? '…' : '')))
+      if (thing.body) {
+        const body = element('p', 'thing-body', thing.body + (thing.truncated ? '…' : ''))
+        item.append(body)
+        if (thing.truncated) item.append(readFullButton('thing', thing.id, body, 65536, true))
+      }
       const traits = element('div', 'trait-list')
       if (thing.traits.length) {
         traits.append(...thing.traits.map(trait => {
@@ -471,11 +544,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
-  function noteCard(note) {
+  function noteCard(note, place) {
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
     meta.append(element('span', 'note-author', note.author), document.createTextNode(' · '), timeNode(note.created_at, ''))
-    card.append(meta, element('p', 'note-body', note.body + (note.truncated ? '…' : '')))
+    if (place) meta.append(document.createTextNode(' · ' + place.name))
+    const body = element('p', 'note-body', note.body + (note.truncated ? '…' : ''))
+    card.append(meta, body)
+    if (note.truncated) card.append(readFullButton('note', note.id, body, 4000, false))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return card
   }
@@ -487,7 +563,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return
     }
     const list = element('div', 'note-list')
-    list.append(...notes.map(noteCard))
+    list.append(...notes.map(note => noteCard(note)))
     target.replaceChildren(list)
   }
 
@@ -504,6 +580,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (nodes.placeSummary) nodes.placeSummary.textContent = betweenPlaces
         ? 'This resident is not currently standing in a public place.'
         : 'The frontier has no matching public address.'
+      if (nodes.placeDescription) {
+        nodes.placeDescription.textContent = ''
+        nodes.placeDescription.hidden = true
+      }
       renderEmpty(nodes.occupants, 'empty-row', betweenPlaces
         ? 'There is no doorway around this resident right now.'
         : 'Nobody can stand here yet.')
@@ -513,6 +593,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (nodes.placeTitle) nodes.placeTitle.textContent = place.name
     if (nodes.placeSummary) nodes.placeSummary.textContent = place.path + ' · kept by ' + place.owner
+    if (nodes.placeDescription) {
+      nodes.placeDescription.textContent = place.description
+      nodes.placeDescription.hidden = !place.description
+    }
     renderPeople(nodes.occupants, residentsAt(snapshot, place.id))
     renderThings(nodes.placeThings, snapshot.things.filter(thing => thing.place_id === place.id &&
       (!state.resident || thing.owner === state.resident)))
@@ -525,26 +609,32 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const notes = snapshot.notes.filter(note =>
       (!state.placeId || note.place_id === state.placeId) &&
       (!state.resident || note.author === state.resident))
-    const placeIds = [...new Set(notes.map(note => note.place_id))]
-    if (!placeIds.length) {
+    const placeOf = placeId => snapshot.flatPlaces.find(candidate => candidate.id === placeId) || null
+    const place = state.placeId ? placeOf(state.placeId) : null
+    if (!notes.length || (state.placeId && !place)) {
       renderEmpty(nodes.conversations, 'empty-row', 'No conversation in the latest public snapshot matches this view.')
       return
     }
-    const groups = placeIds.flatMap(placeId => {
-      const place = snapshot.flatPlaces.find(candidate => candidate.id === placeId)
-      if (!place) return []
+    if (place) {
       const group = element('section', 'conversation-group')
       const heading = element('header', '')
       heading.append(
         element('h3', '', place.name),
-        element('span', 'place-facts', place.path + ' · ' + String(notes.filter(note => note.place_id === placeId).length) + ' shown'),
+        element('span', 'place-facts', place.path + ' · ' + String(notes.length) + ' shown'),
       )
       const list = element('div', 'note-list')
-      list.append(...notes.filter(note => note.place_id === placeId).map(noteCard))
+      list.append(...notes.map(note => noteCard(note)))
       group.append(heading, list)
-      return [group]
-    })
-    nodes.conversations.replaceChildren(...groups)
+      nodes.conversations.replaceChildren(group)
+      return
+    }
+    // Every room at once. The snapshot serves notes newest first, so keep that
+    // order and name the room on each card. Grouping by place here rendered one
+    // room whole before starting the next, so the newest note in a quiet room
+    // sank below every note in the busy one and a reply never reached the top.
+    const list = element('div', 'note-list')
+    list.append(...notes.map(note => noteCard(note, placeOf(note.place_id))))
+    nodes.conversations.replaceChildren(list)
   }
 
   function eventPlaceId(event, snapshot) {
@@ -560,24 +650,30 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderActivity(snapshot) {
     if (!nodes.activity) return
-    const events = snapshot.events.filter(event =>
+    const source = state.eventHistory.length ? state.eventHistory : snapshot.events
+    const events = source.filter(event =>
       (!state.resident || event.actor === state.resident) &&
       (!state.placeId || eventPlaceId(event, snapshot) === state.placeId))
     if (!events.length) {
-      nodes.activity.replaceChildren(element('li', 'empty-row', 'No happening in the latest public snapshot matches this view.'))
-      return
+      nodes.activity.replaceChildren(element('li', 'empty-row', 'No loaded happening matches this view.'))
+    } else {
+      const rows = events.map(event => {
+        const row = element('li', 'activity-row')
+        const copy = element('p', 'activity-copy')
+        copy.append(element('span', 'activity-actor', event.actor), element('span', '', ' ' + event.verb + '.'))
+        row.append(copy, timeNode(event.at, 'activity-time'))
+        const placeId = eventPlaceId(event, snapshot)
+        const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
+        if (place) row.append(element('span', 'activity-context', 'Observed at ' + place.path))
+        return row
+      })
+      nodes.activity.replaceChildren(...rows)
     }
-    const rows = events.map(event => {
-      const row = element('li', 'activity-row')
-      const copy = element('p', 'activity-copy')
-      copy.append(element('span', 'activity-actor', event.actor), element('span', '', ' ' + event.verb + '.'))
-      row.append(copy, timeNode(event.at, 'activity-time'))
-      const placeId = eventPlaceId(event, snapshot)
-      const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
-      if (place) row.append(element('span', 'activity-context', 'Observed at ' + place.path))
-      return row
-    })
-    nodes.activity.replaceChildren(...rows)
+    if (nodes.loadOlderEvents) {
+      nodes.loadOlderEvents.hidden = !state.eventHasMore
+      nodes.loadOlderEvents.disabled = state.loadingOlderEvents
+      nodes.loadOlderEvents.textContent = state.loadingOlderEvents ? 'Loading older happenings…' : 'Load older happenings'
+    }
   }
 
   function renderAgreements(snapshot) {
@@ -647,10 +743,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const hasExcerpts = snapshot.notes.some(note => note.truncated) ||
       snapshot.things.some(thing => thing.truncated) ||
       snapshot.agreements.some(agreement => agreement.truncated)
+    const excerptNotice = !hasExcerpts
+      ? ''
+      : snapshot.bodyLimits
+        ? ' Excerpt limits are ' + snapshot.bodyLimits.notes.toLocaleString() +
+          ' characters for notes, ' + snapshot.bodyLimits.things.toLocaleString() +
+          ' for things, and ' + snapshot.bodyLimits.agreements.toLocaleString() +
+          ' for agreements.'
+        : ' Long text may appear as an excerpt.'
     nodes.scope.textContent = (partial.length
       ? 'Latest public snapshot shows ' + partial.join(' · ') + '.'
       : 'Latest public snapshot is within every display limit.') +
-      (hasExcerpts ? ' Long text may appear as an excerpt.' : '') +
+      excerptNotice +
       (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '')
   }
 
@@ -714,6 +818,55 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return response.json()
   }
 
+  async function getEventPage(beforeId, signal) {
+    const url = new URL('/api/events', window.location.origin)
+    url.searchParams.set('before_id', String(beforeId))
+    url.searchParams.set('limit', '100')
+    const response = await fetch(url.pathname + url.search, {
+      credentials: 'omit',
+      headers: { Accept: 'application/json' },
+      mode: 'same-origin',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      signal,
+    })
+    if (!response.ok) throw new Error('public event history unavailable')
+    const payload = await response.json()
+    if (!payload || typeof payload !== 'object') throw new Error('invalid public event history')
+    return {
+      events: normalizeEvents(payload.events, 200),
+      hasMore: payload.has_more === true,
+    }
+  }
+
+  async function loadOlderEvents() {
+    if (state.loadingOlderEvents || !state.snapshot || !state.eventHasMore) return
+    const oldest = state.eventHistory.at(-1)
+    if (!oldest) return
+    state = { ...state, loadingOlderEvents: true }
+    renderActivity(state.snapshot)
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const page = await getEventPage(oldest.id, controller.signal)
+      const eventHistory = mergeEvents(state.eventHistory, page.events)
+      const madeProgress = eventHistory.length > state.eventHistory.length
+      state = {
+        ...state,
+        eventHistory,
+        eventHasMore: page.hasMore && madeProgress,
+        loadingOlderEvents: false,
+      }
+      renderActivity(state.snapshot)
+    } catch {
+      state = { ...state, loadingOlderEvents: false }
+      renderActivity(state.snapshot)
+      if (nodes.loadOlderEvents) nodes.loadOlderEvents.textContent = 'Could not load · try again'
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
   function scheduleRefresh(delay) {
     window.clearTimeout(state.pollTimer)
     const pollTimer = window.setTimeout(() => {
@@ -736,7 +889,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     try {
       const payload = await getSnapshot(controller.signal)
       const snapshot = normalizeSnapshot(payload)
-      state = { ...state, snapshot, hasSnapshot: true, failures: 0 }
+      const eventHistory = mergeEvents(state.eventHistory, snapshot.events)
+      state = {
+        ...state,
+        snapshot,
+        eventHistory,
+        eventHasMore: snapshot.totals.events > eventHistory.length,
+        hasSnapshot: true,
+        failures: 0,
+      }
       populateFilters(snapshot)
       renderAll()
       setStatus(snapshot.refreshedAt ? 'Watching · checked ' + snapshot.refreshedAt.toLocaleTimeString([], {
@@ -794,6 +955,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     state = { ...state, resident: safeHandle(nodes.residentFilter.value) }
     renderAll()
   })
+  nodes.loadOlderEvents?.addEventListener('click', () => void loadOlderEvents())
   window.addEventListener('hashchange', () => {
     state = { ...state, ...readHashState() }
     renderAll()

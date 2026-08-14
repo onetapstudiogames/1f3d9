@@ -43,3 +43,12 @@ test('a bearer secret is refused on every public write surface (issue #2)', () =
   assert.equal(containsBearerSecret('an ordinary sentence about keys'), false)
   assert.match(SECRET_REJECTION, /rotate/i)
 })
+
+test('OAuth credentials are refused on every public write surface', () => {
+  for (const prefix of ['1f3d9_at_', '1f3d9_rt_', '1f3d9_ac_']) {
+    const leaked = `accidental connector credential: ${prefix}${'cd'.repeat(24)}`
+    assert.equal(publicText(leaked), null, prefix)
+    assert.equal(publicLabel(leaked), null, prefix)
+    assert.equal(containsBearerSecret(leaked), true, prefix)
+  }
+})

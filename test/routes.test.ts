@@ -222,6 +222,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
 
+  // link_kind_revision_traits refuses a trait nobody has coined yet.
+  if (state.scenario === 'uncoined kind trait' &&
+      (/insert into kinds/.test(q) || /insert into kind_revisions/.test(q))) {
+    throw Object.assign(
+      new Error('kind revision names an unknown or duplicate trait'),
+      { code: '23503' },
+    )
+  }
+
   if (q.includes('where secret_hash')) return state.authValid ? [residentRow()] : []
   if (q.includes('/* crafting:commit */')) return [thingRow()]
   if (q.includes('insert into resident_presence') && !q.includes('insert into places')) {
@@ -568,10 +577,28 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }]
 
   if (q.includes('insert into notes')) return [{
-    id: 51, place_id: 2, author: state.actorHandle, body: 'hello from the square',
+    id: 51,
+    place_id: Number(params[0] ?? 2),
+    author: String(params[4] ?? state.actorHandle),
+    body: String(params[3] ?? 'hello from the square'),
     created_at: '2026-08-11T00:00:00.000Z',
   }]
   if (q.includes('from notes')) {
+    if (state.scenario === 'busy place') {
+      const beforeId = q.includes('n.id < coalesce') && params[1] != null ? Number(params[1]) : null
+      const descending = q.includes('order by n.id desc')
+      const limit = q.includes('limit $') ? Number(params.at(-1)) : 200
+      const rows = Array.from({ length: 205 }, (_, index) => ({
+        id: index + 1,
+        place_id: 2,
+        author: 'tiny-lantern',
+        body: `note ${index + 1}`,
+        created_at: new Date(Date.UTC(2026, 7, 11, 0, 0, index + 1)).toISOString(),
+        pinned: false,
+      })).filter(note => beforeId == null || note.id < beforeId)
+      if (descending) rows.reverse()
+      return rows.slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
+    }
     return [{
       id: 51,
       place_id: 2,
@@ -749,6 +776,20 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
   }]
   if (q.includes('from events') && q.includes('count(')) return [{ n: 0 }]
+  if (q.includes('from events') && state.scenario === 'event pagination') {
+    const beforeId = q.includes('id < coalesce') ? Number(params[1]) : null
+    const limit = q.includes('limit $3') ? Number(params[2]) : 200
+    return [205, 204, 203, 202, 201]
+      .filter(id => beforeId == null || id < beforeId)
+      .slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
+      .map(id => ({
+        id,
+        at: new Date(Date.UTC(2026, 7, 11, 0, 0, id - 200)).toISOString(),
+        kind: 'note',
+        actor: 'tiny-lantern',
+        detail: { note_id: id, place_id: 2 },
+      }))
+  }
   if (q.includes('from events') && state.scenario === 'activity surfaces') return [
     {
       id: 70, at: '2026-08-11T00:00:00.000Z', kind: 'place_created',
@@ -973,6 +1014,39 @@ test('malformed auth and oversized thing text fail before any world write', asyn
   assert.equal(inserted('things'), 0)
 })
 
+test('note validation distinguishes place errors and preserves valid Unicode exactly', async () => {
+  reset({ scenario: 'note validation' })
+  const invalidPlace = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 0, body: 'valid words' }),
+  })
+  assert.equal(invalidPlace.status, 400)
+  assert.deepEqual(await invalidPlace.json(), { error: 'place_id must be a positive integer' })
+  assert.equal(inserted('notes'), 0)
+
+  reset({ scenario: 'note validation' })
+  const invalidBody = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: '\u0000' }),
+  })
+  assert.equal(invalidBody.status, 400)
+  assert.deepEqual(await invalidBody.json(), { error: 'body must be 1-4000 safe characters' })
+  assert.equal(inserted('notes'), 0)
+
+  reset({ scenario: 'note validation' })
+  const body = 'Café — east wing 🗺️'
+  const accepted = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body }),
+  })
+  assert.equal(accepted.status, 201)
+  const acceptedBody = await accepted.json() as { note: { body: string } }
+  assert.equal(acceptedBody.note.body, body)
+})
+
 test('the public map is a recursive owner-attributed tree', async () => {
   reset({ scenario: 'map' })
   const response = await app.request('/api/map')
@@ -982,6 +1056,62 @@ test('the public map is a recursive owner-attributed tree', async () => {
   assert.equal(body.places[0]?.owner, 'founder')
   assert.equal(body.places[0]?.children[0]?.id, 2)
   assert.ok(sqlCalls().some(call => /with\s+recursive/i.test(call.query ?? '')))
+})
+
+test('busy places serve the newest notes and expose an older-note cursor', async () => {
+  reset({ scenario: 'busy place' })
+  const first = await app.request('/api/place/2?note_limit=200')
+  assert.equal(first.status, 200)
+  const firstBody = await first.json() as {
+    notes: Array<{ id: number }>
+    notes_page: { has_more: boolean; next_before_note_id: number | null }
+  }
+  assert.equal(firstBody.notes.length, 200)
+  assert.equal(firstBody.notes[0]?.id, 6)
+  assert.equal(firstBody.notes.at(-1)?.id, 205)
+  assert.deepEqual(firstBody.notes_page, { has_more: true, next_before_note_id: 6 })
+
+  reset({ scenario: 'busy place' })
+  const older = await app.request('/api/place/2?before_note_id=6&note_limit=10')
+  assert.equal(older.status, 200)
+  const olderBody = await older.json() as {
+    notes: Array<{ id: number }>
+    notes_page: { has_more: boolean; next_before_note_id: number | null }
+  }
+  assert.deepEqual(olderBody.notes.map(note => note.id), [1, 2, 3, 4, 5])
+  assert.deepEqual(olderBody.notes_page, { has_more: false, next_before_note_id: null })
+
+  const invalid = await app.request('/api/place/2?before_note_id=nope')
+  assert.equal(invalid.status, 400)
+})
+
+test('public thing and note detail reads expose full active records without writes', async () => {
+  reset({ scenario: 'public details' })
+  const thing = await app.request('/api/thing/41')
+  assert.equal(thing.status, 200)
+  const thingBody = await thing.json() as { thing: { id: number; body: string; owner: string } }
+  assert.deepEqual(thingBody.thing, {
+    ...thingBody.thing,
+    id: 41,
+    body: 'warm light',
+    owner: 'tiny-lantern',
+  })
+
+  const note = await app.request('/api/note/51')
+  assert.equal(note.status, 200)
+  const noteBody = await note.json() as { note: { id: number; body: string; author: string } }
+  assert.deepEqual(noteBody.note, {
+    ...noteBody.note,
+    id: 51,
+    body: 'hello from the square',
+    author: 'tiny-lantern',
+  })
+  assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+
+  reset({ scenario: 'public details', thingWithdrawn: true })
+  assert.equal((await app.request('/api/thing/41')).status, 404)
+  assert.equal((await app.request('/api/thing/not-an-id')).status, 400)
+  assert.equal((await app.request('/api/note/not-an-id')).status, 400)
 })
 
 test('each place permission is independent and an allowed visitor owns what they build', async () => {
@@ -1090,6 +1220,38 @@ test('duplicate trait names fail before charging for a kind', async () => {
   assert.match(JSON.stringify(await response.json()), /duplicate|unique/i)
   assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false)
   assert.equal(inserted('kinds'), 0)
+})
+
+test('an uncoined kind trait answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      name: 'erratum', description: 'corrects a claim', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
+})
+
+test('an uncoined trait on kind revision answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      description: 'corrected again', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
 })
 
 test('things pin their birth revision and only their owner may voluntarily upgrade', async () => {
@@ -1576,8 +1738,12 @@ test('front door and human window surface the event names the world actually emi
   state = { ...state, calls: [] }
   const snapshot = await app.request('/api/window')
   assert.equal(snapshot.status, 200)
-  const payload = await snapshot.json() as { events: { kind: string }[] }
+  const payload = await snapshot.json() as {
+    events: { kind: string }[]
+    body_limits: { notes: number; things: number; agreements: number }
+  }
   assert.deepEqual(payload.events.map(event => event.kind), ['place_created', 'sale', 'transfer_cancel'])
+  assert.deepEqual(payload.body_limits, { notes: 2_000, things: 1_000, agreements: 4_000 })
   const eventKindParams = JSON.stringify(sqlCalls().flatMap(call => call.params ?? []))
   for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel']) {
     assert.ok(eventKindParams.includes(kind), `public event query should include ${kind}`)
@@ -1647,6 +1813,9 @@ test('a place owner replaces local laws while a visitor cannot legislate there',
   const body = await changed.json() as { laws: { name: string }[] }
   assert.deepEqual(body.laws.map(law => law.name), ['war-zone'])
   assert.ok(inserted('place_law_changes') > 0)
+  const lawWrite = sqlCalls().find(call => /insert\s+into\s+place_law_changes/i.test(call.query ?? ''))
+  assert.match(lawWrite?.query ?? '', /\$\d+::integer\s+as\s+actor_id/i)
+  assert.match(lawWrite?.query ?? '', /union\s+all[\s\S]*\$\d+::integer\s*,\s*'add'/i)
 
   setActor(8, 'neighbor')
   const rejected = await app.request('/api/place/2/laws', {
@@ -1684,6 +1853,13 @@ test('thing withdrawal is owner-only, one-way, and refused during an open sale',
   assert.ok(sqlCalls().some(call =>
     /update\s+things\s+set\s+withdrawn_at/i.test(call.query ?? '') &&
     /insert\s+into\s+events/i.test(call.query ?? '')))
+  const withdrawalWrite = sqlCalls().find(call =>
+    /update\s+things\s+set\s+withdrawn_at/i.test(call.query ?? '') &&
+    /insert\s+into\s+events/i.test(call.query ?? ''))
+  assert.match(
+    withdrawalWrite?.query ?? '',
+    /jsonb_build_object\(\s*'thing_id'\s*,\s*id\s*,\s*'reason'\s*,\s*\$\d+::text\s*\)/i,
+  )
 
   reset({ scenario: 'thing withdrawal sale', offer: { ...initialState().offer, status: 'open' } })
   const locked = await app.request('/api/thing/41/withdraw', {
@@ -1960,6 +2136,29 @@ test('removed kind and trait names cannot leak through place laws or nested kind
   const moderationReads = sqlCalls().filter(call => /from moderation_actions/i.test(call.query ?? ''))
   assert.ok(moderationReads.length <= 3, `nested moderation must stay batched: ${moderationReads.length}`)
   assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+})
+
+test('event history supports bounded cursor pages without changing the events array', async () => {
+  reset({ scenario: 'event pagination' })
+  const page = await app.request('/api/events?kind=note&before_id=204&limit=2')
+  assert.equal(page.status, 200)
+  const body = await page.json() as {
+    events: Array<{ id: number }>
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(body.events.map(event => event.id), [203, 202])
+  assert.equal(body.has_more, true)
+  assert.equal(body.next_before_id, 202)
+  const eventRead = sqlCalls().find(call => /select\s+id,\s*at,\s*kind,\s*actor,\s*detail[\s\S]*from\s+events/i
+    .test(call.query ?? ''))
+  assert.match(eventRead?.query ?? '', /id\s*<\s*coalesce\(\$2::bigint,\s*2147483648\)/i)
+  assert.match(eventRead?.query ?? '', /limit\s+\$3/i)
+
+  reset({ scenario: 'event pagination' })
+  assert.equal((await app.request('/api/events?before_id=nope')).status, 400)
+  assert.equal((await app.request('/api/events?limit=0')).status, 400)
+  assert.equal((await app.request('/api/events?limit=201')).status, 400)
 })
 
 test('removed authored names are tombstoned inside append-only event details', async () => {
