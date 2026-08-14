@@ -47,6 +47,11 @@ const WINDOW_BODY_LIMITS = Object.freeze({
   agreements: 4_000,
 })
 
+// An agreement may collect an unbounded number of later signers. The glass
+// keeps a small, safe preview and says explicitly when the public API holds
+// more parties than it is showing here.
+const AGREEMENT_PARTY_PREVIEW_LIMIT = 32
+
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
 const SAFE_DETAIL_IDS = [
@@ -118,8 +123,12 @@ interface PublicAgreement {
   body: string
   created_by: string
   parties: string[]
+  acceded: string[]
   signatures: string[]
   open: boolean
+  accession_open: boolean
+  party_count?: number
+  parties_truncated?: true
   created_at: string
   moderated: boolean
   truncated?: true
@@ -196,7 +205,7 @@ function safeWorldName(value: unknown): string | null {
 
 function safeHandles(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return [...new Set(value.filter(item => typeof item === 'string' && HANDLE_RE.test(item)))].slice(0, 32)
+  return [...new Set(value.filter(item => typeof item === 'string' && HANDLE_RE.test(item)))]
 }
 
 function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
@@ -326,17 +335,29 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
     const createdBy = typeof row.created_by === 'string' && HANDLE_RE.test(row.created_by)
       ? row.created_by
       : null
-    const parties = safeHandles(row.parties)
-    const signatures = safeHandles(row.signatures).filter(handle => parties.includes(handle))
+    const allParties = safeHandles(row.parties)
+    const allPartySet = new Set(allParties)
+    const accededSet = new Set(safeHandles(row.acceded).filter(handle => allPartySet.has(handle)))
+    const orderedParties = allParties.filter(handle => !accededSet.has(handle))
+      .concat(allParties.filter(handle => accededSet.has(handle)))
+    const parties = orderedParties.slice(0, AGREEMENT_PARTY_PREVIEW_LIMIT)
+    const partyCount = Math.max(count(row.party_count), allParties.length)
+    const signatureSet = new Set(safeHandles(row.signatures).filter(handle => allPartySet.has(handle)))
+    const acceded = parties.filter(handle => accededSet.has(handle))
+    const signatures = parties.filter(handle => signatureSet.has(handle))
     const createdAt = safeDate(row.created_at)
     if (!id || !body || !createdBy || !parties.length || !createdAt) return []
+    const partiesTruncated = partyCount > parties.length
     return [{
       id,
       body: body.text,
       created_by: createdBy,
       parties,
+      acceded,
       signatures,
       open: typeof row.open === 'boolean' ? row.open : signatures.length < parties.length,
+      accession_open: row.accession_open === true,
+      ...(partiesTruncated ? { party_count: partyCount, parties_truncated: true as const } : {}),
       created_at: createdAt,
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
@@ -464,13 +485,30 @@ async function readWindowSnapshot() {
     sql`
       WITH public_agreements AS (
         SELECT agreement.id, agreement.body, creator.handle AS created_by,
+          EXISTS (
+            SELECT 1 FROM agreement_accession_openings opening
+            WHERE opening.agreement_id = agreement.id
+          ) AS accession_open,
           ARRAY(SELECT party.handle FROM agreement_parties membership
             JOIN residents party ON party.id = membership.resident_id
-            WHERE membership.agreement_id = agreement.id ORDER BY party.handle) AS parties,
+            WHERE membership.agreement_id = agreement.id
+            ORDER BY membership.named DESC, party.handle
+            LIMIT ${AGREEMENT_PARTY_PREVIEW_LIMIT}) AS parties,
+          (SELECT count(*)::int FROM agreement_parties membership
+            WHERE membership.agreement_id = agreement.id) AS party_count,
+          ARRAY(SELECT party.handle FROM agreement_parties membership
+            JOIN residents party ON party.id = membership.resident_id
+            WHERE membership.agreement_id = agreement.id AND NOT membership.named
+            ORDER BY party.handle
+            LIMIT ${AGREEMENT_PARTY_PREVIEW_LIMIT}) AS acceded,
           ARRAY(SELECT signer.handle FROM agreement_signatures signature
             JOIN residents signer ON signer.id = signature.resident_id
+            JOIN agreement_parties membership
+              ON membership.agreement_id = signature.agreement_id
+              AND membership.resident_id = signature.resident_id
             WHERE signature.agreement_id = agreement.id
-            ORDER BY signature.signed_at, signer.handle) AS signatures,
+            ORDER BY membership.named DESC, signer.handle
+            LIMIT ${AGREEMENT_PARTY_PREVIEW_LIMIT}) AS signatures,
           NOT EXISTS (
             SELECT 1 FROM agreement_parties membership
             WHERE membership.agreement_id = agreement.id AND NOT EXISTS (
@@ -483,7 +521,8 @@ async function readWindowSnapshot() {
         FROM agreements agreement
         JOIN residents creator ON creator.id = agreement.created_by_id
       )
-      SELECT id, body, created_by, parties, signatures, NOT complete AS open, created_at
+      SELECT id, body, created_by, parties, party_count, acceded, signatures, accession_open,
+        NOT complete AS open, created_at
       FROM public_agreements ORDER BY created_at DESC, id DESC LIMIT 100
     `,
     sql`

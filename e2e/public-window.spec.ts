@@ -94,3 +94,28 @@ test('all-place conversations stay newest-first and name each room', async ({ pa
   await expect(cards.nth(0).locator('.note-meta')).toContainText('test_square')
   await expect(cards.nth(1).locator('.note-meta')).toContainText('side_room')
 })
+
+test('agreements show author consent and distinguish later signers', async ({ page }) => {
+  await page.goto('/window#view=agreements')
+  await expect(page.getByRole('status')).toContainText('Watching')
+
+  const opened = page.locator('#agreement-list .agreement-card')
+    .filter({ hasText: 'A public agreement opened by its author.' })
+  await expect(opened).toContainText('Open to later signers')
+  await expect(opened).toContainText('Awaiting signatures')
+  await expect(opened.locator('.signature-chip')).toHaveText([
+    '✓ browser-resident',
+    '○ oldwalker',
+    '+ late-signer',
+  ])
+
+  const closed = page.locator('#agreement-list .agreement-card')
+    .filter({ hasText: 'An older agreement that remains closed.' })
+  await expect(closed).toContainText('Closed to later signers')
+
+  await page.goto('/window#view=agreements&resident=member-34')
+  await expect(opened).toBeVisible()
+  await expect(opened).toContainText(
+    'Party preview is incomplete; this agreement stays visible in filtered views.',
+  )
+})

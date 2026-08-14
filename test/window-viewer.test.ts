@@ -30,6 +30,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
 
 test('the window covers the whole public life of the city', () => {
   assert.ok(PUBLIC_EVENT_KINDS.includes('home_set'))
+  assert.ok(PUBLIC_EVENT_KINDS.includes('agreement_accession'))
   for (const phrase of [
     'Who is standing where',
     'Conversations by place',
@@ -131,8 +132,10 @@ test('snapshot row shapers reject malformed public data', () => {
     body: 'we keep the square open',
     created_by: 'tiny-lantern',
     parties: ['tiny-lantern', 'neighbor'],
+    acceded: ['neighbor', 'never-a-party', '<script>'],
     signatures: ['tiny-lantern', '<script>'],
     open: true,
+    accession_open: true,
     created_at: '2026-08-11T00:00:00Z',
   }])
   assert.deepEqual(agreements, [{
@@ -140,11 +143,41 @@ test('snapshot row shapers reject malformed public data', () => {
     body: 'we keep the square open',
     created_by: 'tiny-lantern',
     parties: ['tiny-lantern', 'neighbor'],
+    acceded: ['neighbor'],
     signatures: ['tiny-lantern'],
     open: true,
+    accession_open: true,
     created_at: '2026-08-11T00:00:00.000Z',
     moderated: false,
   }])
+
+  assert.match(WINDOW_JS, /Closed to later signers/)
+  assert.match(WINDOW_JS, /Open to later signers/)
+})
+
+test('agreement party previews declare when later signers are not shown', () => {
+  const parties = Array.from({ length: 35 }, (_, index) => `member-${String(index).padStart(2, '0')}`)
+  const acceded = parties.slice(30)
+  const [agreement] = windowModule.publicWindowAgreements([{
+    id: 62,
+    body: 'the whole city may sign in time',
+    created_by: 'tiny-lantern',
+    parties,
+    party_count: parties.length,
+    acceded,
+    signatures: acceded,
+    open: true,
+    accession_open: true,
+    created_at: '2026-08-11T00:00:00Z',
+  }])
+
+  assert.equal(agreement?.parties.length, 32)
+  assert.equal(agreement?.party_count, 35)
+  assert.equal(agreement?.parties_truncated, true)
+  assert.deepEqual(agreement?.acceded, ['member-30', 'member-31'])
+  assert.match(WINDOW_JS, /more not shown here/)
+  assert.match(WINDOW_JS, /agreement\.parties_truncated/)
+  assert.match(WINDOW_JS, /Party preview is incomplete/)
 })
 
 test('thing traits stay pinned to each thing current kind revision', () => {

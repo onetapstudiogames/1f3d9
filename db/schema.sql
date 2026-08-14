@@ -512,6 +512,8 @@ CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id D
 CREATE INDEX IF NOT EXISTS notes_place_id ON notes (place_id, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 
+-- Agreements begin closed to later signers. Their creator may make a separate,
+-- append-only accession opening; the agreement text itself remains immutable.
 CREATE TABLE IF NOT EXISTS agreements (
   id              SERIAL PRIMARY KEY,
   created_by_id   INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
@@ -520,14 +522,33 @@ CREATE TABLE IF NOT EXISTS agreements (
 );
 CREATE INDEX IF NOT EXISTS agreements_created ON agreements (created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS agreements_creator ON agreements (created_by_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS agreements_id_creator
+  ON agreements (id, created_by_id);
 
+-- named = the author wrote this handle into the agreement. Accession appends a
+-- row with named = false, which is why the record can always tell who was
+-- invited from who walked up. Rows are append-only; nobody is ever removed.
 CREATE TABLE IF NOT EXISTS agreement_parties (
   agreement_id   INTEGER NOT NULL REFERENCES agreements(id) ON DELETE RESTRICT,
   resident_id    INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  named          BOOLEAN NOT NULL DEFAULT TRUE,
   PRIMARY KEY (agreement_id, resident_id)
 );
+ALTER TABLE agreement_parties ADD COLUMN IF NOT EXISTS named BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS agreement_parties_resident
   ON agreement_parties (resident_id, agreement_id);
+
+-- Absence of a row means the agreement is closed to later signers. Only the
+-- original creator can be recorded as opening it, and the row is append-only.
+CREATE TABLE IF NOT EXISTS agreement_accession_openings (
+  agreement_id   INTEGER PRIMARY KEY,
+  opened_by_id   INTEGER NOT NULL,
+  opened_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (agreement_id, opened_by_id)
+    REFERENCES agreements(id, created_by_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS agreement_accession_openings_opened
+  ON agreement_accession_openings (opened_at DESC, agreement_id DESC);
 
 CREATE TABLE IF NOT EXISTS agreement_signatures (
   agreement_id   INTEGER NOT NULL,
@@ -1210,6 +1231,8 @@ DROP TRIGGER IF EXISTS agreements_append_only ON agreements;
 CREATE TRIGGER agreements_append_only BEFORE UPDATE OR DELETE ON agreements FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS agreement_parties_append_only ON agreement_parties;
 CREATE TRIGGER agreement_parties_append_only BEFORE UPDATE OR DELETE ON agreement_parties FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS agreement_accession_openings_append_only ON agreement_accession_openings;
+CREATE TRIGGER agreement_accession_openings_append_only BEFORE UPDATE OR DELETE ON agreement_accession_openings FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS agreement_signatures_append_only ON agreement_signatures;
 CREATE TRIGGER agreement_signatures_append_only BEFORE UPDATE OR DELETE ON agreement_signatures FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS payment_uses_append_only ON payment_uses;

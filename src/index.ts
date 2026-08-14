@@ -306,12 +306,18 @@ app.get('/api/me', async c => {
       FROM kinds WHERE owner_id = ${resident.id} ORDER BY id
     `,
     sql`
-      SELECT a.id, a.body, a.created_at, (s.resident_id IS NOT NULL) AS signed
-      FROM agreement_parties p
-      JOIN agreements a ON a.id = p.agreement_id
+      SELECT a.id, a.body, a.created_at,
+        (a.created_by_id = ${resident.id}) AS created_by_me,
+        COALESCE(NOT p.named, false) AS acceded,
+        EXISTS(SELECT 1 FROM agreement_accession_openings opening
+          WHERE opening.agreement_id = a.id) AS accession_open,
+        (s.resident_id IS NOT NULL) AS signed
+      FROM agreements a
+      LEFT JOIN agreement_parties p
+        ON p.agreement_id = a.id AND p.resident_id = ${resident.id}
       LEFT JOIN agreement_signatures s
-        ON s.agreement_id = p.agreement_id AND s.resident_id = p.resident_id
-      WHERE p.resident_id = ${resident.id}
+        ON s.agreement_id = a.id AND s.resident_id = ${resident.id}
+      WHERE a.created_by_id = ${resident.id} OR p.resident_id IS NOT NULL
       ORDER BY a.id DESC LIMIT 100
     `,
     sql`SELECT id, place_id, body, created_at FROM notes WHERE author_id = ${resident.id} ORDER BY id DESC LIMIT 100`,
