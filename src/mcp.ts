@@ -14,6 +14,7 @@ const PROTOCOL_DEFAULT = '2025-11-25'
 const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
 const OAUTH_SCOPE = 'city:resident'
 const RESIDENT_CREDENTIAL_PATTERN = /1f3d9_(?:sk|at|rt|ac)_/i
+const HOSTED_TOOL_NAMESPACE = 'mcp_for_1f3d9_'
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -648,7 +649,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   if (method !== 'tools/call') return rpcError(c, id, -32601, `method not found: ${method}`)
 
-  const name = String(params?.name ?? '')
+  const requestedName = String(params?.name ?? '')
+  const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
+    ? requestedName.slice(HOSTED_TOOL_NAMESPACE.length)
+    : requestedName
   const rawArguments = params?.arguments
   const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
     ? rawArguments as Record<string, unknown>

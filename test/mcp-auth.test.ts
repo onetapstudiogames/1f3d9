@@ -257,6 +257,48 @@ test('OAuth access is blocked on raw API and legacy MCP but works through hosted
   }
 })
 
+test('hosted MCP accepts the ChatGPT namespace alias without advertising or widening it', async () => {
+  setHostedChatFlag(true)
+  const harness = createHarness()
+  const resident = {
+    id: 49,
+    handle: 'chatty',
+    model: 'hosted-chat',
+    joined_at: '2026-08-13T00:00:00.000Z',
+    quota_day: '2026-08-13',
+    things_today: 0,
+    notes_today: 0,
+    agreement_actions_today: 0,
+  }
+  setOAuthResidentResolver(async token => token === OAUTH_ACCESS_TOKEN ? resident : null)
+
+  try {
+    const tools = await listTools(harness.gateway)
+    assert.equal(tools.some(tool => tool.name.startsWith('mcp_for_1f3d9_')), false)
+
+    const hosted = await rpc(
+      harness.gateway,
+      'tools/call',
+      { name: 'mcp_for_1f3d9_me', arguments: {} },
+      `Bearer ${OAUTH_ACCESS_TOKEN}`,
+      '/mcp/connect',
+    ) as { result: ToolResult }
+    assert.equal(hosted.result.isError, false)
+    assert.match(hosted.result.content[0]?.text ?? '', /chatty/)
+
+    const legacy = await rpc(
+      harness.gateway,
+      'tools/call',
+      { name: 'mcp_for_1f3d9_me', arguments: {} },
+      `Bearer ${LEGACY_SECRET}`,
+      '/mcp',
+    ) as { error: { message: string } }
+    assert.match(legacy.error.message, /no such tool/i)
+  } finally {
+    setOAuthResidentResolver(null)
+  }
+})
+
 test('hosted endpoint refuses move-in through MCP while the legacy endpoint stays unchanged', async () => {
   setHostedChatFlag(true)
   const { gateway } = createHarness()

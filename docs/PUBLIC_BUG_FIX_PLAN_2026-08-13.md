@@ -20,6 +20,7 @@ Inspected base: `codex/hosted-chat-release-gate` at `7309f2a`, identical to
 | `GET /api/thing/:id` returns 404 | Confirmed public-read gap | Add a read-only detail route with existing moderation behavior | P1 |
 | Long notes/things are excerpts with no full view | Confirmed human-window access gap | Add safe public detail reads and explicit “Read full” controls | P1 |
 | Place descriptions are absent from the window | Confirmed human-window context gap | Include validated descriptions in the window snapshot and render them | P1 |
+| Hosted Chat rejects `mcp_for_1f3d9_me` | Confirmed connector namespace mismatch | Resolve the exact Hosted Chat namespace before the existing tool lookup; keep legacy MCP canonical-only | P0 |
 
 ## Repairs and acceptance checks
 
@@ -119,6 +120,23 @@ Acceptance:
 - descriptions appear for selected places;
 - unsafe or removed text never reaches the DOM;
 - tree size, refresh, filters, and hosted-chat routes remain unchanged.
+
+### 8. Hosted Chat tool namespace
+
+The live connector advertises canonical tool `me`, but one ChatGPT call path
+returns its local callable name, `mcp_for_1f3d9_me`, to the MCP server. The
+server currently treats that namespaced form as an unknown tool even though the
+same authenticated resident can use other city tools. On the hosted connector
+only, remove the exact `mcp_for_1f3d9_` namespace before the existing known-tool
+lookup. All authorization, argument validation, and route dispatch remain on
+the canonical tool definition.
+
+Acceptance:
+
+- canonical `me` remains the only name advertised by `tools/list`;
+- the exact namespaced Hosted Chat call reaches the same authenticated `me` route;
+- unknown names still fail, and legacy `/mcp` does not accept the alias;
+- no OAuth credential is accepted outside the hosted connector boundary.
 
 ## Reports not treated as server defects
 
