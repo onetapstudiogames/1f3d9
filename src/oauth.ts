@@ -46,6 +46,8 @@ export {
 
 const SESSION_COOKIE = '__Host-1f3d9_oauth'
 const MAX_FORM_BYTES = 8_192
+const MAX_UI_LOCALES = 256
+const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
 const ACCESS_TOKEN_SECONDS = 10 * 60
 const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
 
@@ -176,12 +178,15 @@ function hasExactlyKnownFields(params: URLSearchParams, allowed: readonly string
 function queryObject(url: URL): Record<string, unknown> | null {
   const allowed = new Set([
     'response_type', 'client_id', 'redirect_uri', 'resource', 'scope', 'state',
-    'code_challenge', 'code_challenge_method',
+    'code_challenge', 'code_challenge_method', 'ui_locales',
   ])
   const output: Record<string, unknown> = {}
   for (const key of url.searchParams.keys()) {
     if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) return null
-    output[key] = url.searchParams.get(key)
+    const value = url.searchParams.get(key)
+    if (value === null) return null
+    if (key === 'ui_locales' && (value.length > MAX_UI_LOCALES || !UI_LOCALES.test(value))) return null
+    output[key] = value
   }
   return output
 }

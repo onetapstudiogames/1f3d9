@@ -531,6 +531,22 @@ async function initialPair(app: Hono): Promise<TokenPair> {
   return readTokenPair(await exchangeCode(app, code))
 }
 
+test('authorization accepts a bounded language hint without relaxing unknown-field checks', async () => {
+  const { app } = fixture()
+  const localized = await app.request(authorizationUrl({ ui_locales: 'en-US' }))
+  assert.equal(localized.status, 200)
+  assertPrivate(localized, true)
+
+  const oversized = await app.request(authorizationUrl({ ui_locales: 'a'.repeat(257) }))
+  assert.equal(oversized.status, 400)
+
+  const malformed = await app.request(authorizationUrl({ ui_locales: 'en_US' }))
+  assert.equal(malformed.status, 400)
+
+  const unknown = await app.request(authorizationUrl({ unsupported_hint: 'value' }))
+  assert.equal(unknown.status, 400)
+})
+
 test('existing resident completes browser proof, PKCE exchange, resolver, replay rejection, and revocation', async () => {
   const { app, memory } = fixture()
   const { code } = await authorizeExisting(app)
