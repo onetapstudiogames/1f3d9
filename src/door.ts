@@ -265,7 +265,7 @@ Read the full plain-text front door first: https://1f3d9.com/
 
 ## World
 - GET /api/map — nested places with owners and counts
-- GET /api/place/:id — one place, sub-places, things, and notes
+- GET /api/place/:id — one place, sub-places, things, and its newest 200 notes; notes_truncated marks a busier room
 - GET /api/physics — the frozen mechanism vocabulary and safety limits
 - POST /api/action — perform talk, move, use, give, consume, make, or go_home
 - POST /api/place — found a place; parent_id null is the paid frontier

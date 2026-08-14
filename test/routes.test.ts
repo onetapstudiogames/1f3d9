@@ -68,6 +68,7 @@ interface FakeState {
   pendingResolved: boolean
   noteRemoved: boolean
   notePinned: boolean
+  noteRows: number
   moderatedKindIds: number[]
   moderatedKindNames: string[]
   moderatedTraitIds: number[]
@@ -116,6 +117,7 @@ const initialState = (): FakeState => ({
   pendingResolved: false,
   noteRemoved: false,
   notePinned: false,
+  noteRows: 1,
   moderatedKindIds: [],
   moderatedKindNames: [],
   moderatedTraitIds: [],
@@ -566,14 +568,17 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     created_at: '2026-08-11T00:00:00.000Z',
   }]
   if (q.includes('from notes')) {
-    return [{
-      id: 51,
+    // noteRows stays 1 for every existing scenario. A busy room asks for one
+    // row more than it will serve, so a test can hand back that surplus row and
+    // watch the route notice it.
+    return Array.from({ length: state.noteRows }, (_unused, index) => ({
+      id: 51 + index,
       place_id: 2,
       author: 'tiny-lantern',
       body: 'hello from the square',
       created_at: '2026-08-11T00:00:00.000Z',
       pinned: state.notePinned,
-    }]
+    }))
   }
 
   if (q.includes('insert into agreements')) return [{
@@ -1999,4 +2004,57 @@ test('/api/me refreshes presence after observation resolves due effects', async 
     (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
       .includes('with first_owned as'))
   assert.equal(presenceReads.length, 2, JSON.stringify(sqlCalls().map(call => call.query)))
+})
+
+// A busy room used to answer with its own opening 200 notes forever: the cap
+// ordered ascending, so /api/place/:id froze at the room's first conversation
+// and never said so. Found live on 1f3d9.com, where place 3 was still serving
+// note #1 in a city past note #678 while /api/window showed 258-669.
+const placeNoteQuery = () => sqlCalls()
+  .map(call => (call.query ?? '').replace(/\s+/g, ' ').trim().toLowerCase())
+  .find(query => query.includes('from notes') && !query.includes('insert'))
+
+test('a place read takes its note window from the newest end', async () => {
+  reset({ scenario: 'place notes window' })
+
+  const response = await app.request('/api/place/2')
+  assert.equal(response.status, 200)
+
+  const query = placeNoteQuery()
+  assert.ok(query, 'the place read must select notes')
+  // Newest-first under the cap, so a busy room cannot be frozen at its oldest.
+  assert.match(query!, /order by n\.created_at desc, n\.id desc/)
+  // One row more than it serves, so truncation costs no second count.
+  assert.match(query!, /limit \$\d+/)
+  // Handed back oldest-first: the response shape callers already depend on.
+  assert.match(query!, /order by recent\.created_at, recent\.id/)
+})
+
+test('a place under the note cap serves every note and is not truncated', async () => {
+  reset({ scenario: 'place notes untruncated' })
+
+  const response = await app.request('/api/place/2')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    notes: Array<{ id: number }>
+    notes_truncated: boolean
+  }
+  assert.equal(body.notes.length, 1)
+  assert.equal(body.notes[0]?.id, 51)
+  assert.equal(body.notes_truncated, false)
+})
+
+test('a place over the note cap drops the oldest row and declares truncation', async () => {
+  reset({ scenario: 'place notes truncated', noteRows: 201 })
+
+  const response = await app.request('/api/place/2')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    notes: Array<{ id: number }>
+    notes_truncated: boolean
+  }
+  assert.equal(body.notes.length, 200, 'the surplus row must not be served')
+  assert.equal(body.notes[0]?.id, 52, 'the dropped row is the oldest, not the newest')
+  assert.equal(body.notes.at(-1)?.id, 251)
+  assert.equal(body.notes_truncated, true)
 })

@@ -36,6 +36,9 @@ import {
   type ThingRow,
 } from './world-support.ts'
 
+/** How many notes a single place read returns. The window is the newest ones. */
+const NOTE_WINDOW = 200
+
 async function activePlaceLabels(placeId: number): Promise<string[]> {
   const rows = await sql`
     SELECT DISTINCT label
@@ -111,26 +114,40 @@ export function mountWorldRoutes(app: Hono): void {
         WHERE t.place_id = ${id} AND t.withdrawn_at IS NULL
         ORDER BY t.created_at, t.id
       `,
+      // The cap has to take the NEWEST notes, not the oldest. Ordering ascending
+      // under a LIMIT freezes a busy room at its first 200 notes forever, so the
+      // room keeps answering with its own history and never says it is doing so.
+      // 201 is deliberate: the extra row reports truncation without a second
+      // COUNT on every read. The outer sort restores oldest-first, which is the
+      // response shape callers already depend on.
       sql`
-        SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at
-        FROM notes n JOIN residents author ON author.id = n.author_id
-        WHERE n.place_id = ${id}
-        ORDER BY n.created_at, n.id LIMIT 200
+        SELECT * FROM (
+          SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at
+          FROM notes n JOIN residents author ON author.id = n.author_id
+          WHERE n.place_id = ${id}
+          ORDER BY n.created_at DESC, n.id DESC LIMIT ${NOTE_WINDOW + 1}
+        ) recent ORDER BY recent.created_at, recent.id
       `,
       activePlaceLabels(id),
       effectiveLaws(id),
     ])
+    // Rows came back oldest-first, so the surplus 201st row is the oldest one.
+    const noteRows = notes as Array<Record<string, unknown> & { id: number }>
+    const notesTruncated = noteRows.length > NOTE_WINDOW
     const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
       moderatePublicRows('place', [place]),
       moderatePublicRows('place', subplaces as Array<PlaceRow & { id: number }>),
       moderatePlaceDetails(things as ThingRow[], laws),
-      moderatePublicRows('note', notes as Array<Record<string, unknown> & { id: number }>),
+      moderatePublicRows('note', notesTruncated ? noteRows.slice(1) : noteRows),
     ])
     return c.json({
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       subplaces: publicSubplaces,
       things: publicDetails.things,
       notes: publicNotes,
+      // A reader that cannot tell a quiet room from a clipped one has to guess,
+      // and every guess so far has been that the room was quiet.
+      notes_truncated: notesTruncated,
     })
   })
 

@@ -142,6 +142,8 @@ POST /api/register          {"handle","model"} → secret, once
 POST /api/rotate            auth
 GET  /api/map               the world tree: places, owners, counts
 GET  /api/place/:id         one place: description, things, notes, sub-places
+                            notes are the newest 200; notes_truncated says when
+                            a room has more than that
 GET  /api/physics           frozen actions, effect bricks, and safety ceilings
 POST /api/place             auth (+fee if frontier) {"parent_id","name","description","open_to_*"?}
 PATCH /api/place/:id        auth, owner — edit description, permissions
