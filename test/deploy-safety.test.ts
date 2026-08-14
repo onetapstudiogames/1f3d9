@@ -36,6 +36,14 @@ const agreementAccessionMigration = readFileSync(
   'utf8',
 )
 
+function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const environment = { ...process.env, ...overrides }
+  for (const name of Object.keys(environment)) {
+    if (name.startsWith('GIT_')) delete environment[name]
+  }
+  return environment
+}
+
 test('the ordinary app deploy never runs or pulls a database migration', () => {
   assert.doesNotMatch(deployScript, /RUN_MIGRATE|scripts\/migrate\.ts|npm run migrate/i)
   assert.doesNotMatch(deployScript, /env pull[^\n]*production/i)
@@ -183,7 +191,11 @@ test('production deploy dry-run proves exact clean branch and commit before netw
   writeFileSync(join(root, 'README.md'), 'release fixture\n')
   writeFileSync(join(root, '.gitignore'), 'env.txt\n')
 
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
+  const git = (...args: string[]) => execFileSync('git', args, {
+    cwd: root,
+    stdio: 'pipe',
+    env: withoutGitHookEnvironment(),
+  })
   git('init', '-q')
   git('config', 'user.email', 'release-test@example.invalid')
   git('config', 'user.name', 'Release Test')
@@ -205,6 +217,7 @@ test('production deploy dry-run proves exact clean branch and commit before netw
   const unacknowledged = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
     cwd: root,
     encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
   })
   assert.notEqual(unacknowledged.status, 0)
   assert.match(
@@ -216,6 +229,7 @@ test('production deploy dry-run proves exact clean branch and commit before netw
   const verified = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
     cwd: root,
     encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
   })
   assert.equal(verified.status, 0, verified.stderr || verified.stdout)
   assert.match(verified.stdout, /release branch and commit verified/i)
@@ -225,6 +239,7 @@ test('production deploy dry-run proves exact clean branch and commit before netw
   const dirty = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
     cwd: root,
     encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
   })
   assert.notEqual(dirty.status, 0)
   assert.match(`${dirty.stdout}\n${dirty.stderr}`, /worktree.*clean/i)
@@ -234,6 +249,7 @@ test('production deploy dry-run proves exact clean branch and commit before netw
   const wrongCommit = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
     cwd: root,
     encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
   })
   assert.notEqual(wrongCommit.status, 0)
 })
@@ -249,7 +265,11 @@ test('deploy settings are parsed as inert data and shell syntax fails before rel
   writeFileSync(join(root, 'README.md'), 'release fixture\n')
   writeFileSync(join(root, '.gitignore'), 'env.txt\n')
 
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
+  const git = (...args: string[]) => execFileSync('git', args, {
+    cwd: root,
+    stdio: 'pipe',
+    env: withoutGitHookEnvironment(),
+  })
   git('init', '-q')
   git('config', 'user.email', 'release-test@example.invalid')
   git('config', 'user.name', 'Release Test')
@@ -278,6 +298,7 @@ test('deploy settings are parsed as inert data and shell syntax fails before rel
     const result = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
       cwd: root,
       encoding: 'utf8',
+      env: withoutGitHookEnvironment(),
     })
     assert.notEqual(result.status, 0)
     assert.equal(existsSync(marker), false, 'env.txt content executed as shell code')
@@ -315,7 +336,11 @@ test('a failed Postgres or browser release gate stops before every provider comm
   for (const name of ['npm', 'npx', 'curl']) chmodSync(join(bin, name), 0o755)
   const bashBin = spawnSync('bash', ['-lc', 'pwd'], { cwd: bin, encoding: 'utf8' }).stdout.trim()
 
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
+  const git = (...args: string[]) => execFileSync('git', args, {
+    cwd: root,
+    stdio: 'pipe',
+    env: withoutGitHookEnvironment(),
+  })
   git('init', '-q')
   git('config', 'user.email', 'release-test@example.invalid')
   git('config', 'user.name', 'Release Test')
@@ -353,6 +378,7 @@ test('a failed Postgres or browser release gate stops before every provider comm
     const result = spawnSync('bash', [`${bashBin}/run-deploy-gate-test.sh`], {
       cwd: root,
       encoding: 'utf8',
+      env: withoutGitHookEnvironment(),
     })
     assert.notEqual(result.status, 0)
     const commands = readFileSync(commandLog, 'utf8')
