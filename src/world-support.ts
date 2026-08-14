@@ -3,6 +3,7 @@ import {
   auth,
   err,
   postgresErrorCode,
+  postgresErrorMessage,
   WALLET_RE,
   type Resident,
 } from './core.ts'
@@ -100,6 +101,16 @@ export function openOffer(row: { has_open_offer?: unknown }): boolean {
 
 export function conflictMessage(error: unknown, fallback: string): string | null {
   return postgresErrorCode(error) === '23505' ? fallback : null
+}
+
+// link_kind_revision_traits raises 23503 with a message the caller can act on.
+// Without this the reason is discarded and a paid request answers "internal".
+export function unknownTraitMessage(error: unknown): string | null {
+  if (postgresErrorCode(error) !== '23503') return null
+  const raised = postgresErrorMessage(error) ?? ''
+  return raised.includes('unknown or duplicate trait')
+    ? 'names an unknown or duplicate trait; coin each trait first with POST /api/trait'
+    : null
 }
 
 export function hasDuplicateNames(source: unknown, normalized: string[]): boolean {
