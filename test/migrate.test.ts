@@ -242,3 +242,8 @@ test('round-two records are append-only rather than deleted after resolution', (
     )
   }
 })
+
+test('cursor-paged public history has matching keyset indexes', () => {
+  assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+notes_place_id\s+ON\s+notes\s*\(place_id,\s*id\s+DESC\)/i)
+  assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+events_kind_id\s+ON\s+events\s*\(kind,\s*id\s+DESC\)/i)
+})

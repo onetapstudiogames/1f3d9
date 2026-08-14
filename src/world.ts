@@ -83,6 +83,14 @@ export function mountWorldRoutes(app: Hono): void {
   app.get('/api/place/:id', async c => {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
+    const rawBeforeNoteId = c.req.query('before_note_id')
+    const beforeNoteId = rawBeforeNoteId === undefined ? null : positiveId(rawBeforeNoteId)
+    if (rawBeforeNoteId !== undefined && !beforeNoteId) {
+      return err(c, 400, 'before_note_id must be a positive integer')
+    }
+    const rawNoteLimit = c.req.query('note_limit')
+    const noteLimit = rawNoteLimit === undefined ? 200 : positiveId(rawNoteLimit)
+    if (!noteLimit || noteLimit > 200) return err(c, 400, 'note_limit must be an integer from 1 to 200')
     const observer = await auth(c)
     if (observer) await resolveDueEffects(id)
 
@@ -96,7 +104,7 @@ export function mountWorldRoutes(app: Hono): void {
     const place = places[0]
     if (!place) return err(c, 404, 'place not found')
 
-    const [subplaces, things, notes, labels, laws] = await Promise.all([
+    const [subplaces, things, noteRows, labels, laws] = await Promise.all([
       sql`
         SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
           p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
@@ -116,11 +124,15 @@ export function mountWorldRoutes(app: Hono): void {
         SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at
         FROM notes n JOIN residents author ON author.id = n.author_id
         WHERE n.place_id = ${id}
-        ORDER BY n.created_at, n.id LIMIT 200
+          AND n.id < coalesce(${beforeNoteId}::bigint, 2147483648)
+        ORDER BY n.id DESC
+        LIMIT ${noteLimit + 1}
       `,
       activePlaceLabels(id),
       effectiveLaws(id),
     ])
+    const hasMoreNotes = noteRows.length > noteLimit
+    const notes = noteRows.slice(0, noteLimit).reverse()
     const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
       moderatePublicRows('place', [place]),
       moderatePublicRows('place', subplaces as Array<PlaceRow & { id: number }>),
@@ -132,7 +144,29 @@ export function mountWorldRoutes(app: Hono): void {
       subplaces: publicSubplaces,
       things: publicDetails.things,
       notes: publicNotes,
+      notes_page: {
+        has_more: hasMoreNotes,
+        next_before_note_id: hasMoreNotes ? Number((notes[0] as { id?: unknown } | undefined)?.id) || null : null,
+      },
     })
+  })
+
+  app.get('/api/thing/:id', async c => {
+    const id = positiveId(c.req.param('id'))
+    if (!id) return err(c, 400, 'thing id must be a positive integer')
+    const rows = await sql`
+      SELECT thing.id, thing.place_id, thing.name, thing.body,
+        thing.owner_id, owner.handle AS owner,
+        thing.kind_id, kind.name AS kind,
+        thing.birth_revision, thing.current_revision, thing.created_at
+      FROM things thing
+      JOIN residents owner ON owner.id = thing.owner_id
+      LEFT JOIN kinds kind ON kind.id = thing.kind_id
+      WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
+    ` as ThingRow[]
+    if (!rows[0]) return err(c, 404, 'thing not found')
+    const publicDetails = await moderatePlaceDetails(rows, [])
+    return c.json({ thing: publicDetails.things[0] })
   })
 
   app.post('/api/place', async c => {

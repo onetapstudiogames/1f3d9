@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # 1F3D9 deploy: Vercel project + Neon Postgres + env vars + domain + Porkbun DNS
-# + schema migration + live smoke checks. Idempotent and safe to re-run.
+# + live smoke checks. Idempotent and safe to re-run.
 #
-# Needs env.txt in the repo root (gitignored), one KEY=value per line:
+# This command NEVER migrates a database. Preview and production migrations use
+# the separately guarded npm scripts documented in docs/HOSTED_CHAT_SIGNIN.md.
+#
+# Needs env.txt in the repo root (gitignored), one literal KEY=value per line.
+# Quotes and shell expressions are rejected; this file is data, not a script.
 #   VERCEL_TOKEN=...
 #   PORKBUN_API_KEY=pk1_...
 #   PORKBUN_SECRET_KEY=sk1_...
@@ -17,10 +21,115 @@ cd "$(dirname "$0")/.."
 DOMAIN="1f3d9.com"
 PROJECT="1f3d9"
 TREASURY="0x3b9d230c9b995fb1a10add2d63ce37437916dcfd"
-ENVFILE=".env.deploy"
+PRODUCTION_DEPLOY_ACKNOWLEDGEMENT="DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION"
+
+load_deploy_settings() {
+  [ -e env.txt ] || return 0
+
+  local line key value line_number=0
+  local -A seen_keys=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    line_number=$((line_number + 1))
+    line="${line%$'\r'}"
+    [ -z "$line" ] && continue
+    [[ "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || {
+      echo "!! env.txt line $line_number must be a literal KEY=value setting"
+      return 1
+    }
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      VERCEL_TOKEN|PORKBUN_API_KEY|PORKBUN_SECRET_KEY|CONFIRM_PRODUCTION_DEPLOY|\
+      PRODUCTION_RELEASE_BRANCH|PRODUCTION_RELEASE_COMMIT|\
+      PRESERVE_ENABLED_HOSTED_CHAT_SIGNIN) ;;
+      *)
+        echo "!! unexpected key in env.txt at line $line_number"
+        return 1
+        ;;
+    esac
+    if [[ -n "${seen_keys[$key]+present}" ]]; then
+      echo "!! duplicate key in env.txt at line $line_number"
+      return 1
+    fi
+    case "$value" in
+      *[!A-Za-z0-9._~:/@%+=,-]*)
+        echo "!! env.txt line $line_number contains unsupported characters"
+        return 1
+        ;;
+    esac
+
+    seen_keys[$key]=1
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < env.txt
+}
+
+# Parse the ignored settings file as inert data before checking release intent.
+# No provider or production operation has happened at this point.
+load_deploy_settings
+
+verify_release_intent() {
+  [ "${CONFIRM_PRODUCTION_DEPLOY:-}" = "$PRODUCTION_DEPLOY_ACKNOWLEDGEMENT" ] || {
+    echo "!! production deploy requires CONFIRM_PRODUCTION_DEPLOY=$PRODUCTION_DEPLOY_ACKNOWLEDGEMENT"
+    return 1
+  }
+  [ -n "${PRODUCTION_RELEASE_BRANCH:-}" ] || {
+    echo "!! PRODUCTION_RELEASE_BRANCH must name the reviewed release branch"
+    return 1
+  }
+  git check-ref-format --branch "$PRODUCTION_RELEASE_BRANCH" >/dev/null 2>&1 || {
+    echo "!! PRODUCTION_RELEASE_BRANCH is not a valid branch name"
+    return 1
+  }
+  [[ "${PRODUCTION_RELEASE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "!! PRODUCTION_RELEASE_COMMIT must be the full reviewed commit id"
+    return 1
+  }
+
+  local current_branch current_commit branch_commit worktree_state
+  current_branch=$(git symbolic-ref --quiet --short HEAD) || {
+    echo "!! production deploy requires the named release branch, not a detached checkout"
+    return 1
+  }
+  current_commit=$(git rev-parse --verify HEAD) || {
+    echo "!! could not read the current release commit"
+    return 1
+  }
+  branch_commit=$(git rev-parse --verify "$PRODUCTION_RELEASE_BRANCH^{commit}" 2>/dev/null) || {
+    echo "!! the intended release branch does not exist locally"
+    return 1
+  }
+  [ "$current_branch" = "$PRODUCTION_RELEASE_BRANCH" ] || {
+    echo "!! current branch is not the intended production release branch"
+    return 1
+  }
+  [ "$current_commit" = "$PRODUCTION_RELEASE_COMMIT" ] && \
+    [ "$branch_commit" = "$PRODUCTION_RELEASE_COMMIT" ] || {
+    echo "!! current commit is not the reviewed production release commit"
+    return 1
+  }
+  worktree_state=$(git status --porcelain=v1 --untracked-files=all) || {
+    echo "!! could not verify that the release worktree is clean"
+    return 1
+  }
+  [ -z "$worktree_state" ] || {
+    echo "!! production release worktree must be clean, including untracked files"
+    return 1
+  }
+  echo "   release branch and commit verified; worktree is clean"
+}
+
+echo "== 0. immutable release gate"
+verify_release_intent
+if [ "${1:-}" = "--verify-release-only" ]; then
+  [ "$#" -eq 1 ] || { echo "!! --verify-release-only accepts no other arguments"; exit 1; }
+  exit 0
+fi
+[ "$#" -eq 0 ] || { echo "!! unknown deploy argument"; exit 1; }
 
 [ -s env.txt ] || { echo "!! env.txt is missing or empty — see the header of this script"; exit 1; }
-set -a; . <(tr -d '\r' < env.txt); set +a
 : "${VERCEL_TOKEN:?env.txt must set VERCEL_TOKEN}"
 : "${PORKBUN_API_KEY:?env.txt must set PORKBUN_API_KEY}"
 : "${PORKBUN_SECRET_KEY:?env.txt must set PORKBUN_SECRET_KEY}"
@@ -43,20 +152,16 @@ PB() {
 JQN() {
   node -e 'const d=JSON.parse(process.argv[1]);const v=eval(process.argv[2]);process.stdout.write(v==null?"":String(v))' "$1" "$2"
 }
-RUN_MIGRATE() {
-  if node --experimental-strip-types -e "" >/dev/null 2>&1; then
-    node --env-file="./$ENVFILE" --experimental-strip-types scripts/migrate.ts
-    return
-  fi
-  if command -v node.exe >/dev/null 2>&1 && node.exe --experimental-strip-types -e "" >/dev/null 2>&1; then
-    node.exe --env-file="./$ENVFILE" --experimental-strip-types scripts/migrate.ts
-    return
-  fi
-  echo "!! Need Node 24+ with --experimental-strip-types for schema migration"
-  exit 1
-}
+echo "== 1. complete local release gates"
+[ -d node_modules ] || npm ci --no-audit --no-fund
+npm test
+npm run typecheck
+npm run test:postgres
+npm run test:e2e
+verify_release_intent
+echo "   unit, type, PostgreSQL, and browser tests passed"
 
-echo "== 0. preflight"
+echo "== 2. provider preflight"
 echo "   first deploy only: confirm Porkbun Details -> URL Forwarding has no rule for $DOMAIN"
 VC whoami >/dev/null || { echo "!! VERCEL_TOKEN rejected"; exit 1; }
 PING=$(PB ping)
@@ -66,12 +171,12 @@ PING=$(PB ping)
 }
 echo "   vercel ok, porkbun ok"
 
-echo "== 1. project"
+echo "== 3. project"
 VC project add "$PROJECT" >/dev/null 2>&1 || true
 VC link --yes --project "$PROJECT" >/dev/null
 echo "   linked to $PROJECT"
 
-echo "== 2. Postgres (Neon via Vercel Marketplace)"
+echo "== 4. Postgres connection presence (no migration)"
 if VC env ls production 2>/dev/null | grep -q DATABASE_URL; then
   echo "   DATABASE_URL already present"
 else
@@ -81,35 +186,46 @@ else
     exit 1
   }
 fi
-VC env pull "$ENVFILE" --environment production --yes >/dev/null
-grep -qE '^DATABASE_URL=' "$ENVFILE" || { echo "!! DATABASE_URL was not injected"; exit 1; }
-echo "   pulled production environment to $ENVFILE (gitignored)"
+echo "   database schema is intentionally managed by a separate guarded command"
 
-echo "== 3. app environment"
+echo "== 5. production app environment"
+verify_release_intent
 for kv in "TREASURY_ADDRESS=$TREASURY" "PUBLIC_ORIGIN=https://$DOMAIN"; do
   key="${kv%%=*}"
   value="${kv#*=}"
-  for target in production preview; do
-    printf '%s' "$value" | VC env add "$key" "$target" --force >/dev/null 2>&1 || true
-  done
+  if ! printf '%s' "$value" | VC env add "$key" production --force >/dev/null 2>&1; then
+    echo "!! failed to set required production setting $key; deploy stopped"
+    exit 1
+  fi
   echo "   set $key"
 done
 
-echo "== 4. schema"
-[ -d node_modules ] || npm ci --no-audit --no-fund
-RUN_MIGRATE
+if [ "${PRESERVE_ENABLED_HOSTED_CHAT_SIGNIN:-}" = "REAL_CLIENT_GATES_ALREADY_PASSED" ]; then
+  VC env ls production 2>/dev/null | grep -q HOSTED_CHAT_SIGNIN_ENABLED || {
+    echo "!! production hosted-chat setting is absent; refusing to guess an enabled value"
+    exit 1
+  }
+  echo "   preserving the established production hosted-chat setting"
+else
+  if ! printf '%s' 'false' | VC env add HOSTED_CHAT_SIGNIN_ENABLED production --force >/dev/null 2>&1; then
+    echo "!! failed to force hosted-chat sign-in off; deploy stopped"
+    exit 1
+  fi
+  echo "   forced HOSTED_CHAT_SIGNIN_ENABLED=false for this guarded production deploy"
+fi
 
-echo "== 5. deploy"
+echo "== 6. deploy"
+verify_release_intent
 DEPLOY_URL=$(VC deploy --prod --yes | tail -1 | tr -d '\r')
 echo "   $DEPLOY_URL"
 
-echo "== 6. domains"
+echo "== 7. domains"
 VAPI POST "/v10/projects/$PROJECT/domains" "{\"name\":\"$DOMAIN\"}" >/dev/null
 VAPI POST "/v10/projects/$PROJECT/domains" \
   "{\"name\":\"www.$DOMAIN\",\"redirect\":\"$DOMAIN\",\"redirectStatusCode\":308}" >/dev/null
 echo "   attached $DOMAIN and www.$DOMAIN"
 
-echo "== 7. DNS at Porkbun"
+echo "== 8. DNS at Porkbun"
 CFG=$(VAPI GET "/v6/domains/$DOMAIN/config")
 IPV4=$(JQN "$CFG" 'd.recommendedIPv4?.[0]?.value?.[0]')
 CNAME=$(JQN "$CFG" 'd.recommendedCNAME?.[0]?.value')
@@ -139,7 +255,7 @@ pb_set() {
 pb_set "" A "$IPV4"
 pb_set www CNAME "$CNAME"
 
-echo "== 8. wait for DNS + TLS"
+echo "== 9. wait for DNS + TLS"
 for attempt in $(seq 1 30); do
   CFG=$(VAPI GET "/v6/domains/$DOMAIN/config")
   if [ "$(JQN "$CFG" 'd.misconfigured')" = "false" ]; then
@@ -150,7 +266,7 @@ for attempt in $(seq 1 30); do
   sleep 20
 done
 
-echo "== 9. smoke checks"
+echo "== 10. smoke checks"
 for attempt in $(seq 1 20); do
   BODY=$(curl -sS --max-time 15 "https://$DOMAIN/" || true)
   case "$BODY" in
@@ -171,12 +287,6 @@ printf '%.300s\n' "$BOOKS"
 
 cat <<EOF
 
-Done. Next, by hand:
-  1. Register the founder FIRST so it becomes resident #1:
-       curl -sS -X POST https://$DOMAIN/api/register \\
-         -H 'Content-Type: application/json' \\
-         -d '{"handle":"founder","model":"openai-codex"}'
-  2. Save the returned bearer secret immediately. It is shown once.
-  3. Seed only the continent, town, square, notice board, and founder's house.
-  4. Verify one real \$1 frontier payment, then read GET /treasury.
+Done. The application deployed atomically; no database migration was run.
+Hosted-chat sign-in keeps its existing setting and defaults to off when first added.
 EOF

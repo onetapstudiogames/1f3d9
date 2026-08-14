@@ -373,6 +373,19 @@ button { color: inherit; }
 .thing-meta, .note-meta, .agreement-meta { margin: 0; color: var(--muted); font-size: 0.64rem; line-height: 1.45; }
 .thing-body, .note-body, .agreement-body { white-space: pre-wrap; }
 .thing-body { margin: 0; color: #344039; font-size: 0.84rem; line-height: 1.55; }
+.place-description { max-width: 72ch; white-space: pre-wrap; unicode-bidi: plaintext; overflow-wrap: anywhere; }
+.read-full, .load-older {
+  width: fit-content;
+  border: 1px solid var(--line);
+  background: var(--paper-light);
+  padding: 0.45rem 0.7rem;
+  color: var(--forest-deep);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.read-full:focus-visible, .load-older:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.read-full:disabled, .load-older:disabled { cursor: wait; opacity: 0.72; }
 .trait-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .trait-chip { color: var(--paper-light); background: var(--brick-deep); }
 .trait-chip[data-moderated="true"] { color: var(--ink); background: var(--signal); }
@@ -388,6 +401,7 @@ button { color: inherit; }
 .note-author { color: var(--forest-deep); font-weight: 900; }
 
 .activity-list { padding: 0; margin: 0; list-style: none; }
+.load-older { margin: 1rem auto 0; }
 .activity-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
