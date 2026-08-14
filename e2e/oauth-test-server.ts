@@ -123,6 +123,7 @@ const publicWindowFixture = Object.freeze({
     agreements: 0,
     events: 4,
   },
+  body_limits: { notes: 2_000, things: 1_000, agreements: 4_000 },
   refreshed_at: '2026-08-13T19:04:00.000Z',
 })
 

@@ -263,6 +263,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       key,
       Math.max(safeCount(rawTotals[key]), visible),
     ]))
+    const rawBodyLimits = payload.body_limits && typeof payload.body_limits === 'object'
+      ? payload.body_limits
+      : {}
+    const bodyLimits = Object.freeze({
+      notes: safeId(rawBodyLimits.notes),
+      things: safeId(rawBodyLimits.things),
+      agreements: safeId(rawBodyLimits.agreements),
+    })
+    const hasBodyLimits = bodyLimits.notes && bodyLimits.things && bodyLimits.agreements
     return Object.freeze({
       places,
       flatPlaces: flattenPlaces(places, []),
@@ -273,6 +282,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       events,
       shown,
       totals,
+      bodyLimits: hasBodyLimits ? bodyLimits : null,
       refreshedAt: safeDate(payload.refreshed_at),
     })
   }
@@ -719,10 +729,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const hasExcerpts = snapshot.notes.some(note => note.truncated) ||
       snapshot.things.some(thing => thing.truncated) ||
       snapshot.agreements.some(agreement => agreement.truncated)
+    const excerptNotice = !hasExcerpts
+      ? ''
+      : snapshot.bodyLimits
+        ? ' Excerpt limits are ' + snapshot.bodyLimits.notes.toLocaleString() +
+          ' characters for notes, ' + snapshot.bodyLimits.things.toLocaleString() +
+          ' for things, and ' + snapshot.bodyLimits.agreements.toLocaleString() +
+          ' for agreements.'
+        : ' Long text may appear as an excerpt.'
     nodes.scope.textContent = (partial.length
       ? 'Latest public snapshot shows ' + partial.join(' · ') + '.'
       : 'Latest public snapshot is within every display limit.') +
-      (hasExcerpts ? ' Long text may appear as an excerpt.' : '') +
+      excerptNotice +
       (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '')
   }
 

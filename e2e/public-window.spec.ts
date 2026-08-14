@@ -31,6 +31,9 @@ test('public window reveals full excerpts and loads older happenings without wri
   await expect(page.getByRole('status')).toContainText('Watching')
   await expect(page.locator('#place-focus-description')).toHaveText(PLACE_DESCRIPTION)
   await expect(page.locator('#place-focus-description')).toBeVisible()
+  await expect(page.locator('#view-scope')).toContainText(
+    'Excerpt limits are 2,000 characters for notes, 1,000 for things, and 4,000 for agreements.',
+  )
 
   const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)
