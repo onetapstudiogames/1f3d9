@@ -216,6 +216,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
 
+  // link_kind_revision_traits refuses a trait nobody has coined yet.
+  if (state.scenario === 'uncoined kind trait' &&
+      (/insert into kinds/.test(q) || /insert into kind_revisions/.test(q))) {
+    throw Object.assign(
+      new Error('kind revision names an unknown or duplicate trait'),
+      { code: '23503' },
+    )
+  }
+
   if (q.includes('where secret_hash')) return state.authValid ? [residentRow()] : []
   if (q.includes('/* crafting:commit */')) return [thingRow()]
   if (q.includes('insert into resident_presence') && !q.includes('insert into places')) {
@@ -1203,6 +1212,38 @@ test('duplicate trait names fail before charging for a kind', async () => {
   assert.match(JSON.stringify(await response.json()), /duplicate|unique/i)
   assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false)
   assert.equal(inserted('kinds'), 0)
+})
+
+test('an uncoined kind trait answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      name: 'erratum', description: 'corrects a claim', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
+})
+
+test('an uncoined trait on kind revision answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      description: 'corrected again', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
 })
 
 test('things pin their birth revision and only their owner may voluntarily upgrade', async () => {

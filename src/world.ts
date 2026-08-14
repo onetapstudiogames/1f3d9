@@ -31,6 +31,7 @@ import {
   setPaymentHeader,
   THING_BODY_MAX_BYTES,
   treasuryFee,
+  unknownTraitMessage,
   type KindRow,
   type PlaceRow,
   type ThingRow,
@@ -475,6 +476,8 @@ export function mountWorldRoutes(app: Hono): void {
       setPaymentHeader(c, fee)
       return c.json({ kind, fee_tx: fee.txHash }, 201)
     } catch (error) {
+      const unknownTrait = unknownTraitMessage(error)
+      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
       const message = conflictMessage(error, 'kind name or payment proof already used')
       if (message) return err(c, 409, message)
       throw error
@@ -576,6 +579,8 @@ export function mountWorldRoutes(app: Hono): void {
       setPaymentHeader(c, fee)
       return c.json({ kind, fee_tx: fee.txHash })
     } catch (error) {
+      const unknownTrait = unknownTraitMessage(error)
+      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
       const message = conflictMessage(error, 'payment proof already used')
       if (message) return err(c, 409, message)
       throw error
