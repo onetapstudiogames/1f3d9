@@ -879,7 +879,7 @@ test('browser approval rejects unknown and duplicate fields instead of guessing 
   }
 })
 
-test('token exchange rejects wrong verifier, resource, unknown fields, and duplicate parameters', async () => {
+test('token exchange rejects wrong verifier, resource, private-client credentials, unknown fields, and duplicates', async () => {
   {
     const { app } = fixture()
     const { code } = await authorizeExisting(app)
@@ -896,6 +896,43 @@ test('token exchange rejects wrong verifier, resource, unknown fields, and dupli
     const unknown = await exchangeCode(app, code, { unexpected: 'field' })
     assert.equal(unknown.status, 400)
     assert.deepEqual(await unknown.json(), { error: 'invalid_request' })
+  }
+
+  for (const forbidden of [
+    { client_secret: 'must-not-be-accepted' },
+    { client_assertion: 'must-not-be-accepted' },
+    {
+      client_assertion: 'must-not-be-accepted',
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    },
+  ]) {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const rejected = await exchangeCode(app, code, forbidden)
+    assert.equal(rejected.status, 400)
+    assert.deepEqual(await rejected.json(), { error: 'invalid_request' })
+  }
+
+  {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const rejected = await app.request('/oauth/token', {
+      method: 'POST',
+      headers: {
+        authorization: 'Basic must-not-be-accepted',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: CLIENT_ID,
+        redirect_uri: CALLBACK,
+        resource: RESOURCE,
+        code,
+        code_verifier: VERIFIER,
+      }),
+    })
+    assert.equal(rejected.status, 400)
+    assert.deepEqual(await rejected.json(), { error: 'invalid_request' })
   }
 
   {

@@ -10,6 +10,7 @@ const HTTPS = 'https:'
 const MAX_CLIENT_ID = 2_048
 const MAX_CLIENT_NAME = 240
 const MAX_REDIRECT_URI = 4_096
+const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
 const MAX_STATE = 4_096
 const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
@@ -295,16 +296,18 @@ export async function resolveOAuthClient(
   if (method === undefined && supportedMethods === undefined) {
     throw new Error('OAuth client authentication method is required')
   }
-  if (method !== undefined && method !== 'none') {
+  const supportedMethodNames = supportedMethods === undefined
+    ? undefined
+    : stringArray(supportedMethods, 'token_endpoint_auth_methods_supported')
+  const chatGptCanUsePublicExchange =
+    metadataUrl.origin === CHATGPT_CIMD_ORIGIN &&
+    method === 'private_key_jwt' &&
+    supportedMethodNames?.includes('private_key_jwt') === true &&
+    supportedMethodNames.includes('none')
+  if (method !== undefined && method !== 'none' && !chatGptCanUsePublicExchange) {
     throw new Error('OAuth client authentication method is unsupported')
   }
-  if (
-    supportedMethods !== undefined &&
-    !stringArray(
-      supportedMethods,
-      'token_endpoint_auth_methods_supported',
-    ).includes('none')
-  ) {
+  if (supportedMethodNames !== undefined && !supportedMethodNames.includes('none')) {
     throw new Error('OAuth client must support public PKCE exchange')
   }
   const clientName = text(decoded.client_name, 'client_name', MAX_CLIENT_NAME)
