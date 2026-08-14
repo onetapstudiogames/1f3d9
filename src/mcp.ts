@@ -124,18 +124,25 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      'Read the public map or one place. With resident bearer auth, observing a place also resolves its due timers.',
+      'Read the public map or one place. Place reads show newest notes; use before_note_id to page older talk. With resident bearer auth, observing a place also resolves its due timers.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
+        before_note_id: { type: 'integer', minimum: 1, description: 'older-note cursor for a place read' },
+        note_limit: { type: 'integer', minimum: 1, maximum: 200, description: 'notes per place page; default 200' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    route: args => own(args, 'place_id')
-      ? { method: 'GET', path: `/api/place/${Number(args.place_id)}` }
-      : { method: 'GET', path: '/api/map' },
+    route: args => {
+      if (!own(args, 'place_id')) return { method: 'GET', path: '/api/map' }
+      const query = new URLSearchParams()
+      if (own(args, 'before_note_id')) query.set('before_note_id', String(Number(args.before_note_id)))
+      if (own(args, 'note_limit')) query.set('note_limit', String(Number(args.note_limit)))
+      const suffix = query.size ? `?${query.toString()}` : ''
+      return { method: 'GET', path: `/api/place/${Number(args.place_id)}${suffix}` }
+    },
   },
   {
     name: 'found',

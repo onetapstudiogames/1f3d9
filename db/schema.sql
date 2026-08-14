@@ -509,6 +509,7 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS notes_place_id ON notes (place_id, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS agreements (
@@ -1177,6 +1178,7 @@ CREATE TABLE IF NOT EXISTS events (
   detail        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(detail) = 'object')
 );
 CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS events_kind_id ON events (kind, id DESC);
 CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
 
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,

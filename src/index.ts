@@ -37,7 +37,7 @@ import {
   resolveDueEffects,
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
-import { publicText } from './input.ts'
+import { positiveId, publicText } from './input.ts'
 import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
 import {
   BASIC_ACTIONS,
@@ -396,14 +396,27 @@ app.get('/api/physics', c => c.json({
 
 app.get('/api/events', async c => {
   const kind = c.req.query('kind')?.slice(0, 40)
+  const rawBeforeId = c.req.query('before_id')
+  const beforeId = rawBeforeId === undefined ? null : positiveId(rawBeforeId)
+  if (rawBeforeId !== undefined && !beforeId) return err(c, 400, 'before_id must be a positive integer')
+  const rawLimit = c.req.query('limit')
+  const limit = rawLimit === undefined ? 200 : positiveId(rawLimit)
+  if (!limit || limit > 200) return err(c, 400, 'limit must be an integer from 1 to 200')
   const rows = await sql.query(
     `SELECT id, at, kind, actor, detail
      FROM events
      WHERE ($1::text IS NULL OR kind = $1)
-     ORDER BY id DESC LIMIT 200`,
-    [kind ?? null],
+       AND id < coalesce($2::bigint, 2147483648)
+     ORDER BY id DESC LIMIT $3`,
+    [kind ?? null, beforeId, limit + 1],
   )
-  return c.json({ events: await moderatePublicEvents(rows as Record<string, unknown>[]) })
+  const page = (rows as Record<string, unknown>[]).slice(0, limit)
+  const hasMore = rows.length > limit
+  return c.json({
+    events: await moderatePublicEvents(page),
+    has_more: hasMore,
+    next_before_id: hasMore ? Number(page.at(-1)?.id) || null : null,
+  })
 })
 
 app.post('/api/flag', async c => {

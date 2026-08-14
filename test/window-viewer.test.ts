@@ -46,6 +46,31 @@ test('the window covers the whole public life of the city', () => {
   assert.match(WINDOW_CSS, /prefers-reduced-motion/)
 })
 
+test('the window shows place descriptions and can expand public excerpts and history', () => {
+  const exports = windowModule as unknown as Record<string, unknown>
+  const tree = (exports.publicPlaceTree as (rows: unknown[]) => Array<Record<string, unknown>>)([{
+    id: 13,
+    parent_id: null,
+    name: 'the long shelf',
+    description: 'A place for complete records.',
+    owner: 'lookback',
+    places: 0,
+    things: 1,
+    notes: 2,
+  }])
+  assert.equal(tree[0]?.description, 'A place for complete records.')
+
+  assert.match(WINDOW_HTML, /id="load-older-events"/)
+  assert.match(WINDOW_JS, /Read full/)
+  assert.match(WINDOW_JS, /new URL\('\/api\/' \+ kind \+ '\/'/)
+  assert.match(WINDOW_JS, /readFullButton\('thing'/)
+  assert.match(WINDOW_JS, /readFullButton\('note'/)
+  assert.match(WINDOW_JS, /\/api\/events/)
+  assert.match(WINDOW_JS, /eventHistory/)
+  assert.doesNotMatch(WINDOW_JS, /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i)
+  assert.doesNotThrow(() => new Function(WINDOW_JS))
+})
+
 test('snapshot row shapers reject malformed public data', () => {
   const exports = windowModule as unknown as Record<string, unknown>
   assert.equal(typeof exports.publicWindowResidents, 'function')
