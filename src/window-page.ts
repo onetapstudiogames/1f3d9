@@ -78,6 +78,7 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">One address under glass</p>
         <h2 id="place-focus-title">Watch a place</h2>
         <p id="place-focus-summary">Choose a place above or from the map.</p>
+        <p id="place-focus-description" class="place-description" hidden></p>
       </header>
       <div class="place-observation">
         <section class="observation-block" aria-labelledby="occupants-title">
@@ -118,6 +119,7 @@ export const WINDOW_HTML = `<!doctype html>
       <ol id="activity-list" class="activity-list">
         <li class="loading-row">Listening for footsteps…</li>
       </ol>
+      <button id="load-older-events" class="load-older" type="button" hidden>Load older happenings</button>
     </section>
 
     <section id="agreements-panel" class="view-panel" role="tabpanel" aria-labelledby="agreements-tab" hidden>

@@ -73,6 +73,7 @@ interface PublicPlace {
   id: number
   parent_id: number | null
   name: string
+  description: string
   owner: string
   places: number
   things: number
@@ -207,12 +208,16 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
   const name = moderated
     ? MODERATED_PLACE_NAME
     : safePublicText(row.name, 120)?.text ?? ''
+  const description = moderated
+    ? ''
+    : safePublicText(row.description, 4_000, true)?.text ?? ''
   const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : ''
   if (!id || !name || !owner || (row.parent_id != null && !parentId)) return null
   return {
     id,
     parent_id: parentId,
     name,
+    description,
     owner,
     places: count(row.places),
     things: count(row.things),
@@ -403,14 +408,15 @@ async function readWindowSnapshot() {
   const [placeRows, residentRows, thingRows, noteRows, agreementRows, eventRows, totalRows] = await Promise.all([
     sql.query(`
       WITH RECURSIVE world AS (
-        SELECT id, parent_id, name, owner_id, ARRAY[id] AS path
+        SELECT id, parent_id, name, description, owner_id, ARRAY[id] AS path
         FROM places WHERE parent_id IS NULL
         UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.owner_id, world.path || child.id
+        SELECT child.id, child.parent_id, child.name, child.description,
+          child.owner_id, world.path || child.id
         FROM places child JOIN world ON child.parent_id = world.id
         WHERE NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
       )
-      SELECT world.id, world.parent_id, world.name, residents.handle AS owner,
+      SELECT world.id, world.parent_id, world.name, world.description, residents.handle AS owner,
         (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,

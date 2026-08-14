@@ -32,6 +32,15 @@ const pad32 = (address: string) =>
   '0x' + address.toLowerCase().replace(/^0x/, '').padStart(64, '0')
 const addressFromTopic = (topic: string) => '0x' + topic.slice(-40)
 
+function parseHexBigInt(value: string): bigint | null {
+  if (!/^0x[0-9a-fA-F]+$/u.test(value)) return null
+  try {
+    return BigInt(value)
+  } catch {
+    return null
+  }
+}
+
 interface Log {
   address: string
   topics: string[]
@@ -70,7 +79,7 @@ function completeReceipt(value: unknown): Receipt | null {
     if (
       !log || typeof log !== 'object' || typeof log.address !== 'string' ||
       !Array.isArray(log.topics) || log.topics.some(topic => typeof topic !== 'string') ||
-      typeof log.data !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(log.data)
+      typeof log.data !== 'string' || !/^0x[0-9a-fA-F]*$/u.test(log.data)
     ) return null
   }
   return receipt as Receipt
@@ -116,26 +125,29 @@ export async function classifyUsdcTransfer(
   }
 
   const target = pad32(to)
-  let transfer: Log | undefined
-  try {
-    transfer = receipt.logs.find(
-      log =>
-        log.address.toLowerCase() === USDC.toLowerCase() &&
-        log.topics[0]?.toLowerCase() === TRANSFER_TOPIC &&
-        (log.topics[2] ?? '').toLowerCase() === target &&
-        (options.expectedFrom == null ||
-          addressFromTopic(log.topics[1] ?? '').toLowerCase() === options.expectedFrom.toLowerCase()) &&
-        (options.exactAmount === true ? BigInt(log.data) === minimum : BigInt(log.data) >= minimum),
-    )
-  } catch {
-    return { state: 'pending' }
+  let transfer: { log: Log; amount: bigint } | undefined
+  for (const log of receipt.logs) {
+    if (
+      log.address.toLowerCase() !== USDC.toLowerCase() ||
+      log.topics[0]?.toLowerCase() !== TRANSFER_TOPIC ||
+      (log.topics[2] ?? '').toLowerCase() !== target ||
+      (options.expectedFrom != null &&
+        addressFromTopic(log.topics[1] ?? '').toLowerCase() !== options.expectedFrom.toLowerCase())
+    ) continue
+
+    const amount = parseHexBigInt(log.data)
+    if (amount == null) continue
+    if (options.exactAmount === true ? amount === minimum : amount >= minimum) {
+      transfer = { log, amount }
+      break
+    }
   }
   if (!transfer) {
     return await finalizedReceipt(receipt) === 'finalized'
       ? { state: 'invalid_final', reason: 'confirmed_mismatch' }
       : { state: 'pending' }
   }
-  const fromTopic = transfer.topics[1]
+  const fromTopic = transfer.log.topics[1]
   if (!fromTopic || !/^0x[0-9a-fA-F]{64}$/u.test(fromTopic)) return { state: 'pending' }
 
   const block = await rpc<{ timestamp?: unknown }>('eth_getBlockByHash', [receipt.blockHash, false])
@@ -150,7 +162,7 @@ export async function classifyUsdcTransfer(
     finalized,
     from: addressFromTopic(fromTopic),
     to,
-    amount: BigInt(transfer.data),
+    amount: transfer.amount,
     blockTime,
   }
 }

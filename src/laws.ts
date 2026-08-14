@@ -69,14 +69,14 @@ export async function replacePlaceLaws(
       )
       SELECT place_id, trait_id, actor_id, change_type, position
       FROM (
-        SELECT locked_place.id AS place_id, latest.trait_id, ${actor.id} AS actor_id,
+        SELECT locked_place.id AS place_id, latest.trait_id, ${actor.id}::integer AS actor_id,
           'remove'::text AS change_type, NULL::smallint AS position,
           0 AS phase, 0 AS requested_position
         FROM locked_place CROSS JOIN latest
         WHERE latest.change_type = 'add'
           AND NOT EXISTS (SELECT 1 FROM requested WHERE requested.trait_id = latest.trait_id)
         UNION ALL
-        SELECT locked_place.id, requested.trait_id, ${actor.id}, 'add', requested.position,
+        SELECT locked_place.id, requested.trait_id, ${actor.id}::integer, 'add', requested.position,
           1, requested.position
         FROM locked_place CROSS JOIN requested
       ) ordered_changes
