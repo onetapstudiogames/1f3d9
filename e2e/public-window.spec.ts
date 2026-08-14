@@ -31,6 +31,9 @@ test('public window reveals full excerpts and loads older happenings without wri
   await expect(page.getByRole('status')).toContainText('Watching')
   await expect(page.locator('#place-focus-description')).toHaveText(PLACE_DESCRIPTION)
   await expect(page.locator('#place-focus-description')).toBeVisible()
+  await expect(page.locator('#view-scope')).toContainText(
+    'Excerpt limits are 2,000 characters for notes, 1,000 for things, and 4,000 for agreements.',
+  )
 
   const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)
@@ -75,4 +78,19 @@ test('public window reveals full excerpts and loads older happenings without wri
   ])
   expect(state.write_requests).toEqual([])
   expect(browserWrites).toEqual([])
+})
+
+test('all-place conversations stay newest-first and name each room', async ({ page }) => {
+  await page.goto('/window#view=conversations')
+  await expect(page.getByRole('status')).toContainText('Watching')
+
+  const cards = page.locator('#conversation-stream .note-card')
+  await expect(cards).toHaveCount(3)
+  expect(await cards.locator('.note-body').allTextContents()).toEqual([
+    'Newest in test square',
+    'Middle in side room',
+    `${NOTE_EXCERPT}…`,
+  ])
+  await expect(cards.nth(0).locator('.note-meta')).toContainText('test_square')
+  await expect(cards.nth(1).locator('.note-meta')).toContainText('side_room')
 })

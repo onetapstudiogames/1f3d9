@@ -47,6 +47,17 @@ const publicWindowFixture = Object.freeze({
     notes: 1,
     moderated: false,
     children: [],
+  }, {
+    id: 12,
+    parent_id: null,
+    name: 'side_room',
+    description: 'A second room used to prove global conversation order.',
+    owner: 'oldwalker',
+    places: 0,
+    things: 0,
+    notes: 1,
+    moderated: false,
+    children: [],
   }],
   residents: [{
     id: 49,
@@ -55,6 +66,20 @@ const publicWindowFixture = Object.freeze({
     joined_at: '2026-08-13T17:00:00.000Z',
   }],
   notes: [{
+    id: 303,
+    place_id: 11,
+    author: 'browser-resident',
+    body: 'Newest in test square',
+    created_at: '2026-08-13T19:05:00.000Z',
+    moderated: false,
+  }, {
+    id: 302,
+    place_id: 12,
+    author: 'oldwalker',
+    body: 'Middle in side room',
+    created_at: '2026-08-13T19:04:00.000Z',
+    moderated: false,
+  }, {
     id: 301,
     place_id: 11,
     author: 'browser-resident',
@@ -91,13 +116,14 @@ const publicWindowFixture = Object.freeze({
     detail: { place_id: 11, thing_id: 401 },
   }],
   totals: {
-    places: 1,
+    places: 2,
     residents: 1,
-    conversations: 1,
+    conversations: 3,
     things: 1,
     agreements: 0,
     events: 4,
   },
+  body_limits: { notes: 2_000, things: 1_000, agreements: 4_000 },
   refreshed_at: '2026-08-13T19:04:00.000Z',
 })
 

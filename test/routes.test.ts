@@ -1677,8 +1677,12 @@ test('front door and human window surface the event names the world actually emi
   state = { ...state, calls: [] }
   const snapshot = await app.request('/api/window')
   assert.equal(snapshot.status, 200)
-  const payload = await snapshot.json() as { events: { kind: string }[] }
+  const payload = await snapshot.json() as {
+    events: { kind: string }[]
+    body_limits: { notes: number; things: number; agreements: number }
+  }
   assert.deepEqual(payload.events.map(event => event.kind), ['place_created', 'sale', 'transfer_cancel'])
+  assert.deepEqual(payload.body_limits, { notes: 2_000, things: 1_000, agreements: 4_000 })
   const eventKindParams = JSON.stringify(sqlCalls().flatMap(call => call.params ?? []))
   for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel']) {
     assert.ok(eventKindParams.includes(kind), `public event query should include ${kind}`)
