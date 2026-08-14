@@ -217,7 +217,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   recordPayment(query, params)
 
   // link_kind_revision_traits refuses a trait nobody has coined yet.
-  if (state.scenario === 'uncoined kind trait' && /insert into kinds/.test(q)) {
+  if (state.scenario === 'uncoined kind trait' &&
+      (/insert into kinds/.test(q) || /insert into kind_revisions/.test(q))) {
     throw Object.assign(
       new Error('kind revision names an unknown or duplicate trait'),
       { code: '23503' },
@@ -1219,6 +1220,22 @@ test('an uncoined kind trait answers with the reason, not "internal"', async () 
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({
       name: 'erratum', description: 'corrects a claim', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
+})
+
+test('an uncoined trait on kind revision answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      description: 'corrected again', traits: ['never-coined'], recipe: [],
       payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
     }),
   })
