@@ -24,7 +24,7 @@ import type {
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
 const origin = `https://127.0.0.1:${port}`
-const callbackUri = `${origin}/oauth/callback`
+const callbackUri = `https://localhost:${port}/oauth/callback`
 const existingResidentKey = `1f3d9_sk_${'ab'.repeat(24)}`
 
 interface StoredRequest extends AuthorizationRequestRecord {

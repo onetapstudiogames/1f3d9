@@ -436,6 +436,10 @@ async function begin(app: Hono, url = authorizationUrl()): Promise<BrowserSessio
   const response = await app.request(url)
   assert.equal(response.status, 200)
   assertPrivate(response, true)
+  assert.match(
+    response.headers.get('content-security-policy') ?? '',
+    /form-action 'self' https:\/\/chat\.example\.test;/u,
+  )
   const setCookie = response.headers.get('set-cookie') ?? ''
   assert.match(setCookie, /^__Host-1f3d9_oauth=[^;]+;/)
   assert.match(setCookie, /; Path=\//i)
@@ -842,11 +846,16 @@ test('authorization query rejects wrong return addresses, resources, duplicates,
   const { app } = fixture()
   for (const patch of [
     { redirect_uri: `${CALLBACK}/near-match` },
+    { redirect_uri: 'https://unapproved.example.test/oauth/callback' },
     { resource: ORIGIN },
   ]) {
     const response = await app.request(authorizationUrl(patch))
     assert.equal(response.status, 400)
     assertPrivate(response, true)
+    assert.doesNotMatch(
+      response.headers.get('content-security-policy') ?? '',
+      /https:\/\/(?:chat|unapproved)\.example\.test/u,
+    )
   }
   const duplicate = await app.request(`${authorizationUrl()}&state=duplicate`)
   assert.equal(duplicate.status, 400)
