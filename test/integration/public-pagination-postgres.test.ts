@@ -392,8 +392,14 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       ).rows.map(row => row.id)
 
       const { default: cityApp } = await import('../../src/index.ts')
+      const statementsBeforeDefaultCensus = statementCount
       const defaultResponse = await cityApp.request('http://city.test/api/residents')
       assert.equal(defaultResponse.status, 200)
+      assert.equal(
+        statementCount - statementsBeforeDefaultCensus,
+        1,
+        'the census page and exact total must come from one PostgreSQL statement',
+      )
       const defaultBody = await defaultResponse.json() as {
         residents: Array<{ id: number }>
         count: number
@@ -438,6 +444,19 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.deepEqual(actual, expected)
       assert.deepEqual(actual.slice(0, 3), [3, 2, 1], 'joined_at wins; id only breaks ties')
       assert.equal(new Set(actual).size, actual.length, 'page boundaries must not repeat residents')
+
+      const exhaustedResponse = await cityApp.request(
+        `http://city.test/api/residents?limit=37&before_id=${expected.at(-1)}`,
+      )
+      assert.equal(exhaustedResponse.status, 200)
+      const exhausted = await exhaustedResponse.json() as typeof defaultBody
+      assert.deepEqual(exhausted.residents, [])
+      assert.equal(exhausted.count, expected.length)
+      assert.equal(exhausted.total, expected.length)
+      assert.equal(exhausted.returned, 0)
+      assert.equal(exhausted.page_size, 37)
+      assert.equal(exhausted.has_more, false)
+      assert.equal(exhausted.next_before_id, null)
     })
 
     await t.test('the window bounds history but keeps the complete map and presence', async () => {

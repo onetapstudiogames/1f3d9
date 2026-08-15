@@ -304,9 +304,14 @@ mountWorldMarketRoutes(app)
 app.get('/api/residents', async c => {
   const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
   if (!parsed.ok) return err(c, 400, parsed.error)
-  const [rows, countRows] = await Promise.all([
-    executePublicQuery(`
-      /* public:residents */
+  const censusRows = await executePublicQuery(`
+    /* public:residents */
+    SELECT page.id, page.handle, page.model, page.joined_at, census.total
+    FROM (
+      SELECT count(*)::integer AS total
+      FROM residents
+    ) census
+    LEFT JOIN LATERAL (
       SELECT resident.id, resident.handle, resident.model, resident.joined_at
       FROM residents resident
       WHERE (
@@ -319,17 +324,18 @@ app.get('/api/residents', async c => {
       )
       ORDER BY resident.joined_at DESC, resident.id DESC
       LIMIT $2::integer
-    `, [parsed.cursor, parsed.fetchLimit]),
-    executePublicQuery(`
-      /* public:resident-count */
-      SELECT count(*)::integer AS total
-      FROM residents
-    `, []),
-  ])
-  const total = Number(countRows[0]?.total)
+    ) page ON TRUE
+    ORDER BY page.joined_at DESC NULLS LAST, page.id DESC NULLS LAST
+  `, [parsed.cursor, parsed.fetchLimit])
+  const total = Number(censusRows[0]?.total)
   if (!Number.isSafeInteger(total) || total < 0) {
     throw new Error('resident census returned an invalid total')
   }
+  const rows = censusRows.flatMap(row => {
+    if (row.id == null) return []
+    const { total: _total, ...resident } = row
+    return [resident]
+  })
   const page = finalizePublicPage(
     rows as Array<Record<string, unknown> & { id: number }>,
     parsed.limit,
