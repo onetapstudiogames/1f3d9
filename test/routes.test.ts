@@ -706,11 +706,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
 
   if (state.scenario === 'remaining pagination') {
-    if (q.includes('from residents') && q.includes('count(')) {
+    if (q.includes('/* public:residents */')) {
       const total = remainingPaginationRows('residents').length
-      return [{ count: total, total }]
+      const page = descendingPage(remainingPaginationRows('residents'), params[0], params[1])
+      return page.length > 0 ? page.map(row => ({ ...row, total })) : [{ total }]
     }
-    const publicCollection = ['residents', 'kinds', 'traits', 'moderation']
+    const publicCollection = ['kinds', 'traits', 'moderation']
       .find(collection => q.includes(`/* public:${collection} */`))
     if (publicCollection) {
       return descendingPage(remainingPaginationRows(publicCollection), params[0], params[1])
@@ -735,13 +736,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }
   }
 
-  if (state.scenario === 'resident arrival pagination' &&
-      q.includes('from residents') && q.includes('count(')) {
-    const total = residentArrivalRows().length
-    return [{ count: total, total }]
-  }
   if (state.scenario === 'resident arrival pagination' && q.includes('/* public:residents */')) {
-    return residentArrivalPage(query, params[0], params[1])
+    const total = residentArrivalRows().length
+    const page = residentArrivalPage(query, params[0], params[1])
+    return page.length > 0 ? page.map(row => ({ ...row, total })) : [{ total }]
   }
 
   if (state.scenario === 'public pagination' && q.includes('from places p') && q.includes('where p.parent_id')) {
@@ -998,7 +996,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return rows
   }
 
-  if (q.includes('/* public:resident-count */')) return [{ total: 2 }]
+  if (q.includes('/* public:residents */')) return [residentRow(), {
+    ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
+  }].map(row => ({ ...row, total: 2 }))
   if (q.includes('from residents')) return [residentRow(), {
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
   }]
@@ -2157,6 +2157,12 @@ test('parameterless resident census returns every resident below its 200-row def
     [null, 201],
     'the default census query must fetch one lookahead row beyond its 200-row page',
   )
+  const censusReads = sqlCalls().filter(call => (
+    /\/\* public:residents \*\//i.test(call.query ?? '')
+      || /\/\* public:resident-count \*\//i.test(call.query ?? '')
+  ))
+  assert.equal(censusReads.length, 1, 'the census page and total must share one database snapshot')
+  assert.match(censusReads[0]?.query ?? '', /count\s*\(\s*\*\s*\)/i)
 })
 
 test('resident census pages by arrival time with stable id ties and no boundary repeats', async () => {
@@ -2212,6 +2218,17 @@ test('resident census pages by arrival time with stable id ties and no boundary 
   assert.equal(third.page_size, 2)
   assert.equal(third.has_more, false)
   assert.equal(third.next_before_id, null)
+
+  const emptyResponse = await app.request('/api/residents?limit=2&before_id=1000')
+  assert.equal(emptyResponse.status, 200)
+  const empty = await emptyResponse.json() as typeof first
+  assert.deepEqual(empty.residents, [])
+  assert.equal(empty.count, 6)
+  assert.equal(empty.total, 6)
+  assert.equal(empty.returned, 0)
+  assert.equal(empty.page_size, 2)
+  assert.equal(empty.has_more, false)
+  assert.equal(empty.next_before_id, null)
 })
 
 test('public collection cursors preserve agreement filters and never repeat the boundary', async () => {
