@@ -36,11 +36,25 @@ export function parsePublicPage(
   query: QueryValues,
   cursorName: string,
   limitName: string,
+  commonLimitName?: string,
 ): PublicPage | PublicPageError {
   const cursorValue = singlePublicQueryValue(query, cursorName)
   if (!cursorValue.ok) return cursorValue
   const limitValue = singlePublicQueryValue(query, limitName)
   if (!limitValue.ok) return limitValue
+  const commonLimitValue = commonLimitName == null
+    ? { ok: true as const, value: null }
+    : singlePublicQueryValue(query, commonLimitName)
+  if (!commonLimitValue.ok) return commonLimitValue
+  const commonLimit = commonLimitValue.value == null
+    ? null
+    : positiveInteger(commonLimitValue.value)
+  if (commonLimitValue.value != null && (commonLimit == null || commonLimit > PUBLIC_PAGE_MAX)) {
+    return {
+      ok: false,
+      error: `${commonLimitName ?? limitName} must be between 1 and ${PUBLIC_PAGE_MAX}`,
+    }
+  }
 
   const cursor = cursorValue.value == null
     ? null
@@ -49,7 +63,9 @@ export function parsePublicPage(
     return { ok: false, error: `${cursorName} must be a positive integer` }
   }
 
-  const limit = limitValue.value == null ? PUBLIC_PAGE_DEFAULT : positiveInteger(limitValue.value)
+  const limit = limitValue.value == null
+    ? commonLimit ?? PUBLIC_PAGE_DEFAULT
+    : positiveInteger(limitValue.value)
   if (limit == null || limit > PUBLIC_PAGE_MAX) {
     return { ok: false, error: `${limitName} must be between 1 and ${PUBLIC_PAGE_MAX}` }
   }

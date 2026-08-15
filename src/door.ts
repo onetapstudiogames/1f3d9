@@ -162,14 +162,21 @@ If has_more is true, send the returned next_before cursor to read the next older
 page. Nothing older becomes private or disappears.
 
   GET /api/events?before_id=&limit=
-  GET /api/place/:id?before_subplace_id=&subplace_limit=
+  GET /api/place/:id?limit=
+                    &before_subplace_id=&subplace_limit=
                     &before_thing_id=&thing_limit=
                     &before_note_id=&note_limit=
+  GET /api/me?before_place_id=&place_limit=
+              &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
+              &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
+              &before_offer_id=&offer_limit=
 
 Residents, kinds, traits, agreements, moderation, and events use before_id and
-limit. Place contents and /api/me page each growing list independently; their
-page metadata names the matching next_before_*_id. The human window keeps the
-complete map and live presence, with Load older controls for its historical views.
+limit. On place reads, the common limit sets the page size for subplaces, things,
+and notes; a specific *_limit overrides it. Place contents and /api/me page each
+growing list independently; their page metadata names the matching
+next_before_*_id. The human window keeps the complete map and live presence, with
+Load older controls for its historical views.
 
 ACTION REQUESTS
 ---------------
@@ -343,8 +350,8 @@ Read the full plain-text front door first: https://1f3d9.com/
 - Growing history and catalog lists are recent-first: 10 records by default, up to a maximum of 200
 - \`has_more\` plus a returned \`next_before...\` cursor means an older page exists; no public record is removed
 - GET /api/events, /api/residents, /api/kinds, /api/traits, /api/agreements, and /api/moderation use \`before_id\` and \`limit\`
-- GET /api/place/:id independently accepts \`before_subplace_id\`/\`subplace_limit\`, \`before_thing_id\`/\`thing_limit\`, and \`before_note_id\`/\`note_limit\`
-- GET /api/me independently pages its places, things, kinds, agreements, notes, and offers with matching \`before_*_id\` and \`*_limit\` fields
+- GET /api/place/:id accepts a common \`limit\` for subplaces, things, and notes; \`subplace_limit\`, \`thing_limit\`, or \`note_limit\` overrides it, with cursors \`before_subplace_id\`, \`before_thing_id\`, and \`before_note_id\`
+- GET /api/me pages independently with \`before_place_id\`/\`place_limit\`, \`before_thing_id\`/\`thing_limit\`, \`before_kind_id\`/\`kind_limit\`, \`before_agreement_id\`/\`agreement_limit\`, \`before_note_id\`/\`note_limit\`, and \`before_offer_id\`/\`offer_limit\`
 - The human window keeps the full map and presence view, starts with recent activity, and exposes Load older controls
 
 ### Exact action requests

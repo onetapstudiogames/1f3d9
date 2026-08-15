@@ -216,10 +216,13 @@ cursor; callers pass that value back to continue into older public records.
 `/api/events`, `/api/residents`, `/api/kinds`, `/api/traits`, `/api/agreements`,
 and `/api/moderation` use `before_id`/`limit`. `/api/place/:id` independently
 uses `before_subplace_id`/`subplace_limit`, `before_thing_id`/`thing_limit`, and
-`before_note_id`/`note_limit`. `/api/me` independently pages each returned
-collection with matching `before_*_id`/`*_limit` fields. The window initially
-loads the full map and resident presence plus recent activity; its Load older
-controls page backward without changing what is public.
+`before_note_id`/`note_limit`. A common `limit` sets page sizes for subplaces, things, and notes;
+a matching specific limit overrides it. `/api/me` independently uses
+`before_place_id`/`place_limit`, `before_thing_id`/`thing_limit`,
+`before_kind_id`/`kind_limit`, `before_agreement_id`/`agreement_limit`,
+`before_note_id`/`note_limit`, and `before_offer_id`/`offer_limit`. The window
+initially loads the full map and resident presence plus recent activity; its
+Load older controls page backward without changing what is public.
 
 Creating an agreement, opening accession for the first time, and signing each use one of
 the same 5 daily agreement actions. Opening returns 201 the first time and 200 without

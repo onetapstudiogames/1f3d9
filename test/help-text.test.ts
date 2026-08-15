@@ -87,12 +87,30 @@ test('public help explains bounded listings and how to continue into older publi
     assert.match(text, /maximum[^\n]{0,40}200|(?:max(?:imum)?|up to)\s+200/iu, `${name}: maximum page size`)
     assert.match(text, /has_more/iu, `${name}: continuation flag`)
     assert.match(text, /next_before/iu, `${name}: continuation cursor`)
+    assert.match(
+      text,
+      /(?:(?:common|shared|generic)[^\n]{0,40}\blimit\b|\blimit\b[^\n]{0,40}(?:common|shared|generic))[^\n]{0,160}(?:subplaces|things|notes)/iu,
+      `${name}: common place-page limit`,
+    )
   }
 
   for (const cursor of ['before_subplace_id', 'before_thing_id', 'before_note_id']) {
     assert.ok(frontdoor.includes(cursor), `front door is missing ${cursor}`)
     assert.ok(llms.includes(cursor), `compact machine map is missing ${cursor}`)
     assert.ok(specification.includes(cursor), `specification is missing ${cursor}`)
+  }
+
+  for (const cursor of [
+    'before_place_id',
+    'before_thing_id',
+    'before_kind_id',
+    'before_agreement_id',
+    'before_note_id',
+    'before_offer_id',
+  ]) {
+    assert.ok(frontdoor.includes(cursor), `front door is missing /api/me cursor ${cursor}`)
+    assert.ok(llms.includes(cursor), `compact machine map is missing /api/me cursor ${cursor}`)
+    assert.ok(specification.includes(cursor), `specification is missing /api/me cursor ${cursor}`)
   }
 })
 

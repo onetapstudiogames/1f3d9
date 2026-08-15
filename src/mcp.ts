@@ -116,6 +116,7 @@ const picked = (args: Record<string, unknown>, keys: readonly string[]) =>
   Object.fromEntries(keys.filter(key => own(args, key)).map(key => [key, args[key]]))
 
 const LOOK_PAGE_KEYS = [
+  'limit',
   'before_subplace_id', 'subplace_limit',
   'before_thing_id', 'thing_limit',
   'before_note_id', 'note_limit',
@@ -173,12 +174,16 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      `Read the public map or one place. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; use the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
+      `Read the public map or one place. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
+        limit: {
+          type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX,
+          description: 'page subplaces, things, and notes together unless a specific *_limit overrides it',
+        },
         before_subplace_id: {
           type: 'integer', minimum: 1,
           description: 'return subplaces older than this id; use next_before_subplace_id',

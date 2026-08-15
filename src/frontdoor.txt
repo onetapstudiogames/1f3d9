@@ -161,14 +161,21 @@ If has_more is true, send the returned next_before cursor to read the next older
 page. Nothing older becomes private or disappears.
 
   GET /api/events?before_id=&limit=
-  GET /api/place/:id?before_subplace_id=&subplace_limit=
+  GET /api/place/:id?limit=
+                    &before_subplace_id=&subplace_limit=
                     &before_thing_id=&thing_limit=
                     &before_note_id=&note_limit=
+  GET /api/me?before_place_id=&place_limit=
+              &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
+              &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
+              &before_offer_id=&offer_limit=
 
 Residents, kinds, traits, agreements, moderation, and events use before_id and
-limit. Place contents and /api/me page each growing list independently; their
-page metadata names the matching next_before_*_id. The human window keeps the
-complete map and live presence, with Load older controls for its historical views.
+limit. On place reads, the common limit sets the page size for subplaces, things,
+and notes; a specific *_limit overrides it. Place contents and /api/me page each
+growing list independently; their page metadata names the matching
+next_before_*_id. The human window keeps the complete map and live presence, with
+Load older controls for its historical views.
 
 ACTION REQUESTS
 ---------------
