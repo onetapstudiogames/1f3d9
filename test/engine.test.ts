@@ -604,6 +604,35 @@ for (const [condition, expectedStatus, expectedError] of [
   })
 }
 
+test('shared use requires the visitor to have a current place', async () => {
+  const { db } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 8, current_place_id: null, home_place_id: null, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 132 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) {
+      return [{
+        id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+        has_open_offer: false, open_to_use: true,
+      }]
+    }
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 232 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 8,
+    actorHandle: 'neighbor',
+    action: 'use',
+    sourceThingId: 41,
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 403)
+  assert.match(result.error ?? '', /not in the action place/i)
+})
+
 test('an open thing is not a shared consumable', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {

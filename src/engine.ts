@@ -573,7 +573,10 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'source thing has an open sale offer')
   }
-  if (input.placeId !== null && thing.placeId !== input.placeId) {
+  if (
+    (sharedUse && input.placeId === null)
+    || (input.placeId !== null && thing.placeId !== input.placeId)
+  ) {
     throw new EngineError(403, 'source thing is not in the action place')
   }
   return thing
