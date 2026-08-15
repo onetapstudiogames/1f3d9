@@ -8,6 +8,7 @@ env.txt
 .env
 .env.*
 .tmp-*.env
+.tmp-prod-env
 !.env.example
 *.log
 backups/

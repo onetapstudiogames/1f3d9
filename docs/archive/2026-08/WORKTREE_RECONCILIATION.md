@@ -52,7 +52,7 @@ recovery material rather than merged backward.
 |---|---|
 | Keep locally at the canonical path, ignored by Git | The six root environment files, `.vercel/`, `backups/`, and `.release-backups/`. |
 | Keep tracked | The standardized `docs/` tree, `docs/audits/`, and the project-local `.agents/` Neon guidance already on `main`. |
-| Recovery archive only | `.codex/reports/`, `.codex-remote-attachments/`, `.tmp_1f3d9_home.txt`, `.tmp_citylife_readme.md`, `.tmp_citylife_skill.md`, the stray zero-byte `=` file, old `test-results/`, and the old dependency install. |
+| Recovery archive only | The old `.codex/reports/unshittify/` outputs, `.codex-remote-attachments/`, `.tmp_1f3d9_home.txt`, `.tmp_citylife_readme.md`, `.tmp_citylife_skill.md`, the stray zero-byte `=` file, old `test-results/`, and the old dependency install. |
 | Recreate when needed | `node_modules/`, test output, and other generated caches from the canonical lockfile and test commands. |
 
 No environment or backup file is deleted by this cleanup. Archive-only means it leaves
