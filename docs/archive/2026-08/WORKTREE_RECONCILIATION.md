@@ -29,7 +29,16 @@ their registration is removed.
 | `1f3d9-release-6738591` | Clean, older release | None | Archive metadata only. |
 | `1f3d9-review-main-1786702255` | Five unresolved conflicts | Older bounded-note approach conflicts with the shipped cursor contract. | Preserve conflict state; no port. |
 | `1f3d9-review-main-1786702453-pr4` | One conflict plus one staged file | Older note-card rendering would remove current expandable bodies. | Preserve conflict state; no port. |
-| `1f3d9-root-canonical` | Accidentally created during this reconciliation | An alternate docs/operations attempt; the guarded canonical staging repo contains the reconciled equivalents. | Preserve before removing this accidental 23rd attached copy. |
+| `1f3d9-root-canonical` | Accidentally created during this reconciliation | An alternate docs/operations attempt; the canonical reconciliation branch contains the reviewed equivalents. | Preserve before removing this accidental 23rd attached copy. |
+
+Three additional project copies were present beside the registered worktrees. They were
+checked separately before archival:
+
+| Unregistered copy | State | Content not safely represented by the reconciliation branch | Reconciliation |
+|---|---|---|---|
+| `1f3d9-production-source-archive` | Clean, divergent by one commit | Only `test-results/.last-run.json`, a generated test artifact. | Preserve exact copy; no product port. |
+| `1f3d9-reconcile-production-main` | Clean ancestor of `main`; local env/cache files | No missing code behavior. Its `.env.local` remains inside the recovery archive. | Preserve exact local copy; no code port. |
+| `1f3d9-redcheck-main` | Detached ancestor with one untracked test | `test/reconciliation-contract.test.ts`, already present byte-for-byte on the canonical reconciliation branch. | Preserve exact copy; no additional port. |
 
 ## Loose root state
 
