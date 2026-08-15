@@ -83,7 +83,7 @@ test('window history queries accept only one safe value for each supported filte
   ) => Record<string, unknown> | null
 
   assert.deepEqual(parse({ collection: ['notes'] }), {
-    collection: 'notes', beforeId: null, limit: 50, placeId: null, resident: null,
+    collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: null,
   })
   assert.deepEqual(parse({
     collection: ['things'], before_id: ['91'], limit: ['12'],
@@ -92,7 +92,7 @@ test('window history queries accept only one safe value for each supported filte
     collection: 'things', beforeId: 91, limit: 12, placeId: 7, resident: 'tiny-lantern',
   })
   assert.deepEqual(parse({ collection: ['agreements'], resident: ['tiny-lantern'] }), {
-    collection: 'agreements', beforeId: null, limit: 50, placeId: null, resident: 'tiny-lantern',
+    collection: 'agreements', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
   })
 
   for (const unsafe of [

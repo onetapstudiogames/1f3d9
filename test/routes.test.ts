@@ -1058,13 +1058,13 @@ const inserted = (table: string) => sqlCalls().filter(call =>
 const networkCalled = (fragment: string) => state.calls.some(call => call.url.includes(fragment))
 
 test('public pagination applies one bounded default and rejects ambiguous or invalid values', () => {
-  assert.equal(PUBLIC_PAGE_DEFAULT, 50)
+  assert.equal(PUBLIC_PAGE_DEFAULT, 10)
   assert.equal(PUBLIC_PAGE_MAX, 200)
   assert.deepEqual(parsePublicPage({}, 'before_id', 'limit'), {
     ok: true,
     cursor: null,
-    limit: 50,
-    fetchLimit: 51,
+    limit: 10,
+    fetchLimit: 11,
   })
   assert.deepEqual(parsePublicPage({ before_id: ['41'], limit: ['200'] }, 'before_id', 'limit'), {
     ok: true,
@@ -1631,18 +1631,18 @@ test('place reads return newest bounded slices and independent continuation curs
     things_page: { has_more: boolean; next_before_thing_id: number | null }
     notes_page: { has_more: boolean; next_before_note_id: number | null }
   }
-  assert.deepEqual(first.subplaces.map(row => row.id), Array.from({ length: 50 }, (_, index) => 160 - index))
-  assert.deepEqual(first.things.map(row => row.id), Array.from({ length: 50 }, (_, index) => 260 - index))
-  assert.deepEqual(first.notes.map(row => row.id), Array.from({ length: 50 }, (_, index) => 360 - index))
-  assert.deepEqual(first.subplaces_page, { has_more: true, next_before_subplace_id: 111 })
-  assert.deepEqual(first.things_page, { has_more: true, next_before_thing_id: 211 })
-  assert.deepEqual(first.notes_page, { has_more: true, next_before_note_id: 311 })
+  assert.deepEqual(first.subplaces.map(row => row.id), Array.from({ length: 10 }, (_, index) => 160 - index))
+  assert.deepEqual(first.things.map(row => row.id), Array.from({ length: 10 }, (_, index) => 260 - index))
+  assert.deepEqual(first.notes.map(row => row.id), Array.from({ length: 10 }, (_, index) => 360 - index))
+  assert.deepEqual(first.subplaces_page, { has_more: true, next_before_subplace_id: 151 })
+  assert.deepEqual(first.things_page, { has_more: true, next_before_thing_id: 251 })
+  assert.deepEqual(first.notes_page, { has_more: true, next_before_note_id: 351 })
 
   for (const pattern of [/from\s+places\s+p[\s\S]*p\.parent_id/i, /from\s+things\s+t/i, /from\s+notes\s+n/i]) {
     const read = sqlCalls().find(call => pattern.test(call.query ?? ''))
     assert.deepEqual(
       read?.params?.map(value => value == null ? null : Number(value)),
-      [2, null, 51],
+      [2, null, 11],
       `lookahead query missing for ${pattern}`,
     )
     assert.match(read?.query ?? '', /order\s+by\s+(?:p\.|t\.|n\.)?id\s+desc/i)
@@ -1650,17 +1650,17 @@ test('place reads return newest bounded slices and independent continuation curs
 
   state = { ...state, calls: [] }
   const secondResponse = await app.request(
-    '/api/place/2?before_subplace_id=111&subplace_limit=5' +
-      '&before_thing_id=211&thing_limit=5&before_note_id=311&note_limit=5',
+    '/api/place/2?before_subplace_id=151&subplace_limit=5' +
+      '&before_thing_id=251&thing_limit=5&before_note_id=351&note_limit=5',
   )
   assert.equal(secondResponse.status, 200)
   const second = await secondResponse.json() as typeof first
-  assert.deepEqual(second.subplaces.map(row => row.id), [110, 109, 108, 107, 106])
-  assert.deepEqual(second.things.map(row => row.id), [210, 209, 208, 207, 206])
-  assert.deepEqual(second.notes.map(row => row.id), [310, 309, 308, 307, 306])
-  assert.deepEqual(second.subplaces_page, { has_more: true, next_before_subplace_id: 106 })
-  assert.deepEqual(second.things_page, { has_more: true, next_before_thing_id: 206 })
-  assert.deepEqual(second.notes_page, { has_more: true, next_before_note_id: 306 })
+  assert.deepEqual(second.subplaces.map(row => row.id), [150, 149, 148, 147, 146])
+  assert.deepEqual(second.things.map(row => row.id), [250, 249, 248, 247, 246])
+  assert.deepEqual(second.notes.map(row => row.id), [350, 349, 348, 347, 346])
+  assert.deepEqual(second.subplaces_page, { has_more: true, next_before_subplace_id: 146 })
+  assert.deepEqual(second.things_page, { has_more: true, next_before_thing_id: 246 })
+  assert.deepEqual(second.notes_page, { has_more: true, next_before_note_id: 346 })
   assert.equal(second.subplaces.some(row => first.subplaces.some(previous => previous.id === row.id)), false)
   assert.equal(second.things.some(row => first.things.some(previous => previous.id === row.id)), false)
   assert.equal(second.notes.some(row => first.notes.some(previous => previous.id === row.id)), false)
@@ -1698,10 +1698,10 @@ test('every remaining growing public collection returns a newest-first default p
     assert.equal(response.status, 200, path)
     const body = await response.json() as Record<string, unknown>
     const rows = body[key] as Array<{ id: number }>
-    assert.equal(rows.length, 50, path)
+    assert.equal(rows.length, 10, path)
     assert.deepEqual(rows.slice(0, 2).map(row => row.id), [newest, newest - 1], path)
     assert.equal(body.has_more, true, path)
-    assert.equal(body.next_before_id, newest - 49, path)
+    assert.equal(body.next_before_id, newest - 9, path)
   }
 })
 
@@ -1807,25 +1807,25 @@ test('/api/me independently pages every growing holdings and history collection'
   const pages = first.pages as Record<string, Record<string, unknown>>
   for (const [collection, newest] of Object.entries(newestByCollection)) {
     const rows = first[collection] as Array<{ id: number }>
-    assert.equal(rows.length, 50, collection)
+    assert.equal(rows.length, 10, collection)
     assert.deepEqual(rows.slice(0, 2).map(row => row.id), [newest, newest - 1], collection)
     assert.equal(pages[collection]?.has_more, true, collection)
-    assert.equal(pages[collection]?.[`next_before_${collection.replace(/s$/, '')}_id`], newest - 49, collection)
+    assert.equal(pages[collection]?.[`next_before_${collection.replace(/s$/, '')}_id`], newest - 9, collection)
   }
 
   state = { ...state, calls: [] }
   const secondResponse = await app.request(
-    '/api/me?before_place_id=1521&place_limit=3' +
-      '&before_thing_id=1621&thing_limit=3&before_kind_id=1721&kind_limit=3' +
-      '&before_agreement_id=1821&agreement_limit=3&before_note_id=1921&note_limit=3' +
-      '&before_offer_id=2021&offer_limit=3',
+    '/api/me?before_place_id=1561&place_limit=3' +
+      '&before_thing_id=1661&thing_limit=3&before_kind_id=1761&kind_limit=3' +
+      '&before_agreement_id=1861&agreement_limit=3&before_note_id=1961&note_limit=3' +
+      '&before_offer_id=2061&offer_limit=3',
     { headers: authHeaders() },
   )
   assert.equal(secondResponse.status, 200)
   const second = await secondResponse.json() as Record<string, unknown>
   for (const [collection, newest] of Object.entries(newestByCollection)) {
     const rows = second[collection] as Array<{ id: number }>
-    assert.deepEqual(rows.map(row => row.id), [newest - 50, newest - 51, newest - 52], collection)
+    assert.deepEqual(rows.map(row => row.id), [newest - 10, newest - 11, newest - 12], collection)
     const previous = first[collection] as Array<{ id: number }>
     assert.equal(rows.some(row => previous.some(item => item.id === row.id)), false, collection)
   }

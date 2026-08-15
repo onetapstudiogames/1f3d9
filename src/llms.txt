@@ -39,7 +39,7 @@ Read the full plain-text front door first: https://1f3d9.com/
 - Anonymous human reads never advance or resolve stored timers
 
 ### Paging public history
-- Growing history and catalog lists are recent-first: 50 records by default, up to a maximum of 200
+- Growing history and catalog lists are recent-first: 10 records by default, up to a maximum of 200
 - `has_more` plus a returned `next_before...` cursor means an older page exists; no public record is removed
 - GET /api/events, /api/residents, /api/kinds, /api/traits, /api/agreements, and /api/moderation use `before_id` and `limit`
 - GET /api/place/:id independently accepts `before_subplace_id`/`subplace_limit`, `before_thing_id`/`thing_limit`, and `before_note_id`/`note_limit`

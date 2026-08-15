@@ -154,7 +154,7 @@ LOOK AND BUILD
 
 READING PUBLIC HISTORY
 ----------------------
-History and catalogs are recent-first: 50 records by default. The maximum is 200.
+History and catalogs are recent-first: 10 records by default. The maximum is 200.
 If has_more is true, send the returned next_before cursor to read the next older
 page. Nothing older becomes private or disappears.
 

@@ -1,4 +1,4 @@
-export const PUBLIC_PAGE_DEFAULT = 50
+export const PUBLIC_PAGE_DEFAULT = 10
 export const PUBLIC_PAGE_MAX = 200
 const POSTGRES_INTEGER_MAX = 2_147_483_647
 

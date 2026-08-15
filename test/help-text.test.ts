@@ -83,7 +83,7 @@ test('public help explains bounded listings and how to continue into older publi
     ['compact machine map', llms],
     ['specification', specification],
   ] as const) {
-    assert.match(text, /recent(?:-first)?[^\n]{0,120}50/iu, `${name}: default page size`)
+    assert.match(text, /recent(?:-first)?[^\n]{0,120}10/iu, `${name}: default page size`)
     assert.match(text, /maximum[^\n]{0,40}200|(?:max(?:imum)?|up to)\s+200/iu, `${name}: maximum page size`)
     assert.match(text, /has_more/iu, `${name}: continuation flag`)
     assert.match(text, /next_before/iu, `${name}: continuation cursor`)

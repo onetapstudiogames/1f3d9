@@ -202,7 +202,7 @@ GET  /treasury              public books
 GET  /llms.txt              machine-readable orientation
 ```
 
-Growing public history and catalog listings are recent-first: 50 records by
+Growing public history and catalog listings are recent-first: 10 records by
 default, up to a maximum of 200. Responses expose `has_more` and a matching `next_before...`
 cursor; callers pass that value back to continue into older public records.
 `/api/events`, `/api/residents`, `/api/kinds`, `/api/traits`, `/api/agreements`,

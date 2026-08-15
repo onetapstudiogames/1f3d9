@@ -127,11 +127,11 @@ async function startPostgres(): Promise<PostgresInstance> {
   }
 }
 
-function page(cursor: number | null = null, limit = 50): PublicPage {
+function page(cursor: number | null = null, limit: number | null = null): PublicPage {
   const parsed = parsePublicPage(
     {
       ...(cursor === null ? {} : { before_id: [String(cursor)] }),
-      limit: [String(limit)],
+      ...(limit === null ? {} : { limit: [String(limit)] }),
     },
     'before_id',
     'limit',
@@ -316,17 +316,17 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
   try {
     const city = await seedCity(postgres.client)
 
-    await t.test('events default to 50 and every older row remains reachable once', async () => {
+    await t.test('events default to 10 and every older row remains reachable once', async () => {
       const request = page()
       const firstRows = await loadPublicEventRows(executePublicQuery, 'note', request)
-      assert.equal(firstRows.length, 51, 'the production query must fetch one lookahead row')
+      assert.equal(firstRows.length, 11, 'the production query must fetch one lookahead row')
       const first = finalizePublicPage(
         firstRows as readonly (Record<string, unknown> & { id: number })[],
         request.limit,
       )
-      assert.equal(first.items.length, 50)
+      assert.equal(first.items.length, 10)
       assert.equal(first.hasMore, true)
-      assert.equal(first.nextCursor, city.expected.events[49])
+      assert.equal(first.nextCursor, city.expected.events[9])
 
       const allIds = await allEventIds()
       assert.deepEqual(allIds, city.expected.events)
@@ -346,11 +346,11 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       )
       assert.deepEqual(
         Object.fromEntries(Object.entries(firstRows).map(([name, rows]) => [name, rows.length])),
-        { subplaces: 51, things: 51, notes: 51 },
+        { subplaces: 11, things: 11, notes: 11 },
         'each production query must fetch its own lookahead row',
       )
 
-      const noteCursor = Number(firstRows.notes[49]!.id)
+      const noteCursor = Number(firstRows.notes[9]!.id)
       const noteOnlyAdvance = await loadPublicPlaceCollectionRows(
         executePublicQuery,
         city.targetPlaceId,
@@ -438,7 +438,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
           agreements: snapshot.agreements.length,
           events: snapshot.events.length,
         },
-        { notes: 50, things: 50, agreements: 50, events: 50 },
+        { notes: 10, things: 10, agreements: 10, events: 10 },
       )
       assert.deepEqual(
         Object.fromEntries(Object.entries(snapshot.pages).map(([name, value]) => [name, value.has_more])),
@@ -460,10 +460,26 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         has_more: boolean
         next_before_id: number | null
       }
-      assert.equal(olderNotes.notes.length, 25)
-      assert.equal(olderNotes.has_more, false)
+      assert.equal(olderNotes.notes.length, 50)
+      assert.equal(olderNotes.has_more, true)
+
+      const oldestNotesResponse = await app.request(
+        `http://city.test/api/window?collection=notes&before_id=${olderNotes.next_before_id}&limit=50`,
+      )
+      assert.equal(oldestNotesResponse.status, 200)
+      const oldestNotes = await oldestNotesResponse.json() as {
+        notes: Array<{ id: number }>
+        has_more: boolean
+        next_before_id: number | null
+      }
+      assert.equal(oldestNotes.notes.length, 15)
+      assert.equal(oldestNotes.has_more, false)
       assert.deepEqual(
-        [...snapshot.notes.map(row => row.id), ...olderNotes.notes.map(row => row.id)],
+        [
+          ...snapshot.notes.map(row => row.id),
+          ...olderNotes.notes.map(row => row.id),
+          ...oldestNotes.notes.map(row => row.id),
+        ],
         city.expected.notes,
       )
 
