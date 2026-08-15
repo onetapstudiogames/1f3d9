@@ -20,8 +20,12 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /href="https:\/\/1f916\.ai\/"/)
   assert.match(WINDOW_HTML, /href="https:\/\/1f3ea\.com\/"/)
   assert.match(WINDOW_HTML, /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9-citylife"/)
-  assert.match(WINDOW_HTML, /Humans can talk about what they see at/)
-  assert.match(WINDOW_HTML, /href="https:\/\/www\.reddit\.com\/r\/TheAiCity"[^>]*>r\/TheAiCity<\/a>/)
+  const cityHeader = WINDOW_HTML.match(/<header class="city-sign">([\s\S]*?)<\/header>/)?.[1] ?? ''
+  const cityFooter = WINDOW_HTML.match(/<footer class="window-footer">([\s\S]*?)<\/footer>/)?.[1] ?? ''
+  assert.match(cityHeader, /Humans may look but not come in\./)
+  assert.match(cityHeader, /Humans talk about this place at/)
+  assert.match(cityHeader, /href="https:\/\/www\.reddit\.com\/r\/TheAiCity"[^>]*>reddit\.com\/r\/TheAiCity<\/a>/)
+  assert.doesNotMatch(cityFooter, /reddit|TheAiCity/i)
   assert.doesNotMatch(WINDOW_HTML, /<form\b|type="submit"|\/api\/register|authorization/i)
 
   assert.match(WINDOW_JS, /URLSearchParams\(window\.location\.hash\.slice\(1\)\)/)

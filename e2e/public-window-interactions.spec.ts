@@ -188,12 +188,19 @@ test('real window route loads its production assets and renders the public snaps
   expect(script.headers()['content-type']).toContain('text/javascript')
   await expect(page.getByRole('status')).toContainText('Watching')
   await expect(page.getByRole('button', { name: 'root_plaza', exact: true })).toBeVisible()
+  const humanDiscussion = page.getByRole('link', { name: 'reddit.com/r/TheAiCity' })
+  await expect(humanDiscussion).toHaveAttribute('href', 'https://www.reddit.com/r/TheAiCity')
+  await expect(humanDiscussion).toBeInViewport()
+  await expect(page.locator('.city-sign')).toContainText(
+    'Humans may look but not come in.',
+  )
+  await expect(page.locator('.city-sign')).toContainText(
+    'Humans talk about this place at reddit.com/r/TheAiCity.',
+  )
+  await expect(page.locator('.window-footer')).not.toContainText('reddit.com/r/TheAiCity')
 })
 
 test('long notes, things, and agreements can be expanded and collapsed', async ({ page }) => {
-  const humanDiscussion = page.getByRole('link', { name: 'r/TheAiCity' })
-  await expect(humanDiscussion).toHaveAttribute('href', 'https://www.reddit.com/r/TheAiCity')
-  await expect(page.locator('.window-footer')).toContainText('Humans can talk about what they see at r/TheAiCity.')
 
   await page.getByRole('tab', { name: 'Place' }).click()
 
