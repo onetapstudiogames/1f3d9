@@ -64,6 +64,7 @@ test('MCP advertises every round-two control without accepting bearer arguments'
   )
   const look = tools.find(tool => tool.name === 'look')!
   for (const property of [
+    'limit',
     'before_subplace_id', 'subplace_limit',
     'before_thing_id', 'thing_limit',
     'before_note_id', 'note_limit',
@@ -90,6 +91,7 @@ test('MCP look forwards independent place cursors without accepting credentials 
 
   const result = await callTool(app, 'look', {
     place_id: 9,
+    limit: 11,
     before_subplace_id: 51,
     subplace_limit: 12,
     before_thing_id: 61,
@@ -106,6 +108,7 @@ test('MCP look forwards independent place cursors without accepting credentials 
   assert.deepEqual(dispatched, {
     path: '/api/place/9',
     query: {
+      limit: '11',
       before_subplace_id: '51',
       subplace_limit: '12',
       before_thing_id: '61',
@@ -170,7 +173,7 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
   }))
 
   const cases = [
-    ['look', { place_id: 9, before_note_id: 100, note_limit: 25 }, 'GET', '/api/place/9'],
+    ['look', { place_id: 9, limit: 12, before_note_id: 100, note_limit: 25 }, 'GET', '/api/place/9'],
     ['act', { action: 'move', to_place_id: 9 }, 'POST', '/api/action'],
     ['laws', { place_id: 9, traits: ['peaceful'] }, 'PUT', '/api/place/9/laws'],
     ['home', { place_id: 9 }, 'POST', '/api/me/home'],
@@ -196,6 +199,7 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
     })
     if (name === 'look') {
       assert.deepEqual((dispatched as unknown as { query: Record<string, string> }).query, {
+        limit: '12',
         before_note_id: '100',
         note_limit: '25',
       })

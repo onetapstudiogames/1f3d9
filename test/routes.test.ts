@@ -1173,6 +1173,28 @@ test('public pagination applies one bounded default and rejects ambiguous or inv
     limit: 200,
     fetchLimit: 201,
   })
+  assert.deepEqual(
+    parsePublicPage({ limit: ['4'] }, 'before_note_id', 'note_limit', 'limit'),
+    { ok: true, cursor: null, limit: 4, fetchLimit: 5 },
+  )
+  assert.deepEqual(
+    parsePublicPage(
+      { limit: ['4'], note_limit: ['2'] },
+      'before_note_id',
+      'note_limit',
+      'limit',
+    ),
+    { ok: true, cursor: null, limit: 2, fetchLimit: 3 },
+  )
+  assert.equal(
+    parsePublicPage(
+      { limit: ['wat'], note_limit: ['2'] },
+      'before_note_id',
+      'note_limit',
+      'limit',
+    ).ok,
+    false,
+  )
 
   for (const query of [
     { before_id: ['0'] },
@@ -2010,6 +2032,51 @@ test('place reads return newest bounded slices and independent continuation curs
   assert.equal(second.notes.some(row => first.notes.some(previous => previous.id === row.id)), false)
 })
 
+test('place reads apply the common limit to every embedded collection', async () => {
+  reset({ scenario: 'public pagination' })
+  const response = await app.request('/api/place/2?limit=4')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    subplaces: Array<{ id: number }>
+    things: Array<{ id: number }>
+    notes: Array<{ id: number }>
+    subplaces_page: { has_more: boolean; next_before_subplace_id: number | null }
+    things_page: { has_more: boolean; next_before_thing_id: number | null }
+    notes_page: { has_more: boolean; next_before_note_id: number | null }
+  }
+  assert.deepEqual(body.subplaces.map(row => row.id), [160, 159, 158, 157])
+  assert.deepEqual(body.things.map(row => row.id), [260, 259, 258, 257])
+  assert.deepEqual(body.notes.map(row => row.id), [360, 359, 358, 357])
+  assert.deepEqual(body.subplaces_page, { has_more: true, next_before_subplace_id: 157 })
+  assert.deepEqual(body.things_page, { has_more: true, next_before_thing_id: 257 })
+  assert.deepEqual(body.notes_page, { has_more: true, next_before_note_id: 357 })
+
+  for (const pattern of [/from\s+places\s+p[\s\S]*p\.parent_id/i, /from\s+things\s+t/i, /from\s+notes\s+n/i]) {
+    const read = sqlCalls().find(call => pattern.test(call.query ?? ''))
+    assert.deepEqual(
+      read?.params?.map(value => value == null ? null : Number(value)),
+      [2, null, 5],
+      `common limit lookahead query missing for ${pattern}`,
+    )
+  }
+})
+
+test('place collection-specific limits override the common limit', async () => {
+  reset({ scenario: 'public pagination' })
+  const response = await app.request(
+    '/api/place/2?limit=4&subplace_limit=2&thing_limit=3&note_limit=5',
+  )
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    subplaces: Array<{ id: number }>
+    things: Array<{ id: number }>
+    notes: Array<{ id: number }>
+  }
+  assert.deepEqual(body.subplaces.map(row => row.id), [160, 159])
+  assert.deepEqual(body.things.map(row => row.id), [260, 259, 258])
+  assert.deepEqual(body.notes.map(row => row.id), [360, 359, 358, 357, 356])
+})
+
 test('public listing routes reject invalid and duplicate pagination parameters', async () => {
   const paths = [
     '/api/events?before_id=nope',
@@ -2018,6 +2085,9 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/place/2?subplace_limit=201',
     '/api/place/2?before_thing_id=0',
     '/api/place/2?note_limit=2&note_limit=3',
+    '/api/place/2?limit=nope',
+    '/api/place/2?limit=nope&subplace_limit=2&thing_limit=2&note_limit=2',
+    '/api/place/2?limit=2&limit=3',
   ]
   for (const path of paths) {
     reset({ scenario: 'public pagination' })
