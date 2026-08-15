@@ -21,6 +21,7 @@ import type {
   AuthorizationRequestInput,
   AuthorizationRequestRecord,
 } from '../src/oauth-store.ts'
+import { windowPage, windowScript, windowStyle } from '../src/window.ts'
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
 const origin = `https://127.0.0.1:${port}`
@@ -281,6 +282,9 @@ app.post('/mcp/connect', async c => {
 app.get('/oauth/callback', c => c.html(
   '<!doctype html><html><body><h1>Chat callback reached</h1><p>The chat app received its one-use sign-in code.</p></body></html>',
 ))
+app.get('/window', windowPage)
+app.get('/window.css', windowStyle)
+app.get('/window.js', windowScript)
 app.get('/__e2e/health', c => c.json({ ok: true, run: randomUUID() }))
 
 const certificate = makeCertificate()

@@ -5,6 +5,7 @@ import {
   parseKindRecipe,
   type KindRecipe,
 } from './physics.ts'
+import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 
 export type CraftSqlRow = Readonly<Record<string, unknown>>
 
@@ -41,7 +42,7 @@ export interface CraftedThing {
   readonly kind: string
 }
 
-export type CraftFailureStatus = 400 | 404 | 409 | 429
+export type CraftFailureStatus = 400 | 403 | 404 | 409 | 429
 
 export type CraftResult =
   | Readonly<{
@@ -79,7 +80,9 @@ interface KindRow {
 
 interface PlaceRow {
   readonly id: number
-  readonly owner_id: number
+  readonly parent_id: number | null
+  readonly place_kind: string
+  readonly owner_id: number | null
   readonly open_to_things: boolean
 }
 
@@ -215,12 +218,13 @@ export async function craftKindThing(
 
   const placeRows = await sql`
     /* crafting:place */
-    SELECT id, owner_id, open_to_things
+    SELECT id, parent_id, place_kind, owner_id, open_to_things
     FROM places
     WHERE id = ${input.placeId}
   `
   const place = placeRows[0] as PlaceRow | undefined
   if (!place) return failure(404, 'place not found')
+  if (isWorldRootRow(place)) return failure(403, WORLD_TRANSIT_ONLY_ERROR)
   if (place.owner_id !== input.actorId && place.open_to_things !== true) {
     return failure(409, 'target place does not accept things')
   }
@@ -292,6 +296,7 @@ export async function craftKindThing(
       FROM places AS place
       WHERE place.id = ${input.placeId}
         AND (place.owner_id = ${input.actorId} OR place.open_to_things)
+        AND place.owner_id IS NOT NULL
       FOR UPDATE OF place
     ), required AS MATERIALIZED (
       SELECT requirement.kind, requirement.quantity

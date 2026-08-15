@@ -2,6 +2,12 @@
 // No live database, wallet, payment, deployment, or network service is touched.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import {
+  PUBLIC_PAGE_DEFAULT,
+  PUBLIC_PAGE_MAX,
+  finalizePublicPage,
+  parsePublicPage,
+} from '../src/public-pagination.ts'
 
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
@@ -192,6 +198,122 @@ const thingRow = (id = 41) => ({
     : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
   created_at: '2026-08-11T00:00:00.000Z',
 })
+
+const descendingPage = <T extends { id: number }>(
+  rows: readonly T[],
+  cursor: unknown,
+  fetchLimit: unknown,
+) => rows
+  .filter(row => cursor == null || row.id < Number(cursor))
+  .sort((left, right) => right.id - left.id)
+  .slice(0, Number(fetchLimit))
+
+const paginationEvents = () => Array.from({ length: 70 }, (_, index) => {
+  const id = 70 - index
+  return {
+    id,
+    at: `2026-08-11T00:${String(id).padStart(2, '0')}:00.000Z`,
+    kind: id % 2 === 0 ? 'note_created' : 'thing_created',
+    actor: 'tiny-lantern',
+    detail: { id },
+  }
+})
+
+const paginationSubplaces = () => Array.from({ length: 60 }, (_, index) => ({
+  ...placeRow(160 - index, 2),
+  name: `Subplace ${160 - index}`,
+}))
+
+const paginationThings = () => Array.from({ length: 60 }, (_, index) => ({
+  ...thingRow(260 - index),
+  name: `Thing ${260 - index}`,
+}))
+
+const paginationNotes = () => Array.from({ length: 60 }, (_, index) => ({
+  id: 360 - index,
+  place_id: 2,
+  author: 'tiny-lantern',
+  body: `Note ${360 - index}`,
+  created_at: '2026-08-11T00:00:00.000Z',
+}))
+
+const recentIds = (newest: number) => Array.from({ length: 60 }, (_, index) => newest - index)
+
+const remainingPaginationRows = (collection: string) => {
+  const newestByCollection: Record<string, number> = {
+    residents: 1070,
+    kinds: 1170,
+    traits: 1270,
+    agreements: 1370,
+    moderation: 1470,
+    me_places: 1570,
+    me_things: 1670,
+    me_kinds: 1770,
+    me_agreements: 1870,
+    me_notes: 1970,
+    me_offers: 2070,
+  }
+  const newest = newestByCollection[collection]
+  if (!newest) throw new Error(`unknown pagination fixture: ${collection}`)
+  return recentIds(newest).map(id => {
+    const common = { id, created_at: '2026-08-11T00:00:00.000Z' }
+    if (collection === 'residents') return {
+      ...common, handle: `resident-${id}`, model: 'test-model', joined_at: common.created_at,
+    }
+    if (collection === 'kinds') return {
+      ...common, name: `kind-${id}`, owner_id: 7, owner: 'tiny-lantern',
+      revision: 1, description: '', traits: [], recipe: [],
+    }
+    if (collection === 'traits') return {
+      ...common, name: `trait-${id}`, description: '', recipe: null,
+      mechanical: false, coiner: 'tiny-lantern',
+    }
+    if (collection === 'agreements') return {
+      ...common, body: `agreement ${id}`, created_by: 'tiny-lantern',
+      parties: ['tiny-lantern'], signatures: id % 2 === 0 ? [] : ['tiny-lantern'],
+      open: id % 2 === 0,
+    }
+    if (collection === 'moderation') return {
+      ...common, target_type: 'note', target_id: id, action: 'remove',
+      reason: `reason ${id}`, actor: 'founder',
+    }
+    if (collection === 'me_places') return { ...common, parent_id: 1, name: `place-${id}` }
+    if (collection === 'me_things') return {
+      ...common, place_id: 2, name: `thing-${id}`, kind_id: null,
+      birth_revision: null, current_revision: null,
+    }
+    if (collection === 'me_kinds') return { ...common, name: `kind-${id}`, current_revision: 1 }
+    if (collection === 'me_agreements') return { ...common, body: `agreement ${id}`, signed: id % 2 === 0 }
+    if (collection === 'me_notes') return { ...common, place_id: 2, body: `note ${id}` }
+    return {
+      ...common, type: 'thing', asset_id: 41, status: 'open',
+      price_usdc: 2, reserved_until: null,
+    }
+  })
+}
+
+const residentArrivalRows = () => [
+  { id: 1_000, handle: 'old-high-id', model: 'test-model', joined_at: '2026-08-10T00:00:00.000Z' },
+  { id: 100, handle: 'early-tie-low', model: 'test-model', joined_at: '2026-08-11T00:00:00.000Z' },
+  { id: 200, handle: 'early-tie-high', model: 'test-model', joined_at: '2026-08-11T00:00:00.000Z' },
+  { id: 910, handle: 'middle', model: 'test-model', joined_at: '2026-08-12T00:00:00.000Z' },
+  { id: 5, handle: 'recent-tie-low', model: 'test-model', joined_at: '2026-08-13T00:00:00.000Z' },
+  { id: 800, handle: 'recent-tie-high', model: 'test-model', joined_at: '2026-08-13T00:00:00.000Z' },
+]
+
+function residentArrivalPage(query: string, cursor: unknown, fetchLimit: unknown) {
+  const orderedByArrival = /order\s+by\s+resident\.joined_at\s+desc\s*,\s*resident\.id\s+desc/i.test(query)
+  const rows = residentArrivalRows().sort((left, right) => orderedByArrival
+    ? right.joined_at.localeCompare(left.joined_at) || right.id - left.id
+    : right.id - left.id)
+  if (cursor == null) return rows.slice(0, Number(fetchLimit))
+  const boundary = rows.find(row => row.id === Number(cursor))
+  if (!boundary) return []
+  return rows.filter(row => orderedByArrival
+    ? row.joined_at < boundary.joined_at
+      || (row.joined_at === boundary.joined_at && row.id < boundary.id)
+    : row.id < boundary.id).slice(0, Number(fetchLimit))
+}
 
 function reset(patch: Partial<FakeState> = {}) {
   state = { ...initialState(), ...patch }
@@ -457,6 +579,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       created_at: '2026-08-11T00:04:00.000Z',
     }]
   }
+  if (state.scenario === 'remaining pagination' && q.includes('/* public:moderation */')) {
+    return descendingPage(remainingPaginationRows('moderation'), params[0], params[1])
+  }
   if (q.includes('from moderation_actions')) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
@@ -525,6 +650,46 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('notes_today = notes_today + 1')) return state.quota.notes ? [{ id: state.actorId }] : []
   if (q.includes('agreement_actions_today = agreement_actions_today + 1'))
     return state.quota.agreements ? [{ id: state.actorId }] : []
+
+  if (state.scenario === 'remaining pagination') {
+    const publicCollection = ['residents', 'kinds', 'traits', 'moderation']
+      .find(collection => q.includes(`/* public:${collection} */`))
+    if (publicCollection) {
+      return descendingPage(remainingPaginationRows(publicCollection), params[0], params[1])
+    }
+    if (q.includes('/* public:agreements */')) {
+      const party = params[0] == null ? null : String(params[0])
+      const open = params[1] == null ? null : String(params[1]) === 'true'
+      const agreements = remainingPaginationRows('agreements') as Array<{
+        id: number
+        parties: string[]
+        open: boolean
+      }>
+      const filtered = agreements.filter(row =>
+        (party == null || row.parties.includes(party)) && (open == null || row.open === open))
+      return descendingPage(filtered, params[2], params[3])
+    }
+    const meCollection = [
+      'me_places', 'me_things', 'me_kinds', 'me_agreements', 'me_notes', 'me_offers',
+    ].find(collection => q.includes(`/* public:${collection} */`))
+    if (meCollection) {
+      return descendingPage(remainingPaginationRows(meCollection), params[1], params[2])
+    }
+  }
+
+  if (state.scenario === 'resident arrival pagination' && q.includes('/* public:residents */')) {
+    return residentArrivalPage(query, params[0], params[1])
+  }
+
+  if (state.scenario === 'public pagination' && q.includes('from places p') && q.includes('where p.parent_id')) {
+    return descendingPage(paginationSubplaces(), params[1], params[2])
+  }
+  if (state.scenario === 'public pagination' && q.includes('from things t') && q.includes('t.place_id')) {
+    return descendingPage(paginationThings(), params[1], params[2])
+  }
+  if (state.scenario === 'public pagination' && q.includes('from notes n') && q.includes('n.place_id')) {
+    return descendingPage(paginationNotes(), params[1], params[2])
+  }
 
   if (q.includes('with recursive place_tree')) return [placeRow(1, null), placeRow(2, 1)]
   if (q.includes('insert into places')) return [placeRow(3, 2)]
@@ -740,6 +905,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('from residents')) return [residentRow(), {
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
   }]
+  if (q.includes('from events') && state.scenario === 'public pagination') {
+    const kind = params[0] == null ? null : String(params[0])
+    const matching = paginationEvents().filter(event => kind == null || event.kind === kind)
+    return descendingPage(matching, params[1], params[2])
+  }
   if (q.includes('from events') && q.includes('count(')) return [{ n: 0 }]
   if (q.includes('from events') && state.scenario === 'activity surfaces') return [
     {
@@ -886,6 +1056,47 @@ const sqlCalls = () => state.calls.filter(call => call.query)
 const inserted = (table: string) => sqlCalls().filter(call =>
   new RegExp(`insert\\s+into\\s+${table}\\b`, 'i').test(call.query ?? '')).length
 const networkCalled = (fragment: string) => state.calls.some(call => call.url.includes(fragment))
+
+test('public pagination applies one bounded default and rejects ambiguous or invalid values', () => {
+  assert.equal(PUBLIC_PAGE_DEFAULT, 50)
+  assert.equal(PUBLIC_PAGE_MAX, 200)
+  assert.deepEqual(parsePublicPage({}, 'before_id', 'limit'), {
+    ok: true,
+    cursor: null,
+    limit: 50,
+    fetchLimit: 51,
+  })
+  assert.deepEqual(parsePublicPage({ before_id: ['41'], limit: ['200'] }, 'before_id', 'limit'), {
+    ok: true,
+    cursor: 41,
+    limit: 200,
+    fetchLimit: 201,
+  })
+
+  for (const query of [
+    { before_id: ['0'] },
+    { before_id: ['1.5'] },
+    { before_id: ['wat'] },
+    { before_id: ['2147483648'] },
+    { before_id: ['4', '3'] },
+    { limit: ['0'] },
+    { limit: ['201'] },
+    { limit: ['2', '3'] },
+  ]) {
+    assert.equal(parsePublicPage(query, 'before_id', 'limit').ok, false, JSON.stringify(query))
+  }
+
+  const source = Object.freeze([{ id: 3 }, { id: 2 }, { id: 1 }])
+  const finalized = finalizePublicPage(source, 2)
+  assert.deepEqual(finalized, {
+    items: [{ id: 3 }, { id: 2 }],
+    hasMore: true,
+    nextCursor: 2,
+  })
+  assert.equal(Object.isFrozen(finalized), true)
+  assert.equal(Object.isFrozen(finalized.items), true)
+  assert.deepEqual(source.map(row => row.id), [3, 2, 1])
+})
 
 test('registration returns a bearer secret once and rotation kills the stored old hash', async () => {
   reset({ scenario: 'identity' })
@@ -1379,6 +1590,260 @@ test('frontier x402 settles before creation and one tx proof cannot pay twice', 
   assert.match(JSON.stringify(await replay.json()), /used|payment|proof/i)
 })
 
+test('events keep the public contract while paging stably by kind and id', async () => {
+  reset({ scenario: 'public pagination' })
+  const firstResponse = await app.request('/api/events?kind=note_created&before_id=65&limit=3')
+  assert.equal(firstResponse.status, 200)
+  const first = await firstResponse.json() as {
+    events: Array<{ id: number }>
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(first.events.map(event => event.id), [64, 62, 60])
+  assert.equal(first.has_more, true)
+  assert.equal(first.next_before_id, 60)
+  const firstRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
+  assert.deepEqual(
+    firstRead?.params?.map((value, index) => index === 0 ? value : Number(value)),
+    ['note_created', 65, 4],
+    'the database fetches one lookahead row',
+  )
+  assert.match(firstRead?.query ?? '', /id\s*<\s*\$2::integer/i)
+  assert.match(firstRead?.query ?? '', /order\s+by\s+id\s+desc/i)
+
+  state = { ...state, calls: [] }
+  const secondResponse = await app.request('/api/events?kind=note_created&before_id=60&limit=3')
+  assert.equal(secondResponse.status, 200)
+  const second = await secondResponse.json() as typeof first
+  assert.deepEqual(second.events.map(event => event.id), [58, 56, 54])
+  assert.equal(second.events.some(event => first.events.some(previous => previous.id === event.id)), false)
+})
+
+test('place reads return newest bounded slices and independent continuation cursors', async () => {
+  reset({ scenario: 'public pagination' })
+  const firstResponse = await app.request('/api/place/2')
+  assert.equal(firstResponse.status, 200)
+  const first = await firstResponse.json() as {
+    subplaces: Array<{ id: number }>
+    things: Array<{ id: number }>
+    notes: Array<{ id: number }>
+    subplaces_page: { has_more: boolean; next_before_subplace_id: number | null }
+    things_page: { has_more: boolean; next_before_thing_id: number | null }
+    notes_page: { has_more: boolean; next_before_note_id: number | null }
+  }
+  assert.deepEqual(first.subplaces.map(row => row.id), Array.from({ length: 50 }, (_, index) => 160 - index))
+  assert.deepEqual(first.things.map(row => row.id), Array.from({ length: 50 }, (_, index) => 260 - index))
+  assert.deepEqual(first.notes.map(row => row.id), Array.from({ length: 50 }, (_, index) => 360 - index))
+  assert.deepEqual(first.subplaces_page, { has_more: true, next_before_subplace_id: 111 })
+  assert.deepEqual(first.things_page, { has_more: true, next_before_thing_id: 211 })
+  assert.deepEqual(first.notes_page, { has_more: true, next_before_note_id: 311 })
+
+  for (const pattern of [/from\s+places\s+p[\s\S]*p\.parent_id/i, /from\s+things\s+t/i, /from\s+notes\s+n/i]) {
+    const read = sqlCalls().find(call => pattern.test(call.query ?? ''))
+    assert.deepEqual(
+      read?.params?.map(value => value == null ? null : Number(value)),
+      [2, null, 51],
+      `lookahead query missing for ${pattern}`,
+    )
+    assert.match(read?.query ?? '', /order\s+by\s+(?:p\.|t\.|n\.)?id\s+desc/i)
+  }
+
+  state = { ...state, calls: [] }
+  const secondResponse = await app.request(
+    '/api/place/2?before_subplace_id=111&subplace_limit=5' +
+      '&before_thing_id=211&thing_limit=5&before_note_id=311&note_limit=5',
+  )
+  assert.equal(secondResponse.status, 200)
+  const second = await secondResponse.json() as typeof first
+  assert.deepEqual(second.subplaces.map(row => row.id), [110, 109, 108, 107, 106])
+  assert.deepEqual(second.things.map(row => row.id), [210, 209, 208, 207, 206])
+  assert.deepEqual(second.notes.map(row => row.id), [310, 309, 308, 307, 306])
+  assert.deepEqual(second.subplaces_page, { has_more: true, next_before_subplace_id: 106 })
+  assert.deepEqual(second.things_page, { has_more: true, next_before_thing_id: 206 })
+  assert.deepEqual(second.notes_page, { has_more: true, next_before_note_id: 306 })
+  assert.equal(second.subplaces.some(row => first.subplaces.some(previous => previous.id === row.id)), false)
+  assert.equal(second.things.some(row => first.things.some(previous => previous.id === row.id)), false)
+  assert.equal(second.notes.some(row => first.notes.some(previous => previous.id === row.id)), false)
+})
+
+test('public listing routes reject invalid and duplicate pagination parameters', async () => {
+  const paths = [
+    '/api/events?before_id=nope',
+    '/api/events?limit=2&limit=3',
+    '/api/events?kind=note_created&kind=thing_created',
+    '/api/place/2?subplace_limit=201',
+    '/api/place/2?before_thing_id=0',
+    '/api/place/2?note_limit=2&note_limit=3',
+  ]
+  for (const path of paths) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
+  }
+})
+
+test('every remaining growing public collection returns a newest-first default page', async () => {
+  const cases = [
+    ['/api/residents', 'residents', 1070],
+    ['/api/kinds', 'kinds', 1170],
+    ['/api/traits', 'traits', 1270],
+    ['/api/agreements', 'agreements', 1370],
+    ['/api/moderation', 'moderation', 1470],
+  ] as const
+
+  for (const [path, key, newest] of cases) {
+    reset({ scenario: 'remaining pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 200, path)
+    const body = await response.json() as Record<string, unknown>
+    const rows = body[key] as Array<{ id: number }>
+    assert.equal(rows.length, 50, path)
+    assert.deepEqual(rows.slice(0, 2).map(row => row.id), [newest, newest - 1], path)
+    assert.equal(body.has_more, true, path)
+    assert.equal(body.next_before_id, newest - 49, path)
+  }
+})
+
+test('resident census pages by arrival time with stable id ties and no boundary repeats', async () => {
+  reset({ scenario: 'resident arrival pagination' })
+  const firstResponse = await app.request('/api/residents?limit=2')
+  assert.equal(firstResponse.status, 200)
+  const first = await firstResponse.json() as {
+    residents: Array<{ id: number }>
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(first.residents.map(row => row.id), [800, 5])
+  assert.equal(first.has_more, true)
+  assert.equal(first.next_before_id, 5)
+
+  const firstRead = sqlCalls().find(call => /\/\* public:residents \*\//i.test(call.query ?? ''))
+  assert.match(
+    firstRead?.query ?? '',
+    /\(resident\.joined_at\s*,\s*resident\.id\)\s*<\s*\(\s*select\s+boundary\.joined_at\s*,\s*boundary\.id/i,
+  )
+  assert.match(firstRead?.query ?? '', /order\s+by\s+resident\.joined_at\s+desc\s*,\s*resident\.id\s+desc/i)
+  assert.deepEqual(firstRead?.params?.map(value => value == null ? null : Number(value)), [null, 3])
+
+  state = { ...state, calls: [] }
+  const secondResponse = await app.request('/api/residents?before_id=5&limit=2')
+  assert.equal(secondResponse.status, 200)
+  const second = await secondResponse.json() as typeof first
+  assert.deepEqual(second.residents.map(row => row.id), [910, 200])
+  assert.equal(second.has_more, true)
+  assert.equal(second.next_before_id, 200)
+  assert.equal(second.residents.some(row => first.residents.some(previous => previous.id === row.id)), false)
+
+  state = { ...state, calls: [] }
+  const thirdResponse = await app.request('/api/residents?before_id=200&limit=2')
+  assert.equal(thirdResponse.status, 200)
+  const third = await thirdResponse.json() as typeof first
+  assert.deepEqual(third.residents.map(row => row.id), [100, 1000])
+  assert.equal(third.has_more, false)
+  assert.equal(third.next_before_id, null)
+})
+
+test('public collection cursors preserve agreement filters and never repeat the boundary', async () => {
+  reset({ scenario: 'remaining pagination' })
+  const response = await app.request(
+    '/api/agreements?party=tiny-lantern&open=true&before_id=1360&limit=3',
+  )
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    agreements: Array<{ id: number; open: boolean }>
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(body.agreements.map(row => row.id), [1358, 1356, 1354])
+  assert.equal(body.agreements.every(row => row.open), true)
+  assert.equal(body.has_more, true)
+  assert.equal(body.next_before_id, 1354)
+  const read = sqlCalls().find(call => /\/\* public:agreements \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    read?.params?.map((value, index) => index === 1 ? String(value) : value == null ? null : String(value)),
+    ['tiny-lantern', 'true', '1360', '4'],
+  )
+
+  state = { ...state, calls: [] }
+  const nextResponse = await app.request(
+    '/api/agreements?party=tiny-lantern&open=true&before_id=1354&limit=3',
+  )
+  const next = await nextResponse.json() as typeof body
+  assert.deepEqual(next.agreements.map(row => row.id), [1352, 1350, 1348])
+  assert.equal(next.agreements.some(row => body.agreements.some(previous => previous.id === row.id)), false)
+})
+
+test('remaining public collections reject invalid or duplicate page parameters', async () => {
+  for (const path of [
+    '/api/residents?before_id=0',
+    '/api/kinds?limit=201',
+    '/api/traits?before_id=nope',
+    '/api/agreements?party=tiny-lantern&party=neighbor',
+    '/api/agreements?open=true&open=false',
+    '/api/agreements?limit=2&limit=3',
+    '/api/moderation?before_id=2&before_id=1',
+  ]) {
+    reset({ scenario: 'remaining pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
+  }
+})
+
+test('/api/me independently pages every growing holdings and history collection', async () => {
+  reset({ scenario: 'remaining pagination' })
+  const firstResponse = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(firstResponse.status, 200)
+  const first = await firstResponse.json() as Record<string, unknown>
+  const newestByCollection = {
+    places: 1570,
+    things: 1670,
+    kinds: 1770,
+    agreements: 1870,
+    notes: 1970,
+    offers: 2070,
+  } as const
+  const pages = first.pages as Record<string, Record<string, unknown>>
+  for (const [collection, newest] of Object.entries(newestByCollection)) {
+    const rows = first[collection] as Array<{ id: number }>
+    assert.equal(rows.length, 50, collection)
+    assert.deepEqual(rows.slice(0, 2).map(row => row.id), [newest, newest - 1], collection)
+    assert.equal(pages[collection]?.has_more, true, collection)
+    assert.equal(pages[collection]?.[`next_before_${collection.replace(/s$/, '')}_id`], newest - 49, collection)
+  }
+
+  state = { ...state, calls: [] }
+  const secondResponse = await app.request(
+    '/api/me?before_place_id=1521&place_limit=3' +
+      '&before_thing_id=1621&thing_limit=3&before_kind_id=1721&kind_limit=3' +
+      '&before_agreement_id=1821&agreement_limit=3&before_note_id=1921&note_limit=3' +
+      '&before_offer_id=2021&offer_limit=3',
+    { headers: authHeaders() },
+  )
+  assert.equal(secondResponse.status, 200)
+  const second = await secondResponse.json() as Record<string, unknown>
+  for (const [collection, newest] of Object.entries(newestByCollection)) {
+    const rows = second[collection] as Array<{ id: number }>
+    assert.deepEqual(rows.map(row => row.id), [newest - 50, newest - 51, newest - 52], collection)
+    const previous = first[collection] as Array<{ id: number }>
+    assert.equal(rows.some(row => previous.some(item => item.id === row.id)), false, collection)
+  }
+})
+
+test('/api/me rejects invalid independent page parameters after authentication', async () => {
+  for (const path of [
+    '/api/me?place_limit=201',
+    '/api/me?before_thing_id=0',
+    '/api/me?note_limit=2&note_limit=3',
+    '/api/me?before_offer_id=wat',
+  ]) {
+    reset({ scenario: 'remaining pagination' })
+    const response = await app.request(path, { headers: authHeaders() })
+    assert.equal(response.status, 400, path)
+  }
+})
+
 test('official facts, events, residents, and treasury are public and anti-token', async () => {
   reset({ scenario: 'public books' })
   const official = await app.request('/api/official')
@@ -1438,7 +1903,11 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
 test('MCP advertises the city tools and dispatches through bearer-header API auth', async () => {
   reset({ scenario: 'mcp', openToNotes: true })
   const listed = await app.request('/mcp', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SECRET}`,
+    },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
   })
   assert.equal(listed.status, 200)

@@ -1,4 +1,15 @@
 import { WINDOW_CLIENT_SAFETY_JS } from './window-client-safety.ts'
+import { WORLD_ROOT_NAME } from './world-root.ts'
+
+export function mergeWindowRows<T extends Readonly<{ id: number }>>(
+  current: readonly T[],
+  incoming: readonly T[],
+): T[] {
+  const rows = new Map<number, T>()
+  for (const row of current) rows.set(row.id, row)
+  for (const row of incoming) rows.set(row.id, row)
+  return [...rows.values()].sort((left, right) => right.id - left.id)
+}
 
 export const PUBLIC_EVENT_LABELS = Object.freeze({
   register: 'moved into the city',
@@ -32,6 +43,8 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
 export const PUBLIC_EVENT_KINDS = Object.freeze(Object.keys(PUBLIC_EVENT_LABELS))
 
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
+const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
+const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -39,11 +52,15 @@ export const WINDOW_JS = `(() => {
   const BASE_REFRESH_MS = 60000
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
+  const COLLAPSED_BODY_CHARACTERS = 360
+  const COLLAPSED_BODY_LINES = 5
   const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{2,31}$/
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
   const MODERATED_TEXT = '[removed by maintainer]'
+  const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
   const VIEWS = Object.freeze(['map', 'place', 'conversations', 'happenings', 'agreements'])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
+  const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -58,19 +75,27 @@ export const WINDOW_JS = `(() => {
     placeSummary: document.getElementById('place-focus-summary'),
     occupants: document.getElementById('place-occupants'),
     placeThings: document.getElementById('place-things'),
+    placeThingsPage: document.getElementById('place-things-page'),
     placeConversation: document.getElementById('place-conversation'),
+    placeNotesPage: document.getElementById('place-notes-page'),
     conversations: document.getElementById('conversation-stream'),
+    conversationPage: document.getElementById('conversation-page'),
     activity: document.getElementById('activity-list'),
+    happeningsPage: document.getElementById('happenings-page'),
     agreements: document.getElementById('agreement-list'),
+    agreementsPage: document.getElementById('agreements-page'),
   }
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
+  let bodyIdSequence = 0
   let state = {
     failures: 0,
     refreshing: false,
     hasSnapshot: false,
     pollTimer: 0,
     snapshot: null,
+    histories: { notes: {}, things: {}, agreements: {}, events: {} },
+    collapsedPlaceIds: [],
     view: 'map',
     placeId: null,
     resident: null,
@@ -109,16 +134,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function normalizePlaces(values, depth, seen) {
     if (!Array.isArray(values) || depth >= 32) return []
-    return values.slice(0, 1000).flatMap(rawPlace => {
+    return values.flatMap(rawPlace => {
       if (!rawPlace || typeof rawPlace !== 'object') return []
       const id = safeId(rawPlace.id)
-      const owner = safeHandle(rawPlace.owner)
+      const parentId = rawPlace.parent_id === null ? null : safeId(rawPlace.parent_id)
+      const owner = rawPlace.owner === null ? null : safeHandle(rawPlace.owner)
       const name = safeText(rawPlace.name, '', 120, false)
-      if (!id || !owner || !name || seen.has(id)) return []
+      const isOwnerlessWorld = rawPlace.owner === null && parentId === null && name === WORLD_ROOT_NAME
+      if (
+        !id || !name || seen.has(id) ||
+        (!owner && !isOwnerlessWorld) ||
+        (rawPlace.parent_id !== null && !parentId)
+      ) return []
       const nextSeen = new Set([...seen, id])
       return [{
         id,
-        parent_id: rawPlace.parent_id == null ? null : safeId(rawPlace.parent_id),
+        parent_id: parentId,
         name,
         owner,
         places: safeCount(rawPlace.places),
@@ -132,7 +163,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function normalizeResidents(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 2000).flatMap(raw => {
+    return values.flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const handle = safeHandle(raw.handle)
@@ -146,7 +177,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function normalizeNotes(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 1000).flatMap(raw => {
+    return values.slice(0, 200).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const placeId = safeId(raw.place_id)
@@ -162,7 +193,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function normalizeThings(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 1000).flatMap(raw => {
+    return values.slice(0, 200).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const placeId = safeId(raw.place_id)
@@ -183,7 +214,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function normalizeAgreements(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 100).flatMap(raw => {
+    return values.slice(0, 200).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const body = safeText(raw.body, '', 4000, false)
@@ -202,7 +233,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function normalizeEvents(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 100).flatMap(raw => {
+    return values.slice(0, 200).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const actor = safeHandle(raw.actor)
@@ -229,6 +260,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  function normalizePage(raw, rows, total) {
+    const source = raw && typeof raw === 'object' ? raw : null
+    const hasMore = source ? source.has_more === true : total > rows.length
+    const cursor = safeId(source?.next_before_id) || safeId(rows.at(-1)?.id)
+    return Object.freeze({
+      hasMore: Boolean(hasMore && cursor),
+      nextBeforeId: hasMore && cursor ? cursor : null,
+    })
+  }
+
   function normalizeSnapshot(payload) {
     if (!payload || typeof payload !== 'object') throw new Error('invalid public snapshot')
     const places = normalizePlaces(payload.places, 0, new Set())
@@ -250,6 +291,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       key,
       Math.max(safeCount(rawTotals[key]), visible),
     ]))
+    const rawPages = payload.pages && typeof payload.pages === 'object' ? payload.pages : {}
+    const pages = Object.freeze({
+      notes: normalizePage(rawPages.notes, notes, totals.conversations),
+      things: normalizePage(rawPages.things, things, totals.things),
+      agreements: normalizePage(rawPages.agreements, agreements, totals.agreements),
+      events: normalizePage(rawPages.events, events, totals.events),
+    })
     return Object.freeze({
       places,
       flatPlaces: flattenPlaces(places, []),
@@ -260,8 +308,104 @@ ${WINDOW_CLIENT_SAFETY_JS}
       events,
       shown,
       totals,
+      pages,
       refreshedAt: safeDate(payload.refreshed_at),
     })
+  }
+
+  function historyKey(collection, filters) {
+    if (collection === 'events') return 'all'
+    const place = collection === 'agreements' ? '' : String(filters.placeId || '')
+    if (!place && !filters.resident) return 'all'
+    return 'place:' + place + '|resident:' + String(filters.resident || '')
+  }
+
+  function filterHistoryRows(collection, rows, filters) {
+    if (collection === 'notes') return rows.filter(row =>
+      (!filters.placeId || row.place_id === filters.placeId) &&
+      (!filters.resident || row.author === filters.resident))
+    if (collection === 'things') return rows.filter(row =>
+      (!filters.placeId || row.place_id === filters.placeId) &&
+      (!filters.resident || row.owner === filters.resident))
+    if (collection === 'agreements') return rows.filter(row => !filters.resident ||
+      row.created_by === filters.resident || row.parties.includes(filters.resident))
+    return rows
+  }
+
+  function historyTotal(collection, filters) {
+    const snapshot = state.snapshot
+    if (!snapshot) return 0
+    const place = filters.placeId
+      ? snapshot.flatPlaces.find(candidate => candidate.id === filters.placeId)
+      : null
+    if (collection === 'notes') return place ? place.notes : snapshot.totals.conversations
+    if (collection === 'things') return place ? place.things : snapshot.totals.things
+    if (collection === 'agreements') return snapshot.totals.agreements
+    return snapshot.totals.events
+  }
+
+  function historyEntry(collection, filters) {
+    const key = historyKey(collection, filters)
+    const stored = state.histories[collection]?.[key]
+    if (stored) return stored
+    const global = state.histories[collection]?.all
+    const snapshotRows = state.snapshot?.[collection] || []
+    const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters)
+    return Object.freeze({
+      rows,
+      hasMore: historyTotal(collection, filters) > rows.length,
+      nextBeforeId: null,
+      initialized: false,
+      loading: false,
+      error: false,
+    })
+  }
+
+  function setHistoryEntry(collection, filters, entry) {
+    const key = historyKey(collection, filters)
+    state = {
+      ...state,
+      histories: {
+        ...state.histories,
+        [collection]: {
+          ...state.histories[collection],
+          [key]: Object.freeze({
+            ...entry,
+            filters: Object.freeze({ placeId: filters.placeId, resident: filters.resident }),
+          }),
+        },
+      },
+    }
+  }
+
+  function mergeSnapshotHistories(snapshot) {
+    let histories = state.histories
+    for (const collection of ['notes', 'things', 'agreements', 'events']) {
+      const existing = histories[collection] || {}
+      const refreshed = Object.fromEntries(Object.entries(existing).map(([key, entry]) => {
+        if (key === 'all' || !entry?.filters) return [key, entry]
+        const freshRows = filterHistoryRows(collection, snapshot[collection], entry.filters)
+        return [key, Object.freeze({ ...entry, rows: mergeWindowRows(entry.rows, freshRows) })]
+      }))
+      const current = existing.all
+      const rows = mergeWindowRows(current?.rows || [], snapshot[collection])
+      const page = snapshot.pages[collection]
+      const entry = current
+        ? { ...current, rows }
+        : {
+            rows,
+            hasMore: page.hasMore,
+            nextBeforeId: page.nextBeforeId,
+            initialized: true,
+            loading: false,
+            error: false,
+          }
+      histories = {
+        ...histories,
+        [collection]: { ...refreshed, all: Object.freeze(entry) },
+      }
+    }
+    return histories
   }
 
   function readHashState() {
@@ -343,6 +487,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return chip
   }
 
+  function togglePlaceBranch(placeId) {
+    const collapsedPlaceIds = state.collapsedPlaceIds.includes(placeId)
+      ? state.collapsedPlaceIds.filter(id => id !== placeId)
+      : [...state.collapsedPlaceIds, placeId]
+    state = { ...state, collapsedPlaceIds }
+    if (state.snapshot) renderMap(state.snapshot)
+  }
+
   function placeList(values, snapshot, depth) {
     const list = element('ul', 'place-tree')
     if (!Array.isArray(values) || depth >= 32) return list
@@ -350,15 +502,29 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const node = element('li', 'place-node')
       const card = element('article', 'place-card')
       card.dataset.watched = String(state.placeId === place.id)
+      const hasChildren = place.children.length > 0
+      const expanded = hasChildren && !state.collapsedPlaceIds.includes(place.id)
       const watch = element('button', 'place-watch place-name', place.name)
       watch.type = 'button'
       watch.addEventListener('click', () => choosePlace(place.id, true))
       card.append(
         watch,
-        element('span', 'place-owner', 'kept by ' + place.owner),
+        element('span', 'place-owner', place.owner
+          ? 'kept by ' + place.owner
+          : 'unowned · transit only'),
         element('span', 'place-facts', String(place.places) + ' inside · ' +
           String(place.things) + ' things · ' + String(place.notes) + ' notes'),
       )
+      if (hasChildren) {
+        const childrenId = 'place-children-' + String(place.id)
+        const disclosure = element('button', 'place-disclosure', expanded ? 'Collapse inside' : 'Show inside')
+        disclosure.type = 'button'
+        disclosure.setAttribute('aria-expanded', String(expanded))
+        disclosure.setAttribute('aria-controls', childrenId)
+        disclosure.setAttribute('aria-label', (expanded ? 'Collapse' : 'Show') + ' places inside ' + place.name)
+        disclosure.addEventListener('click', () => togglePlaceBranch(place.id))
+        card.append(disclosure)
+      }
       const occupants = residentsAt(snapshot, place.id)
       if (occupants.length) {
         const line = element('div', 'occupant-line')
@@ -366,7 +532,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         card.append(line)
       }
       node.append(card)
-      if (place.children.length) node.append(placeList(place.children, snapshot, depth + 1))
+      if (hasChildren) {
+        const children = placeList(place.children, snapshot, depth + 1)
+        children.id = 'place-children-' + String(place.id)
+        children.hidden = !expanded
+        node.append(children)
+      }
       list.append(node)
     }
     return list
@@ -435,6 +606,48 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
+  function isLongBody(body) {
+    return body.length > COLLAPSED_BODY_CHARACTERS || body.split('\\n').length > COLLAPSED_BODY_LINES
+  }
+
+  function renderExpandableBody(kind, id, body, truncated) {
+    const block = element('div', 'body-block')
+    const bodyNode = element('p', kind + '-body public-body', body + (truncated ? '…' : ''))
+    const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)
+    const collapsible = isLongBody(body)
+    bodyNode.id = bodyId
+    bodyNode.dataset.expanded = String(!collapsible)
+    block.append(bodyNode)
+
+    let availability = null
+    if (truncated) {
+      availability = element(
+        'p',
+        'body-availability',
+        'Excerpt only — the full text is not included in this snapshot.',
+      )
+      availability.id = bodyId + '-availability'
+      block.append(availability)
+    }
+
+    if (collapsible) {
+      let expanded = false
+      const disclosure = element('button', 'body-disclosure', 'Show more')
+      disclosure.type = 'button'
+      disclosure.setAttribute('aria-expanded', 'false')
+      disclosure.setAttribute('aria-controls', bodyId)
+      if (availability) disclosure.setAttribute('aria-describedby', availability.id)
+      disclosure.addEventListener('click', () => {
+        expanded = !expanded
+        bodyNode.dataset.expanded = String(expanded)
+        disclosure.setAttribute('aria-expanded', String(expanded))
+        disclosure.textContent = expanded ? 'Show less' : 'Show more'
+      })
+      block.append(disclosure)
+    }
+    return block
+  }
+
   function renderThings(target, things) {
     if (!target) return
     if (!things.length) {
@@ -449,7 +662,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('p', 'thing-meta', 'kept by ' + thing.owner +
           (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind')),
       )
-      if (thing.body) item.append(element('p', 'thing-body', thing.body + (thing.truncated ? '…' : '')))
+      if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
       const traits = element('div', 'trait-list')
       if (thing.traits.length) {
         traits.append(...thing.traits.map(trait => {
@@ -473,7 +686,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
     meta.append(element('span', 'note-author', note.author), document.createTextNode(' · '), timeNode(note.created_at, ''))
-    card.append(meta, element('p', 'note-body', note.body + (note.truncated ? '…' : '')))
+    card.append(meta, renderExpandableBody('note', note.id, note.body, note.truncated))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return card
   }
@@ -507,25 +720,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : 'Nobody can stand here yet.')
       renderEmpty(nodes.placeThings, 'empty-row', 'No place is selected for visible things.')
       renderEmpty(nodes.placeConversation, 'empty-row', 'No place is selected for conversation.')
+      if (nodes.placeThingsPage) nodes.placeThingsPage.hidden = true
+      if (nodes.placeNotesPage) nodes.placeNotesPage.hidden = true
       return
     }
     if (nodes.placeTitle) nodes.placeTitle.textContent = place.name
-    if (nodes.placeSummary) nodes.placeSummary.textContent = place.path + ' · kept by ' + place.owner
+    if (nodes.placeSummary) nodes.placeSummary.textContent = place.path + (place.owner
+      ? ' · kept by ' + place.owner
+      : ' · nobody owns it · transit only')
     renderPeople(nodes.occupants, residentsAt(snapshot, place.id))
-    renderThings(nodes.placeThings, snapshot.things.filter(thing => thing.place_id === place.id &&
-      (!state.resident || thing.owner === state.resident)))
-    renderNotes(nodes.placeConversation, snapshot.notes.filter(note => note.place_id === place.id &&
-      (!state.resident || note.author === state.resident)), 'No conversation in the latest public snapshot matches here.')
+    const filters = Object.freeze({ placeId: place.id, resident: state.resident })
+    renderThings(nodes.placeThings, historyEntry('things', filters).rows)
+    renderNotes(nodes.placeConversation, historyEntry('notes', filters).rows,
+      'No conversation in the latest public snapshot matches here.')
+    renderHistoryControl(nodes.placeThingsPage, 'things', 'things', filters)
+    renderHistoryControl(nodes.placeNotesPage, 'notes', 'notes', filters)
   }
 
   function renderConversations(snapshot) {
     if (!nodes.conversations) return
-    const notes = snapshot.notes.filter(note =>
-      (!state.placeId || note.place_id === state.placeId) &&
-      (!state.resident || note.author === state.resident))
+    const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
+    const notes = historyEntry('notes', filters).rows
     const placeIds = [...new Set(notes.map(note => note.place_id))]
     if (!placeIds.length) {
       renderEmpty(nodes.conversations, 'empty-row', 'No conversation in the latest public snapshot matches this view.')
+      renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
       return
     }
     const groups = placeIds.flatMap(placeId => {
@@ -543,6 +762,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return [group]
     })
     nodes.conversations.replaceChildren(...groups)
+    renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
   }
 
   function eventPlaceId(event, snapshot) {
@@ -558,11 +778,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderActivity(snapshot) {
     if (!nodes.activity) return
-    const events = snapshot.events.filter(event =>
+    const filters = Object.freeze({ placeId: null, resident: null })
+    const events = historyEntry('events', filters).rows.filter(event =>
       (!state.resident || event.actor === state.resident) &&
       (!state.placeId || eventPlaceId(event, snapshot) === state.placeId))
     if (!events.length) {
       nodes.activity.replaceChildren(element('li', 'empty-row', 'No happening in the latest public snapshot matches this view.'))
+      renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
       return
     }
     const rows = events.map(event => {
@@ -576,14 +798,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return row
     })
     nodes.activity.replaceChildren(...rows)
+    renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
   }
 
   function renderAgreements(snapshot) {
     if (!nodes.agreements) return
-    const agreements = snapshot.agreements.filter(agreement => !state.resident ||
-      agreement.created_by === state.resident || agreement.parties.includes(state.resident))
+    const filters = Object.freeze({ placeId: null, resident: state.resident })
+    const agreements = historyEntry('agreements', filters).rows
     if (!agreements.length) {
       renderEmpty(nodes.agreements, 'empty-row', 'No agreement in the latest public snapshot matches this resident view.')
+      renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
       return
     }
     nodes.agreements.replaceChildren(...agreements.map(agreement => {
@@ -591,7 +815,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const copy = element('div', '')
       copy.append(
         element('p', 'agreement-meta', 'agreement #' + String(agreement.id) + ' · written by ' + agreement.created_by),
-        element('p', 'agreement-body', agreement.body + (agreement.truncated ? '…' : '')),
+        renderExpandableBody('agreement', agreement.id, agreement.body, agreement.truncated),
         timeNode(agreement.created_at, 'agreement-meta'),
       )
       if (agreement.moderated) copy.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
@@ -609,6 +833,94 @@ ${WINDOW_CLIENT_SAFETY_JS}
       card.append(copy, side)
       return card
     }))
+    renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
+  }
+
+  function renderHistoryControl(target, collection, label, filters) {
+    if (!target) return
+    const entry = historyEntry(collection, filters)
+    if (!entry.hasMore && !entry.loading && !entry.error) {
+      target.hidden = true
+      target.replaceChildren()
+      return
+    }
+    const text = entry.loading
+      ? 'Loading older ' + label + '…'
+      : entry.error ? 'Retry loading older ' + label : 'Load older ' + label
+    const button = element('button', 'history-load', text)
+    button.type = 'button'
+    button.disabled = entry.loading
+    button.addEventListener('click', () => void loadHistory(collection, filters))
+    target.hidden = false
+    target.replaceChildren(button)
+  }
+
+  function historyRequestUrl(collection, entry, filters) {
+    const url = new URL(
+      collection === 'events' ? '/api/events' : '/api/window',
+      window.location.origin,
+    )
+    url.searchParams.set('limit', '50')
+    if (collection !== 'events') {
+      url.searchParams.set('collection', collection)
+      if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
+      if (filters.resident) url.searchParams.set('resident', filters.resident)
+    }
+    if (entry.initialized && entry.nextBeforeId) {
+      url.searchParams.set('before_id', String(entry.nextBeforeId))
+    }
+    return url
+  }
+
+  function normalizeHistoryRows(collection, payload) {
+    if (!payload || typeof payload !== 'object') throw new Error('invalid public history page')
+    if (collection === 'notes') return normalizeNotes(payload.notes)
+    if (collection === 'things') return normalizeThings(payload.things)
+    if (collection === 'agreements') return normalizeAgreements(payload.agreements)
+    return normalizeEvents(payload.events)
+  }
+
+  async function loadHistory(collection, filters) {
+    const current = historyEntry(collection, filters)
+    if (current.loading || (!current.hasMore && !current.error)) return
+    setHistoryEntry(collection, filters, { ...current, loading: true, error: false })
+    renderAll()
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const requestEntry = historyEntry(collection, filters)
+      const url = historyRequestUrl(collection, requestEntry, filters)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('public history unavailable')
+      const payload = await response.json()
+      const incoming = normalizeHistoryRows(collection, payload)
+      const hasMore = payload.has_more === true
+      const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
+      if (hasMore && !nextBeforeId) throw new Error('invalid public history cursor')
+      const latest = historyEntry(collection, filters)
+      setHistoryEntry(collection, filters, {
+        rows: mergeWindowRows(latest.rows, incoming),
+        hasMore,
+        nextBeforeId,
+        initialized: true,
+        loading: false,
+        error: false,
+      })
+    } catch {
+      const latest = historyEntry(collection, filters)
+      setHistoryEntry(collection, filters, { ...latest, loading: false, error: true })
+    } finally {
+      window.clearTimeout(timeout)
+      renderAll()
+    }
   }
 
   function renderCounts(snapshot) {
@@ -722,7 +1034,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     try {
       const payload = await getSnapshot(controller.signal)
       const snapshot = normalizeSnapshot(payload)
-      state = { ...state, snapshot, hasSnapshot: true, failures: 0 }
+      const histories = mergeSnapshotHistories(snapshot)
+      state = { ...state, snapshot, histories, hasSnapshot: true, failures: 0 }
       populateFilters(snapshot)
       renderAll()
       setStatus(snapshot.refreshedAt ? 'Watching · checked ' + snapshot.refreshedAt.toLocaleTimeString([], {

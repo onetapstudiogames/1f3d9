@@ -79,12 +79,15 @@ test('every production release test gate runs before the first provider call', (
 
 test('preview migration requires exact acknowledgement and named isolated Neon targets', () => {
   assert.throws(
-    () => resolveMigrationRun(['--target', 'preview'], { DATABASE_URL: 'postgres://example/db' }),
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'hosted-chat-signin'],
+      { DATABASE_URL: 'postgres://example/db' },
+    ),
     /APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW/,
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'preview'], {
+    () => resolveMigrationRun(['--target', 'preview', '--migration', 'hosted-chat-signin'], {
       CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
@@ -96,7 +99,7 @@ test('preview migration requires exact acknowledgement and named isolated Neon t
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'preview'], {
+    () => resolveMigrationRun(['--target', 'preview', '--migration', 'hosted-chat-signin'], {
       CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
@@ -107,7 +110,7 @@ test('preview migration requires exact acknowledgement and named isolated Neon t
     /preview branch.*production branch/i,
   )
 
-  const run = resolveMigrationRun(['--target', 'preview'], {
+  const run = resolveMigrationRun(['--target', 'preview', '--migration', 'hosted-chat-signin'], {
     CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
     NEON_API_KEY: 'secret-neon-key',
     NEON_PROJECT_ID: 'project-one',
@@ -358,14 +361,14 @@ test('production migration requires a real Neon snapshot configuration and exact
   const productionUrl = 'postgres://role@example.neon.tech/db'
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'production'], {
+    () => resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
       PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
     }),
     /APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION/,
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'production'], {
+    () => resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
       PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
@@ -377,14 +380,14 @@ test('production migration requires a real Neon snapshot configuration and exact
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'production'], {
+    () => resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
       PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
       CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
     }),
     /NEON_API_KEY/,
   )
 
-  const run = resolveMigrationRun(['--target', 'production'], {
+  const run = resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
     PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
     CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
     NEON_API_KEY: 'secret-neon-key',
@@ -579,6 +582,13 @@ test('migration target must be named explicitly', () => {
   )
 })
 
+test('remote migration file must be named explicitly', () => {
+  assert.throws(
+    () => resolveMigrationRun(['--target', 'preview'], {}),
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination/,
+  )
+})
+
 test('the reviewed release migration is additive and OAuth-only', () => {
   const uncommented = releaseMigration.replace(/^\s*--.*$/gm, '')
   assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -613,6 +623,55 @@ test('fresh installs contain every reviewed OAuth migration statement', () => {
 test('package commands name preview and production migrations explicitly', () => {
   assert.equal(packageJson.scripts.migrate, undefined)
   assert.match(packageJson.scripts['migrate:local'] ?? '', /--target local$/)
-  assert.match(packageJson.scripts['migrate:preview'] ?? '', /--target preview$/)
-  assert.match(packageJson.scripts['migrate:production'] ?? '', /--target production$/)
+  assert.match(packageJson.scripts['migrate:preview'] ?? '', /--target preview --migration hosted-chat-signin$/)
+  assert.match(packageJson.scripts['migrate:production'] ?? '', /--target production --migration hosted-chat-signin$/)
+  assert.match(packageJson.scripts['migrate:preview:world-root-expand'] ?? '', /--migration world-root-expand$/)
+  assert.match(packageJson.scripts['migrate:preview:world-root-topology'] ?? '', /--migration world-root-topology$/)
+  assert.match(packageJson.scripts['migrate:production:world-root-expand'] ?? '', /--migration world-root-expand$/)
+  assert.match(packageJson.scripts['migrate:production:world-root-topology'] ?? '', /--migration world-root-topology$/)
+})
+
+test('public pagination indexes are an explicitly selected additive release', () => {
+  const paginationMigration = readFileSync(
+    new URL('../db/migrations/20260814_public_pagination.sql', import.meta.url),
+    'utf8',
+  )
+  const uncommented = paginationMigration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(paginationMigration)
+
+  assert.equal(statements.length, 10)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
+  for (const statement of statements) {
+    const executable = statement.replace(/^\s*--.*$/gm, '').trim()
+    assert.match(executable, /^CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/i)
+  }
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'public-pagination'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260814_public_pagination.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'public-pagination'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'public-pagination-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260814_public_pagination.sql')
+
+  assert.match(packageJson.scripts['migrate:preview:public-pagination'] ?? '', /--target preview --migration public-pagination$/)
+  assert.match(packageJson.scripts['migrate:production:public-pagination'] ?? '', /--target production --migration public-pagination$/)
 })

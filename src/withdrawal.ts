@@ -60,7 +60,7 @@ export async function withdrawThing(
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'thing_withdrawn', ${actor.handle}, jsonb_build_object(
-        'thing_id', id, 'reason', ${reason}
+        'thing_id', id, 'reason', ${reason}::text
       )
       FROM changed
     )

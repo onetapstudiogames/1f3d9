@@ -638,10 +638,10 @@ async function finalizeReconciledPayment(
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'world_sale', $3, jsonb_build_object(
-        'transfer_id', transfer.id, 'offer_id', $1, 'thing_id', $9,
+        'transfer_id', transfer.id, 'offer_id', $1::integer, 'thing_id', $9::integer,
         'from', $17::text, 'to', $3::text, 'price_usdc', $10::numeric,
-        'tx_hash', $4::text, 'market_listing_id', $15,
-        'market_checkout_id', $14
+        'tx_hash', $4::text, 'market_listing_id', $15::integer,
+        'market_checkout_id', $14::integer
       ) FROM new_transfer transfer
     )
     SELECT id FROM new_transfer
@@ -756,7 +756,7 @@ export function mountWorldMarketRoutes(
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'world_listed', $3, jsonb_build_object(
-            'offer_id', id, 'thing_id', $1, 'market_draft_id', $7,
+            'offer_id', id, 'thing_id', $1::integer, 'market_draft_id', $7::integer,
             'price_usdc', $4::numeric
           ) FROM new_offer
         )
@@ -1164,10 +1164,10 @@ export function mountWorldMarketRoutes(
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'world_sale', $3, jsonb_build_object(
-            'transfer_id', transfer.id, 'offer_id', $1, 'thing_id', $9,
+            'transfer_id', transfer.id, 'offer_id', $1::integer, 'thing_id', $9::integer,
             'from', $17::text, 'to', $3::text, 'price_usdc', $10::numeric,
-            'tx_hash', $4::text, 'market_listing_id', $15,
-            'market_checkout_id', $14
+            'tx_hash', $4::text, 'market_listing_id', $15::integer,
+            'market_checkout_id', $14::integer
           ) FROM new_transfer transfer
         )
         SELECT id FROM new_transfer
@@ -1360,7 +1360,7 @@ export function mountWorldMarketRoutes(
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'world_cancel', $3, jsonb_build_object(
-          'offer_id', offer.id, 'thing_id', offer.asset_id, 'market_draft_id', $4
+          'offer_id', offer.id, 'thing_id', offer.asset_id, 'market_draft_id', $4::integer
         )
         FROM canceled_offer offer CROSS JOIN released_thing thing CROSS JOIN release_guard guard
         WHERE guard.ok = 1

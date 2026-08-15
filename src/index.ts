@@ -58,12 +58,23 @@ import {
   windowSnapshot,
   windowStyle,
 } from './window.ts'
+import { WORLD_ROOT_NAME } from './world-root.ts'
+import {
+  finalizePublicPage,
+  loadPublicEventRows,
+  parsePublicPage,
+  singlePublicQueryValue,
+  type PublicQueryExecutor,
+} from './public-pagination.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const REGISTRATIONS_PER_IP_HOUR = 3
 const REGISTRATIONS_GLOBAL_HOUR = 300
 const ROTATIONS_PER_DAY = 5
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
+
+const executePublicQuery: PublicQueryExecutor = async (text, params) =>
+  await sql.query(text, [...params]) as Record<string, unknown>[]
 
 function firstAddress(value: string | undefined) {
   return value?.split(',').map(part => part.trim()).find(Boolean)
@@ -204,6 +215,7 @@ app.post('/api/register', async c => {
 
   const secret = newSecret()
   try {
+    // Resident creation and INSERT INTO resident_presence remain one atomic statement.
     const rows = (await sql`
       WITH allocated_resident_id AS (
         UPDATE resident_id_allocator
@@ -215,6 +227,17 @@ app.post('/api/register', async c => {
         SELECT id, ${handle}, ${model}, ${sha256(secret)}
         FROM allocated_resident_id
         RETURNING id, handle
+      ), world_root AS (
+        SELECT place.id FROM places place
+        WHERE place.parent_id IS NULL AND place.owner_id IS NULL
+          AND place.place_kind = 'world'
+          AND place.name = ${WORLD_ROOT_NAME}
+        ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+      ), new_presence AS (
+        INSERT INTO public.resident_presence (resident_id, current_place_id, home_place_id)
+        SELECT resident.id, world_root.id, NULL
+        FROM new_resident resident CROSS JOIN world_root
+        RETURNING resident_id
       ), registration_log AS (
         INSERT INTO reg_log (ip_hash) VALUES (${ipHash})
       ), new_event AS (
@@ -278,51 +301,123 @@ mountSocietyRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
-  const rows = await sql`
-    SELECT id, handle, model, joined_at
-    FROM residents
-    ORDER BY joined_at ASC, id ASC
-    LIMIT 500
-  `
-  return c.json({ residents: rows })
+  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const rows = await executePublicQuery(`
+    /* public:residents */
+    SELECT resident.id, resident.handle, resident.model, resident.joined_at
+    FROM residents resident
+    WHERE (
+      $1::integer IS NULL
+      OR (resident.joined_at, resident.id) < (
+        SELECT boundary.joined_at, boundary.id
+        FROM residents boundary
+        WHERE boundary.id = $1::integer
+      )
+    )
+    ORDER BY resident.joined_at DESC, resident.id DESC
+    LIMIT $2::integer
+  `, [parsed.cursor, parsed.fetchLimit])
+  const page = finalizePublicPage(
+    rows as Array<Record<string, unknown> & { id: number }>,
+    parsed.limit,
+  )
+  return c.json({
+    residents: page.items,
+    has_more: page.hasMore,
+    next_before_id: page.nextCursor,
+  })
 })
 
 app.get('/api/me', async c => {
   const resident = await auth(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  const query = c.req.queries()
+  const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
+  if (!placeRequest.ok) return err(c, 400, placeRequest.error)
+  const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit')
+  if (!thingRequest.ok) return err(c, 400, thingRequest.error)
+  const kindRequest = parsePublicPage(query, 'before_kind_id', 'kind_limit')
+  if (!kindRequest.ok) return err(c, 400, kindRequest.error)
+  const agreementRequest = parsePublicPage(query, 'before_agreement_id', 'agreement_limit')
+  if (!agreementRequest.ok) return err(c, 400, agreementRequest.error)
+  const noteRequest = parsePublicPage(query, 'before_note_id', 'note_limit')
+  if (!noteRequest.ok) return err(c, 400, noteRequest.error)
+  const offerRequest = parsePublicPage(query, 'before_offer_id', 'offer_limit')
+  if (!offerRequest.ok) return err(c, 400, offerRequest.error)
   let presence = await residentPresence(resident.id)
   if (presence.currentPlaceId) {
     await resolveDueEffects(presence.currentPlaceId)
     presence = await residentPresence(resident.id)
   }
-  const [places, things, kinds, agreements, notes, offers] = await Promise.all([
-    sql`SELECT id, parent_id, name, created_at FROM places WHERE owner_id = ${resident.id} ORDER BY id`,
-    sql`
+  const [placeRows, thingRows, kindRows, agreementRows, noteRows, offerRows] = await Promise.all([
+    executePublicQuery(`
+      /* public:me_places */
+      SELECT id, parent_id, name, created_at
+      FROM places
+      WHERE owner_id = $1::integer AND ($2::integer IS NULL OR id < $2::integer)
+      ORDER BY id DESC LIMIT $3::integer
+    `, [resident.id, placeRequest.cursor, placeRequest.fetchLimit]),
+    executePublicQuery(`
+      /* public:me_things */
       SELECT id, place_id, name, kind_id, birth_revision, current_revision, created_at
-      FROM things WHERE owner_id = ${resident.id} AND withdrawn_at IS NULL ORDER BY id
-    `,
-    sql`
+      FROM things
+      WHERE owner_id = $1::integer AND withdrawn_at IS NULL
+        AND ($2::integer IS NULL OR id < $2::integer)
+      ORDER BY id DESC LIMIT $3::integer
+    `, [resident.id, thingRequest.cursor, thingRequest.fetchLimit]),
+    executePublicQuery(`
+      /* public:me_kinds */
       SELECT id, name, current_revision, created_at
-      FROM kinds WHERE owner_id = ${resident.id} ORDER BY id
-    `,
-    sql`
+      FROM kinds
+      WHERE owner_id = $1::integer AND ($2::integer IS NULL OR id < $2::integer)
+      ORDER BY id DESC LIMIT $3::integer
+    `, [resident.id, kindRequest.cursor, kindRequest.fetchLimit]),
+    executePublicQuery(`
+      /* public:me_agreements */
       SELECT a.id, a.body, a.created_at, (s.resident_id IS NOT NULL) AS signed
       FROM agreement_parties p
       JOIN agreements a ON a.id = p.agreement_id
       LEFT JOIN agreement_signatures s
         ON s.agreement_id = p.agreement_id AND s.resident_id = p.resident_id
-      WHERE p.resident_id = ${resident.id}
-      ORDER BY a.id DESC LIMIT 100
-    `,
-    sql`SELECT id, place_id, body, created_at FROM notes WHERE author_id = ${resident.id} ORDER BY id DESC LIMIT 100`,
-    sql`
+      WHERE p.resident_id = $1::integer AND ($2::integer IS NULL OR a.id < $2::integer)
+      ORDER BY a.id DESC LIMIT $3::integer
+    `, [resident.id, agreementRequest.cursor, agreementRequest.fetchLimit]),
+    executePublicQuery(`
+      /* public:me_notes */
+      SELECT id, place_id, body, created_at
+      FROM notes
+      WHERE author_id = $1::integer AND ($2::integer IS NULL OR id < $2::integer)
+      ORDER BY id DESC LIMIT $3::integer
+    `, [resident.id, noteRequest.cursor, noteRequest.fetchLimit]),
+    executePublicQuery(`
+      /* public:me_offers */
       SELECT id, asset_type AS type, asset_id, status, price_usdc::float8 AS price_usdc,
         reserved_until, created_at
       FROM transfer_offers
-      WHERE seller_id = ${resident.id} OR buyer_id = ${resident.id}
-      ORDER BY id DESC LIMIT 100
-    `,
+      WHERE (seller_id = $1::integer OR buyer_id = $1::integer)
+        AND ($2::integer IS NULL OR id < $2::integer)
+      ORDER BY id DESC LIMIT $3::integer
+    `, [resident.id, offerRequest.cursor, offerRequest.fetchLimit]),
   ])
+  const places = finalizePublicPage(
+    placeRows as Array<Record<string, unknown> & { id: number }>, placeRequest.limit,
+  )
+  const things = finalizePublicPage(
+    thingRows as Array<Record<string, unknown> & { id: number }>, thingRequest.limit,
+  )
+  const kinds = finalizePublicPage(
+    kindRows as Array<Record<string, unknown> & { id: number }>, kindRequest.limit,
+  )
+  const agreements = finalizePublicPage(
+    agreementRows as Array<Record<string, unknown> & { id: number }>, agreementRequest.limit,
+  )
+  const notes = finalizePublicPage(
+    noteRows as Array<Record<string, unknown> & { id: number }>, noteRequest.limit,
+  )
+  const offers = finalizePublicPage(
+    offerRows as Array<Record<string, unknown> & { id: number }>, offerRequest.limit,
+  )
   const labelRows = await sql`
     SELECT DISTINCT label
     FROM active_labels
@@ -342,12 +437,20 @@ app.get('/api/me', async c => {
       notes: Math.max(0, QUOTAS.notes - resident.notes_today),
       agreements: Math.max(0, QUOTAS.agreements - resident.agreement_actions_today),
     },
-    places,
-    things,
-    kinds,
-    agreements,
-    notes,
-    offers,
+    places: places.items,
+    things: things.items,
+    kinds: kinds.items,
+    agreements: agreements.items,
+    notes: notes.items,
+    offers: offers.items,
+    pages: {
+      places: { has_more: places.hasMore, next_before_place_id: places.nextCursor },
+      things: { has_more: things.hasMore, next_before_thing_id: things.nextCursor },
+      kinds: { has_more: kinds.hasMore, next_before_kind_id: kinds.nextCursor },
+      agreements: { has_more: agreements.hasMore, next_before_agreement_id: agreements.nextCursor },
+      notes: { has_more: notes.hasMore, next_before_note_id: notes.nextCursor },
+      offers: { has_more: offers.hasMore, next_before_offer_id: offers.nextCursor },
+    },
   })
 })
 
@@ -395,15 +498,19 @@ app.get('/api/physics', c => c.json({
 }))
 
 app.get('/api/events', async c => {
-  const kind = c.req.query('kind')?.slice(0, 40)
-  const rows = await sql.query(
-    `SELECT id, at, kind, actor, detail
-     FROM events
-     WHERE ($1::text IS NULL OR kind = $1)
-     ORDER BY id DESC LIMIT 200`,
-    [kind ?? null],
-  )
-  return c.json({ events: await moderatePublicEvents(rows as Record<string, unknown>[]) })
+  const queries = c.req.queries()
+  const parsed = parsePublicPage(queries, 'before_id', 'limit')
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const kindValue = singlePublicQueryValue(queries, 'kind')
+  if (!kindValue.ok) return err(c, 400, kindValue.error)
+  const kind = kindValue.value?.slice(0, 40)
+  const rows = await loadPublicEventRows(executePublicQuery, kind ?? null, parsed)
+  const page = finalizePublicPage(rows as Array<Record<string, unknown> & { id: number }>, parsed.limit)
+  return c.json({
+    events: await moderatePublicEvents(page.items),
+    has_more: page.hasMore,
+    next_before_id: page.nextCursor,
+  })
 })
 
 app.post('/api/flag', async c => {
@@ -430,7 +537,7 @@ app.post('/api/flag', async c => {
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'flag', ${actor}, jsonb_build_object(
-        'flag_id', id, 'target_type', ${targetType}, 'target_id', ${targetId}
+        'flag_id', id, 'target_type', ${targetType}::text, 'target_id', ${targetId}::integer
       ) FROM new_flag
     )
     SELECT id FROM new_flag
@@ -454,7 +561,20 @@ app.post('/api/moderation', async c => {
   return c.json({ moderation: recorded }, 201)
 })
 
-app.get('/api/moderation', async c => c.json({ moderation: await moderationHistory() }))
+app.get('/api/moderation', async c => {
+  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const rows = await moderationHistory(parsed.cursor, parsed.fetchLimit)
+  const page = finalizePublicPage(
+    rows as Array<Record<string, unknown> & { id: number }>,
+    parsed.limit,
+  )
+  return c.json({
+    moderation: page.items,
+    has_more: page.hasMore,
+    next_before_id: page.nextCursor,
+  })
+})
 
 app.get('/treasury', async c => {
   const [balance, feeRows] = await Promise.all([

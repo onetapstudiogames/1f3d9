@@ -200,21 +200,139 @@ CREATE TABLE IF NOT EXISTS anonymous_flag_limits (
 CREATE TABLE IF NOT EXISTS places (
   id                SERIAL PRIMARY KEY,
   parent_id         INTEGER REFERENCES places(id) ON DELETE RESTRICT,
+  place_kind        TEXT NOT NULL DEFAULT 'place',
   name              TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120),
   description       TEXT NOT NULL DEFAULT '' CHECK (octet_length(description) <= 65536),
-  owner_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  owner_id          INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
   open_to_building  BOOLEAN NOT NULL DEFAULT FALSE,
   open_to_things    BOOLEAN NOT NULL DEFAULT FALSE,
   open_to_notes     BOOLEAN NOT NULL DEFAULT FALSE,
+  active_offer_id   INTEGER,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (parent_id IS NULL OR parent_id <> id)
+  CONSTRAINT places_place_kind_allowed
+    CHECK (place_kind IN ('world', 'continent', 'place')),
+  CONSTRAINT places_active_offer_positive
+    CHECK (active_offer_id IS NULL OR active_offer_id > 0),
+  CONSTRAINT places_no_self_parent CHECK (parent_id IS NULL OR parent_id <> id),
+  CONSTRAINT places_world_shape CHECK (
+    (
+      place_kind = 'world'
+      AND parent_id IS NULL
+      AND name = 'the world'
+      AND owner_id IS NULL
+      AND active_offer_id IS NULL
+      AND NOT open_to_building
+      AND NOT open_to_things
+      AND NOT open_to_notes
+    )
+    OR
+    (
+      place_kind IN ('continent', 'place')
+      AND parent_id IS NOT NULL
+      AND owner_id IS NOT NULL
+    )
+  )
 );
+-- `migrate:local` is allowed only on a loopback database, but it remains a real
+-- idempotent full-schema upgrade path. Bring a legacy local tree to the final
+-- topology here; remote databases must use the two reviewed release migrations.
+ALTER TABLE places
+  ADD COLUMN IF NOT EXISTS place_kind TEXT NOT NULL DEFAULT 'place';
+ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER;
+ALTER TABLE places ALTER COLUMN owner_id DROP NOT NULL;
+
+DO $schema_upgrade$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'places'::regclass
+      AND conname = 'places_place_kind_allowed'
+  ) THEN
+    ALTER TABLE places
+      ADD CONSTRAINT places_place_kind_allowed
+      CHECK (place_kind IN ('world', 'continent', 'place')) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'places'::regclass
+      AND conname = 'places_active_offer_positive'
+  ) THEN
+    ALTER TABLE places
+      ADD CONSTRAINT places_active_offer_positive
+      CHECK (active_offer_id IS NULL OR active_offer_id > 0) NOT VALID;
+  END IF;
+END
+$schema_upgrade$;
+ALTER TABLE places VALIDATE CONSTRAINT places_place_kind_allowed;
+ALTER TABLE places VALIDATE CONSTRAINT places_active_offer_positive;
+
+UPDATE places
+SET place_kind = 'continent'
+WHERE parent_id IS NULL
+  AND owner_id IS NOT NULL
+  AND place_kind <> 'world';
+
+DROP INDEX IF EXISTS places_frontier_name;
+
+INSERT INTO places (
+  parent_id, place_kind, name, description, owner_id,
+  open_to_building, open_to_things, open_to_notes, active_offer_id
+)
+SELECT
+  NULL, 'world', 'the world',
+  'the unowned space between continents; transit only',
+  NULL, FALSE, FALSE, FALSE, NULL
+WHERE NOT EXISTS (SELECT 1 FROM places WHERE place_kind = 'world')
+ON CONFLICT DO NOTHING;
+
+UPDATE places AS continent
+SET parent_id = world.id
+FROM (
+  SELECT id
+  FROM places
+  WHERE place_kind = 'world'
+    AND parent_id IS NULL
+    AND owner_id IS NULL
+  ORDER BY id
+  LIMIT 1
+) AS world
+WHERE continent.place_kind = 'continent'
+  AND continent.parent_id IS NULL
+  AND continent.id <> world.id;
+
+ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
+ALTER TABLE places
+  ADD CONSTRAINT places_world_shape CHECK (
+    (
+      place_kind = 'world'
+      AND parent_id IS NULL
+      AND name = 'the world'
+      AND owner_id IS NULL
+      AND active_offer_id IS NULL
+      AND NOT open_to_building
+      AND NOT open_to_things
+      AND NOT open_to_notes
+    )
+    OR
+    (
+      place_kind IN ('continent', 'place')
+      AND parent_id IS NOT NULL
+      AND owner_id IS NOT NULL
+    )
+  ) NOT VALID;
+ALTER TABLE places VALIDATE CONSTRAINT places_world_shape;
+
 CREATE UNIQUE INDEX IF NOT EXISTS places_sibling_name
   ON places (parent_id, lower(name)) WHERE parent_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS places_frontier_name
-  ON places (lower(name)) WHERE parent_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS places_one_world
+  ON places ((1)) WHERE place_kind = 'world';
+CREATE UNIQUE INDEX IF NOT EXISTS places_one_root
+  ON places ((1)) WHERE parent_id IS NULL;
 CREATE INDEX IF NOT EXISTS places_parent ON places (parent_id, created_at, id);
 CREATE INDEX IF NOT EXISTS places_owner ON places (owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS places_parent_id_desc ON places (parent_id, id DESC);
+CREATE INDEX IF NOT EXISTS places_owner_id_desc ON places (owner_id, id DESC);
 
 -- Presence is the only mutable round-two state. A new resident may have neither
 -- a current place nor a home until the world has somewhere to put them.
@@ -224,6 +342,29 @@ CREATE TABLE IF NOT EXISTS resident_presence (
   home_place_id     INTEGER REFERENCES places(id) ON DELETE RESTRICT,
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+INSERT INTO resident_presence (
+  resident_id, current_place_id, home_place_id, updated_at
+)
+SELECT resident.id, world.id, NULL, now()
+FROM residents AS resident
+CROSS JOIN (
+  SELECT id
+  FROM places
+  WHERE place_kind = 'world'
+    AND parent_id IS NULL
+    AND owner_id IS NULL
+  ORDER BY id
+  LIMIT 1
+) AS world
+ON CONFLICT (resident_id) DO UPDATE
+SET current_place_id = coalesce(
+      resident_presence.current_place_id,
+      EXCLUDED.current_place_id
+    ),
+    updated_at = CASE
+      WHEN resident_presence.current_place_id IS NULL THEN now()
+      ELSE resident_presence.updated_at
+    END;
 CREATE INDEX IF NOT EXISTS resident_presence_current
   ON resident_presence (current_place_id) WHERE current_place_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS resident_presence_home
@@ -231,8 +372,7 @@ CREATE INDEX IF NOT EXISTS resident_presence_home
 
 -- The generic transfer table cannot cleanly own three circular foreign keys.
 -- Application transactions maintain this positive row-state mutex instead.
-ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
-  CHECK (active_offer_id > 0);
+ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER;
 
 CREATE TABLE IF NOT EXISTS traits (
   id            SERIAL PRIMARY KEY,
@@ -258,6 +398,7 @@ CREATE TABLE IF NOT EXISTS kinds (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS kinds_name_lower ON kinds (lower(name));
 CREATE INDEX IF NOT EXISTS kinds_owner ON kinds (owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS kinds_owner_id_desc ON kinds (owner_id, id DESC);
 
 ALTER TABLE kinds ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
@@ -325,6 +466,10 @@ CREATE INDEX IF NOT EXISTS things_owner ON things (owner_id, created_at DESC)
   WHERE withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_kind ON things (kind_id, current_revision)
   WHERE kind_id IS NOT NULL AND withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_place_active_id_desc
+  ON things (place_id, id DESC) WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_owner_active_id_desc
+  ON things (owner_id, id DESC) WHERE withdrawn_at IS NULL;
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
@@ -510,6 +655,8 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC);
+CREATE INDEX IF NOT EXISTS notes_author_id_desc ON notes (author_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS agreements (
   id              SERIAL PRIMARY KEY,
@@ -880,6 +1027,10 @@ CREATE INDEX IF NOT EXISTS transfer_offers_seller
   ON transfer_offers (seller_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS transfer_offers_buyer
   ON transfer_offers (buyer_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS transfer_offers_seller_id_desc
+  ON transfer_offers (seller_id, id DESC);
+CREATE INDEX IF NOT EXISTS transfer_offers_buyer_id_desc
+  ON transfer_offers (buyer_id, id DESC);
 CREATE INDEX IF NOT EXISTS transfer_offers_reservation
   ON transfer_offers (reserved_until) WHERE status = 'open' AND reserved_until IS NOT NULL;
 
@@ -1178,6 +1329,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS events_kind_id_desc ON events (kind, id DESC);
 
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,
 -- their changes are represented by immutable revisions, transfers, and events.
@@ -1222,3 +1374,138 @@ DROP TRIGGER IF EXISTS flags_append_only ON flags;
 CREATE TRIGGER flags_append_only BEFORE UPDATE OR DELETE ON flags FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS events_append_only ON events;
 CREATE TRIGGER events_append_only BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+
+-- Structural world-root invariants are also enforced at the database boundary.
+-- Application permission flags are local to each place; the ownerless root does
+-- not grant or deny permissions in its child continents.
+CREATE OR REPLACE FUNCTION protect_place_topology() RETURNS trigger
+LANGUAGE plpgsql AS $function$
+DECLARE
+  parent_kind TEXT;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.place_kind = 'world' THEN
+      RAISE EXCEPTION 'the world is transit only and cannot be deleted'
+        USING ERRCODE = '55000';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.place_kind = 'world' THEN
+      RAISE EXCEPTION 'the world is transit only and immutable'
+        USING ERRCODE = '55000';
+    END IF;
+    IF NEW.place_kind IS DISTINCT FROM OLD.place_kind THEN
+      RAISE EXCEPTION 'place kind is immutable' USING ERRCODE = '55000';
+    END IF;
+  END IF;
+
+  IF NEW.place_kind = 'world' THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT place.place_kind
+  INTO parent_kind
+  FROM places AS place
+  WHERE place.id = NEW.parent_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'place parent does not exist' USING ERRCODE = '23503';
+  END IF;
+
+  IF NEW.place_kind = 'continent' AND parent_kind <> 'world' THEN
+    RAISE EXCEPTION 'continents must be direct children of the world'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NEW.place_kind = 'place' AND parent_kind = 'world' THEN
+    RAISE EXCEPTION 'only continents may be created directly under the world'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND NEW.parent_id IS DISTINCT FROM OLD.parent_id AND EXISTS (
+    WITH RECURSIVE ancestry(id, parent_id, path) AS (
+      SELECT place.id, place.parent_id, ARRAY[place.id]
+      FROM places AS place
+      WHERE place.id = NEW.parent_id
+      UNION ALL
+      SELECT parent.id, parent.parent_id, ancestry.path || parent.id
+      FROM places AS parent
+      JOIN ancestry ON parent.id = ancestry.parent_id
+      WHERE NOT parent.id = ANY(ancestry.path)
+    )
+    SELECT 1 FROM ancestry WHERE id = NEW.id
+  ) THEN
+    RAISE EXCEPTION 'a place cannot become its own ancestor'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END
+$function$;
+
+DROP TRIGGER IF EXISTS places_protect_topology_write ON places;
+CREATE TRIGGER places_protect_topology_write
+  BEFORE UPDATE OR DELETE ON places
+  FOR EACH ROW EXECUTE FUNCTION protect_place_topology();
+DROP TRIGGER IF EXISTS places_protect_topology_insert ON places;
+CREATE TRIGGER places_protect_topology_insert
+  BEFORE INSERT ON places
+  FOR EACH ROW EXECUTE FUNCTION protect_place_topology();
+
+CREATE OR REPLACE FUNCTION reject_world_place_content() RETURNS trigger
+LANGUAGE plpgsql AS $function$
+DECLARE
+  candidate_place_id INTEGER;
+BEGIN
+  IF TG_TABLE_NAME = 'resident_presence' THEN
+    candidate_place_id := NEW.home_place_id;
+  ELSE
+    candidate_place_id := NEW.place_id;
+  END IF;
+
+  IF candidate_place_id IS NOT NULL AND EXISTS (
+    SELECT 1
+    FROM places
+    WHERE id = candidate_place_id
+      AND place_kind = 'world'
+  ) THEN
+    RAISE EXCEPTION 'the world is transit only'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION reject_world_place_label() RETURNS trigger
+LANGUAGE plpgsql AS $function$
+BEGIN
+  IF NEW.target_type = 'place' AND EXISTS (
+    SELECT 1
+    FROM places
+    WHERE id = NEW.target_id
+      AND place_kind = 'world'
+  ) THEN
+    RAISE EXCEPTION 'the world is transit only and cannot be labeled'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$function$;
+
+DROP TRIGGER IF EXISTS things_reject_world_place ON things;
+CREATE TRIGGER things_reject_world_place BEFORE INSERT OR UPDATE ON things
+  FOR EACH ROW EXECUTE FUNCTION reject_world_place_content();
+DROP TRIGGER IF EXISTS notes_reject_world_place ON notes;
+CREATE TRIGGER notes_reject_world_place BEFORE INSERT OR UPDATE ON notes
+  FOR EACH ROW EXECUTE FUNCTION reject_world_place_content();
+DROP TRIGGER IF EXISTS place_law_changes_reject_world_place ON place_law_changes;
+CREATE TRIGGER place_law_changes_reject_world_place BEFORE INSERT OR UPDATE ON place_law_changes
+  FOR EACH ROW EXECUTE FUNCTION reject_world_place_content();
+DROP TRIGGER IF EXISTS resident_presence_reject_world_home ON resident_presence;
+CREATE TRIGGER resident_presence_reject_world_home BEFORE INSERT OR UPDATE ON resident_presence
+  FOR EACH ROW EXECUTE FUNCTION reject_world_place_content();
+DROP TRIGGER IF EXISTS active_labels_reject_world_place ON active_labels;
+CREATE TRIGGER active_labels_reject_world_place BEFORE INSERT OR UPDATE ON active_labels
+  FOR EACH ROW EXECUTE FUNCTION reject_world_place_label();

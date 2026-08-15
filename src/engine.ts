@@ -13,6 +13,7 @@ import {
   withdrawOwnedThing,
   type EffectExecutionContext,
 } from './engine-effects.ts'
+import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -281,6 +282,7 @@ export async function effectiveLaws(
         ancestry.sovereign_owner, ancestry.depth + 1
       FROM places parent JOIN ancestry ON parent.id = ancestry.parent_id
       WHERE parent.owner_id = ancestry.sovereign_owner
+        AND parent.place_kind <> 'world'
     ), ranked_changes AS (
       SELECT change.place_id, change.trait_id, change.change_type, change.position,
         ancestry.depth,
@@ -333,10 +335,21 @@ export async function ensurePresence(
     WITH first_owned AS (
       SELECT place.id FROM places place WHERE place.owner_id = ${actorId}
       ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+    ), world_root AS (
+      SELECT place.id FROM places place
+      WHERE place.parent_id IS NULL AND place.owner_id IS NULL
+        AND place.place_kind = 'world'
+        AND place.name = ${WORLD_ROOT_NAME}
+      ORDER BY place.created_at ASC, place.id ASC LIMIT 1
     ), seeded AS (
       INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
-      SELECT resident.id, first_owned.id, first_owned.id
-      FROM residents resident LEFT JOIN first_owned ON true WHERE resident.id = ${actorId}
+      SELECT resident.id,
+        COALESCE((SELECT id FROM world_root), (SELECT id FROM first_owned)),
+        CASE
+          WHEN EXISTS (SELECT 1 FROM world_root) THEN NULL
+          ELSE (SELECT id FROM first_owned)
+        END
+      FROM residents resident WHERE resident.id = ${actorId}
       ON CONFLICT (resident_id) DO UPDATE SET
         current_place_id = COALESCE(resident_presence.current_place_id, EXCLUDED.current_place_id),
         home_place_id = COALESCE(resident_presence.home_place_id, EXCLUDED.home_place_id),
@@ -375,11 +388,20 @@ export async function setHome(
   const actorId = positiveId(residentId, 'resident id')
   const homeId = positiveId(placeId, 'place id')
   const rows = await queryRows<Record<string, unknown>>(db`
+    WITH eligible_home AS MATERIALIZED (
+      SELECT ${actorId}::integer AS resident_id, owned.id AS place_id
+      FROM places owned
+      JOIN resident_presence presence ON presence.current_place_id = owned.id
+      WHERE owned.id = ${homeId}
+        AND owned.owner_id = ${actorId}
+        AND presence.resident_id = ${actorId}
+      FOR UPDATE OF owned, presence
+    )
     INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
-    SELECT ${actorId}, owned.id, owned.id FROM places owned
-    WHERE owned.id = ${homeId} AND owned.owner_id = ${actorId}
+    SELECT resident_id, place_id, place_id FROM eligible_home
     ON CONFLICT (resident_id) DO UPDATE SET
       home_place_id = EXCLUDED.home_place_id, updated_at = now()
+    WHERE resident_presence.current_place_id = EXCLUDED.current_place_id
     RETURNING resident_id, current_place_id, home_place_id, updated_at
   `)
   if (!rows[0]) throw new EngineError(403, 'home must be a place you own')
@@ -393,23 +415,23 @@ export async function moveResident(
 ): Promise<Presence> {
   const actorId = positiveId(residentId, 'resident id')
   const destinationId = positiveId(destinationPlaceId, 'destination place id')
-  const current = await readPresence(actorId, db)
-  const requested = current.currentPlaceId === null
-    ? [destinationId]
-    : [current.currentPlaceId, destinationId]
+  const stored = await readPresence(actorId, db)
+  const current = stored.currentPlaceId === null ? await ensurePresence(actorId, db) : stored
+  if (current.currentPlaceId === null) {
+    throw new EngineError(409, 'resident has no current place')
+  }
+  const requested = [current.currentPlaceId, destinationId]
   const places = await queryRows<{ id?: unknown; parent_id?: unknown }>(db`
     SELECT id, parent_id FROM places WHERE id = ANY (${requested}::int[])
   `)
   const destination = places.find(row => integer(row.id) === destinationId)
   if (!destination) throw new EngineError(404, 'destination place not found')
   if (current.currentPlaceId === destinationId) return current
-  if (current.currentPlaceId !== null) {
-    const oldPlace = places.find(row => integer(row.id) === current.currentPlaceId)
-    const destinationParent = nullableRowId(destination.parent_id, 'destination parent id')
-    const oldParent = oldPlace ? nullableRowId(oldPlace.parent_id, 'current parent id') : null
-    if (destinationParent !== current.currentPlaceId && oldParent !== destinationId) {
-      throw new EngineError(403, 'move must cross one parent-child edge')
-    }
+  const oldPlace = places.find(row => integer(row.id) === current.currentPlaceId)
+  const destinationParent = nullableRowId(destination.parent_id, 'destination parent id')
+  const oldParent = oldPlace ? nullableRowId(oldPlace.parent_id, 'current parent id') : null
+  if (destinationParent !== current.currentPlaceId && oldParent !== destinationId) {
+    throw new EngineError(403, 'move must cross one parent-child edge')
   }
   return writeResidentLocation(actorId, destinationId, db)
 }

@@ -1,6 +1,7 @@
 import type { Resident } from './core.ts'
 import { sql } from './db.ts'
 import { stringList } from './input.ts'
+import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 
 export interface PublicLaw {
   readonly id: number
@@ -26,10 +27,18 @@ export async function replacePlaceLaws(
   names: readonly string[],
 ): Promise<readonly PublicLaw[] | LawFailure> {
   const placeRows = await sql`
-    SELECT id, owner_id FROM places WHERE id = ${placeId}
-  ` as Array<{ id: number; owner_id: number }>
+    SELECT id, parent_id, place_kind, owner_id FROM places WHERE id = ${placeId}
+  ` as Array<{
+    id: number
+    parent_id: number | null
+    place_kind: string
+    owner_id: number | null
+  }>
   const place = placeRows[0]
   if (!place) return Object.freeze({ error: 'place not found', status: 404 })
+  if (isWorldRootRow(place)) {
+    return Object.freeze({ error: WORLD_TRANSIT_ONLY_ERROR, status: 403 })
+  }
   if (place.owner_id !== actor.id) {
     return Object.freeze({ error: 'only the place owner may change its laws', status: 403 })
   }

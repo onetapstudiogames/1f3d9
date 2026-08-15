@@ -1,6 +1,7 @@
 import type { Context, Hono } from 'hono'
 import { allowOAuthForHostedConnectorRequest } from './core.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
+import { PUBLIC_PAGE_DEFAULT, PUBLIC_PAGE_MAX } from './public-pagination.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -13,7 +14,12 @@ import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
 const PROTOCOL_DEFAULT = '2025-11-25'
 const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
 const OAUTH_SCOPE = 'city:resident'
-const RESIDENT_CREDENTIAL_PATTERN = /1f3d9_(?:sk|at|rt|ac)_/i
+const RESIDENT_CREDENTIAL_PATTERN =
+  /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac)_[0-9a-f]{64})/i
+const CREDENTIAL_LIKE_INPUT_PATTERN = /1f3d9_(?:sk|at|rt|ac)_[0-9a-f]{8,}/i
+const CREDENTIAL_REDACTION = '[redacted: this note contained a resident credential]'
+const CREDENTIAL_RESPONSE_WITHHELD =
+  'The city withheld a response that contained a resident credential.'
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -45,9 +51,16 @@ const defaultOAuthChallenge = () =>
   `scope="${OAUTH_SCOPE}", error="invalid_token", ` +
   'error_description="Sign in to 1F3D9 to use resident tools."'
 
+const publicMcpDoorAuthMessage = () =>
+  `You are at the public 1F3D9 MCP door: ${publicOrigin()}/mcp. ` +
+  'Anonymous reads work here, but resident tools do not. ' +
+  `To sign in, connect at ${publicOrigin()}/mcp/connect. ` +
+  `If you already have a resident key, send it in the HTTP Authorization header to ${publicOrigin()}/mcp.`
+
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
   'and does not have to be your model\'s—then register once and save the secret. ' +
+  'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
   'Then look, found, make, act, set laws and home, withdraw, transfer, agree, sign, and say. ' +
   'Put the bearer secret only in the HTTP ' +
   'Authorization header. Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
@@ -59,6 +72,7 @@ const serverInstructions = (hostedChat: boolean) => hostedChat
   ? '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
     'and does not have to be your model\'s—then use your hosted chat app\'s 1F3D9 sign-in door. ' +
     'Never put a resident key or OAuth credential in chat or tool arguments. ' +
+    'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
     'Then look, found, make, act, set laws and home, withdraw, transfer, agree, sign, and say. ' +
     'Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
     'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
@@ -100,6 +114,40 @@ const own = (value: Record<string, unknown>, key: string) =>
 const picked = (args: Record<string, unknown>, keys: readonly string[]) =>
   Object.fromEntries(keys.filter(key => own(args, key)).map(key => [key, args[key]]))
 
+const LOOK_PAGE_KEYS = [
+  'before_subplace_id', 'subplace_limit',
+  'before_thing_id', 'thing_limit',
+  'before_note_id', 'note_limit',
+] as const
+
+const ME_PAGE_KEYS = [
+  'before_place_id', 'place_limit',
+  'before_thing_id', 'thing_limit',
+  'before_kind_id', 'kind_limit',
+  'before_agreement_id', 'agreement_limit',
+  'before_note_id', 'note_limit',
+  'before_offer_id', 'offer_limit',
+] as const
+
+function lookPlacePath(args: Record<string, unknown>): string {
+  const path = `/api/place/${Number(args.place_id)}`
+  const query = new URLSearchParams()
+  for (const key of LOOK_PAGE_KEYS) {
+    if (own(args, key)) query.set(key, String(args[key]))
+  }
+  const encoded = query.toString()
+  return encoded ? `${path}?${encoded}` : path
+}
+
+function mePath(args: Record<string, unknown>): string {
+  const query = new URLSearchParams()
+  for (const key of ME_PAGE_KEYS) {
+    if (own(args, key)) query.set(key, String(args[key]))
+  }
+  const encoded = query.toString()
+  return encoded ? `/api/me?${encoded}` : '/api/me'
+}
+
 const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'register',
@@ -124,30 +172,45 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      'Read the public map or one place. With resident bearer auth, observing a place also resolves its due timers.',
+      `Read the public map or one place. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; use the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
+        before_subplace_id: {
+          type: 'integer', minimum: 1,
+          description: 'return subplaces older than this id; use next_before_subplace_id',
+        },
+        subplace_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_thing_id: {
+          type: 'integer', minimum: 1,
+          description: 'return active things older than this id; use next_before_thing_id',
+        },
+        thing_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_note_id: {
+          type: 'integer', minimum: 1,
+          description: 'return notes older than this id; use next_before_note_id',
+        },
+        note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     route: args => own(args, 'place_id')
-      ? { method: 'GET', path: `/api/place/${Number(args.place_id)}` }
+      ? { method: 'GET', path: lookPlacePath(args) }
       : { method: 'GET', path: '/api/map' },
   },
   {
     name: 'found',
     description:
-      'Found a place. Building inside land you own or open land is free; parent_id null claims the $1 USDC frontier.',
+      'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         parent_id: {
           anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }],
-          description: 'parent place, or null for the paid frontier',
+          description: 'parent place; null or the world id for a paid frontier continent',
         },
         name: { type: 'string' },
         description: { type: 'string' },
@@ -200,7 +263,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'act',
     description:
-      'Perform one frozen basic action. go_home is always unblockable; other actions can run local laws and thing traits.',
+      'Perform one frozen basic action. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -212,7 +275,7 @@ const TOOLS: readonly ToolDefinition[] = [
         thing_id: { type: 'integer', minimum: 1, description: 'source thing for use, give, or consume' },
         target_type: { type: 'string', enum: ['resident', 'place', 'thing', 'kind'] },
         target_id: { type: 'integer', minimum: 1 },
-        to_place_id: { type: 'integer', minimum: 1, description: 'destination for move or move effects' },
+        to_place_id: { type: 'integer', minimum: 1, description: 'destination for move or move effects; a basic move crosses one parent-child edge' },
         to_handle: { type: 'string', description: 'recipient for give or transfer effects' },
       },
       required: ['action'],
@@ -227,7 +290,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'laws',
-    description: 'Replace the ordered local law traits for a place you own. Prior law changes remain public history.',
+    description: 'Replace the ordered local law traits for a place you own. Laws stay regional; the ownerless world accepts none. Prior law changes remain public history.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -251,7 +314,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'home',
-    description: 'Choose a place you own as home. Use act with action go_home to return there.',
+    description: 'While standing in a place you own, choose it as home. The world cannot be home. Use act with action go_home to return there.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -458,10 +521,28 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'me',
-    description: 'Read what you own, signed, said, and currently owe, plus today\'s remaining free-action quotas.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    description:
+      `Read what you own, signed, said, and currently owe, plus today's remaining free-action quotas. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records.`,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        before_place_id: { type: 'integer', minimum: 1 },
+        place_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_thing_id: { type: 'integer', minimum: 1 },
+        thing_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_kind_id: { type: 'integer', minimum: 1 },
+        kind_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_agreement_id: { type: 'integer', minimum: 1 },
+        agreement_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_note_id: { type: 'integer', minimum: 1 },
+        note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_offer_id: { type: 'integer', minimum: 1 },
+        offer_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+      },
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    route: () => ({ method: 'GET', path: '/api/me' }),
+    route: args => ({ method: 'GET', path: mePath(args) }),
   },
   {
     name: 'moderate',
@@ -513,7 +594,7 @@ const SENSITIVE_ARGUMENT_KEYS = new Set([
 ])
 
 function containsSecretArgument(value: unknown, depth = 0): boolean {
-  if (typeof value === 'string') return RESIDENT_CREDENTIAL_PATTERN.test(value)
+  if (typeof value === 'string') return CREDENTIAL_LIKE_INPUT_PATTERN.test(value)
   if (!value || typeof value !== 'object' || depth > 8) return false
   if (Array.isArray(value)) return value.some(item => containsSecretArgument(item, depth + 1))
   return Object.entries(value).some(([key, nested]) =>
@@ -528,6 +609,53 @@ function containsUnknownArgument(tool: ToolDefinition, args: Record<string, unkn
   return Object.keys(args).some(key => !Object.prototype.hasOwnProperty.call(properties, key))
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * Historical notes can predate the public-write credential guard. Preserve the
+ * containing response and the note's public metadata, replacing only an unsafe
+ * note body. The final response scan below remains the backstop for credentials
+ * found anywhere else or beyond this bounded traversal.
+ */
+function redactCredentialBearingNoteBodies(value: unknown, depth = 0): unknown {
+  if (depth > 32) return value
+  if (Array.isArray(value)) {
+    return value.map(item => redactCredentialBearingNoteBodies(item, depth + 1))
+  }
+  if (!isRecord(value)) return value
+
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => {
+    if (key !== 'notes' || !Array.isArray(nested)) {
+      return [key, redactCredentialBearingNoteBodies(nested, depth + 1)]
+    }
+
+    return [key, nested.map(note => {
+      if (!isRecord(note)) return redactCredentialBearingNoteBodies(note, depth + 1)
+      const redacted = typeof note.body === 'string' && RESIDENT_CREDENTIAL_PATTERN.test(note.body)
+        ? { ...note, body: CREDENTIAL_REDACTION }
+        : note
+      return redactCredentialBearingNoteBodies(redacted, depth + 1)
+    })]
+  }))
+}
+
+function safeguardHostedResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
+  if (!RESIDENT_CREDENTIAL_PATTERN.test(rawText)) return { text: rawText, withheld: false }
+
+  try {
+    const redactedText = JSON.stringify(redactCredentialBearingNoteBodies(JSON.parse(rawText)))
+    if (typeof redactedText === 'string' && !RESIDENT_CREDENTIAL_PATTERN.test(redactedText)) {
+      return { text: redactedText, withheld: false }
+    }
+  } catch {
+    // Malformed or unexpected credential-bearing responses stay fail-closed.
+  }
+
+  return { text: CREDENTIAL_RESPONSE_WITHHELD, withheld: true }
+}
+
 function safeOAuthChallenge(candidate: string | null): string {
   const expectedMetadata = `resource_metadata="${publicOrigin()}/.well-known/oauth-protected-resource/mcp/connect"`
   if (
@@ -536,7 +664,7 @@ function safeOAuthChallenge(candidate: string | null): string {
     /^Bearer(?:\s|$)/i.test(candidate) &&
     candidate.includes(expectedMetadata) &&
     !/[\u0000-\u001f\u007f]/.test(candidate) &&
-    !RESIDENT_CREDENTIAL_PATTERN.test(candidate)
+    !CREDENTIAL_LIKE_INPUT_PATTERN.test(candidate)
   ) {
     return candidate
   }
@@ -573,6 +701,10 @@ function securitySchemesFor(name: string) {
   if (name === 'register') return [NOAUTH_SECURITY_SCHEME]
   if (name === 'look') return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
   return [OAUTH_SECURITY_SCHEME]
+}
+
+function allowsAnonymous(name: string): boolean {
+  return securitySchemesFor(name).some(scheme => scheme.type === 'noauth')
 }
 
 function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
@@ -629,13 +761,16 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (method === 'notifications/initialized') return c.body(null, 202)
   if (method === 'ping') return c.json({ jsonrpc: '2.0', id: id ?? null, result: {} })
   if (method === 'tools/list') {
+    const tools = TOOLS.filter(tool => (
+      hostedChat
+        ? !['register', 'moderate'].includes(tool.name)
+        : c.req.header('authorization') || allowsAnonymous(tool.name)
+    ))
     return c.json({
       jsonrpc: '2.0',
       id: id ?? null,
       result: {
-        tools: TOOLS
-          .filter(tool => !hostedChat || !['register', 'moderate'].includes(tool.name))
-          .map(tool => advertisedTool(tool, hostedChat)),
+        tools: tools.map(tool => advertisedTool(tool, hostedChat)),
       },
     })
   }
@@ -658,6 +793,9 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   if (containsUnknownArgument(tool, args)) {
     return toolResult(c, id, 'Unsupported tool argument. Use only fields advertised by tools/list.', true)
+  }
+  if (!hostedChat && !c.req.header('authorization') && !allowsAnonymous(name)) {
+    return toolResult(c, id, publicMcpDoorAuthMessage(), true)
   }
 
   if (hostedChat && ['register', 'moderate'].includes(name)) {
@@ -686,17 +824,17 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       ? await app.request(hostedBackingRequest(route.path, init))
       : await app.request(route.path, init)
     const rawText = await response.text()
-    const text = hostedChat && RESIDENT_CREDENTIAL_PATTERN.test(rawText)
-      ? 'The city withheld a response that contained a resident credential.'
-      : rawText
+    const safeguarded = hostedChat
+      ? safeguardHostedResponse(rawText)
+      : { text: rawText, withheld: false }
     if (hostedChat && response.status === 401) {
       const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
-      return toolResult(c, id, text, true, {
+      return toolResult(c, id, safeguarded.text, true, {
         oauthChallenge,
         forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
       })
     }
-    return toolResult(c, id, text, response.status >= 400)
+    return toolResult(c, id, safeguarded.text, safeguarded.withheld || response.status >= 400)
   } catch {
     return toolResult(c, id, 'The city API could not answer this tool call.', true)
   }

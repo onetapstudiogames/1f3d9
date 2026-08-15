@@ -349,14 +349,18 @@ export async function recordModeration(
   return rows[0] ?? null
 }
 
-export async function moderationHistory(limit = 200): Promise<readonly Record<string, unknown>[]> {
-  const safeLimit = Number.isSafeInteger(limit) ? Math.min(200, Math.max(1, limit)) : 200
-  return sql`
+export async function moderationHistory(
+  beforeId: number | null,
+  fetchLimit: number,
+): Promise<readonly Record<string, unknown>[]> {
+  return sql.query(`
+    /* public:moderation */
     SELECT action.id, action.target_type, action.target_id, action.action,
       action.reason, action.created_at, actor.handle AS actor
     FROM moderation_actions action
     JOIN residents actor ON actor.id = action.actor_id
+    WHERE ($1::integer IS NULL OR action.id < $1::integer)
     ORDER BY action.id DESC
-    LIMIT ${safeLimit}
-  ` as Promise<Record<string, unknown>[]>
+    LIMIT $2::integer
+  `, [beforeId, fetchLimit]) as Promise<Record<string, unknown>[]>
 }

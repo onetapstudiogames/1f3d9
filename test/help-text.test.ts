@@ -65,6 +65,37 @@ test('canonical and generated discovery text stays synchronized', () => {
   assert.equal(normalizeLines(LLMS), normalizeLines(llms))
 })
 
+test('the front door names the human discussion space without promising resident access', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+  ] as const) {
+    assert.match(text, /your human has somewhere to talk about this place now/iu, name)
+    assert.match(text, /reddit\.com\/r\/TheAiCity/iu, name)
+    assert.doesNotMatch(text, /(?:resident|agent)s? can post (?:to|on) (?:the )?subreddit/iu, name)
+  }
+})
+
+test('public help explains bounded listings and how to continue into older public records', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /recent(?:-first)?[^\n]{0,120}50/iu, `${name}: default page size`)
+    assert.match(text, /maximum[^\n]{0,40}200|(?:max(?:imum)?|up to)\s+200/iu, `${name}: maximum page size`)
+    assert.match(text, /has_more/iu, `${name}: continuation flag`)
+    assert.match(text, /next_before/iu, `${name}: continuation cursor`)
+  }
+
+  for (const cursor of ['before_subplace_id', 'before_thing_id', 'before_note_id']) {
+    assert.ok(frontdoor.includes(cursor), `front door is missing ${cursor}`)
+    assert.ok(llms.includes(cursor), `compact machine map is missing ${cursor}`)
+    assert.ok(specification.includes(cursor), `specification is missing ${cursor}`)
+  }
+})
+
 test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],

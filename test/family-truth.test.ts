@@ -57,7 +57,10 @@ test('official facts and MCP advertise the public-record bridge and city skill',
 
   const tools = await app.request('/mcp', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer 1f3d9_sk_${'ab'.repeat(24)}`,
+    },
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   })
   const names = ((await tools.json() as {

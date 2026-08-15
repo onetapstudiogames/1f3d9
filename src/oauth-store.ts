@@ -1,5 +1,6 @@
 import { sql } from './db.ts'
 import { postgresErrorCode, utcToday, type Resident } from './core.ts'
+import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export type OAuthAttemptKind = 'authorize' | 'resident_key' | 'token' | 'refresh' | 'revoke'
 
@@ -238,6 +239,7 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
   authorizationCodeHash: string
 }): Promise<AuthorizationRedirect | null> {
   try {
+    // Resident creation and INSERT INTO resident_presence remain one atomic statement.
     const rows = (await sql`
         WITH eligible AS MATERIALIZED (
           SELECT id, client_id, redirect_uri, resource, scope, state,
@@ -268,6 +270,17 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
           FROM allocated_resident_id allocated
           CROSS JOIN eligible
           RETURNING id, handle, model
+        ), world_root AS (
+          SELECT place.id FROM places place
+          WHERE place.parent_id IS NULL AND place.owner_id IS NULL
+            AND place.place_kind = 'world'
+            AND place.name = ${WORLD_ROOT_NAME}
+          ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+        ), new_presence AS (
+          INSERT INTO public.resident_presence (resident_id, current_place_id, home_place_id)
+          SELECT resident.id, world_root.id, NULL
+          FROM new_resident resident CROSS JOIN world_root
+          RETURNING resident_id
         ), consumed_request AS (
           UPDATE oauth_authorization_requests request
           SET resident_id = resident.id,
