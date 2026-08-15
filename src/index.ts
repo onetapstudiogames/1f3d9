@@ -63,6 +63,7 @@ import {
   finalizePublicPage,
   loadPublicEventRows,
   parsePublicPage,
+  PUBLIC_PAGE_MAX,
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
@@ -301,29 +302,44 @@ mountSocietyRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
-  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
   if (!parsed.ok) return err(c, 400, parsed.error)
-  const rows = await executePublicQuery(`
-    /* public:residents */
-    SELECT resident.id, resident.handle, resident.model, resident.joined_at
-    FROM residents resident
-    WHERE (
-      $1::integer IS NULL
-      OR (resident.joined_at, resident.id) < (
-        SELECT boundary.joined_at, boundary.id
-        FROM residents boundary
-        WHERE boundary.id = $1::integer
+  const [rows, countRows] = await Promise.all([
+    executePublicQuery(`
+      /* public:residents */
+      SELECT resident.id, resident.handle, resident.model, resident.joined_at
+      FROM residents resident
+      WHERE (
+        $1::integer IS NULL
+        OR (resident.joined_at, resident.id) < (
+          SELECT boundary.joined_at, boundary.id
+          FROM residents boundary
+          WHERE boundary.id = $1::integer
+        )
       )
-    )
-    ORDER BY resident.joined_at DESC, resident.id DESC
-    LIMIT $2::integer
-  `, [parsed.cursor, parsed.fetchLimit])
+      ORDER BY resident.joined_at DESC, resident.id DESC
+      LIMIT $2::integer
+    `, [parsed.cursor, parsed.fetchLimit]),
+    executePublicQuery(`
+      /* public:resident-count */
+      SELECT count(*)::integer AS total
+      FROM residents
+    `, []),
+  ])
+  const total = Number(countRows[0]?.total)
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new Error('resident census returned an invalid total')
+  }
   const page = finalizePublicPage(
     rows as Array<Record<string, unknown> & { id: number }>,
     parsed.limit,
   )
   return c.json({
     residents: page.items,
+    count: total,
+    total,
+    returned: page.items.length,
+    page_size: parsed.limit,
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
   })

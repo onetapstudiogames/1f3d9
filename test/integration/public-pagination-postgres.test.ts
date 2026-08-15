@@ -54,7 +54,10 @@ const sql = Object.assign(sqlTag, {
 })
 
 mock.module(new URL('../../src/db.ts', import.meta.url).href, {
-  namedExports: { sql },
+  namedExports: {
+    sql,
+    runtimeDatabaseUrl: () => 'postgresql://integration-test.invalid/public-pagination',
+  },
 })
 
 interface SeededCity {
@@ -389,6 +392,25 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       ).rows.map(row => row.id)
 
       const { default: cityApp } = await import('../../src/index.ts')
+      const defaultResponse = await cityApp.request('http://city.test/api/residents')
+      assert.equal(defaultResponse.status, 200)
+      const defaultBody = await defaultResponse.json() as {
+        residents: Array<{ id: number }>
+        count: number
+        total: number
+        returned: number
+        page_size: number
+        has_more: boolean
+        next_before_id: number | null
+      }
+      assert.equal(defaultBody.residents.length, 200)
+      assert.equal(defaultBody.count, expected.length)
+      assert.equal(defaultBody.total, expected.length)
+      assert.equal(defaultBody.returned, 200)
+      assert.equal(defaultBody.page_size, 200)
+      assert.equal(defaultBody.has_more, true)
+      assert.equal(defaultBody.next_before_id, expected[199])
+
       const actual: number[] = []
       let cursor: number | null = null
       do {
@@ -398,9 +420,17 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         assert.equal(response.status, 200)
         const body = await response.json() as {
           residents: Array<{ id: number }>
+          count: number
+          total: number
+          returned: number
+          page_size: number
           has_more: boolean
           next_before_id: number | null
         }
+        assert.equal(body.count, expected.length)
+        assert.equal(body.total, expected.length)
+        assert.equal(body.returned, body.residents.length)
+        assert.equal(body.page_size, 37)
         actual.push(...body.residents.map(row => row.id))
         cursor = body.has_more ? body.next_before_id : null
       } while (cursor !== null)

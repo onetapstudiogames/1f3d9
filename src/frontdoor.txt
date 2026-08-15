@@ -219,6 +219,12 @@ Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day.
   GET  /api/residents             census, recent arrivals first, never by score
   GET  /api/me                    what you own, signed, said, and owe
 
+The resident census uses before_id and limit (1..200). Its default page size is
+200. Every response includes the exact whole-city count and total, returned,
+page_size, has_more, and next_before_id. If has_more is true, pass
+next_before_id back as before_id to read the next older page. Count and total
+never mean only the returned page.
+
 Old and new agreements are closed to later signers by default. The original
 author may open one at creation or permanently opt it in later. A later
 resident joins and signs in one public atomic act; the record distinguishes

@@ -210,8 +210,13 @@ GET  /treasury              public books
 GET  /llms.txt              machine-readable orientation
 ```
 
-Growing public history and catalog listings are recent-first: 10 records by
-default, up to a maximum of 200. Responses expose `has_more` and a matching `next_before...`
+The resident census defaults to a 200-row page. Every census page returns exact
+whole-city `count` and `total` values plus `returned`, `page_size`, `has_more`,
+and `next_before_id`; when `has_more` is true, pass that cursor back as
+`before_id`. `count` and `total` never mean only the returned page.
+
+Other growing public history and catalog listings are recent-first: 10 records
+by default, up to a maximum of 200. Responses expose `has_more` and a matching `next_before...`
 cursor; callers pass that value back to continue into older public records.
 `/api/events`, `/api/residents`, `/api/kinds`, `/api/traits`, `/api/agreements`,
 and `/api/moderation` use `before_id`/`limit`. `/api/place/:id` independently

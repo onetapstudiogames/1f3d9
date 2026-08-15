@@ -706,6 +706,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
 
   if (state.scenario === 'remaining pagination') {
+    if (q.includes('from residents') && q.includes('count(')) {
+      const total = remainingPaginationRows('residents').length
+      return [{ count: total, total }]
+    }
     const publicCollection = ['residents', 'kinds', 'traits', 'moderation']
       .find(collection => q.includes(`/* public:${collection} */`))
     if (publicCollection) {
@@ -731,6 +735,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }
   }
 
+  if (state.scenario === 'resident arrival pagination' &&
+      q.includes('from residents') && q.includes('count(')) {
+    const total = residentArrivalRows().length
+    return [{ count: total, total }]
+  }
   if (state.scenario === 'resident arrival pagination' && q.includes('/* public:residents */')) {
     return residentArrivalPage(query, params[0], params[1])
   }
@@ -989,6 +998,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return rows
   }
 
+  if (q.includes('/* public:resident-count */')) return [{ total: 2 }]
   if (q.includes('from residents')) return [residentRow(), {
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
   }]
@@ -2097,9 +2107,8 @@ test('public listing routes reject invalid and duplicate pagination parameters',
   }
 })
 
-test('every remaining growing public collection returns a newest-first default page', async () => {
+test('non-census growing public collections keep their newest-first 10-row default', async () => {
   const cases = [
-    ['/api/residents', 'residents', 1070],
     ['/api/kinds', 'kinds', 1170],
     ['/api/traits', 'traits', 1270],
     ['/api/agreements', 'agreements', 1370],
@@ -2119,16 +2128,55 @@ test('every remaining growing public collection returns a newest-first default p
   }
 })
 
+test('parameterless resident census returns every resident below its 200-row default', async () => {
+  reset({ scenario: 'remaining pagination' })
+  const response = await app.request('/api/residents')
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    residents: Array<{ id: number }>
+    count: number
+    total: number
+    returned: number
+    page_size: number
+    has_more: boolean
+    next_before_id: number | null
+  }
+
+  const expectedIds = recentIds(1070)
+  assert.deepEqual(body.residents.map(row => row.id), expectedIds)
+  assert.equal(body.count, expectedIds.length)
+  assert.equal(body.total, expectedIds.length)
+  assert.equal(body.returned, expectedIds.length)
+  assert.equal(body.page_size, 200)
+  assert.equal(body.has_more, false)
+  assert.equal(body.next_before_id, null)
+
+  const residentRead = sqlCalls().find(call => /\/\* public:residents \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    residentRead?.params?.map(value => value == null ? null : Number(value)),
+    [null, 201],
+    'the default census query must fetch one lookahead row beyond its 200-row page',
+  )
+})
+
 test('resident census pages by arrival time with stable id ties and no boundary repeats', async () => {
   reset({ scenario: 'resident arrival pagination' })
   const firstResponse = await app.request('/api/residents?limit=2')
   assert.equal(firstResponse.status, 200)
   const first = await firstResponse.json() as {
     residents: Array<{ id: number }>
+    count: number
+    total: number
+    returned: number
+    page_size: number
     has_more: boolean
     next_before_id: number | null
   }
   assert.deepEqual(first.residents.map(row => row.id), [800, 5])
+  assert.equal(first.count, 6)
+  assert.equal(first.total, 6)
+  assert.equal(first.returned, 2)
+  assert.equal(first.page_size, 2)
   assert.equal(first.has_more, true)
   assert.equal(first.next_before_id, 5)
 
@@ -2145,6 +2193,10 @@ test('resident census pages by arrival time with stable id ties and no boundary 
   assert.equal(secondResponse.status, 200)
   const second = await secondResponse.json() as typeof first
   assert.deepEqual(second.residents.map(row => row.id), [910, 200])
+  assert.equal(second.count, 6)
+  assert.equal(second.total, 6)
+  assert.equal(second.returned, 2)
+  assert.equal(second.page_size, 2)
   assert.equal(second.has_more, true)
   assert.equal(second.next_before_id, 200)
   assert.equal(second.residents.some(row => first.residents.some(previous => previous.id === row.id)), false)
@@ -2154,6 +2206,10 @@ test('resident census pages by arrival time with stable id ties and no boundary 
   assert.equal(thirdResponse.status, 200)
   const third = await thirdResponse.json() as typeof first
   assert.deepEqual(third.residents.map(row => row.id), [100, 1000])
+  assert.equal(third.count, 6)
+  assert.equal(third.total, 6)
+  assert.equal(third.returned, 2)
+  assert.equal(third.page_size, 2)
   assert.equal(third.has_more, false)
   assert.equal(third.next_before_id, null)
 })
