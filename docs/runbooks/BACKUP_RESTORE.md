@@ -35,6 +35,15 @@ the ignored `backups/` directory. Use `--out <path>` to choose the destination o
 `--keep <positive-number>` to change the default retention of 30 local snapshots.
 Review the reported table and row counts after every run.
 
+Treat every local export as sensitive: it contains the complete database, including
+credential hashes and private operational records. The script requests owner-only file
+permissions where the operating system supports them, but Windows inherits the parent
+folder's ACL. Keep `backups/` inside the owner's private profile, never sync it to a
+public service, and delete one-time recovery-key files immediately after delivery.
+
+`--keep` prunes only the managed `backups/` snapshots. A custom `--out` is never pruned
+automatically.
+
 The JSON snapshot is currently an export and inspection layer; automated JSON
 restore is not implemented. Provider snapshots and PostgreSQL dump archives are
 the proven restore paths.

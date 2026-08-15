@@ -6,9 +6,7 @@ test-results/
 env.txt
 .env
 .env.*
+.tmp-*.env
 !.env.example
 *.log
 backups/
-
-.vercel
-.env*
