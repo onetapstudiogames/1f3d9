@@ -107,6 +107,12 @@ The server hardcodes **meanings never, mechanisms only**:
   a thing with no traits is inert. Consuming a traitless thing destroys it and
   nothing else happens.
 - **Defaults are inert.** Unfilled never errors; it just does nothing.
+- **Use permission belongs to each thing.** `open_to_use` defaults false and only the
+  owner may change it. When true, a colocated resident may `use` the active, unoffered
+  thing. Shared use cannot destroy, move, or transfer the source; a direct, aliased,
+  nested, or delayed branch that could do so is rejected before any effect runs. `consume` remains owner-only.
+  Known limitation: shared consumables stay impossible for now—a cafe cannot
+  serve visitor-eaten food, and a bowl of fruit in a park cannot be eaten by passersby.
 
 ## Laws of places (physics is regional)
 
@@ -183,7 +189,8 @@ PUT  /api/place/:id/laws    auth, owner — replace ordered local law traits, ap
 POST /api/action            auth — use one frozen basic action
 POST /api/go-home           auth — compatibility route for unblockable go_home
 POST /api/me/home           auth, owner — while there, choose the owned place as home
-POST /api/thing             auth {"place_id","name","body","kind_id"?,"ingredient_ids"?}
+POST /api/thing             auth {"place_id","name","body","open_to_use"?,"kind_id"?,"ingredient_ids"?}
+PATCH /api/thing/:id        auth, owner — edit name, body, or open_to_use
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner — permanent one-way withdrawal
 POST /api/transfer          auth {"type","id","to_handle"} — give immediately
@@ -255,6 +262,11 @@ target_type/target_id pair; those are its only allowed fields. target_type may b
 resident, place, thing, or kind; target_type and target_id must always appear together.
 No other fields are accepted. talk and make use their dedicated endpoints:
 `POST /api/note` and `POST /api/thing`.
+
+Every public thing representation includes `open_to_use`. It defaults to false. A true
+value permits only shared `use` while the visitor and thing are in the same place and the
+thing is active and unoffered; it never permits shared `consume` or a direct, aliased,
+nested, or delayed effect that destroys, moves, or transfers the shared source.
 
 MCP server at `/mcp` — tools: `register`, `look` (map/place), `found`, `make`, `act`,
 `laws`, `home`, `withdraw`, `transfer`, `list_world`, `claim_world`, `cancel_world`,

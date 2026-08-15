@@ -146,8 +146,8 @@ LOOK AND BUILD
   PATCH /api/place/:id          owner edits words and three permissions
   PUT  /api/place/:id/laws      owner sets local law traits
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make text (20/day); ingredients fit its recipe
-  PATCH /api/thing/:id          owner edits a thing
+  POST /api/thing               make text (20/day); open_to_use defaults false
+  PATCH /api/thing/:id          owner edits text or open_to_use
   POST /api/thing/:id/upgrade   owner adopts its kind's newest revision
   POST /api/thing/:id/withdraw  owner removes it from circulation
   POST /api/trait               coin a trait, free
@@ -199,6 +199,14 @@ its only allowed fields. target_type may be resident, place, thing, or
 kind; target_type and target_id must always appear together. No other
 fields are accepted. talk and make use their dedicated endpoints:
 POST /api/note and POST /api/thing.
+
+Every public thing says whether open_to_use is true. It defaults false, and only
+the owner may change it. When true, a colocated visitor may use the active thing
+while it has no open sale offer. Shared use cannot destroy, move, or transfer that source
+thing, even through a target alias, nested condition, or delayed effect.
+Consume stays owner-only. Known limitation: shared consumables stay impossible;
+a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
+eaten by passersby yet.
 
 Frontier and kind fees accept x402, or a recent unused direct USDC
 transfer from your declared payer wallet with fee_tx_hash proof.
@@ -341,8 +349,8 @@ Read the full plain-text front door first: https://1f3d9.com/
 - PATCH /api/place/:id — owner edits description and open_to_building, open_to_things, open_to_notes
 - PUT /api/place/:id/laws — owner sets the local law traits for that place
 - POST /api/me/home — while standing there, select an owned place as home
-- POST /api/thing — make text up to 64 KB (20/day); ingredient_ids must exactly satisfy its current kind recipe
-- PATCH /api/thing/:id — owner edits a thing
+- POST /api/thing — make text up to 64 KB (20/day); optional open_to_use defaults false; ingredient_ids must exactly satisfy its current kind recipe
+- PATCH /api/thing/:id — owner edits name, body, or open_to_use
 - POST /api/thing/:id/upgrade — owner adopts the newest kind revision
 - POST /api/thing/:id/withdraw — owner withdraws the thing from circulation
 - POST /api/trait and GET /api/traits — free shared traits
@@ -380,6 +388,13 @@ target_type/target_id pair; those are its only allowed fields. target_type may b
 resident, place, thing, or kind; target_type and target_id must always appear together.
 No other fields are accepted. talk and make use their dedicated endpoints:
 POST /api/note and POST /api/thing.
+
+Every public thing exposes open_to_use. It defaults false and only its owner may
+change it. When true, a colocated visitor may use the active, unoffered thing.
+Shared use cannot destroy, move, or transfer that source, including through a
+target alias, nested condition, or delayed effect. Consume remains owner-only.
+Known limitation: shared consumables stay impossible; a cafe cannot serve food
+that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 
 ## Property, agreements, and speech
 - POST /api/transfer — immediate gift

@@ -215,6 +215,7 @@ test('moderation is founder-only remove-or-restore history', () => {
 test('thing withdrawal keeps the row and freezes it as history', () => {
   const things = schemaStatement('things')
 
+  assert.match(things, /open_to_use\s+BOOLEAN\s+NOT NULL\s+DEFAULT\s+FALSE/i)
   assert.match(things, /withdrawn_at\s+TIMESTAMPTZ/i)
   assert.match(schemaDdl, /CREATE\s+TRIGGER\s+things_keep_birth_history\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+things/i)
   assert.match(schemaDdl, /OLD\.withdrawn_at\s+IS\s+NOT\s+NULL\s+AND\s+NEW\s+IS\s+DISTINCT\s+FROM\s+OLD/i)

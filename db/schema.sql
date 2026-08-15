@@ -445,6 +445,7 @@ CREATE TABLE IF NOT EXISTS things (
   name              TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120),
   body              TEXT NOT NULL DEFAULT '' CHECK (octet_length(body) <= 65536),
   owner_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  open_to_use       BOOLEAN NOT NULL DEFAULT FALSE,
   kind_id           INTEGER REFERENCES kinds(id) ON DELETE RESTRICT,
   birth_revision    INTEGER,
   current_revision  INTEGER,
@@ -473,6 +474,7 @@ CREATE INDEX IF NOT EXISTS things_owner_active_id_desc
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
+ALTER TABLE things ADD COLUMN IF NOT EXISTS open_to_use BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- A place's current laws are the latest change for each trait. Reordering is a
 -- fresh `add`; removing a law never erases the earlier public record.

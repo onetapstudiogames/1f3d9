@@ -9,6 +9,7 @@ import {
 } from './physics.ts'
 import {
   executeEffects,
+  SHARED_SOURCE_MUTATION_ERROR,
   thingState,
   withdrawOwnedThing,
   type EffectExecutionContext,
@@ -564,16 +565,55 @@ async function recordActionResolution(
 }
 
 async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
-  if (input.sourceThingId === null) return
-  const thing = await thingState(input.sourceThingId, db)
+  if (input.sourceThingId === null) return null
+  const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'source thing not found')
-  if (thing.ownerId !== input.actorId) throw new EngineError(403, 'source thing is not yours')
+  const sharedUse = input.action === 'use' && thing.ownerId !== input.actorId && thing.openToUse === true
+  if (thing.ownerId !== input.actorId && !sharedUse) throw new EngineError(403, 'source thing is not yours')
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'source thing has an open sale offer')
   }
-  if (input.placeId !== null && thing.placeId !== input.placeId) {
+  if (
+    (sharedUse && input.placeId === null)
+    || (input.placeId !== null && thing.placeId !== input.placeId)
+  ) {
     throw new EngineError(403, 'source thing is not in the action place')
   }
+  return thing
+}
+
+function sharedUseTouchesSourceDestructively(
+  effects: readonly Effect[],
+  sourceThingId: number,
+  target: RuntimeTarget | null,
+): boolean {
+  for (const effect of effects) {
+    if (
+      effect.effect === 'destroy'
+      || effect.effect === 'move'
+      || effect.effect === 'transfer'
+    ) {
+      const namesSharedSource = effect.target === 'source'
+        || (
+          effect.target === 'target'
+          && target?.type === 'thing'
+          && target.id === sourceThingId
+        )
+      if (namesSharedSource) return true
+    }
+    if (
+      effect.effect === 'wait'
+      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target)
+    ) return true
+    if (
+      effect.effect === 'check_label'
+      && (
+        sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target)
+        || sharedUseTouchesSourceDestructively(effect.else ?? [], sourceThingId, target)
+      )
+    ) return true
+  }
+  return false
 }
 
 async function loadPrograms(input: RequiredActionInput, db: TaggedSql): Promise<StoredProgram[]> {
@@ -607,13 +647,18 @@ async function intrinsicAction(input: RequiredActionInput, db: TaggedSql): Promi
   return false
 }
 
-function actionContext(actionId: number, input: RequiredActionInput): EffectExecutionContext {
+function actionContext(
+  actionId: number,
+  input: RequiredActionInput,
+  sharedSourceThingId: number | null = null,
+): EffectExecutionContext {
   return {
     actionId: actionId > 0 ? actionId : null,
     actorId: input.actorId,
     actorHandle: input.actorHandle,
     placeId: input.placeId,
     sourceThingId: input.sourceThingId,
+    sharedSourceThingId,
     target: input.target,
     destinationPlaceId: input.destinationPlaceId,
     recipientId: input.recipientId,
@@ -660,10 +705,26 @@ export async function runAction(
         return { actionId, status: 'applied', httpStatus: 200, error: null, effectsApplied: 0 }
       }
 
-      await sourceReady(input, transaction)
+      const source = await sourceReady(input, transaction)
       const programs = await loadPrograms(input, transaction)
+      const sharedSourceThingId = input.action === 'use'
+        && source
+        && source.ownerId !== input.actorId
+        && source.openToUse === true
+        ? source.id
+        : null
+      if (
+        sharedSourceThingId !== null
+        && programs.some(program => sharedUseTouchesSourceDestructively(
+          program.effects,
+          sharedSourceThingId,
+          input.target,
+        ))
+      ) {
+        throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+      }
       const intrinsicApplied = await intrinsicAction(input, transaction)
-      const base = actionContext(actionId, input)
+      const base = actionContext(actionId, input, sharedSourceThingId)
       let effectsApplied = 0
       for (const program of programs) {
         effectsApplied += await executeEffects(program.effects, {

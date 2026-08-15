@@ -59,6 +59,7 @@ interface FakeState {
   agreementCreatorId: number
   agreementExists: boolean
   thingOwnerId: number
+  thingOpenToUse: boolean
   thingWithdrawn: boolean
   targetThingOwnerId: number
   targetThingWithdrawn: boolean
@@ -112,6 +113,7 @@ const initialState = (): FakeState => ({
   agreementCreatorId: 7,
   agreementExists: true,
   thingOwnerId: 7,
+  thingOpenToUse: false,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
   targetThingWithdrawn: false,
@@ -199,6 +201,7 @@ const thingRow = (id = 41) => ({
   owner: id === 41
     ? (state.thingOwnerId === state.actorId ? state.actorHandle : 'founder')
     : (state.targetThingOwnerId === state.actorId ? state.actorHandle : 'neighbor'),
+  open_to_use: id === 41 ? state.thingOpenToUse : false,
   kind_id: 3,
   kind: 'lantern',
   birth_revision: 1,
@@ -290,7 +293,7 @@ const remainingPaginationRows = (collection: string) => {
     if (collection === 'me_places') return { ...common, parent_id: 1, name: `place-${id}` }
     if (collection === 'me_things') return {
       ...common, place_id: 2, name: `thing-${id}`, kind_id: null,
-      birth_revision: null, current_revision: null,
+      birth_revision: null, current_revision: null, open_to_use: false,
     }
     if (collection === 'me_kinds') return { ...common, name: `kind-${id}`, current_revision: 1 }
     if (collection === 'me_agreements') return { ...common, body: `agreement ${id}`, signed: id % 2 === 0 }
@@ -879,6 +882,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_open_offer: state.offer.status === 'open',
     }]
   }
+  if (q.includes('select thing.id, thing.owner_id, thing.active_offer_id') &&
+      q.includes('left join transfer_offers')) {
+    return state.thingWithdrawn ? [] : [{
+      id: 41,
+      owner_id: state.thingOwnerId,
+      active_offer_id: state.offer.status === 'open' ? state.offer.id : null,
+      has_open_offer: state.offer.status === 'open',
+    }]
+  }
   if (q.includes('reserved_until') && q.includes('update transfer_offers') && !q.includes("status = 'claimed'")) {
     const reservedAt = new Date(Date.now() - 2_000).toISOString()
     const reservedUntil = new Date(Date.parse(reservedAt) + 5 * 60_000).toISOString()
@@ -957,8 +969,13 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return []
   }
   if (q.includes('insert into things')) return [thingRow()]
-  if (q.includes('update things set'))
+  if (q.includes('update things set')) {
+    if (q.includes('open_to_use')) {
+      const requested = params.find(value => value === true || value === false || value === 'true' || value === 'false')
+      if (requested != null) state = { ...state, thingOpenToUse: String(requested) === 'true' }
+    }
     return state.actorId === state.thingOwnerId && !state.thingWithdrawn ? [thingRow()] : []
+  }
   if (q.includes('select owner_id from things')) {
     const target = Number(params[0] ?? 41)
     return [{ owner_id: target === 41 ? state.thingOwnerId : state.targetThingOwnerId }]
@@ -975,6 +992,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
         : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
       active_offer_id: null,
+      has_open_offer: false,
+      open_to_use: targetIsSource ? state.thingOpenToUse : false,
       traits: state.kindTraitNames,
     }]
   }
@@ -2409,6 +2428,8 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
   const transferTool = listBody.result.tools.find(tool => tool.name === 'transfer')
   assert.ok(transferTool?.inputSchema.properties && 'buyer_wallet' in transferTool.inputSchema.properties)
+  const makeTool = listBody.result.tools.find(tool => tool.name === 'make')
+  assert.ok(makeTool?.inputSchema.properties && 'open_to_use' in makeTool.inputSchema.properties)
 
   for (const key of ['secret', 'authorization', 'token', 'api_key', 'unexpected']) {
     const unsafeArgument = await app.request('/mcp', {
@@ -2643,6 +2664,117 @@ test('withdrawing a thing hides it from the street and freezes further edits', a
   assert.equal(edited.status, 404)
 })
 
+test('thing detail and place reads expose open_to_use, defaulting to false', async () => {
+  reset({ scenario: 'thing open_to_use read', thingOpenToUse: false })
+
+  const [thingResponse, placeResponse] = await Promise.all([
+    app.request('/api/thing/41'),
+    app.request('/api/place/2'),
+  ])
+  assert.equal(thingResponse.status, 200)
+  assert.equal(placeResponse.status, 200)
+
+  const thingBody = await thingResponse.json() as { thing: { open_to_use: boolean } }
+  const placeBody = await placeResponse.json() as {
+    things: Array<{ id: number; open_to_use: boolean }>
+  }
+  assert.equal(thingBody.thing.open_to_use, false)
+  assert.equal(placeBody.things.find(thing => thing.id === 41)?.open_to_use, false)
+  const detailRead = sqlCalls().find(call => (
+    /from\s+things\s+thing/i.test(call.query ?? '') && /where\s+thing\.id/i.test(call.query ?? '')
+  ))
+  const placeRead = sqlCalls().find(call => /from\s+things\s+t\b/i.test(call.query ?? ''))
+  assert.match(detailRead?.query ?? '', /thing\.open_to_use/i)
+  assert.match(placeRead?.query ?? '', /t\.open_to_use/i)
+
+  reset({ scenario: 'remaining pagination' })
+  const meResponse = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(meResponse.status, 200)
+  const meBody = await meResponse.json() as { things: Array<{ open_to_use: boolean }> }
+  assert.equal(meBody.things[0]?.open_to_use, false)
+  const meRead = sqlCalls().find(call => /\/\*\s*public:me_things\s*\*\//i.test(call.query ?? ''))
+  assert.match(meRead?.query ?? '', /\bopen_to_use\b/i)
+})
+
+test('new things default closed and may be opened explicitly by their creator', async () => {
+  reset({ scenario: 'thing open_to_use create default', openToThings: true })
+  const closed = await app.request('/api/thing', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, name: 'closed lantern', body: 'owner use only' }),
+  })
+  assert.equal(closed.status, 201)
+  const closedBody = await closed.json() as { thing: { open_to_use: boolean } }
+  assert.equal(closedBody.thing.open_to_use, false)
+
+  reset({ scenario: 'thing open_to_use create explicit', openToThings: true, thingOpenToUse: true })
+  const opened = await app.request('/api/thing', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      place_id: 2, name: 'public lantern', body: 'visitors may use this', open_to_use: true,
+    }),
+  })
+  assert.equal(opened.status, 201, await opened.clone().text())
+  const openedBody = await opened.json() as { thing: { open_to_use: boolean } }
+  assert.equal(openedBody.thing.open_to_use, true)
+  const insert = sqlCalls().find(call => /insert\s+into\s+things/i.test(call.query ?? ''))
+  assert.match(insert?.query ?? '', /\bopen_to_use\b/i)
+  assert.equal(insert?.params?.some(value => value === true || value === 'true'), true)
+
+  for (const invalid of [null, 'yes', 1]) {
+    const response = await app.request('/api/thing', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        place_id: 2, name: 'invalid lantern', body: '', open_to_use: invalid,
+      }),
+    })
+    assert.equal(response.status, 400)
+  }
+})
+
+test('the thing owner can toggle open_to_use and a visitor cannot edit it', async () => {
+  reset({ scenario: 'thing open_to_use patch', thingOwnerId: 7, thingOpenToUse: false })
+
+  const changed = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({ open_to_use: true }),
+  })
+  assert.equal(changed.status, 200)
+  const changedBody = await changed.json() as { thing: { open_to_use: boolean } }
+  assert.equal(changedBody.thing.open_to_use, true)
+  const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
+  assert.match(update?.query ?? '', /\bopen_to_use\b/i)
+
+  reset({ scenario: 'thing open_to_use patch denied', thingOwnerId: 7, thingOpenToUse: false })
+  setActor(8, 'neighbor')
+  const denied = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ open_to_use: true }),
+  })
+  assert.equal(denied.status, 403)
+
+  reset({ scenario: 'thing open_to_use validation' })
+  for (const invalid of [null, 'yes', 1]) {
+    const response = await app.request('/api/thing/41', {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ open_to_use: invalid }),
+    })
+    assert.equal(response.status, 400)
+  }
+
+  reset({
+    scenario: 'thing open_to_use offer lock',
+    offer: { id: 90, status: 'open', reservedAt: null, reservedUntil: null, buyerWallet: null },
+  })
+  const offered = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ open_to_use: true }),
+  })
+  assert.equal(offered.status, 409)
+})
+
 test('use composes effects, local laws act on talk, and going home stays unblockable', async () => {
   reset({
     scenario: 'effects and laws',
@@ -2704,6 +2836,61 @@ test('use composes effects, local laws act on talk, and going home stays unblock
   const homeBody = await home.json() as { action: { place_id: number | null } }
   assert.equal(homeBody.action.place_id, 3)
 })
+
+test('a visitor may use an open thing but not consume it', async () => {
+  reset({
+    scenario: 'shared use allowed',
+    actorId: 8,
+    actorHandle: 'neighbor',
+    thingOwnerId: 7,
+    thingOpenToUse: true,
+    currentPlaceId: 2,
+    thingTraitRecipe: { use: [{ effect: 'label', target: 'actor', label: 'welcomed' }] },
+  })
+  const used = await app.request('/api/action', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ action: 'use', thing_id: 41 }),
+  })
+  assert.equal(used.status, 200, await used.clone().text())
+
+  const consumed = await app.request('/api/action', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ action: 'consume', thing_id: 41 }),
+  })
+  assert.equal(consumed.status, 403)
+})
+
+for (const [label, recipe] of [
+  ['destroy', [{ effect: 'destroy', target: 'source' }]],
+  ['move', [{ effect: 'move', target: 'source', to: 'destination' }]],
+  ['transfer', [{ effect: 'transfer', target: 'source', to: 'recipient' }]],
+  ['wait-destroy', [{ effect: 'wait', seconds: 60, then: [{ effect: 'destroy', target: 'source' }] }]],
+] as const) {
+  test(`shared use blocks ${label} against the open source thing`, async () => {
+    reset({
+      scenario: `shared use ${label} blocked`,
+      actorId: 8,
+      actorHandle: 'neighbor',
+      thingOwnerId: 7,
+      thingOpenToUse: true,
+      currentPlaceId: 2,
+      thingTraitRecipe: { use: recipe },
+    })
+    const response = await app.request('/api/action', {
+      method: 'POST',
+      headers: authHeaders(OTHER_SECRET),
+      body: JSON.stringify({
+        action: 'use',
+        thing_id: 41,
+        to_place_id: 3,
+        to_handle: 'tiny-lantern',
+      }),
+    })
+    assert.equal(response.status, 403, await response.clone().text())
+  })
+}
 
 test('damage stays off unless the place consents, and stored timers resolve on observation', async () => {
   const originalNow = Date.now

@@ -360,6 +360,84 @@ test('due effects resolve append-only and are never deleted', async () => {
   assert.equal(calls.some(call => /'effect_resolved'/.test(call.text)), true)
 })
 
+test('stored shared-use provenance blocks a destructive source timer at execution', async () => {
+  let dueRead = 0
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM pending_effects pending/.test(text)) {
+      dueRead += 1
+      return dueRead === 1 ? [{
+        id: 502,
+        action_id: 130,
+        parent_effect_id: null,
+        place_id: 2,
+        actor_id: 8,
+        source_trait_id: 8,
+        source_thing_id: 41,
+        target_type: null,
+        target_id: null,
+        destination_place_id: null,
+        recipient_id: null,
+        payload: {
+          effects: [{ effect: 'destroy', target: 'source' }],
+          repeat_remaining: 0,
+          shared_source_thing_id: 41,
+        },
+        due_at: '2026-08-11T00:00:00.000Z',
+        generation: 0,
+      }] : []
+    }
+    if (/INSERT INTO effect_resolutions/.test(text)) return [{ id: 702 }]
+    return []
+  })
+
+  const result = await resolveDueEffects(2, db)
+
+  assert.deepEqual(result, { resolved: 0, failed: 1, capped: false })
+  assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+  const resolution = calls.find(call => /INSERT INTO effect_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.match(String(resolution.values[2]), /shared.*source.*owner/i)
+})
+
+test('invalid stored shared-use provenance is skipped closed', async () => {
+  let dueRead = 0
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM pending_effects pending/.test(text)) {
+      dueRead += 1
+      return dueRead === 1 ? [{
+        id: 503,
+        action_id: 130,
+        parent_effect_id: null,
+        place_id: 2,
+        actor_id: 8,
+        source_trait_id: 8,
+        source_thing_id: 41,
+        target_type: null,
+        target_id: null,
+        destination_place_id: null,
+        recipient_id: null,
+        payload: {
+          effects: [{ effect: 'destroy', target: 'source' }],
+          repeat_remaining: 0,
+          shared_source_thing_id: 'invalid',
+        },
+        due_at: '2026-08-11T00:00:00.000Z',
+        generation: 0,
+      }] : []
+    }
+    if (/INSERT INTO effect_resolutions/.test(text)) return [{ id: 703 }]
+    return []
+  })
+
+  const result = await resolveDueEffects(2, db)
+
+  assert.deepEqual(result, { resolved: 0, failed: 1, capped: false })
+  assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+  const resolution = calls.find(call => /INSERT INTO effect_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.match(String(resolution.values[2]), /invalid stored effect payload/i)
+})
+
 test('go_home ignores supplied source traps and bypasses every block query', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/INSERT INTO action_runs/.test(text)) return [{ id: 105 }]
@@ -439,6 +517,250 @@ test('traitless consume still withdraws the owned source thing', async () => {
   assert.equal(calls.some(call => /'thing_withdrawn'/.test(call.text)), true)
 })
 
+test('a visitor may use an active, co-located, unoffered open thing without owning it', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 130 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) {
+      return [{
+        id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+        has_open_offer: false, open_to_use: true,
+      }]
+    }
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 8,
+      recipe: { use: [{ effect: 'label', target: 'actor', label: 'welcomed' }] },
+    }]
+    if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
+    if (/INSERT INTO active_labels/.test(text)) return [{ id: 301 }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 230 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 8,
+    actorHandle: 'neighbor',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+  }, db)
+
+  assert.equal(result.status, 'applied')
+  assert.equal(result.httpStatus, 200)
+  assert.equal(calls.some(call => /INSERT INTO active_labels/.test(call.text)), true)
+  const sourceRead = calls.find(call => /SELECT thing\.id/.test(call.text))
+  assert.ok(sourceRead)
+  assert.match(sourceRead.text, /FOR UPDATE OF thing/i)
+})
+
+for (const [condition, expectedStatus, expectedError] of [
+  [
+    { open_to_use: false, withdrawn_at: null, active_offer_id: null, has_open_offer: false, place_id: 2 },
+    403,
+    /source thing is not yours/i,
+  ],
+  [
+    { open_to_use: true, withdrawn_at: '2026-08-11T00:00:00.000Z', active_offer_id: null, has_open_offer: false, place_id: 2 },
+    404,
+    /source thing not found/i,
+  ],
+  [
+    { open_to_use: true, withdrawn_at: null, active_offer_id: 90, has_open_offer: true, place_id: 2 },
+    409,
+    /open sale offer/i,
+  ],
+  [
+    { open_to_use: true, withdrawn_at: null, active_offer_id: null, has_open_offer: false, place_id: 3 },
+    403,
+    /not in the action place/i,
+  ],
+] as const) {
+  test(`shared use enforces source readiness (${expectedStatus}: ${expectedError.source})`, async () => {
+    const { db } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 131 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) return [{ id: 41, owner_id: 7, ...condition }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 231 }]
+      return []
+    })
+
+    const result = await runAction({
+      actorId: 8,
+      actorHandle: 'neighbor',
+      action: 'use',
+      placeId: 2,
+      sourceThingId: 41,
+    }, db)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, expectedStatus)
+    assert.match(result.error ?? '', expectedError)
+  })
+}
+
+test('shared use requires the visitor to have a current place', async () => {
+  const { db } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 8, current_place_id: null, home_place_id: null, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 132 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) {
+      return [{
+        id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+        has_open_offer: false, open_to_use: true,
+      }]
+    }
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 232 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 8,
+    actorHandle: 'neighbor',
+    action: 'use',
+    sourceThingId: 41,
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 403)
+  assert.match(result.error ?? '', /not in the action place/i)
+})
+
+test('an open thing is not a shared consumable', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 132 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) return [{
+      id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+      has_open_offer: false, open_to_use: true,
+    }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 232 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 8,
+    actorHandle: 'neighbor',
+    action: 'consume',
+    placeId: 2,
+    sourceThingId: 41,
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 403)
+  assert.match(result.error ?? '', /source thing is not yours/i)
+  assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+})
+
+const sourceMutationEffects = [
+  ['destroy', (target: 'source' | 'target') => ({ effect: 'destroy', target })],
+  ['move', (target: 'source' | 'target') => ({ effect: 'move', target, to: 'destination' })],
+  ['transfer', (target: 'source' | 'target') => ({ effect: 'transfer', target, to: 'actor' })],
+] as const
+
+const mutationNesting = [
+  ['direct', (effect: object) => [effect]],
+  ['nested', (effect: object) => [{
+    effect: 'check_label', target: 'actor', label: 'owner-only-escape', then: [effect],
+  }]],
+  ['delayed', (effect: object) => [{ effect: 'wait', seconds: 10, then: [effect] }]],
+] as const
+
+for (const [referenceName, reference, target] of [
+  ['source-symbol', 'source', null],
+  ['target-alias', 'target', { type: 'thing' as const, id: 41 }],
+] as const) {
+  for (const [effectName, makeEffect] of sourceMutationEffects) {
+    for (const [pathName, wrap] of mutationNesting) {
+      const recipe = wrap(makeEffect(reference))
+      test(`shared use refuses ${pathName} ${effectName} through the ${referenceName}`, async () => {
+        const { db, calls } = fakeSql(({ text }) => {
+          if (/FROM resident_presence/.test(text)) {
+            return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+          }
+          if (/INSERT INTO action_runs/.test(text)) return [{ id: 131 }]
+          if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+          if (/SELECT thing\.id/.test(text)) {
+            return [{
+              id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+              has_open_offer: false, open_to_use: true,
+            }]
+          }
+          if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+            trait_id: 8,
+            recipe: { use: recipe },
+          }]
+          if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 231 }]
+          return []
+        })
+
+        const result = await runAction({
+          actorId: 8,
+          actorHandle: 'neighbor',
+          action: 'use',
+          placeId: 2,
+          sourceThingId: 41,
+          target,
+          destinationPlaceId: 3,
+          recipientId: 7,
+        }, db)
+
+        assert.equal(result.status, 'failed')
+        assert.equal(result.httpStatus, 403)
+        assert.match(result.error ?? '', /shared.*source.*owner|open.*thing.*change/i)
+        assert.equal(calls.some(call => /INSERT INTO active_labels/.test(call.text)), false)
+        assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+        assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), false)
+        assert.equal(calls.some(call => /UPDATE things SET owner_id/.test(call.text)), false)
+        assert.equal(calls.some(call => /INSERT INTO pending_effects/.test(call.text)), false)
+      })
+    }
+  }
+}
+
+test('an owner may still use a destructive source recipe', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 133 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) return [{
+      id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+      has_open_offer: false, open_to_use: true,
+    }]
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 8,
+      recipe: { use: [{ effect: 'destroy', target: 'source' }] },
+    }]
+    if (/UPDATE things SET withdrawn_at/.test(text)) return [{ id: 41 }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 233 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+  }, db)
+
+  assert.equal(result.status, 'applied')
+  assert.equal(result.httpStatus, 200)
+  assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), true)
+})
+
 test('wait stores a frozen root effect at generation zero', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {
@@ -477,6 +799,45 @@ test('wait stores a frozen root effect at generation zero', async () => {
   assert.equal(pending.values[12], 0)
   assert.match(String(pending.values[10]), /"repeat_remaining":2/)
   assert.match(pending.text, /'effect_scheduled'/)
+})
+
+test('a safe shared-use timer stores its restricted source provenance', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 134 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) return [{
+      id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+      has_open_offer: false, open_to_use: true,
+    }]
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 8,
+      recipe: { use: [{
+        effect: 'wait', seconds: 10,
+        then: [{ effect: 'label', target: 'actor', label: 'welcomed-later' }],
+      }] },
+    }]
+    if (/pg_advisory_xact_lock/.test(text)) return []
+    if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
+    if (/INSERT INTO pending_effects/.test(text)) return [{ id: 508 }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 234 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 8,
+    actorHandle: 'neighbor',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+  }, db)
+
+  assert.equal(result.status, 'applied')
+  const pending = calls.find(call => /INSERT INTO pending_effects/.test(call.text))
+  assert.ok(pending)
+  assert.match(String(pending.values[10]), /"shared_source_thing_id":41/)
 })
 
 test('wait refuses a place queue already at its unresolved cap', async () => {

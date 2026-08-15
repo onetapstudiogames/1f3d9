@@ -130,7 +130,7 @@ function twoRequestBarrier(): () => Promise<void> {
   }
 }
 
-async function resetDatabase(): Promise<void> {
+async function resetDatabase(): Promise<number> {
   assert.ok(database)
   await database.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await database.query(schemaDdl)
@@ -140,13 +140,30 @@ async function resetDatabase(): Promise<void> {
       (2, 'neighbor', 'integration-test', $2)
   `, [secretHash(founderSecret), secretHash(neighborSecret)])
   await database.query(`
-    INSERT INTO places (id, name, description, owner_id)
-      VALUES (1, 'test-room', 'a test room', 1);
     INSERT INTO traits (id, name, description, coiner_id)
-      VALUES (1, 'peaceful', 'quiet conduct', 1);
-    INSERT INTO things (id, place_id, name, body, owner_id)
-      VALUES (1, 1, 'test-object', 'still here', 1);
+      VALUES (1, 'peaceful', 'quiet conduct', 1)
   `)
+  const room = await database.query<{ place_id: number }>(`
+    WITH world AS MATERIALIZED (
+      SELECT id FROM places WHERE place_kind = 'world'
+    ), continent AS (
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      SELECT id, 'continent', 'test-continent', 'integration-test land', 1
+      FROM world
+      RETURNING id
+    ), test_room AS (
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      SELECT id, 'place', 'test-room', 'a test room', 1
+      FROM continent
+      RETURNING id
+    )
+    INSERT INTO things (id, place_id, name, body, owner_id)
+    SELECT 1, id, 'test-object', 'still here', 1
+    FROM test_room
+    RETURNING place_id
+  `)
+  assert.ok(room.rows[0], 'the PostgreSQL fixture must create a test room')
+  return room.rows[0].place_id
 }
 
 async function seedAgreement(options: { accessionOpen?: boolean } = {}): Promise<number> {
@@ -178,8 +195,8 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     const { withdrawThing } = await import('../../src/withdrawal.ts')
 
     await t.test('law replacement keeps typed actor IDs and append-only history', async () => {
-      await resetDatabase()
-      const result = await replacePlaceLaws(actor, 1, ['peaceful'])
+      const roomId = await resetDatabase()
+      const result = await replacePlaceLaws(actor, roomId, ['peaceful'])
       assert.equal('error' in result, false)
       assert.deepEqual(result, [{ id: 1, name: 'peaceful', position: 0 }])
       const history = await database!.query(`

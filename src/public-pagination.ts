@@ -154,6 +154,7 @@ export async function loadPublicPlaceCollectionRows(
     ),
     query(
       `SELECT t.id, t.place_id, t.name, t.body, t.owner_id, owner.handle AS owner,
+         t.open_to_use,
          t.kind_id, k.name AS kind, t.birth_revision, t.current_revision, t.created_at
        FROM things t
        JOIN residents owner ON owner.id = t.owner_id
