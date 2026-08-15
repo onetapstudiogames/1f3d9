@@ -35,6 +35,10 @@ const agreementAccessionMigration = readFileSync(
   new URL('../db/migrations/20260814_agreement_accession.sql', import.meta.url),
   'utf8',
 )
+const openToUseMigrationUrl = new URL(
+  '../db/migrations/20260815_open_to_use.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -523,8 +527,49 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use/,
   )
+})
+
+test('open-to-use is an additive, idempotent permission migration', () => {
+  const migration = readFileSync(openToUseMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(migration)
+
+  assert.equal(statements.length, 1)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP|UPDATE|DELETE|TRUNCATE)\b/im)
+  assert.match(
+    uncommented,
+    /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+open_to_use\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+FALSE/i,
+  )
+})
+
+test('open-to-use is selected as one separate preview or production migration', () => {
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'open-to-use'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260815_open_to_use.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'open-to-use'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'open-to-use-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260815_open_to_use.sql')
 })
 
 test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
@@ -608,6 +653,7 @@ test('fresh installs contain every reviewed release migration statement', () => 
   for (const [migration, label] of [
     [oauthMigration, 'hosted-chat'],
     [agreementAccessionMigration, 'agreement-accession'],
+    [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
   ] as const) {
     for (const statement of splitSqlStatements(migration)) {
       assert.ok(
@@ -629,6 +675,8 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:world-root-topology'] ?? '', /--migration world-root-topology$/)
   assert.match(packageJson.scripts['migrate:preview:agreement-accession'] ?? '', /--target preview --migration agreement-accession$/)
   assert.match(packageJson.scripts['migrate:production:agreement-accession'] ?? '', /--target production --migration agreement-accession$/)
+  assert.match(packageJson.scripts['migrate:preview:open-to-use'] ?? '', /--target preview --migration open-to-use$/)
+  assert.match(packageJson.scripts['migrate:production:open-to-use'] ?? '', /--target production --migration open-to-use$/)
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {

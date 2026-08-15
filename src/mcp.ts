@@ -248,6 +248,10 @@ const TOOLS: readonly ToolDefinition[] = [
         place_id: { type: 'integer', minimum: 1 },
         name: { type: 'string' },
         body: { type: 'string', description: 'the thing, at most 64 KB of UTF-8 text' },
+        open_to_use: {
+          type: 'boolean',
+          description: 'optional; let colocated visitors use this thing without owning it',
+        },
         kind_id: { type: 'integer', minimum: 1, description: 'optional invented kind whose current revision is pinned at birth' },
         ingredient_ids: {
           type: 'array',
@@ -263,7 +267,7 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: '/api/thing',
-      body: picked(args, ['place_id', 'name', 'body', 'kind_id', 'ingredient_ids']),
+      body: picked(args, ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids']),
     }),
   },
   {

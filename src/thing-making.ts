@@ -10,6 +10,7 @@ export interface MakeThingInput {
   readonly placeId: number
   readonly name: string
   readonly body: string
+  readonly openToUse?: boolean
   readonly kindId: number | null
   readonly ingredientIds: unknown
 }
@@ -66,6 +67,7 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
         placeId: input.placeId,
         name: input.name,
         body: input.body,
+        openToUse: input.openToUse === true,
         ingredientIds: input.ingredientIds,
       })
       if (!result.ok) throw new EngineError(result.status, result.error)
@@ -106,8 +108,8 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
             AND EXISTS (SELECT 1 FROM permitted_place)
           RETURNING id
         ), new_thing AS (
-          INSERT INTO things (place_id, name, body, owner_id)
-          SELECT permitted_place.id, ${input.name}, ${input.body}, ${input.actor.id}
+          INSERT INTO things (place_id, name, body, owner_id, open_to_use)
+          SELECT permitted_place.id, ${input.name}, ${input.body}, ${input.actor.id}, ${input.openToUse === true}
           FROM permitted_place CROSS JOIN quota_spend
           RETURNING *
         ), new_event AS (

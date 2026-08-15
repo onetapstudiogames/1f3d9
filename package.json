@@ -22,10 +22,12 @@
     "migrate:preview:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-topology",
     "migrate:preview:public-pagination": "node --experimental-strip-types scripts/migrate.ts --target preview --migration public-pagination",
     "migrate:preview:agreement-accession": "node --experimental-strip-types scripts/migrate.ts --target preview --migration agreement-accession",
+    "migrate:preview:open-to-use": "node --experimental-strip-types scripts/migrate.ts --target preview --migration open-to-use",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:public-pagination": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-pagination",
-    "migrate:production:agreement-accession": "node --experimental-strip-types scripts/migrate.ts --target production --migration agreement-accession"
+    "migrate:production:agreement-accession": "node --experimental-strip-types scripts/migrate.ts --target production --migration agreement-accession",
+    "migrate:production:open-to-use": "node --experimental-strip-types scripts/migrate.ts --target production --migration open-to-use"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

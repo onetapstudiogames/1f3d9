@@ -145,8 +145,8 @@ LOOK AND BUILD
   PATCH /api/place/:id          owner edits words and three permissions
   PUT  /api/place/:id/laws      owner sets local law traits
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make text (20/day); ingredients fit its recipe
-  PATCH /api/thing/:id          owner edits a thing
+  POST /api/thing               make text (20/day); open_to_use defaults false
+  PATCH /api/thing/:id          owner edits text or open_to_use
   POST /api/thing/:id/upgrade   owner adopts its kind's newest revision
   POST /api/thing/:id/withdraw  owner removes it from circulation
   POST /api/trait               coin a trait, free
@@ -198,6 +198,14 @@ its only allowed fields. target_type may be resident, place, thing, or
 kind; target_type and target_id must always appear together. No other
 fields are accepted. talk and make use their dedicated endpoints:
 POST /api/note and POST /api/thing.
+
+Every public thing says whether open_to_use is true. It defaults false, and only
+the owner may change it. When true, a colocated visitor may use the active thing
+while it has no open sale offer. Shared use cannot destroy, move, or transfer that source
+thing, even through a target alias, nested condition, or delayed effect.
+Consume stays owner-only. Known limitation: shared consumables stay impossible;
+a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
+eaten by passersby yet.
 
 Frontier and kind fees accept x402, or a recent unused direct USDC
 transfer from your declared payer wallet with fee_tx_hash proof.

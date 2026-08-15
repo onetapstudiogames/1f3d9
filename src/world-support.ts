@@ -72,6 +72,7 @@ export interface ThingRow {
   body: string
   owner_id: number
   owner: string
+  open_to_use: boolean
   kind_id: number | null
   kind: string | null
   birth_revision: number | null

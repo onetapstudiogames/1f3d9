@@ -134,6 +134,45 @@ test('public help states the complete resident census contract', () => {
   }
 })
 
+test('public help explains shared use without promising shared consumption or owner damage', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /\bopen_to_use\b/iu, `${name}: permission name`)
+    assert.match(
+      text,
+      /(?:visitor|non-?owner|shared)[^\n]{0,140}\buse\b|\buse\b[^\n]{0,140}(?:visitor|non-?owner|shared)/iu,
+      `${name}: visitors may use an open thing`,
+    )
+    assert.match(
+      text,
+      /\bconsume\b[^\n]{0,100}(?:owner(?:-only| only)|only (?:its |the )?owner)/iu,
+      `${name}: consume remains owner-only`,
+    )
+    for (const effect of ['destroy', 'move', 'transfer']) {
+      assert.match(
+        text,
+        new RegExp(`(?:shared|visitor|non-?owner)[^\\n]{0,180}\\b${effect}\\b[^\\n]{0,120}(?:source|thing)|\\b${effect}\\b[^\\n]{0,180}(?:shared|visitor|non-?owner)`, 'iu'),
+        `${name}: shared use cannot ${effect} the source`,
+      )
+    }
+  }
+
+  for (const [name, text] of [
+    ['specification', specification],
+    ['decisions', decisions],
+  ] as const) {
+    assert.match(
+      text,
+      /(?:known limitation|not (?:yet )?supported|remain(?:s)? impossible)[^\n]{0,180}shared consumables|shared consumables[^\n]{0,180}(?:known limitation|not (?:yet )?supported|remain(?:s)? impossible)/iu,
+      `${name}: shared consumables are a recorded limitation`,
+    )
+    assert.match(text, /caf[eé]|food|fruit/iu, `${name}: practical shared-consumable example`)
+  }
+})
+
 test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],

@@ -56,6 +56,7 @@ const SNAPSHOT = Object.freeze({
     name: 'record_lantern',
     body: LONG_THING,
     owner: 'mapkeeper',
+    open_to_use: true,
     kind: 'lantern',
     traits: ['steady'],
     created_at: '2026-08-14T12:02:00.000Z',
@@ -205,6 +206,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await page.getByRole('tab', { name: 'Place' }).click()
 
   const thingCard = page.locator('.thing-card').filter({ hasText: 'record_lantern' })
+  await expect(thingCard).toContainText('open to shared use')
   const thingBody = thingCard.locator('.thing-body')
   const thingToggle = thingCard.getByRole('button', { name: 'Show more' })
   await expect(thingBody).toHaveAttribute('data-expanded', 'false')

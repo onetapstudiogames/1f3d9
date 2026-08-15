@@ -207,7 +207,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const traits = Array.isArray(raw.traits)
         ? [...new Set(raw.traits.map(safeWorldName).filter(Boolean))].slice(0, 32)
         : []
-      return [{ id, place_id: placeId, name, body, owner, kind, traits,
+      return [{ id, place_id: placeId, name, body, owner, open_to_use: raw.open_to_use === true, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
         kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true }]
     })
@@ -677,7 +677,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       item.append(
         element('h4', '', thing.name),
         element('p', 'thing-meta', 'kept by ' + thing.owner +
-          (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind')),
+          (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind') +
+          (thing.open_to_use ? ' · open to shared use' : ' · owner use only')),
       )
       if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
       const traits = element('div', 'trait-list')

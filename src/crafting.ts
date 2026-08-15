@@ -25,6 +25,7 @@ export interface CraftThingInput {
   readonly placeId: unknown
   readonly name: unknown
   readonly body: unknown
+  readonly openToUse?: unknown
   readonly ingredientIds: unknown
 }
 
@@ -34,6 +35,7 @@ export interface CraftedThing {
   readonly name: string
   readonly body: string
   readonly owner_id: number
+  readonly open_to_use: boolean
   readonly kind_id: number
   readonly birth_revision: number
   readonly current_revision: number
@@ -68,6 +70,7 @@ interface ValidCraftInput {
   readonly placeId: number
   readonly name: string
   readonly body: string
+  readonly openToUse: boolean
   readonly ingredientIds: readonly number[]
 }
 
@@ -105,6 +108,10 @@ function positiveInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
 }
 
+function optionalBoolean(value: unknown): boolean | null {
+  return value === undefined ? false : typeof value === 'boolean' ? value : null
+}
+
 function ingredientIdList(value: unknown): readonly number[] | null {
   if (!Array.isArray(value) || value.length > MAX_CRAFT_INGREDIENTS) return null
   const ids: number[] = []
@@ -134,6 +141,7 @@ function validateRequest(input: CraftThingInput): ValidCraftInput | null {
     maximumBytes: THING_BODY_MAX_BYTES,
     allowEmpty: true,
   })
+  const openToUse = optionalBoolean(input.openToUse)
   const ingredientIds = ingredientIdList(input.ingredientIds)
   if (
     actorId === null
@@ -142,9 +150,10 @@ function validateRequest(input: CraftThingInput): ValidCraftInput | null {
     || placeId === null
     || name === null
     || body === null
+    || openToUse === null
     || ingredientIds === null
   ) return null
-  return Object.freeze({ actorId, actorHandle, kindId, placeId, name, body, ingredientIds })
+  return Object.freeze({ actorId, actorHandle, kindId, placeId, name, body, openToUse, ingredientIds })
 }
 
 function exactRecipeMatch(recipe: KindRecipe, ingredients: readonly IngredientRow[]): boolean {
@@ -179,6 +188,7 @@ function craftedThing(row: CraftSqlRow): CraftedThing {
     name: String(row.name),
     body: String(row.body),
     owner_id: Number(row.owner_id),
+    open_to_use: row.open_to_use === true,
     kind_id: Number(row.kind_id),
     birth_revision: Number(row.birth_revision),
     current_revision: Number(row.current_revision),
@@ -354,10 +364,10 @@ export async function craftKindThing(
       RETURNING actor.id, actor.handle
     ), new_thing AS (
       INSERT INTO things (
-        place_id, name, body, owner_id, kind_id, birth_revision, current_revision
+        place_id, name, body, owner_id, open_to_use, kind_id, birth_revision, current_revision
       )
       SELECT locked_place.id, ${input.name}, ${input.body}, ${input.actorId},
-        locked_kind.id, locked_kind.current_revision, locked_kind.current_revision
+        ${input.openToUse}, locked_kind.id, locked_kind.current_revision, locked_kind.current_revision
       FROM locked_kind CROSS JOIN locked_place CROSS JOIN quota_spend
       RETURNING *
     ), withdrawn AS (

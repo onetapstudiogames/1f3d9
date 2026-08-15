@@ -382,7 +382,7 @@ app.get('/api/me', async c => {
     `, [resident.id, placeRequest.cursor, placeRequest.fetchLimit]),
     executePublicQuery(`
       /* public:me_things */
-      SELECT id, place_id, name, kind_id, birth_revision, current_revision, created_at
+      SELECT id, place_id, name, open_to_use, kind_id, birth_revision, current_revision, created_at
       FROM things
       WHERE owner_id = $1::integer AND withdrawn_at IS NULL
         AND ($2::integer IS NULL OR id < $2::integer)

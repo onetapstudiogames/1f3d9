@@ -58,6 +58,7 @@ test('MCP advertises every round-two control without accepting bearer arguments'
   assert.deepEqual((act.inputSchema.properties?.action as { enum: string[] }).enum, ACTIONS)
   const make = tools.find(tool => tool.name === 'make')!
   assert.ok('ingredient_ids' in (make.inputSchema.properties ?? {}))
+  assert.ok('open_to_use' in (make.inputSchema.properties ?? {}))
   assert.equal(
     (make.inputSchema.properties?.ingredient_ids as { maxItems?: number }).maxItems,
     MAX_CRAFT_INGREDIENTS,
@@ -174,6 +175,9 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
 
   const cases = [
     ['look', { place_id: 9, limit: 12, before_note_id: 100, note_limit: 25 }, 'GET', '/api/place/9'],
+    ['make', {
+      place_id: 9, name: 'shared bell', body: 'ring', open_to_use: true,
+    }, 'POST', '/api/thing'],
     ['act', { action: 'move', to_place_id: 9 }, 'POST', '/api/action'],
     ['laws', { place_id: 9, traits: ['peaceful'] }, 'PUT', '/api/place/9/laws'],
     ['home', { place_id: 9 }, 'POST', '/api/me/home'],
@@ -202,6 +206,14 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
         limit: '12',
         before_note_id: '100',
         note_limit: '25',
+      })
+    }
+    if (name === 'make') {
+      assert.deepEqual((dispatched as unknown as { body: Record<string, unknown> }).body, {
+        place_id: 9,
+        name: 'shared bell',
+        body: 'ring',
+        open_to_use: true,
       })
     }
   }

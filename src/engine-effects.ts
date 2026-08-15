@@ -30,6 +30,8 @@ import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 export const MAX_DUE_EFFECTS_PER_OBSERVATION = MAX_PENDING_EFFECTS_PER_PLACE
+export const SHARED_SOURCE_MUTATION_ERROR =
+  'shared use cannot change its source thing; only the owner may destroy, move, or transfer it'
 export interface LawAuthority {
   readonly traitId: number
   readonly sourcePlaceId: number
@@ -40,6 +42,7 @@ export interface EffectExecutionContext {
   readonly actorHandle: string
   readonly placeId: number | null
   readonly sourceThingId: number | null
+  readonly sharedSourceThingId: number | null
   readonly target: RuntimeTarget | null
   readonly destinationPlaceId: number | null
   readonly recipientId: number | null
@@ -56,6 +59,7 @@ export interface ThingState {
   readonly withdrawnAt: string | null
   readonly activeOfferId: number | null
   readonly hasOpenOffer: boolean
+  readonly openToUse: boolean
 }
 interface PendingRow {
   readonly id: number
@@ -64,6 +68,7 @@ interface PendingRow {
   readonly actorId: number
   readonly sourceTraitId: number | null
   readonly sourceThingId: number | null
+  readonly sharedSourceThingId: number | null
   readonly target: RuntimeTarget | null
   readonly destinationPlaceId: number | null
   readonly recipientId: number | null
@@ -155,18 +160,35 @@ async function requireScopedBrickTarget(
   return target
 }
 
-export async function thingState(thingId: number, db: TaggedSql): Promise<ThingState | null> {
-  const rows = await queryRows<Record<string, unknown>>(db`
-    SELECT thing.id, thing.owner_id, thing.place_id,
-      thing.withdrawn_at, thing.active_offer_id,
-      EXISTS (
-        SELECT 1 FROM transfer_offers offer
-        WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
-          AND offer.status = 'open'
-      ) AS has_open_offer
-    FROM things thing
-    WHERE thing.id = ${thingId}
-  `)
+export async function thingState(
+  thingId: number,
+  db: TaggedSql,
+  options: Readonly<{ forUpdate?: boolean }> = {},
+): Promise<ThingState | null> {
+  const rows = await queryRows<Record<string, unknown>>(options.forUpdate === true
+    ? db`
+      SELECT thing.id, thing.owner_id, thing.place_id,
+        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
+        EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
+            AND offer.status = 'open'
+        ) AS has_open_offer
+      FROM things thing
+      WHERE thing.id = ${thingId}
+      FOR UPDATE OF thing
+    `
+    : db`
+      SELECT thing.id, thing.owner_id, thing.place_id,
+        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
+        EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
+            AND offer.status = 'open'
+        ) AS has_open_offer
+      FROM things thing
+      WHERE thing.id = ${thingId}
+    `)
   const row = rows[0]
   if (!row) return null
   return {
@@ -176,6 +198,7 @@ export async function thingState(thingId: number, db: TaggedSql): Promise<ThingS
     withdrawnAt: row.withdrawn_at == null ? null : String(row.withdrawn_at),
     activeOfferId: nullableRowId(row.active_offer_id, 'thing offer id'),
     hasOpenOffer: row.has_open_offer === true,
+    openToUse: row.open_to_use === true,
   }
 }
 
@@ -254,16 +277,27 @@ async function executeEffect(
     if (!target || target.type !== 'thing') {
       throw new EngineError(403, 'agents and non-thing targets cannot be destroyed')
     }
+    if (target.id === context.sharedSourceThingId) {
+      throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+    }
     await destroyThing(target.id, context, db)
     return 1
   }
   if (effect.effect === 'move') {
-    const target = await requireTarget(resolveSymbolicTarget(effect.target, context), db)
+    const resolved = resolveSymbolicTarget(effect.target, context)
+    if (resolved?.type === 'thing' && resolved.id === context.sharedSourceThingId) {
+      throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+    }
+    const target = await requireTarget(resolved, db)
     await moveEffectTarget(target, effect.to, context, db)
     return 1
   }
   if (effect.effect === 'transfer') {
-    const target = await requireTarget(resolveSymbolicTarget(effect.target, context), db)
+    const resolved = resolveSymbolicTarget(effect.target, context)
+    if (resolved?.type === 'thing' && resolved.id === context.sharedSourceThingId) {
+      throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+    }
+    const target = await requireTarget(resolved, db)
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
     if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient')
     await transferAsset(target, context.actorId, recipientId, db)
@@ -594,6 +628,7 @@ async function scheduleEffect(
       trait_id: context.lawAuthority.traitId,
       source_place_id: context.lawAuthority.sourcePlaceId,
     },
+    shared_source_thing_id: context.sharedSourceThingId,
   }
   await insertPendingEffect({
     actionId: context.actionId,
@@ -637,13 +672,27 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
   const generation = integer(row.generation)
   if (!Number.isFinite(dueAt.getTime()) || !Number.isFinite(logicalDueAt.getTime())
     || generation === null || generation < 0 || generation > MAX_EFFECT_GENERATIONS) return null
+  const sourceThingId = nullableRowId(row.source_thing_id, 'pending source thing id')
+  const hasSharedSourceThingId = payload.shared_source_thing_id != null
+  const sharedSourceThingId = !hasSharedSourceThingId
+    ? null
+    : integer(payload.shared_source_thing_id)
+  if (
+    hasSharedSourceThingId
+    && (
+      sharedSourceThingId === null
+      || sharedSourceThingId <= 0
+      || sharedSourceThingId !== sourceThingId
+    )
+  ) return null
   return {
     id: rowId(row.id, 'pending effect id'),
     actionId: nullableRowId(row.action_id, 'pending action id'),
     placeId: rowId(row.place_id, 'pending place id'),
     actorId: rowId(row.actor_id, 'pending actor id'),
     sourceTraitId: nullableRowId(row.source_trait_id, 'pending source trait id'),
-    sourceThingId: nullableRowId(row.source_thing_id, 'pending source thing id'),
+    sourceThingId,
+    sharedSourceThingId,
     target: type && id ? { type, id } : null,
     destinationPlaceId: nullableRowId(row.destination_place_id, 'pending destination id'),
     recipientId: nullableRowId(row.recipient_id, 'pending recipient id'),
@@ -741,6 +790,7 @@ async function resolveOne(
     actorHandle: '',
     placeId: row.placeId,
     sourceThingId: row.sourceThingId,
+    sharedSourceThingId: row.sharedSourceThingId,
     target: row.target,
     destinationPlaceId: row.destinationPlaceId,
     recipientId: row.recipientId,

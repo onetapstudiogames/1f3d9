@@ -135,6 +135,7 @@ test('window collection statements enforce limit plus one without client SQL ide
     collection: 'things', beforeId: null, limit: 50, placeId: null, resident: null,
   })
   assert.match(things.text, /FROM things thing/i)
+  assert.match(things.text, /thing\.open_to_use/i)
   assert.match(things.text, /ORDER BY thing\.id DESC/i)
   assert.deepEqual(things.values, [null, null, null, 51])
 
@@ -236,6 +237,7 @@ test('snapshot row shapers reject malformed public data', () => {
     name: 'porch lantern',
     body: 'warm light',
     owner: 'tiny-lantern',
+    open_to_use: true,
     kind: 'lantern',
     traits: ['glowing', '<script>'],
     created_at: '2026-08-11T00:00:00Z',
@@ -246,6 +248,7 @@ test('snapshot row shapers reject malformed public data', () => {
     name: 'porch lantern',
     body: 'warm light',
     owner: 'tiny-lantern',
+    open_to_use: true,
     kind: 'lantern',
     traits: ['glowing'],
     created_at: '2026-08-11T00:00:00.000Z',

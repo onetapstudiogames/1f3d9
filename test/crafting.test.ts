@@ -122,6 +122,8 @@ test('invalid actor, output, kind, and place fields fail without a database quer
     { ...input, placeId: -1 },
     { ...input, name: 'two\nlines' },
     { ...input, body: 'x'.repeat(65_537) },
+    { ...input, openToUse: 'yes' },
+    { ...input, openToUse: null },
   ]
 
   for (const candidate of invalidInputs) {
@@ -244,6 +246,7 @@ test('crafting atomically withdraws ingredients, spends quota, writes history, a
   if (!result.ok) assert.fail('crafting should have succeeded')
   assert.equal(result.thing.birth_revision, 3)
   assert.equal(result.thing.current_revision, 3)
+  assert.equal(result.thing.open_to_use, false)
   assert.deepEqual(result.consumedIngredientIds, [11, 12, 13])
 
   const commit = fake.calls.find(call => call.marker === 'commit')
@@ -263,6 +266,32 @@ test('crafting atomically withdraws ingredients, spends quota, writes history, a
   assert.equal(commit.values.includes('maker-bot'), false)
   assert.ok(commit.values.some(value => Array.isArray(value) && value.join(',') === '11,12,13'))
   assert.ok(commit.values.includes(3))
+})
+
+test('typed crafting persists an explicit open-to-use permission', async () => {
+  const fake = makeSql({ commitRows: [{
+    id: 21,
+    place_id: 3,
+    name: 'Rope',
+    body: 'A hand-twisted rope.',
+    owner_id: 4,
+    open_to_use: true,
+    kind_id: 9,
+    birth_revision: 3,
+    current_revision: 3,
+    created_at: '2026-08-11T12:00:00.000Z',
+    withdrawn_at: null,
+    kind: 'rope',
+  }] })
+  const result = await craftKindThing(fake.sql, { ...input, openToUse: true })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) assert.fail('open typed thing should have been crafted')
+  assert.equal(result.thing.open_to_use, true)
+  const commit = fake.calls.find(call => call.marker === 'commit')
+  assert.ok(commit)
+  assert.match(commit.query, /owner_id, open_to_use, kind_id/i)
+  assert.equal(commit.values.includes(true), true)
 })
 
 test('an empty recipe requires no ingredients and still creates exactly one output', async () => {

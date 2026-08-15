@@ -169,7 +169,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const rows = await sql`
       SELECT thing.id, thing.place_id, thing.name, thing.body,
-        thing.owner_id, owner.handle AS owner,
+        thing.owner_id, owner.handle AS owner, thing.open_to_use,
         thing.kind_id, kind.name AS kind,
         thing.birth_revision, thing.current_revision, thing.created_at
       FROM things thing
@@ -707,18 +707,22 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['place_id', 'name', 'body', 'kind_id', 'ingredient_ids'])) {
-      return err(c, 400, 'thing accepts place_id, name, body, optional kind_id, and ingredient_ids')
+    if (!hasOnly(body, ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids'])) {
+      return err(c, 400, 'thing accepts place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids')
     }
     const placeId = positiveId(body.place_id)
     const name = publicLabel(body.name)
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const thingBody = publicText(body.body ?? '', { maximumBytes: THING_BODY_MAX_BYTES, allowEmpty: true })
+    const openToUse = body.open_to_use === undefined
+      ? false
+      : typeof body.open_to_use === 'boolean' ? body.open_to_use : null
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
     const ingredientIds = body.ingredient_ids ?? []
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (!name) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody == null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
+    if (openToUse === null) return err(c, 400, 'open_to_use must be boolean when present')
     if (body.kind_id != null && !kindId) return err(c, 400, 'kind_id must be a positive integer')
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
@@ -747,6 +751,7 @@ export function mountWorldRoutes(app: Hono): void {
       placeId,
       name,
       body: thingBody,
+      openToUse,
       kindId,
       ingredientIds,
     })
@@ -763,16 +768,20 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['name', 'body']) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name and body are editable; birth_revision is permanent')
+    if (!hasOnly(body, ['name', 'body', 'open_to_use']) || Object.keys(body).length === 0) {
+      return err(c, 400, 'only name, body, and open_to_use are editable; birth_revision is permanent')
     }
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
     const thingBody = body.body === undefined
       ? undefined
       : publicText(body.body, { maximumBytes: THING_BODY_MAX_BYTES, allowEmpty: true })
+    const openToUse = body.open_to_use === undefined
+      ? undefined
+      : typeof body.open_to_use === 'boolean' ? body.open_to_use : null
     if (name === null) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody === null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
+    if (openToUse === null) return err(c, 400, 'open_to_use must be boolean when present')
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.active_offer_id,
@@ -807,7 +816,8 @@ export function mountWorldRoutes(app: Hono): void {
       ), changed AS (
         UPDATE things SET
           name = coalesce(${name ?? null}::text, name),
-          body = coalesce(${thingBody ?? null}::text, body)
+          body = coalesce(${thingBody ?? null}::text, body),
+          open_to_use = coalesce(${openToUse ?? null}::boolean, open_to_use)
         WHERE id IN (SELECT id FROM editable)
         RETURNING *
       ), new_event AS (

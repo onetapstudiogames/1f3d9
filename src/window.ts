@@ -117,6 +117,7 @@ interface PublicThing {
   name: string
   body: string
   owner: string
+  open_to_use: boolean
   kind: string | null
   traits: string[]
   created_at: string
@@ -328,6 +329,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       name: name.text,
       body: body.text,
       owner,
+      open_to_use: row.open_to_use === true,
       kind,
       traits,
       created_at: createdAt,
@@ -515,6 +517,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
   if (options.collection === 'things') {
     return Object.freeze({
       text: `SELECT thing.id, thing.place_id, thing.name, thing.body, owner.handle AS owner,
+          thing.open_to_use,
           thing.kind_id, thing.current_revision, kind.name AS kind,
           coalesce(revision.traits, '{}'::text[]) AS traits, thing.created_at
         FROM things thing

@@ -11,7 +11,7 @@ import {
   resolveDueEffects,
   type EffectExecutionContext,
 } from '../../src/engine-effects.ts'
-import type { TaggedSql } from '../../src/engine.ts'
+import { runAction, type TaggedSql } from '../../src/engine.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'engine_timer_integration'
@@ -78,7 +78,7 @@ function taggedSql(client: Client): TaggedSql {
   }) as TaggedSql
 }
 
-test('wait effects schedule and resolve against PostgreSQL', async () => {
+test('shared use and wait effects execute against PostgreSQL', async () => {
   const postgres = await startPostgres()
   try {
     await postgres.client.query(schemaDdl)
@@ -105,6 +105,7 @@ test('wait effects schedule and resolve against PostgreSQL', async () => {
       actorHandle: 'timer-tester',
       placeId,
       sourceThingId: null,
+      sharedSourceThingId: null,
       target: null,
       destinationPlaceId: null,
       recipientId: null,
@@ -155,6 +156,92 @@ test('wait effects schedule and resolve against PostgreSQL', async () => {
       event_status: 'applied',
       label_applied: true,
     }])
+
+    await postgres.client.query(`
+      INSERT INTO residents (id, handle, model, secret_hash)
+      VALUES (2, 'timer-visitor', 'integration-test', repeat('2', 64))
+    `)
+    await postgres.client.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (2, $1, NULL)
+    `, [placeId])
+    await postgres.client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES (
+        1,
+        'welcoming',
+        'labels a visitor',
+        '{"use":[{"effect":"label","target":"actor","label":"welcomed"}]}'::jsonb,
+        1
+      );
+      INSERT INTO kinds (id, name, owner_id) VALUES (1, 'visitor-bell', 1);
+      INSERT INTO kind_revisions (kind_id, revision, traits)
+      VALUES (1, 1, ARRAY['welcoming']);
+    `)
+    await postgres.client.query(`
+      INSERT INTO things (
+        id, place_id, name, body, owner_id, open_to_use,
+        kind_id, birth_revision, current_revision
+      ) VALUES (1, $1, 'visitor bell', 'ring me', 1, true, 1, 1, 1);
+    `, [placeId])
+
+    const sharedUse = await runAction({
+      actorId: 2,
+      actorHandle: 'timer-visitor',
+      action: 'use',
+      placeId,
+      sourceThingId: 1,
+    }, db)
+    assert.equal(sharedUse.status, 'applied')
+    const welcomed = await postgres.client.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM active_labels
+        WHERE target_type = 'resident' AND target_id = 2 AND label = 'welcomed'
+      ) AS present
+    `)
+    assert.deepEqual(welcomed.rows, [{ present: true }])
+
+    await postgres.client.query(`
+      UPDATE traits SET recipe = '{
+        "use":[{
+          "effect":"wait",
+          "seconds":10,
+          "then":[{"effect":"destroy","target":"target"}]
+        }]
+      }'::jsonb
+      WHERE id = 1
+    `)
+    const destructiveAlias = await runAction({
+      actorId: 2,
+      actorHandle: 'timer-visitor',
+      action: 'use',
+      placeId,
+      sourceThingId: 1,
+      target: { type: 'thing', id: 1 },
+    }, db)
+    assert.equal(destructiveAlias.status, 'failed')
+    assert.equal(destructiveAlias.httpStatus, 403)
+
+    const consume = await runAction({
+      actorId: 2,
+      actorHandle: 'timer-visitor',
+      action: 'consume',
+      placeId,
+      sourceThingId: 1,
+    }, db)
+    assert.equal(consume.status, 'failed')
+    assert.equal(consume.httpStatus, 403)
+    const protectedSource = await postgres.client.query(`
+      SELECT withdrawn_at, (
+        SELECT count(*)::int FROM pending_effects pending
+        WHERE NOT EXISTS (
+          SELECT 1 FROM effect_resolutions resolution
+          WHERE resolution.pending_effect_id = pending.id
+        )
+      ) AS unresolved_pending
+      FROM things WHERE id = 1
+    `)
+    assert.deepEqual(protectedSource.rows, [{ withdrawn_at: null, unresolved_pending: 0 }])
   } finally {
     await postgres.client.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
