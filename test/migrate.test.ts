@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { splitSqlStatements } from '../scripts/migrate.ts'
+import { resolveMigrationRun, splitSqlStatements } from '../scripts/migrate.ts'
 
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
 
@@ -243,9 +243,146 @@ test('round-two records are append-only rather than deleted after resolution', (
   }
 })
 
-test('cursor-paged public history has matching keyset indexes', () => {
-  assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+notes_place_id\s+ON\s+notes\s*\(place_id,\s*id\s+DESC\)/i)
-  assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+events_kind_id\s+ON\s+events\s*\(kind,\s*id\s+DESC\)/i)
+test('world-root expansion is compatibility-only and does not change city topology', () => {
+  const expansion = readFileSync(
+    new URL('../db/migrations/20260814_world_root_expand.sql', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(expansion, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+place_kind/i)
+  assert.match(expansion, /ALTER\s+COLUMN\s+owner_id\s+DROP\s+NOT\s+NULL/i)
+  assert.doesNotMatch(expansion, /INSERT\s+INTO\s+places/i)
+  assert.doesNotMatch(expansion, /UPDATE\s+places[\s\S]*parent_id/i)
+  assert.doesNotMatch(expansion, /CREATE\s+TRIGGER/i)
+})
+
+test('the loopback full schema upgrades a legacy tree before final root indexes', () => {
+  const addKind = schemaDdl.search(
+    /ALTER\s+TABLE\s+places\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+place_kind/i,
+  )
+  const typeLegacyRoots = schemaDdl.search(
+    /UPDATE\s+places[\s\S]*?SET\s+place_kind\s*=\s*'continent'[\s\S]*?parent_id\s+IS\s+NULL/i,
+  )
+  const createWorld = schemaDdl.search(/INSERT\s+INTO\s+places[\s\S]*?'world'/i)
+  const reparent = schemaDdl.search(
+    /UPDATE\s+places\s+AS\s+continent[\s\S]*?SET\s+parent_id\s*=\s*world\.id/i,
+  )
+  const finalRootIndex = schemaDdl.search(
+    /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+places_one_root/i,
+  )
+
+  assert.ok(addKind >= 0)
+  assert.ok(addKind < typeLegacyRoots)
+  assert.ok(typeLegacyRoots < createWorld)
+  assert.ok(createWorld < reparent)
+  assert.ok(reparent < finalRootIndex)
+  assert.match(
+    schemaDdl,
+    /ADD\s+CONSTRAINT\s+places_active_offer_positive[\s\S]*?active_offer_id\s+IS\s+NULL[\s\S]*?active_offer_id\s*>\s*0/i,
+  )
+  assert.match(
+    schemaDdl,
+    /INSERT\s+INTO\s+resident_presence[\s\S]*?ON\s+CONFLICT\s*\(resident_id\)\s+DO\s+UPDATE[\s\S]*?current_place_id\s*=\s*coalesce/i,
+  )
+})
+
+test('world-root topology is one bounded transaction with database backstops', () => {
+  const topology = readFileSync(
+    new URL('../db/migrations/20260814_world_root_topology.sql', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(topology, /^\s*BEGIN\s*;/i)
+  assert.match(topology, /SET\s+LOCAL\s+lock_timeout\s*=/i)
+  assert.match(topology, /SET\s+LOCAL\s+statement_timeout\s*=/i)
+  assert.match(topology, /LOCK\s+TABLE\s+places/i)
+  assert.match(topology, /INSERT\s+INTO\s+places/i)
+  assert.match(topology, /UPDATE\s+places[\s\S]*place_kind\s*=\s*'continent'/i)
+  assert.match(topology, /UPDATE\s+places[\s\S]*parent_id/i)
+  assert.match(topology, /INSERT\s+INTO\s+resident_presence[\s\S]*ON\s+CONFLICT/i)
+  assert.match(topology, /COMMIT\s*;\s*$/i)
+
+  for (const table of ['things', 'notes', 'place_law_changes', 'resident_presence', 'active_labels']) {
+    assert.match(
+      topology,
+      new RegExp(`CREATE\\s+TRIGGER[\\s\\S]{0,240}ON\\s+${table}\\b`, 'i'),
+      `missing topology backstop for ${table}`,
+    )
+  }
+})
+
+test('remote world-root topology selection requires its own destructive acknowledgement', () => {
+  const previewEnvironment = {
+    CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+    PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+  } as const
+
+  const expansion = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'world-root-expand'],
+    previewEnvironment,
+  )
+  assert.equal(expansion.migrationFile, 'db/migrations/20260814_world_root_expand.sql')
+
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'world-root-topology'],
+      previewEnvironment,
+    ),
+    /CONFIRM_WORLD_ROOT_TOPOLOGY/,
+  )
+
+  const topology = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'world-root-topology'],
+    {
+      ...previewEnvironment,
+      CONFIRM_WORLD_ROOT_TOPOLOGY: 'REPARENT_CONTINENTS_UNDER_UNOWNED_WORLD_ROOT',
+    },
+  )
+  assert.equal(topology.migrationFile, 'db/migrations/20260814_world_root_topology.sql')
+})
+
+const publicPaginationIndexes = Object.freeze([
+  'CREATE INDEX IF NOT EXISTS places_parent_id_desc ON places (parent_id, id DESC)',
+  'CREATE INDEX IF NOT EXISTS places_owner_id_desc ON places (owner_id, id DESC)',
+  'CREATE INDEX IF NOT EXISTS things_place_active_id_desc ON things (place_id, id DESC) WHERE withdrawn_at IS NULL',
+  'CREATE INDEX IF NOT EXISTS things_owner_active_id_desc ON things (owner_id, id DESC) WHERE withdrawn_at IS NULL',
+  'CREATE INDEX IF NOT EXISTS kinds_owner_id_desc ON kinds (owner_id, id DESC)',
+  'CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC)',
+  'CREATE INDEX IF NOT EXISTS notes_author_id_desc ON notes (author_id, id DESC)',
+  'CREATE INDEX IF NOT EXISTS events_kind_id_desc ON events (kind, id DESC)',
+  'CREATE INDEX IF NOT EXISTS transfer_offers_seller_id_desc ON transfer_offers (seller_id, id DESC)',
+  'CREATE INDEX IF NOT EXISTS transfer_offers_buyer_id_desc ON transfer_offers (buyer_id, id DESC)',
+])
+
+function normalizeSql(statement: string): string {
+  return statement.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').trim()
+}
+
+test('public pagination migration contains only the exact keyset indexes used by listing queries', () => {
+  const migration = readFileSync(
+    new URL('../db/migrations/20260814_public_pagination.sql', import.meta.url),
+    'utf8',
+  )
+
+  assert.deepEqual(
+    splitSqlStatements(migration).map(normalizeSql),
+    publicPaginationIndexes,
+  )
+})
+
+test('fresh schema contains every reviewed public pagination index without drift', () => {
+  const freshInstallStatements = new Set(splitSqlStatements(schemaDdl).map(normalizeSql))
+
+  for (const index of publicPaginationIndexes) {
+    assert.ok(
+      freshInstallStatements.has(index),
+      `db/schema.sql is missing the reviewed pagination index: ${index}`,
+    )
+  }
 })
 
 test('agreement accession is an append-only opt-in by the original author', () => {

@@ -83,7 +83,7 @@ export async function insertPendingEffect(input: PendingEffectInsert, db: Tagged
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'effect_scheduled', resident.handle,
-        jsonb_build_object('effect_id', scheduled.id, 'place_id', ${input.placeId},
+        jsonb_build_object('effect_id', scheduled.id, 'place_id', ${input.placeId}::integer,
           'due_at', scheduled.due_at, 'generation', scheduled.generation)
       FROM scheduled JOIN residents resident ON resident.id = ${input.actorId}
     ) SELECT id FROM scheduled

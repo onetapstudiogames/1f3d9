@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
   copyFileSync,
   chmodSync,
@@ -37,46 +37,21 @@ const agreementAccessionMigration = readFileSync(
 )
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const environment = { ...process.env, ...overrides }
+  const environment = { ...process.env }
   for (const name of Object.keys(environment)) {
     if (name.startsWith('GIT_')) delete environment[name]
   }
-  return environment
+  return { ...environment, ...overrides }
 }
 
-test('the ordinary app deploy never runs or pulls a database migration', () => {
+test('the retired deploy helper is read-only outside local verification', () => {
   assert.doesNotMatch(deployScript, /RUN_MIGRATE|scripts\/migrate\.ts|npm run migrate/i)
-  assert.doesNotMatch(deployScript, /env pull[^\n]*production/i)
-  assert.match(deployScript, /HOSTED_CHAT_SIGNIN_ENABLED/)
-  assert.match(deployScript, /HOSTED_CHAT_SIGNIN_ENABLED=false/)
-  assert.doesNotMatch(deployScript, /PUBLIC_ORIGIN[^\n]*preview|preview[^\n]*PUBLIC_ORIGIN/i)
+  assert.doesNotMatch(deployScript, /\bVC\s+deploy\b|\bvercel(?:@latest)?\s+deploy\b/i)
+  assert.doesNotMatch(deployScript, /\bVC\s+env\s+add\b|\bVAPI\s+(?:POST|PATCH|PUT|DELETE)\b|\bPB\s+/i)
+  assert.doesNotMatch(deployScript, /VERCEL_TOKEN|PORKBUN_API_KEY|PORKBUN_SECRET_KEY/)
 })
 
-test('production environment writes cannot fail silently before deployment', () => {
-  const environmentWrites = deployScript
-    .split('\n')
-    .filter(line => /VC env add/.test(line))
-
-  assert.ok(environmentWrites.length >= 2)
-  for (const line of environmentWrites) {
-    assert.doesNotMatch(line, /\|\|\s*true/)
-  }
-
-  const releaseProofs = [...deployScript.matchAll(/^verify_release_intent$/gm)]
-  assert.ok(releaseProofs.length >= 3, 'release state must be rechecked immediately before writes and deploy')
-  const environmentStep = deployScript.indexOf('echo "== 5. production app environment"')
-  const firstEnvironmentWrite = deployScript.indexOf('VC env add', environmentStep)
-  const environmentProof = deployScript.indexOf('verify_release_intent', environmentStep)
-  assert.ok(environmentProof > environmentStep && environmentProof < firstEnvironmentWrite)
-  const deployStep = deployScript.indexOf('echo "== 6. deploy"')
-  const productionDeploy = deployScript.indexOf('VC deploy --prod', deployStep)
-  const deployProof = deployScript.indexOf('verify_release_intent', deployStep)
-  assert.ok(deployProof > deployStep && deployProof < productionDeploy)
-})
-
-test('every production release test gate runs before the first provider call', () => {
-  const providerStart = deployScript.indexOf('VC whoami')
-  assert.ok(providerStart > 0)
+test('every release test gate remains part of explicit branch preparation', () => {
   for (const command of [
     'npm test',
     'npm run typecheck',
@@ -84,19 +59,23 @@ test('every production release test gate runs before the first provider call', (
     'npm run test:e2e',
   ]) {
     const position = deployScript.indexOf(command)
-    assert.ok(position > 0, `missing production gate: ${command}`)
-    assert.ok(position < providerStart, `${command} must run before provider preflight`)
+    assert.ok(position > 0, `missing preparation gate: ${command}`)
   }
+  assert.match(deployScript, /--prepare/)
+  assert.match(deployScript, /merge[^\n]*\bmain\b/i)
 })
 
 test('preview migration requires exact acknowledgement and named isolated Neon targets', () => {
   assert.throws(
-    () => resolveMigrationRun(['--target', 'preview'], { DATABASE_URL: 'postgres://example/db' }),
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'hosted-chat-signin'],
+      { DATABASE_URL: 'postgres://example/db' },
+    ),
     /APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW/,
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'preview'], {
+    () => resolveMigrationRun(['--target', 'preview', '--migration', 'hosted-chat-signin'], {
       CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
@@ -108,7 +87,7 @@ test('preview migration requires exact acknowledgement and named isolated Neon t
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'preview'], {
+    () => resolveMigrationRun(['--target', 'preview', '--migration', 'hosted-chat-signin'], {
       CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
@@ -119,7 +98,7 @@ test('preview migration requires exact acknowledgement and named isolated Neon t
     /preview branch.*production branch/i,
   )
 
-  const run = resolveMigrationRun(['--target', 'preview'], {
+  const run = resolveMigrationRun(['--target', 'preview', '--migration', 'hosted-chat-signin'], {
     CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
     NEON_API_KEY: 'secret-neon-key',
     NEON_PROJECT_ID: 'project-one',
@@ -134,10 +113,7 @@ test('preview migration requires exact acknowledgement and named isolated Neon t
     branchId: 'branch-preview',
     productionBranchId: 'branch-production',
   })
-  assert.deepEqual(run.migrationFiles, [
-    'db/migrations/20260813_hosted_chat_signin.sql',
-    'db/migrations/20260814_agreement_accession.sql',
-  ])
+  assert.equal(run.migrationFile, 'db/migrations/20260813_hosted_chat_signin.sql')
 })
 
 test('preview database host must match its exact read-write Neon endpoint and not production', async () => {
@@ -184,221 +160,153 @@ test('preview database host must match its exact read-write Neon endpoint and no
   )
 })
 
-test('production deploy dry-run proves exact clean branch and commit before network work', () => {
-  const root = mkdtempSync(join(tmpdir(), '1f3d9-deploy-guard-'))
-  mkdirSync(join(root, 'scripts'))
-  copyFileSync(new URL('../scripts/deploy.sh', import.meta.url), join(root, 'scripts', 'deploy.sh'))
-  writeFileSync(join(root, 'README.md'), 'release fixture\n')
-  writeFileSync(join(root, '.gitignore'), 'env.txt\n')
+type PreparationFixture = Readonly<{
+  root: string
+  commandLog: string
+  git: (...args: string[]) => Buffer
+  run: () => SpawnSyncReturns<string>
+}>
 
-  const git = (...args: string[]) => execFileSync('git', args, {
-    cwd: root,
-    stdio: 'pipe',
-    env: withoutGitHookEnvironment(),
+function createPreparationFixture(): PreparationFixture {
+  const root = mkdtempSync(join(tmpdir(), '1f3d9-deploy-prepare-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), '1f3d9-deploy-remote-'))
+  const remote = join(remoteRoot, 'origin.git')
+  const hooks = mkdtempSync(join(tmpdir(), '1f3d9-deploy-hooks-'))
+  const bin = mkdtempSync(join(tmpdir(), '1f3d9-deploy-bin-'))
+  const commandLog = join(bin, 'npm.log')
+  const gitEnvironment = withoutGitHookEnvironment({
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: 'NUL',
   })
-  git('init', '-q')
-  git('config', 'user.email', 'release-test@example.invalid')
-  git('config', 'user.name', 'Release Test')
-  git('checkout', '-q', '-b', 'codex/release-test')
-  git('add', '.gitignore', 'README.md', 'scripts/deploy.sh')
-  git('commit', '-q', '-m', 'test release')
-  const commit = git('rev-parse', 'HEAD').toString().trim()
-  const writeReleaseIntent = (
-    releaseCommit: string,
-    acknowledgement = 'DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION',
-  ) => writeFileSync(join(root, 'env.txt'), [
-    `CONFIRM_PRODUCTION_DEPLOY=${acknowledgement}`,
-    'PRODUCTION_RELEASE_BRANCH=codex/release-test',
-    `PRODUCTION_RELEASE_COMMIT=${releaseCommit}`,
-    '',
-  ].join('\n'))
-
-  writeReleaseIntent(commit, 'yes')
-  const unacknowledged = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
-  })
-  assert.notEqual(unacknowledged.status, 0)
-  assert.match(
-    `${unacknowledged.stdout}\n${unacknowledged.stderr}`,
-    /DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION/,
+  const git = (...args: string[]) => execFileSync(
+    'git',
+    ['-c', `core.hooksPath=${hooks}`, '-C', root, ...args],
+    { cwd: tmpdir(), stdio: 'pipe', env: gitEnvironment },
   )
 
-  writeReleaseIntent(commit)
-  const verified = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
-  })
-  assert.equal(verified.status, 0, verified.stderr || verified.stdout)
-  assert.match(verified.stdout, /release branch and commit verified/i)
-  assert.doesNotMatch(verified.stdout, /vercel ok|porkbun ok/i)
-
-  writeFileSync(join(root, 'untracked.txt'), 'dirty\n')
-  const dirty = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
-  })
-  assert.notEqual(dirty.status, 0)
-  assert.match(`${dirty.stdout}\n${dirty.stderr}`, /worktree.*clean/i)
-
-  unlinkSync(join(root, 'untracked.txt'))
-  writeReleaseIntent('0'.repeat(40))
-  const wrongCommit = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
-  })
-  assert.notEqual(wrongCommit.status, 0)
-})
-
-test('deploy settings are parsed as inert data and shell syntax fails before release proof', () => {
-  assert.doesNotMatch(deployScript, /(?:^|[;&]\s*)\.?\s*source\s+env\.txt|\.\s*<\(/m)
-  assert.match(deployScript, /load_deploy_settings/)
-  assert.match(deployScript, /unexpected key in env\.txt/)
-
-  const root = mkdtempSync(join(tmpdir(), '1f3d9-deploy-data-'))
-  mkdirSync(join(root, 'scripts'))
-  copyFileSync(new URL('../scripts/deploy.sh', import.meta.url), join(root, 'scripts', 'deploy.sh'))
-  writeFileSync(join(root, 'README.md'), 'release fixture\n')
-  writeFileSync(join(root, '.gitignore'), 'env.txt\n')
-
-  const git = (...args: string[]) => execFileSync('git', args, {
-    cwd: root,
+  execFileSync('git', ['-c', `core.hooksPath=${hooks}`, 'init', '--bare', '-q', remote], {
+    cwd: tmpdir(),
     stdio: 'pipe',
-    env: withoutGitHookEnvironment(),
+    env: gitEnvironment,
   })
-  git('init', '-q')
-  git('config', 'user.email', 'release-test@example.invalid')
-  git('config', 'user.name', 'Release Test')
-  git('checkout', '-q', '-b', 'codex/release-test')
-  git('add', '.gitignore', 'README.md', 'scripts/deploy.sh')
-  git('commit', '-q', '-m', 'test release')
-  const commit = git('rev-parse', 'HEAD').toString().trim()
-  const marker = join(root, 'shell-command-ran')
-
-  const maliciousFiles = [
-    [
-      'CONFIRM_PRODUCTION_DEPLOY=DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION',
-      'PRODUCTION_RELEASE_BRANCH=$(touch shell-command-ran)',
-      `PRODUCTION_RELEASE_COMMIT=${commit}`,
-    ],
-    [
-      'CONFIRM_PRODUCTION_DEPLOY=DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION',
-      'PRODUCTION_RELEASE_BRANCH=codex/release-test',
-      `PRODUCTION_RELEASE_COMMIT=${commit}`,
-      'touch shell-command-ran',
-    ],
-  ]
-
-  for (const lines of maliciousFiles) {
-    writeFileSync(join(root, 'env.txt'), `${lines.join('\n')}\n`)
-    const result = spawnSync('bash', ['scripts/deploy.sh', '--verify-release-only'], {
-      cwd: root,
-      encoding: 'utf8',
-      env: withoutGitHookEnvironment(),
-    })
-    assert.notEqual(result.status, 0)
-    assert.equal(existsSync(marker), false, 'env.txt content executed as shell code')
-    assert.doesNotMatch(result.stdout, /vercel ok|porkbun ok/i)
-  }
-})
-
-test('a failed Postgres or browser release gate stops before every provider command', () => {
-  const root = mkdtempSync(join(tmpdir(), '1f3d9-deploy-test-gates-'))
-  const bin = mkdtempSync(join(tmpdir(), '1f3d9-deploy-test-bin-'))
+  const bashRemoteRoot = spawnSync('bash', ['-lc', 'pwd'], {
+    cwd: remoteRoot,
+    encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
+  }).stdout.trim()
   mkdirSync(join(root, 'scripts'))
   mkdirSync(join(root, 'node_modules'))
   copyFileSync(new URL('../scripts/deploy.sh', import.meta.url), join(root, 'scripts', 'deploy.sh'))
   writeFileSync(join(root, 'README.md'), 'release fixture\n')
-  writeFileSync(join(root, '.gitignore'), 'env.txt\n')
+  git('init', '-q', '--initial-branch=agent/release-test')
+  git('config', '--local', 'user.email', 'release-test@example.invalid')
+  git('config', '--local', 'user.name', 'Release Test')
+  git('add', 'README.md', 'scripts/deploy.sh')
+  git('commit', '-q', '-m', 'test release')
+  git('remote', 'add', 'origin', remote)
+  git('push', '-q', '-u', 'origin', 'HEAD')
+  git('remote', 'set-url', 'origin', `${bashRemoteRoot}/origin.git`)
 
   const npmStub = join(bin, 'npm')
-  const providerStub = (name: string) => join(bin, name)
   writeFileSync(npmStub, [
     '#!/usr/bin/env bash',
     'printf "npm %s\\n" "$*" >> "$TEST_COMMAND_LOG"',
-    '[ "${FAIL_GATE:-}" = "postgres" ] && [ "$*" = "run test:postgres" ] && exit 41',
-    '[ "${FAIL_GATE:-}" = "e2e" ] && [ "$*" = "run test:e2e" ] && exit 42',
     'exit 0',
     '',
   ].join('\n'))
-  for (const name of ['npx', 'curl']) {
-    writeFileSync(providerStub(name), [
-      '#!/usr/bin/env bash',
-      `printf "PROVIDER ${name} %s\\n" "$*" >> "$TEST_COMMAND_LOG"`,
-      'exit 99',
-      '',
-    ].join('\n'))
-  }
-  for (const name of ['npm', 'npx', 'curl']) chmodSync(join(bin, name), 0o755)
-  const bashBin = spawnSync('bash', ['-lc', 'pwd'], { cwd: bin, encoding: 'utf8' }).stdout.trim()
-
-  const git = (...args: string[]) => execFileSync('git', args, {
-    cwd: root,
-    stdio: 'pipe',
+  chmodSync(npmStub, 0o755)
+  const bashBin = spawnSync('bash', ['-lc', 'pwd'], {
+    cwd: bin,
+    encoding: 'utf8',
     env: withoutGitHookEnvironment(),
-  })
-  git('init', '-q')
-  git('config', 'user.email', 'release-test@example.invalid')
-  git('config', 'user.name', 'Release Test')
-  git('checkout', '-q', '-b', 'codex/release-test')
-  git('add', '.gitignore', 'README.md', 'scripts/deploy.sh')
-  git('commit', '-q', '-m', 'test release')
-  const commit = git('rev-parse', 'HEAD').toString().trim()
-  writeFileSync(join(root, 'env.txt'), [
-    'CONFIRM_PRODUCTION_DEPLOY=DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION',
-    'PRODUCTION_RELEASE_BRANCH=codex/release-test',
-    `PRODUCTION_RELEASE_COMMIT=${commit}`,
-    'VERCEL_TOKEN=test-token',
-    'PORKBUN_API_KEY=pk1_test',
-    'PORKBUN_SECRET_KEY=sk1_test',
+  }).stdout.trim()
+  const bashRoot = spawnSync('bash', ['-lc', 'pwd'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
+  }).stdout.trim()
+  const wrapper = join(bin, 'run-prepare.sh')
+  writeFileSync(wrapper, [
+    '#!/usr/bin/env bash',
+    `PATH=${JSON.stringify(bashBin)}:$PATH`,
+    'export PATH',
+    `TEST_COMMAND_LOG=${JSON.stringify(`${bashBin}/npm.log`)}`,
+    'export TEST_COMMAND_LOG',
+    `cd ${JSON.stringify(bashRoot)}`,
+    'bash scripts/deploy.sh --prepare',
     '',
   ].join('\n'))
+  chmodSync(wrapper, 0o755)
 
-  const wrapper = join(bin, 'run-deploy-gate-test.sh')
-  for (const failedGate of ['postgres', 'e2e']) {
-    const commandLog = join(bin, `${failedGate}.log`)
-    writeFileSync(wrapper, [
-      '#!/usr/bin/env bash',
-      `PATH=${JSON.stringify(bashBin)}:$PATH`,
-      'export PATH',
-      `TEST_COMMAND_LOG=${JSON.stringify(`${bashBin}/${failedGate}.log`)}`,
-      'export TEST_COMMAND_LOG',
-      `FAIL_GATE=${failedGate}`,
-      'export FAIL_GATE',
-      `cd ${JSON.stringify(
-        spawnSync('bash', ['-lc', 'pwd'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
-      )}`,
-      'bash scripts/deploy.sh',
-      '',
-    ].join('\n'))
-    const result = spawnSync('bash', [`${bashBin}/run-deploy-gate-test.sh`], {
+  return {
+    root,
+    commandLog,
+    git,
+    run: () => spawnSync('bash', [`${bashBin}/run-prepare.sh`], {
       cwd: root,
       encoding: 'utf8',
       env: withoutGitHookEnvironment(),
-    })
-    assert.notEqual(result.status, 0)
-    const commands = readFileSync(commandLog, 'utf8')
-    assert.match(commands, new RegExp(`npm run test:${failedGate}`))
-    assert.doesNotMatch(commands, /PROVIDER/)
+    }),
   }
+}
+
+test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', () => {
+  const fixture = createPreparationFixture()
+  const result = spawnSync('bash', ['scripts/deploy.sh'], {
+    cwd: fixture.root,
+    encoding: 'utf8',
+    env: withoutGitHookEnvironment(),
+  })
+
+  assert.notEqual(result.status, 0)
+  assert.match(`${result.stdout}\n${result.stderr}`, /--prepare/)
+  assert.match(`${result.stdout}\n${result.stderr}`, /merge[^\n]*main/i)
+  assert.equal(existsSync(fixture.commandLog), false)
+})
+
+test('preparation proves a clean GitHub branch and runs every local gate without deploying', () => {
+  const fixture = createPreparationFixture()
+  const result = fixture.run()
+
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.match(result.stdout, /did not deploy/i)
+  assert.match(result.stdout, /merge[^\n]*main/i)
+  const commands = readFileSync(fixture.commandLog, 'utf8')
+  for (const command of ['npm test', 'npm run typecheck', 'npm run test:postgres', 'npm run test:e2e']) {
+    assert.match(commands, new RegExp(`^${command}$`, 'm'))
+  }
+})
+
+test('dirty or not-pushed work stops before any preparation gate', () => {
+  const dirty = createPreparationFixture()
+  writeFileSync(join(dirty.root, 'untracked.txt'), 'not reviewed\n')
+  const dirtyResult = dirty.run()
+  assert.notEqual(dirtyResult.status, 0)
+  assert.match(`${dirtyResult.stdout}\n${dirtyResult.stderr}`, /worktree.*clean/i)
+  assert.equal(existsSync(dirty.commandLog), false)
+
+  const unpushed = createPreparationFixture()
+  writeFileSync(join(unpushed.root, 'README.md'), 'new unpushed commit\n')
+  unpushed.git('add', 'README.md')
+  unpushed.git('commit', '-q', '-m', 'unpushed')
+  const unpushedResult = unpushed.run()
+  assert.notEqual(unpushedResult.status, 0)
+  assert.match(`${unpushedResult.stdout}\n${unpushedResult.stderr}`, /pushed.*origin/i)
+  assert.equal(existsSync(unpushed.commandLog), false)
 })
 
 test('production migration requires a real Neon snapshot configuration and exact acknowledgement', () => {
   const productionUrl = 'postgres://role@example.neon.tech/db'
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'production'], {
+    () => resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
       PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
     }),
     /APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION/,
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'production'], {
+    () => resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
       PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
@@ -410,14 +318,14 @@ test('production migration requires a real Neon snapshot configuration and exact
   )
 
   assert.throws(
-    () => resolveMigrationRun(['--target', 'production'], {
+    () => resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
       PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
       CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
     }),
     /NEON_API_KEY/,
   )
 
-  const run = resolveMigrationRun(['--target', 'production'], {
+  const run = resolveMigrationRun(['--target', 'production', '--migration', 'hosted-chat-signin'], {
     PRODUCTION_DATABASE_URL_UNPOOLED: productionUrl,
     CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
     NEON_API_KEY: 'secret-neon-key',
@@ -431,10 +339,7 @@ test('production migration requires a real Neon snapshot configuration and exact
     branchId: 'branch-one',
     name: 'oauth-release-1',
   })
-  assert.deepEqual(run.migrationFiles, [
-    'db/migrations/20260813_hosted_chat_signin.sql',
-    'db/migrations/20260814_agreement_accession.sql',
-  ])
+  assert.equal(run.migrationFile, 'db/migrations/20260813_hosted_chat_signin.sql')
 })
 
 test('the full local schema can run only against an acknowledged loopback database', () => {
@@ -452,10 +357,10 @@ test('the full local schema can run only against an acknowledged loopback databa
     }),
     /CONFIRM_LOCAL_SCHEMA/,
   )
-  assert.deepEqual(resolveMigrationRun(['--target', 'local'], {
+  assert.equal(resolveMigrationRun(['--target', 'local'], {
     ...acknowledged,
     LOCAL_DATABASE_URL_UNPOOLED: 'postgres://role@127.0.0.1/db',
-  }).migrationFiles, ['db/schema.sql'])
+  }).migrationFile, 'db/schema.sql')
 })
 
 test('production snapshot must be created and confirmed before migration can proceed', async () => {
@@ -615,6 +520,13 @@ test('migration target must be named explicitly', () => {
   )
 })
 
+test('remote migration file must be named explicitly', () => {
+  assert.throws(
+    () => resolveMigrationRun(['--target', 'preview'], {}),
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession/,
+  )
+})
+
 test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
   const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
   assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -658,6 +570,34 @@ test('the agreement-accession migration is additive, idempotent, and leaves old 
   )
 })
 
+test('agreement accession is selected as one separate preview or production migration', () => {
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'agreement-accession'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260814_agreement_accession.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'agreement-accession'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'agreement-accession-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260814_agreement_accession.sql')
+})
+
 test('fresh installs contain every reviewed release migration statement', () => {
   const normalize = (statement: string) => statement
     .replace(/^\s*--.*$/gm, '')
@@ -681,6 +621,57 @@ test('fresh installs contain every reviewed release migration statement', () => 
 test('package commands name preview and production migrations explicitly', () => {
   assert.equal(packageJson.scripts.migrate, undefined)
   assert.match(packageJson.scripts['migrate:local'] ?? '', /--target local$/)
-  assert.match(packageJson.scripts['migrate:preview'] ?? '', /--target preview$/)
-  assert.match(packageJson.scripts['migrate:production'] ?? '', /--target production$/)
+  assert.match(packageJson.scripts['migrate:preview'] ?? '', /--target preview --migration hosted-chat-signin$/)
+  assert.match(packageJson.scripts['migrate:production'] ?? '', /--target production --migration hosted-chat-signin$/)
+  assert.match(packageJson.scripts['migrate:preview:world-root-expand'] ?? '', /--migration world-root-expand$/)
+  assert.match(packageJson.scripts['migrate:preview:world-root-topology'] ?? '', /--migration world-root-topology$/)
+  assert.match(packageJson.scripts['migrate:production:world-root-expand'] ?? '', /--migration world-root-expand$/)
+  assert.match(packageJson.scripts['migrate:production:world-root-topology'] ?? '', /--migration world-root-topology$/)
+  assert.match(packageJson.scripts['migrate:preview:agreement-accession'] ?? '', /--target preview --migration agreement-accession$/)
+  assert.match(packageJson.scripts['migrate:production:agreement-accession'] ?? '', /--target production --migration agreement-accession$/)
+})
+
+test('public pagination indexes are an explicitly selected additive release', () => {
+  const paginationMigration = readFileSync(
+    new URL('../db/migrations/20260814_public_pagination.sql', import.meta.url),
+    'utf8',
+  )
+  const uncommented = paginationMigration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(paginationMigration)
+
+  assert.equal(statements.length, 10)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
+  for (const statement of statements) {
+    const executable = statement.replace(/^\s*--.*$/gm, '').trim()
+    assert.match(executable, /^CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/i)
+  }
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'public-pagination'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260814_public_pagination.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'public-pagination'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'public-pagination-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260814_public_pagination.sql')
+
+  assert.match(packageJson.scripts['migrate:preview:public-pagination'] ?? '', /--target preview --migration public-pagination$/)
+  assert.match(packageJson.scripts['migrate:production:public-pagination'] ?? '', /--target production --migration public-pagination$/)
 })

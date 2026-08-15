@@ -31,6 +31,7 @@ async function createTalkNote(
     WITH permitted_place AS (
       SELECT id FROM places
       WHERE id = $1 AND (owner_id = $2 OR open_to_notes)
+        AND owner_id IS NOT NULL
     ), spent_quota AS (
       UPDATE residents SET notes_today = notes_today + 1
       WHERE id = $2 AND notes_today < $3

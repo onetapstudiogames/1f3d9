@@ -6,9 +6,19 @@ import { neon } from '@neondatabase/serverless'
 
 type SqlMode = 'normal' | 'single-quote' | 'double-quote' | 'line-comment' | 'block-comment' | 'dollar-quote'
 type MigrationTarget = 'local' | 'preview' | 'production'
+type RemoteMigration =
+  | 'hosted-chat-signin'
+  | 'world-root-expand'
+  | 'world-root-topology'
+  | 'public-pagination'
+  | 'agreement-accession'
+
 type MigrationFile =
   | 'db/schema.sql'
   | 'db/migrations/20260813_hosted_chat_signin.sql'
+  | 'db/migrations/20260814_world_root_expand.sql'
+  | 'db/migrations/20260814_world_root_topology.sql'
+  | 'db/migrations/20260814_public_pagination.sql'
   | 'db/migrations/20260814_agreement_accession.sql'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
@@ -16,7 +26,7 @@ type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 export type MigrationRun = Readonly<{
   target: MigrationTarget
   databaseUrl: string
-  migrationFiles: readonly MigrationFile[]
+  migrationFile: MigrationFile
   preview?: Readonly<{
     projectId: string
     branchId: string
@@ -32,15 +42,34 @@ export type MigrationRun = Readonly<{
 const PRODUCTION_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION'
 const PREVIEW_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW'
 const LOCAL_ACKNOWLEDGEMENT = 'APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE'
+const WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT = 'REPARENT_CONTINENTS_UNDER_UNOWNED_WORLD_ROOT'
 const NEON_ID = /^[a-z0-9-]{1,60}$/
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
+const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
+  'hosted-chat-signin': 'db/migrations/20260813_hosted_chat_signin.sql',
+  'world-root-expand': 'db/migrations/20260814_world_root_expand.sql',
+  'world-root-topology': 'db/migrations/20260814_world_root_topology.sql',
+  'public-pagination': 'db/migrations/20260814_public_pagination.sql',
+  'agreement-accession': 'db/migrations/20260814_agreement_accession.sql',
+}
 
-function targetArgument(args: readonly string[]): string | undefined {
-  const joined = args.find(argument => argument.startsWith('--target='))
-  if (joined) return joined.slice('--target='.length)
+function namedArgument(args: readonly string[], name: string): string | undefined {
+  const prefix = `--${name}=`
+  const joined = args.find(argument => argument.startsWith(prefix))
+  if (joined) return joined.slice(prefix.length)
 
-  const index = args.indexOf('--target')
+  const index = args.indexOf(`--${name}`)
   return index === -1 ? undefined : args[index + 1]
+}
+
+function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
+  const requested = namedArgument(args, 'migration')
+  if (!requested || !(requested in REMOTE_MIGRATIONS)) {
+    throw new Error(
+      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession',
+    )
+  }
+  return requested as RemoteMigration
 }
 
 function requireDirectPostgresUrl(value: string | undefined, variableName: string): string {
@@ -85,13 +114,16 @@ export function resolveMigrationRun(
   args: readonly string[],
   environment: MigrationEnvironment,
 ): MigrationRun {
-  const requestedTarget = targetArgument(args)
+  const requestedTarget = namedArgument(args, 'target')
   if (!['local', 'preview', 'production'].includes(requestedTarget ?? '')) {
     throw new Error('migration requires --target local|preview|production')
   }
 
   const target = requestedTarget as MigrationTarget
   if (target === 'local') {
+    if (namedArgument(args, 'migration')) {
+      throw new Error('local migration always applies db/schema.sql and does not accept --migration')
+    }
     if (environment.CONFIRM_LOCAL_SCHEMA !== LOCAL_ACKNOWLEDGEMENT) {
       throw new Error(`local migration requires CONFIRM_LOCAL_SCHEMA=${LOCAL_ACKNOWLEDGEMENT}`)
     }
@@ -103,8 +135,19 @@ export function resolveMigrationRun(
           'LOCAL_DATABASE_URL_UNPOOLED',
         ),
       ),
-      migrationFiles: ['db/schema.sql'],
+      migrationFile: 'db/schema.sql',
     }
+  }
+
+  const migration = remoteMigrationArgument(args)
+  const migrationFile = REMOTE_MIGRATIONS[migration]
+  if (
+    migration === 'world-root-topology' &&
+    environment.CONFIRM_WORLD_ROOT_TOPOLOGY !== WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      `world-root topology requires CONFIRM_WORLD_ROOT_TOPOLOGY=${WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT}`,
+    )
   }
 
   if (target === 'preview') {
@@ -132,10 +175,7 @@ export function resolveMigrationRun(
         environment.PREVIEW_DATABASE_URL_UNPOOLED,
         'PREVIEW_DATABASE_URL_UNPOOLED',
       ),
-      migrationFiles: [
-        'db/migrations/20260813_hosted_chat_signin.sql',
-        'db/migrations/20260814_agreement_accession.sql',
-      ],
+      migrationFile,
       preview: { projectId, branchId, productionBranchId },
     }
   }
@@ -157,10 +197,7 @@ export function resolveMigrationRun(
       environment.PRODUCTION_DATABASE_URL_UNPOOLED,
       'PRODUCTION_DATABASE_URL_UNPOOLED',
     ),
-    migrationFiles: [
-      'db/migrations/20260813_hosted_chat_signin.sql',
-      'db/migrations/20260814_agreement_accession.sql',
-    ],
+    migrationFile,
     snapshot: {
       projectId: requiredIdentifier(environment.NEON_PROJECT_ID, 'NEON_PROJECT_ID'),
       branchId: requiredIdentifier(environment.NEON_PRODUCTION_BRANCH_ID, 'NEON_PRODUCTION_BRANCH_ID'),
@@ -472,9 +509,23 @@ export async function applyMigration(databaseUrl: string, ddl: string): Promise<
   const statements = splitSqlStatements(ddl)
   if (statements.length === 0) throw new Error('migration contains no SQL statements')
 
+  const beginsTransaction = /^BEGIN(?:\s+(?:WORK|TRANSACTION))?$/i.test(statements[0]!)
+  const commitsTransaction = /^COMMIT(?:\s+(?:WORK|TRANSACTION))?$/i.test(statements.at(-1)!)
+  if (beginsTransaction !== commitsTransaction) {
+    throw new Error('migration transaction boundary is incomplete')
+  }
+
+  const runnableStatements = beginsTransaction ? statements.slice(1, -1) : statements
+  if (runnableStatements.length === 0) throw new Error('migration contains no SQL statements')
+  if (runnableStatements.some(statement =>
+    /^(?:BEGIN|COMMIT|ROLLBACK)(?:\s+(?:WORK|TRANSACTION))?$/i.test(statement)
+  )) {
+    throw new Error('migration contains an unexpected transaction boundary')
+  }
+
   const sql = neon(databaseUrl)
   await sql.transaction(transaction =>
-    statements.map(statement => transaction.query(statement)),
+    runnableStatements.map(statement => transaction.query(statement)),
   )
   return statements.length
 }
@@ -498,13 +549,9 @@ async function main(): Promise<void> {
     console.log(`verified production snapshot ${snapshotId}`)
   }
 
-  const ddl = run.migrationFiles
-    .map(migrationFile => readFileSync(new URL(`../${migrationFile}`, import.meta.url), 'utf8'))
-    .join('\n\n')
+  const ddl = readFileSync(new URL(`../${run.migrationFile}`, import.meta.url), 'utf8')
   const statementCount = await applyMigration(run.databaseUrl, ddl)
-  console.log(
-    `applied ${statementCount} statements from ${run.migrationFiles.join(', ')} to ${run.target}`,
-  )
+  console.log(`applied ${statementCount} statements from ${run.migrationFile} to ${run.target}`)
 }
 
 const entrypoint = process.argv[1]

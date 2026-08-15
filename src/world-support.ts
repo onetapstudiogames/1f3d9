@@ -37,8 +37,8 @@ export interface PlaceRow {
   parent_id: number | null
   name: string
   description: string
-  owner_id: number
-  owner: string
+  owner_id: number | null
+  owner: string | null
   open_to_building: boolean
   open_to_things: boolean
   open_to_notes: boolean
@@ -46,6 +46,11 @@ export interface PlaceRow {
   things?: number
   notes?: number
   created_at: string
+}
+
+export interface PlaceTreeRow extends PlaceRow {
+  [key: string]: unknown
+  children: PlaceTreeRow[]
 }
 
 export interface KindRow {
@@ -176,7 +181,7 @@ export function setPaymentHeader(c: Context, fee: FeePayment): void {
 export function buildPlaceTree(
   rows: PlaceRow[],
   parentId: number | null,
-): Array<PlaceRow & { children: unknown[] }> {
+): PlaceTreeRow[] {
   return rows
     .filter(row => (row.parent_id == null ? null : Number(row.parent_id)) === parentId)
     .map(row => ({ ...row, children: buildPlaceTree(rows, Number(row.id)) }))

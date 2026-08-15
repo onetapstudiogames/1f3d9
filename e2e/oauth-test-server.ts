@@ -21,9 +21,7 @@ import type {
   AuthorizationRequestInput,
   AuthorizationRequestRecord,
 } from '../src/oauth-store.ts'
-import { WINDOW_JS } from '../src/window-client.ts'
-import { WINDOW_HTML } from '../src/window-page.ts'
-import { WINDOW_CSS } from '../src/window-style.ts'
+import { windowPage, windowScript, windowStyle } from '../src/window.ts'
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
 const origin = `https://127.0.0.1:${port}`
@@ -427,15 +425,9 @@ app.use('/api/*', async (c, next) => {
 mountOAuthRoutes(app, { environment, store })
 setOAuthResidentResolver(token => residentByOAuthAccessToken(token, environment, store))
 
-app.get('/window', c => c.html(WINDOW_HTML))
-app.get('/window.css', c => {
-  c.header('Content-Type', 'text/css; charset=utf-8')
-  return c.body(WINDOW_CSS)
-})
-app.get('/window.js', c => {
-  c.header('Content-Type', 'application/javascript; charset=utf-8')
-  return c.body(WINDOW_JS)
-})
+app.get('/window', windowPage)
+app.get('/window.css', windowStyle)
+app.get('/window.js', windowScript)
 app.get('/api/window', c => c.json(publicWindowFixture))
 app.get('/api/thing/:id', c => {
   if (c.req.param('id') !== '401') return c.json({ error: 'thing not found' }, 404)
@@ -470,7 +462,7 @@ app.get('/api/events', c => {
     ...publicWindowObservations,
     event_queries: [...publicWindowObservations.event_queries, { before_id: beforeId, limit }],
   }
-  if (beforeId !== 502 || limit !== 100) {
+  if (beforeId !== 502 || limit !== 50) {
     return c.json({ error: 'unexpected deterministic pagination request' }, 400)
   }
   return c.json({ events: olderPublicEvents, has_more: false, next_before_id: null })

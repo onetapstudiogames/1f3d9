@@ -163,38 +163,36 @@ Preview migration requires the exact acknowledgement
 `CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW`, plus
 `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PREVIEW_BRANCH_ID`,
 `NEON_PRODUCTION_BRANCH_ID`, and `PREVIEW_DATABASE_URL_UNPOOLED`. The two branch IDs
-must differ. Before opening a database connection, `npm run migrate:preview` asks Neon's
-read-only endpoint API to prove that the URL is the direct read-write endpoint for that
-exact project and preview branch. It then applies the reviewed additive migrations in
-order: `db/migrations/20260813_hosted_chat_signin.sql`, followed by
-`db/migrations/20260814_agreement_accession.sql`.
+must differ. Before opening a database connection, each explicitly named preview
+migration asks Neon's read-only endpoint API to prove that the URL is the direct
+read-write endpoint for that exact project and preview branch. `npm run migrate:preview`
+applies only `db/migrations/20260813_hosted_chat_signin.sql`;
+`npm run migrate:preview:agreement-accession` separately applies only
+`db/migrations/20260814_agreement_accession.sql`. There is no automatic migration bundle.
 
 Production requires a real Neon snapshot, not a typed promise that one exists. The
 operator provides `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PRODUCTION_BRANCH_ID`, a safe
 `PRODUCTION_SNAPSHOT_NAME`, and `PRODUCTION_DATABASE_URL_UNPOOLED`, then sets
-`CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION` and runs
-`npm run migrate:production`. Before any write, the command asks Neon's read-only branch
+`CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION` and runs the one
+explicitly named command for the reviewed migration. `npm run migrate:production` names
+only the hosted-chat migration; `npm run migrate:production:agreement-accession` names
+only agreement accession. Before any write, the command asks Neon's read-only branch
 endpoint API to prove that the database hostname belongs to that exact project and branch.
 Only then does it create and verify the snapshot, open the database connection, and apply
-the same reviewed additive migration bundle in one transaction.
+that one migration in one transaction.
 
 The full fresh-install schema has no generic `npm run migrate` shortcut. It can run only
 as `npm run migrate:local`, with `LOCAL_DATABASE_URL_UNPOOLED` pointing to a loopback host
 and `CONFIRM_LOCAL_SCHEMA=APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE`.
 
-The ordinary `scripts/deploy.sh` command cannot run a migration or write preview
-configuration. Before it contacts a provider, writes a production setting, or deploys,
-it requires `CONFIRM_PRODUCTION_DEPLOY=DEPLOY_REVIEWED_COMMIT_TO_1F3D9_PRODUCTION`, an
-exact `PRODUCTION_RELEASE_BRANCH`, and the full `PRODUCTION_RELEASE_COMMIT`. The command
-parses `env.txt` as a strict allowlisted data file, never as shell code. It proves that it
-is on that branch at that commit and that the entire worktree is clean, then runs the
-ordinary tests, type check, real PostgreSQL rollback tests, and browser tests before its
-first provider call. It repeats the release proof immediately before production settings
-are written and immediately before deployment.
-`scripts/deploy.sh --verify-release-only` performs just this local proof and exits without
-network access. A real deploy forces the hosted-chat switch off unless the operator sets
-`PRESERVE_ENABLED_HOSTED_CHAT_SIGNIN=REAL_CLIENT_GATES_ALREADY_PASSED` after Release 1 has
-already passed its real-client gates.
+`scripts/deploy.sh` is preparation-only and accepts only `--prepare`. It cannot run a
+migration, change Vercel or Neon settings, or upload a local folder. It requires a clean
+non-`main` branch whose exact `HEAD` is already pushed to its matching `origin` branch,
+then runs the ordinary tests, type check, real PostgreSQL rollback tests, and browser
+tests. After those gates pass, open the GitHub pull request, verify its Vercel preview,
+and merge it into `main`. The linked Vercel project builds and ships that exact GitHub
+`main` commit. Production feature-switch or environment changes remain separate,
+explicit provider operations; the preparation script never changes them.
 
 ## Release 2: generated recovery codes
 

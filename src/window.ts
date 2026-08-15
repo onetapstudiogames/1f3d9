@@ -9,9 +9,17 @@ import {
   moderatePublicKinds,
   moderatePublicRows,
 } from './moderation-store.ts'
+import {
+  PUBLIC_PAGE_DEFAULT,
+  PUBLIC_PAGE_MAX,
+  finalizePublicPage,
+  parsePublicPage,
+  type PublicQueryExecutor,
+} from './public-pagination.ts'
 import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS, WINDOW_JS } from './window-client.ts'
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
+import { WORLD_ROOT_NAME } from './world-root.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -31,12 +39,12 @@ const WINDOW_CSP = [
 const SAFE_EVENT_KINDS = new Set(PUBLIC_EVENT_KINDS)
 const UNSAFE_PUBLIC_OUTPUT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u
 const WINDOW_LIMITS = Object.freeze({
-  places: 1_000,
-  residents: 2_000,
-  conversations: 1_000,
-  things: 1_000,
-  agreements: 100,
-  events: 100,
+  places: null,
+  residents: null,
+  conversations: PUBLIC_PAGE_DEFAULT,
+  things: PUBLIC_PAGE_DEFAULT,
+  agreements: PUBLIC_PAGE_DEFAULT,
+  events: PUBLIC_PAGE_DEFAULT,
 })
 
 // How many characters of a body survive the glass. WINDOW_LIMITS counts items;
@@ -78,8 +86,7 @@ interface PublicPlace {
   id: number
   parent_id: number | null
   name: string
-  description: string
-  owner: string
+  owner: string | null
   places: number
   things: number
   notes: number
@@ -217,16 +224,21 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
   const name = moderated
     ? MODERATED_PLACE_NAME
     : safePublicText(row.name, 120)?.text ?? ''
-  const description = moderated
-    ? ''
-    : safePublicText(row.description, 4_000, true)?.text ?? ''
-  const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : ''
-  if (!id || !name || !owner || (row.parent_id != null && !parentId)) return null
+  const owner = row.owner === null
+    ? null
+    : typeof row.owner === 'string' && HANDLE_RE.test(row.owner)
+      ? row.owner
+      : undefined
+  const isOwnerlessWorld = owner === null && row.parent_id === null && name === WORLD_ROOT_NAME
+  if (
+    !id || !name || owner === undefined ||
+    (owner === null && !isOwnerlessWorld) ||
+    (row.parent_id != null && !parentId)
+  ) return null
   return {
     id,
     parent_id: parentId,
     name,
-    description,
     owner,
     places: count(row.places),
     things: count(row.things),
@@ -270,7 +282,7 @@ export function publicWindowResidents(values: unknown[]): PublicResident[] {
     const currentPlaceId = row.current_place_id == null ? null : positiveInteger(row.current_place_id)
     if (!id || !handle || !joinedAt || (row.current_place_id != null && !currentPlaceId)) return []
     return [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt }]
-  }).slice(0, 2_000)
+  })
 }
 
 export function publicWindowNotes(values: unknown[]): PublicNote[] {
@@ -292,7 +304,7 @@ export function publicWindowNotes(values: unknown[]): PublicNote[] {
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
     }]
-  }).slice(0, 1_000)
+  }).slice(0, PUBLIC_PAGE_MAX)
 }
 
 export function publicWindowThings(values: unknown[]): PublicThing[] {
@@ -323,7 +335,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       kind_moderated: row.kind_moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
     }]
-  }).slice(0, 1_000)
+  }).slice(0, PUBLIC_PAGE_MAX)
 }
 
 export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
@@ -362,7 +374,7 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
     }]
-  }).slice(0, 100)
+  }).slice(0, PUBLIC_PAGE_MAX)
 }
 
 function publicWindowEvent(value: unknown) {
@@ -425,65 +437,102 @@ export function mergeWindowThingTraits(
   })
 }
 
-async function readWindowSnapshot() {
-  const [placeRows, residentRows, thingRows, noteRows, agreementRows, eventRows, totalRows] = await Promise.all([
-    sql.query(`
-      WITH RECURSIVE world AS (
-        SELECT id, parent_id, name, description, owner_id, ARRAY[id] AS path
-        FROM places WHERE parent_id IS NULL
-        UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.description,
-          child.owner_id, world.path || child.id
-        FROM places child JOIN world ON child.parent_id = world.id
-        WHERE NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
-      )
-      SELECT world.id, world.parent_id, world.name, world.description, residents.handle AS owner,
-        (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
-        (SELECT count(*)::int FROM things thing
-          WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
-        (SELECT count(*)::int FROM notes note WHERE note.place_id = world.id) AS notes,
-        coalesce(moderation.action = 'remove', false) AS moderated
-      FROM world JOIN residents ON residents.id = world.owner_id
-      LEFT JOIN LATERAL (
-        SELECT action FROM moderation_actions
-        WHERE target_type = 'place' AND target_id = world.id
-        ORDER BY created_at DESC, id DESC LIMIT 1
-      ) moderation ON true
-      ORDER BY world.path LIMIT 1000
-    `),
-    sql`
-      SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at
-      FROM residents resident
-      LEFT JOIN resident_presence presence ON presence.resident_id = resident.id
-      ORDER BY resident.joined_at, resident.id
-      LIMIT 2000
-    `,
-    sql`
-      SELECT thing.id, thing.place_id, thing.name, thing.body, owner.handle AS owner,
-        thing.kind_id, thing.current_revision, kind.name AS kind,
-        coalesce(revision.traits, '{}'::text[]) AS traits,
-        thing.created_at
-      FROM things thing
-      JOIN residents owner ON owner.id = thing.owner_id
-      LEFT JOIN kinds kind ON kind.id = thing.kind_id
-      LEFT JOIN kind_revisions revision
-        ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
-      WHERE thing.withdrawn_at IS NULL
-      ORDER BY thing.created_at DESC, thing.id DESC
-      LIMIT 1000
-    `,
-    sql`
-      WITH ranked_notes AS (
-        SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
-          row_number() OVER (PARTITION BY note.place_id ORDER BY note.created_at DESC, note.id DESC) AS place_rank
+const WINDOW_HISTORY_KEYS = new Set([
+  'collection', 'before_id', 'limit', 'place_id', 'resident',
+])
+const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements'])
+
+export interface WindowHistoryQuery {
+  readonly collection: 'notes' | 'things' | 'agreements'
+  readonly beforeId: number | null
+  readonly limit: number
+  readonly placeId: number | null
+  readonly resident: string | null
+}
+
+function oneWindowQueryValue(
+  queries: Readonly<Record<string, readonly string[]>>,
+  name: string,
+): string | null | undefined {
+  const values = queries[name]
+  if (values === undefined) return undefined
+  return values.length === 1 ? values[0] ?? null : null
+}
+
+export function parseWindowHistoryQuery(
+  queries: Readonly<Record<string, readonly string[]>>,
+): WindowHistoryQuery | null {
+  if (Object.keys(queries).some(key => !WINDOW_HISTORY_KEYS.has(key))) return null
+  if (Object.values(queries).some(values => values.length !== 1)) return null
+
+  const collection = oneWindowQueryValue(queries, 'collection')
+  if (!collection || !WINDOW_HISTORY_COLLECTIONS.has(collection)) return null
+  const page = parsePublicPage(queries, 'before_id', 'limit')
+  if (!page.ok) return null
+
+  const placeValue = oneWindowQueryValue(queries, 'place_id')
+  const parsedPlaceId = /^\d+$/.test(placeValue ?? '') ? positiveInteger(placeValue) : null
+  const placeId = placeValue === undefined
+    ? null
+    : parsedPlaceId !== null && parsedPlaceId <= 2_147_483_647 ? parsedPlaceId : null
+  if (placeValue !== undefined && placeId === null) return null
+
+  const residentValue = oneWindowQueryValue(queries, 'resident')
+  const resident = residentValue === undefined
+    ? null
+    : typeof residentValue === 'string' && HANDLE_RE.test(residentValue) ? residentValue : null
+  if (residentValue !== undefined && resident === null) return null
+  if (collection === 'agreements' && placeId !== null) return null
+
+  return Object.freeze({
+    collection: collection as WindowHistoryQuery['collection'],
+    beforeId: page.cursor,
+    limit: page.limit,
+    placeId,
+    resident,
+  })
+}
+
+export interface WindowCollectionStatement {
+  readonly text: string
+  readonly values: readonly unknown[]
+}
+
+export function windowCollectionStatement(options: WindowHistoryQuery): WindowCollectionStatement {
+  const fetchLimit = options.limit + 1
+  if (options.collection === 'notes') {
+    return Object.freeze({
+      text: `SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
         FROM notes note JOIN residents author ON author.id = note.author_id
-      )
-      SELECT id, place_id, author, body, created_at
-      FROM ranked_notes WHERE place_rank <= 100
-      ORDER BY created_at DESC, id DESC LIMIT 1000
-    `,
-    sql`
-      WITH public_agreements AS (
+        WHERE ($1::integer IS NULL OR note.id < $1::integer)
+          AND ($2::integer IS NULL OR note.place_id = $2::integer)
+          AND ($3::text IS NULL OR author.handle = $3::text)
+        ORDER BY note.id DESC
+        LIMIT $4::integer`,
+      values: Object.freeze([options.beforeId, options.placeId, options.resident, fetchLimit]),
+    })
+  }
+  if (options.collection === 'things') {
+    return Object.freeze({
+      text: `SELECT thing.id, thing.place_id, thing.name, thing.body, owner.handle AS owner,
+          thing.kind_id, thing.current_revision, kind.name AS kind,
+          coalesce(revision.traits, '{}'::text[]) AS traits, thing.created_at
+        FROM things thing
+        JOIN residents owner ON owner.id = thing.owner_id
+        LEFT JOIN kinds kind ON kind.id = thing.kind_id
+        LEFT JOIN kind_revisions revision
+          ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
+        WHERE thing.withdrawn_at IS NULL
+          AND ($1::integer IS NULL OR thing.id < $1::integer)
+          AND ($2::integer IS NULL OR thing.place_id = $2::integer)
+          AND ($3::text IS NULL OR owner.handle = $3::text)
+        ORDER BY thing.id DESC
+        LIMIT $4::integer`,
+      values: Object.freeze([options.beforeId, options.placeId, options.resident, fetchLimit]),
+    })
+  }
+  return Object.freeze({
+    text: `WITH public_agreements AS (
         SELECT agreement.id, agreement.body, creator.handle AS created_by,
           EXISTS (
             SELECT 1 FROM agreement_accession_openings opening
@@ -520,16 +569,159 @@ async function readWindowSnapshot() {
           agreement.created_at
         FROM agreements agreement
         JOIN residents creator ON creator.id = agreement.created_by_id
+        WHERE ($1::integer IS NULL OR agreement.id < $1::integer)
+          AND ($2::text IS NULL OR creator.handle = $2::text OR EXISTS (
+            SELECT 1 FROM agreement_parties membership
+            JOIN residents party ON party.id = membership.resident_id
+            WHERE membership.agreement_id = agreement.id AND party.handle = $2::text
+          ))
       )
       SELECT id, body, created_by, parties, party_count, acceded, signatures, accession_open,
         NOT complete AS open, created_at
-      FROM public_agreements ORDER BY created_at DESC, id DESC LIMIT 100
-    `,
+      FROM public_agreements ORDER BY id DESC LIMIT $3::integer`,
+    values: Object.freeze([options.beforeId, options.resident, fetchLimit]),
+  })
+}
+
+const executePublicQuery: PublicQueryExecutor = async (text, params) => (
+  await sql.query(text, [...params]) as readonly Record<string, unknown>[]
+)
+
+export async function loadWindowCollectionRows(
+  options: WindowHistoryQuery,
+  query: PublicQueryExecutor = executePublicQuery,
+): Promise<readonly Record<string, unknown>[]> {
+  const statement = windowCollectionStatement(options)
+  return query(statement.text, statement.values)
+}
+
+interface WindowCollectionPage {
+  readonly items: readonly (PublicNote | PublicThing | PublicAgreement)[]
+  readonly hasMore: boolean
+  readonly nextBeforeId: number | null
+}
+
+export async function readWindowCollectionPage(
+  options: WindowHistoryQuery,
+  query: PublicQueryExecutor = executePublicQuery,
+): Promise<WindowCollectionPage> {
+  const rows = await loadWindowCollectionRows(options, query)
+  const rawPage = finalizePublicPage(
+    rows as readonly (Record<string, unknown> & { id: number })[],
+    options.limit,
+  )
+  let items: readonly (PublicNote | PublicThing | PublicAgreement)[]
+  if (options.collection === 'notes') {
+    const moderated = await moderatePublicRows(
+      'note',
+      [...rawPage.items] as Array<Record<string, unknown> & { id: number }>,
+    )
+    items = publicWindowNotes([...moderated])
+  } else if (options.collection === 'things') {
+    const rawThings = [...rawPage.items]
+    const [details, facets] = await Promise.all([
+      moderatePlaceDetails(rawThings, []),
+      moderatePublicKinds(kindFacets(rawThings)),
+    ])
+    items = publicWindowThings(mergeWindowThingTraits(
+      details.things as readonly Record<string, unknown>[],
+      facets as readonly Record<string, unknown>[],
+    ))
+  } else {
+    const moderated = await moderatePublicRows(
+      'agreement',
+      [...rawPage.items] as Array<Record<string, unknown> & { id: number }>,
+    )
+    items = publicWindowAgreements([...moderated])
+  }
+  return Object.freeze({
+    items: Object.freeze(items),
+    hasMore: rawPage.hasMore,
+    nextBeforeId: rawPage.nextCursor,
+  })
+}
+
+async function readWindowEventPage(
+  query: PublicQueryExecutor = executePublicQuery,
+) {
+  const pageRequest = Object.freeze({
+    cursor: null,
+    limit: PUBLIC_PAGE_DEFAULT,
+    fetchLimit: PUBLIC_PAGE_DEFAULT + 1,
+  })
+  const rows = await query(
+    `SELECT id, at, kind, actor, detail
+     FROM events
+     WHERE kind = ANY($1::text[])
+     ORDER BY id DESC
+     LIMIT $2::integer`,
+    [PUBLIC_EVENT_KINDS, pageRequest.fetchLimit],
+  )
+  const rawPage = finalizePublicPage(
+    rows as readonly (Record<string, unknown> & { id: number })[],
+    pageRequest.limit,
+  )
+  const moderated = await moderatePublicEvents([...rawPage.items])
+  return Object.freeze({
+    items: Object.freeze(moderated.map(publicWindowEvent).filter(event => event !== null)),
+    hasMore: rawPage.hasMore,
+    nextBeforeId: rawPage.nextCursor,
+  })
+}
+
+const defaultWindowHistoryQuery = (
+  collection: WindowHistoryQuery['collection'],
+): WindowHistoryQuery => Object.freeze({
+  collection,
+  beforeId: null,
+  limit: PUBLIC_PAGE_DEFAULT,
+  placeId: null,
+  resident: null,
+})
+
+async function readWindowSnapshot() {
+  const [
+    placeRows,
+    residentRows,
+    notePage,
+    thingPage,
+    agreementPage,
+    eventPage,
+    totalRows,
+  ] = await Promise.all([
+    sql.query(`
+      WITH RECURSIVE world AS (
+        SELECT id, parent_id, name, owner_id, ARRAY[id] AS path
+        FROM places WHERE parent_id IS NULL
+        UNION ALL
+        SELECT child.id, child.parent_id, child.name, child.owner_id, world.path || child.id
+        FROM places child JOIN world ON child.parent_id = world.id
+        WHERE NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
+      )
+      SELECT world.id, world.parent_id, world.name, residents.handle AS owner,
+        (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
+        (SELECT count(*)::int FROM things thing
+          WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
+        (SELECT count(*)::int FROM notes note WHERE note.place_id = world.id) AS notes,
+        coalesce(moderation.action = 'remove', false) AS moderated
+      FROM world LEFT JOIN residents ON residents.id = world.owner_id
+      LEFT JOIN LATERAL (
+        SELECT action FROM moderation_actions
+        WHERE target_type = 'place' AND target_id = world.id
+        ORDER BY created_at DESC, id DESC LIMIT 1
+      ) moderation ON true
+      ORDER BY world.path
+    `),
     sql`
-      SELECT id, at, kind, actor, detail
-      FROM events WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
-      ORDER BY id DESC LIMIT 100
+      SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at
+      FROM residents resident
+      LEFT JOIN resident_presence presence ON presence.resident_id = resident.id
+      ORDER BY resident.joined_at, resident.id
     `,
+    readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
+    readWindowCollectionPage(defaultWindowHistoryQuery('things')),
+    readWindowCollectionPage(defaultWindowHistoryQuery('agreements')),
+    readWindowEventPage(),
     sql`
       SELECT
         (SELECT count(*)::int FROM places) AS places,
@@ -542,25 +734,12 @@ async function readWindowSnapshot() {
     `,
   ])
 
-  const rawThings = thingRows as Record<string, unknown>[]
-  const [publicEvents, publicNotes, publicAgreements, publicThingDetails, publicFacets] = await Promise.all([
-    moderatePublicEvents(eventRows as Record<string, unknown>[]),
-    moderatePublicRows('note', noteRows as Array<Record<string, unknown> & { id: number }>),
-    moderatePublicRows('agreement', agreementRows as Array<Record<string, unknown> & { id: number }>),
-    moderatePlaceDetails(rawThings, []),
-    moderatePublicKinds(kindFacets(rawThings)),
-  ])
-  const thingsWithSafeTraits = mergeWindowThingTraits(
-    publicThingDetails.things as readonly Record<string, unknown>[],
-    publicFacets as readonly Record<string, unknown>[],
-  )
-
   const places = publicPlaceTree(placeRows as unknown[])
   const residents = publicWindowResidents(residentRows as unknown[])
-  const notes = publicWindowNotes([...publicNotes])
-  const things = publicWindowThings(thingsWithSafeTraits)
-  const agreements = publicWindowAgreements([...publicAgreements])
-  const events = publicEvents.map(publicWindowEvent).filter(event => event !== null)
+  const notes = notePage.items as readonly PublicNote[]
+  const things = thingPage.items as readonly PublicThing[]
+  const agreements = agreementPage.items as readonly PublicAgreement[]
+  const events = eventPage.items
   const shown = {
     places: (placeRows as unknown[]).length,
     residents: residents.length,
@@ -576,6 +755,12 @@ async function readWindowSnapshot() {
     things,
     agreements,
     events,
+    pages: {
+      notes: { has_more: notePage.hasMore, next_before_id: notePage.nextBeforeId },
+      things: { has_more: thingPage.hasMore, next_before_id: thingPage.nextBeforeId },
+      agreements: { has_more: agreementPage.hasMore, next_before_id: agreementPage.nextBeforeId },
+      events: { has_more: eventPage.hasMore, next_before_id: eventPage.nextBeforeId },
+    },
     totals: publicWindowTotals(
       (totalRows as Record<string, unknown>[])[0] ?? {},
       shown,
@@ -604,7 +789,6 @@ async function cachedWindowSnapshot() {
 }
 
 export async function windowSnapshot(c: Context) {
-  const url = new URL(c.req.url)
   const hasCredentials = [
     'authorization',
     'proxy-authorization',
@@ -612,11 +796,25 @@ export async function windowSnapshot(c: Context) {
     'x-payment',
     'x-api-key',
   ].some(name => Boolean(c.req.header(name)))
-  if (url.search || hasCredentials) {
-    return c.json({ error: 'the public city window accepts no query or credential data' }, 400)
+  const queries = c.req.queries()
+  harden(c)
+  if (hasCredentials) {
+    return c.json({ error: 'the public city window accepts no credential data' }, 400)
+  }
+  if (Object.keys(queries).length) {
+    const request = parseWindowHistoryQuery(queries)
+    if (!request) {
+      return c.json({ error: 'invalid public window history query' }, 400)
+    }
+    const page = await readWindowCollectionPage(request)
+    c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+    return c.json({
+      [request.collection]: page.items,
+      has_more: page.hasMore,
+      next_before_id: page.nextBeforeId,
+    })
   }
   const snapshot = await cachedWindowSnapshot()
-  harden(c)
   c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
   return c.json(snapshot)
 }

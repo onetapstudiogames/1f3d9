@@ -35,6 +35,7 @@ const EXISTING_TOOL_NAMES = [
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
 ] as const
+const PUBLIC_ANONYMOUS_TOOL_NAMES = ['register', 'look'] as const
 
 const PROTECTED_TOOL_NAMES = [
   'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
@@ -86,6 +87,23 @@ function createHarness() {
   }
 }
 
+function createAuthenticatedLookHarness(payload: Record<string, unknown>) {
+  const city = new Hono()
+  city.get('/api/place/:id', c => {
+    if (c.req.header('authorization') !== `Bearer ${OAUTH_ACCESS_TOKEN}`) {
+      return c.json({ error: 'A valid resident sign-in is required.' }, 401)
+    }
+    return c.json(payload)
+  })
+
+  const gateway = new Hono()
+  gateway.post('/mcp/connect', c => mcp(c, city, {
+    hostedChat: true,
+    forwardUnauthorizedStatus: false,
+  }))
+  return gateway
+}
+
 async function rpc(
   app: Hono,
   method: string,
@@ -104,8 +122,8 @@ async function rpc(
   return response.json() as Promise<Record<string, unknown>>
 }
 
-async function listTools(app: Hono, path = '/mcp/connect'): Promise<ToolDefinition[]> {
-  const response = await rpc(app, 'tools/list', undefined, undefined, path) as {
+async function listTools(app: Hono, path = '/mcp/connect', authorization?: string): Promise<ToolDefinition[]> {
+  const response = await rpc(app, 'tools/list', undefined, authorization, path) as {
     result: { tools: ToolDefinition[] }
   }
   return response.result.tools
@@ -177,7 +195,10 @@ test('feature on turns a missing resident sign-in into an MCP OAuth challenge', 
 test('feature off keeps the original tools and legacy bearer-header flow unchanged', async () => {
   setHostedChatFlag(false)
   const harness = createHarness()
-  const tools = await listTools(harness.gateway, '/mcp')
+  const anonymousTools = await listTools(harness.gateway, '/mcp')
+  assert.deepEqual(anonymousTools.map(tool => tool.name), PUBLIC_ANONYMOUS_TOOL_NAMES)
+
+  const tools = await listTools(harness.gateway, '/mcp', `Bearer ${LEGACY_SECRET}`)
 
   assert.deepEqual(tools.map(tool => tool.name), EXISTING_TOOL_NAMES)
   assert.equal(tools.every(tool => tool.securitySchemes === undefined), true)
@@ -198,10 +219,29 @@ test('feature off keeps the original tools and legacy bearer-header flow unchang
   assert.equal(harness.forwardedAuthorization(), `Bearer ${LEGACY_SECRET}`)
 })
 
+test('feature off public door says to use /mcp/connect for sign-in instead of pretending a protected tool worked', async () => {
+  setHostedChatFlag(false)
+  const { gateway } = createHarness()
+  const response = await rpc(
+    gateway,
+    'tools/call',
+    { name: 'me', arguments: {} },
+    undefined,
+    '/mcp',
+  ) as { result: ToolResult }
+
+  assert.equal(response.result.isError, true)
+  const text = response.result.content[0]?.text ?? ''
+  assert.match(text, /public 1F3D9 MCP door/i)
+  assert.match(text, /https:\/\/1f3d9\.com\/mcp\b/)
+  assert.match(text, /https:\/\/1f3d9\.com\/mcp\/connect\b/)
+  assert.equal(response.result._meta?.['mcp/www_authenticate'], undefined)
+})
+
 test('agreement tools make later accession an explicit author opt-in', async () => {
   setHostedChatFlag(false)
   const { gateway } = createHarness()
-  const tools = await listTools(gateway, '/mcp')
+  const tools = await listTools(gateway, '/mcp', `Bearer ${LEGACY_SECRET}`)
 
   const agree = toolByName(tools, 'agree')
   const accessionProperty = agree.inputSchema.properties?.accession_open as
@@ -358,4 +398,132 @@ test('OAuth credentials and browser-session fields are rejected without reflecti
     assert.doesNotMatch(JSON.stringify(response), new RegExp(value, 'i'), field)
   }
   assert.equal(harness.noteCalls(), 0)
+})
+
+test('hosted look redacts only a credential-bearing note body and preserves the place response', async () => {
+  setHostedChatFlag(true)
+  const residentKey = `1f3d9_sk_${'ef'.repeat(24)}`
+  const accessToken = `1f3d9_at_${'34'.repeat(32)}`
+  const unsafeNote56 = {
+    id: 56,
+    place_id: 2,
+    author: 'guard-test-owner',
+    body: `pre-publish guard fixture ${residentKey}`,
+    created_at: '2026-08-14T15:00:00.000Z',
+  }
+  const unsafeNote57 = {
+    id: 57,
+    place_id: 2,
+    author: 'guard-test-owner',
+    body: `second pre-publish guard fixture ${accessToken}`,
+    created_at: '2026-08-14T15:01:00.000Z',
+  }
+  const unsafeNote58 = {
+    id: 58,
+    place_id: 2,
+    author: 'guard-test-owner',
+    body: `credential followed by lowercase hex ${residentKey}a`,
+    created_at: '2026-08-14T15:01:30.000Z',
+  }
+  const unsafeNote59 = {
+    id: 59,
+    place_id: 2,
+    author: 'guard-test-owner',
+    body: `credential followed by uppercase hex ${accessToken}F`,
+    created_at: '2026-08-14T15:01:45.000Z',
+  }
+  const formatNote = {
+    id: 49,
+    place_id: 2,
+    author: 'documentarian',
+    body: 'A resident key starts with 1f3d9_sk_...; this is not a credential.',
+    created_at: '2026-08-14T14:59:00.000Z',
+  }
+  const safeNote = {
+    id: 60,
+    place_id: 2,
+    author: 'neighbor',
+    body: 'The square remains readable.',
+    created_at: '2026-08-14T15:02:00.000Z',
+  }
+  const placePayload = {
+    place: {
+      id: 2,
+      parent_id: 1,
+      name: 'the square',
+      description: 'The public center of the city.',
+      owner_id: null,
+      owner: null,
+      labels: ['meeting-place'],
+      laws: [],
+    },
+    subplaces: [{ id: 3, parent_id: 2, name: 'the waystation' }],
+    things: [{
+      id: 313,
+      place_id: 2,
+      name: 'credential safety guide',
+      body: 'The format 1f3d9_at_... is safe to name when no token follows it.',
+    }],
+    notes: [formatNote, unsafeNote56, unsafeNote57, unsafeNote58, unsafeNote59, safeNote],
+  }
+  const gateway = createAuthenticatedLookHarness(placePayload)
+
+  const response = await rpc(
+    gateway,
+    'tools/call',
+    { name: 'look', arguments: { place_id: 2 } },
+    `Bearer ${OAUTH_ACCESS_TOKEN}`,
+  ) as { result: ToolResult }
+
+  assert.equal(response.result.isError, false)
+  const text = response.result.content[0]?.text ?? ''
+  const parsed = JSON.parse(text) as typeof placePayload
+  const redactedBody56 = parsed.notes[1]?.body
+  const redactedBody57 = parsed.notes[2]?.body
+  const redactedBody58 = parsed.notes[3]?.body
+  const redactedBody59 = parsed.notes[4]?.body
+  assert.match(redactedBody56 ?? '', /redacted.*resident credential/i)
+  assert.match(redactedBody57 ?? '', /redacted.*resident credential/i)
+  assert.match(redactedBody58 ?? '', /redacted.*resident credential/i)
+  assert.match(redactedBody59 ?? '', /redacted.*resident credential/i)
+  assert.deepEqual(parsed, {
+    ...placePayload,
+    notes: [
+      formatNote,
+      { ...unsafeNote56, body: redactedBody56 },
+      { ...unsafeNote57, body: redactedBody57 },
+      { ...unsafeNote58, body: redactedBody58 },
+      { ...unsafeNote59, body: redactedBody59 },
+      safeNote,
+    ],
+  })
+  assert.doesNotMatch(JSON.stringify(response), new RegExp(residentKey, 'i'))
+  assert.doesNotMatch(JSON.stringify(response), new RegExp(accessToken, 'i'))
+})
+
+test('hosted look still fails closed when a credential survives outside a note body', async () => {
+  setHostedChatFlag(true)
+  const residentKey = `1f3d9_sk_${'12'.repeat(24)}`
+  const gateway = createAuthenticatedLookHarness({
+    place: {
+      id: 2,
+      name: 'the square',
+      description: `unsafe place description ${residentKey}`,
+    },
+    subplaces: [],
+    things: [],
+    notes: [{ id: 58, place_id: 2, author: 'neighbor', body: 'Safe public note.' }],
+  })
+
+  const response = await rpc(
+    gateway,
+    'tools/call',
+    { name: 'look', arguments: { place_id: 2 } },
+    `Bearer ${OAUTH_ACCESS_TOKEN}`,
+  ) as { result: ToolResult }
+
+  assert.equal(response.result.isError, true)
+  assert.match(response.result.content[0]?.text ?? '', /withheld.*resident credential/i)
+  assert.doesNotMatch(JSON.stringify(response), new RegExp(residentKey, 'i'))
+  assert.doesNotMatch(JSON.stringify(response), /Safe public note\./)
 })

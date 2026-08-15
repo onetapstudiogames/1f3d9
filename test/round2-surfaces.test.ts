@@ -39,9 +39,16 @@ async function callTool(
 }
 
 test('MCP advertises every round-two control without accepting bearer arguments', async () => {
-  const response = await mcpRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  const response = await mcpRequest(
+    { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+    'Bearer resident-secret',
+  )
   const payload = await response.json() as {
-    result: { tools: Array<{ name: string; inputSchema: { properties?: Record<string, unknown> } }> }
+    result: { tools: Array<{
+      name: string
+      description: string
+      inputSchema: { properties?: Record<string, unknown> }
+    }> }
   }
   const tools = payload.result.tools
   const names = tools.map(tool => tool.name)
@@ -56,9 +63,86 @@ test('MCP advertises every round-two control without accepting bearer arguments'
     MAX_CRAFT_INGREDIENTS,
   )
   const look = tools.find(tool => tool.name === 'look')!
-  assert.ok('before_note_id' in (look.inputSchema.properties ?? {}))
-  assert.ok('note_limit' in (look.inputSchema.properties ?? {}))
+  for (const property of [
+    'before_subplace_id', 'subplace_limit',
+    'before_thing_id', 'thing_limit',
+    'before_note_id', 'note_limit',
+  ]) assert.ok(property in (look.inputSchema.properties ?? {}), `${property} should be advertised`)
+  assert.match(look.description, /recent.*default/i)
+  assert.match(look.description, /continue|older/i)
+  const me = tools.find(tool => tool.name === 'me')!
+  for (const singular of ['place', 'thing', 'kind', 'agreement', 'note', 'offer']) {
+    assert.ok(`before_${singular}_id` in (me.inputSchema.properties ?? {}))
+    assert.ok(`${singular}_limit` in (me.inputSchema.properties ?? {}))
+  }
+  assert.match(me.description, /recent.*default/i)
   assert.equal(tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
+})
+
+test('MCP look forwards independent place cursors without accepting credentials in arguments', async () => {
+  const app = new Hono()
+  app.post('/mcp', c => mcp(c, app))
+  app.all('/api/*', c => c.json({
+    path: c.req.path,
+    query: c.req.query(),
+    authorization: c.req.header('authorization'),
+  }))
+
+  const result = await callTool(app, 'look', {
+    place_id: 9,
+    before_subplace_id: 51,
+    subplace_limit: 12,
+    before_thing_id: 61,
+    thing_limit: 13,
+    before_note_id: 71,
+    note_limit: 14,
+  })
+  assert.equal(result.result.isError, false)
+  const dispatched = JSON.parse(result.result.content[0]!.text) as {
+    path: string
+    query: Record<string, string>
+    authorization: string
+  }
+  assert.deepEqual(dispatched, {
+    path: '/api/place/9',
+    query: {
+      before_subplace_id: '51',
+      subplace_limit: '12',
+      before_thing_id: '61',
+      thing_limit: '13',
+      before_note_id: '71',
+      note_limit: '14',
+    },
+    authorization: 'Bearer resident-secret',
+  })
+
+  const rejected = await callTool(app, 'look', { place_id: 9, token: 0 })
+  assert.equal(rejected.result.isError, true)
+  assert.match(rejected.result.content[0]!.text, /authorization header/i)
+})
+
+test('MCP me forwards every independent holdings cursor', async () => {
+  const app = new Hono()
+  app.post('/mcp', c => mcp(c, app))
+  app.all('/api/*', c => c.json({ path: c.req.path, query: c.req.query() }))
+  const args = {
+    before_place_id: 11, place_limit: 21,
+    before_thing_id: 12, thing_limit: 22,
+    before_kind_id: 13, kind_limit: 23,
+    before_agreement_id: 14, agreement_limit: 24,
+    before_note_id: 15, note_limit: 25,
+    before_offer_id: 16, offer_limit: 26,
+  }
+  const result = await callTool(app, 'me', args)
+  assert.equal(result.result.isError, false)
+  const dispatched = JSON.parse(result.result.content[0]!.text) as {
+    path: string
+    query: Record<string, string>
+  }
+  assert.equal(dispatched.path, '/api/me')
+  assert.deepEqual(dispatched.query, Object.fromEntries(
+    Object.entries(args).map(([key, value]) => [key, String(value)]),
+  ))
 })
 
 test('round-two discovery text names the frozen vocabulary, canonical routes, and observation rule', () => {
@@ -118,7 +202,7 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
     }
   }
 
-  const rejected = await callTool(app, 'act', { action: 'go_home', token: 'do-not-forward' })
+  const rejected = await callTool(app, 'act', { action: 'go_home', token: 0 })
   assert.equal(rejected.result.isError, true)
   assert.match(rejected.result.content[0]!.text, /authorization header/i)
 })
@@ -143,7 +227,6 @@ test('the window vocabulary covers round-two history and a removed place becomes
     id: 7,
     parent_id: null,
     name: '[removed by maintainer]',
-    description: '',
     owner: 'tiny-lantern',
     places: 1,
     things: 2,

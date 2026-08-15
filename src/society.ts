@@ -15,11 +15,21 @@ import {
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { runTalkNoteAction } from './note-action.ts'
+import { WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
+import {
+  finalizePublicPage,
+  parsePublicPage,
+  singlePublicQueryValue,
+  type PublicQueryExecutor,
+} from './public-pagination.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const NOTE_CHARACTERS = 4_000
 const AGREEMENT_BYTES = 65_536
 const MAX_PARTIES = 32
+
+const executePublicQuery: PublicQueryExecutor = async (text, params) =>
+  await sql.query(text, [...params]) as Record<string, unknown>[]
 
 const ASSETS = {
   place: { table: 'places', transferable: '' },
@@ -32,7 +42,7 @@ type JsonObject = Record<string, unknown>
 
 interface OwnerRow {
   id: number
-  owner_id: number
+  owner_id: number | null
   active_offer_id?: number | null
 }
 
@@ -177,10 +187,18 @@ export function mountSocietyRoutes(app: Hono): void {
     if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
 
     const places = await sql`
-      SELECT id, owner_id, open_to_notes FROM places WHERE id = ${placeId}
-    ` as { id: number; owner_id: number; open_to_notes: boolean }[]
+      SELECT id, parent_id, owner_id, open_to_notes FROM places WHERE id = ${placeId}
+    ` as {
+      id: number
+      parent_id: number | null
+      owner_id: number | null
+      open_to_notes: boolean
+    }[]
     const place = places[0]
     if (!place) return err(c, 404, 'no such place')
+    if (place.parent_id === null && place.owner_id === null) {
+      return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
+    }
     if (place.owner_id !== resident.id && !place.open_to_notes)
       return err(c, 403, 'this place is not open to notes')
     await resolveDueEffects(placeId)
@@ -440,13 +458,21 @@ export function mountSocietyRoutes(app: Hono): void {
   })
 
   app.get('/api/agreements', async c => {
-    const party = c.req.query('party')
-    const openValue = c.req.query('open')
+    const queries = c.req.queries()
+    const parsed = parsePublicPage(queries, 'before_id', 'limit')
+    if (!parsed.ok) return err(c, 400, parsed.error)
+    const partyValue = singlePublicQueryValue(queries, 'party')
+    if (!partyValue.ok) return err(c, 400, partyValue.error)
+    const openQueryValue = singlePublicQueryValue(queries, 'open')
+    if (!openQueryValue.ok) return err(c, 400, openQueryValue.error)
+    const party = partyValue.value
+    const openValue = openQueryValue.value
     if (party != null && !HANDLE_RE.test(party)) return err(c, 400, 'bad party handle')
     if (openValue != null && openValue !== 'true' && openValue !== 'false')
       return err(c, 400, 'open must be true or false')
     const open = openValue == null ? null : openValue === 'true'
-    const rows = await sql`
+    const rows = await executePublicQuery(`
+      /* public:agreements */
       WITH public_agreements AS (
         SELECT a.id, a.body, creator.handle AS created_by,
           EXISTS(SELECT 1 FROM agreement_accession_openings opening
@@ -468,12 +494,20 @@ export function mountSocietyRoutes(app: Hono): void {
       SELECT id, body, created_by, parties, acceded, signatures, accession_open,
         NOT complete AS open, created_at
       FROM public_agreements
-      WHERE (${party ?? null}::text IS NULL OR ${party ?? null} = ANY(parties))
-        AND (${open}::boolean IS NULL OR (NOT complete) = ${open})
-      ORDER BY created_at DESC, id DESC LIMIT 200
-    ` as Record<string, unknown>[]
-    const agreements = rows.map(agreementState)
-    return c.json({ agreements: await moderatePublicRows('agreement', agreements) })
+      WHERE ($1::text IS NULL OR $1::text = ANY(parties))
+        AND ($2::boolean IS NULL OR (NOT complete) = $2::boolean)
+        AND ($3::integer IS NULL OR id < $3::integer)
+      ORDER BY id DESC LIMIT $4::integer
+    `, [party ?? null, open, parsed.cursor, parsed.fetchLimit])
+    const page = finalizePublicPage(
+      rows as Array<Record<string, unknown> & { id: number }>, parsed.limit,
+    )
+    const agreements = page.items.map(agreementState)
+    return c.json({
+      agreements: await moderatePublicRows('agreement', agreements),
+      has_more: page.hasMore,
+      next_before_id: page.nextCursor,
+    })
   })
 
   app.post('/api/transfer', async c => {
@@ -491,6 +525,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
     const asset = await ownerOf(type, id)
     if (!asset) return err(c, 404, `no such ${type}`)
+    if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may transfer it`)
     if (asset.active_offer_id != null || await openOffer(type, id))
       return err(c, 409, 'this asset already has an open transfer offer')
@@ -528,7 +563,7 @@ export function mountSocietyRoutes(app: Hono): void {
           ), new_event AS (
             INSERT INTO events (kind, actor, detail)
             SELECT 'transfer', $5, jsonb_build_object(
-              'transfer_id', t.id, 'asset_type', $1::text, 'asset_id', $2,
+              'transfer_id', t.id, 'asset_type', $1::text, 'asset_id', $2::integer,
               'from', $5::text, 'to', $6::text, 'mode', 'gift'
             ) FROM new_transfer t
           )
@@ -576,6 +611,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
     const asset = await ownerOf(type, id)
     if (!asset) return err(c, 404, `no such ${type}`)
+    if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may offer it`)
     if (asset.active_offer_id != null || await openOffer(type, id))
       return err(c, 409, 'this asset already has an open transfer offer')
@@ -842,8 +878,8 @@ export function mountSocietyRoutes(app: Hono): void {
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'sale', $10, jsonb_build_object(
-            'transfer_id', t.id, 'offer_id', $1, 'asset_type', $4::text,
-            'asset_id', $5, 'from', $11::text, 'to', $10::text,
+            'transfer_id', t.id, 'offer_id', $1::integer, 'asset_type', $4::text,
+            'asset_id', $5::integer, 'from', $11::text, 'to', $10::text,
             'price_usdc', $6::numeric, 'tx_hash', $8::text
           ) FROM new_transfer t
         )

@@ -13,10 +13,15 @@ import {
 } from './pay.ts'
 import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
 import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
-import { effectiveLaws, resolveDueEffects } from './engine.ts'
+import { effectiveLaws, residentPresence, resolveDueEffects } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
+import {
+  isWorldRootRow,
+  WORLD_ROOT_NAME,
+  WORLD_TRANSIT_ONLY_ERROR,
+} from './world-root.ts'
 import {
   buildPlaceTree,
   conflictMessage,
@@ -36,6 +41,15 @@ import {
   type PlaceRow,
   type ThingRow,
 } from './world-support.ts'
+import {
+  finalizePublicPage,
+  loadPublicPlaceCollectionRows,
+  parsePublicPage,
+  type PublicQueryExecutor,
+} from './public-pagination.ts'
+
+const executePublicQuery: PublicQueryExecutor = async (text, params) =>
+  await sql.query(text, [...params]) as Record<string, unknown>[]
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
   const rows = await sql`
@@ -73,7 +87,7 @@ export function mountWorldRoutes(app: Hono): void {
           WHERE thing.place_id = tree.id AND thing.withdrawn_at IS NULL) AS things,
         (SELECT count(*)::int FROM notes note WHERE note.place_id = tree.id) AS notes
       FROM place_tree tree
-      JOIN residents owner ON owner.id = tree.owner_id
+      LEFT JOIN residents owner ON owner.id = tree.owner_id
       ORDER BY tree.path
     `) as PlaceRow[]
     const publicRows = await moderatePublicRows('place', rows)
@@ -83,14 +97,13 @@ export function mountWorldRoutes(app: Hono): void {
   app.get('/api/place/:id', async c => {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
-    const rawBeforeNoteId = c.req.query('before_note_id')
-    const beforeNoteId = rawBeforeNoteId === undefined ? null : positiveId(rawBeforeNoteId)
-    if (rawBeforeNoteId !== undefined && !beforeNoteId) {
-      return err(c, 400, 'before_note_id must be a positive integer')
-    }
-    const rawNoteLimit = c.req.query('note_limit')
-    const noteLimit = rawNoteLimit === undefined ? 200 : positiveId(rawNoteLimit)
-    if (!noteLimit || noteLimit > 200) return err(c, 400, 'note_limit must be an integer from 1 to 200')
+    const query = c.req.queries()
+    const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit')
+    if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
+    const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit')
+    if (!thingRequest.ok) return err(c, 400, thingRequest.error)
+    const noteRequest = parsePublicPage(query, 'before_note_id', 'note_limit')
+    if (!noteRequest.ok) return err(c, 400, noteRequest.error)
     const observer = await auth(c)
     if (observer) await resolveDueEffects(id)
 
@@ -98,55 +111,55 @@ export function mountWorldRoutes(app: Hono): void {
       SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
       FROM places p
-      JOIN residents owner ON owner.id = p.owner_id
+      LEFT JOIN residents owner ON owner.id = p.owner_id
       WHERE p.id = ${id}
     `) as PlaceRow[]
     const place = places[0]
     if (!place) return err(c, 404, 'place not found')
 
-    const [subplaces, things, noteRows, labels, laws] = await Promise.all([
-      sql`
-        SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
-          p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
-        FROM places p JOIN residents owner ON owner.id = p.owner_id
-        WHERE p.parent_id = ${id} ORDER BY p.created_at, p.id
-      `,
-      sql`
-        SELECT t.id, t.place_id, t.name, t.body, t.owner_id, owner.handle AS owner,
-          t.kind_id, k.name AS kind, t.birth_revision, t.current_revision, t.created_at
-        FROM things t
-        JOIN residents owner ON owner.id = t.owner_id
-        LEFT JOIN kinds k ON k.id = t.kind_id
-        WHERE t.place_id = ${id} AND t.withdrawn_at IS NULL
-        ORDER BY t.created_at, t.id
-      `,
-      sql`
-        SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at
-        FROM notes n JOIN residents author ON author.id = n.author_id
-        WHERE n.place_id = ${id}
-          AND n.id < coalesce(${beforeNoteId}::bigint, 2147483648)
-        ORDER BY n.id DESC
-        LIMIT ${noteLimit + 1}
-      `,
+    const [collections, labels, laws] = await Promise.all([
+      loadPublicPlaceCollectionRows(executePublicQuery, id, {
+        subplaces: subplaceRequest,
+        things: thingRequest,
+        notes: noteRequest,
+      }),
       activePlaceLabels(id),
       effectiveLaws(id),
     ])
-    const hasMoreNotes = noteRows.length > noteLimit
-    const notes = noteRows.slice(0, noteLimit).reverse()
+    const subplacesPage = finalizePublicPage(
+      collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
+      subplaceRequest.limit,
+    )
+    const thingsPage = finalizePublicPage(
+      collections.things as unknown as readonly (ThingRow & { id: number })[],
+      thingRequest.limit,
+    )
+    const notesPage = finalizePublicPage(
+      collections.notes as Array<Record<string, unknown> & { id: number }>,
+      noteRequest.limit,
+    )
     const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
       moderatePublicRows('place', [place]),
-      moderatePublicRows('place', subplaces as Array<PlaceRow & { id: number }>),
-      moderatePlaceDetails(things as ThingRow[], laws),
-      moderatePublicRows('note', notes as Array<Record<string, unknown> & { id: number }>),
+      moderatePublicRows('place', subplacesPage.items),
+      moderatePlaceDetails(thingsPage.items, laws),
+      moderatePublicRows('note', notesPage.items),
     ])
     return c.json({
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       subplaces: publicSubplaces,
       things: publicDetails.things,
       notes: publicNotes,
+      subplaces_page: {
+        has_more: subplacesPage.hasMore,
+        next_before_subplace_id: subplacesPage.nextCursor,
+      },
+      things_page: {
+        has_more: thingsPage.hasMore,
+        next_before_thing_id: thingsPage.nextCursor,
+      },
       notes_page: {
-        has_more: hasMoreNotes,
-        next_before_note_id: hasMoreNotes ? Number((notes[0] as { id?: unknown } | undefined)?.id) || null : null,
+        has_more: notesPage.hasMore,
+        next_before_note_id: notesPage.nextCursor,
       },
     })
   })
@@ -205,17 +218,29 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'place permissions must be booleans')
     }
 
+    // Presence is established before either the free or paid founding path so
+    // founding can never recreate the old null-location entry shortcut.
+    await residentPresence(resident.id)
+
     if (parentId != null) {
       const parents = (await sql`
-        SELECT id, owner_id, open_to_building FROM places WHERE id = ${parentId}
-      `) as Array<{ id: number; owner_id: number; open_to_building: boolean }>
+        SELECT id, parent_id, place_kind, owner_id, open_to_building
+        FROM places WHERE id = ${parentId}
+      `) as Array<{
+        id: number
+        parent_id: number | null
+        place_kind: string
+        owner_id: number | null
+        open_to_building: boolean
+      }>
       const parent = parents[0]
       if (!parent) return err(c, 404, 'parent place not found')
-      if (parent.owner_id !== resident.id && !parent.open_to_building) {
+      if (isWorldRootRow(parent)) {
+        // An explicit world parent is the same paid frontier operation as the
+        // long-standing parent_id:null request. It is never a free build.
+      } else if (parent.owner_id !== resident.id && !parent.open_to_building) {
         return err(c, 403, 'this place does not permit visitors to build')
-      }
-
-      try {
+      } else try {
         const rows = (await sql`
           WITH permitted_parent AS (
             SELECT parent.id
@@ -225,23 +250,17 @@ export function mountWorldRoutes(app: Hono): void {
             FOR UPDATE
           ), new_place AS (
             INSERT INTO places (
-              parent_id, name, description, owner_id,
+              parent_id, place_kind, name, description, owner_id,
               open_to_building, open_to_things, open_to_notes
             )
-            SELECT permitted_parent.id, ${name}, ${description}, ${resident.id},
+            SELECT permitted_parent.id, 'place', ${name}, ${description}, ${resident.id},
               ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
             FROM permitted_parent
             RETURNING *
           ), new_presence AS (
             INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
             SELECT ${resident.id}, id, id FROM new_place
-            ON CONFLICT (resident_id) DO UPDATE SET
-              current_place_id = coalesce(resident_presence.current_place_id, EXCLUDED.current_place_id),
-              home_place_id = coalesce(resident_presence.home_place_id, EXCLUDED.home_place_id),
-              updated_at = CASE
-                WHEN resident_presence.current_place_id IS NULL OR resident_presence.home_place_id IS NULL
-                THEN now() ELSE resident_presence.updated_at
-              END
+            ON CONFLICT (resident_id) DO NOTHING
           ), new_event AS (
             INSERT INTO events (kind, actor, detail)
             SELECT 'place_created', ${resident.handle}, jsonb_build_object(
@@ -263,29 +282,40 @@ export function mountWorldRoutes(app: Hono): void {
     if (fee instanceof Response) return fee
     try {
       const rows = (await sql`
-        WITH payment_use AS (
+        WITH world_root AS MATERIALIZED (
+          SELECT root.id
+          FROM places root
+          WHERE root.parent_id IS NULL AND root.owner_id IS NULL
+            AND root.place_kind = 'world'
+            AND root.name = ${WORLD_ROOT_NAME}
+            AND (${parentId}::integer IS NULL OR root.id = ${parentId})
+          ORDER BY root.id LIMIT 1
+          FOR SHARE
+        ), world_root_parent AS MATERIALIZED (
+          SELECT id FROM world_root
+          UNION ALL
+          SELECT NULL::integer
+          WHERE ${body.parent_id === null}
+            AND NOT EXISTS (SELECT 1 FROM world_root)
+          LIMIT 1
+        ), payment_use AS (
           INSERT INTO payment_uses (tx_hash, purpose, actor_id)
-          VALUES (${fee.txHash}, 'frontier', ${resident.id})
+          SELECT ${fee.txHash}, 'frontier', ${resident.id}
+          FROM world_root_parent
           RETURNING tx_hash
         ), new_place AS (
           INSERT INTO places (
-            parent_id, name, description, owner_id,
+            parent_id, place_kind, name, description, owner_id,
             open_to_building, open_to_things, open_to_notes
           )
-          SELECT NULL, ${name}, ${description}, ${resident.id},
+          SELECT world_root_parent.id, 'continent', ${name}, ${description}, ${resident.id},
             ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
-          FROM payment_use
+          FROM payment_use CROSS JOIN world_root_parent
           RETURNING *
         ), new_presence AS (
           INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
           SELECT ${resident.id}, id, id FROM new_place
-          ON CONFLICT (resident_id) DO UPDATE SET
-            current_place_id = coalesce(resident_presence.current_place_id, EXCLUDED.current_place_id),
-            home_place_id = coalesce(resident_presence.home_place_id, EXCLUDED.home_place_id),
-            updated_at = CASE
-              WHEN resident_presence.current_place_id IS NULL OR resident_presence.home_place_id IS NULL
-              THEN now() ELSE resident_presence.updated_at
-            END
+          ON CONFLICT (resident_id) DO NOTHING
         ), new_fee AS (
           INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
           SELECT ${resident.id}, 'frontier', ${CLAIM_FEE_USDC}, payment_use.tx_hash
@@ -300,7 +330,7 @@ export function mountWorldRoutes(app: Hono): void {
         SELECT new_place.*, ${resident.handle}::text AS owner FROM new_place
       `) as PlaceRow[]
       const place = rows[0]
-      if (!place) return err(c, 409, 'frontier founding could not be completed')
+      if (!place) return err(c, 409, 'world root changed before frontier founding; retry')
       setPaymentHeader(c, fee)
       return c.json({ place, fee_tx: fee.txHash }, 201)
     } catch (error) {
@@ -341,12 +371,13 @@ export function mountWorldRoutes(app: Hono): void {
       WHERE p.id = ${id}
     `) as Array<{
       id: number
-      owner_id: number
+      owner_id: number | null
       active_offer_id: number | null
       has_open_offer?: boolean
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, 'place not found')
+    if (existing.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the place owner may edit it')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'place cannot be edited while it has an open sale offer')
@@ -399,7 +430,10 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/kinds', async c => {
-    const kinds = (await sql`
+    const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+    if (!parsed.ok) return err(c, 400, parsed.error)
+    const rows = await executePublicQuery(`
+      /* public:kinds */
       SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
         revision.revision, revision.description, revision.traits, revision.recipe,
         k.created_at
@@ -407,9 +441,16 @@ export function mountWorldRoutes(app: Hono): void {
       JOIN residents owner ON owner.id = k.owner_id
       JOIN kind_revisions revision
         ON revision.kind_id = k.id AND revision.revision = k.current_revision
-      ORDER BY k.created_at, k.id
-    `) as KindRow[]
-    return c.json({ kinds: await moderatePublicKinds(kinds) })
+      WHERE ($1::integer IS NULL OR k.id < $1::integer)
+      ORDER BY k.id DESC
+      LIMIT $2::integer
+    `, [parsed.cursor, parsed.fetchLimit])
+    const page = finalizePublicPage(rows as unknown as readonly KindRow[], parsed.limit)
+    return c.json({
+      kinds: await moderatePublicKinds(page.items),
+      has_more: page.hasMore,
+      next_before_id: page.nextCursor,
+    })
   })
 
   app.post('/api/kind', async c => {
@@ -588,19 +629,30 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/traits', async c => {
-    const traits = await sql`
+    const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+    if (!parsed.ok) return err(c, 400, parsed.error)
+    const rows = await executePublicQuery(`
+      /* public:traits */
       SELECT trait.id, trait.name, trait.description, trait.recipe,
         (trait.recipe IS NOT NULL) AS mechanical,
         coiner.handle AS coiner, trait.created_at
       FROM traits trait
       JOIN residents coiner ON coiner.id = trait.coiner_id
-      ORDER BY trait.created_at, trait.id
-    `
+      WHERE ($1::integer IS NULL OR trait.id < $1::integer)
+      ORDER BY trait.id DESC
+      LIMIT $2::integer
+    `, [parsed.cursor, parsed.fetchLimit])
+    const page = finalizePublicPage(
+      rows as Array<Record<string, unknown> & { id: number }>,
+      parsed.limit,
+    )
     return c.json({
       traits: await moderatePublicRows(
         'trait',
-        traits as Array<Record<string, unknown> & { id: number }>,
+        page.items,
       ),
+      has_more: page.hasMore,
+      next_before_id: page.nextCursor,
     })
   })
 
@@ -673,10 +725,18 @@ export function mountWorldRoutes(app: Hono): void {
     }
 
     const placeRows = (await sql`
-      SELECT id, owner_id, open_to_things FROM places WHERE id = ${placeId}
-    `) as Array<{ id: number; owner_id: number; open_to_things: boolean }>
+      SELECT id, parent_id, place_kind, owner_id, open_to_things
+      FROM places WHERE id = ${placeId}
+    `) as Array<{
+      id: number
+      parent_id: number | null
+      place_kind: string
+      owner_id: number | null
+      open_to_things: boolean
+    }>
     const place = placeRows[0]
     if (!place) return err(c, 404, 'place not found')
+    if (isWorldRootRow(place)) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (place.owner_id !== resident.id && !place.open_to_things) {
       return err(c, 403, 'this place does not permit visitors to make things')
     }

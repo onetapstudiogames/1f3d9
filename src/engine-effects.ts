@@ -26,6 +26,7 @@ import {
   MAX_PENDING_EFFECTS_PER_PLACE,
   insertPendingEffect,
 } from './engine-timer-store.ts'
+import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 export const MAX_DUE_EFFECTS_PER_OBSERVATION = MAX_PENDING_EFFECTS_PER_PLACE
@@ -215,6 +216,12 @@ async function executeEffect(
 ): Promise<number> {
   if (effect.effect === 'label') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
+    if (target.type === 'place') {
+      const places = await queryRows<Record<string, unknown>>(db`
+        SELECT id, parent_id, place_kind, owner_id FROM places WHERE id = ${target.id}
+      `)
+      if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
+    }
     await queryRows(db`
       INSERT INTO active_labels (
         target_type, target_id, label, actor_id,
@@ -320,6 +327,7 @@ async function destroyThing(
         SELECT parent.id, parent.parent_id, parent.owner_id, ancestry.sovereign_owner
         FROM places parent JOIN ancestry ON parent.id = ancestry.parent_id
         WHERE parent.owner_id = ancestry.sovereign_owner
+          AND parent.place_kind <> 'world'
       ), latest AS (
         SELECT DISTINCT ON (change.place_id, change.trait_id)
           change.place_id, change.trait_id, change.change_type
@@ -696,7 +704,7 @@ async function recordEffectResolution(
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'effect_resolved', resident.handle,
-        jsonb_build_object('effect_id', resolution.pending_effect_id, 'status', ${status})
+        jsonb_build_object('effect_id', resolution.pending_effect_id, 'status', ${status}::text)
       FROM resolution
       JOIN pending_effects pending ON pending.id = resolution.pending_effect_id
       JOIN residents resident ON resident.id = pending.actor_id

@@ -97,6 +97,7 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
           FROM places place
           WHERE place.id = ${input.placeId}
             AND (place.owner_id = ${input.actor.id} OR place.open_to_things)
+            AND place.owner_id IS NOT NULL
           FOR UPDATE
         ), quota_spend AS (
           UPDATE residents SET things_today = things_today + 1
