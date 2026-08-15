@@ -8,6 +8,7 @@ env.txt
 .env.*
 !.env.example
 *.log
+backups/
 
 .vercel
 .env*

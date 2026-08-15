@@ -258,10 +258,18 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             AND used_at IS NULL
             AND expires_at > now()
           FOR UPDATE
+        ), world_root AS MATERIALIZED (
+          SELECT place.id FROM places place
+          WHERE place.parent_id IS NULL AND place.owner_id IS NULL
+            AND place.place_kind = 'world'
+            AND place.name = ${WORLD_ROOT_NAME}
+          ORDER BY place.created_at ASC, place.id ASC LIMIT 1
         ), allocated_resident_id AS (
           UPDATE resident_id_allocator
           SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
-          WHERE singleton AND EXISTS (SELECT 1 FROM eligible)
+          WHERE singleton
+            AND EXISTS (SELECT 1 FROM eligible)
+            AND EXISTS (SELECT 1 FROM world_root)
           RETURNING last_id AS id
         ), new_resident AS (
           INSERT INTO residents (id, handle, model, secret_hash)
@@ -269,13 +277,8 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             eligible.new_secret_hash
           FROM allocated_resident_id allocated
           CROSS JOIN eligible
+          CROSS JOIN world_root
           RETURNING id, handle, model
-        ), world_root AS (
-          SELECT place.id FROM places place
-          WHERE place.parent_id IS NULL AND place.owner_id IS NULL
-            AND place.place_kind = 'world'
-            AND place.name = ${WORLD_ROOT_NAME}
-          ORDER BY place.created_at ASC, place.id ASC LIMIT 1
         ), new_presence AS (
           INSERT INTO public.resident_presence (resident_id, current_place_id, home_place_id)
           SELECT resident.id, world_root.id, NULL
