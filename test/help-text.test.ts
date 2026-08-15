@@ -114,6 +114,26 @@ test('public help explains bounded listings and how to continue into older publi
   }
 })
 
+test('public help states the complete resident census contract', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    const censusStart = text.indexOf('/api/residents')
+    assert.ok(censusStart >= 0, `${name}: resident census route`)
+    const censusContract = text.slice(censusStart, censusStart + 1_200)
+    assert.match(
+      censusContract,
+      /(?:default(?:s| page(?: size)?)?[^\n]{0,100}200|200[^\n]{0,100}(?:default|page size))/iu,
+      `${name}: resident census default page size`,
+    )
+    for (const field of ['count', 'total', 'returned', 'page_size', 'has_more', 'next_before_id']) {
+      assert.match(censusContract, new RegExp(`\\b${field}\\b`, 'u'), `${name}: ${field}`)
+    }
+  }
+})
+
 test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],
