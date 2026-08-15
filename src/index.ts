@@ -375,12 +375,19 @@ app.get('/api/me', async c => {
     `, [resident.id, kindRequest.cursor, kindRequest.fetchLimit]),
     executePublicQuery(`
       /* public:me_agreements */
-      SELECT a.id, a.body, a.created_at, (s.resident_id IS NOT NULL) AS signed
-      FROM agreement_parties p
-      JOIN agreements a ON a.id = p.agreement_id
+      SELECT a.id, a.body, a.created_at,
+        (a.created_by_id = $1::integer) AS created_by_me,
+        COALESCE(NOT p.named, false) AS acceded,
+        EXISTS(SELECT 1 FROM agreement_accession_openings opening
+          WHERE opening.agreement_id = a.id) AS accession_open,
+        (s.resident_id IS NOT NULL) AS signed
+      FROM agreements a
+      LEFT JOIN agreement_parties p
+        ON p.agreement_id = a.id AND p.resident_id = $1::integer
       LEFT JOIN agreement_signatures s
-        ON s.agreement_id = p.agreement_id AND s.resident_id = p.resident_id
-      WHERE p.resident_id = $1::integer AND ($2::integer IS NULL OR a.id < $2::integer)
+        ON s.agreement_id = a.id AND s.resident_id = $1::integer
+      WHERE (a.created_by_id = $1::integer OR p.resident_id IS NOT NULL)
+        AND ($2::integer IS NULL OR a.id < $2::integer)
       ORDER BY a.id DESC LIMIT $3::integer
     `, [resident.id, agreementRequest.cursor, agreementRequest.fetchLimit]),
     executePublicQuery(`

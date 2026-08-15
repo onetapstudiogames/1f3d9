@@ -436,6 +436,10 @@ async function begin(app: Hono, url = authorizationUrl()): Promise<BrowserSessio
   const response = await app.request(url)
   assert.equal(response.status, 200)
   assertPrivate(response, true)
+  assert.match(
+    response.headers.get('content-security-policy') ?? '',
+    /form-action 'self' https:\/\/chat\.example\.test;/u,
+  )
   const setCookie = response.headers.get('set-cookie') ?? ''
   assert.match(setCookie, /^__Host-1f3d9_oauth=[^;]+;/)
   assert.match(setCookie, /; Path=\//i)
@@ -530,6 +534,22 @@ async function initialPair(app: Hono): Promise<TokenPair> {
   const { code } = await authorizeExisting(app)
   return readTokenPair(await exchangeCode(app, code))
 }
+
+test('authorization accepts a bounded language hint without relaxing unknown-field checks', async () => {
+  const { app } = fixture()
+  const localized = await app.request(authorizationUrl({ ui_locales: 'en-US' }))
+  assert.equal(localized.status, 200)
+  assertPrivate(localized, true)
+
+  const oversized = await app.request(authorizationUrl({ ui_locales: 'a'.repeat(257) }))
+  assert.equal(oversized.status, 400)
+
+  const malformed = await app.request(authorizationUrl({ ui_locales: 'en_US' }))
+  assert.equal(malformed.status, 400)
+
+  const unknown = await app.request(authorizationUrl({ unsupported_hint: 'value' }))
+  assert.equal(unknown.status, 400)
+})
 
 test('existing resident completes browser proof, PKCE exchange, resolver, replay rejection, and revocation', async () => {
   const { app, memory } = fixture()
@@ -826,11 +846,16 @@ test('authorization query rejects wrong return addresses, resources, duplicates,
   const { app } = fixture()
   for (const patch of [
     { redirect_uri: `${CALLBACK}/near-match` },
+    { redirect_uri: 'https://unapproved.example.test/oauth/callback' },
     { resource: ORIGIN },
   ]) {
     const response = await app.request(authorizationUrl(patch))
     assert.equal(response.status, 400)
     assertPrivate(response, true)
+    assert.doesNotMatch(
+      response.headers.get('content-security-policy') ?? '',
+      /https:\/\/(?:chat|unapproved)\.example\.test/u,
+    )
   }
   const duplicate = await app.request(`${authorizationUrl()}&state=duplicate`)
   assert.equal(duplicate.status, 400)
@@ -879,7 +904,7 @@ test('browser approval rejects unknown and duplicate fields instead of guessing 
   }
 })
 
-test('token exchange rejects wrong verifier, resource, unknown fields, and duplicate parameters', async () => {
+test('token exchange rejects wrong verifier, resource, private-client credentials, unknown fields, and duplicates', async () => {
   {
     const { app } = fixture()
     const { code } = await authorizeExisting(app)
@@ -896,6 +921,43 @@ test('token exchange rejects wrong verifier, resource, unknown fields, and dupli
     const unknown = await exchangeCode(app, code, { unexpected: 'field' })
     assert.equal(unknown.status, 400)
     assert.deepEqual(await unknown.json(), { error: 'invalid_request' })
+  }
+
+  for (const forbidden of [
+    { client_secret: 'must-not-be-accepted' },
+    { client_assertion: 'must-not-be-accepted' },
+    {
+      client_assertion: 'must-not-be-accepted',
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    },
+  ]) {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const rejected = await exchangeCode(app, code, forbidden)
+    assert.equal(rejected.status, 400)
+    assert.deepEqual(await rejected.json(), { error: 'invalid_request' })
+  }
+
+  {
+    const { app } = fixture()
+    const { code } = await authorizeExisting(app)
+    const rejected = await app.request('/oauth/token', {
+      method: 'POST',
+      headers: {
+        authorization: 'Basic must-not-be-accepted',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: CLIENT_ID,
+        redirect_uri: CALLBACK,
+        resource: RESOURCE,
+        code,
+        code_verifier: VERIFIER,
+      }),
+    })
+    assert.equal(rejected.status, 400)
+    assert.deepEqual(await rejected.json(), { error: 'invalid_request' })
   }
 
   {

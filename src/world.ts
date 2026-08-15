@@ -36,6 +36,7 @@ import {
   setPaymentHeader,
   THING_BODY_MAX_BYTES,
   treasuryFee,
+  unknownTraitMessage,
   type KindRow,
   type PlaceRow,
   type ThingRow,
@@ -161,6 +162,24 @@ export function mountWorldRoutes(app: Hono): void {
         next_before_note_id: notesPage.nextCursor,
       },
     })
+  })
+
+  app.get('/api/thing/:id', async c => {
+    const id = positiveId(c.req.param('id'))
+    if (!id) return err(c, 400, 'thing id must be a positive integer')
+    const rows = await sql`
+      SELECT thing.id, thing.place_id, thing.name, thing.body,
+        thing.owner_id, owner.handle AS owner,
+        thing.kind_id, kind.name AS kind,
+        thing.birth_revision, thing.current_revision, thing.created_at
+      FROM things thing
+      JOIN residents owner ON owner.id = thing.owner_id
+      LEFT JOIN kinds kind ON kind.id = thing.kind_id
+      WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
+    ` as ThingRow[]
+    if (!rows[0]) return err(c, 404, 'thing not found')
+    const publicDetails = await moderatePlaceDetails(rows, [])
+    return c.json({ thing: publicDetails.things[0] })
   })
 
   app.post('/api/place', async c => {
@@ -498,6 +517,8 @@ export function mountWorldRoutes(app: Hono): void {
       setPaymentHeader(c, fee)
       return c.json({ kind, fee_tx: fee.txHash }, 201)
     } catch (error) {
+      const unknownTrait = unknownTraitMessage(error)
+      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
       const message = conflictMessage(error, 'kind name or payment proof already used')
       if (message) return err(c, 409, message)
       throw error
@@ -599,6 +620,8 @@ export function mountWorldRoutes(app: Hono): void {
       setPaymentHeader(c, fee)
       return c.json({ kind, fee_tx: fee.txHash })
     } catch (error) {
+      const unknownTrait = unknownTraitMessage(error)
+      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
       const message = conflictMessage(error, 'payment proof already used')
       if (message) return err(c, 409, message)
       throw error

@@ -102,6 +102,13 @@ export function postgresErrorCode(error: unknown, depth = 0): string | null {
   return postgresErrorCode(candidate.sourceError, depth + 1)
 }
 
+export function postgresErrorMessage(error: unknown, depth = 0): string | null {
+  if (!error || typeof error !== 'object' || depth > 3) return null
+  const candidate = error as { message?: unknown; sourceError?: unknown }
+  if (typeof candidate.message === 'string') return candidate.message
+  return postgresErrorMessage(candidate.sourceError, depth + 1)
+}
+
 type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500 | 502 | 503
 
 export function err(c: Context, status: ErrorStatus, message: string) {

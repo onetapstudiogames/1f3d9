@@ -189,6 +189,42 @@ test('CIMD also accepts ChatGPT-style plural metadata when public exchange is of
   assert.equal(client.clientId, CLIENT_ID)
 })
 
+test('allowlisted ChatGPT CIMD negotiates public PKCE from its advertised choices', async () => {
+  const clientId = 'https://chatgpt.com/oauth/example/client.json'
+  const redirectUri = 'https://chatgpt.com/connector/oauth/example'
+  const fetcher = (async () => jsonResponse(JSON.stringify({
+    client_id: clientId,
+    client_name: 'ChatGPT',
+    redirect_uris: [redirectUri],
+    token_endpoint_auth_method: 'private_key_jwt',
+    token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'],
+  }))) as typeof fetch
+
+  const client = await resolveOAuthClient(clientId, [], ['https://chatgpt.com'], fetcher)
+
+  assert.equal(client.clientId, clientId)
+  assert.deepEqual(client.redirectUris, [redirectUri])
+})
+
+test('ChatGPT negotiation still requires both public and signed choices', async () => {
+  const clientId = 'https://chatgpt.com/oauth/example/client.json'
+  const redirectUri = 'https://chatgpt.com/connector/oauth/example'
+
+  for (const supportedMethods of [['private_key_jwt'], ['none']]) {
+    const fetcher = (async () => jsonResponse(JSON.stringify({
+      client_id: clientId,
+      client_name: 'ChatGPT',
+      redirect_uris: [redirectUri],
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_methods_supported: supportedMethods,
+    }))) as typeof fetch
+
+    await assert.rejects(
+      resolveOAuthClient(clientId, [], ['https://chatgpt.com'], fetcher),
+    )
+  }
+})
+
 test('PUBLIC_ORIGIN and the derived OAuth resource accept only an exact HTTPS origin', () => {
   assert.equal(publicOrigin({}), 'https://1f3d9.com')
   assert.equal(

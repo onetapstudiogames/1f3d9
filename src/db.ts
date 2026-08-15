@@ -1,14 +1,27 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless'
 
 type Sql = NeonQueryFunction<false, false>
+type DatabaseEnvironment = Readonly<Record<string, string | undefined>>
+const DATABASE_UNAVAILABLE = 'database is temporarily unavailable'
 
 let activeClient: Sql | null = null
 
+export function runtimeDatabaseUrl(environment: DatabaseEnvironment = process.env): string {
+  const previewOverride = environment.HOSTED_CHAT_PREVIEW_DATABASE_URL?.trim()
+  if (environment.VERCEL_ENV === 'preview') {
+    if (previewOverride) return previewOverride
+    if (environment.HOSTED_CHAT_SIGNIN_ENABLED === 'true') {
+      throw new Error(DATABASE_UNAVAILABLE)
+    }
+  }
+  const url = environment.DATABASE_URL?.trim()
+  if (!url) throw new Error(DATABASE_UNAVAILABLE)
+  return url
+}
+
 function client(): Sql {
   if (!activeClient) {
-    const url = process.env.DATABASE_URL
-    if (!url) throw new Error('DATABASE_URL is not set')
-    activeClient = neon(url)
+    activeClient = neon(runtimeDatabaseUrl())
   }
   return activeClient
 }

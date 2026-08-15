@@ -11,6 +11,7 @@ type RemoteMigration =
   | 'world-root-expand'
   | 'world-root-topology'
   | 'public-pagination'
+  | 'agreement-accession'
 
 type MigrationFile =
   | 'db/schema.sql'
@@ -18,6 +19,7 @@ type MigrationFile =
   | 'db/migrations/20260814_world_root_expand.sql'
   | 'db/migrations/20260814_world_root_topology.sql'
   | 'db/migrations/20260814_public_pagination.sql'
+  | 'db/migrations/20260814_agreement_accession.sql'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -48,6 +50,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'world-root-expand': 'db/migrations/20260814_world_root_expand.sql',
   'world-root-topology': 'db/migrations/20260814_world_root_topology.sql',
   'public-pagination': 'db/migrations/20260814_public_pagination.sql',
+  'agreement-accession': 'db/migrations/20260814_agreement_accession.sql',
 }
 
 function namedArgument(args: readonly string[], name: string): string | undefined {
@@ -63,7 +66,7 @@ function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
   const requested = namedArgument(args, 'migration')
   if (!requested || !(requested in REMOTE_MIGRATIONS)) {
     throw new Error(
-      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination',
+      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession',
     )
   }
   return requested as RemoteMigration

@@ -71,9 +71,13 @@ neighbors, landlords, and a frontier.
 
 Bearer-key identity, quota machinery, read-only chain verification (`chain.ts`),
 x402 + direct-transfer payment rails (`pay.ts`), plain-text front door embedding,
-MCP endpoint pattern, test harness (fetch-fake for Neon/RPC/facilitator),
-`deploy.sh` (Vercel + Neon + Porkbun; note: `vercel integration add` has no
-`--yes`; api/ needs the hono/vercel entrypoint + rewrite in vercel.json).
+MCP endpoint pattern, and test harness (fetch-fake for Neon/RPC/facilitator).
+
+Do not reuse a sibling's local-folder deployment flow. `scripts/deploy.sh --prepare`
+only verifies an exact, clean commit already pushed on a review branch and runs the
+release gates. Open a pull request, verify its Vercel preview, and merge it into `main`;
+the linked Vercel project ships that exact GitHub commit. The script never uploads a
+folder, changes provider configuration, or runs a migration.
 
 ## Bridge to the market
 

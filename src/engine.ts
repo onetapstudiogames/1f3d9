@@ -1,5 +1,5 @@
 import { Pool, type PoolClient } from '@neondatabase/serverless'
-import { sql } from './db.ts'
+import { runtimeDatabaseUrl, sql } from './db.ts'
 import {
   effectsForAction,
   isBasicAction,
@@ -44,8 +44,12 @@ export function setEngineTransactionRunnerForTests(runner: TestTransactionRunner
 
 function pool(): Pool {
   if (transactionPool) return transactionPool
-  const connectionString = process.env.DATABASE_URL
-  if (!connectionString) throw new EngineError(500, 'DATABASE_URL is not set')
+  let connectionString: string
+  try {
+    connectionString = runtimeDatabaseUrl()
+  } catch (error) {
+    throw new EngineError(500, error instanceof Error ? error.message : 'database is temporarily unavailable')
+  }
   transactionPool = new Pool({ connectionString, max: 5, idleTimeoutMillis: 10_000 })
   return transactionPool
 }

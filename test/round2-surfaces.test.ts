@@ -164,11 +164,13 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
   app.all('/api/*', async c => c.json({
     method: c.req.method,
     path: c.req.path,
+    query: c.req.query(),
     authorization: c.req.header('authorization'),
     body: c.req.method === 'GET' ? null : await c.req.json(),
   }))
 
   const cases = [
+    ['look', { place_id: 9, before_note_id: 100, note_limit: 25 }, 'GET', '/api/place/9'],
     ['act', { action: 'move', to_place_id: 9 }, 'POST', '/api/action'],
     ['laws', { place_id: 9, traits: ['peaceful'] }, 'PUT', '/api/place/9/laws'],
     ['home', { place_id: 9 }, 'POST', '/api/me/home'],
@@ -192,6 +194,12 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
       path,
       authorization: 'Bearer resident-secret',
     })
+    if (name === 'look') {
+      assert.deepEqual((dispatched as unknown as { query: Record<string, string> }).query, {
+        before_note_id: '100',
+        note_limit: '25',
+      })
+    }
   }
 
   const rejected = await callTool(app, 'act', { action: 'go_home', token: 0 })

@@ -53,6 +53,11 @@ interface FakeState {
   openToThings: boolean
   openToNotes: boolean
   quota: { things: boolean; notes: boolean; agreements: boolean }
+  agreementParties: string[]
+  agreementAcceded: string[]
+  agreementAccessionOpen: boolean
+  agreementCreatorId: number
+  agreementExists: boolean
   thingOwnerId: number
   thingWithdrawn: boolean
   targetThingOwnerId: number
@@ -101,6 +106,11 @@ const initialState = (): FakeState => ({
   openToThings: false,
   openToNotes: false,
   quota: { things: true, notes: true, agreements: true },
+  agreementParties: ['tiny-lantern', 'neighbor'],
+  agreementAcceded: [],
+  agreementAccessionOpen: false,
+  agreementCreatorId: 7,
+  agreementExists: true,
   thingOwnerId: 7,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
@@ -337,6 +347,15 @@ function recordPayment(query: string, params: unknown[]) {
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  // link_kind_revision_traits refuses a trait nobody has coined yet.
+  if (state.scenario === 'uncoined kind trait' &&
+      (/insert into kinds/.test(q) || /insert into kind_revisions/.test(q))) {
+    throw Object.assign(
+      new Error('kind revision names an unknown or duplicate trait'),
+      { code: '23503' },
+    )
+  }
 
   if (q.includes('where secret_hash')) return state.authValid ? [residentRow()] : []
   if (q.includes('/* crafting:commit */')) return [thingRow()]
@@ -648,8 +667,43 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return state.quota.things ? [thingRow()] : []
   if (q.includes('things_today = things_today + 1')) return state.quota.things ? [{ id: state.actorId }] : []
   if (q.includes('notes_today = notes_today + 1')) return state.quota.notes ? [{ id: state.actorId }] : []
-  if (q.includes('agreement_actions_today = agreement_actions_today + 1'))
-    return state.quota.agreements ? [{ id: state.actorId }] : []
+  if (q.includes('agreement_actions_today = agreement_actions_today + 1')) {
+    if (!state.quota.agreements) return []
+    if (q.includes('insert into agreement_signatures')) {
+      const acceded = !state.agreementParties.includes(state.actorHandle)
+      state = {
+        ...state,
+        agreementParties: acceded
+          ? [...state.agreementParties, state.actorHandle]
+          : state.agreementParties,
+        agreementAcceded: acceded
+          ? [...state.agreementAcceded, state.actorHandle]
+          : state.agreementAcceded,
+      }
+      return [{
+        agreement_id: 61,
+        handle: state.actorHandle,
+        acceded,
+        signed_at: '2026-08-11T00:00:00.000Z',
+      }]
+    }
+    if (q.includes('insert into agreement_accession_openings')) {
+      if (q.includes('insert into agreements')) {
+        const accessionOpen = params.some(value => value === true || value === 'true' || value === 't')
+        state = { ...state, agreementAccessionOpen: accessionOpen }
+        return [{
+          id: 61,
+          body: 'we keep the square open',
+          accession_open: accessionOpen,
+          created_at: '2026-08-11T00:00:00.000Z',
+        }]
+      }
+      if (state.agreementAccessionOpen) return []
+      state = { ...state, agreementAccessionOpen: true }
+      return [{ agreement_id: 61, opened_at: '2026-08-11T00:00:00.000Z' }]
+    }
+    return [{ id: state.actorId }]
+  }
 
   if (state.scenario === 'remaining pagination') {
     const publicCollection = ['residents', 'kinds', 'traits', 'moderation']
@@ -727,10 +781,28 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }]
 
   if (q.includes('insert into notes')) return [{
-    id: 51, place_id: 2, author: state.actorHandle, body: 'hello from the square',
+    id: 51,
+    place_id: Number(params[0] ?? 2),
+    author: String(params[4] ?? state.actorHandle),
+    body: String(params[3] ?? 'hello from the square'),
     created_at: '2026-08-11T00:00:00.000Z',
   }]
   if (q.includes('from notes')) {
+    if (state.scenario === 'busy place') {
+      const beforeId = params[1] == null ? null : Number(params[1])
+      const descending = q.includes('order by n.id desc')
+      const limit = q.includes('limit $') ? Number(params.at(-1)) : 200
+      const rows = Array.from({ length: 205 }, (_, index) => ({
+        id: index + 1,
+        place_id: 2,
+        author: 'tiny-lantern',
+        body: `note ${index + 1}`,
+        created_at: new Date(Date.UTC(2026, 7, 11, 0, 0, index + 1)).toISOString(),
+        pinned: false,
+      })).filter(note => beforeId == null || note.id < beforeId)
+      if (descending) rows.reverse()
+      return rows.slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
+    }
     return [{
       id: 51,
       place_id: 2,
@@ -741,6 +813,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }]
   }
 
+  if (q.includes('insert into agreement_accession_openings')) return []
   if (q.includes('insert into agreements')) return [{
     id: 61, body: 'we keep the square open', created_by: state.actorHandle, status: 'open',
   }]
@@ -748,14 +821,28 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('insert into agreement_signatures')) return [{
     agreement_id: 61, handle: state.actorHandle, signed_at: '2026-08-11T00:00:00.000Z',
   }]
-  if (q.includes('from agreements')) return [{
+  if (q.includes('as created_by_me') && q.includes('from agreements')) return [{
     id: 61,
     body: 'we keep the square open',
-    parties: ['tiny-lantern', 'neighbor'],
-    signatures: ['tiny-lantern'],
-    open: true,
+    created_by_me: true,
+    acceded: false,
+    accession_open: state.agreementAccessionOpen,
+    signed: false,
     created_at: '2026-08-11T00:00:00.000Z',
   }]
+  if (q.includes('from agreements')) return state.agreementExists ? [{
+    id: 61,
+    created_by_id: state.agreementCreatorId,
+    body: 'we keep the square open',
+    parties: state.agreementParties,
+    acceded: state.agreementAcceded,
+    signatures: ['tiny-lantern'],
+    accession_open: state.agreementAccessionOpen,
+    opened_at: state.agreementAccessionOpen ? '2026-08-11T00:00:00.000Z' : null,
+    already_signed: false,
+    open: true,
+    created_at: '2026-08-11T00:00:00.000Z',
+  }] : []
   if (q.includes('from agreement_parties')) return []
 
   if (q.includes('insert into transfer_offers')) {
@@ -911,6 +998,20 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return descendingPage(matching, params[1], params[2])
   }
   if (q.includes('from events') && q.includes('count(')) return [{ n: 0 }]
+  if (q.includes('from events') && state.scenario === 'event pagination') {
+    const beforeId = params[1] == null ? null : Number(params[1])
+    const limit = q.includes('limit $3') ? Number(params[2]) : 200
+    return [205, 204, 203, 202, 201]
+      .filter(id => beforeId == null || id < beforeId)
+      .slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
+      .map(id => ({
+        id,
+        at: new Date(Date.UTC(2026, 7, 11, 0, 0, id - 200)).toISOString(),
+        kind: 'note',
+        actor: 'tiny-lantern',
+        detail: { note_id: id, place_id: 2 },
+      }))
+  }
   if (q.includes('from events') && state.scenario === 'activity surfaces') return [
     {
       id: 70, at: '2026-08-11T00:00:00.000Z', kind: 'place_created',
@@ -1176,6 +1277,39 @@ test('malformed auth and oversized thing text fail before any world write', asyn
   assert.equal(inserted('things'), 0)
 })
 
+test('note validation distinguishes place errors and preserves valid Unicode exactly', async () => {
+  reset({ scenario: 'note validation' })
+  const invalidPlace = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 0, body: 'valid words' }),
+  })
+  assert.equal(invalidPlace.status, 400)
+  assert.deepEqual(await invalidPlace.json(), { error: 'place_id must be a positive integer' })
+  assert.equal(inserted('notes'), 0)
+
+  reset({ scenario: 'note validation' })
+  const invalidBody = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: '\u0000' }),
+  })
+  assert.equal(invalidBody.status, 400)
+  assert.deepEqual(await invalidBody.json(), { error: 'body must be 1-4000 safe characters' })
+  assert.equal(inserted('notes'), 0)
+
+  reset({ scenario: 'note validation' })
+  const body = 'Café — east wing 🗺️'
+  const accepted = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body }),
+  })
+  assert.equal(accepted.status, 201)
+  const acceptedBody = await accepted.json() as { note: { body: string } }
+  assert.equal(acceptedBody.note.body, body)
+})
+
 test('the public map is a recursive owner-attributed tree', async () => {
   reset({ scenario: 'map' })
   const response = await app.request('/api/map')
@@ -1185,6 +1319,62 @@ test('the public map is a recursive owner-attributed tree', async () => {
   assert.equal(body.places[0]?.owner, 'founder')
   assert.equal(body.places[0]?.children[0]?.id, 2)
   assert.ok(sqlCalls().some(call => /with\s+recursive/i.test(call.query ?? '')))
+})
+
+test('busy places serve the newest notes and expose an older-note cursor', async () => {
+  reset({ scenario: 'busy place' })
+  const first = await app.request('/api/place/2?note_limit=200')
+  assert.equal(first.status, 200)
+  const firstBody = await first.json() as {
+    notes: Array<{ id: number }>
+    notes_page: { has_more: boolean; next_before_note_id: number | null }
+  }
+  assert.equal(firstBody.notes.length, 200)
+  assert.equal(firstBody.notes[0]?.id, 205)
+  assert.equal(firstBody.notes.at(-1)?.id, 6)
+  assert.deepEqual(firstBody.notes_page, { has_more: true, next_before_note_id: 6 })
+
+  reset({ scenario: 'busy place' })
+  const older = await app.request('/api/place/2?before_note_id=6&note_limit=10')
+  assert.equal(older.status, 200)
+  const olderBody = await older.json() as {
+    notes: Array<{ id: number }>
+    notes_page: { has_more: boolean; next_before_note_id: number | null }
+  }
+  assert.deepEqual(olderBody.notes.map(note => note.id), [5, 4, 3, 2, 1])
+  assert.deepEqual(olderBody.notes_page, { has_more: false, next_before_note_id: null })
+
+  const invalid = await app.request('/api/place/2?before_note_id=nope')
+  assert.equal(invalid.status, 400)
+})
+
+test('public thing and note detail reads expose full active records without writes', async () => {
+  reset({ scenario: 'public details' })
+  const thing = await app.request('/api/thing/41')
+  assert.equal(thing.status, 200)
+  const thingBody = await thing.json() as { thing: { id: number; body: string; owner: string } }
+  assert.deepEqual(thingBody.thing, {
+    ...thingBody.thing,
+    id: 41,
+    body: 'warm light',
+    owner: 'tiny-lantern',
+  })
+
+  const note = await app.request('/api/note/51')
+  assert.equal(note.status, 200)
+  const noteBody = await note.json() as { note: { id: number; body: string; author: string } }
+  assert.deepEqual(noteBody.note, {
+    ...noteBody.note,
+    id: 51,
+    body: 'hello from the square',
+    author: 'tiny-lantern',
+  })
+  assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+
+  reset({ scenario: 'public details', thingWithdrawn: true })
+  assert.equal((await app.request('/api/thing/41')).status, 404)
+  assert.equal((await app.request('/api/thing/not-an-id')).status, 400)
+  assert.equal((await app.request('/api/note/not-an-id')).status, 400)
 })
 
 test('each place permission is independent and an allowed visitor owns what they build', async () => {
@@ -1295,6 +1485,38 @@ test('duplicate trait names fail before charging for a kind', async () => {
   assert.equal(inserted('kinds'), 0)
 })
 
+test('an uncoined kind trait answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      name: 'erratum', description: 'corrects a claim', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
+})
+
+test('an uncoined trait on kind revision answers with the reason, not "internal"', async () => {
+  reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  const response = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      description: 'corrected again', traits: ['never-coined'], recipe: [],
+      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
+    }),
+  })
+  assert.equal(response.status, 400)
+  const body = JSON.stringify(await response.json())
+  assert.match(body, /unknown or duplicate trait/)
+  assert.match(body, /POST \/api\/trait/)
+  assert.doesNotMatch(body, /internal/)
+})
+
 test('things pin their birth revision and only their owner may voluntarily upgrade', async () => {
   reset({ scenario: 'thing revision', kindRevision: 1, openToThings: true })
   const made = await app.request('/api/thing', {
@@ -1366,6 +1588,8 @@ test('agreements remain unenforced public text and each party signs for itself',
     body: JSON.stringify({ parties: ['tiny-lantern', 'neighbor'], body: 'we keep the square open' }),
   })
   assert.equal(created.status, 201)
+  const createdBody = await created.json() as { agreement: { accession_open: boolean } }
+  assert.equal(createdBody.agreement.accession_open, false)
 
   const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
   assert.equal(signed.status, 200)
@@ -1376,6 +1600,126 @@ test('agreements remain unenforced public text and each party signs for itself',
   assert.equal(body.agreements[0]?.body, 'we keep the square open')
   assert.deepEqual(body.agreements[0]?.signatures, ['tiny-lantern'])
   assert.equal(body.agreements[0]?.open, true)
+})
+
+test('a new agreement may explicitly open itself to later accession', async () => {
+  reset({ scenario: 'agreements' })
+
+  const created = await app.request('/api/agreement', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      parties: ['tiny-lantern', 'neighbor'],
+      body: 'we keep the square open',
+      accession_open: true,
+    }),
+  })
+
+  assert.equal(created.status, 201, await created.clone().text())
+  const body = await created.json() as { agreement: { accession_open: boolean } }
+  assert.equal(body.agreement.accession_open, true)
+  assert.equal(inserted('agreement_accession_openings'), 1)
+})
+
+test('a later arrival cannot accede until the author explicitly opens the agreement', async () => {
+  reset({ scenario: 'agreements', agreementParties: ['neighbor'], agreementAccessionOpen: false })
+  setActor(9, 'latecomer')
+
+  const blocked = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(blocked.status, 403)
+  assert.equal(inserted('agreement_parties'), 0)
+  assert.equal(inserted('agreement_signatures'), 0)
+})
+
+test('a later arrival accedes and signs atomically after author opt-in', async () => {
+  reset({
+    scenario: 'agreements',
+    agreementParties: ['neighbor'],
+    agreementAccessionOpen: true,
+  })
+  setActor(9, 'latecomer')
+
+  const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(signed.status, 200, await signed.clone().text())
+  const body = await signed.json() as { signature: { handle: string; acceded: boolean } }
+  assert.equal(body.signature.handle, 'latecomer')
+  assert.equal(body.signature.acceded, true)
+  // One statement carries both inserts, so this asserts the accession path was
+  // taken at all -- whether its WHERE clause suppresses the party row for a
+  // named signer is Postgres semantics no fake can decide.
+  assert.equal(inserted('agreement_parties'), 1)
+  assert.equal(inserted('agreement_signatures'), 1)
+})
+
+test('a named party signs without acceding', async () => {
+  reset({ scenario: 'agreements' })
+
+  const signed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+  assert.equal(signed.status, 200, await signed.clone().text())
+  const body = await signed.json() as { signature: { acceded: boolean } }
+  assert.equal(body.signature.acceded, false)
+  assert.equal(inserted('agreement_signatures'), 1)
+})
+
+test('only the original author may permanently open an existing agreement to accession', async () => {
+  reset({ scenario: 'agreements', agreementCreatorId: 7, agreementAccessionOpen: false })
+
+  setActor(8, 'neighbor')
+  const denied = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+  })
+  assert.equal(denied.status, 403)
+  assert.equal(inserted('agreement_accession_openings'), 0)
+
+  setActor(7, 'tiny-lantern')
+  const opened = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(opened.status, 201, await opened.clone().text())
+  const body = await opened.json() as { agreement: { id: number; accession_open: boolean } }
+  assert.deepEqual(body.agreement, {
+    id: 61,
+    accession_open: true,
+    opened_at: '2026-08-11T00:00:00.000Z',
+  })
+  assert.equal(inserted('agreement_accession_openings'), 1)
+
+  const retried = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(retried.status, 200, await retried.clone().text())
+  assert.equal(inserted('agreement_accession_openings'), 1)
+})
+
+test('opening accession distinguishes missing agreements and exhausted quota', async () => {
+  reset({ scenario: 'agreements', agreementExists: false })
+  const missing = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(missing.status, 404)
+
+  reset({ scenario: 'agreements', quota: { things: true, notes: true, agreements: false } })
+  const capped = await app.request('/api/agreement/61/open-accession', {
+    method: 'POST', headers: authHeaders(),
+  })
+  assert.equal(capped.status, 429)
+  assert.equal(inserted('agreement_accession_openings'), 0)
+})
+
+test('the public record separates the parties an author named from those who acceded', async () => {
+  reset({
+    scenario: 'agreements',
+    agreementParties: ['neighbor', 'tiny-lantern'],
+    agreementAcceded: ['tiny-lantern'],
+  })
+
+  const record = await app.request('/api/agreements?party=tiny-lantern')
+  assert.equal(record.status, 200)
+  const body = await record.json() as {
+    agreements: { parties: string[]; acceded: string[]; accession_open: boolean }[]
+  }
+  assert.deepEqual(body.agreements[0]?.parties, ['neighbor', 'tiny-lantern'])
+  assert.deepEqual(body.agreements[0]?.acceded, ['tiny-lantern'])
+  assert.equal(body.agreements[0]?.accession_open, false)
 })
 
 test('a gift moves immediately, while an open sale offer locks the asset', async () => {
@@ -1917,7 +2261,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
-    'agree', 'sign', 'say', 'me', 'moderate',
+    'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
   ])
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
   const transferTool = listBody.result.tools.find(tool => tool.name === 'transfer')
@@ -1984,8 +2328,12 @@ test('front door and human window surface the event names the world actually emi
   state = { ...state, calls: [] }
   const snapshot = await app.request('/api/window')
   assert.equal(snapshot.status, 200)
-  const payload = await snapshot.json() as { events: { kind: string }[] }
+  const payload = await snapshot.json() as {
+    events: { kind: string }[]
+    body_limits: { notes: number; things: number; agreements: number }
+  }
   assert.deepEqual(payload.events.map(event => event.kind), ['place_created', 'sale', 'transfer_cancel'])
+  assert.deepEqual(payload.body_limits, { notes: 2_000, things: 1_000, agreements: 4_000 })
   const eventKindParams = JSON.stringify(sqlCalls().flatMap(call => call.params ?? []))
   for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel']) {
     assert.ok(eventKindParams.includes(kind), `public event query should include ${kind}`)
@@ -2055,6 +2403,9 @@ test('a place owner replaces local laws while a visitor cannot legislate there',
   const body = await changed.json() as { laws: { name: string }[] }
   assert.deepEqual(body.laws.map(law => law.name), ['war-zone'])
   assert.ok(inserted('place_law_changes') > 0)
+  const lawWrite = sqlCalls().find(call => /insert\s+into\s+place_law_changes/i.test(call.query ?? ''))
+  assert.match(lawWrite?.query ?? '', /\$\d+::integer\s+as\s+actor_id/i)
+  assert.match(lawWrite?.query ?? '', /union\s+all[\s\S]*\$\d+::integer\s*,\s*'add'/i)
 
   setActor(8, 'neighbor')
   const rejected = await app.request('/api/place/2/laws', {
@@ -2092,6 +2443,13 @@ test('thing withdrawal is owner-only, one-way, and refused during an open sale',
   assert.ok(sqlCalls().some(call =>
     /update\s+things\s+set\s+withdrawn_at/i.test(call.query ?? '') &&
     /insert\s+into\s+events/i.test(call.query ?? '')))
+  const withdrawalWrite = sqlCalls().find(call =>
+    /update\s+things\s+set\s+withdrawn_at/i.test(call.query ?? '') &&
+    /insert\s+into\s+events/i.test(call.query ?? ''))
+  assert.match(
+    withdrawalWrite?.query ?? '',
+    /jsonb_build_object\(\s*'thing_id'\s*,\s*id\s*,\s*'reason'\s*,\s*\$\d+::text\s*\)/i,
+  )
 
   reset({ scenario: 'thing withdrawal sale', offer: { ...initialState().offer, status: 'open' } })
   const locked = await app.request('/api/thing/41/withdraw', {
@@ -2370,6 +2728,30 @@ test('removed kind and trait names cannot leak through place laws or nested kind
   assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
 })
 
+test('event history supports bounded cursor pages without changing the events array', async () => {
+  reset({ scenario: 'event pagination' })
+  const page = await app.request('/api/events?kind=note&before_id=204&limit=2')
+  assert.equal(page.status, 200)
+  const body = await page.json() as {
+    events: Array<{ id: number }>
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(body.events.map(event => event.id), [203, 202])
+  assert.equal(body.has_more, true)
+  assert.equal(body.next_before_id, 202)
+  const eventRead = sqlCalls().find(call => /select\s+id,\s*at,\s*kind,\s*actor,\s*detail[\s\S]*from\s+events/i
+    .test(call.query ?? ''))
+  assert.match(eventRead?.query ?? '', /\$2::integer\s+is\s+null\s+or\s+id\s*<\s*\$2::integer/i)
+  assert.match(eventRead?.query ?? '', /limit\s+\$3::integer/i)
+  assert.deepEqual(eventRead?.params, ['note', '204', '3'])
+
+  reset({ scenario: 'event pagination' })
+  assert.equal((await app.request('/api/events?before_id=nope')).status, 400)
+  assert.equal((await app.request('/api/events?limit=0')).status, 400)
+  assert.equal((await app.request('/api/events?limit=201')).status, 400)
+})
+
 test('removed authored names are tombstoned inside append-only event details', async () => {
   reset({
     scenario: 'nested moderation events',
@@ -2458,14 +2840,33 @@ test('removed kind and trait records expose identity and history but no authored
   assert.equal(traits.traits[0]?.mechanical, false)
 })
 
-test('/api/me refreshes presence after observation resolves due effects', async () => {
-  reset({ scenario: 'me timer refresh', scheduledLabelAt: Date.now() - 1 })
+test('/api/me refreshes presence and includes agreements the resident authored without joining', async () => {
+  reset({
+    scenario: 'me timer refresh',
+    scheduledLabelAt: Date.now() - 1,
+    agreementParties: ['neighbor'],
+  })
 
   const response = await app.request('/api/me', { headers: authHeaders() })
   assert.equal(response.status, 200)
+  const body = await response.json() as { agreements: Array<Record<string, unknown>> }
+  assert.deepEqual(body.agreements[0], {
+    id: 61,
+    body: 'we keep the square open',
+    created_by_me: true,
+    acceded: false,
+    accession_open: false,
+    signed: false,
+    created_at: '2026-08-11T00:00:00.000Z',
+  })
 
   const presenceReads = sqlCalls().filter(call =>
     (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
       .includes('with first_owned as'))
   assert.equal(presenceReads.length, 2, JSON.stringify(sqlCalls().map(call => call.query)))
+  assert.ok(sqlCalls().some(call => {
+    const query = (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
+    return query.includes('from agreements a') &&
+      query.includes('a.created_by_id =') && query.includes('or p.resident_id is not null')
+  }))
 })

@@ -27,10 +27,11 @@ test.afterEach(async ({ page }) => {
 
 function authorizationPath(): string {
   const origin = test.info().project.use.baseURL as string
+  const callback = `${origin.replace('127.0.0.1', 'localhost')}/oauth/callback`
   const query = new URLSearchParams({
     response_type: 'code',
     client_id: 'browser-e2e-client',
-    redirect_uri: `${origin}/oauth/callback`,
+    redirect_uri: callback,
     resource: `${origin}/mcp/connect`,
     scope: 'city:resident',
     state,
@@ -64,11 +65,12 @@ function callbackCode(page: Page): string {
 
 async function redeemCode(page: Page, code: string): Promise<string> {
   const origin = test.info().project.use.baseURL as string
+  const callback = `${origin.replace('127.0.0.1', 'localhost')}/oauth/callback`
   const response = await page.request.post('/oauth/token', {
     form: {
       grant_type: 'authorization_code',
       client_id: 'browser-e2e-client',
-      redirect_uri: `${origin}/oauth/callback`,
+      redirect_uri: callback,
       resource: `${origin}/mcp/connect`,
       scope: 'city:resident',
       code,

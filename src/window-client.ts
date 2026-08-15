@@ -31,6 +31,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   effect_resolved: 'resolved a stored effect',
   note: 'left a note',
   agreement: 'wrote an agreement',
+  agreement_accession: 'opened an agreement to later signers',
   agreement_sign: 'signed an agreement',
   transfer: 'gave away property',
   transfer_offer: 'offered property for sale',
@@ -220,20 +221,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const body = safeText(raw.body, '', 4000, false)
       const createdBy = safeHandle(raw.created_by)
       const parties = safeHandles(raw.parties)
+      const acceded = safeHandles(raw.acceded).filter(handle => parties.includes(handle))
       const signatures = safeHandles(raw.signatures).filter(handle => parties.includes(handle))
+      const partyCount = Math.max(safeCount(raw.party_count), parties.length)
       const createdAt = safeDate(raw.created_at)
       return id && body && createdBy && parties.length && createdAt
-        ? [{ id, body, created_by: createdBy, parties, signatures,
+        ? [{ id, body, created_by: createdBy, parties, acceded, signatures,
           open: typeof raw.open === 'boolean' ? raw.open : signatures.length < parties.length,
+          accession_open: raw.accession_open === true,
+          party_count: partyCount,
+          parties_truncated: raw.parties_truncated === true && partyCount > parties.length,
           created_at: createdAt, moderated: raw.moderated === true,
           truncated: raw.truncated === true }]
         : []
     })
   }
 
-  function normalizeEvents(values) {
+  function normalizeEvents(values, maximum = 100) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 200).flatMap(raw => {
+    return values.slice(0, maximum).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const actor = safeHandle(raw.actor)
@@ -298,6 +304,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       agreements: normalizePage(rawPages.agreements, agreements, totals.agreements),
       events: normalizePage(rawPages.events, events, totals.events),
     })
+    const rawBodyLimits = payload.body_limits && typeof payload.body_limits === 'object'
+      ? payload.body_limits
+      : {}
+    const bodyLimits = Object.freeze({
+      notes: safeId(rawBodyLimits.notes),
+      things: safeId(rawBodyLimits.things),
+      agreements: safeId(rawBodyLimits.agreements),
+    })
+    const hasBodyLimits = bodyLimits.notes && bodyLimits.things && bodyLimits.agreements
     return Object.freeze({
       places,
       flatPlaces: flattenPlaces(places, []),
@@ -309,6 +324,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       shown,
       totals,
       pages,
+      bodyLimits: hasBodyLimits ? bodyLimits : null,
       refreshedAt: safeDate(payload.refreshed_at),
     })
   }
@@ -328,7 +344,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       (!filters.placeId || row.place_id === filters.placeId) &&
       (!filters.resident || row.owner === filters.resident))
     if (collection === 'agreements') return rows.filter(row => !filters.resident ||
-      row.created_by === filters.resident || row.parties.includes(filters.resident))
+      row.created_by === filters.resident || row.parties.includes(filters.resident) ||
+      row.parties_truncated)
     return rows
   }
 
@@ -682,10 +699,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
-  function noteCard(note) {
+  function noteCard(note, place) {
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
     meta.append(element('span', 'note-author', note.author), document.createTextNode(' · '), timeNode(note.created_at, ''))
+    if (place) meta.append(document.createTextNode(' · ' + place.name))
     card.append(meta, renderExpandableBody('note', note.id, note.body, note.truncated))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return card
@@ -698,7 +716,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return
     }
     const list = element('div', 'note-list')
-    list.append(...notes.map(noteCard))
+    list.append(...notes.map(note => noteCard(note)))
     target.replaceChildren(list)
   }
 
@@ -741,27 +759,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!nodes.conversations) return
     const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
     const notes = historyEntry('notes', filters).rows
-    const placeIds = [...new Set(notes.map(note => note.place_id))]
-    if (!placeIds.length) {
+    const placeOf = placeId => snapshot.flatPlaces.find(candidate => candidate.id === placeId) || null
+    const place = state.placeId ? placeOf(state.placeId) : null
+    if (!notes.length || (state.placeId && !place)) {
       renderEmpty(nodes.conversations, 'empty-row', 'No conversation in the latest public snapshot matches this view.')
       renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
       return
     }
-    const groups = placeIds.flatMap(placeId => {
-      const place = snapshot.flatPlaces.find(candidate => candidate.id === placeId)
-      if (!place) return []
+    if (place) {
       const group = element('section', 'conversation-group')
       const heading = element('header', '')
       heading.append(
         element('h3', '', place.name),
-        element('span', 'place-facts', place.path + ' · ' + String(notes.filter(note => note.place_id === placeId).length) + ' shown'),
+        element('span', 'place-facts', place.path + ' · ' + String(notes.length) + ' shown'),
       )
       const list = element('div', 'note-list')
-      list.append(...notes.filter(note => note.place_id === placeId).map(noteCard))
+      list.append(...notes.map(note => noteCard(note)))
       group.append(heading, list)
-      return [group]
-    })
-    nodes.conversations.replaceChildren(...groups)
+      nodes.conversations.replaceChildren(group)
+    } else {
+      // Every room at once. The server pages notes newest first, so retain that
+      // order and name each room without regrouping the stream by place.
+      const list = element('div', 'note-list')
+      list.append(...notes.map(note => noteCard(note, placeOf(note.place_id))))
+      nodes.conversations.replaceChildren(list)
+    }
     renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
   }
 
@@ -818,18 +840,40 @@ ${WINDOW_CLIENT_SAFETY_JS}
         renderExpandableBody('agreement', agreement.id, agreement.body, agreement.truncated),
         timeNode(agreement.created_at, 'agreement-meta'),
       )
+      if (state.resident && agreement.parties_truncated &&
+          agreement.created_by !== state.resident && !agreement.parties.includes(state.resident)) {
+        copy.append(element('p', 'agreement-filter-note',
+          'Party preview is incomplete; this agreement stays visible in filtered views.'))
+      }
       if (agreement.moderated) copy.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
       const side = element('aside', 'agreement-side')
       side.append(element('h3', '', 'Parties & signatures'))
       const signatures = element('div', 'signature-list')
-      signatures.append(...agreement.parties.map(party => {
+      // Named parties first, then whoever acceded later. An acceded party has
+      // always signed -- joining is the signing -- so it gets its own mark
+      // rather than a tick that would read as an invitation the author wrote.
+      const named = agreement.parties.filter(party => !agreement.acceded.includes(party))
+      signatures.append(...named.concat(agreement.acceded).map(party => {
+        const acceded = agreement.acceded.includes(party)
         const signed = agreement.signatures.includes(party)
-        const chip = element('span', 'signature-chip', (signed ? '✓ ' : '○ ') + party)
+        const chip = element('span', 'signature-chip',
+          (acceded ? '+ ' : signed ? '✓ ' : '○ ') + party)
         chip.dataset.signed = String(signed)
+        if (acceded) {
+          chip.dataset.acceded = 'true'
+          chip.title = 'acceded after the agreement was written'
+        }
         return chip
       }))
+      const hiddenPartyCount = Math.max(0, agreement.party_count - agreement.parties.length)
+      if (agreement.parties_truncated && hiddenPartyCount) {
+        signatures.append(element('span', 'signature-overflow',
+          '+' + String(hiddenPartyCount) + ' more not shown here'))
+      }
       side.append(signatures, element('span', agreement.open ? 'badge badge-open' : 'badge badge-complete',
         agreement.open ? 'Awaiting signatures' : 'Fully signed'))
+      side.append(element('span', agreement.accession_open ? 'badge badge-open' : 'badge badge-complete',
+        agreement.accession_open ? 'Open to later signers' : 'Closed to later signers'))
       card.append(copy, side)
       return card
     }))
@@ -945,10 +989,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const hasExcerpts = snapshot.notes.some(note => note.truncated) ||
       snapshot.things.some(thing => thing.truncated) ||
       snapshot.agreements.some(agreement => agreement.truncated)
+    const excerptNotice = !hasExcerpts
+      ? ''
+      : snapshot.bodyLimits
+        ? ' Excerpt limits are ' + snapshot.bodyLimits.notes.toLocaleString() +
+          ' characters for notes, ' + snapshot.bodyLimits.things.toLocaleString() +
+          ' for things, and ' + snapshot.bodyLimits.agreements.toLocaleString() +
+          ' for agreements.'
+        : ' Long text may appear as an excerpt.'
     nodes.scope.textContent = (partial.length
       ? 'Latest public snapshot shows ' + partial.join(' · ') + '.'
       : 'Latest public snapshot is within every display limit.') +
-      (hasExcerpts ? ' Long text may appear as an excerpt.' : '') +
+      excerptNotice +
       (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '')
   }
 

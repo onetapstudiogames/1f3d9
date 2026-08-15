@@ -46,6 +46,8 @@ export {
 
 const SESSION_COOKIE = '__Host-1f3d9_oauth'
 const MAX_FORM_BYTES = 8_192
+const MAX_UI_LOCALES = 256
+const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
 const ACCESS_TOKEN_SECONDS = 10 * 60
 const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
 
@@ -80,7 +82,7 @@ function clientAddress(c: Context, environment: OAuthEnvironment): string {
   return lastAddress(c.req.header('x-vercel-forwarded-for')) ?? 'unknown'
 }
 
-function privateHeaders(c: Context, html = false): void {
+function privateHeaders(c: Context, html = false, callbackOrigin?: string): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Referrer-Policy', html ? 'same-origin' : 'no-referrer')
@@ -89,9 +91,12 @@ function privateHeaders(c: Context, html = false): void {
   c.res.headers.delete('Access-Control-Allow-Origin')
   c.res.headers.delete('Access-Control-Allow-Credentials')
   if (html) {
+    const formAction = callbackOrigin
+      ? `form-action 'self' ${callbackOrigin}; `
+      : "form-action 'self'; "
     c.header(
       'Content-Security-Policy',
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; " +
+      "default-src 'none'; style-src 'unsafe-inline'; " + formAction +
         "base-uri 'none'; frame-ancestors 'none'",
     )
   }
@@ -111,9 +116,23 @@ function page(title: string, body: string): string {
 </style></head><body><main>${body}</main></body></html>`
 }
 
-function html(c: Context, status: 200 | 400 | 403 | 409 | 429, title: string, body: string) {
-  privateHeaders(c, true)
+function html(
+  c: Context,
+  status: 200 | 400 | 403 | 409 | 429,
+  title: string,
+  body: string,
+  callbackOrigin?: string,
+) {
+  privateHeaders(c, true, callbackOrigin)
   return c.html(page(title, body), status)
+}
+
+function registeredCallbackOrigin(redirectUri: string): string {
+  const redirect = new URL(redirectUri)
+  if (redirect.protocol !== 'https:' || redirect.origin === 'null') {
+    throw new Error('registered OAuth callback must use HTTPS')
+  }
+  return redirect.origin
 }
 
 function browserError(c: Context, status: 400 | 403 | 409 | 429, message: string) {
@@ -176,12 +195,15 @@ function hasExactlyKnownFields(params: URLSearchParams, allowed: readonly string
 function queryObject(url: URL): Record<string, unknown> | null {
   const allowed = new Set([
     'response_type', 'client_id', 'redirect_uri', 'resource', 'scope', 'state',
-    'code_challenge', 'code_challenge_method',
+    'code_challenge', 'code_challenge_method', 'ui_locales',
   ])
   const output: Record<string, unknown> = {}
   for (const key of url.searchParams.keys()) {
     if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) return null
-    output[key] = url.searchParams.get(key)
+    const value = url.searchParams.get(key)
+    if (value === null) return null
+    if (key === 'ui_locales' && (value.length > MAX_UI_LOCALES || !UI_LOCALES.test(value))) return null
+    output[key] = value
   }
   return output
 }
@@ -391,10 +413,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       codeChallenge: request.codeChallenge,
     })
     setSessionCookie(c, session)
-    return html(c, 200, 'Connect to 1F3D9', consentPage({
-      clientName: request.clientName,
-      csrf,
-    }))
+    return html(
+      c,
+      200,
+      'Connect to 1F3D9',
+      consentPage({ clientName: request.clientName, csrf }),
+      registeredCallbackOrigin(request.redirectUri),
+    )
   })
 
   app.post('/oauth/authorize', async c => {
@@ -500,7 +525,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         return browserError(c, 409, 'That resident name is already taken.')
       }
       setSessionCookie(c, session)
-      return html(c, 200, 'Save the resident key', rootKeyPage(pending.handle, residentSecret, csrf))
+      return html(
+        c,
+        200,
+        'Save the resident key',
+        rootKeyPage(pending.handle, residentSecret, csrf),
+        registeredCallbackOrigin(request.redirect_uri),
+      )
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return browserError(c, 409, 'That resident name is already taken.')

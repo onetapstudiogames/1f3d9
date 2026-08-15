@@ -47,6 +47,19 @@ const WINDOW_LIMITS = Object.freeze({
   events: PUBLIC_PAGE_DEFAULT,
 })
 
+// How many characters of a body survive the glass. WINDOW_LIMITS counts items;
+// these count characters, and the two used to share names without saying so.
+const WINDOW_BODY_LIMITS = Object.freeze({
+  notes: 2_000,
+  things: 1_000,
+  agreements: 4_000,
+})
+
+// An agreement may collect an unbounded number of later signers. The glass
+// keeps a small, safe preview and says explicitly when the public API holds
+// more parties than it is showing here.
+const AGREEMENT_PARTY_PREVIEW_LIMIT = 32
+
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
 const SAFE_DETAIL_IDS = [
@@ -117,8 +130,12 @@ interface PublicAgreement {
   body: string
   created_by: string
   parties: string[]
+  acceded: string[]
   signatures: string[]
   open: boolean
+  accession_open: boolean
+  party_count?: number
+  parties_truncated?: true
   created_at: string
   moderated: boolean
   truncated?: true
@@ -195,7 +212,7 @@ function safeWorldName(value: unknown): string | null {
 
 function safeHandles(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return [...new Set(value.filter(item => typeof item === 'string' && HANDLE_RE.test(item)))].slice(0, 32)
+  return [...new Set(value.filter(item => typeof item === 'string' && HANDLE_RE.test(item)))]
 }
 
 function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
@@ -275,7 +292,7 @@ export function publicWindowNotes(values: unknown[]): PublicNote[] {
     const id = positiveInteger(row.id)
     const placeId = positiveInteger(row.place_id)
     const author = typeof row.author === 'string' && HANDLE_RE.test(row.author) ? row.author : null
-    const body = safePublicText(row.body, 2_000)
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.notes)
     const createdAt = safeDate(row.created_at)
     if (!id || !placeId || !author || !body || !createdAt) return []
     return [{
@@ -297,7 +314,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
     const id = positiveInteger(row.id)
     const placeId = positiveInteger(row.place_id)
     const name = safePublicText(row.name, 120)
-    const body = safePublicText(row.body, 1_000, true)
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.things, true)
     const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : null
     const kind = row.kind == null ? null : safeWorldName(row.kind)
     const createdAt = safeDate(row.created_at)
@@ -326,21 +343,33 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
     if (!value || typeof value !== 'object') return []
     const row = value as Record<string, unknown>
     const id = positiveInteger(row.id)
-    const body = safePublicText(row.body, 4_000)
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.agreements)
     const createdBy = typeof row.created_by === 'string' && HANDLE_RE.test(row.created_by)
       ? row.created_by
       : null
-    const parties = safeHandles(row.parties)
-    const signatures = safeHandles(row.signatures).filter(handle => parties.includes(handle))
+    const allParties = safeHandles(row.parties)
+    const allPartySet = new Set(allParties)
+    const accededSet = new Set(safeHandles(row.acceded).filter(handle => allPartySet.has(handle)))
+    const orderedParties = allParties.filter(handle => !accededSet.has(handle))
+      .concat(allParties.filter(handle => accededSet.has(handle)))
+    const parties = orderedParties.slice(0, AGREEMENT_PARTY_PREVIEW_LIMIT)
+    const partyCount = Math.max(count(row.party_count), allParties.length)
+    const signatureSet = new Set(safeHandles(row.signatures).filter(handle => allPartySet.has(handle)))
+    const acceded = parties.filter(handle => accededSet.has(handle))
+    const signatures = parties.filter(handle => signatureSet.has(handle))
     const createdAt = safeDate(row.created_at)
     if (!id || !body || !createdBy || !parties.length || !createdAt) return []
+    const partiesTruncated = partyCount > parties.length
     return [{
       id,
       body: body.text,
       created_by: createdBy,
       parties,
+      acceded,
       signatures,
       open: typeof row.open === 'boolean' ? row.open : signatures.length < parties.length,
+      accession_open: row.accession_open === true,
+      ...(partiesTruncated ? { party_count: partyCount, parties_truncated: true as const } : {}),
       created_at: createdAt,
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
@@ -505,13 +534,30 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
   return Object.freeze({
     text: `WITH public_agreements AS (
         SELECT agreement.id, agreement.body, creator.handle AS created_by,
+          EXISTS (
+            SELECT 1 FROM agreement_accession_openings opening
+            WHERE opening.agreement_id = agreement.id
+          ) AS accession_open,
           ARRAY(SELECT party.handle FROM agreement_parties membership
             JOIN residents party ON party.id = membership.resident_id
-            WHERE membership.agreement_id = agreement.id ORDER BY party.handle) AS parties,
+            WHERE membership.agreement_id = agreement.id
+            ORDER BY membership.named DESC, party.handle
+            LIMIT ${AGREEMENT_PARTY_PREVIEW_LIMIT}) AS parties,
+          (SELECT count(*)::int FROM agreement_parties membership
+            WHERE membership.agreement_id = agreement.id) AS party_count,
+          ARRAY(SELECT party.handle FROM agreement_parties membership
+            JOIN residents party ON party.id = membership.resident_id
+            WHERE membership.agreement_id = agreement.id AND NOT membership.named
+            ORDER BY party.handle
+            LIMIT ${AGREEMENT_PARTY_PREVIEW_LIMIT}) AS acceded,
           ARRAY(SELECT signer.handle FROM agreement_signatures signature
             JOIN residents signer ON signer.id = signature.resident_id
+            JOIN agreement_parties membership
+              ON membership.agreement_id = signature.agreement_id
+              AND membership.resident_id = signature.resident_id
             WHERE signature.agreement_id = agreement.id
-            ORDER BY signature.signed_at, signer.handle) AS signatures,
+            ORDER BY membership.named DESC, signer.handle
+            LIMIT ${AGREEMENT_PARTY_PREVIEW_LIMIT}) AS signatures,
           NOT EXISTS (
             SELECT 1 FROM agreement_parties membership
             WHERE membership.agreement_id = agreement.id AND NOT EXISTS (
@@ -530,7 +576,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
             WHERE membership.agreement_id = agreement.id AND party.handle = $2::text
           ))
       )
-      SELECT id, body, created_by, parties, signatures, NOT complete AS open, created_at
+      SELECT id, body, created_by, parties, party_count, acceded, signatures, accession_open,
+        NOT complete AS open, created_at
       FROM public_agreements ORDER BY id DESC LIMIT $3::integer`,
     values: Object.freeze([options.beforeId, options.resident, fetchLimit]),
   })
@@ -720,6 +767,7 @@ async function readWindowSnapshot() {
     ),
     shown,
     limits: WINDOW_LIMITS,
+    body_limits: WINDOW_BODY_LIMITS,
     refreshed_at: new Date().toISOString(),
   }
 }
