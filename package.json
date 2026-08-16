@@ -11,8 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types test/*.test.ts",
-    "test:coverage": "node --test --experimental-strip-types --experimental-test-coverage test/*.test.ts",
+    "test": "node --experimental-strip-types scripts/run-tests.ts",
+    "test:coverage": "node --experimental-strip-types scripts/run-tests.ts --coverage",
     "test:e2e": "playwright test",
     "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts",
     "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
