@@ -445,6 +445,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           state: 'completed',
           status: state.paymentAttempt.responseStatus ?? 200,
           body: state.paymentAttempt.response,
+          paymentResponseHeader: 'completed-response',
         }
       }
       const created = state.paymentAttempt == null
@@ -507,7 +508,12 @@ function makeHarness(patch: Partial<FakeState> = {}) {
     resumePayment: async ({ attempt }) => {
       state = { ...state, directVerifications: state.directVerifications + 1 }
       if (attempt.status === 'completed' && attempt.response) {
-        return { state: 'completed', status: attempt.responseStatus ?? 200, body: attempt.response }
+        return {
+          state: 'completed',
+          status: attempt.responseStatus ?? 200,
+          body: attempt.response,
+          paymentResponseHeader: 'completed-response',
+        }
       }
       if (state.directVerificationInvalid || attempt.status === 'invalid') {
         state = {
@@ -769,6 +775,41 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.equal(retry.status, 200)
   assert.deepEqual(await retry.json(), firstBody)
   assert.equal(harness.getState().directVerifications, 1)
+})
+
+test('a completed payment replay preserves its x402 response header', async () => {
+  const now = NOW.toISOString()
+  const paymentAttempt = {
+    ...fakePaymentAttempt(now),
+    status: 'completed' as const,
+    responseStatus: 200,
+    response: { offer: { id: 101, phase: 'claimed' } },
+    completedAt: now,
+  }
+  const harness = makeHarness({
+    offer: openOffer({
+      buyer_id: 8,
+      buyer: 'neighbor',
+      reserved_by: 8,
+      buyer_wallet: BUYER_WALLET,
+      market_listing_id: 91,
+      market_checkout_id: 81,
+      reserved_at: now,
+      reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+    }),
+    thingLocked: true,
+    paymentAttempt,
+  })
+
+  const response = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT },
+    body: '{}',
+  })
+
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(response.headers.get('X-PAYMENT-RESPONSE'), 'completed-response')
+  assert.equal(harness.getState().facilitatorSettlements, 0)
 })
 
 test('world x402 claim uses the signed authorization nonce without a payment-identifier extension', async () => {

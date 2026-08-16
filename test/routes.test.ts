@@ -2199,6 +2199,88 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
     /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? '')))
 })
 
+test('a completed direct-sale replay preserves its x402 response header', async () => {
+  reset({
+    scenario: 'direct sale',
+    chainFrom: BUYER_WALLET,
+    chainTo: SELLER_WALLET,
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    offer: { id: 90, status: 'open', reservedUntil: null },
+  })
+  setActor(8, 'neighbor')
+  const reservation = await app.request('/api/transfer/90/claim', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(reservation.status, 402)
+
+  const completedAttempt: FakePaymentAttempt = {
+    public_id: 'pay_' + '88'.repeat(32),
+    actor_id: 8,
+    counterparty_id: 7,
+    operation: 'direct_sale',
+    target_key: 'direct-sale:90',
+    offer_id: 90,
+    asset_type: 'thing',
+    asset_id: 42,
+    request_hash: '99'.repeat(32),
+    method: 'x402',
+    network: 'base',
+    token: USDC.toLowerCase(),
+    payer_wallet: BUYER_WALLET.toLowerCase(),
+    payee_wallet: SELLER_WALLET.toLowerCase(),
+    amount_units: '2000000',
+    x402_nonce: '0x' + 'cc'.repeat(32),
+    x402_payload_digest: 'aa'.repeat(32),
+    x402_valid_after: String(AUTHORIZATION_NOW - 120),
+    x402_valid_before: String(AUTHORIZATION_NOW + 3600),
+    start_block: '256',
+    start_time: new Date(Date.now() - 60_000).toISOString(),
+    end_time: new Date(Date.now() + 240_000).toISOString(),
+    status: 'completed',
+    lease_owner: null,
+    lease_expires_at: null,
+    tx_hash: TX1.toLowerCase(),
+    finalized_block_number: '256',
+    finalized_block_hash: TX2,
+    finalized_block_time: new Date().toISOString(),
+    finalized_at: new Date().toISOString(),
+    invalid_reason: null,
+    result_json: { kind: 'transfer_offer', id: 90 },
+    response_status: 200,
+    response_json: {
+      offer: { id: 90, status: 'claimed' },
+      transfer: {
+        id: 91,
+        type: 'thing',
+        asset_id: 42,
+        from: 'tiny-lantern',
+        to: 'neighbor',
+        price_usdc: 2,
+        tx_hash: TX1.toLowerCase(),
+      },
+    },
+    created_at: new Date(Date.now() - 60_000).toISOString(),
+    updated_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+  }
+  state = {
+    ...state,
+    paymentAttempts: new Map([[completedAttempt.public_id, completedAttempt]]),
+  }
+
+  const replay = await app.request('/api/transfer/90/claim', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+  })
+
+  assert.equal(replay.status, 200, await replay.clone().text())
+  assert.ok(replay.headers.get('X-PAYMENT-RESPONSE'))
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 0)
+})
+
 test('raw transaction proof cannot create a payment window or bypass its buyer binding', async () => {
   reset({
     scenario: 'sale wallet binding', chainFrom: BUYER_WALLET, chainTo: SELLER_WALLET,
@@ -2435,6 +2517,7 @@ test('frontier x402 retry uses the same signed authorization and does not settle
     body: requestBody,
   })
   assert.equal(retry.status, 201)
+  assert.ok(retry.headers.get('X-PAYMENT-RESPONSE'))
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
   assert.equal(state.paymentHashes.size, 1)
 })

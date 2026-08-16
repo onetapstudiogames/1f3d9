@@ -158,7 +158,12 @@ export async function treasuryFee(
   if (payment.state === 'completed') {
     return new Response(JSON.stringify(payment.body), {
       status: payment.status,
-      headers: { 'content-type': 'application/json; charset=UTF-8' },
+      headers: {
+        'content-type': 'application/json; charset=UTF-8',
+        ...(payment.paymentResponseHeader
+          ? { 'X-PAYMENT-RESPONSE': payment.paymentResponseHeader }
+          : {}),
+      },
     })
   }
   if (payment.state === 'payment_pending') return c.json(payment.body, 202)

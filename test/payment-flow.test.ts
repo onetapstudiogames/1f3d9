@@ -236,6 +236,7 @@ test('a completed retry returns the stored canonical response without chain or f
         disposition: 'existing',
         attempt: attempt({
           status: 'completed', responseStatus: 201,
+          txHash: TX,
           response: { ok: true, thing: { id: 42 } },
         }),
       }
@@ -243,9 +244,16 @@ test('a completed retry returns the stored canonical response without chain or f
   })
   const result = await runDurableX402(input, deps)
 
-  assert.deepEqual(result, {
-    state: 'completed', status: 201, body: { ok: true, thing: { id: 42 } },
-  })
+  assert.equal(result.state, 'completed')
+  if (result.state === 'completed') {
+    assert.equal(result.status, 201)
+    assert.deepEqual(result.body, { ok: true, thing: { id: 42 } })
+    assert.ok(result.paymentResponseHeader)
+    assert.deepEqual(
+      JSON.parse(Buffer.from(result.paymentResponseHeader, 'base64').toString('utf8')),
+      { success: true, transaction: TX, payer: PAYER },
+    )
+  }
   assert.deepEqual(events, ['block', 'create'])
 })
 

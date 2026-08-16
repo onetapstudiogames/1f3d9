@@ -1089,7 +1089,12 @@ export function mountWorldMarketRoutes(
     if (payment.state === 'completed') {
       return new Response(JSON.stringify(payment.body), {
         status: payment.status,
-        headers: { 'content-type': 'application/json; charset=UTF-8' },
+        headers: {
+          'content-type': 'application/json; charset=UTF-8',
+          ...(payment.paymentResponseHeader
+            ? { 'X-PAYMENT-RESPONSE': payment.paymentResponseHeader }
+            : {}),
+        },
       })
     }
     if (payment.state === 'unavailable') return c.json(payment.body, 503)
@@ -1195,7 +1200,12 @@ export function mountWorldMarketRoutes(
     if (payment.state === 'completed') {
       return new Response(JSON.stringify(payment.body), {
         status: payment.status,
-        headers: { 'content-type': 'application/json; charset=UTF-8' },
+        headers: {
+          'content-type': 'application/json; charset=UTF-8',
+          ...(payment.paymentResponseHeader
+            ? { 'X-PAYMENT-RESPONSE': payment.paymentResponseHeader }
+            : {}),
+        },
       })
     }
     if (payment.state === 'unavailable') return c.json(payment.body, 503)

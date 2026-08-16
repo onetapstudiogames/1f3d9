@@ -88,7 +88,12 @@ export type DurableX402Result =
       finalizedAt: string
       paymentResponseHeader: string
     }
-  | { state: 'completed'; status: number; body: Record<string, unknown> }
+  | {
+      state: 'completed'
+      status: number
+      body: Record<string, unknown>
+      paymentResponseHeader: string | null
+    }
   | {
       state: 'payment_pending'
       status: 202
@@ -164,7 +169,14 @@ function completed(attempt: PaymentAttemptRecord): DurableX402Result {
   if (attempt.responseStatus == null || attempt.response == null) {
     return pending(attempt, 'payment completed but its canonical response is still being reconciled')
   }
-  return { state: 'completed', status: attempt.responseStatus, body: attempt.response }
+  return {
+    state: 'completed',
+    status: attempt.responseStatus,
+    body: attempt.response,
+    paymentResponseHeader: attempt.txHash && attempt.payerWallet
+      ? settlementHeader(attempt.txHash, attempt.payerWallet)
+      : null,
+  }
 }
 
 function rejected(error: string, status: 400 | 409 = 400, doNotPayAgain = false): DurableX402Result {
