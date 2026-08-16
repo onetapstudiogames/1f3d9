@@ -16,8 +16,12 @@ reviewed Git commit and make production impossible to reproduce from `main`.
    proves the branch is pushed at the tested commit and runs the test,
    type-check, PostgreSQL integration, and browser suites. It does not upload or
    deploy anything.
-3. Open a pull request and check its Vercel preview, including the changed user
-   paths and any expected API behavior.
+3. Before checking the Vercel preview, confirm its Preview-only sensitive
+   `HOSTED_CHAT_PREVIEW_DATABASE_URL` points to the intended isolated branch and that
+   the production `DATABASE_URL` is scoped to Production only. A missing or blank
+   preview setting intentionally makes database work unavailable; never restore the
+   production fallback to make a preview pass. Then check the changed user paths and
+   expected API behavior.
 4. Merge the reviewed pull request into `main`. Vercel then deploys that exact
    GitHub commit.
 

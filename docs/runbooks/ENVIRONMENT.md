@@ -18,11 +18,18 @@ There are no byte-for-byte duplicates within the six root files. Similar key nam
 not prove that values are current, so none of the temporary files should be used as a
 source of truth.
 
-## What production uses
+## What each runtime uses
 
-Vercel production and preview deployments use environment values stored in Vercel, not
-files committed from this folder. Local database tools prefer a `DATABASE_URL` already
-set in the process, then read `.env.local`, then `.env.deploy`, then `env.txt`.
+Vercel deployments use environment values stored in Vercel, not files committed from
+this folder. Scope the general `DATABASE_URL` to Production only. Every Preview must
+instead receive a Preview-only sensitive `HOSTED_CHAT_PREVIEW_DATABASE_URL` pointing to
+its isolated database branch. Preview runtime code ignores `DATABASE_URL`; when the
+dedicated value is missing or blank, database work fails closed with a generic
+unavailable response.
+
+Local development and operator tools continue to use their explicitly selected local
+settings. Local database tools prefer a `DATABASE_URL` already set in the process, then
+read `.env.local`, then `.env.deploy`, then `env.txt`.
 
 The Neon key in `.env.local` is scoped only to project `bold-union-44728141`; it was
 authenticated successfully after creation. It can still administer that project, so it
