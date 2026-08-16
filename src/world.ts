@@ -348,7 +348,7 @@ export function mountWorldRoutes(app: Hono): void {
           : err(c, 409, 'world root changed before frontier founding; retry')
       }
       if (fee.attemptKey) {
-        await markX402PaymentCompleted({ query: sql.query }, fee.attemptKey, {
+        await markX402PaymentCompleted(sql.query, fee.attemptKey, {
           completionTxHash: fee.txHash,
           completionKind: 'place',
           completionId: place.id,
@@ -554,7 +554,7 @@ export function mountWorldRoutes(app: Hono): void {
       }
       const kind = { ...returned, revision: 1 }
       if (fee.attemptKey) {
-        await markX402PaymentCompleted({ query: sql.query }, fee.attemptKey, {
+        await markX402PaymentCompleted(sql.query, fee.attemptKey, {
           completionTxHash: fee.txHash,
           completionKind: 'kind_revision',
           completionId: kind.id,
@@ -680,7 +680,7 @@ export function mountWorldRoutes(app: Hono): void {
           : err(c, 409, 'kind changed or received an open sale offer; retry')
       }
       if (fee.attemptKey) {
-        await markX402PaymentCompleted({ query: sql.query }, fee.attemptKey, {
+        await markX402PaymentCompleted(sql.query, fee.attemptKey, {
           completionTxHash: fee.txHash,
           completionKind: 'kind_revision',
           completionId: kind.id,

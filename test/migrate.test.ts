@@ -99,7 +99,7 @@ test('offer history trigger rejects claims without an active buyer reservation',
   )
   assert.match(
     schemaDdl,
-    /NEW\.block_time\s+IS\s+NULL[\s\S]*date_trunc\('second',\s*world_offer\.reserved_at\)[\s\S]*NEW\.block_time\s+>=\s+date_trunc\('second',\s*world_offer\.reserved_until\)/i,
+    /NEW\.block_time\s+IS\s+NULL[\s\S]*NEW\.block_time\s+<\s+world_offer\.reserved_at[\s\S]*NEW\.block_time\s+>\s+world_offer\.reserved_until/i,
   )
 })
 
@@ -124,21 +124,18 @@ test('fresh and upgraded world constraints use one stable set of names', () => {
 test('x402 payment attempts are durable before settlement or final product writes', () => {
   const attempts = schemaStatement('payment_attempts')
 
-  assert.match(attempts, /public_id\s+TEXT\s+PRIMARY KEY/i)
+  assert.match(attempts, /payment_key\s+TEXT\s+NOT NULL\s+UNIQUE/i)
+  assert.match(attempts, /payment_kind\s+TEXT\s+NOT NULL\s+CHECK\s*\(payment_kind\s+IN\s*\('x402'\)\)/i)
+  assert.match(attempts, /status\s+TEXT\s+NOT NULL\s+CHECK\s*\(status\s+IN\s*\('initiated',\s*'settled',\s*'completed',\s*'failed'\)\)/i)
+  assert.match(attempts, /payer_wallet\s+TEXT\s+NOT NULL/i)
+  assert.match(attempts, /payee_wallet\s+TEXT\s+NOT NULL/i)
+  assert.match(attempts, /amount_usdc\s+NUMERIC\(12,6\)\s+NOT NULL/i)
+  assert.match(attempts, /payment_payload\s+JSONB\s+NOT NULL/i)
+  assert.match(attempts, /transaction_hash\s+TEXT/i)
+  assert.match(attempts, /completion_tx_hash\s+TEXT/i)
+  assert.match(attempts, /purpose\s+TEXT\s+NOT NULL/i)
   assert.match(attempts, /actor_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\(id\)/i)
-  assert.match(attempts, /operation\s+TEXT\s+NOT NULL/i)
-  assert.match(attempts, /request_hash\s+TEXT/i)
-  assert.match(attempts, /request_json\s+JSONB/i)
-  assert.match(attempts, /method\s+TEXT/i)
-  assert.match(attempts, /token\s+TEXT/i)
-  assert.match(attempts, /amount_units\s+BIGINT/i)
-  assert.match(attempts, /x402_nonce\s+TEXT/i)
-  assert.match(attempts, /x402_payload_digest\s+TEXT/i)
-  assert.match(attempts, /tx_hash\s+TEXT\s+UNIQUE/i)
-  assert.match(attempts, /finalized_block_number\s+BIGINT/i)
-  assert.match(attempts, /response_status\s+SMALLINT/i)
-  assert.match(schemaDdl, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_x402_nonce/i)
-  assert.match(schemaDdl, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_one_live_target/i)
+  assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_actor_created/i)
 })
 
 test('round-two state tables are created idempotently', () => {

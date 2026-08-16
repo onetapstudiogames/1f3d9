@@ -100,25 +100,19 @@ interface FakeState {
   chainAgeSeconds: number
   paymentHashes: Set<string>
   paymentAttempts: Map<string, {
-    public_id: string
+    payment_key: string
+    payment_kind: 'x402'
+    status: 'initiated' | 'settled' | 'completed' | 'failed'
     actor_id: number
-    operation: string
-    target_key: string | null
-    request_hash: string
-    method: string | null
-    network: string | null
-    token: string | null
-    payer_wallet: string | null
-    payee_wallet: string | null
-    amount_units: string | null
-    x402_nonce: string | null
-    x402_payload_digest: string | null
-    status: 'settling' | 'payment_pending' | 'completed' | 'invalid' | 'expired'
-    tx_hash: string | null
-    result_json: Record<string, unknown> | null
-    created_at: string
-    updated_at: string
-    completed_at: string | null
+    purpose: string
+    payer_wallet: string
+    payee_wallet: string
+    amount_usdc: number
+    transaction_hash: string | null
+    completion_tx_hash: string | null
+    completion_kind: string | null
+    completion_id: number | null
+    completion_revision: number | null
   }>
   facilitatorVerify: boolean
   facilitatorSettle: boolean
@@ -386,86 +380,47 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
 
-  if (q.includes('/* payment-attempts:find */')) {
-    const targetKey = params[0] == null ? null : String(params[0])
-    const operation = String(params[1])
-    const nonce = params[2] == null ? null : String(params[2]).toLowerCase()
-    const network = params[3] == null ? null : String(params[3])
-    const token = params[4] == null ? null : String(params[4]).toLowerCase()
-    const payerWallet = params[5] == null ? null : String(params[5]).toLowerCase()
-    const row = [...state.paymentAttempts.values()].reverse().find(attempt =>
-      ['settling', 'payment_pending', 'completed'].includes(attempt.status) && (
-        (targetKey != null && attempt.operation === operation && attempt.target_key === targetKey)
-        || (
-          nonce != null
-          && attempt.network === network
-          && attempt.token === token
-          && attempt.payer_wallet === payerWallet
-          && attempt.x402_nonce === nonce
-        )
-      ))
+  if (q.includes('/* payment-attempts:initiate */')) {
+    const key = String(params[0])
+    if (!state.paymentAttempts.has(key)) {
+      const next = new Map(state.paymentAttempts)
+      next.set(key, {
+        payment_key: key,
+        payment_kind: 'x402',
+        status: 'initiated',
+        actor_id: Number(params[1]),
+        purpose: String(params[2]),
+        payer_wallet: String(params[3]).toLowerCase(),
+        payee_wallet: String(params[4]).toLowerCase(),
+        amount_usdc: Number(params[5]),
+        transaction_hash: null,
+        completion_tx_hash: null,
+        completion_kind: null,
+        completion_id: null,
+        completion_revision: null,
+      })
+      state = { ...state, paymentAttempts: next }
+    }
+    return []
+  }
+  if (q.includes('/* payment-attempts:read */')) {
+    const row = state.paymentAttempts.get(String(params[0]))
     return row ? [{ ...row }] : []
   }
-  if (q.includes('/* payment-attempts:create */')) {
-    const key = String(params[0])
-    const next = new Map(state.paymentAttempts)
-    const conflict = [...next.values()].some(attempt =>
-      ['settling', 'payment_pending', 'completed'].includes(attempt.status) && (
-        attempt.public_id === key
-        || (
-          params[4] != null
-          && attempt.operation === String(params[3])
-          && attempt.target_key === String(params[4])
-        )
-        || (
-          params[16] != null
-          && attempt.network === String(params[11])
-          && attempt.token === String(params[12]).toLowerCase()
-          && attempt.payer_wallet === String(params[13]).toLowerCase()
-          && attempt.x402_nonce === String(params[16]).toLowerCase()
-        )
-      ))
-    if (conflict) return []
-    const row = {
-      public_id: key,
-      actor_id: Number(params[1]),
-      operation: String(params[3]),
-      target_key: params[4] == null ? null : String(params[4]),
-      request_hash: String(params[8]),
-      method: params[10] == null ? null : String(params[10]),
-      network: params[11] == null ? null : String(params[11]),
-      token: params[12] == null ? null : String(params[12]).toLowerCase(),
-      payer_wallet: params[13] == null ? null : String(params[13]).toLowerCase(),
-      payee_wallet: params[14] == null ? null : String(params[14]).toLowerCase(),
-      amount_units: params[15] == null ? null : String(params[15]),
-      x402_nonce: params[16] == null ? null : String(params[16]).toLowerCase(),
-      x402_payload_digest: params[17] == null ? null : String(params[17]).toLowerCase(),
-      status: 'settling' as const,
-      tx_hash: null,
-      result_json: null,
-      created_at: '2026-08-11T00:00:00.000Z',
-      updated_at: '2026-08-11T00:00:00.000Z',
-      completed_at: null,
-    }
-    next.set(key, row)
-    state = { ...state, paymentAttempts: next }
-    return [{ ...row }]
-  }
-  if (q.includes('/* payment-attempts:legacy-settled */')) {
+  if (q.includes('/* payment-attempts:settled */')) {
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (!current) return []
     const next = new Map(state.paymentAttempts)
     next.set(key, {
       ...current,
-      status: current.status === 'completed' ? 'completed' : 'payment_pending',
-      tx_hash: current.tx_hash ?? String(params[1]).toLowerCase(),
-      updated_at: '2026-08-11T00:00:01.000Z',
+      status: current.status === 'completed' ? 'completed' : 'settled',
+      transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
     })
     state = { ...state, paymentAttempts: next }
     return [{ ...next.get(key)! }]
   }
-  if (q.includes('/* payment-attempts:legacy-completed */')) {
+  if (q.includes('/* payment-attempts:completed */')) {
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (!current) return []
@@ -473,14 +428,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     next.set(key, {
       ...current,
       status: 'completed',
-      tx_hash: current.tx_hash ?? String(params[1]).toLowerCase(),
-      result_json: {
-        completion_kind: String(params[2]),
-        completion_id: Number(params[3]),
-        completion_revision: params[4] == null ? null : Number(params[4]),
-      },
-      completed_at: '2026-08-11T00:00:02.000Z',
-      updated_at: '2026-08-11T00:00:02.000Z',
+      transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
+      completion_tx_hash: String(params[1]).toLowerCase(),
+      completion_kind: String(params[2]),
+      completion_id: Number(params[3]),
+      completion_revision: params[4] == null ? null : Number(params[4]),
     })
     state = { ...state, paymentAttempts: next }
     return [{ ...next.get(key)! }]

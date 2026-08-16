@@ -986,7 +986,7 @@ export function mountWorldMarketRoutes(
       verifiedVia = 'x402'
       blockTime = confirmed.blockTime.toISOString()
     } else if (paymentHeader) {
-      const started = await startX402PaymentAttempt({ query: dependencies.query }, {
+      const started = await startX402PaymentAttempt(dependencies.query, {
         actorId: buyer.id,
         purpose: 'sale',
         payeeWallet: offer.seller_wallet,
@@ -1016,7 +1016,7 @@ export function mountWorldMarketRoutes(
           return challenge402(c, accepted, 'settled payment does not match the reservation')
         }
         const settledAttempt = await markX402PaymentSettled(
-          { query: dependencies.query },
+          dependencies.query,
           started.attempt.paymentKey,
           settledHash,
         )
@@ -1240,7 +1240,7 @@ export function mountWorldMarketRoutes(
       const claimed = await readOffer(dependencies, offer.id)
       if (!claimed) return err(c, 500, 'claimed world receipt is unavailable')
       if (paymentAttemptKey) {
-        await markX402PaymentCompleted({ query: dependencies.query }, paymentAttemptKey, {
+        await markX402PaymentCompleted(dependencies.query, paymentAttemptKey, {
           completionTxHash: txHash,
           completionKind: 'world_offer',
           completionId: offer.id,

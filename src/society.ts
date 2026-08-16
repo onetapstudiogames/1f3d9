@@ -803,7 +803,7 @@ export function mountSocietyRoutes(app: Hono): void {
     let responseHeader: string | null = null
     let paymentAttemptKey: string | null = null
     if (paymentHeader) {
-      const started = await startX402PaymentAttempt({ query: sql.query }, {
+      const started = await startX402PaymentAttempt(sql.query, {
         actorId: resident.id,
         purpose: 'sale',
         payeeWallet: offer.seller_wallet,
@@ -831,7 +831,7 @@ export function mountSocietyRoutes(app: Hono): void {
           return challenge402(c, accepted, 'settled payer does not match the signed X-PAYMENT payer')
         }
         const settledAttempt = await markX402PaymentSettled(
-          { query: sql.query },
+          sql.query,
           started.attempt.paymentKey,
           settled.transaction,
         )
@@ -931,7 +931,7 @@ export function mountSocietyRoutes(app: Hono): void {
       const claimed = rows[0]
       if (!claimed) return err(c, 409, 'offer, ownership, or reservation changed before the sale closed')
       if (paymentAttemptKey) {
-        await markX402PaymentCompleted({ query: sql.query }, paymentAttemptKey, {
+        await markX402PaymentCompleted(sql.query, paymentAttemptKey, {
           completionTxHash: txHash,
           completionKind: 'transfer_offer',
           completionId: offerId,
