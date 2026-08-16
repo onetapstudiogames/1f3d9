@@ -141,7 +141,9 @@ async function resetDatabase(): Promise<number> {
   `, [secretHash(founderSecret), secretHash(neighborSecret)])
   await database.query(`
     INSERT INTO traits (id, name, description, coiner_id)
-      VALUES (1, 'peaceful', 'quiet conduct', 1)
+      VALUES
+        (1, 'peaceful', 'quiet conduct', 1),
+        (2, 'war-zone', 'combat allowed', 1)
   `)
   const room = await database.query<{ place_id: number }>(`
     WITH world AS MATERIALIZED (
@@ -196,29 +198,53 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
 
     await t.test('law replacement keeps typed actor IDs and append-only history', async () => {
       const roomId = await resetDatabase()
-      const result = await replacePlaceLaws(actor, roomId, ['peaceful'])
-      assert.equal('error' in result, false)
-      assert.deepEqual(result, [{ id: 1, name: 'peaceful', position: 0 }])
+      const initial = await replacePlaceLaws(actor, roomId, ['peaceful', 'war-zone'])
+      assert.equal('error' in initial, false)
+      const replaced = await replacePlaceLaws(actor, roomId, ['war-zone'])
+      assert.equal('error' in replaced, false)
+      assert.deepEqual(replaced, [{ id: 2, name: 'war-zone', position: 0 }])
       const history = await database!.query(`
-        SELECT change.actor_id, change.change_type, change.position, event.kind
+        SELECT change.actor_id, change.change_type, change.position, trait.name
         FROM place_law_changes change
-        JOIN events event ON event.kind = 'laws_changed'
+        JOIN traits trait ON trait.id = change.trait_id
+        WHERE change.place_id = $1
+        ORDER BY change.id
+      `, [roomId])
+      assert.deepEqual(history.rows, [
+        { actor_id: 1, change_type: 'add', position: 0, name: 'peaceful' },
+        { actor_id: 1, change_type: 'add', position: 1, name: 'war-zone' },
+        { actor_id: 1, change_type: 'remove', position: null, name: 'peaceful' },
+        { actor_id: 1, change_type: 'add', position: 0, name: 'war-zone' },
+      ])
+      const events = await database!.query(`
+        SELECT kind, detail FROM events
+        WHERE kind = 'laws_changed'
+        ORDER BY id
       `)
-      assert.deepEqual(history.rows, [{ actor_id: 1, change_type: 'add', position: 0, kind: 'laws_changed' }])
-})
+      assert.deepEqual(events.rows, [
+        { kind: 'laws_changed', detail: { place_id: roomId, traits: ['peaceful', 'war-zone'] } },
+        { kind: 'laws_changed', detail: { place_id: roomId, traits: ['war-zone'] } },
+      ])
+    })
     await t.test('withdrawal writes the timestamp and event in one statement', async () => {
       await resetDatabase()
-      const result = await withdrawThing(actor, 1)
+      const result = await withdrawThing(actor, 1, 'destroyed')
       assert.equal('error' in result, false)
       assert.ok(Number.isFinite(Date.parse(String('withdrawn_at' in result ? result.withdrawn_at : ''))))
       const state = await database!.query(`
         SELECT thing.withdrawn_at IS NOT NULL AS withdrawn,
-          event.kind, event.detail->>'reason' AS reason
+          event.kind, event.detail,
+          jsonb_typeof(event.detail->'reason') AS reason_type
         FROM things thing
         JOIN events event ON (event.detail->>'thing_id')::integer = thing.id
         WHERE thing.id = 1
       `)
-      assert.deepEqual(state.rows, [{ withdrawn: true, kind: 'thing_withdrawn', reason: 'withdrawn' }])
+      assert.deepEqual(state.rows, [{
+        withdrawn: true,
+        kind: 'thing_withdrawn',
+        detail: { thing_id: 1, reason: 'destroyed' },
+        reason_type: 'string',
+      }])
     })
 
     const { Hono } = await import('hono')
