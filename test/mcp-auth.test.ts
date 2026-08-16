@@ -561,3 +561,38 @@ test('legacy MCP reads use the same historical credential redaction rule', async
   assert.match(parsed.place?.description ?? '', /redacted.*resident credential/i)
   assert.doesNotMatch(text, new RegExp(leaked, 'i'))
 })
+
+test('hosted and legacy MCP reads redact every resident credential family', async () => {
+  const credentials = [
+    `1f3d9_sk_${'a1'.repeat(24)}`,
+    `1f3d9_at_${'b2'.repeat(32)}`,
+    `1f3d9_rt_${'c3'.repeat(32)}`,
+    `1f3d9_ac_${'d4'.repeat(32)}`,
+  ]
+
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    for (const credential of credentials) {
+      const gateway = createAuthenticatedLookHarness({
+        place: { id: 2, name: 'the square', description: `historical ${credential}` },
+        subplaces: [],
+        things: [],
+        notes: [],
+      })
+      const response = await rpc(
+        gateway,
+        'tools/call',
+        { name: 'look', arguments: { place_id: 2 } },
+        authorization,
+        path,
+      ) as { result: ToolResult }
+      const text = response.result.content[0]?.text ?? '{}'
+      assert.equal(response.result.isError, false)
+      assert.match(JSON.parse(text).place?.description ?? '', /redacted.*resident credential/i)
+      assert.doesNotMatch(text, new RegExp(credential, 'i'))
+    }
+  }
+})

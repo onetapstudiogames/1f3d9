@@ -59,7 +59,7 @@ export type CredentialExposureScanResult = Readonly<{
     project_id?: string
     branch_id?: string
   }>
-  affected_resident_ids: readonly number[]
+  associated_resident_ids: readonly number[]
   credential_owner_resident_ids: readonly number[]
   live_credential_owner_resident_ids: readonly number[]
   counts: Readonly<{
@@ -77,7 +77,7 @@ export type CredentialExposureScanResult = Readonly<{
 }>
 
 type ExposureRow = Readonly<{
-  publishing_resident_id: number | null
+  associated_resident_id: number | null
   content: string
 }>
 
@@ -90,48 +90,52 @@ type IdentityRow = Readonly<{
 
 export const PUBLIC_EXPOSURE_SQL = `
   /* public_credential_exposures */
-  SELECT id::bigint AS row_id, id AS publishing_resident_id, model AS content
-  FROM residents WHERE model ~* $1
+  SELECT id::bigint AS row_id, id AS associated_resident_id, model AS content
+  FROM public.residents WHERE model ~* $1
   UNION ALL
-  SELECT id::bigint, owner_id, name FROM places WHERE name ~* $1
+  SELECT id::bigint, owner_id, name FROM public.places WHERE name ~* $1
   UNION ALL
-  SELECT id::bigint, owner_id, description FROM places WHERE description ~* $1
+  SELECT id::bigint, owner_id, description FROM public.places WHERE description ~* $1
   UNION ALL
-  SELECT id::bigint, coiner_id, name FROM traits WHERE name ~* $1
+  SELECT id::bigint, coiner_id, name FROM public.traits WHERE name ~* $1
   UNION ALL
-  SELECT id::bigint, coiner_id, description FROM traits WHERE description ~* $1
+  SELECT id::bigint, coiner_id, description FROM public.traits WHERE description ~* $1
   UNION ALL
-  SELECT id::bigint, coiner_id, recipe::text FROM traits
+  SELECT id::bigint, coiner_id, recipe::text FROM public.traits
     WHERE recipe IS NOT NULL AND recipe::text ~* $1
   UNION ALL
-  SELECT id::bigint, owner_id, name FROM kinds WHERE name ~* $1
+  SELECT id::bigint, owner_id, name FROM public.kinds WHERE name ~* $1
   UNION ALL
   SELECT revision.kind_id::bigint, kind.owner_id, revision.description
-  FROM kind_revisions revision JOIN kinds kind ON kind.id = revision.kind_id
+  FROM public.kind_revisions revision
+  JOIN public.kinds kind ON kind.id = revision.kind_id
   WHERE revision.description ~* $1
   UNION ALL
   SELECT revision.kind_id::bigint, kind.owner_id, array_to_string(revision.traits, ' ')
-  FROM kind_revisions revision JOIN kinds kind ON kind.id = revision.kind_id
+  FROM public.kind_revisions revision
+  JOIN public.kinds kind ON kind.id = revision.kind_id
   WHERE array_to_string(revision.traits, ' ') ~* $1
   UNION ALL
   SELECT revision.kind_id::bigint, kind.owner_id, revision.recipe::text
-  FROM kind_revisions revision JOIN kinds kind ON kind.id = revision.kind_id
+  FROM public.kind_revisions revision
+  JOIN public.kinds kind ON kind.id = revision.kind_id
   WHERE revision.recipe::text ~* $1
   UNION ALL
-  SELECT id::bigint, owner_id, name FROM things WHERE name ~* $1
+  SELECT id::bigint, owner_id, name FROM public.things WHERE name ~* $1
   UNION ALL
-  SELECT id::bigint, owner_id, body FROM things WHERE body ~* $1
+  SELECT id::bigint, owner_id, body FROM public.things WHERE body ~* $1
   UNION ALL
-  SELECT id::bigint, author_id, body FROM notes WHERE body ~* $1
+  SELECT id::bigint, author_id, body FROM public.notes WHERE body ~* $1
   UNION ALL
-  SELECT id::bigint, created_by_id, body FROM agreements WHERE body ~* $1
+  SELECT id::bigint, created_by_id, body FROM public.agreements WHERE body ~* $1
   UNION ALL
-  SELECT id::bigint, actor_id, label FROM active_labels WHERE label ~* $1
+  SELECT id::bigint, actor_id, label FROM public.active_labels WHERE label ~* $1
   UNION ALL
-  SELECT id::bigint, actor_id, reason FROM moderation_actions WHERE reason ~* $1
+  SELECT id::bigint, actor_id, reason FROM public.moderation_actions WHERE reason ~* $1
   UNION ALL
   SELECT event.id::bigint, resident.id, event.detail::text
-  FROM events event LEFT JOIN residents resident ON resident.handle = event.actor
+  FROM public.events event
+  LEFT JOIN public.residents resident ON resident.handle = event.actor
   WHERE event.detail::text ~* $1
 `
 
@@ -139,11 +143,11 @@ const IDENTITY_MATCH_SQL = `
   /* credential_identity_matches */
   SELECT secret_hash AS credential_hash, 'resident_key'::text AS credential_kind,
     id AS resident_id, true AS live
-  FROM residents WHERE secret_hash = ANY($1::text[])
+  FROM public.residents WHERE secret_hash = ANY($1::text[])
   UNION ALL
   SELECT code.code_hash, 'oauth_authorization_code'::text, code.resident_id,
     (code.used_at IS NULL AND code.expires_at > statement_timestamp()) AS live
-  FROM oauth_authorization_codes code WHERE code.code_hash = ANY($1::text[])
+  FROM public.oauth_authorization_codes code WHERE code.code_hash = ANY($1::text[])
   UNION ALL
   SELECT token.token_hash,
     CASE token.token_type
@@ -154,8 +158,8 @@ const IDENTITY_MATCH_SQL = `
     (token.used_at IS NULL AND token.revoked_at IS NULL
       AND token.expires_at > statement_timestamp()
       AND family.revoked_at IS NULL AND family.expires_at > statement_timestamp()) AS live
-  FROM oauth_tokens token
-  JOIN oauth_token_families family ON family.id = token.family_id
+  FROM public.oauth_tokens token
+  JOIN public.oauth_token_families family ON family.id = token.family_id
   WHERE token.token_hash = ANY($1::text[])
 `
 
@@ -251,17 +255,17 @@ function positiveResidentId(value: unknown): number | null {
 
 function parseExposureRows(rows: readonly Record<string, unknown>[]): readonly ExposureRow[] {
   return Object.freeze(rows.map(row => {
-    const publishingResidentId = row.publishing_resident_id == null
+    const associatedResidentId = row.associated_resident_id == null
       ? null
-      : positiveResidentId(row.publishing_resident_id)
+      : positiveResidentId(row.associated_resident_id)
     if (
       typeof row.content !== 'string' ||
-      (row.publishing_resident_id != null && publishingResidentId === null)
+      (row.associated_resident_id != null && associatedResidentId === null)
     ) {
       throw new Error('credential scan received an invalid public record shape')
     }
     return Object.freeze({
-      publishing_resident_id: publishingResidentId,
+      associated_resident_id: associatedResidentId,
       content: row.content,
     })
   }))
@@ -299,7 +303,7 @@ function buildResult(
   exposures: readonly ExposureRow[],
   identities: readonly IdentityRow[],
 ): CredentialExposureScanResult {
-  const affectedResidents = new Set<number>()
+  const associatedResidents = new Set<number>()
   const credentialOwners = new Set<number>()
   const liveCredentialOwners = new Set<number>()
   const identityByHash = new Map<string, IdentityRow>()
@@ -324,7 +328,7 @@ function buildResult(
 
   for (const exposure of exposures) {
     if (!containsPublicCredential(exposure.content)) continue
-    if (exposure.publishing_resident_id) affectedResidents.add(exposure.publishing_resident_id)
+    if (exposure.associated_resident_id) associatedResidents.add(exposure.associated_resident_id)
     const matches = extractResidentCredentials(exposure.content)
     if (matches.length === 0) partialShapes += 1
     for (const match of matches) {
@@ -355,7 +359,7 @@ function buildResult(
   return Object.freeze({
     schema_version: 1,
     target: targetEvidence,
-    affected_resident_ids: sortedIds(affectedResidents),
+    associated_resident_ids: sortedIds(associatedResidents),
     credential_owner_resident_ids: sortedIds(credentialOwners),
     live_credential_owner_resident_ids: sortedIds(liveCredentialOwners),
     counts: Object.freeze({
@@ -420,6 +424,7 @@ export async function runCredentialExposureScan(options: Readonly<{
     await client.connect()
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
     transactionStarted = true
+    await client.query('SET LOCAL search_path = pg_catalog, public')
     await client.query("SET LOCAL statement_timeout = '15s'")
     await client.query("SET LOCAL lock_timeout = '2s'")
     await client.query("SET LOCAL idle_in_transaction_session_timeout = '20s'")

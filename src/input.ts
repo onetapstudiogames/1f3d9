@@ -28,12 +28,7 @@ function unsafePublicText(value: string): boolean {
 
 export function publicLabel(value: unknown, maximum = 120): string | null {
   if (typeof value !== 'string') return null
-  let normalized: string
-  try {
-    normalized = value.normalize('NFC').trim()
-  } catch {
-    return null
-  }
+  const normalized = value.trim()
   if (!normalized || normalized.length > maximum || /[\r\n]/u.test(normalized)) return null
   return unsafePublicText(normalized) ? null : normalized
 }
@@ -43,12 +38,7 @@ export function publicText(
   options: { maximumCharacters?: number; maximumBytes?: number; allowEmpty?: boolean } = {},
 ): string | null {
   if (typeof value !== 'string') return null
-  let normalized: string
-  try {
-    normalized = value.normalize('NFC').trim()
-  } catch {
-    return null
-  }
+  const normalized = value.trim()
   if (!options.allowEmpty && !normalized) return null
   if (options.maximumCharacters != null && normalized.length > options.maximumCharacters) return null
   if (options.maximumBytes != null && Buffer.byteLength(value, 'utf8') > options.maximumBytes) return null
@@ -57,12 +47,7 @@ export function publicText(
 
 export function worldName(value: unknown): string | null {
   if (typeof value !== 'string') return null
-  let normalized: string
-  try {
-    normalized = value.normalize('NFC').toLowerCase().trim()
-  } catch {
-    return null
-  }
+  const normalized = value.toLowerCase().trim()
   return WORLD_NAME_RE.test(normalized) && !unsafePublicText(normalized) ? normalized : null
 }
 

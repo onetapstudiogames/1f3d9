@@ -1541,56 +1541,64 @@ test('duplicate trait names fail before charging for a kind', async () => {
 })
 
 test('credential-shaped names and recipes fail before any public write or payment', async () => {
-  const leaked = `1f3d9_sk_${'a1'.repeat(24)}`
   const paidFields = { payer_wallet: SELLER_WALLET, fee_tx_hash: TX1 }
-  const cases = [
-    ['/api/kind', 'POST', {
-      name: leaked, description: 'safe', traits: [], recipe: [], ...paidFields,
-    }],
-    ['/api/kind', 'POST', {
-      name: 'safe-kind', description: 'safe', traits: [leaked], recipe: [], ...paidFields,
-    }],
-    ['/api/kind', 'POST', {
-      name: 'safe-kind', description: 'safe', traits: [],
-      recipe: [{ kind: leaked, quantity: 1 }], ...paidFields,
-    }],
-    ['/api/kind/3/revise', 'POST', {
-      description: 'safe', traits: [leaked], recipe: [], ...paidFields,
-    }],
-    ['/api/kind/3/revise', 'POST', {
-      description: 'safe', traits: [], recipe: [{ kind: leaked, quantity: 1 }], ...paidFields,
-    }],
-    ['/api/trait', 'POST', { name: leaked, description: 'safe' }],
-    ['/api/trait', 'POST', {
-      name: 'safe-trait', description: 'safe',
-      recipe: { use: [{ effect: 'label', target: 'actor', label: leaked }] },
-    }],
-    ['/api/trait', 'POST', {
-      name: 'safe-trait', description: 'safe',
-      recipe: { use: [{ effect: 'check_label', target: 'actor', label: leaked, then: [] }] },
-    }],
-    ['/api/place/2/laws', 'PUT', { traits: [leaked] }],
-  ] as const
+  const credentials = [
+    `1f3d9_sk_${'a1'.repeat(24)}`,
+    `1f3d9_at_${'b2'.repeat(32)}`,
+    `1f3d9_rt_${'c3'.repeat(32)}`,
+    `1f3d9_ac_${'d4'.repeat(32)}`,
+  ]
 
-  for (const [path, method, body] of cases) {
-    reset({ scenario: `credential write guard ${path}` })
-    const response = await app.request(path, {
-      method,
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-    })
-    assert.equal(response.status, 400, `${path}: ${await response.clone().text()}`)
-    assert.doesNotMatch(await response.text(), new RegExp(leaked, 'i'), path)
-    assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false, path)
-    assert.equal(
-      sqlCalls().some(call => (
-        /\b(?:insert|update|delete)\b/i.test(call.query ?? '') &&
-        /\b(?:kinds|kind_revisions|traits|place_law_changes|payment_uses|fees|events)\b/i
-          .test(call.query ?? '')
-      )),
-      false,
-      `${path}: ${JSON.stringify(sqlCalls())}`,
-    )
+  for (const leaked of credentials) {
+    const cases = [
+      ['/api/kind', 'POST', {
+        name: leaked, description: 'safe', traits: [], recipe: [], ...paidFields,
+      }],
+      ['/api/kind', 'POST', {
+        name: 'safe-kind', description: 'safe', traits: [leaked], recipe: [], ...paidFields,
+      }],
+      ['/api/kind', 'POST', {
+        name: 'safe-kind', description: 'safe', traits: [],
+        recipe: [{ kind: leaked, quantity: 1 }], ...paidFields,
+      }],
+      ['/api/kind/3/revise', 'POST', {
+        description: 'safe', traits: [leaked], recipe: [], ...paidFields,
+      }],
+      ['/api/kind/3/revise', 'POST', {
+        description: 'safe', traits: [], recipe: [{ kind: leaked, quantity: 1 }], ...paidFields,
+      }],
+      ['/api/trait', 'POST', { name: leaked, description: 'safe' }],
+      ['/api/trait', 'POST', {
+        name: 'safe-trait', description: 'safe',
+        recipe: { use: [{ effect: 'label', target: 'actor', label: leaked }] },
+      }],
+      ['/api/trait', 'POST', {
+        name: 'safe-trait', description: 'safe',
+        recipe: { use: [{ effect: 'check_label', target: 'actor', label: leaked, then: [] }] },
+      }],
+      ['/api/place/2/laws', 'PUT', { traits: [leaked] }],
+    ] as const
+
+    for (const [path, method, body] of cases) {
+      reset({ scenario: `credential write guard ${path}` })
+      const response = await app.request(path, {
+        method,
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      })
+      assert.equal(response.status, 400, `${path}: ${await response.clone().text()}`)
+      assert.doesNotMatch(await response.text(), new RegExp(leaked, 'i'), path)
+      assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false, path)
+      assert.equal(
+        sqlCalls().some(call => (
+          /\b(?:insert|update|delete)\b/i.test(call.query ?? '') &&
+          /\b(?:kinds|kind_revisions|traits|place_law_changes|payment_uses|fees|events)\b/i
+            .test(call.query ?? '')
+        )),
+        false,
+        `${path}: ${JSON.stringify(sqlCalls())}`,
+      )
+    }
   }
 })
 
@@ -2185,25 +2193,33 @@ test('public listing routes reject invalid and duplicate pagination parameters',
 })
 
 test('raw public place reads redact historical resident credentials without dropping the response', async () => {
-  reset({
-    scenario: 'public credential redaction',
-    placeDescription: `unsafe place description ${SECRET}`,
-    noteBody: `unsafe historical note ${'1f3d9_at_' + '34'.repeat(32)}`,
-  })
+  const credentials = [
+    `1f3d9_sk_${'a1'.repeat(24)}`,
+    `1f3d9_at_${'b2'.repeat(32)}`,
+    `1f3d9_rt_${'c3'.repeat(32)}`,
+    `1f3d9_ac_${'d4'.repeat(32)}`,
+  ]
 
-  const response = await app.request('/api/place/2')
-  assert.equal(response.status, 200)
-  const body = await response.json() as {
-    place: { description: string; id: number }
-    notes: Array<{ body: string }>
-    things: Array<{ id: number }>
+  for (const credential of credentials) {
+    reset({
+      scenario: 'public credential redaction',
+      placeDescription: `unsafe place description ${credential}`,
+      noteBody: `unsafe historical note ${credential}`,
+    })
+
+    const response = await app.request('/api/place/2')
+    assert.equal(response.status, 200)
+    const body = await response.json() as {
+      place: { description: string; id: number }
+      notes: Array<{ body: string }>
+      things: Array<{ id: number }>
+    }
+    assert.equal(body.place.id, 2)
+    assert.match(body.place.description, /redacted.*resident credential/i)
+    assert.match(body.notes[0]?.body ?? '', /redacted.*resident credential/i)
+    assert.equal(body.things[0]?.id, 41)
+    assert.doesNotMatch(JSON.stringify(body), new RegExp(credential, 'i'))
   }
-  assert.equal(body.place.id, 2)
-  assert.match(body.place.description, /redacted.*resident credential/i)
-  assert.match(body.notes[0]?.body ?? '', /redacted.*resident credential/i)
-  assert.equal(body.things[0]?.id, 41)
-  assert.doesNotMatch(JSON.stringify(body), new RegExp(SECRET, 'i'))
-  assert.doesNotMatch(JSON.stringify(body), /1f3d9_at_[0-9a-f]{64}/i)
 })
 
 test('non-census growing public collections keep their newest-first 10-row default', async () => {

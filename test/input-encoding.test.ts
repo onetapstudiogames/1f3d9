@@ -11,9 +11,11 @@ import {
 
 test('public text preserves valid Unicode punctuation', () => {
   const text = '“The inn’s open”—bring maps… 🗺️'
+  const decomposedLabel = 'Cafe\u0301 — east wing'
 
   assert.equal(publicText(text, { maximumCharacters: 80 }), text)
   assert.equal(publicLabel('Café — east wing'), 'Café — east wing')
+  assert.equal(publicLabel(decomposedLabel), decomposedLabel)
 })
 
 test('public text and labels reject Unicode replacement characters', () => {

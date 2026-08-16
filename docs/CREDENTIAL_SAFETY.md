@@ -19,13 +19,17 @@ allowlisted public text columns and identity hashes without changing stored
 records. Its output contains only:
 
 - safe database target evidence;
-- IDs of residents who published affected fields;
+- IDs currently associated with affected records (author, current owner, coiner,
+  or actor, depending on the record);
 - IDs of residents whose current or historical credential hash matched;
 - IDs whose matching credential is still live; and
 - aggregate counts by credential family and live state.
 
 It never prints public text, tokens, hashes, database URLs, handles, row IDs, or
 surface names.
+
+Associated resident IDs are triage hints, not historical authorship proof.
+Transferable places, things, and kinds report their current owner.
 
 Local example:
 
