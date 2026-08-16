@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -58,6 +59,29 @@ function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Pr
     if (name.startsWith('GIT_')) delete environment[name]
   }
   return { ...environment, ...overrides }
+}
+
+function waitMilliseconds(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
+
+function removeDirectoryWithRetries(path: string): void {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      rmSync(path, {
+        force: true,
+        maxRetries: 3,
+        recursive: true,
+        retryDelay: 50,
+      })
+      return
+    } catch (error) {
+      lastError = error
+      waitMilliseconds(50 * (attempt + 1))
+    }
+  }
+  throw lastError
 }
 
 test('the retired deploy helper is read-only outside local verification', () => {
@@ -181,6 +205,7 @@ type PreparationFixture = Readonly<{
   commandLog: string
   git: (...args: string[]) => Buffer
   run: () => SpawnSyncReturns<string>
+  cleanup: () => void
 }>
 
 function createPreparationFixture(): PreparationFixture {
@@ -263,11 +288,17 @@ function createPreparationFixture(): PreparationFixture {
       encoding: 'utf8',
       env: withoutGitHookEnvironment(),
     }),
+    cleanup: () => {
+      for (const path of [bin, hooks, remoteRoot, root]) {
+        removeDirectoryWithRetries(path)
+      }
+    },
   }
 }
 
-test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', () => {
+test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', t => {
   const fixture = createPreparationFixture()
+  t.after(() => fixture.cleanup())
   const result = spawnSync('bash', ['scripts/deploy.sh'], {
     cwd: fixture.root,
     encoding: 'utf8',
@@ -280,8 +311,9 @@ test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', () 
   assert.equal(existsSync(fixture.commandLog), false)
 })
 
-test('preparation proves a clean GitHub branch and runs every local gate without deploying', () => {
+test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {
   const fixture = createPreparationFixture()
+  t.after(() => fixture.cleanup())
   const result = fixture.run()
 
   assert.equal(result.status, 0, result.stderr || result.stdout)
@@ -293,8 +325,9 @@ test('preparation proves a clean GitHub branch and runs every local gate without
   }
 })
 
-test('dirty or not-pushed work stops before any preparation gate', () => {
+test('dirty or not-pushed work stops before any preparation gate', t => {
   const dirty = createPreparationFixture()
+  t.after(() => dirty.cleanup())
   writeFileSync(join(dirty.root, 'untracked.txt'), 'not reviewed\n')
   const dirtyResult = dirty.run()
   assert.notEqual(dirtyResult.status, 0)
@@ -302,6 +335,7 @@ test('dirty or not-pushed work stops before any preparation gate', () => {
   assert.equal(existsSync(dirty.commandLog), false)
 
   const unpushed = createPreparationFixture()
+  t.after(() => unpushed.cleanup())
   writeFileSync(join(unpushed.root, 'README.md'), 'new unpushed commit\n')
   unpushed.git('add', 'README.md')
   unpushed.git('commit', '-q', '-m', 'unpushed')
