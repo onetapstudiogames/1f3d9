@@ -2,6 +2,7 @@ export const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 export const NETWORK = 'base'
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+const AUTHORIZATION_USED_TOPIC = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5'
 const BALANCE_OF = '0x70a08231'
 const RPC = process.env.BASE_RPC_URL ?? 'https://mainnet.base.org'
 const RPC_TIMEOUT_MS = 4_000
@@ -45,6 +46,9 @@ interface Log {
   address: string
   topics: string[]
   data: string
+  transactionHash?: string
+  blockHash?: string
+  blockNumber?: string
 }
 
 interface Receipt {
@@ -59,6 +63,9 @@ export interface VerifiedTransfer {
   to: string
   amount: bigint
   blockTime: Date
+  blockNumber: bigint
+  blockHash: string
+  finalizedAt: Date
 }
 
 export type TransferCheck =
@@ -163,6 +170,9 @@ export async function classifyUsdcTransfer(
     to,
     amount: transfer.amount,
     blockTime,
+    blockNumber: BigInt(receipt.blockNumber),
+    blockHash: receipt.blockHash.toLowerCase(),
+    finalizedAt: new Date(),
   }
 }
 
@@ -173,8 +183,64 @@ export async function verifyUsdcTransfer(
 ): Promise<VerifiedTransfer | null> {
   const checked = await classifyUsdcTransfer(txHash, to, minimum)
   return checked.state === 'matched'
-    ? { from: checked.from, to: checked.to, amount: checked.amount, blockTime: checked.blockTime }
+    ? {
+      from: checked.from,
+      to: checked.to,
+      amount: checked.amount,
+      blockTime: checked.blockTime,
+      blockNumber: checked.blockNumber,
+      blockHash: checked.blockHash,
+      finalizedAt: checked.finalizedAt,
+    }
     : null
+}
+
+export async function currentBaseBlockNumber(): Promise<bigint | null> {
+  const blockNumber = await rpc<string>('eth_blockNumber', [])
+  return typeof blockNumber === 'string' ? parseHexBigInt(blockNumber) : null
+}
+
+export async function findFinalizedAuthorizationTransaction(
+  payerWallet: string,
+  nonce: string,
+  startBlock: bigint,
+): Promise<string | null> {
+  if (!/^0x[0-9a-fA-F]{40}$/u.test(payerWallet) || !/^0x[0-9a-fA-F]{64}$/u.test(nonce)) {
+    return null
+  }
+  const finalized = await rpc<{ number?: unknown }>('eth_getBlockByNumber', ['finalized', false])
+  if (!finalized || typeof finalized.number !== 'string') return null
+  const finalizedNumber = parseHexBigInt(finalized.number)
+  if (finalizedNumber == null || finalizedNumber < startBlock) return null
+  const result = await rpc<unknown>('eth_getLogs', [{
+    address: USDC,
+    fromBlock: `0x${startBlock.toString(16)}`,
+    toBlock: finalized.number,
+    topics: [AUTHORIZATION_USED_TOPIC, pad32(payerWallet), nonce.toLowerCase()],
+  }])
+  if (!Array.isArray(result)) return null
+  const transactions = new Set<string>()
+  for (const candidate of result) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+    const log = candidate as Partial<Log>
+    const transactionHash = typeof log.transactionHash === 'string'
+      ? log.transactionHash.toLowerCase()
+      : ''
+    const blockNumber = typeof log.blockNumber === 'string'
+      ? parseHexBigInt(log.blockNumber)
+      : null
+    if (
+      log.address?.toLowerCase() !== USDC.toLowerCase()
+      || log.topics?.[0]?.toLowerCase() !== AUTHORIZATION_USED_TOPIC
+      || log.topics?.[1]?.toLowerCase() !== pad32(payerWallet)
+      || log.topics?.[2]?.toLowerCase() !== nonce.toLowerCase()
+      || !/^0x[0-9a-f]{64}$/u.test(transactionHash)
+      || blockNumber == null
+      || blockNumber > finalizedNumber
+    ) return null
+    transactions.add(transactionHash)
+  }
+  return transactions.size === 1 ? [...transactions][0]! : null
 }
 
 export async function usdcBalance(address: string): Promise<string | null> {

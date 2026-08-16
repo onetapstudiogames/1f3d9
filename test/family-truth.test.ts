@@ -63,10 +63,38 @@ test('official facts and MCP advertise the public-record bridge and city skill',
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   })
-  const names = ((await tools.json() as {
-    result: { tools: Array<{ name: string }> }
-  }).result.tools).map(tool => tool.name)
+  const listedTools = (await tools.json() as {
+    result: {
+      tools: Array<{
+        name: string
+        description: string
+        inputSchema: { properties?: Record<string, unknown> }
+      }>
+    }
+  }).result.tools
+  const names = listedTools.map(tool => tool.name)
   for (const name of ['list_world', 'claim_world', 'cancel_world', 'reconcile_world']) {
     assert.ok(names.includes(name), name)
+  }
+
+  for (const name of ['found', 'claim_world', 'transfer']) {
+    const tool = listedTools.find(candidate => candidate.name === name)
+    assert.ok(tool, name)
+    assert.doesNotMatch(tool.description, /direct payment|tx_hash/iu, `${name}: x402-only description`)
+    assert.ok(!('fee_tx_hash' in (tool.inputSchema.properties ?? {})), `${name}: no fee_tx_hash input`)
+    assert.ok(!('tx_hash' in (tool.inputSchema.properties ?? {})), `${name}: no tx_hash input`)
+  }
+})
+
+test('public payment instructions require x402 and do not advertise raw transaction proofs', () => {
+  for (const [name, value] of [
+    ['front door source', read('../src/door.ts')],
+    ['front door', read('../src/frontdoor.txt')],
+    ['compact machine map', read('../src/llms.txt')],
+    ['specification', read('../docs/SPEC.md')],
+    ['canonical front door', read('../docs/FRONTDOOR.md')],
+  ] as const) {
+    assert.match(value, /x402/iu, `${name}: x402`)
+    assert.doesNotMatch(value, /fee_tx_hash|direct payment proofs?|direct-transfer\s*\+\s*tx-hash|matching-wallet tx_hash/iu, `${name}: no raw proof instructions`)
   }
 })

@@ -223,8 +223,6 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
-        payer_wallet: { type: 'string', description: 'your Base wallet when using direct payment proof' },
-        fee_tx_hash: { type: 'string', description: 'direct $1 USDC payment proof; omit when using x402' },
       },
       required: ['parent_id', 'name'],
     },
@@ -234,7 +232,7 @@ const TOOLS: readonly ToolDefinition[] = [
       path: '/api/place',
       body: picked(args, [
         'parent_id', 'name', 'description', 'open_to_building', 'open_to_things',
-        'open_to_notes', 'payer_wallet', 'fee_tx_hash',
+        'open_to_notes',
       ]),
     }),
   },
@@ -369,7 +367,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'claim_world',
     description:
-      'Reserve or pay for a 1F3EA world offer. First send checkout id plus buyer wallet; then pay inside five minutes with tx_hash or the HTTP X-PAYMENT header. If x402 settlement is payment_pending, the same buyer retries without paying again even after the window.',
+      'Reserve or pay for a 1F3EA world offer. First send checkout id plus buyer wallet; then retry inside five minutes with the signed HTTP X-PAYMENT header. If settlement is payment_pending, the same buyer retries without paying again even after the window.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -377,7 +375,6 @@ const TOOLS: readonly ToolDefinition[] = [
         offer_id: { type: 'integer', minimum: 1 },
         market_checkout_id: { type: 'integer', minimum: 1 },
         buyer_wallet: { type: 'string' },
-        tx_hash: { type: 'string' },
       },
       required: ['offer_id'],
     },
@@ -385,7 +382,7 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: `/api/world/offer/${Number(args.offer_id)}/claim`,
-      body: picked(args, ['market_checkout_id', 'buyer_wallet', 'tx_hash']),
+      body: picked(args, ['market_checkout_id', 'buyer_wallet']),
     }),
   },
   {
@@ -441,7 +438,6 @@ const TOOLS: readonly ToolDefinition[] = [
           type: 'string',
           description: 'buyer Base wallet; required to open a five-minute claim reservation',
         },
-        tx_hash: { type: 'string', description: 'direct buyer-to-seller USDC proof for claim' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
@@ -458,7 +454,7 @@ const TOOLS: readonly ToolDefinition[] = [
         return {
           method: 'POST',
           path: `/api/transfer/${Number(args.offer_id)}/claim`,
-          body: picked(args, ['buyer_wallet', 'tx_hash']),
+          body: picked(args, ['buyer_wallet']),
         }
       }
       if (action === 'cancel') {

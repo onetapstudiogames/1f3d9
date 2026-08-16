@@ -4,21 +4,15 @@ import { auth, err, HANDLE_RE, postgresErrorCode, QUOTAS, WALLET_RE } from './co
 import { sql } from './db.ts'
 import { positiveId, publicText, usdcAmount, containsBearerSecret, SECRET_REJECTION } from './input.ts'
 import {
-  canonicalTxHash,
   challenge402,
   CLAIM_WINDOW_SECONDS,
   paymentReadinessResponse,
-  paymentResponseHeader,
   requirements,
-  settleX402,
-  verifyDirectPayment,
 } from './pay.ts'
 import {
-  markX402PaymentCompleted,
-  markX402PaymentSettled,
-  PAYMENT_ATTEMPT_CONFLICT,
-  startX402PaymentAttempt,
+  findPaymentAttempt,
 } from './payment-attempts.ts'
+import { resumeDurableX402, runDurableX402 } from './payment-flow.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { runTalkNoteAction } from './note-action.ts'
@@ -703,8 +697,8 @@ export function mountSocietyRoutes(app: Hono): void {
     const offerId = positiveId(c.req.param('offerId'))
     if (!offerId) return err(c, 400, 'bad offer id')
     const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['buyer_wallet', 'tx_hash']))
-      return err(c, 400, 'body may contain buyer_wallet or tx_hash')
+    if (!body || !hasOnly(body, ['buyer_wallet']))
+      return err(c, 400, 'body may contain buyer_wallet only; paid claims use X-PAYMENT')
     const requestedWallet = body.buyer_wallet == null
       ? null
       : typeof body.buyer_wallet === 'string' && WALLET_RE.test(body.buyer_wallet)
@@ -712,8 +706,6 @@ export function mountSocietyRoutes(app: Hono): void {
         : undefined
     if (requestedWallet === undefined)
       return err(c, 400, 'buyer_wallet must be a Base address')
-    const suppliedTx = body.tx_hash == null ? null : canonicalTxHash(body.tx_hash)
-    if (body.tx_hash != null && !suppliedTx) return err(c, 400, 'tx_hash must be 0x followed by 64 hex characters')
 
     const offer = await readOffer(offerId)
     if (!offer) return err(c, 404, 'no such transfer offer')
@@ -735,24 +727,30 @@ export function mountSocietyRoutes(app: Hono): void {
       `1F3D9 transfer offer ${offerId}`,
     )
     const paymentHeader = c.req.header('x-payment')
-    if (paymentHeader && suppliedTx)
-      return err(c, 400, 'use either X-PAYMENT or tx_hash, not both')
 
     const reservedAt = offer.reserved_at ? new Date(offer.reserved_at) : null
     const reservedUntil = offer.reserved_until ? new Date(offer.reserved_until) : null
     const now = Date.now()
-    const activeReservation =
+    const boundReservation =
       offer.reserved_by === resident.id &&
       typeof offer.buyer_wallet === 'string' && WALLET_RE.test(offer.buyer_wallet) &&
       reservedAt != null && !Number.isNaN(reservedAt.getTime()) && reservedAt.getTime() <= now &&
-      reservedUntil != null && !Number.isNaN(reservedUntil.getTime()) && reservedUntil.getTime() > now
+      reservedUntil != null && !Number.isNaN(reservedUntil.getTime())
+    const activeReservation = boundReservation && reservedUntil!.getTime() > now
+    const existingAttempt = boundReservation
+      ? await findPaymentAttempt({ query: sql.query }, {
+        actorId: resident.id,
+        operation: 'direct_sale',
+        offerId,
+      })
+      : null
 
-    if (!activeReservation) {
+    if (!activeReservation && !existingAttempt) {
       if (reservedUntil && !Number.isNaN(reservedUntil.getTime()) && reservedUntil.getTime() > now)
         return err(c, 409, 'this offer already has an active reservation')
       if (!requestedWallet)
         return err(c, 400, 'first claim call requires buyer_wallet to open a five-minute reservation')
-      if (paymentHeader || suppliedTx)
+      if (paymentHeader)
         return err(c, 409, 'no active reservation; open one before sending payment')
 
       const reservedRows = await sql.query(`
@@ -782,98 +780,93 @@ export function mountSocietyRoutes(app: Hono): void {
       return challenge402(
         c,
         accepted,
-        `reservation opened for five minutes; pay from ${requestedWallet} and retry with X-PAYMENT or tx_hash`,
+        `reservation opened for five minutes; pay from ${requestedWallet} and retry with X-PAYMENT`,
       )
     }
 
     const buyerWallet = offer.buyer_wallet!.toLowerCase()
     if (requestedWallet && requestedWallet !== buyerWallet)
       return err(c, 409, 'buyer_wallet does not match the active reservation')
-    if (!paymentHeader && !suppliedTx)
+    if (!paymentHeader && !existingAttempt)
       return challenge402(
         c,
         accepted,
-        `active reservation: pay $${offer.price_usdc} USDC from ${buyerWallet}, then retry with X-PAYMENT or tx_hash`,
+        `active reservation: pay $${offer.price_usdc} USDC from ${buyerWallet}, then retry with X-PAYMENT`,
       )
 
-    let txHash: string
-    let payer: string
-    let verifiedVia: 'x402' | 'claim'
-    let paymentBlockTime: string | null
-    let responseHeader: string | null = null
-    let paymentAttemptKey: string | null = null
-    if (paymentHeader) {
-      const started = await startX402PaymentAttempt(sql.query, {
-        actorId: resident.id,
-        purpose: 'sale',
-        payeeWallet: offer.seller_wallet,
-        amountUsdc: Number(offer.price_usdc),
+    const payment = paymentHeader
+      ? await runDurableX402({
+        database: { query: sql.query },
         paymentHeader,
         accepted,
+        actorId: resident.id,
+        counterpartyId: offer.seller_id,
+        operation: 'direct_sale',
+        targetKey: `direct-sale:${offerId}`,
+        offerId,
+        assetType: type,
+        assetId: offer.asset_id,
+        request: {
+          offer_id: offerId,
+          buyer_wallet: buyerWallet,
+          seller_wallet: offer.seller_wallet,
+          price_usdc: Number(offer.price_usdc),
+          asset_type: type,
+          asset_id: offer.asset_id,
+        },
+        expectedPayerWallet: buyerWallet,
+        notBefore: reservedAt!,
+        notAfter: reservedUntil!,
       })
-      if ('error' in started) {
-        if (started.code === PAYMENT_ATTEMPT_CONFLICT) return err(c, 409, started.error)
-        return challenge402(c, accepted, started.error)
-      }
-      if (started.payerWallet !== buyerWallet)
-        return challenge402(c, accepted, 'X-PAYMENT payer does not match the reservation wallet')
-      paymentAttemptKey = started.attempt.paymentKey
-      if (started.attempt.transactionHash) {
-        txHash = started.attempt.transactionHash
-        payer = started.attempt.payerWallet
-        verifiedVia = 'x402'
-        paymentBlockTime = null
-      } else {
-        const settled = await settleX402(paymentHeader, accepted)
-        if ('error' in settled) return challenge402(c, accepted, settled.error)
-        if (!WALLET_RE.test(settled.payer)) return challenge402(c, accepted, 'settlement returned an invalid payer address')
-        if (settled.payer.toLowerCase() !== started.payerWallet) {
-          return challenge402(c, accepted, 'settled payer does not match the signed X-PAYMENT payer')
-        }
-        const settledAttempt = await markX402PaymentSettled(
-          sql.query,
-          started.attempt.paymentKey,
-          settled.transaction,
-        )
-        if (!settledAttempt?.transactionHash) {
-          return err(c, 503, 'payment settled but its durable attempt record is unavailable')
-        }
-        txHash = settledAttempt.transactionHash
-        payer = settledAttempt.payerWallet
-        if (payer !== buyerWallet)
-          return challenge402(c, accepted, 'settled payer does not match the reservation wallet')
-        verifiedVia = 'x402'
-        paymentBlockTime = null
-        responseHeader = paymentResponseHeader(settled)
-      }
-    } else {
-      const direct = await verifyDirectPayment(
-        suppliedTx!,
-        offer.seller_wallet,
-        Number(offer.price_usdc),
-        reservedAt!,
-        reservedUntil!,
-      )
-      if (!direct)
-        return err(c, 402, 'tx did not verify inside the active reservation window')
-      txHash = suppliedTx!
-      payer = direct.from.toLowerCase()
-      if (payer !== buyerWallet)
-        return err(c, 402, 'direct payment came from a wallet other than the reservation wallet')
-      verifiedVia = 'claim'
-      paymentBlockTime = direct.blockTime.toISOString()
+      : await resumeDurableX402({
+        database: { query: sql.query },
+        attempt: existingAttempt!,
+        actorId: resident.id,
+      })
+
+    if (payment.state === 'completed') {
+      return new Response(JSON.stringify(payment.body), {
+        status: payment.status,
+        headers: { 'content-type': 'application/json; charset=UTF-8' },
+      })
     }
+    if (payment.state === 'payment_pending') return c.json(payment.body, 202)
+    if (payment.state === 'unavailable') return c.json(payment.body, 503)
+    if (payment.state === 'rejected') {
+      return payment.status === 409
+        ? c.json(payment.body, 409)
+        : c.json(payment.body, 400)
+    }
+
+    const txHash = payment.txHash
+    const payer = payment.payerWallet
+    const paymentBlockTime = payment.blockTime
 
     try {
       const rows = await sql.query(`
-        WITH claimed_offer AS (
+        WITH payment_attempt AS MATERIALIZED (
+          SELECT public_id
+          FROM payment_attempts
+          WHERE public_id = $17 AND lease_owner = $18
+            AND status = 'payment_pending' AND tx_hash = $8
+            AND actor_id = $3 AND counterparty_id = $2
+            AND operation = 'direct_sale' AND offer_id = $1
+            AND asset_type = $4 AND asset_id = $5
+          FOR UPDATE
+        ), claimed_offer AS (
           UPDATE transfer_offers SET status = 'claimed', claimed_at = now()
+          FROM payment_attempt
           WHERE id = $1 AND status = 'open' AND seller_id = $2 AND buyer_id = $3
             AND asset_type = $4 AND asset_id = $5
             AND price_usdc = $6 AND lower(seller_wallet) = lower($7)
             AND reserved_by = $3 AND lower(buyer_wallet) = lower($14)
             AND reserved_at = $15::timestamptz AND reserved_until = $16::timestamptz
-            AND reserved_at <= clock_timestamp() AND reserved_until > clock_timestamp()
+            AND $13::timestamptz >= (
+              date_trunc('second', reserved_at)
+              + CASE WHEN reserved_at > date_trunc('second', reserved_at)
+                THEN interval '1 second' ELSE interval '0 seconds' END
+            )
+            AND $13::timestamptz < date_trunc('second', reserved_until)
             AND EXISTS (
               SELECT 1 FROM ${table}
               WHERE id = $5 AND owner_id = $2 AND active_offer_id = $1${transferable}
@@ -886,16 +879,17 @@ export function mountSocietyRoutes(app: Hono): void {
           RETURNING id, asset_id, seller_id, buyer_id
         ), claimed_payment_use AS (
           INSERT INTO payment_uses (
-            tx_hash, actor_id, purpose, payer_wallet, payee_wallet, amount_usdc
+            tx_hash, payment_attempt_id, actor_id, purpose,
+            payer_wallet, payee_wallet, amount_usdc
           )
-          SELECT $8, $3, 'sale', $9, lower($7), $6 FROM claimed_offer
+          SELECT $8, $17, $3, 'sale', $9, lower($7), $6 FROM claimed_offer
           RETURNING tx_hash
         ), new_payment AS (
           INSERT INTO sale_payments (
             offer_id, buyer_id, payer_wallet, payee_wallet, amount_usdc,
             tx_hash, verified_via, block_time
           )
-          SELECT o.id, o.buyer_id, $9, lower($7), $6, p.tx_hash, $12, $13
+          SELECT o.id, o.buyer_id, $9, lower($7), $6, p.tx_hash, 'x402', $13
           FROM claimed_offer o CROSS JOIN claimed_payment_use p
           RETURNING offer_id, tx_hash
         ), changed_owner AS (
@@ -920,24 +914,49 @@ export function mountSocietyRoutes(app: Hono): void {
             'asset_id', $5::integer, 'from', $11::text, 'to', $10::text,
             'price_usdc', $6::numeric, 'tx_hash', $8::text
           ) FROM new_transfer t
+        ), response_row AS (
+          SELECT o.id, 'claimed'::text AS status, t.id AS transfer_id, t.created_at
+          FROM claimed_offer o CROSS JOIN new_transfer t
+        ), completed_attempt AS (
+          SELECT complete_payment_attempt(
+            $17,
+            $18,
+            jsonb_build_object('kind', 'transfer_offer', 'id', $1::integer),
+            200::smallint,
+            jsonb_build_object(
+              'offer', jsonb_build_object('id', $1::integer, 'status', 'claimed'),
+              'transfer', jsonb_build_object(
+                'id', response_row.transfer_id,
+                'type', $4::text,
+                'asset_id', $5::integer,
+                'from', $11::text,
+                'to', $10::text,
+                'price_usdc', $6::numeric,
+                'tx_hash', $8::text,
+                'created_at', response_row.created_at
+              )
+            )
+          ) AS attempt
+          FROM response_row CROSS JOIN claimed_payment_use
         )
-        SELECT o.id, 'claimed'::text AS status, t.id AS transfer_id, t.created_at
-        FROM claimed_offer o CROSS JOIN new_transfer t
+        SELECT response_row.* FROM response_row CROSS JOIN completed_attempt
       `, [
         offerId, offer.seller_id, resident.id, type, offer.asset_id, Number(offer.price_usdc),
         offer.seller_wallet, txHash, payer, resident.handle, offer.seller,
-        verifiedVia, paymentBlockTime, buyerWallet, offer.reserved_at!, offer.reserved_until!,
+        'x402', paymentBlockTime, buyerWallet, offer.reserved_at!, offer.reserved_until!,
+        payment.attemptId, payment.leaseOwner,
       ]) as { id: number; status?: string; transfer_id?: number; created_at?: string }[]
       const claimed = rows[0]
-      if (!claimed) return err(c, 409, 'offer, ownership, or reservation changed before the sale closed')
-      if (paymentAttemptKey) {
-        await markX402PaymentCompleted(sql.query, paymentAttemptKey, {
-          completionTxHash: txHash,
-          completionKind: 'transfer_offer',
-          completionId: offerId,
-        })
+      if (!claimed) {
+        return c.json({
+          payment: 'pending',
+          payment_attempt_id: payment.attemptId,
+          transaction: txHash,
+          do_not_pay_again: true,
+          retry: 'retry this same claim; the recorded payment remains reserved',
+        }, 202)
       }
-      if (responseHeader) c.header('X-PAYMENT-RESPONSE', responseHeader)
+      c.header('X-PAYMENT-RESPONSE', payment.paymentResponseHeader)
       return c.json({
         offer: { id: offerId, status: claimed.status ?? 'claimed' },
         transfer: {
@@ -978,6 +997,12 @@ export function mountSocietyRoutes(app: Hono): void {
         UPDATE transfer_offers SET status = 'canceled', canceled_at = now()
         WHERE id = $1 AND seller_id = $2 AND status = 'open'
           AND (reserved_until IS NULL OR reserved_until <= now())
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_attempts
+            WHERE payment_attempts.operation = 'direct_sale'
+              AND payment_attempts.offer_id = $1
+              AND payment_attempts.status IN ('settling', 'payment_pending', 'needs_review')
+          )
           AND EXISTS (
             SELECT 1 FROM ${table}
             WHERE id = $3 AND owner_id = $2 AND active_offer_id = $1${transferable}

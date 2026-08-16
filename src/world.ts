@@ -10,6 +10,7 @@ import {
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
 import {
   CLAIM_FEE_USDC,
+  TREASURY,
 } from './pay.ts'
 import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
 import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
@@ -32,6 +33,7 @@ import {
   isResponse,
   jsonBody,
   openOffer,
+  releasePaymentLease,
   requireResident,
   setPaymentHeader,
   THING_BODY_MAX_BYTES,
@@ -41,7 +43,6 @@ import {
   type PlaceRow,
   type ThingRow,
 } from './world-support.ts'
-import { markX402PaymentCompleted } from './payment-attempts.ts'
 import {
   finalizePublicPage,
   loadPublicPlaceCollectionRows,
@@ -51,6 +52,15 @@ import {
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
+
+async function everyTraitExists(names: readonly string[]): Promise<boolean> {
+  if (names.length === 0) return true
+  const rows = await sql`
+    SELECT name FROM traits WHERE name = ANY(${[...names]}::text[])
+  ` as Array<{ name: string }>
+  const found = new Set(rows.map(row => row.name))
+  return names.every(name => found.has(name))
+}
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
   const rows = await sql`
@@ -195,8 +205,6 @@ export function mountWorldRoutes(app: Hono): void {
       'open_to_building',
       'open_to_things',
       'open_to_notes',
-      'payer_wallet',
-      'fee_tx_hash',
     ])) {
       return err(c, 400, 'place body contains an unsupported field')
     }
@@ -281,11 +289,21 @@ export function mountWorldRoutes(app: Hono): void {
 
     const fee = await treasuryFee(
       c,
-      body,
       `${DOMAIN}/api/place`,
       '1F3D9 frontier founding fee',
       resident.id,
-      'frontier',
+      {
+        operation: 'frontier',
+        targetKey: `frontier:${parentId ?? 'root'}:${name}`,
+        request: {
+          parent_id: parentId,
+          name,
+          description,
+          open_to_building: openToBuilding ?? false,
+          open_to_things: openToThings ?? false,
+          open_to_notes: openToNotes ?? false,
+        },
+      },
     )
     if (fee instanceof Response) return fee
     try {
@@ -306,6 +324,16 @@ export function mountWorldRoutes(app: Hono): void {
           WHERE ${body.parent_id === null}
             AND NOT EXISTS (SELECT 1 FROM world_root)
           LIMIT 1
+        ), payment_attempt AS MATERIALIZED (
+          SELECT public_id
+          FROM payment_attempts
+          WHERE public_id = ${fee.attemptId}
+            AND lease_owner = ${fee.leaseOwner}
+            AND status = 'payment_pending'
+            AND tx_hash = ${fee.txHash}
+            AND actor_id = ${resident.id}
+            AND operation = 'frontier'
+          FOR UPDATE
         ), new_place AS (
           INSERT INTO places (
             parent_id, place_kind, name, description, owner_id,
@@ -313,11 +341,15 @@ export function mountWorldRoutes(app: Hono): void {
           )
           SELECT world_root_parent.id, 'continent', ${name}, ${description}, ${resident.id},
             ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
-          FROM world_root_parent
+          FROM world_root_parent CROSS JOIN payment_attempt
           RETURNING *
         ), payment_use AS (
-          INSERT INTO payment_uses (tx_hash, purpose, actor_id)
-          SELECT ${fee.txHash}, 'frontier', ${resident.id}
+          INSERT INTO payment_uses (
+            tx_hash, payment_attempt_id, purpose, actor_id,
+            payer_wallet, payee_wallet, amount_usdc
+          )
+          SELECT ${fee.txHash}, ${fee.attemptId}, 'frontier', ${resident.id},
+            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
           FROM new_place
           RETURNING tx_hash
         ), new_presence AS (
@@ -334,25 +366,32 @@ export function mountWorldRoutes(app: Hono): void {
             'place_id', id, 'parent_id', parent_id, 'name', name,
             'frontier', true, 'fee_tx_hash', ${fee.txHash}::text
           ) FROM new_place
+        ), completed_attempt AS (
+          SELECT complete_payment_attempt(
+            ${fee.attemptId},
+            ${fee.leaseOwner},
+            jsonb_build_object('kind', 'place', 'id', new_place.id),
+            201::smallint,
+            jsonb_build_object(
+              'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text),
+              'fee_tx', ${fee.txHash}::text
+            )
+          ) AS attempt
+          FROM new_place CROSS JOIN payment_use
         )
-        SELECT new_place.*, ${resident.handle}::text AS owner FROM new_place
+        SELECT new_place.*, ${resident.handle}::text AS owner
+        FROM new_place CROSS JOIN completed_attempt
       `) as PlaceRow[]
       const place = rows[0]
       if (!place) {
-        return fee.attemptKey
-          ? c.json({
-            payment: 'pending',
-            fee_tx: fee.txHash,
-            retry: 'retry this same request with the same X-PAYMENT header; do not sign a new payment',
-          }, 202)
-          : err(c, 409, 'world root changed before frontier founding; retry')
-      }
-      if (fee.attemptKey) {
-        await markX402PaymentCompleted(sql.query, fee.attemptKey, {
-          completionTxHash: fee.txHash,
-          completionKind: 'place',
-          completionId: place.id,
-        })
+        await releasePaymentLease(fee)
+        return c.json({
+          payment: 'pending',
+          payment_attempt_id: fee.attemptId,
+          fee_tx: fee.txHash,
+          do_not_pay_again: true,
+          retry: 'retry this same request with the same X-PAYMENT header',
+        }, 202)
       }
       setPaymentHeader(c, fee)
       return c.json({ place, fee_tx: fee.txHash }, 201)
@@ -481,7 +520,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['name', 'description', 'traits', 'recipe', 'payer_wallet', 'fee_tx_hash'])) {
+    if (!hasOnly(body, ['name', 'description', 'traits', 'recipe'])) {
       return err(c, 400, 'kind body contains an unsupported field')
     }
     const name = worldName(body.name)
@@ -500,21 +539,37 @@ export function mountWorldRoutes(app: Hono): void {
     if (recipe == null) {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
     }
+    if (!await everyTraitExists(traits)) {
+      return err(c, 400, 'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait')
+    }
 
     const fee = await treasuryFee(
       c,
-      body,
       `${DOMAIN}/api/kind`,
       '1F3D9 kind invention fee',
       resident.id,
-      'kind_invention',
+      {
+        operation: 'kind_invention',
+        targetKey: `kind-invention:${name}`,
+        request: { name, description, traits, recipe },
+      },
     )
     if (fee instanceof Response) return fee
     try {
       const rows = (await sql`
-        WITH new_kind AS (
+        WITH payment_attempt AS MATERIALIZED (
+          SELECT public_id
+          FROM payment_attempts
+          WHERE public_id = ${fee.attemptId}
+            AND lease_owner = ${fee.leaseOwner}
+            AND status = 'payment_pending'
+            AND tx_hash = ${fee.txHash}
+            AND actor_id = ${resident.id}
+            AND operation = 'kind_invention'
+          FOR UPDATE
+        ), new_kind AS (
           INSERT INTO kinds (name, owner_id, current_revision)
-          VALUES (${name}, ${resident.id}, 1)
+          SELECT ${name}, ${resident.id}, 1 FROM payment_attempt
           RETURNING id, name, owner_id, current_revision, created_at
         ), new_revision AS (
           INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
@@ -522,8 +577,12 @@ export function mountWorldRoutes(app: Hono): void {
           FROM new_kind
           RETURNING kind_id, revision, description, traits, recipe
         ), payment_use AS (
-          INSERT INTO payment_uses (tx_hash, purpose, actor_id)
-          SELECT ${fee.txHash}, 'kind_invention', ${resident.id}
+          INSERT INTO payment_uses (
+            tx_hash, payment_attempt_id, purpose, actor_id,
+            payer_wallet, payee_wallet, amount_usdc
+          )
+          SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_invention', ${resident.id},
+            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
           FROM new_revision
           RETURNING tx_hash
         ), new_fee AS (
@@ -536,31 +595,35 @@ export function mountWorldRoutes(app: Hono): void {
             'kind_id', new_kind.id, 'name', new_kind.name,
             'revision', new_revision.revision, 'fee_tx_hash', ${fee.txHash}::text
           ) FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
+        ), result_row AS (
+          SELECT new_kind.id, new_kind.name, new_kind.owner_id, ${resident.handle}::text AS owner,
+            new_revision.revision, new_revision.description, new_revision.traits,
+            new_revision.recipe, new_kind.created_at
+          FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
+        ), completed_attempt AS (
+          SELECT complete_payment_attempt(
+            ${fee.attemptId},
+            ${fee.leaseOwner},
+            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
+            201::smallint,
+            jsonb_build_object('kind', to_jsonb(result_row), 'fee_tx', ${fee.txHash}::text)
+          ) AS attempt
+          FROM result_row CROSS JOIN payment_use
         )
-        SELECT new_kind.id, new_kind.name, new_kind.owner_id, ${resident.handle}::text AS owner,
-          new_revision.revision, new_revision.description, new_revision.traits,
-          new_revision.recipe, new_kind.created_at
-        FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
+        SELECT result_row.* FROM result_row CROSS JOIN completed_attempt
       `) as KindRow[]
       const returned = rows[0]
       if (!returned) {
-        return fee.attemptKey
-          ? c.json({
-            payment: 'pending',
-            fee_tx: fee.txHash,
-            retry: 'retry this same request with the same X-PAYMENT header; do not sign a new payment',
-          }, 202)
-          : err(c, 409, 'kind invention could not be completed')
+        await releasePaymentLease(fee)
+        return c.json({
+          payment: 'pending',
+          payment_attempt_id: fee.attemptId,
+          fee_tx: fee.txHash,
+          do_not_pay_again: true,
+          retry: 'retry this same request with the same X-PAYMENT header',
+        }, 202)
       }
       const kind = { ...returned, revision: 1 }
-      if (fee.attemptKey) {
-        await markX402PaymentCompleted(sql.query, fee.attemptKey, {
-          completionTxHash: fee.txHash,
-          completionKind: 'kind_revision',
-          completionId: kind.id,
-          completionRevision: kind.revision,
-        })
-      }
       setPaymentHeader(c, fee)
       return c.json({ kind, fee_tx: fee.txHash }, 201)
     } catch (error) {
@@ -579,7 +642,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'kind id must be a positive integer')
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['description', 'traits', 'recipe', 'payer_wallet', 'fee_tx_hash'])) {
+    if (!hasOnly(body, ['description', 'traits', 'recipe'])) {
       return err(c, 400, 'kind revision contains an unsupported field')
     }
     const suppliedTraits = body.traits === undefined ? undefined : stringList(body.traits)
@@ -617,19 +680,38 @@ export function mountWorldRoutes(app: Hono): void {
     if (recipe == null) {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
     }
+    if (!await everyTraitExists(traits)) {
+      return err(c, 400, 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait')
+    }
 
     const fee = await treasuryFee(
       c,
-      body,
       `${DOMAIN}/api/kind/${id}/revise`,
       '1F3D9 kind revision fee',
       resident.id,
-      'kind_revision',
+      {
+        operation: 'kind_revision',
+        targetKey: `kind-revision:${id}:${current.revision + 1}`,
+        assetType: 'kind',
+        assetId: id,
+        request: { kind_id: id, description, traits, recipe },
+      },
     )
     if (fee instanceof Response) return fee
     try {
       const rows = (await sql`
-        WITH locked_kind AS (
+        WITH payment_attempt AS MATERIALIZED (
+          SELECT public_id
+          FROM payment_attempts
+          WHERE public_id = ${fee.attemptId}
+            AND lease_owner = ${fee.leaseOwner}
+            AND status = 'payment_pending'
+            AND tx_hash = ${fee.txHash}
+            AND actor_id = ${resident.id}
+            AND operation = 'kind_revision'
+            AND asset_type = 'kind' AND asset_id = ${id}
+          FOR UPDATE
+        ), locked_kind AS (
           SELECT k.id, k.name, k.owner_id, k.current_revision
           FROM kinds k
           LEFT JOIN transfer_offers offer ON offer.asset_type = 'kind'
@@ -641,7 +723,7 @@ export function mountWorldRoutes(app: Hono): void {
           INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
           SELECT locked_kind.id, locked_kind.current_revision + 1,
             ${description}, ${traits}, ${JSON.stringify(recipe)}::jsonb
-          FROM locked_kind
+          FROM locked_kind CROSS JOIN payment_attempt
           RETURNING kind_id, revision, description, traits, recipe
         ), changed_kind AS (
           UPDATE kinds SET current_revision = new_revision.revision
@@ -649,8 +731,13 @@ export function mountWorldRoutes(app: Hono): void {
           WHERE kinds.id = new_revision.kind_id
           RETURNING kinds.id, kinds.name, kinds.owner_id, kinds.created_at
         ), payment_use AS (
-          INSERT INTO payment_uses (tx_hash, purpose, actor_id)
-          SELECT ${fee.txHash}, 'kind_revision', ${resident.id} FROM changed_kind
+          INSERT INTO payment_uses (
+            tx_hash, payment_attempt_id, purpose, actor_id,
+            payer_wallet, payee_wallet, amount_usdc
+          )
+          SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_revision', ${resident.id},
+            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
+          FROM changed_kind
           RETURNING tx_hash
         ), new_fee AS (
           INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
@@ -662,30 +749,34 @@ export function mountWorldRoutes(app: Hono): void {
             'kind_id', changed_kind.id, 'name', changed_kind.name,
             'revision', new_revision.revision, 'fee_tx_hash', ${fee.txHash}::text
           ) FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
+        ), result_row AS (
+          SELECT changed_kind.id, changed_kind.name, changed_kind.owner_id,
+            ${resident.handle}::text AS owner, new_revision.revision,
+            new_revision.description, new_revision.traits, new_revision.recipe,
+            changed_kind.created_at
+          FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
+        ), completed_attempt AS (
+          SELECT complete_payment_attempt(
+            ${fee.attemptId},
+            ${fee.leaseOwner},
+            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
+            200::smallint,
+            jsonb_build_object('kind', to_jsonb(result_row), 'fee_tx', ${fee.txHash}::text)
+          ) AS attempt
+          FROM result_row CROSS JOIN payment_use
         )
-        SELECT changed_kind.id, changed_kind.name, changed_kind.owner_id,
-          ${resident.handle}::text AS owner, new_revision.revision,
-          new_revision.description, new_revision.traits, new_revision.recipe,
-          changed_kind.created_at
-        FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
+        SELECT result_row.* FROM result_row CROSS JOIN completed_attempt
       `) as KindRow[]
       const kind = rows[0]
       if (!kind) {
-        return fee.attemptKey
-          ? c.json({
-            payment: 'pending',
-            fee_tx: fee.txHash,
-            retry: 'retry this same request with the same X-PAYMENT header; do not sign a new payment',
-          }, 202)
-          : err(c, 409, 'kind changed or received an open sale offer; retry')
-      }
-      if (fee.attemptKey) {
-        await markX402PaymentCompleted(sql.query, fee.attemptKey, {
-          completionTxHash: fee.txHash,
-          completionKind: 'kind_revision',
-          completionId: kind.id,
-          completionRevision: kind.revision,
-        })
+        await releasePaymentLease(fee)
+        return c.json({
+          payment: 'pending',
+          payment_attempt_id: fee.attemptId,
+          fee_tx: fee.txHash,
+          do_not_pay_again: true,
+          retry: 'retry this same request with the same X-PAYMENT header',
+        }, 202)
       }
       setPaymentHeader(c, fee)
       return c.json({ kind, fee_tx: fee.txHash })

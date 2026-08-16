@@ -5,21 +5,15 @@ import { positiveId, publicLabel, publicText } from './input.ts'
 import {
   canonicalTxHash,
   challenge402,
-  classifyDirectPayment,
   paymentReadinessResponse,
-  paymentResponseHeader,
   requirements,
-  settleX402,
-  type DirectPaymentCheck,
-  type PaymentRequirements,
-  type Settled,
 } from './pay.ts'
+import { findPaymentAttempt } from './payment-attempts.ts'
 import {
-  markX402PaymentCompleted,
-  markX402PaymentSettled,
-  PAYMENT_ATTEMPT_CONFLICT,
-  startX402PaymentAttempt,
-} from './payment-attempts.ts'
+  resumeDurableX402,
+  runDurableX402,
+  type DurableX402Result,
+} from './payment-flow.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -78,6 +72,7 @@ interface OfferRecord {
   market_listing_id: number | null
   market_checkout_id: number | null
   market_buyer: string | null
+  pending_payment_attempt_id: string | null
   pending_x402_tx_hash: string | null
   pending_x402_payer: string | null
   pending_x402_at: string | null
@@ -103,12 +98,9 @@ export interface WorldMarketDependencies {
   now: () => Date
   marketOrigin: string
   marketGet: (path: string) => Promise<unknown>
-  verifyDirectPayment: typeof classifyDirectPayment
-  settleX402: (
-    paymentHeader: string,
-    accepted: PaymentRequirements,
-  ) => Promise<Settled | { error: string }>
-  paymentResponseHeader: typeof paymentResponseHeader
+  findPayment: typeof findPaymentAttempt
+  runPayment: typeof runDurableX402
+  resumePayment: typeof resumeDurableX402
 }
 
 class MarketReadError extends Error {
@@ -316,6 +308,9 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
   const pendingHash = row.pending_x402_tx_hash == null
     ? null
     : canonicalTxHash(row.pending_x402_tx_hash)
+  const pendingAttemptId = row.pending_payment_attempt_id == null
+    ? null
+    : String(row.pending_payment_attempt_id)
   const pendingPayer = row.pending_x402_payer == null ? null : wallet(row.pending_x402_payer)
   const marketBuyer = row.market_buyer == null ? null : publicLabel(row.market_buyer, 120)
   const evidenceState = String(row.x402_evidence_state ?? 'none')
@@ -340,6 +335,7 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
     (row.market_buyer != null && marketBuyer == null) ||
     ((buyerId == null) !== (marketBuyer == null)) ||
     ((pendingHash == null) !== (pendingPayer == null)) ||
+    ((pendingHash == null) !== (pendingAttemptId == null)) ||
     ((pendingHash == null) !== (row.pending_x402_at == null)) ||
     !evidenceConsistent ||
     (row.from != null && from == null) || (row.to != null && to == null) ||
@@ -365,6 +361,7 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
     market_listing_id: nullableInteger(row.market_listing_id),
     market_checkout_id: nullableInteger(row.market_checkout_id),
     market_buyer: marketBuyer,
+    pending_payment_attempt_id: pendingAttemptId,
     pending_x402_tx_hash: pendingHash,
     pending_x402_payer: pendingPayer,
     pending_x402_at: nullableString(row.pending_x402_at),
@@ -398,7 +395,7 @@ async function readOffer(
       o.price_usdc::float8 AS price_usdc, lower(o.seller_wallet) AS seller_wallet,
       o.status, o.reserved_by, lower(o.buyer_wallet) AS buyer_wallet,
       o.market_origin, o.market_draft_id, o.market_listing_id, o.market_checkout_id,
-      o.market_buyer,
+      o.market_buyer, o.pending_payment_attempt_id,
       o.pending_x402_tx_hash, lower(o.pending_x402_payer) AS pending_x402_payer,
       o.pending_x402_at, o.x402_evidence_state, o.x402_invalid_reason, o.x402_invalid_at,
       o.reserved_at, o.reserved_until, o.created_at, o.claimed_at, o.canceled_at,
@@ -490,55 +487,8 @@ function challenge(c: Context, offer: OfferRecord) {
   return challenge402(
     c,
     accepted,
-    `active five-minute reservation: pay $${offer.price_usdc} USDC from ${offer.buyer_wallet} and retry with X-PAYMENT or tx_hash`,
+    `active five-minute reservation: pay $${offer.price_usdc} USDC from ${offer.buyer_wallet} and retry with X-PAYMENT`,
   )
-}
-
-function pending202(c: Context, offer: OfferRecord, now: Date, responseHeader?: string | null) {
-  if (responseHeader) c.header('X-PAYMENT-RESPONSE', responseHeader)
-  return c.json({
-    offer: publicOffer(offer, now),
-    note: 'payment settled; the thing stays locked while the city waits for the public Base transfer',
-    retry: 'the same resident may retry this claim without another payment',
-  }, 202)
-}
-
-function x402Payer(header: string): string | null {
-  try {
-    const parsed = JSON.parse(Buffer.from(header, 'base64').toString('utf8')) as {
-      payload?: { authorization?: { from?: unknown } }
-    }
-    return wallet(parsed.payload?.authorization?.from)
-  } catch {
-    return null
-  }
-}
-
-async function confirmedSettlement(
-  dependencies: WorldMarketDependencies,
-  txHash: string,
-  offer: OfferRecord,
-  reservedAt: Date,
-  reservedUntil: Date,
-): Promise<DirectPaymentCheck> {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const confirmed = await dependencies.verifyDirectPayment(
-      txHash,
-      offer.seller_wallet,
-      offer.price_usdc,
-      reservedAt,
-      reservedUntil,
-      offer.buyer_wallet == null ? { exactAmount: true } : {
-        expectedFrom: offer.buyer_wallet,
-        exactAmount: true,
-      },
-    )
-    if (confirmed.state !== 'pending') return confirmed
-    if (attempt < 2) {
-      await new Promise<void>(resolve => setTimeout(resolve, 150 * (attempt + 1)))
-    }
-  }
-  return { state: 'pending' }
 }
 
 async function getMarket(
@@ -573,46 +523,141 @@ function defaultDependencies(): WorldMarketDependencies {
     now: () => new Date(),
     marketOrigin,
     marketGet: path => publicMarketGet(marketOrigin, path),
-    verifyDirectPayment: classifyDirectPayment,
-    settleX402,
-    paymentResponseHeader,
+    findPayment: findPaymentAttempt,
+    runPayment: runDurableX402,
+    resumePayment: resumeDurableX402,
   }
 }
 
-async function finalizeReconciledPayment(
+type ReadyPayment = Extract<DurableX402Result, { state: 'ready' }>
+
+async function parkWorldPayment(
   dependencies: WorldMarketDependencies,
   offer: OfferRecord,
-  blockTime: Date,
+  payment: Pick<DurableX402Result & {
+    attemptId: string
+    payerWallet: string | null
+    txHash: string | null
+  }, 'attemptId' | 'payerWallet' | 'txHash'>,
 ): Promise<OfferRecord | null> {
   if (
-    offer.buyer_id == null || offer.buyer == null || offer.buyer_wallet == null ||
-    offer.pending_x402_tx_hash == null || offer.market_buyer == null
+    offer.buyer_id == null || offer.buyer_wallet == null || offer.market_buyer == null
+    || payment.txHash == null || payment.payerWallet == null
+  ) return null
+  if (payment.payerWallet !== offer.buyer_wallet) return null
+  if (paymentPending(offer)) {
+    return offer.pending_payment_attempt_id === payment.attemptId
+      && offer.pending_x402_tx_hash === payment.txHash
+      && offer.pending_x402_payer === payment.payerWallet
+      ? offer
+      : null
+  }
+  await dependencies.query(`
+    /* world-market:pending-x402 */
+    UPDATE transfer_offers SET
+      pending_payment_attempt_id = $3,
+      pending_x402_tx_hash = $4,
+      pending_x402_payer = lower($5),
+      pending_x402_at = clock_timestamp()
+    WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
+      AND buyer_id = $2 AND reserved_by = $2 AND lower(buyer_wallet) = lower($5)
+      AND seller_id = $6 AND asset_id = $7
+      AND price_usdc = $8 AND lower(seller_wallet) = lower($9)
+      AND reserved_at = $10::timestamptz AND reserved_until = $11::timestamptz
+      AND market_checkout_id = $12 AND market_listing_id = $13
+      AND market_draft_id = $14 AND market_buyer = $15
+      AND pending_x402_tx_hash IS NULL AND pending_payment_attempt_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM payment_attempts attempt
+        WHERE attempt.public_id = $3 AND attempt.actor_id = $2
+          AND attempt.counterparty_id = $6 AND attempt.operation = 'world_sale'
+          AND attempt.offer_id = $1 AND attempt.asset_type = 'thing' AND attempt.asset_id = $7
+          AND attempt.status = 'payment_pending' AND attempt.tx_hash = $4
+          AND attempt.payer_wallet = lower($5) AND attempt.payee_wallet = lower($9)
+          AND attempt.amount_units = ($8::numeric * 1000000)::bigint
+      )
+      AND EXISTS (
+        SELECT 1 FROM things
+        WHERE things.id = $7 AND things.owner_id = $6
+          AND things.withdrawn_at IS NULL AND things.active_offer_id = $1
+      )
+    RETURNING id
+  `, [
+    offer.id,
+    offer.buyer_id,
+    payment.attemptId,
+    payment.txHash,
+    payment.payerWallet,
+    offer.seller_id,
+    offer.asset_id,
+    offer.price_usdc,
+    offer.seller_wallet,
+    offer.reserved_at,
+    offer.reserved_until,
+    offer.market_checkout_id,
+    offer.market_listing_id,
+    offer.market_draft_id,
+    offer.market_buyer,
+  ])
+  const current = await readOffer(dependencies, offer.id)
+  return current?.pending_payment_attempt_id === payment.attemptId
+    && current.pending_x402_tx_hash === payment.txHash
+    && current.pending_x402_payer === payment.payerWallet
+    ? current
+    : null
+}
+
+async function finalizeWorldPayment(
+  dependencies: WorldMarketDependencies,
+  offer: OfferRecord,
+  payment: ReadyPayment,
+): Promise<Record<string, unknown> | null> {
+  if (
+    offer.buyer_id == null || offer.buyer == null || offer.buyer_wallet == null
+    || offer.market_buyer == null || offer.pending_payment_attempt_id !== payment.attemptId
+    || offer.pending_x402_tx_hash !== payment.txHash
   ) return null
   const rows = await dependencies.query(`
-    /* world-market:reconcile-claim */
-    WITH claimed_offer AS (
+    /* world-market:finalize-payment */
+    WITH payment_attempt AS MATERIALIZED (
+      SELECT public_id
+      FROM payment_attempts
+      WHERE public_id = $18 AND lease_owner = $19
+        AND status = 'payment_pending' AND tx_hash = $4
+        AND actor_id = $2 AND counterparty_id = $7
+        AND operation = 'world_sale' AND offer_id = $1
+        AND asset_type = 'thing' AND asset_id = $8
+      FOR UPDATE
+    ), claimed_offer AS (
       UPDATE transfer_offers SET status = 'claimed', claimed_at = clock_timestamp()
+      FROM payment_attempt
       WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
         AND buyer_id = $2 AND reserved_by = $2 AND lower(buyer_wallet) = lower($5)
-        AND seller_id = $8 AND asset_id = $9
-        AND price_usdc = $10 AND lower(seller_wallet) = lower($11)
-        AND reserved_at = $12::timestamptz AND reserved_until = $13::timestamptz
-        AND $7::timestamptz IS NOT NULL AND $7::timestamptz >= reserved_at
-        AND $7::timestamptz <= reserved_until
+        AND seller_id = $7 AND asset_id = $8
+        AND price_usdc = $9 AND lower(seller_wallet) = lower($10)
+        AND reserved_at = $11::timestamptz AND reserved_until = $12::timestamptz
+        AND $6::timestamptz >= (
+          date_trunc('second', reserved_at)
+          + CASE WHEN reserved_at > date_trunc('second', reserved_at)
+            THEN interval '1 second' ELSE interval '0 seconds' END
+        )
+        AND $6::timestamptz < date_trunc('second', reserved_until)
         AND x402_evidence_state = 'pending'
+        AND pending_payment_attempt_id = $18
         AND pending_x402_tx_hash = $4 AND pending_x402_payer = lower($5)
-        AND market_checkout_id = $14 AND market_listing_id = $15
-        AND market_draft_id = $16 AND market_buyer = $18
+        AND market_checkout_id = $13 AND market_listing_id = $14
+        AND market_draft_id = $15 AND market_buyer = $17
         AND EXISTS (
-          SELECT 1 FROM things WHERE things.id = $9 AND things.owner_id = $8
+          SELECT 1 FROM things WHERE things.id = $8 AND things.owner_id = $7
             AND things.withdrawn_at IS NULL AND things.active_offer_id = $1
         )
-      RETURNING id, asset_id, seller_id, buyer_id, price_usdc, seller_wallet
+      RETURNING id, asset_id, seller_id, buyer_id, price_usdc, seller_wallet, claimed_at
     ), used_payment AS (
       INSERT INTO payment_uses (
-        tx_hash, actor_id, purpose, payer_wallet, payee_wallet, amount_usdc
+        tx_hash, payment_attempt_id, actor_id, purpose,
+        payer_wallet, payee_wallet, amount_usdc
       )
-      SELECT $4, $2, 'sale', lower($5), lower(seller_wallet), price_usdc
+      SELECT $4, $18, $2, 'sale', lower($5), lower(seller_wallet), price_usdc
       FROM claimed_offer RETURNING tx_hash
     ), new_payment AS (
       INSERT INTO sale_payments (
@@ -620,8 +665,8 @@ async function finalizeReconciledPayment(
         tx_hash, verified_via, block_time
       )
       SELECT offer.id, offer.buyer_id, lower($5), lower(offer.seller_wallet),
-        offer.price_usdc, payment.tx_hash, 'x402', $7
-      FROM claimed_offer offer CROSS JOIN used_payment payment
+        offer.price_usdc, used.tx_hash, 'x402', $6
+      FROM claimed_offer offer CROSS JOIN used_payment used
       RETURNING offer_id, tx_hash
     ), changed_owner AS (
       UPDATE things SET owner_id = $2, active_offer_id = NULL
@@ -639,27 +684,69 @@ async function finalizeReconciledPayment(
       INSERT INTO transfers (
         asset_type, asset_id, from_id, to_id, offer_id, price_usdc, tx_hash
       )
-      SELECT 'thing', thing.id, $8, $2, $1, $10, $4
+      SELECT 'thing', thing.id, $7, $2, $1, $9, $4
       FROM changed_owner thing CROSS JOIN owner_guard guard WHERE guard.ok = 1
       RETURNING id
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'world_sale', $3, jsonb_build_object(
-        'transfer_id', transfer.id, 'offer_id', $1::integer, 'thing_id', $9::integer,
-        'from', $17::text, 'to', $3::text, 'price_usdc', $10::numeric,
-        'tx_hash', $4::text, 'market_listing_id', $15::integer,
-        'market_checkout_id', $14::integer
+        'transfer_id', transfer.id, 'offer_id', $1::integer, 'thing_id', $8::integer,
+        'from', $16::text, 'to', $3::text, 'price_usdc', $9::numeric,
+        'tx_hash', $4::text, 'market_listing_id', $14::integer,
+        'market_checkout_id', $13::integer
       ) FROM new_transfer transfer
+    ), response_row AS (
+      SELECT offer.claimed_at FROM claimed_offer offer CROSS JOIN new_transfer transfer
+    ), completed_attempt AS (
+      SELECT complete_payment_attempt(
+        $18,
+        $19,
+        jsonb_build_object('kind', 'world_offer', 'id', $1::integer),
+        200::smallint,
+        jsonb_build_object('offer', jsonb_build_object(
+          'id', $1::integer,
+          'channel', 'world',
+          'phase', 'claimed',
+          'asset_type', 'thing',
+          'asset_id', $8::integer,
+          'asset_name', $20::text,
+          'locked', false,
+          'seller', $16::text,
+          'buyer', $3::text,
+          'price_usdc', $9::numeric,
+          'seller_wallet', lower($10::text),
+          'market_origin', $21::text,
+          'market_draft_id', $15::integer,
+          'market_listing_id', $14::integer,
+          'market_checkout_id', $13::integer,
+          'market_buyer', $17::text,
+          'pending_x402_tx_hash', $4::text,
+          'pending_x402_at', $22::timestamptz,
+          'x402_invalid_reason', NULL,
+          'x402_invalid_at', NULL,
+          'reserved_at', $11::timestamptz,
+          'reserved_until', $12::timestamptz,
+          'created_at', $23::timestamptz,
+          'claimed_at', response_row.claimed_at,
+          'canceled_at', NULL,
+          'tx_hash', $4::text,
+          'buyer_wallet', lower($5::text),
+          'verified_via', 'x402',
+          'block_time', $6::timestamptz,
+          'from', lower($5::text),
+          'to', lower($10::text)
+        ))
+      ) AS completed
+      FROM response_row CROSS JOIN used_payment
     )
-    SELECT id FROM new_transfer
+    SELECT (completed).response_json AS response FROM completed_attempt
   `, [
     offer.id,
     offer.buyer_id,
     offer.buyer,
-    offer.pending_x402_tx_hash,
-    offer.buyer_wallet,
-    'x402',
-    blockTime.toISOString(),
+    payment.txHash,
+    payment.payerWallet,
+    payment.blockTime,
     offer.seller_id,
     offer.asset_id,
     offer.price_usdc,
@@ -671,8 +758,14 @@ async function finalizeReconciledPayment(
     offer.market_draft_id,
     offer.seller,
     offer.market_buyer,
+    payment.attemptId,
+    payment.leaseOwner,
+    offer.asset_name,
+    offer.market_origin,
+    offer.pending_x402_at,
+    offer.created_at,
   ])
-  return rows[0] ? readOffer(dependencies, offer.id) : null
+  return object(rows[0]?.response)
 }
 
 export function mountWorldMarketRoutes(
@@ -798,8 +891,8 @@ export function mountWorldMarketRoutes(
     const offerId = positiveId(c.req.param('offerId'))
     if (!offerId) return err(c, 400, 'bad world offer id')
     const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['market_checkout_id', 'buyer_wallet', 'tx_hash'])) {
-      return err(c, 400, 'body may contain market_checkout_id, buyer_wallet, and tx_hash only')
+    if (!body || !hasOnly(body, ['market_checkout_id', 'buyer_wallet'])) {
+      return err(c, 400, 'body may contain market_checkout_id and buyer_wallet only; paid claims use X-PAYMENT')
     }
     const checkoutId = body.market_checkout_id == null ? null : positiveId(body.market_checkout_id)
     if (body.market_checkout_id != null && checkoutId == null) {
@@ -807,13 +900,8 @@ export function mountWorldMarketRoutes(
     }
     const requestedWallet = body.buyer_wallet == null ? null : wallet(body.buyer_wallet)
     if (body.buyer_wallet != null && !requestedWallet) return err(c, 400, 'buyer_wallet must be a Base address')
-    const suppliedTx = body.tx_hash == null ? null : canonicalTxHash(body.tx_hash)
-    if (body.tx_hash != null && !suppliedTx) {
-      return err(c, 400, 'tx_hash must be 0x followed by 64 hex characters')
-    }
     const paymentHeader = c.req.header('x-payment')
-    if (paymentHeader && suppliedTx) return err(c, 400, 'use either X-PAYMENT or tx_hash, not both')
-    const hasPayment = Boolean(paymentHeader || suppliedTx)
+    const hasPayment = Boolean(paymentHeader)
 
     let offer = await readOffer(dependencies, offerId)
     if (!offer) return err(c, 404, 'no such world offer')
@@ -829,6 +917,13 @@ export function mountWorldMarketRoutes(
     const now = dependencies.now()
     const pendingAtStart = paymentPending(offer)
     const active = reservationActive(offer, now)
+    const existingAttempt = offer.buyer_id === buyer.id
+      ? await dependencies.findPayment({ query: dependencies.query }, {
+        actorId: buyer.id,
+        operation: 'world_sale',
+        offerId: offer.id,
+      })
+      : null
     if (pendingAtStart) {
       if (offer.buyer_id !== buyer.id) {
         return err(c, 409, 'this world offer has a settled payment pending for another resident')
@@ -839,13 +934,10 @@ export function mountWorldMarketRoutes(
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
         return err(c, 409, 'buyer_wallet does not match the settled payment')
       }
-      if (paymentHeader) {
-        return err(c, 409, 'payment is already settled; retry without X-PAYMENT')
+      if (!existingAttempt || existingAttempt.publicId !== offer.pending_payment_attempt_id) {
+        return err(c, 503, 'the pending payment custody record is unavailable')
       }
-      if (suppliedTx != null && suppliedTx !== offer.pending_x402_tx_hash) {
-        return err(c, 409, 'tx_hash does not match the settled payment')
-      }
-    } else if (!active) {
+    } else if (!active && !existingAttempt) {
       if (hasPayment) return err(c, 409, 'open a five-minute reservation before sending payment')
       if (!checkoutId || !requestedWallet) {
         return err(c, 400, 'first claim call requires market_checkout_id and buyer_wallet')
@@ -894,6 +986,12 @@ export function mountWorldMarketRoutes(
             AND market_origin = $7 AND market_draft_id = $8
             AND (reserved_until IS NULL OR reserved_until <= clock_timestamp())
             AND pending_x402_tx_hash IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM payment_attempts
+              WHERE payment_attempts.operation = 'world_sale'
+                AND payment_attempts.offer_id = transfer_offers.id
+                AND payment_attempts.status IN ('settling', 'payment_pending', 'needs_review')
+            )
             AND (market_listing_id IS NULL OR market_listing_id = $5)
             AND EXISTS (
               SELECT 1 FROM things
@@ -943,7 +1041,7 @@ export function mountWorldMarketRoutes(
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
         return err(c, 409, 'buyer_wallet does not match the active reservation')
       }
-      if (!hasPayment) return challenge(c, offer)
+      if (!hasPayment && !existingAttempt) return challenge(c, offer)
     }
 
     const reservedAt = timestamp(offer.reserved_at)!
@@ -954,303 +1052,106 @@ export function mountWorldMarketRoutes(
       `${CITY_ORIGIN}/api/world/offer/${offer.id}/claim`,
       `1F3D9 world offer ${offer.id}`,
     )
-    let txHash: string
-    let payer: string
-    let verifiedVia: 'x402' | 'claim'
-    let blockTime: string | null
-    let responseHeader: string | null = null
-    let paymentAttemptKey: string | null = null
-    if (pendingAtStart) {
-      txHash = offer.pending_x402_tx_hash!
-      const confirmed = await confirmedSettlement(
-        dependencies,
-        txHash,
-        offer,
-        reservedAt,
-        reservedUntil,
-      )
-      if (confirmed.state === 'pending') {
-        return pending202(c, offer, dependencies.now())
-      }
-      if (confirmed.state === 'invalid_final') {
-        return err(c, 409, 'the settled payment needs reconciliation before this offer can change')
-      }
-      const confirmedPayer = wallet(confirmed.from)
-      if (
-        !confirmedPayer || confirmedPayer !== offer.buyer_wallet || confirmedPayer !== offer.pending_x402_payer ||
-        confirmed.blockTime < reservedAt || confirmed.blockTime > reservedUntil
-      ) {
-        return err(c, 409, 'the public Base transfer does not match the settled payment reservation')
-      }
-      payer = confirmedPayer
-      verifiedVia = 'x402'
-      blockTime = confirmed.blockTime.toISOString()
-    } else if (paymentHeader) {
-      const started = await startX402PaymentAttempt(dependencies.query, {
-        actorId: buyer.id,
-        purpose: 'sale',
-        payeeWallet: offer.seller_wallet,
-        amountUsdc: offer.price_usdc,
+    const paymentRequest = {
+      offer_id: offer.id,
+      market_checkout_id: offer.market_checkout_id,
+      market_listing_id: offer.market_listing_id,
+      market_draft_id: offer.market_draft_id,
+      market_buyer: offer.market_buyer,
+      buyer_wallet: offer.buyer_wallet,
+      seller_wallet: offer.seller_wallet,
+      price_usdc: offer.price_usdc,
+      asset_id: offer.asset_id,
+    }
+    const payment = paymentHeader
+      ? await dependencies.runPayment({
+        database: { query: dependencies.query },
         paymentHeader,
         accepted,
+        actorId: buyer.id,
+        counterpartyId: offer.seller_id,
+        operation: 'world_sale',
+        targetKey: `world-sale:${offer.id}`,
+        offerId: offer.id,
+        assetType: 'thing',
+        assetId: offer.asset_id,
+        request: paymentRequest,
+        expectedPayerWallet: offer.buyer_wallet!,
+        notBefore: reservedAt,
+        notAfter: reservedUntil,
       })
-      if ('error' in started) {
-        if (started.code === PAYMENT_ATTEMPT_CONFLICT) return err(c, 409, started.error)
-        return challenge402(c, accepted, started.error)
-      }
-      if (started.payerWallet !== offer.buyer_wallet) {
-        return challenge402(c, accepted, 'X-PAYMENT payer must match the reservation wallet')
-      }
-      paymentAttemptKey = started.attempt.paymentKey
-      let settledHash = started.attempt.transactionHash
-      let settledPayer = started.attempt.transactionHash ? started.attempt.payerWallet : null
-      if (!settledHash) {
-        const settled = await dependencies.settleX402(paymentHeader, accepted)
-        if ('error' in settled) return challenge402(c, accepted, settled.error)
-        settledPayer = wallet(settled.payer)
-        if (settledPayer && settledPayer !== started.payerWallet) {
-          return challenge402(c, accepted, 'settled payer does not match the signed X-PAYMENT payer')
+      : await dependencies.resumePayment({
+        database: { query: dependencies.query },
+        attempt: existingAttempt!,
+        actorId: buyer.id,
+      })
+
+    if (payment.state === 'completed') {
+      return new Response(JSON.stringify(payment.body), {
+        status: payment.status,
+        headers: { 'content-type': 'application/json; charset=UTF-8' },
+      })
+    }
+    if (payment.state === 'unavailable') return c.json(payment.body, 503)
+    if (payment.state === 'rejected') {
+      return payment.status === 409
+        ? c.json(payment.body, 409)
+        : c.json(payment.body, 400)
+    }
+    if (payment.state === 'payment_pending') {
+      let pendingOffer = offer
+      if (payment.txHash && payment.payerWallet) {
+        try {
+          pendingOffer = await parkWorldPayment(dependencies, offer, payment) ?? offer
+        } catch (error) {
+          if (postgresErrorCode(error) !== '23505') throw error
         }
-        settledHash = canonicalTxHash(settled.transaction)
-        if (!settledPayer || settledPayer !== offer.buyer_wallet || !settledHash) {
-          return challenge402(c, accepted, 'settled payment does not match the reservation')
-        }
-        const settledAttempt = await markX402PaymentSettled(
-          dependencies.query,
-          started.attempt.paymentKey,
-          settledHash,
-        )
-        if (!settledAttempt?.transactionHash) {
-          return err(c, 503, 'payment settled but its durable attempt record is unavailable')
-        }
-        settledHash = settledAttempt.transactionHash
-        settledPayer = settledAttempt.payerWallet
-        responseHeader = dependencies.paymentResponseHeader(settled)
       }
-      try {
-        const rows = await dependencies.query(`
-          /* world-market:pending-x402 */
-          UPDATE transfer_offers SET
-            pending_x402_tx_hash = $4,
-            pending_x402_payer = lower($5),
-            pending_x402_at = clock_timestamp()
-          WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
-            AND buyer_id = $2 AND reserved_by = $2
-            AND lower(buyer_wallet) = lower($5)
-            AND seller_id = $8 AND asset_id = $9
-            AND price_usdc = $10 AND lower(seller_wallet) = lower($11)
-            AND reserved_at = $12::timestamptz AND reserved_until = $13::timestamptz
-            AND reserved_at <= clock_timestamp() AND reserved_until > clock_timestamp()
-            AND market_checkout_id = $14 AND market_listing_id = $15 AND market_draft_id = $16
-            AND market_buyer = $17
-            AND pending_x402_tx_hash IS NULL
-            AND EXISTS (
-              SELECT 1 FROM things
-              WHERE things.id = $9 AND things.owner_id = $8
-                AND things.withdrawn_at IS NULL AND things.active_offer_id = $1
-            )
-          RETURNING id
-        `, [
-          offer.id,
-          buyer.id,
-          buyer.handle,
-          settledHash,
-          settledPayer,
-          'x402',
-          null,
-          offer.seller_id,
-          offer.asset_id,
-          offer.price_usdc,
-          offer.seller_wallet,
-          offer.reserved_at,
-          offer.reserved_until,
-          offer.market_checkout_id,
-          offer.market_listing_id,
-          offer.market_draft_id,
-          offer.market_buyer,
-        ])
-        if (!rows[0]) {
-          const raced = await readOffer(dependencies, offer.id)
-          if (
-            !raced || raced.buyer_id !== buyer.id || raced.pending_x402_tx_hash !== settledHash ||
-            raced.pending_x402_payer !== settledPayer
-          ) return err(c, 409, 'offer or reservation changed while the payment settled')
-          offer = raced
-        } else {
-          const pending = await readOffer(dependencies, offer.id)
-          if (!pending || !paymentPending(pending)) {
-            return err(c, 503, 'payment settled but its durable city record is unavailable')
-          }
-          offer = pending
-        }
-      } catch (error) {
-        if (postgresErrorCode(error) === '23505') {
-          return err(c, 409, 'that settled payment is already bound to another offer')
-        }
-        throw error
-      }
-      // The x402 facilitator specification says /settle returns only after chain
-      // confirmation, but its response has no block timestamp. Re-read the public
-      // Base transfer so the city receipt never trusts facilitator metadata for time.
-      const confirmed = await confirmedSettlement(
-        dependencies,
-        settledHash,
-        offer,
-        reservedAt,
-        reservedUntil,
-      )
-      const confirmedPayer = confirmed.state === 'matched' ? wallet(confirmed.from) : null
-      if (
-        confirmed.state !== 'matched' || !confirmedPayer || confirmedPayer !== offer.buyer_wallet ||
-        confirmed.blockTime < reservedAt || confirmed.blockTime > reservedUntil
-      ) {
-        return pending202(c, offer, dependencies.now(), responseHeader)
-      }
-      txHash = settledHash
-      payer = confirmedPayer
-      verifiedVia = 'x402'
-      blockTime = confirmed.blockTime.toISOString()
-    } else {
-      const direct = await dependencies.verifyDirectPayment(
-        suppliedTx!,
-        offer.seller_wallet,
-        offer.price_usdc,
-        reservedAt,
-        reservedUntil,
-        offer.buyer_wallet == null ? { exactAmount: true } : {
-          expectedFrom: offer.buyer_wallet,
-          exactAmount: true,
-        },
-      )
-      const directPayer = direct.state === 'matched' ? wallet(direct.from) : null
-      if (
-        direct.state !== 'matched' || !directPayer || directPayer !== offer.buyer_wallet ||
-        direct.blockTime < reservedAt || direct.blockTime > reservedUntil
-      ) return err(c, 402, 'tx did not verify from the reservation wallet inside its five-minute window')
-      txHash = suppliedTx!
-      payer = directPayer
-      verifiedVia = 'claim'
-      blockTime = direct.blockTime.toISOString()
+      return c.json({
+        ...payment.body,
+        offer: publicOffer(pendingOffer, dependencies.now()),
+        retry: 'retry this same claim; the recorded payment remains reserved',
+      }, 202)
     }
 
     try {
-      const rows = await dependencies.query(`
-        /* world-market:claim */
-        WITH claimed_offer AS (
-          UPDATE transfer_offers SET status = 'claimed', claimed_at = clock_timestamp()
-          WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
-            AND buyer_id = $2 AND reserved_by = $2
-            AND lower(buyer_wallet) = lower($5)
-            AND seller_id = $8 AND asset_id = $9
-            AND price_usdc = $10 AND lower(seller_wallet) = lower($11)
-            AND reserved_at = $12::timestamptz AND reserved_until = $13::timestamptz
-            AND reserved_at <= clock_timestamp()
-            AND (
-              reserved_until > clock_timestamp()
-              OR ($6 = 'x402' AND pending_x402_tx_hash = $4
-                AND pending_x402_payer = lower($5))
-            )
-            AND $7::timestamptz IS NOT NULL AND $7::timestamptz >= reserved_at
-            AND $7::timestamptz <= reserved_until
-            AND (
-              ($6 = 'x402' AND pending_x402_tx_hash = $4
-                AND pending_x402_payer = lower($5))
-              OR ($6 = 'claim' AND pending_x402_tx_hash IS NULL)
-            )
-            AND market_checkout_id = $14 AND market_listing_id = $15 AND market_draft_id = $16
-            AND market_buyer = $18
-            AND EXISTS (
-              SELECT 1 FROM things
-              WHERE things.id = $9 AND things.owner_id = $8
-                AND things.withdrawn_at IS NULL AND things.active_offer_id = $1
-            )
-          RETURNING id, asset_id, seller_id, buyer_id, price_usdc, seller_wallet
-        ), used_payment AS (
-          INSERT INTO payment_uses (
-            tx_hash, actor_id, purpose, payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT $4, $2, 'sale', lower($5), lower(seller_wallet), price_usdc
-          FROM claimed_offer
-          RETURNING tx_hash
-        ), new_payment AS (
-          INSERT INTO sale_payments (
-            offer_id, buyer_id, payer_wallet, payee_wallet, amount_usdc,
-            tx_hash, verified_via, block_time
-          )
-          SELECT offer.id, offer.buyer_id, lower($5), lower(offer.seller_wallet),
-            offer.price_usdc, payment.tx_hash, $6, $7
-          FROM claimed_offer offer CROSS JOIN used_payment payment
-          RETURNING offer_id, tx_hash
-        ), changed_owner AS (
-          UPDATE things SET owner_id = $2, active_offer_id = NULL
-          FROM claimed_offer offer CROSS JOIN new_payment payment
-          WHERE things.id = offer.asset_id AND things.owner_id = offer.seller_id
-            AND things.withdrawn_at IS NULL AND things.active_offer_id = offer.id
-          RETURNING things.id
-        ), owner_guard AS MATERIALIZED (
-          SELECT CASE
-            WHEN NOT EXISTS (SELECT 1 FROM claimed_offer) THEN 0
-            WHEN EXISTS (SELECT 1 FROM changed_owner) THEN 1
-            ELSE 1 / (SELECT count(*)::int FROM changed_owner)
-          END AS ok
-        ), new_transfer AS (
-          INSERT INTO transfers (
-            asset_type, asset_id, from_id, to_id, offer_id, price_usdc, tx_hash
-          )
-          SELECT 'thing', thing.id, $8, $2, $1, $10, $4
-          FROM changed_owner thing CROSS JOIN owner_guard guard WHERE guard.ok = 1
-          RETURNING id
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'world_sale', $3, jsonb_build_object(
-            'transfer_id', transfer.id, 'offer_id', $1::integer, 'thing_id', $9::integer,
-            'from', $17::text, 'to', $3::text, 'price_usdc', $10::numeric,
-            'tx_hash', $4::text, 'market_listing_id', $15::integer,
-            'market_checkout_id', $14::integer
-          ) FROM new_transfer transfer
-        )
-        SELECT id FROM new_transfer
-      `, [
-        offer.id,
-        buyer.id,
-        buyer.handle,
-        txHash,
-        payer,
-        verifiedVia,
-        blockTime,
-        offer.seller_id,
-        offer.asset_id,
-        offer.price_usdc,
-        offer.seller_wallet,
-        offer.reserved_at,
-        offer.reserved_until,
-        offer.market_checkout_id,
-        offer.market_listing_id,
-        offer.market_draft_id,
-        offer.seller,
-        offer.market_buyer,
-      ])
-      if (!rows[0]) {
+      const parked = await parkWorldPayment(dependencies, offer, payment)
+      if (!parked) {
         const raced = await readOffer(dependencies, offer.id)
         if (raced?.status === 'claimed' && raced.buyer_id === buyer.id) {
           return c.json({ offer: publicOffer(raced, dependencies.now()) })
         }
-        return err(c, 409, 'offer, reservation, payment, or ownership changed before transfer')
+        return c.json({
+          payment: 'pending',
+          payment_attempt_id: payment.attemptId,
+          transaction: payment.txHash,
+          do_not_pay_again: true,
+          retry: 'retry this same claim; the recorded payment remains reserved',
+        }, 202)
       }
-      const claimed = await readOffer(dependencies, offer.id)
-      if (!claimed) return err(c, 500, 'claimed world receipt is unavailable')
-      if (paymentAttemptKey) {
-        await markX402PaymentCompleted(dependencies.query, paymentAttemptKey, {
-          completionTxHash: txHash,
-          completionKind: 'world_offer',
-          completionId: offer.id,
-        })
+
+      const response = await finalizeWorldPayment(dependencies, parked, payment)
+      if (response) {
+        c.header('X-PAYMENT-RESPONSE', payment.paymentResponseHeader)
+        return c.json(response)
       }
-      if (responseHeader) c.header('X-PAYMENT-RESPONSE', responseHeader)
-      return c.json({ offer: publicOffer(claimed, dependencies.now()) })
+      const raced = await readOffer(dependencies, offer.id)
+      if (raced?.status === 'claimed' && raced.buyer_id === buyer.id) {
+        return c.json({ offer: publicOffer(raced, dependencies.now()) })
+      }
+      return c.json({
+        payment: 'pending',
+        payment_attempt_id: payment.attemptId,
+        transaction: payment.txHash,
+        do_not_pay_again: true,
+        retry: 'retry this same claim; the recorded payment remains reserved',
+      }, 202)
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
-        return err(c, 409, 'that payment transaction was already used')
+        return c.json({
+          error: 'that payment transaction is already reserved',
+          do_not_pay_again: true,
+        }, 409)
       }
       throw error
     }
@@ -1271,68 +1172,103 @@ export function mountWorldMarketRoutes(
     if (offer.status === 'claimed' || offer.status === 'canceled' || paymentInvalid(offer)) {
       return c.json({ offer: publicOffer(offer, dependencies.now()) })
     }
-    if (!paymentPending(offer)) return err(c, 409, 'this world offer has no settled payment to reconcile')
-    const reservedAt = timestamp(offer.reserved_at)
-    const reservedUntil = timestamp(offer.reserved_until)
-    if (!reservedAt || !reservedUntil || !offer.buyer_wallet || !offer.pending_x402_tx_hash) {
-      return err(c, 409, 'the pending payment record is incomplete')
+    const readiness = paymentReadinessResponse(c)
+    if (readiness) return readiness
+    if (
+      !paymentPending(offer) || offer.buyer_id == null
+      || offer.pending_payment_attempt_id == null
+    ) return err(c, 409, 'this world offer has no durable payment to reconcile')
+
+    const attempt = await dependencies.findPayment({ query: dependencies.query }, {
+      actorId: offer.buyer_id,
+      operation: 'world_sale',
+      offerId: offer.id,
+    })
+    if (!attempt || attempt.publicId !== offer.pending_payment_attempt_id) {
+      return err(c, 503, 'the pending payment custody record is unavailable')
     }
-    const checked = await dependencies.verifyDirectPayment(
-      offer.pending_x402_tx_hash,
-      offer.seller_wallet,
-      offer.price_usdc,
-      reservedAt,
-      reservedUntil,
-      { expectedFrom: offer.buyer_wallet, exactAmount: true },
-    )
-    if (checked.state === 'pending') return pending202(c, offer, dependencies.now())
-    if (checked.state === 'matched') {
-      try {
-        const claimed = await finalizeReconciledPayment(dependencies, offer, checked.blockTime)
-        if (claimed) return c.json({ offer: publicOffer(claimed, dependencies.now()) })
-        const raced = await readOffer(dependencies, offer.id)
-        if (raced?.status === 'claimed') {
-          return c.json({ offer: publicOffer(raced, dependencies.now()) })
-        }
-        return err(c, 409, 'offer, payment, or ownership changed during reconciliation')
-      } catch (error) {
-        if (postgresErrorCode(error) === '23505') {
-          return err(c, 409, 'that payment transaction was already used')
-        }
-        throw error
+    const payment = await dependencies.resumePayment({
+      database: { query: dependencies.query },
+      attempt,
+      actorId: offer.buyer_id,
+    })
+    if (payment.state === 'completed') {
+      return new Response(JSON.stringify(payment.body), {
+        status: payment.status,
+        headers: { 'content-type': 'application/json; charset=UTF-8' },
+      })
+    }
+    if (payment.state === 'unavailable') return c.json(payment.body, 503)
+    if (payment.state === 'payment_pending') {
+      return c.json({
+        ...payment.body,
+        offer: publicOffer(offer, dependencies.now()),
+        retry: 'retry this reconciliation; the recorded payment remains reserved',
+      }, 202)
+    }
+    if (payment.state === 'rejected') {
+      const rows = await dependencies.query(`
+        /* world-market:invalidate-x402 */
+        UPDATE transfer_offers SET
+          x402_evidence_state = 'invalid',
+          x402_invalid_reason = $3,
+          x402_invalid_at = clock_timestamp()
+        WHERE id = $1 AND channel = 'world' AND status = 'open'
+          AND (seller_id = $2 OR buyer_id = $2)
+          AND x402_evidence_state = 'pending'
+          AND pending_payment_attempt_id = $4
+          AND pending_x402_tx_hash = $5 AND pending_x402_payer = lower($6)
+          AND reserved_at = $7::timestamptz AND reserved_until = $8::timestamptz
+          AND EXISTS (
+            SELECT 1 FROM things WHERE things.id = transfer_offers.asset_id
+              AND things.owner_id = transfer_offers.seller_id
+              AND things.withdrawn_at IS NULL AND things.active_offer_id = transfer_offers.id
+          )
+        RETURNING id
+      `, [
+        offer.id,
+        actor.id,
+        payment.body.error,
+        attempt.publicId,
+        offer.pending_x402_tx_hash,
+        offer.pending_x402_payer,
+        offer.reserved_at,
+        offer.reserved_until,
+      ])
+      if (!rows[0]) return c.json(payment.body, payment.status)
+      offer = await readOffer(dependencies, offer.id)
+      if (!offer || !paymentInvalid(offer)) {
+        return err(c, 500, 'invalid payment audit record is unavailable')
       }
+      return c.json({ offer: publicOffer(offer, dependencies.now()) })
     }
 
-    const rows = await dependencies.query(`
-      /* world-market:invalidate-x402 */
-      UPDATE transfer_offers SET
-        x402_evidence_state = 'invalid',
-        x402_invalid_reason = $3,
-        x402_invalid_at = clock_timestamp()
-      WHERE id = $1 AND channel = 'world' AND status = 'open'
-        AND (seller_id = $2 OR buyer_id = $2)
-        AND x402_evidence_state = 'pending'
-        AND pending_x402_tx_hash = $4 AND pending_x402_payer = lower($5)
-        AND reserved_at = $6::timestamptz AND reserved_until = $7::timestamptz
-        AND EXISTS (
-          SELECT 1 FROM things WHERE things.id = transfer_offers.asset_id
-            AND things.owner_id = transfer_offers.seller_id
-            AND things.withdrawn_at IS NULL AND things.active_offer_id = transfer_offers.id
-        )
-      RETURNING id
-    `, [
-      offer.id,
-      actor.id,
-      checked.reason,
-      offer.pending_x402_tx_hash,
-      offer.pending_x402_payer,
-      offer.reserved_at,
-      offer.reserved_until,
-    ])
-    if (!rows[0]) return err(c, 409, 'payment evidence or ownership changed during reconciliation')
-    offer = await readOffer(dependencies, offer.id)
-    if (!offer || !paymentInvalid(offer)) return err(c, 500, 'invalid payment audit record is unavailable')
-    return c.json({ offer: publicOffer(offer, dependencies.now()) })
+    try {
+      const response = await finalizeWorldPayment(dependencies, offer, payment)
+      if (response) {
+        c.header('X-PAYMENT-RESPONSE', payment.paymentResponseHeader)
+        return c.json(response)
+      }
+      const raced = await readOffer(dependencies, offer.id)
+      if (raced?.status === 'claimed') {
+        return c.json({ offer: publicOffer(raced, dependencies.now()) })
+      }
+      return c.json({
+        payment: 'pending',
+        payment_attempt_id: payment.attemptId,
+        transaction: payment.txHash,
+        do_not_pay_again: true,
+        retry: 'retry this reconciliation; the recorded payment remains reserved',
+      }, 202)
+    } catch (error) {
+      if (postgresErrorCode(error) === '23505') {
+        return c.json({
+          error: 'that payment transaction is already reserved',
+          do_not_pay_again: true,
+        }, 409)
+      }
+      throw error
+    }
   })
 
   app.post('/api/world/offer/:offerId/cancel', async c => {
@@ -1384,6 +1320,12 @@ export function mountWorldMarketRoutes(
           AND (
             reserved_until IS NULL OR reserved_until <= clock_timestamp()
             OR x402_evidence_state = 'invalid'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_attempts
+            WHERE payment_attempts.offer_id = transfer_offers.id
+              AND payment_attempts.operation = 'world_sale'
+              AND payment_attempts.status IN ('settling', 'payment_pending', 'needs_review')
           )
           AND EXISTS (
             SELECT 1 FROM things WHERE things.id = transfer_offers.asset_id

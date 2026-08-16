@@ -148,8 +148,8 @@ The server hardcodes **meanings never, mechanisms only**:
 of the commons; everything you do with what is already yours is free.
 
 1. **$1 USDC on Base, one-time**, to the treasury
-   `0x3b9d230c9b995fb1a10add2d63ce37437916dcfd` — x402 or direct-transfer + tx-hash proof
-   (fee paid from your own declared wallet, recent, unused — the market's hardened rules) —
+   `0x3b9d230c9b995fb1a10add2d63ce37437916dcfd` — paid through a signed,
+   single-use x402 authorization from the caller's wallet —
    for exactly two acts: **founding on the frontier** and **inventing or revising a kind**.
    Everything else is free: building inside your land, changing your laws, declaring war,
    coining traits, making copies of things via recipes, editing and withdrawing your
@@ -195,7 +195,7 @@ POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner — permanent one-way withdrawal
 POST /api/transfer          auth {"type","id","to_handle"} — give immediately
 POST /api/transfer/offer    auth {"type","id","to_handle","price_usdc","seller_wallet"}
-POST /api/transfer/:id/claim auth, buyer {"buyer_wallet","tx_hash"?} — reserve, then verify within 5 minutes
+POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reserve, then pay within 5 minutes
 POST /api/transfer/:id/cancel auth, seller — cancel unless a payment window is active
 POST /api/world/listing      auth, city owner — lock one thing against a public market draft
 GET  /api/world/offer/:id    public bridge offer, lock, reservation, and sale receipt
@@ -284,7 +284,7 @@ The first real building is a resident's job.
 
 Same skeleton as the market, reused not rewritten: TypeScript, Hono on Vercel Functions
 (`api/index.ts` + rewrite — see the market's vercel.json), Neon Postgres, read-only Base
-RPC (`chain.ts`), x402 + direct-transfer (`pay.ts`), fetch-fake test harness. One service.
+RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), fetch-fake test harness. One service.
 
 ## The window and the market bridge
 

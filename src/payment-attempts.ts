@@ -1,246 +1,688 @@
 import { createHash } from 'node:crypto'
-import type { PaymentRequirements, SettledError } from './pay.ts'
 
-const WALLET_RE = /^0x[0-9a-fA-F]{40}$/
-const TX_HASH_RE = /^0x[0-9a-f]{64}$/
+const WALLET_RE = /^0x[0-9a-f]{40}$/u
+const HASH_RE = /^0x[0-9a-f]{64}$/u
+const SHA256_RE = /^[0-9a-f]{64}$/u
+const TOKEN_RE = /^0x[0-9a-f]{40}$/u
+const PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]+$/u
 
-type Query = (text: string, params: unknown[]) => Promise<Record<string, unknown>[]>
+export type PaymentAttemptStatus =
+  | 'settling'
+  | 'payment_pending'
+  | 'completed'
+  | 'invalid'
+  | 'expired'
+  | 'needs_review'
+  | 'legacy_completed'
 
 export interface PaymentAttemptRecord {
-  paymentKey: string
-  paymentKind: 'x402'
-  status: 'initiated' | 'settled' | 'completed' | 'failed'
+  publicId: string
   actorId: number
-  purpose: string
-  payerWallet: string
-  payeeWallet: string
-  amountUsdc: number
-  transactionHash: string | null
-  completionTxHash: string | null
-  completionKind: 'place' | 'kind_revision' | 'transfer_offer' | 'world_offer' | null
-  completionId: number | null
-  completionRevision: number | null
+  counterpartyId: number | null
+  operation: 'frontier' | 'kind_invention' | 'kind_revision' | 'direct_sale' | 'world_sale' | 'legacy'
+  targetKey: string | null
+  offerId: number | null
+  assetType: 'place' | 'thing' | 'kind' | null
+  assetId: number | null
+  requestHash: string | null
+  method: 'x402' | 'claim' | 'legacy' | null
+  network: 'base' | null
+  token: string | null
+  payerWallet: string | null
+  payeeWallet: string | null
+  amountUnits: bigint | null
+  x402Nonce: string | null
+  x402PayloadDigest: string | null
+  x402ValidAfter: bigint | null
+  x402ValidBefore: bigint | null
+  startBlock: bigint | null
+  startTime: string | null
+  endTime: string | null
+  status: PaymentAttemptStatus
+  leaseOwner: string | null
+  leaseExpiresAt: string | null
+  txHash: string | null
+  finalizedBlockNumber: bigint | null
+  finalizedBlockHash: string | null
+  finalizedBlockTime: string | null
+  finalizedAt: string | null
+  invalidReason: string | null
+  result: Record<string, unknown> | null
+  responseStatus: number | null
+  response: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
 }
 
-interface StoredRow extends Record<string, unknown> {
-  payment_key: string
-  payment_kind: string
-  status: string
-  actor_id: number
-  purpose: string
-  payer_wallet: string
-  payee_wallet: string
-  amount_usdc: number
-  transaction_hash: string | null
-  completion_tx_hash: string | null
-  completion_kind: string | null
-  completion_id: number | null
-  completion_revision: number | null
+type PaymentAttemptQueryRow = Record<string, unknown> | PaymentAttemptRecord
+
+export interface PaymentAttemptQueryable {
+  query(text: string, params?: readonly unknown[] | any[]): Promise<readonly PaymentAttemptQueryRow[]>
 }
 
-export interface X402AttemptDraft {
+export type PaymentAttemptQuery = (
+  text: string,
+  params?: readonly unknown[] | any[],
+) => Promise<readonly PaymentAttemptQueryRow[]>
+
+export type PaymentAttemptDatabase = PaymentAttemptQueryable | PaymentAttemptQuery
+
+export interface PaymentAttemptInput {
   actorId: number
-  purpose: string
-  payeeWallet: string
-  amountUsdc: number
-  paymentHeader: string
-  accepted: PaymentRequirements
+  counterpartyId?: number | null
+  operation: PaymentAttemptRecord['operation']
+  targetKey?: string | null
+  offerId?: number | null
+  assetType?: PaymentAttemptRecord['assetType']
+  assetId?: number | null
+  request: unknown
+  method: Exclude<PaymentAttemptRecord['method'], 'legacy'> | null
+  network: PaymentAttemptRecord['network']
+  token: string | null
+  payerWallet: string | null
+  payeeWallet: string | null
+  amountUnits: bigint | null
+  x402Nonce?: string | null
+  x402PayloadDigest?: string | null
+  x402ValidAfter?: bigint | null
+  x402ValidBefore?: bigint | null
+  startBlock?: bigint | null
+  startTime?: string | null
+  endTime?: string | null
 }
 
-export interface X402AttemptStart {
-  attempt: PaymentAttemptRecord
-  paymentPayload: unknown
-  payerWallet: string
-  paymentIdentifier: string
-}
-
-export const PAYMENT_ATTEMPT_CONFLICT = 'payment_attempt_conflict'
-
-function paymentIdentifierFromPayload(payload: unknown): string | null {
-  const extension = (payload as {
-    extensions?: { 'payment-identifier'?: { id?: unknown } | string }
-  })?.extensions?.['payment-identifier']
-  if (typeof extension === 'string') return extension.trim() || null
-  const id = extension && typeof extension === 'object' && !Array.isArray(extension)
-    ? extension.id
-    : null
-  return typeof id === 'string' && id.trim() ? id.trim() : null
-}
-
-function rowAttempt(row: StoredRow | undefined): PaymentAttemptRecord | null {
-  if (!row) return null
-  const paymentKey = String(row.payment_key ?? '')
-  const paymentKind = String(row.payment_kind ?? '')
-  const status = String(row.status ?? '')
-  const payerWallet = String(row.payer_wallet ?? '').toLowerCase()
-  const payeeWallet = String(row.payee_wallet ?? '').toLowerCase()
-  const transactionHash = row.transaction_hash == null ? null : String(row.transaction_hash).toLowerCase()
-  const completionTxHash = row.completion_tx_hash == null ? null : String(row.completion_tx_hash).toLowerCase()
-  const completionKind = row.completion_kind == null ? null : String(row.completion_kind)
-  const completionId = row.completion_id == null ? null : Number(row.completion_id)
-  const completionRevision = row.completion_revision == null ? null : Number(row.completion_revision)
-  if (
-    !paymentKey || paymentKind !== 'x402' ||
-    !['initiated', 'settled', 'completed', 'failed'].includes(status) ||
-    !WALLET_RE.test(payerWallet) || !WALLET_RE.test(payeeWallet) ||
-    typeof row.actor_id !== 'number' || typeof row.purpose !== 'string' ||
-    typeof row.amount_usdc !== 'number' ||
-    (transactionHash != null && !TX_HASH_RE.test(transactionHash)) ||
-    (completionTxHash != null && !TX_HASH_RE.test(completionTxHash))
-  ) return null
-  return {
-    paymentKey,
-    paymentKind: 'x402',
-    status: status as PaymentAttemptRecord['status'],
-    actorId: row.actor_id,
-    purpose: row.purpose,
-    payerWallet,
-    payeeWallet,
-    amountUsdc: row.amount_usdc,
-    transactionHash,
-    completionTxHash,
-    completionKind: completionKind as PaymentAttemptRecord['completionKind'],
-    completionId,
-    completionRevision,
+export class PaymentAttemptConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PaymentAttemptConflictError'
   }
 }
 
-export function decodeX402PaymentHeader(paymentHeader: string): unknown | null {
+type CanonicalJson = null | boolean | string | number | CanonicalJson[] | { [key: string]: CanonicalJson }
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function normalizeJson(value: unknown, seen: Set<object>): CanonicalJson {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw new TypeError('canonical JSON requires safe integers only')
+    return value
+  }
+  if (Array.isArray(value)) {
+    if (Object.keys(value).length !== value.length) throw new TypeError('canonical JSON rejects sparse arrays')
+    return value.map(item => normalizeJson(item, seen))
+  }
+  if (typeof value !== 'object') throw new TypeError('canonical JSON supports only JSON values')
+  if (seen.has(value)) throw new TypeError('canonical JSON rejects cyclic values')
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError('canonical JSON requires plain objects')
+  }
+  seen.add(value)
   try {
-    return JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8')) as unknown
-  } catch {
-    return null
+    const output: Record<string, CanonicalJson> = {}
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      const child = (value as Record<string, unknown>)[key]
+      if (child === undefined) throw new TypeError('canonical JSON rejects undefined values')
+      output[key] = normalizeJson(child, seen)
+    }
+    return output
+  } finally {
+    seen.delete(value)
   }
 }
 
-export function x402PayerFromPayload(payload: unknown): string | null {
-  const payer = (payload as { payload?: { authorization?: { from?: unknown } } })?.payload?.authorization?.from
-  return typeof payer === 'string' && WALLET_RE.test(payer) ? payer.toLowerCase() : null
+export function canonicalPaymentRequest(value: unknown): { json: string; hash: string } {
+  const json = JSON.stringify(normalizeJson(value, new Set()))
+  return { json, hash: sha256Hex(json) }
 }
 
-function paymentKey(paymentIdentifier: string): string {
-  return createHash('sha256')
-    .update(paymentIdentifier)
-    .digest('hex')
+export function x402NonceKey(input: {
+  network: 'base'
+  token: string
+  payerWallet: string
+  nonce: string
+}): string {
+  const token = input.token.toLowerCase()
+  const payerWallet = input.payerWallet.toLowerCase()
+  const nonce = input.nonce.toLowerCase()
+  if (input.network !== 'base') throw new TypeError('x402 nonce key requires Base')
+  if (!TOKEN_RE.test(token)) throw new TypeError('x402 nonce key requires a token address')
+  if (!WALLET_RE.test(payerWallet)) throw new TypeError('x402 nonce key requires a payer wallet')
+  if (!HASH_RE.test(nonce)) throw new TypeError('x402 nonce key requires a 32-byte nonce')
+  return `base:${token}:${payerWallet}:${nonce}`
 }
 
-function sameAttemptScope(
-  attempt: PaymentAttemptRecord,
-  draft: X402AttemptDraft,
-  payerWallet: string,
-): boolean {
-  return attempt.actorId === draft.actorId
-    && attempt.purpose === draft.purpose
-    && attempt.payerWallet === payerWallet
-    && attempt.payeeWallet === draft.payeeWallet.toLowerCase()
-    && attempt.amountUsdc === draft.amountUsdc
+function rowValue(row: Record<string, unknown>, camel: string, snake = camel): unknown {
+  return camel in row ? row[camel] : row[snake]
 }
 
-export async function startX402PaymentAttempt(
-  query: Query,
-  draft: X402AttemptDraft,
-): Promise<X402AttemptStart | SettledError> {
-  const paymentPayload = decodeX402PaymentHeader(draft.paymentHeader)
-  if (paymentPayload == null) return { error: 'X-PAYMENT header is not base64 JSON' }
-  const paymentIdentifier = paymentIdentifierFromPayload(paymentPayload)
-  if (!paymentIdentifier) return { error: 'X-PAYMENT must include a payment-identifier for safe retries' }
-  const payerWallet = x402PayerFromPayload(paymentPayload)
-  if (!payerWallet) return { error: 'X-PAYMENT must contain a valid payer address' }
-  const key = paymentKey(paymentIdentifier)
-  await query(`
-    /* payment-attempts:initiate */
-    INSERT INTO payment_attempts (
-      payment_key, payment_kind, status, actor_id, purpose,
-      payer_wallet, payee_wallet, amount_usdc, payment_payload
-    )
-    VALUES ($1, 'x402', 'initiated', $2, $3, lower($4), lower($5), $6, $7::jsonb)
-    ON CONFLICT (payment_key) DO NOTHING
-  `, [
-    key,
-    draft.actorId,
-    draft.purpose,
-    payerWallet,
-    draft.payeeWallet,
-    draft.amountUsdc,
-    JSON.stringify(paymentPayload),
-  ])
-  const rows = await query(`
-    /* payment-attempts:read */
-    SELECT payment_key, payment_kind, status, actor_id, purpose,
-      lower(payer_wallet) AS payer_wallet, lower(payee_wallet) AS payee_wallet,
-      amount_usdc::float8 AS amount_usdc,
-      transaction_hash, completion_tx_hash, completion_kind, completion_id, completion_revision
-    FROM payment_attempts
-    WHERE payment_key = $1
-  `, [key])
-  const attempt = rowAttempt(rows[0] as StoredRow | undefined)
-  if (!attempt) return { error: 'payment attempt record is unavailable' }
-  if (!sameAttemptScope(attempt, draft, payerWallet)) {
-    return {
-      error: 'X-PAYMENT payment-identifier is already bound to a different payer, actor, purpose, payee, or amount',
-      code: PAYMENT_ATTEMPT_CONFLICT,
-    }
+async function runQuery(
+  database: PaymentAttemptDatabase,
+  text: string,
+  params: readonly unknown[],
+): Promise<readonly PaymentAttemptQueryRow[]> {
+  return typeof database === 'function'
+    ? await database(text, params)
+    : await database.query(text, params)
+}
+
+function isoString(value: unknown): string | null {
+  if (value == null) return null
+  const date = value instanceof Date ? value : new Date(String(value))
+  if (Number.isNaN(date.getTime())) throw new TypeError('invalid timestamp row')
+  return date.toISOString()
+}
+
+function integer(value: unknown): number | null {
+  if (value == null) return null
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed)) throw new TypeError('invalid integer row')
+  return parsed
+}
+
+function bigintValue(value: unknown): bigint | null {
+  if (value == null) return null
+  if (typeof value === 'bigint') return value
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value)
+  if (typeof value === 'string' && /^-?\d+$/u.test(value)) return BigInt(value)
+  throw new TypeError('invalid bigint row')
+}
+
+function hashValue(value: unknown): string | null {
+  if (value == null) return null
+  const hash = String(value).toLowerCase()
+  if (!HASH_RE.test(hash)) throw new TypeError('invalid hash row')
+  return hash
+}
+
+function walletValue(value: unknown): string | null {
+  if (value == null) return null
+  const wallet = String(value).toLowerCase()
+  if (!WALLET_RE.test(wallet)) throw new TypeError('invalid wallet row')
+  return wallet
+}
+
+function shaValue(value: unknown): string | null {
+  if (value == null) return null
+  const digest = String(value).toLowerCase()
+  if (!SHA256_RE.test(digest)) throw new TypeError('invalid digest row')
+  return digest
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  if (value == null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid JSON object row')
+  return value as Record<string, unknown>
+}
+
+function textValue(value: unknown): string | null {
+  return value == null ? null : String(value)
+}
+
+function paymentAttemptFromRow(row: Record<string, unknown> | undefined): PaymentAttemptRecord | null {
+  if (!row) return null
+  const publicId = String(rowValue(row, 'publicId', 'public_id') ?? '')
+  const operation = String(rowValue(row, 'operation') ?? '')
+  const status = String(rowValue(row, 'status') ?? '')
+  const actorId = integer(rowValue(row, 'actorId', 'actor_id'))
+  if (!PUBLIC_ID_RE.test(publicId)) throw new TypeError('invalid public id row')
+  if (actorId == null) throw new TypeError('invalid actor row')
+  if (!['frontier', 'kind_invention', 'kind_revision', 'direct_sale', 'world_sale', 'legacy'].includes(operation)) {
+    throw new TypeError('invalid operation row')
+  }
+  if (!['settling', 'payment_pending', 'completed', 'invalid', 'expired', 'needs_review', 'legacy_completed'].includes(status)) {
+    throw new TypeError('invalid status row')
   }
   return {
-    attempt,
-    paymentPayload,
-    payerWallet,
-    paymentIdentifier,
+    publicId,
+    actorId,
+    counterpartyId: integer(rowValue(row, 'counterpartyId', 'counterparty_id')),
+    operation: operation as PaymentAttemptRecord['operation'],
+    targetKey: textValue(rowValue(row, 'targetKey', 'target_key')),
+    offerId: integer(rowValue(row, 'offerId', 'offer_id')),
+    assetType: textValue(rowValue(row, 'assetType', 'asset_type')) as PaymentAttemptRecord['assetType'],
+    assetId: integer(rowValue(row, 'assetId', 'asset_id')),
+    requestHash: shaValue(rowValue(row, 'requestHash', 'request_hash')),
+    method: textValue(rowValue(row, 'method')) as PaymentAttemptRecord['method'],
+    network: textValue(rowValue(row, 'network')) as PaymentAttemptRecord['network'],
+    token: textValue(rowValue(row, 'token'))?.toLowerCase() ?? null,
+    payerWallet: walletValue(rowValue(row, 'payerWallet', 'payer_wallet')),
+    payeeWallet: walletValue(rowValue(row, 'payeeWallet', 'payee_wallet')),
+    amountUnits: bigintValue(rowValue(row, 'amountUnits', 'amount_units')),
+    x402Nonce: hashValue(rowValue(row, 'x402Nonce', 'x402_nonce')),
+    x402PayloadDigest: shaValue(rowValue(row, 'x402PayloadDigest', 'x402_payload_digest')),
+    x402ValidAfter: bigintValue(rowValue(row, 'x402ValidAfter', 'x402_valid_after')),
+    x402ValidBefore: bigintValue(rowValue(row, 'x402ValidBefore', 'x402_valid_before')),
+    startBlock: bigintValue(rowValue(row, 'startBlock', 'start_block')),
+    startTime: isoString(rowValue(row, 'startTime', 'start_time')),
+    endTime: isoString(rowValue(row, 'endTime', 'end_time')),
+    status: status as PaymentAttemptStatus,
+    leaseOwner: textValue(rowValue(row, 'leaseOwner', 'lease_owner')),
+    leaseExpiresAt: isoString(rowValue(row, 'leaseExpiresAt', 'lease_expires_at')),
+    txHash: hashValue(rowValue(row, 'txHash', 'tx_hash')),
+    finalizedBlockNumber: bigintValue(rowValue(row, 'finalizedBlockNumber', 'finalized_block_number')),
+    finalizedBlockHash: hashValue(rowValue(row, 'finalizedBlockHash', 'finalized_block_hash')),
+    finalizedBlockTime: isoString(rowValue(row, 'finalizedBlockTime', 'finalized_block_time')),
+    finalizedAt: isoString(rowValue(row, 'finalizedAt', 'finalized_at')),
+    invalidReason: textValue(rowValue(row, 'invalidReason', 'invalid_reason')),
+    result: objectValue(rowValue(row, 'result', 'result_json')),
+    responseStatus: integer(rowValue(row, 'responseStatus', 'response_status')),
+    response: objectValue(rowValue(row, 'response', 'response_json')),
+    createdAt: isoString(rowValue(row, 'createdAt', 'created_at')) ?? new Date(0).toISOString(),
+    updatedAt: isoString(rowValue(row, 'updatedAt', 'updated_at')) ?? new Date(0).toISOString(),
+    completedAt: isoString(rowValue(row, 'completedAt', 'completed_at')),
   }
 }
 
-export async function markX402PaymentSettled(
-  query: Query,
-  paymentKeyValue: string,
-  transactionHash: string,
-): Promise<PaymentAttemptRecord | null> {
-  const rows = await query(`
-    /* payment-attempts:settled */
-    UPDATE payment_attempts
-    SET status = CASE WHEN status = 'completed' THEN status ELSE 'settled' END,
-      transaction_hash = coalesce(transaction_hash, $2),
-      settled_at = coalesce(settled_at, clock_timestamp())
-    WHERE payment_key = $1
-      AND (transaction_hash IS NULL OR transaction_hash = $2)
-    RETURNING payment_key, payment_kind, status, actor_id, purpose,
-      lower(payer_wallet) AS payer_wallet, lower(payee_wallet) AS payee_wallet,
-      amount_usdc::float8 AS amount_usdc,
-      transaction_hash, completion_tx_hash, completion_kind, completion_id, completion_revision
-  `, [paymentKeyValue, transactionHash])
-  return rowAttempt(rows[0] as StoredRow | undefined)
+function sameImmutableTerms(attempt: PaymentAttemptRecord, input: PaymentAttemptInput, requestHash: string): boolean {
+  return attempt.actorId === input.actorId
+    && attempt.counterpartyId === (input.counterpartyId ?? null)
+    && attempt.operation === input.operation
+    && attempt.targetKey === (input.targetKey ?? null)
+    && attempt.offerId === (input.offerId ?? null)
+    && attempt.assetType === (input.assetType ?? null)
+    && attempt.assetId === (input.assetId ?? null)
+    && attempt.requestHash === requestHash
+    && attempt.method === input.method
+    && attempt.network === input.network
+    && attempt.token === (input.token?.toLowerCase() ?? null)
+    && attempt.payerWallet === (input.payerWallet?.toLowerCase() ?? null)
+    && attempt.payeeWallet === (input.payeeWallet?.toLowerCase() ?? null)
+    && attempt.amountUnits === (input.amountUnits ?? null)
+    && attempt.x402Nonce === (input.x402Nonce?.toLowerCase() ?? null)
+    && attempt.x402PayloadDigest === (input.x402PayloadDigest?.toLowerCase() ?? null)
+    && attempt.x402ValidAfter === (input.x402ValidAfter ?? null)
+    && attempt.x402ValidBefore === (input.x402ValidBefore ?? null)
+    && attempt.startTime === (input.startTime ?? null)
+    && attempt.endTime === (input.endTime ?? null)
 }
 
-export async function markX402PaymentCompleted(
-  query: Query,
-  paymentKeyValue: string,
-  completion: {
-    completionTxHash: string
-    completionKind: NonNullable<PaymentAttemptRecord['completionKind']>
-    completionId: number
-    completionRevision?: number | null
+function conflict(message = 'payment attempt is already bound to different immutable terms'): never {
+  throw new PaymentAttemptConflictError(message)
+}
+
+function readByTargetOrNonce(input: PaymentAttemptInput): { text: string; params: readonly unknown[] } {
+  return {
+    text: `
+      /* payment-attempts:find */
+      SELECT *
+      FROM payment_attempts
+      WHERE (
+        ($1::text IS NOT NULL AND operation = $2 AND target_key = $1)
+        OR (
+          $3::text IS NOT NULL
+          AND network = $4
+          AND token = lower($5)
+          AND payer_wallet = lower($6)
+          AND x402_nonce = lower($3)
+        )
+      )
+        AND status IN ('settling', 'payment_pending', 'needs_review', 'completed')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    params: [
+      input.targetKey ?? null,
+      input.operation,
+      input.x402Nonce ?? null,
+      input.network,
+      input.token ?? null,
+      input.payerWallet ?? null,
+    ],
+  }
+}
+
+export async function createOrReadPaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: PaymentAttemptInput,
+  nextPublicId: () => string,
+): Promise<{ disposition: 'existing' | 'created'; attempt: PaymentAttemptRecord }> {
+  const request = canonicalPaymentRequest(input.request)
+  const lookup = readByTargetOrNonce(input)
+  const existing = paymentAttemptFromRow((await runQuery(database, lookup.text, lookup.params))[0] as Record<string, unknown> | undefined)
+  if (existing) {
+    if (!sameImmutableTerms(existing, input, request.hash)) conflict()
+    return { disposition: 'existing', attempt: existing }
+  }
+
+  const created = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:create */
+    INSERT INTO payment_attempts (
+      public_id, actor_id, counterparty_id, operation, target_key, offer_id,
+      asset_type, asset_id, request_hash, request_json, method, network, token,
+      payer_wallet, payee_wallet, amount_units, x402_nonce, x402_payload_digest,
+      x402_valid_after, x402_valid_before, start_block, start_time, end_time, status
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10::jsonb, $11, $12, lower($13),
+      lower($14), lower($15), $16, lower($17), lower($18),
+      $19, $20, $21, $22::timestamptz, $23::timestamptz, 'settling'
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING *
+  `, [
+    nextPublicId(),
+    input.actorId,
+    input.counterpartyId ?? null,
+    input.operation,
+    input.targetKey ?? null,
+    input.offerId ?? null,
+    input.assetType ?? null,
+    input.assetId ?? null,
+    request.hash,
+    request.json,
+    input.method,
+    input.network,
+    input.token ?? null,
+    input.payerWallet ?? null,
+    input.payeeWallet ?? null,
+    input.amountUnits?.toString() ?? null,
+    input.x402Nonce ?? null,
+    input.x402PayloadDigest ?? null,
+    input.x402ValidAfter?.toString() ?? null,
+    input.x402ValidBefore?.toString() ?? null,
+    input.startBlock?.toString() ?? null,
+    input.startTime ?? null,
+    input.endTime ?? null,
+  ]))[0] as Record<string, unknown> | undefined)
+  if (created) return { disposition: 'created', attempt: created }
+
+  const raced = paymentAttemptFromRow((await runQuery(database, lookup.text, lookup.params))[0] as Record<string, unknown> | undefined)
+  if (!raced || !sameImmutableTerms(raced, input, request.hash)) conflict()
+  return { disposition: 'existing', attempt: raced }
+}
+
+export async function acquireSettlementLease(
+  database: PaymentAttemptDatabase,
+  input: { publicId: string; actorId: number; leaseMilliseconds: number },
+  nextLeaseOwner: () => string,
+): Promise<
+  | { acquired: true; attempt: PaymentAttemptRecord; leaseOwner: string }
+  | { acquired: false; attempt: PaymentAttemptRecord | null }
+> {
+  const leaseOwner = nextLeaseOwner()
+  const leased = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:lease */
+    UPDATE payment_attempts
+    SET lease_owner = $3,
+      lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond'),
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND actor_id = $2
+      AND status IN ('settling', 'payment_pending', 'needs_review')
+      AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+    RETURNING *
+  `, [input.publicId, input.actorId, leaseOwner, input.leaseMilliseconds]))[0] as Record<string, unknown> | undefined)
+  if (leased) return { acquired: true, attempt: leased, leaseOwner }
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:lease-read */
+    SELECT *
+    FROM payment_attempts
+    WHERE public_id = $1 AND actor_id = $2
+    LIMIT 1
+  `, [input.publicId, input.actorId]))[0] as Record<string, unknown> | undefined)
+  return { acquired: false, attempt: current }
+}
+
+export async function bindPaymentEvidence(
+  database: PaymentAttemptDatabase,
+  input: {
+    publicId: string
+    leaseOwner: string
+    txHash: string
+    finality: null | {
+      blockNumber: bigint
+      blockHash: string
+      blockTime: string
+      finalizedAt: string
+    }
   },
-): Promise<PaymentAttemptRecord | null> {
-  const rows = await query(`
-    /* payment-attempts:completed */
+): Promise<PaymentAttemptRecord> {
+  const updated = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:bind-evidence */
+    UPDATE payment_attempts
+    SET tx_hash = coalesce(tx_hash, lower($3)),
+      status = 'payment_pending',
+      finalized_block_number = coalesce(finalized_block_number, $4),
+      finalized_block_hash = coalesce(finalized_block_hash, lower($5)),
+      finalized_block_time = coalesce(finalized_block_time, $6::timestamptz),
+      finalized_at = coalesce(finalized_at, $7::timestamptz),
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND lease_owner = $2
+      AND status IN ('settling', 'payment_pending', 'needs_review')
+      AND (tx_hash IS NULL OR tx_hash = $3)
+      AND ($5::text IS NULL OR finalized_block_hash IS NULL OR finalized_block_hash = $5)
+    RETURNING *
+  `, [
+    input.publicId,
+    input.leaseOwner,
+    input.txHash,
+    input.finality?.blockNumber.toString() ?? null,
+    input.finality?.blockHash ?? null,
+    input.finality?.blockTime ?? null,
+    input.finality?.finalizedAt ?? null,
+  ]))[0] as Record<string, unknown> | undefined)
+  if (updated) return updated
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:evidence-read */
+    SELECT *
+    FROM payment_attempts
+    WHERE public_id = $1
+    LIMIT 1
+  `, [input.publicId]))[0] as Record<string, unknown> | undefined)
+  if (!current || (current.txHash != null && current.txHash !== input.txHash.toLowerCase())) {
+    conflict('payment evidence conflicts with an existing transaction')
+  }
+  return current
+}
+
+export async function releaseSettlementLease(
+  database: PaymentAttemptDatabase,
+  input: { publicId: string; leaseOwner: string },
+): Promise<PaymentAttemptRecord> {
+  const released = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:release-lease */
+    UPDATE payment_attempts
+    SET lease_owner = NULL,
+      lease_expires_at = NULL,
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND lease_owner = $2
+      AND status IN ('settling', 'payment_pending', 'needs_review')
+    RETURNING *
+  `, [input.publicId, input.leaseOwner]))[0] as Record<string, unknown> | undefined)
+  if (released) return released
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:release-lease-read */
+    SELECT * FROM payment_attempts WHERE public_id = $1 LIMIT 1
+  `, [input.publicId]))[0] as Record<string, unknown> | undefined)
+  if (!current) conflict('payment attempt is unavailable')
+  return current
+}
+
+export async function completePaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: {
+    publicId: string
+    leaseOwner: string
+    result: Record<string, unknown>
+    responseStatus: number
+    response: Record<string, unknown>
+  },
+): Promise<PaymentAttemptRecord> {
+  const completed = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:complete */
     UPDATE payment_attempts
     SET status = 'completed',
-      transaction_hash = coalesce(transaction_hash, $2),
-      completion_tx_hash = $2,
-      completion_kind = $3,
-      completion_id = $4,
-      completion_revision = $5,
-      completed_at = clock_timestamp()
-    WHERE payment_key = $1
-    RETURNING payment_key, payment_kind, status, actor_id, purpose,
-      lower(payer_wallet) AS payer_wallet, lower(payee_wallet) AS payee_wallet,
-      amount_usdc::float8 AS amount_usdc,
-      transaction_hash, completion_tx_hash, completion_kind, completion_id, completion_revision
+      result_json = $3::jsonb,
+      response_status = $4,
+      response_json = $5::jsonb,
+      completed_at = coalesce(completed_at, clock_timestamp()),
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND lease_owner = $2
+      AND status = 'payment_pending'
+      AND tx_hash IS NOT NULL
+      AND finalized_block_number IS NOT NULL
+      AND finalized_block_hash IS NOT NULL
+      AND finalized_block_time IS NOT NULL
+      AND finalized_at IS NOT NULL
+    RETURNING *
   `, [
-    paymentKeyValue,
-    completion.completionTxHash,
-    completion.completionKind,
-    completion.completionId,
-    completion.completionRevision ?? null,
-  ])
-  return rowAttempt(rows[0] as StoredRow | undefined)
+    input.publicId,
+    input.leaseOwner,
+    JSON.stringify(input.result),
+    input.responseStatus,
+    JSON.stringify(input.response),
+  ]))[0] as Record<string, unknown> | undefined)
+  if (completed) return completed
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:complete-read */
+    SELECT *
+    FROM payment_attempts
+    WHERE public_id = $1
+    LIMIT 1
+  `, [input.publicId]))[0] as Record<string, unknown> | undefined)
+  if (!current || current.status !== 'completed') conflict('payment attempt cannot complete from its current state')
+  return current
+}
+
+export async function invalidatePaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: { publicId: string; leaseOwner: string; reason: string },
+): Promise<PaymentAttemptRecord> {
+  const invalid = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:invalidate */
+    UPDATE payment_attempts
+    SET status = 'invalid',
+      invalid_reason = $3,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND lease_owner = $2
+      AND status IN ('settling', 'payment_pending', 'needs_review')
+    RETURNING *
+  `, [input.publicId, input.leaseOwner, input.reason]))[0] as Record<string, unknown> | undefined)
+  if (invalid) return invalid
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:invalidate-read */
+    SELECT *
+    FROM payment_attempts
+    WHERE public_id = $1
+    LIMIT 1
+  `, [input.publicId]))[0] as Record<string, unknown> | undefined)
+  if (!current || current.status !== 'invalid') conflict('payment attempt cannot be invalidated from its current state')
+  return current
+}
+
+export async function expirePaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: { publicId: string; leaseOwner: string; reason: string },
+): Promise<PaymentAttemptRecord> {
+  const expired = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:expire */
+    UPDATE payment_attempts
+    SET status = 'expired',
+      invalid_reason = $3,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND lease_owner = $2
+      AND status = 'settling'
+    RETURNING *
+  `, [input.publicId, input.leaseOwner, input.reason]))[0] as Record<string, unknown> | undefined)
+  if (expired) return expired
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:expire-read */
+    SELECT *
+    FROM payment_attempts
+    WHERE public_id = $1
+    LIMIT 1
+  `, [input.publicId]))[0] as Record<string, unknown> | undefined)
+  if (!current || current.status !== 'expired') conflict('payment attempt cannot expire from its current state')
+  return current
+}
+
+export async function markPaymentAttemptNeedsReview(
+  database: PaymentAttemptDatabase,
+  input: { publicId: string; leaseOwner: string; reason: string },
+): Promise<PaymentAttemptRecord> {
+  const review = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:needs-review */
+    UPDATE payment_attempts
+    SET status = 'needs_review',
+      invalid_reason = $3,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      updated_at = clock_timestamp()
+    WHERE public_id = $1
+      AND lease_owner = $2
+      AND status IN ('settling', 'payment_pending', 'needs_review')
+    RETURNING *
+  `, [input.publicId, input.leaseOwner, input.reason]))[0] as Record<string, unknown> | undefined)
+  if (review) return review
+  const current = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:needs-review-read */
+    SELECT * FROM payment_attempts WHERE public_id = $1 LIMIT 1
+  `, [input.publicId]))[0] as Record<string, unknown> | undefined)
+  if (!current || current.status !== 'needs_review') {
+    conflict('payment attempt cannot enter review from its current state')
+  }
+  return current
+}
+
+export function toPublicPaymentAttempt(row: Record<string, unknown> | PaymentAttemptRecord): Record<string, unknown> {
+  const attempt = paymentAttemptFromRow(row as Record<string, unknown>)
+  if (!attempt) throw new TypeError('payment attempt row is unavailable')
+  return {
+    id: attempt.publicId,
+    state: attempt.status,
+    do_not_pay_again: ['payment_pending', 'needs_review', 'completed', 'invalid', 'legacy_completed'].includes(attempt.status),
+    ...(attempt.txHash ? { transaction: attempt.txHash } : {}),
+    ...(attempt.responseStatus != null ? { response_status: attempt.responseStatus } : {}),
+    ...(attempt.response ? { response: attempt.response } : {}),
+  }
+}
+
+export async function getPaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: { publicId: string; actorId: number },
+): Promise<Record<string, unknown> | null> {
+  const attempt = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:get */
+    SELECT *
+    FROM payment_attempts
+    WHERE public_id = $1 AND actor_id = $2
+    LIMIT 1
+  `, [input.publicId, input.actorId]))[0] as Record<string, unknown> | undefined)
+  return attempt ? toPublicPaymentAttempt(attempt) : null
+}
+
+export async function findPaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: {
+    actorId: number
+    operation: Exclude<PaymentAttemptRecord['operation'], 'legacy'>
+    offerId: number
+  },
+): Promise<PaymentAttemptRecord | null> {
+  return paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:find-operation */
+    SELECT *
+    FROM payment_attempts
+    WHERE actor_id = $1
+      AND operation = $2
+      AND offer_id = $3
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, [input.actorId, input.operation, input.offerId]))[0] as Record<string, unknown> | undefined)
 }

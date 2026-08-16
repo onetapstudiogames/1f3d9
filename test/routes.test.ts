@@ -26,19 +26,34 @@ const OTHER_SECRET = '1f3d9_sk_' + 'cd'.repeat(24)
 const TX1 = '0x' + '11'.repeat(32)
 const TX2 = '0x' + '22'.repeat(32)
 const TX_CASE_UPPER = '0x' + 'AB'.repeat(32)
-const PAYMENT_ID = 'pay_frontier_retry_1234567890abcdef'
-const X_PAYMENT = Buffer.from(JSON.stringify({
-  payload: { authorization: { from: BUYER_WALLET } },
-  extensions: {
-    'payment-identifier': {
-      info: { required: true },
-      id: PAYMENT_ID,
+const AUTHORIZATION_NOW = Math.floor(Date.now() / 1000)
+function xPayment(
+  payer: string,
+  payee: string,
+  amountUnits: number,
+  nonceDigit: string,
+): string {
+  return Buffer.from(JSON.stringify({
+    x402Version: 1,
+    scheme: 'exact',
+    network: 'base',
+    payload: {
+      signature: '0x' + 'ef'.repeat(65),
+      authorization: {
+        from: payer,
+        to: payee,
+        value: String(amountUnits),
+        validAfter: String(AUTHORIZATION_NOW - 120),
+        validBefore: String(AUTHORIZATION_NOW + 3600),
+        nonce: '0x' + nonceDigit.repeat(32),
+      },
     },
-  },
-})).toString('base64')
-const X_PAYMENT_NO_ID = Buffer.from(JSON.stringify({
-  payload: { authorization: { from: BUYER_WALLET } },
-})).toString('base64')
+  }), 'utf8').toString('base64')
+}
+const X_PAYMENT = xPayment(SELLER_WALLET, TREASURY, 1_000_000, 'aa')
+const X_PAYMENT_NO_ID = xPayment(SELLER_WALLET, TREASURY, 1_000_000, 'bb')
+const SALE_X_PAYMENT = xPayment(BUYER_WALLET, SELLER_WALLET, 2_000_000, 'cc')
+const STRANGER_SALE_X_PAYMENT = xPayment(STRANGER_WALLET, SELLER_WALLET, 2_000_000, 'dd')
 
 interface DbCall { url: string; query?: string; params?: unknown[] }
 interface OfferState {
@@ -48,6 +63,45 @@ interface OfferState {
   reservedAt?: string | null
   reservedUntil: string | null
   buyerWallet?: string | null
+}
+interface FakePaymentAttempt {
+  public_id: string
+  actor_id: number
+  counterparty_id: number | null
+  operation: string
+  target_key: string | null
+  offer_id: number | null
+  asset_type: string | null
+  asset_id: number | null
+  request_hash: string
+  method: string | null
+  network: string | null
+  token: string | null
+  payer_wallet: string | null
+  payee_wallet: string | null
+  amount_units: string | null
+  x402_nonce: string | null
+  x402_payload_digest: string | null
+  x402_valid_after: string | null
+  x402_valid_before: string | null
+  start_block: string | null
+  start_time: string | null
+  end_time: string | null
+  status: 'settling' | 'payment_pending' | 'completed' | 'invalid' | 'expired' | 'needs_review'
+  lease_owner: string | null
+  lease_expires_at: string | null
+  tx_hash: string | null
+  finalized_block_number: string | null
+  finalized_block_hash: string | null
+  finalized_block_time: string | null
+  finalized_at: string | null
+  invalid_reason: string | null
+  result_json: Record<string, unknown> | null
+  response_status: number | null
+  response_json: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
 }
 type LawRecipe = Record<string, unknown>
 interface FakeState {
@@ -99,21 +153,7 @@ interface FakeState {
   chainTo: string
   chainAgeSeconds: number
   paymentHashes: Set<string>
-  paymentAttempts: Map<string, {
-    payment_key: string
-    payment_kind: 'x402'
-    status: 'initiated' | 'settled' | 'completed' | 'failed'
-    actor_id: number
-    purpose: string
-    payer_wallet: string
-    payee_wallet: string
-    amount_usdc: number
-    transaction_hash: string | null
-    completion_tx_hash: string | null
-    completion_kind: string | null
-    completion_id: number | null
-    completion_revision: number | null
-  }>
+  paymentAttempts: Map<string, FakePaymentAttempt>
   facilitatorVerify: boolean
   facilitatorSettle: boolean
   anonymousFlagsUsed: number
@@ -380,47 +420,212 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
 
-  if (q.includes('/* payment-attempts:initiate */')) {
-    const key = String(params[0])
-    if (!state.paymentAttempts.has(key)) {
-      const next = new Map(state.paymentAttempts)
-      next.set(key, {
-        payment_key: key,
-        payment_kind: 'x402',
-        status: 'initiated',
-        actor_id: Number(params[1]),
-        purpose: String(params[2]),
-        payer_wallet: String(params[3]).toLowerCase(),
-        payee_wallet: String(params[4]).toLowerCase(),
-        amount_usdc: Number(params[5]),
-        transaction_hash: null,
-        completion_tx_hash: null,
-        completion_kind: null,
-        completion_id: null,
-        completion_revision: null,
-      })
-      state = { ...state, paymentAttempts: next }
-    }
-    return []
+  if (q.includes('/* payment-attempts:find-operation */')) {
+    const row = [...state.paymentAttempts.values()].reverse().find(attempt =>
+      attempt.actor_id === Number(params[0])
+      && attempt.operation === String(params[1])
+      && attempt.offer_id === Number(params[2]))
+    return row ? [{ ...row }] : []
   }
-  if (q.includes('/* payment-attempts:read */')) {
+  if (q.includes('/* payment-attempts:find */')) {
+    const targetKey = params[0] == null ? null : String(params[0])
+    const operation = String(params[1])
+    const nonce = params[2] == null ? null : String(params[2]).toLowerCase()
+    const network = params[3] == null ? null : String(params[3])
+    const token = params[4] == null ? null : String(params[4]).toLowerCase()
+    const payerWallet = params[5] == null ? null : String(params[5]).toLowerCase()
+    const row = [...state.paymentAttempts.values()].reverse().find(attempt =>
+      ['settling', 'payment_pending', 'needs_review', 'completed'].includes(attempt.status) && (
+        (targetKey != null && attempt.operation === operation && attempt.target_key === targetKey)
+        || (
+          nonce != null
+          && attempt.network === network
+          && attempt.token === token
+          && attempt.payer_wallet === payerWallet
+          && attempt.x402_nonce === nonce
+        )
+      ))
+    return row ? [{ ...row }] : []
+  }
+  if (q.includes('/* payment-attempts:create */')) {
+    const key = String(params[0])
+    const next = new Map(state.paymentAttempts)
+    const conflict = [...next.values()].some(attempt =>
+      ['settling', 'payment_pending', 'needs_review', 'completed'].includes(attempt.status) && (
+        attempt.public_id === key
+        || (
+          params[4] != null
+          && attempt.operation === String(params[3])
+          && attempt.target_key === String(params[4])
+        )
+        || (
+          params[16] != null
+          && attempt.network === String(params[11])
+          && attempt.token === String(params[12]).toLowerCase()
+          && attempt.payer_wallet === String(params[13]).toLowerCase()
+          && attempt.x402_nonce === String(params[16]).toLowerCase()
+        )
+      ))
+    if (conflict) return []
+    const row = {
+      public_id: key,
+      actor_id: Number(params[1]),
+      counterparty_id: params[2] == null ? null : Number(params[2]),
+      operation: String(params[3]),
+      target_key: params[4] == null ? null : String(params[4]),
+      offer_id: params[5] == null ? null : Number(params[5]),
+      asset_type: params[6] == null ? null : String(params[6]),
+      asset_id: params[7] == null ? null : Number(params[7]),
+      request_hash: String(params[8]),
+      method: params[10] == null ? null : String(params[10]),
+      network: params[11] == null ? null : String(params[11]),
+      token: params[12] == null ? null : String(params[12]).toLowerCase(),
+      payer_wallet: params[13] == null ? null : String(params[13]).toLowerCase(),
+      payee_wallet: params[14] == null ? null : String(params[14]).toLowerCase(),
+      amount_units: params[15] == null ? null : String(params[15]),
+      x402_nonce: params[16] == null ? null : String(params[16]).toLowerCase(),
+      x402_payload_digest: params[17] == null ? null : String(params[17]).toLowerCase(),
+      x402_valid_after: params[18] == null ? null : String(params[18]),
+      x402_valid_before: params[19] == null ? null : String(params[19]),
+      start_block: params[20] == null ? null : String(params[20]),
+      start_time: params[21] == null ? null : String(params[21]),
+      end_time: params[22] == null ? null : String(params[22]),
+      status: 'settling' as const,
+      lease_owner: null,
+      lease_expires_at: null,
+      tx_hash: null,
+      finalized_block_number: null,
+      finalized_block_hash: null,
+      finalized_block_time: null,
+      finalized_at: null,
+      invalid_reason: null,
+      result_json: null,
+      response_status: null,
+      response_json: null,
+      created_at: '2026-08-11T00:00:00.000Z',
+      updated_at: '2026-08-11T00:00:00.000Z',
+      completed_at: null,
+    }
+    next.set(key, row)
+    state = { ...state, paymentAttempts: next }
+    return [{ ...row }]
+  }
+  if (q.includes('/* payment-attempts:lease */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (
+      !current || current.actor_id !== Number(params[1])
+      || !['settling', 'payment_pending', 'needs_review'].includes(current.status)
+      || current.lease_owner != null
+    ) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      lease_owner: String(params[2]),
+      lease_expires_at: new Date(Date.now() + Number(params[3])).toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    const next = new Map(state.paymentAttempts).set(key, updated)
+    state = { ...state, paymentAttempts: next }
+    return [{ ...updated }]
+  }
+  if (q.includes('/* payment-attempts:lease-read */')) {
+    const row = state.paymentAttempts.get(String(params[0]))
+    return row?.actor_id === Number(params[1]) ? [{ ...row }] : []
+  }
+  if (q.includes('/* payment-attempts:bind-evidence */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (!current || current.lease_owner !== String(params[1])) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      status: 'payment_pending',
+      tx_hash: current.tx_hash ?? String(params[2]).toLowerCase(),
+      finalized_block_number: current.finalized_block_number ?? (params[3] == null ? null : String(params[3])),
+      finalized_block_hash: current.finalized_block_hash ?? (params[4] == null ? null : String(params[4]).toLowerCase()),
+      finalized_block_time: current.finalized_block_time ?? (params[5] == null ? null : String(params[5])),
+      finalized_at: current.finalized_at ?? (params[6] == null ? null : String(params[6])),
+      updated_at: new Date().toISOString(),
+    }
+    const next = new Map(state.paymentAttempts).set(key, updated)
+    state = { ...state, paymentAttempts: next }
+    return [{ ...updated }]
+  }
+  if (q.includes('/* payment-attempts:evidence-read */')) {
     const row = state.paymentAttempts.get(String(params[0]))
     return row ? [{ ...row }] : []
   }
-  if (q.includes('/* payment-attempts:settled */')) {
+  if (q.includes('/* payment-attempts:release-lease */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (!current || current.lease_owner !== String(params[1])) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    const next = new Map(state.paymentAttempts).set(key, updated)
+    state = { ...state, paymentAttempts: next }
+    return [{ ...updated }]
+  }
+  if (q.includes('/* payment-attempts:release-lease-read */')) {
+    const row = state.paymentAttempts.get(String(params[0]))
+    return row ? [{ ...row }] : []
+  }
+  if (q.includes('/* payment-attempts:invalidate */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (!current || current.lease_owner !== String(params[1])) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      status: 'invalid',
+      invalid_reason: String(params[2]),
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    const next = new Map(state.paymentAttempts).set(key, updated)
+    state = { ...state, paymentAttempts: next }
+    return [{ ...updated }]
+  }
+  if (q.includes('/* payment-attempts:needs-review */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (!current || current.lease_owner !== String(params[1])) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      status: 'needs_review',
+      invalid_reason: String(params[2]),
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    const next = new Map(state.paymentAttempts).set(key, updated)
+    state = { ...state, paymentAttempts: next }
+    return [{ ...updated }]
+  }
+  if (
+    q.includes('/* payment-attempts:invalidate-read */')
+    || q.includes('/* payment-attempts:needs-review-read */')
+  ) {
+    const row = state.paymentAttempts.get(String(params[0]))
+    return row ? [{ ...row }] : []
+  }
+  if (q.includes('/* payment-attempts:legacy-settled */')) {
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (!current) return []
     const next = new Map(state.paymentAttempts)
     next.set(key, {
       ...current,
-      status: current.status === 'completed' ? 'completed' : 'settled',
-      transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
+      status: current.status === 'completed' ? 'completed' : 'payment_pending',
+      tx_hash: current.tx_hash ?? String(params[1]).toLowerCase(),
+      updated_at: '2026-08-11T00:00:01.000Z',
     })
     state = { ...state, paymentAttempts: next }
     return [{ ...next.get(key)! }]
   }
-  if (q.includes('/* payment-attempts:completed */')) {
+  if (q.includes('/* payment-attempts:legacy-completed */')) {
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (!current) return []
@@ -428,11 +633,14 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     next.set(key, {
       ...current,
       status: 'completed',
-      transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
-      completion_tx_hash: String(params[1]).toLowerCase(),
-      completion_kind: String(params[2]),
-      completion_id: Number(params[3]),
-      completion_revision: params[4] == null ? null : Number(params[4]),
+      tx_hash: current.tx_hash ?? String(params[1]).toLowerCase(),
+      result_json: {
+        completion_kind: String(params[2]),
+        completion_id: Number(params[3]),
+        completion_revision: params[4] == null ? null : Number(params[4]),
+      },
+      completed_at: '2026-08-11T00:00:02.000Z',
+      updated_at: '2026-08-11T00:00:02.000Z',
     })
     state = { ...state, paymentAttempts: next }
     return [{ ...next.get(key)! }]
@@ -1235,7 +1443,9 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
   state = { ...state, calls: [...state.calls, { url, query: body?.query, params: body?.params }] }
   if (url.includes('/sql')) return jsonResponse(neonEncode(dbRespond(body.query, body.params ?? [])))
   if (url.includes('base-rpc.test')) {
-    const result = body.method === 'eth_getTransactionReceipt'
+    const result = body.method === 'eth_blockNumber'
+      ? '0x100'
+      : body.method === 'eth_getTransactionReceipt'
       ? {
         status: '0x1',
         blockHash: '0x' + 'bb'.repeat(32),
@@ -1243,7 +1453,7 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
         logs: [{
           address: USDC,
           topics: [TRANSFER_TOPIC, pad32(state.chainFrom), pad32(state.chainTo)],
-          data: '0x1e8480',
+          data: state.chainTo.toLowerCase() === TREASURY.toLowerCase() ? '0x0f4240' : '0x1e8480',
         }],
       }
       : body.method === 'eth_getBlockByHash'
@@ -1254,7 +1464,9 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
             : { number: '0x100', hash: '0x' + 'bb'.repeat(32) }
         : body.method === 'eth_call'
           ? '0x0f4240'
-          : null
+          : body.method === 'eth_getLogs'
+            ? []
+            : null
     return jsonResponse({ jsonrpc: '2.0', id: body.id, result })
   }
   if (url.includes('/verify')) return jsonResponse(state.facilitatorVerify
@@ -1600,12 +1812,14 @@ test('traits are globally named, free, and mechanical only when an inert recipe 
 })
 
 test('kind revision is paid but never rewrites existing things', async () => {
-  reset({ scenario: 'kind revision', chainFrom: SELLER_WALLET, chainTo: TREASURY })
+  reset({
+    scenario: 'kind revision', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
   const revised = await app.request('/api/kind/3/revise', {
-    method: 'POST', headers: authHeaders(),
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
     body: JSON.stringify({
       description: 'a small dependable light', traits: ['glowing'], recipe: [],
-      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
     }),
   })
   assert.equal(revised.status, 200)
@@ -1620,7 +1834,6 @@ test('duplicate trait names fail before charging for a kind', async () => {
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({
       name: 'double-glow', description: 'invalid', traits: ['glowing', 'glowing'], recipe: [],
-      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
     }),
   })
   assert.equal(response.status, 400)
@@ -1635,7 +1848,6 @@ test('an uncoined kind trait answers with the reason, not "internal"', async () 
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({
       name: 'erratum', description: 'corrects a claim', traits: ['never-coined'], recipe: [],
-      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
     }),
   })
   assert.equal(response.status, 400)
@@ -1651,7 +1863,6 @@ test('an uncoined trait on kind revision answers with the reason, not "internal"
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({
       description: 'corrected again', traits: ['never-coined'], recipe: [],
-      payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
     }),
   })
   assert.equal(response.status, 400)
@@ -1960,11 +2171,13 @@ test('an unpaid buyer claim reserves five minutes and temporarily blocks seller 
   assert.equal(canceled.status, 200)
 })
 
-test('a reserved buyer can retry with direct proof and ownership closes atomically', async () => {
+test('a reserved buyer can retry with signed x402 and ownership closes atomically', async () => {
   reset({
     scenario: 'direct sale',
     chainFrom: BUYER_WALLET,
     chainTo: SELLER_WALLET,
+    facilitatorVerify: true,
+    facilitatorSettle: true,
     offer: { id: 90, status: 'open', reservedUntil: null },
   })
   setActor(8, 'neighbor')
@@ -1975,8 +2188,8 @@ test('a reserved buyer can retry with direct proof and ownership closes atomical
   assert.equal(reservation.status, 402)
   state = { ...state, chainAgeSeconds: 0 }
   const settled = await app.request('/api/transfer/90/claim', {
-    method: 'POST', headers: authHeaders(OTHER_SECRET),
-    body: JSON.stringify({ buyer_wallet: BUYER_WALLET, tx_hash: TX1 }),
+    method: 'POST', headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': SALE_X_PAYMENT },
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
   })
   assert.equal(settled.status, 200)
   const body = await settled.json() as { offer: { status: string }; transfer: { to: string } }
@@ -1986,7 +2199,7 @@ test('a reserved buyer can retry with direct proof and ownership closes atomical
     /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? '')))
 })
 
-test('payment cannot create its own window or come from a different buyer wallet', async () => {
+test('raw transaction proof cannot create a payment window or bypass its buyer binding', async () => {
   reset({
     scenario: 'sale wallet binding', chainFrom: BUYER_WALLET, chainTo: SELLER_WALLET,
     chainAgeSeconds: 0, offer: { id: 90, status: 'open', reservedUntil: null },
@@ -1996,7 +2209,7 @@ test('payment cannot create its own window or come from a different buyer wallet
     method: 'POST', headers: authHeaders(OTHER_SECRET),
     body: JSON.stringify({ buyer_wallet: BUYER_WALLET, tx_hash: TX1 }),
   })
-  assert.equal(premature.status, 409)
+  assert.equal(premature.status, 400)
   assert.equal(state.offer.reservedUntil, null)
   assert.equal(networkCalled('base-rpc.test'), false)
 
@@ -2008,10 +2221,10 @@ test('payment cannot create its own window or come from a different buyer wallet
   state = { ...state, chainFrom: STRANGER_WALLET, calls: [] }
 
   const mismatched = await app.request('/api/transfer/90/claim', {
-    method: 'POST', headers: authHeaders(OTHER_SECRET),
-    body: JSON.stringify({ buyer_wallet: BUYER_WALLET, tx_hash: TX2 }),
+    method: 'POST', headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': STRANGER_SALE_X_PAYMENT },
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
   })
-  assert.equal(mismatched.status, 402)
+  assert.equal(mismatched.status, 400)
   assert.equal(inserted('sale_payments'), 0)
   assert.equal(inserted('payment_uses'), 0)
   assert.equal(state.offer.status, 'open')
@@ -2033,19 +2246,20 @@ test('x402 payer must match the wallet bound to the active reservation', async (
 
   const mismatched = await app.request('/api/transfer/90/claim', {
     method: 'POST',
-    headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': X_PAYMENT },
+    headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': STRANGER_SALE_X_PAYMENT },
     body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
   })
-  assert.equal(mismatched.status, 402)
-  assert.equal(networkCalled('/settle'), true)
+  assert.equal(mismatched.status, 400)
+  assert.equal(networkCalled('/settle'), false)
   assert.equal(inserted('sale_payments'), 0)
   assert.equal(state.offer.status, 'open')
   const attemptIndex = state.calls.findIndex(call => /insert\s+into\s+payment_attempts/i.test(call.query ?? ''))
   const settleIndex = state.calls.findIndex(call => call.url.includes('/settle'))
-  assert.ok(attemptIndex >= 0 && settleIndex > attemptIndex)
+  assert.equal(attemptIndex, -1)
+  assert.equal(settleIndex, -1)
 })
 
-test('x402 paid creation requires a payment-identifier for safe retries', async () => {
+test('x402 paid creation uses the signed nonce without a payment-identifier extension', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,
@@ -2059,9 +2273,8 @@ test('x402 paid creation requires a payment-identifier for safe retries', async 
     body: JSON.stringify({ parent_id: null, name: 'Needs Id', description: 'frontier' }),
   })
 
-  assert.equal(response.status, 402)
-  assert.match(await response.text(), /payment-identifier/i)
-  assert.equal(networkCalled('/settle'), false)
+  assert.equal(response.status, 201, await response.clone().text())
+  assert.equal(networkCalled('/settle'), true)
 })
 
 test('hosted production paid routes fail closed before custody schema readiness', async () => {
@@ -2125,7 +2338,7 @@ test('hosted production paid routes fail closed before custody schema readiness'
   }
 })
 
-test('the same x402 payment identifier cannot be rebound to a different paid purpose', async () => {
+test('the same signed x402 nonce cannot be rebound to a different paid purpose', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,
@@ -2151,11 +2364,11 @@ test('the same x402 payment identifier cannot be rebound to a different paid pur
     }),
   })
   assert.equal(rebound.status, 409, await rebound.clone().text())
-  assert.match(await rebound.text(), /payment-identifier.*different/i)
+  assert.match(await rebound.text(), /payment attempt|immutable|different/i)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
 })
 
-test('frontier x402 records a durable attempt before settlement and one tx proof cannot pay twice', async () => {
+test('frontier x402 records custody before settlement and raw transaction proofs stay disabled', async () => {
   reset({
     scenario: 'paid claims', facilitatorVerify: true, facilitatorSettle: true,
     chainFrom: SELLER_WALLET, chainTo: TREASURY,
@@ -2179,7 +2392,7 @@ test('frontier x402 records a durable attempt before settlement and one tx proof
       payer_wallet: SELLER_WALLET, fee_tx_hash: TX1,
     }),
   })
-  assert.equal(first.status, 201)
+  assert.equal(first.status, 400)
 
   const replay = await app.request('/api/place', {
     method: 'POST', headers: authHeaders(),
@@ -2188,11 +2401,11 @@ test('frontier x402 records a durable attempt before settlement and one tx proof
       payer_wallet: SELLER_WALLET, fee_tx_hash: TX_CASE_UPPER,
     }),
   })
-  assert.equal(replay.status, 409)
-  assert.match(JSON.stringify(await replay.json()), /used|payment|proof/i)
+  assert.equal(replay.status, 400)
+  assert.match(JSON.stringify(await replay.json()), /unsupported field|x-payment/i)
 })
 
-test('frontier x402 retry uses the same payment identifier and does not settle twice', async () => {
+test('frontier x402 retry uses the same signed authorization and does not settle twice', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,

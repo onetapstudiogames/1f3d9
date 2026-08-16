@@ -4,30 +4,20 @@ import {
   err,
   postgresErrorCode,
   postgresErrorMessage,
-  WALLET_RE,
   type Resident,
 } from './core.ts'
 import {
-  canonicalTxHash,
   challenge402,
   CLAIM_FEE_USDC,
   paymentReadinessResponse,
-  paymentResponseHeader,
   requirements,
-  settleX402,
   TREASURY,
-  verifyDirectPayment,
-  type Settled,
 } from './pay.ts'
 import { sql } from './db.ts'
-import {
-  markX402PaymentSettled,
-  PAYMENT_ATTEMPT_CONFLICT,
-  startX402PaymentAttempt,
-} from './payment-attempts.ts'
+import { runDurableX402 } from './payment-flow.ts'
+import { releaseSettlementLease, type PaymentAttemptRecord } from './payment-attempts.ts'
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
-const DIRECT_FEE_MAX_AGE_MS = 60 * 60 * 1000
 export const DESCRIPTION_MAX = 4_000
 export const THING_BODY_MAX_BYTES = 65_536
 
@@ -36,8 +26,18 @@ export type JsonObject = Record<string, unknown>
 interface FeePayment {
   txHash: string
   payerWallet: string
-  settled: Settled | null
-  attemptKey: string | null
+  attemptId: string
+  leaseOwner: string
+  blockTime: string
+  responseHeader: string
+}
+
+interface TreasuryFeeOperation {
+  operation: 'frontier' | 'kind_invention' | 'kind_revision'
+  targetKey: string
+  assetType?: PaymentAttemptRecord['assetType']
+  assetId?: number | null
+  request: Record<string, unknown>
 }
 
 export interface PlaceRow {
@@ -133,91 +133,67 @@ export function hasDuplicateNames(source: unknown, normalized: string[]): boolea
 
 export async function treasuryFee(
   c: Context,
-  body: JsonObject,
   resource: string,
   description: string,
   actorId: number,
-  purpose: string,
+  details: TreasuryFeeOperation,
 ): Promise<FeePayment | Response> {
   const unavailable = paymentReadinessResponse(c)
   if (unavailable) return unavailable
   const accepted = requirements(TREASURY, CLAIM_FEE_USDC, resource, description)
   const paymentHeader = c.req.header('x-payment')
+  if (!paymentHeader) return challenge402(c, accepted, 'costs $1 USDC through x402; send the X-PAYMENT header')
 
-  if (paymentHeader) {
-    const started = await startX402PaymentAttempt(sql.query, {
-      actorId,
-      purpose,
-      payeeWallet: TREASURY,
-      amountUsdc: CLAIM_FEE_USDC,
-      paymentHeader,
-      accepted,
+  const payment = await runDurableX402({
+    database: { query: sql.query },
+    paymentHeader,
+    accepted,
+    actorId,
+    operation: details.operation,
+    targetKey: details.targetKey,
+    ...(details.assetType !== undefined ? { assetType: details.assetType } : {}),
+    ...(details.assetId !== undefined ? { assetId: details.assetId } : {}),
+    request: details.request,
+  })
+  if (payment.state === 'completed') {
+    return new Response(JSON.stringify(payment.body), {
+      status: payment.status,
+      headers: { 'content-type': 'application/json; charset=UTF-8' },
     })
-    if ('error' in started) {
-      if (started.code === PAYMENT_ATTEMPT_CONFLICT) return err(c, 409, started.error)
-      return challenge402(c, accepted, started.error)
-    }
-    if (started.attempt.transactionHash) {
-      return {
-        txHash: started.attempt.transactionHash,
-        payerWallet: started.attempt.payerWallet,
-        settled: null,
-        attemptKey: started.attempt.paymentKey,
-      }
-    }
-    const settled = await settleX402(paymentHeader, accepted)
-    if ('error' in settled) return challenge402(c, accepted, settled.error)
-    if (!WALLET_RE.test(settled.payer)) {
-      return challenge402(c, accepted, 'settlement did not identify a valid payer wallet')
-    }
-    const settledAttempt = await markX402PaymentSettled(
-      sql.query,
-      started.attempt.paymentKey,
-      settled.transaction,
-    )
-    if (!settledAttempt?.transactionHash) {
-      return err(c, 503, 'payment settled but its durable attempt record is unavailable')
-    }
-    return {
-      txHash: settledAttempt.transactionHash,
-      payerWallet: settledAttempt.payerWallet,
-      settled,
-      attemptKey: settledAttempt.paymentKey,
-    }
+  }
+  if (payment.state === 'payment_pending') return c.json(payment.body, 202)
+  if (payment.state === 'unavailable') return c.json(payment.body, 503)
+  if (payment.state === 'rejected') {
+    return payment.status === 409
+      ? c.json(payment.body, 409)
+      : c.json(payment.body, 400)
   }
 
-  if (body.fee_tx_hash == null) {
-    return challenge402(
-      c,
-      accepted,
-      'costs $1 USDC — pay via x402 (X-PAYMENT header) or include payer_wallet and fee_tx_hash',
-    )
+  return {
+    txHash: payment.txHash,
+    payerWallet: payment.payerWallet,
+    attemptId: payment.attemptId,
+    leaseOwner: payment.leaseOwner,
+    blockTime: payment.blockTime,
+    responseHeader: payment.paymentResponseHeader,
   }
-
-  const txHash = canonicalTxHash(body.fee_tx_hash)
-  if (!txHash) return err(c, 400, 'fee_tx_hash must be 0x followed by 64 hex characters')
-  const payerWallet = typeof body.payer_wallet === 'string' ? body.payer_wallet : ''
-  if (!WALLET_RE.test(payerWallet)) {
-    return err(c, 400, 'payer_wallet must be 0x followed by 40 hex characters')
-  }
-
-  const direct = await verifyDirectPayment(
-    txHash,
-    TREASURY,
-    CLAIM_FEE_USDC,
-    new Date(Date.now() - DIRECT_FEE_MAX_AGE_MS),
-  )
-  if (!direct) {
-    return err(c, 402, 'payment did not verify: send at least $1 USDC on Base to the treasury within the last hour')
-  }
-  if (direct.from.toLowerCase() !== payerWallet.toLowerCase()) {
-    return err(c, 402, 'payment must come from the declared payer_wallet')
-  }
-  return { txHash, payerWallet: payerWallet.toLowerCase(), settled: null, attemptKey: null }
 }
 
 export function setPaymentHeader(c: Context, fee: FeePayment): void {
-  if (fee.settled) c.header('X-PAYMENT-RESPONSE', paymentResponseHeader(fee.settled))
+  c.header('X-PAYMENT-RESPONSE', fee.responseHeader)
+}
+
+export async function releasePaymentLease(
+  fee: Pick<FeePayment, 'attemptId' | 'leaseOwner'>,
+): Promise<void> {
+  try {
+    await releaseSettlementLease({ query: sql.query }, {
+      publicId: fee.attemptId,
+      leaseOwner: fee.leaseOwner,
+    })
+  } catch {
+    // Durable evidence remains safe; lease expiry is the fallback retry path.
+  }
 }
 
 export function buildPlaceTree(

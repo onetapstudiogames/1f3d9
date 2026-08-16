@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Hono, type Context } from 'hono'
 import { mountWorldMarketRoutes, type WorldMarketDependencies } from '../src/world-market.ts'
 import { mcp } from '../src/mcp.ts'
+import type { PaymentAttemptRecord } from '../src/payment-attempts.ts'
 
 const MARKET = 'https://1f3ea.com'
 const SELLER_SECRET = 'Bearer seller-secret'
@@ -12,6 +13,7 @@ const SELLER_WALLET = '0x1111111111111111111111111111111111111111'
 const BUYER_WALLET = '0x2222222222222222222222222222222222222222'
 const OTHER_WALLET = '0x3333333333333333333333333333333333333333'
 const TX = '0x' + 'ab'.repeat(32)
+const ATTEMPT_ID = 'pay_world_offer_1234567890abcdef'
 const PAYMENT_ID = 'pay_world_offer_1234567890abcdef'
 const X_PAYMENT = Buffer.from(JSON.stringify({
   payload: { authorization: { from: BUYER_WALLET } },
@@ -52,6 +54,7 @@ interface FakeOffer {
   market_listing_id: number | null
   market_checkout_id: number | null
   market_buyer: string | null
+  pending_payment_attempt_id: string | null
   pending_x402_tx_hash: string | null
   pending_x402_payer: string | null
   pending_x402_at: string | null
@@ -83,21 +86,7 @@ interface FakeState {
   directVerificationInvalid: boolean
   directBlockTime: string
   facilitatorSettlements: number
-  paymentAttempts: Map<string, {
-    payment_key: string
-    payment_kind: 'x402'
-    status: 'initiated' | 'settled' | 'completed' | 'failed'
-    actor_id: number
-    purpose: string
-    payer_wallet: string
-    payee_wallet: string
-    amount_usdc: number
-    transaction_hash: string | null
-    completion_tx_hash: string | null
-    completion_kind: string | null
-    completion_id: number | null
-    completion_revision: number | null
-  }>
+  paymentAttempt: PaymentAttemptRecord | null
   now: string
   queries: Array<{ text: string; params: readonly unknown[] }>
 }
@@ -159,6 +148,7 @@ function openOffer(overrides: Partial<FakeOffer> = {}): FakeOffer {
     market_listing_id: null,
     market_checkout_id: null,
     market_buyer: null,
+    pending_payment_attempt_id: null,
     pending_x402_tx_hash: null,
     pending_x402_payer: null,
     pending_x402_at: null,
@@ -176,9 +166,12 @@ function openOffer(overrides: Partial<FakeOffer> = {}): FakeOffer {
     to: null,
     ...overrides,
   }
-  return overrides.market_buyer === undefined && offer.buyer_id != null
+  const withBuyer = overrides.market_buyer === undefined && offer.buyer_id != null
     ? { ...offer, market_buyer: 'market-buyer' }
     : offer
+  return overrides.pending_payment_attempt_id === undefined && withBuyer.pending_x402_tx_hash != null
+    ? { ...withBuyer, pending_payment_attempt_id: ATTEMPT_ID }
+    : withBuyer
 }
 
 function initialState(patch: Partial<FakeState> = {}): FakeState {
@@ -196,15 +189,60 @@ function initialState(patch: Partial<FakeState> = {}): FakeState {
     directVerificationInvalid: false,
     directBlockTime: NOW.toISOString(),
     facilitatorSettlements: 0,
-    paymentAttempts: new Map(),
+    paymentAttempt: null,
     now: NOW.toISOString(),
     queries: [],
     ...patch,
   }
 }
 
+function fakePaymentAttempt(now: string): PaymentAttemptRecord {
+  return {
+    publicId: ATTEMPT_ID,
+    actorId: 8,
+    counterpartyId: 7,
+    operation: 'world_sale',
+    targetKey: 'world-sale:101',
+    offerId: 101,
+    assetType: 'thing',
+    assetId: 41,
+    requestHash: '11'.repeat(32),
+    method: 'x402',
+    network: 'base',
+    token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    payerWallet: BUYER_WALLET,
+    payeeWallet: SELLER_WALLET,
+    amountUnits: 2_000_000n,
+    x402Nonce: '0x' + '22'.repeat(32),
+    x402PayloadDigest: '33'.repeat(32),
+    x402ValidAfter: 1n,
+    x402ValidBefore: 4_102_444_800n,
+    startBlock: 15n,
+    startTime: now,
+    endTime: new Date(Date.parse(now) + 300_000).toISOString(),
+    status: 'payment_pending',
+    leaseOwner: 'world-payment-lease',
+    leaseExpiresAt: new Date(Date.parse(now) + 30_000).toISOString(),
+    txHash: TX,
+    finalizedBlockNumber: null,
+    finalizedBlockHash: null,
+    finalizedBlockTime: null,
+    finalizedAt: null,
+    invalidReason: null,
+    result: null,
+    responseStatus: null,
+    response: null,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: null,
+  }
+}
+
 function makeHarness(patch: Partial<FakeState> = {}) {
   let state = initialState(patch)
+  if (state.offer?.pending_payment_attempt_id && state.paymentAttempt == null) {
+    state = { ...state, paymentAttempt: fakePaymentAttempt(state.now) }
+  }
 
   const query = async (text: string, params: readonly unknown[]) => {
     state = { ...state, queries: [...state.queries, { text, params }] }
@@ -237,63 +275,6 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       return [offer]
     }
     if (text.includes('world-market:read-offer')) return state.offer ? [{ ...state.offer }] : []
-    if (text.includes('payment-attempts:initiate')) {
-      const key = String(params[0])
-      if (!state.paymentAttempts.has(key)) {
-        const next = new Map(state.paymentAttempts)
-        next.set(key, {
-          payment_key: key,
-          payment_kind: 'x402',
-          status: 'initiated',
-          actor_id: Number(params[1]),
-          purpose: String(params[2]),
-          payer_wallet: String(params[3]).toLowerCase(),
-          payee_wallet: String(params[4]).toLowerCase(),
-          amount_usdc: Number(params[5]),
-          transaction_hash: null,
-          completion_tx_hash: null,
-          completion_kind: null,
-          completion_id: null,
-          completion_revision: null,
-        })
-        state = { ...state, paymentAttempts: next }
-      }
-      return []
-    }
-    if (text.includes('payment-attempts:read')) {
-      const row = state.paymentAttempts.get(String(params[0]))
-      return row ? [{ ...row }] : []
-    }
-    if (text.includes('payment-attempts:settled')) {
-      const key = String(params[0])
-      const current = state.paymentAttempts.get(key)
-      if (!current) return []
-      const next = new Map(state.paymentAttempts)
-      next.set(key, {
-        ...current,
-        status: current.status === 'completed' ? 'completed' : 'settled',
-        transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
-      })
-      state = { ...state, paymentAttempts: next }
-      return [{ ...next.get(key)! }]
-    }
-    if (text.includes('payment-attempts:completed')) {
-      const key = String(params[0])
-      const current = state.paymentAttempts.get(key)
-      if (!current) return []
-      const next = new Map(state.paymentAttempts)
-      next.set(key, {
-        ...current,
-        status: 'completed',
-        transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
-        completion_tx_hash: String(params[1]).toLowerCase(),
-        completion_kind: String(params[2]),
-        completion_id: Number(params[3]),
-        completion_revision: params[4] == null ? null : Number(params[4]),
-      })
-      state = { ...state, paymentAttempts: next }
-      return [{ ...next.get(key)! }]
-    }
     if (text.includes('world-market:reserve')) {
       const offer = state.offer
       if (!offer || offer.status !== 'open') return []
@@ -322,11 +303,11 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       const offer = state.offer
       if (
         !offer || offer.status !== 'open' || offer.pending_x402_tx_hash != null ||
-        offer.buyer_id !== Number(params[1]) || offer.buyer_wallet !== String(params[4]) ||
-        Date.parse(offer.reserved_until ?? '') <= Date.parse(state.now)
+        offer.buyer_id !== Number(params[1]) || offer.buyer_wallet !== String(params[4])
       ) return []
       const pending = {
         ...offer,
+        pending_payment_attempt_id: String(params[2]),
         pending_x402_tx_hash: String(params[3]),
         pending_x402_payer: String(params[4]),
         pending_x402_at: state.now,
@@ -347,7 +328,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       state = { ...state, offer: invalid }
       return [{ id: offer.id }]
     }
-    if (text.includes('world-market:claim') || text.includes('world-market:reconcile-claim')) {
+    if (text.includes('world-market:finalize-payment')) {
       const offer = state.offer
       if (!offer || offer.status !== 'open' || offer.buyer_id !== Number(params[1])) return []
       const claimed = {
@@ -357,20 +338,73 @@ function makeHarness(patch: Partial<FakeState> = {}) {
         locked: false,
         tx_hash: String(params[3]),
         buyer_wallet: String(params[4]),
-        verified_via: String(params[5]),
-        block_time: params[6] == null ? null : String(params[6]),
+        verified_via: 'x402',
+        block_time: params[5] == null ? null : String(params[5]),
         from: String(params[4]),
         to: offer.seller_wallet,
       }
-      state = { ...state, offer: claimed, thingOwner: Number(params[1]), thingLocked: false }
-      return [{ id: offer.id }]
+      const response = {
+        offer: {
+          id: claimed.id,
+          channel: claimed.channel,
+          phase: 'claimed',
+          asset_type: claimed.asset_type,
+          asset_id: claimed.asset_id,
+          asset_name: claimed.asset_name,
+          locked: false,
+          seller: claimed.seller,
+          buyer: claimed.buyer,
+          price_usdc: claimed.price_usdc,
+          seller_wallet: claimed.seller_wallet,
+          market_origin: claimed.market_origin,
+          market_draft_id: claimed.market_draft_id,
+          market_listing_id: claimed.market_listing_id,
+          market_checkout_id: claimed.market_checkout_id,
+          market_buyer: claimed.market_buyer,
+          pending_x402_tx_hash: claimed.pending_x402_tx_hash,
+          pending_x402_at: claimed.pending_x402_at,
+          x402_invalid_reason: claimed.x402_invalid_reason,
+          x402_invalid_at: claimed.x402_invalid_at,
+          reserved_at: claimed.reserved_at,
+          reserved_until: claimed.reserved_until,
+          created_at: claimed.created_at,
+          claimed_at: claimed.claimed_at,
+          canceled_at: claimed.canceled_at,
+          tx_hash: claimed.tx_hash,
+          buyer_wallet: claimed.buyer_wallet,
+          verified_via: claimed.verified_via,
+          block_time: claimed.block_time,
+          from: claimed.from,
+          to: claimed.to,
+        },
+      }
+      state = {
+        ...state,
+        offer: claimed,
+        thingOwner: Number(params[1]),
+        thingLocked: false,
+        paymentAttempt: state.paymentAttempt
+          ? {
+            ...state.paymentAttempt,
+            status: 'completed',
+            result: { kind: 'world_offer', id: offer.id },
+            responseStatus: 200,
+            response,
+            completedAt: state.now,
+            updatedAt: state.now,
+          }
+          : null,
+      }
+      return [{ response }]
     }
     if (text.includes('world-market:cancel')) {
       const offer = state.offer
       const active = offer?.reserved_until != null && Date.parse(offer.reserved_until) > Date.parse(state.now)
       if (
         !offer || offer.status !== 'open' || (active && offer.x402_evidence_state !== 'invalid') ||
-        (offer.pending_x402_tx_hash != null && offer.x402_evidence_state !== 'invalid')
+        (offer.pending_x402_tx_hash != null && offer.x402_evidence_state !== 'invalid') ||
+        (state.paymentAttempt != null &&
+          ['settling', 'payment_pending', 'needs_review'].includes(state.paymentAttempt.status))
       ) return []
       state = {
         ...state,
@@ -404,22 +438,123 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       }
       throw new Error(`unexpected market path: ${path}`)
     },
-    verifyDirectPayment: async (_hash, _to, _amount, _notBefore, _notAfter) => {
-      state = { ...state, directVerifications: state.directVerifications + 1 }
-      if (state.directVerificationInvalid) return { state: 'invalid_final', reason: 'confirmed_mismatch' }
-      return state.directVerificationAvailable
-        ? { state: 'matched', from: BUYER_WALLET, amount: '2.000000', blockTime: new Date(state.directBlockTime) }
-        : { state: 'pending' }
-    },
-    settleX402: async () => {
-      state = { ...state, facilitatorSettlements: state.facilitatorSettlements + 1 }
+    findPayment: async () => state.paymentAttempt,
+    runPayment: async () => {
+      if (state.paymentAttempt?.status === 'completed' && state.paymentAttempt.response) {
+        return {
+          state: 'completed',
+          status: state.paymentAttempt.responseStatus ?? 200,
+          body: state.paymentAttempt.response,
+        }
+      }
+      const created = state.paymentAttempt == null
+      const attempt = state.paymentAttempt ?? fakePaymentAttempt(state.now)
+      state = {
+        ...state,
+        facilitatorSettlements: state.facilitatorSettlements + (created ? 1 : 0),
+        directVerifications: state.directVerifications + 1,
+        paymentAttempt: attempt,
+        queries: created
+          ? [...state.queries, { text: '/* payment-attempts:create */ INSERT INTO payment_attempts', params: [] }]
+          : state.queries,
+      }
+      if (state.directVerificationInvalid) {
+        state = {
+          ...state,
+          paymentAttempt: { ...attempt, status: 'invalid', invalidReason: 'confirmed_mismatch' },
+        }
+        return {
+          state: 'rejected',
+          status: 400,
+          body: { error: 'payment transaction does not match this operation', do_not_pay_again: true },
+        }
+      }
+      if (!state.directVerificationAvailable) {
+        return {
+          state: 'payment_pending',
+          status: 202,
+          attemptId: attempt.publicId,
+          payerWallet: attempt.payerWallet,
+          txHash: attempt.txHash,
+          body: { payment: 'pending', payment_attempt_id: attempt.publicId, do_not_pay_again: true },
+        }
+      }
+      const finalizedAt = new Date(Date.parse(state.directBlockTime) + 60_000).toISOString()
+      state = {
+        ...state,
+        paymentAttempt: {
+          ...attempt,
+          leaseOwner: 'world-payment-lease',
+          finalizedBlockNumber: 16n,
+          finalizedBlockHash: '0x' + '44'.repeat(32),
+          finalizedBlockTime: state.directBlockTime,
+          finalizedAt,
+        },
+      }
       return {
-        transaction: TX,
-        payer: BUYER_WALLET,
-        raw: { success: true, transaction: TX, payer: BUYER_WALLET },
+        state: 'ready',
+        attemptId: attempt.publicId,
+        leaseOwner: 'world-payment-lease',
+        txHash: TX,
+        payerWallet: BUYER_WALLET,
+        blockNumber: 16n,
+        blockHash: '0x' + '44'.repeat(32),
+        blockTime: state.directBlockTime,
+        finalizedAt,
+        paymentResponseHeader: 'settled-response',
       }
     },
-    paymentResponseHeader: () => 'settled-response',
+    resumePayment: async ({ attempt }) => {
+      state = { ...state, directVerifications: state.directVerifications + 1 }
+      if (attempt.status === 'completed' && attempt.response) {
+        return { state: 'completed', status: attempt.responseStatus ?? 200, body: attempt.response }
+      }
+      if (state.directVerificationInvalid || attempt.status === 'invalid') {
+        state = {
+          ...state,
+          paymentAttempt: { ...attempt, status: 'invalid', invalidReason: 'confirmed_mismatch' },
+        }
+        return {
+          state: 'rejected',
+          status: 400,
+          body: { error: 'confirmed_mismatch', do_not_pay_again: true },
+        }
+      }
+      if (!state.directVerificationAvailable) {
+        return {
+          state: 'payment_pending',
+          status: 202,
+          attemptId: attempt.publicId,
+          payerWallet: attempt.payerWallet,
+          txHash: attempt.txHash,
+          body: { payment: 'pending', payment_attempt_id: attempt.publicId, do_not_pay_again: true },
+        }
+      }
+      const finalizedAt = new Date(Date.parse(state.directBlockTime) + 60_000).toISOString()
+      state = {
+        ...state,
+        paymentAttempt: {
+          ...attempt,
+          leaseOwner: 'world-payment-lease',
+          finalizedBlockNumber: 16n,
+          finalizedBlockHash: '0x' + '44'.repeat(32),
+          finalizedBlockTime: state.directBlockTime,
+          finalizedAt,
+        },
+      }
+      return {
+        state: 'ready',
+        attemptId: attempt.publicId,
+        leaseOwner: 'world-payment-lease',
+        txHash: TX,
+        payerWallet: BUYER_WALLET,
+        blockNumber: 16n,
+        blockHash: '0x' + '44'.repeat(32),
+        blockTime: state.directBlockTime,
+        finalizedAt,
+        paymentResponseHeader: 'settled-response',
+      }
+    },
   }
 
   const app = new Hono()
@@ -502,8 +637,8 @@ test('a buyer must already be a resident and cannot pay before reserving', async
     method: 'POST', headers: jsonHeaders(BUYER_SECRET),
     body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET, tx_hash: TX }),
   })
-  assert.equal(payFirst.status, 409)
-  assert.equal(harness.getState().directVerifications, 0)
+  assert.equal(payFirst.status, 400)
+  assert.equal(harness.getState().facilitatorSettlements, 0)
 })
 
 test('checkout city handle is bound to the authenticated resident', async () => {
@@ -610,7 +745,9 @@ test('payment closes ownership atomically and a retry returns the same public re
     draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'withdrawn' }),
   })
   const pay = () => harness.app.request('/api/world/offer/101/claim', {
-    method: 'POST', headers: jsonHeaders(BUYER_SECRET), body: JSON.stringify({ tx_hash: TX }),
+    method: 'POST',
+    headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT },
+    body: '{}',
   })
   const first = await pay()
   assert.equal(first.status, 200, await first.clone().text())
@@ -622,11 +759,11 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.equal(firstBody.offer.tx_hash, TX)
   assert.equal(harness.getState().thingOwner, 8)
   assert.ok(harness.getState().queries.some(call =>
-    call.text.includes('world-market:claim') && /payment_uses/i.test(call.text) &&
+    call.text.includes('world-market:finalize-payment') && /payment_uses/i.test(call.text) &&
     /sale_payments/i.test(call.text) && /update\s+things/i.test(call.text) && /insert\s+into\s+transfers/i.test(call.text)))
-  const guardedClaim = harness.getState().queries.find(call => call.text.includes('world-market:claim'))
-  assert.match(guardedClaim?.text ?? '', /reserved_until\s*>\s*clock_timestamp\(\)/i)
-  assert.match(guardedClaim?.text ?? '', /\$7::timestamptz\s*>=\s*reserved_at/i)
+  const guardedClaim = harness.getState().queries.find(call => call.text.includes('world-market:finalize-payment'))
+  assert.match(guardedClaim?.text ?? '', /date_trunc\('second', reserved_at\)/i)
+  assert.match(guardedClaim?.text ?? '', /complete_payment_attempt/i)
 
   const retry = await pay()
   assert.equal(retry.status, 200)
@@ -634,7 +771,7 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.equal(harness.getState().directVerifications, 1)
 })
 
-test('world x402 claim requires a payment-identifier for safe retries', async () => {
+test('world x402 claim uses the signed authorization nonce without a payment-identifier extension', async () => {
   const reserved = openOffer({
     buyer_id: 8,
     buyer: 'neighbor',
@@ -652,9 +789,8 @@ test('world x402 claim requires a payment-identifier for safe retries', async ()
     body: '{}',
   })
 
-  assert.equal(response.status, 402)
-  assert.match(await response.text(), /payment-identifier/i)
-  assert.equal(harness.getState().facilitatorSettlements, 0)
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(harness.getState().facilitatorSettlements, 1)
 })
 
 test('hosted world claims fail closed before custody schema readiness', async () => {

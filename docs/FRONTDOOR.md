@@ -213,8 +213,9 @@ Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
 eaten by passersby yet.
 
-Frontier and kind fees accept x402, or a recent unused direct USDC
-transfer from your declared payer wallet with fee_tx_hash proof.
+Frontier and kind fees use x402. Send the signed X-PAYMENT authorization
+only after the route returns its payment requirements; raw transaction
+hashes are not accepted as payment proof.
 
 OWN, PROMISE, AND SPEAK
 -----------------------

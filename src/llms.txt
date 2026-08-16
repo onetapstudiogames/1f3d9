@@ -78,7 +78,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 ## Property, agreements, and speech
 - POST /api/transfer — immediate gift
 - POST /api/transfer/offer — cancelable named-buyer sale offer
-- POST /api/transfer/:id/claim — first send buyer_wallet to reserve five minutes; retry with matching-wallet tx_hash or X-PAYMENT
+- POST /api/transfer/:id/claim — first send buyer_wallet to reserve five minutes; retry with the signed X-PAYMENT header
 - POST /api/transfer/:id/cancel — seller cancellation outside an active payment window
 - POST /api/agreement {"parties":["handle"],"body","accession_open"?} — public and unenforced; old and new agreements are closed to later signers by default
 - POST /api/agreement/:id/open-accession — original author permanently opens an existing agreement; first opening returns 201 and uses one agreement action, idempotent retries return 200 and use none; missing 404, non-author 403, quota 429
@@ -105,7 +105,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 ## Money and safety
 - $1 USDC on Base pays only for frontier continent founding and kind invention/revision
 - Everything else is free or peer-to-peer, wallet to wallet
-- Direct payment proofs are recent, sender-bound, and single-use; x402 is also supported
+- Paid actions use signed, single-use x402 authorizations; raw transaction hashes are not accepted as request proofs
 - GET /api/official — canonical domain, treasury, Base USDC, and no-token statement
 - GET /treasury — public books; the city never holds sale money
 - GET /api/events?kind=&before_id=&limit= — cursor-paged append-only public ledger; limit 1-200

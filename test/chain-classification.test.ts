@@ -10,6 +10,8 @@ const OTHER = '0x3333333333333333333333333333333333333333'
 const SELLER = '0x1111111111111111111111111111111111111111'
 const TX = '0x' + 'ab'.repeat(32)
 const BLOCK_HASH = '0x' + 'cd'.repeat(32)
+const NONCE = '0x' + 'ef'.repeat(32)
+const AUTHORIZATION_USED_TOPIC = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5'
 
 const pad32 = (address: string) => '0x' + address.slice(2).padStart(64, '0')
 const transfer = (from: string, amount: bigint) => ({
@@ -30,6 +32,7 @@ interface RpcState {
   canonicalHash: string
   finalizedNumber: string
   malformedReceipt: boolean
+  authorizationTransactions: string[]
 }
 
 let state: RpcState
@@ -50,6 +53,17 @@ globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
     result = body.params[0] === 'finalized'
       ? { number: state.finalizedNumber }
       : { number: '0x100', hash: state.canonicalHash }
+  } else if (body.method === 'eth_blockNumber') {
+    result = '0x101'
+  } else if (body.method === 'eth_getLogs') {
+    result = state.authorizationTransactions.map(transactionHash => ({
+      address: USDC,
+      topics: [AUTHORIZATION_USED_TOPIC, pad32(BUYER), NONCE],
+      data: '0x',
+      transactionHash,
+      blockNumber: '0x100',
+      blockHash: BLOCK_HASH,
+    }))
   }
   return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), {
     status: 200,
@@ -57,8 +71,11 @@ globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
   })
 }) as typeof fetch
 
-const { classifyUsdcTransfer } = await import('../src/chain.ts')
-const { classifyDirectPayment } = await import('../src/pay.ts')
+const {
+  classifyUsdcTransfer,
+  currentBaseBlockNumber,
+  findFinalizedAuthorizationTransaction,
+} = await import('../src/chain.ts')
 
 function reset(patch: Partial<RpcState> = {}) {
   state = {
@@ -67,6 +84,7 @@ function reset(patch: Partial<RpcState> = {}) {
     canonicalHash: BLOCK_HASH,
     finalizedNumber: '0x100',
     malformedReceipt: false,
+    authorizationTransactions: [],
     ...patch,
   }
 }
@@ -118,7 +136,23 @@ test('a nine-log receipt ignores four empty-data logs and matches the later exac
     assert.equal(result.to, SELLER)
     assert.equal(result.amount, 1_000_000n)
     assert.equal(result.blockTime.toISOString(), '1970-01-01T00:01:40.000Z')
+    assert.equal(result.blockNumber, 256n)
+    assert.equal(result.blockHash, BLOCK_HASH)
+    assert.ok(result.finalizedAt instanceof Date)
   }
+})
+
+test('a timed-out EIP-3009 authorization can recover its unique finalized transaction', async () => {
+  reset({ authorizationTransactions: [TX] })
+
+  assert.equal(await currentBaseBlockNumber(), 257n)
+  assert.equal(
+    await findFinalizedAuthorizationTransaction(BUYER, NONCE, 240n),
+    TX,
+  )
+
+  state = { ...state, authorizationTransactions: [TX, '0x' + '12'.repeat(32)] }
+  assert.equal(await findFinalizedAuthorizationTransaction(BUYER, NONCE, 240n), null)
 })
 
 test('an empty-data transfer-like log cannot poison a finalized receipt', async () => {
@@ -157,29 +191,6 @@ test('mined but unfinalized mismatch and reorg ambiguity remain pending', async 
   assert.equal((await classifyUsdcTransfer(TX, SELLER, 2_000_000n, {
     expectedFrom: BUYER, exactAmount: true,
   })).state, 'pending')
-})
-
-test('a mined out-of-window transfer stays pending until its block is finalized', async () => {
-  reset({ logs: [transfer(BUYER, 2_000_000n)], finalizedNumber: '0xff' })
-  const pending = await classifyDirectPayment(
-    TX,
-    SELLER,
-    2,
-    new Date('1970-01-01T00:02:00.000Z'),
-    new Date('1970-01-01T00:07:00.000Z'),
-    { expectedFrom: BUYER, exactAmount: true },
-  )
-  assert.equal(pending.state, 'pending')
-
-  state = { ...state, finalizedNumber: '0x100' }
-  assert.deepEqual(await classifyDirectPayment(
-    TX,
-    SELLER,
-    2,
-    new Date('1970-01-01T00:02:00.000Z'),
-    new Date('1970-01-01T00:07:00.000Z'),
-    { expectedFrom: BUYER, exactAmount: true },
-  ), { state: 'invalid_final', reason: 'confirmed_mismatch' })
 })
 
 test('only canonical finalized failed or mismatched receipts become invalid_final', async () => {
