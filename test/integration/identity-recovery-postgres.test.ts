@@ -190,6 +190,35 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       assert.equal((await database!.query('SELECT last_id FROM resident_id_allocator WHERE singleton')).rows[0]!.last_id, 2)
     })
 
+    await t.test('a missing world root leaves the whole registration pending and unchanged', async () => {
+      await resetDatabase()
+      await database!.query('DROP TRIGGER places_protect_topology_write ON places')
+      await database!.query("DELETE FROM places WHERE place_kind = 'world'")
+      const pending = registration('missing-world', 'unplaced-resident')
+      assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
+
+      assert.equal(await store.confirmResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+      }), null)
+
+      const state = await database!.query(
+        `SELECT
+           (SELECT count(*) FROM residents WHERE handle = 'unplaced-resident') AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM events WHERE actor = 'unplaced-resident') AS events,
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT resident_id FROM pending_resident_registrations WHERE session_hash = $1) AS resident_id,
+           (SELECT confirmed_at FROM pending_resident_registrations WHERE session_hash = $1) AS confirmed_at`,
+        [pending.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        residents: '0', presences: '0', events: '0', last_id: 1,
+        resident_id: null, confirmed_at: null,
+      }])
+    })
+
     await t.test('two pending claims for one handle have one winner and no leaked ID', async () => {
       await resetDatabase()
       const first = registration('race-first', 'raced-name')
