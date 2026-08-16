@@ -129,12 +129,14 @@ async function insertAttempt(database: Pool, input: AttemptInput): Promise<void>
       method, network, token, payer_wallet, payee_wallet, amount_units,
       x402_nonce, status, tx_hash,
       finalized_block_number, finalized_block_hash, finalized_block_time,
-      finalized_at, result_json, response_status, response_json, completed_at
+      finalized_at, result_json, response_status, response_json,
+      created_at, updated_at, completed_at
     ) VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10, $11,
       $12, $13, $14,
-      $15, $16, $17, $18, $19::jsonb, $20, $21::jsonb, $22
+      $15, $16, $17, $18, $19::jsonb, $20, $21::jsonb,
+      '2026-08-16T12:00:00Z', '2026-08-16T12:00:00Z', $22
     )
   `, [
     input.publicId,
@@ -498,14 +500,15 @@ test('payment custody invariants hold in PostgreSQL', async t => {
             payer_wallet, payee_wallet, amount_units, start_time, end_time,
             status, tx_hash, finalized_block_number, finalized_block_hash,
             finalized_block_time, finalized_at, result_json,
-            response_status, response_json, completed_at
+            response_status, response_json, created_at, updated_at, completed_at
           ) VALUES (
             $1, 2, 1, 'world_sale', 'offer:' || $2::text,
-            $2, 'thing', $3, 'x402', 'base', $4,
+            $2::integer, 'thing', $3, 'x402', 'base', $4,
             $5, $6, 2000000, '2026-08-16T12:00:00Z', '2026-08-16T12:05:00Z',
             'completed', $7, 22000010, $8,
             $9, '2026-08-16T12:06:00Z', jsonb_build_object('offer_id', $2),
-            200, jsonb_build_object('ok', true), '2026-08-16T12:06:00Z'
+            200, jsonb_build_object('ok', true),
+            '2026-08-16T12:00:00Z', '2026-08-16T12:00:00Z', '2026-08-16T12:06:00Z'
           )
         `, [
           attemptId,
