@@ -158,6 +158,12 @@ of whether hosted-chat sign-in is enabled and even when a general `DATABASE_URL`
 exists. Scope `DATABASE_URL` to Production only. Production and development always
 ignore the preview-only override.
 
+The shared Neon branch `preview/shared-vercel-testing` intentionally has no
+expiration so multi-week work and future preview testing are not interrupted. Keep it
+while Preview remains an ongoing test environment. If Preview database access is no
+longer needed, remove `HOSTED_CHAT_PREVIEW_DATABASE_URL` from Vercel Preview first,
+then delete the Neon branch. Never replace it with the production database URL.
+
 ### Guarded migration commands
 
 Preview migration requires the exact acknowledgement
