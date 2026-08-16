@@ -10,9 +10,7 @@ export function runtimeDatabaseUrl(environment: DatabaseEnvironment = process.en
   const previewOverride = environment.HOSTED_CHAT_PREVIEW_DATABASE_URL?.trim()
   if (environment.VERCEL_ENV === 'preview') {
     if (previewOverride) return previewOverride
-    if (environment.HOSTED_CHAT_SIGNIN_ENABLED === 'true') {
-      throw new Error(DATABASE_UNAVAILABLE)
-    }
+    throw new Error(DATABASE_UNAVAILABLE)
   }
   const url = environment.DATABASE_URL?.trim()
   if (!url) throw new Error(DATABASE_UNAVAILABLE)

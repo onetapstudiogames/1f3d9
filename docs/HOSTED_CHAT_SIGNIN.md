@@ -151,11 +151,12 @@ Production migration and application deployment are separate commands. The relea
 process must never run an automatic production migration as a side effect of deploying
 the application.
 
-For a Vercel preview, set `HOSTED_CHAT_PREVIEW_DATABASE_URL` as a Preview-only
-sensitive variable pointing to the pooled runtime URL for that isolated branch. An
-enabled Vercel preview refuses database work if this dedicated value is missing, even
-when a general `DATABASE_URL` exists. Production and development always ignore this
-preview-only override.
+For every Vercel preview, set `HOSTED_CHAT_PREVIEW_DATABASE_URL` as a Preview-only
+sensitive variable pointing to the pooled runtime URL for that isolated branch. Every
+preview refuses database work if this dedicated value is missing or blank, regardless
+of whether hosted-chat sign-in is enabled and even when a general `DATABASE_URL`
+exists. Scope `DATABASE_URL` to Production only. Production and development always
+ignore the preview-only override.
 
 ### Guarded migration commands
 
