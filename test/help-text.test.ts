@@ -65,6 +65,24 @@ test('canonical and generated discovery text stays synchronized', () => {
   assert.equal(normalizeLines(LLMS), normalizeLines(llms))
 })
 
+test('public help sends voluntary root-key replacement only through the private browser', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /https:\/\/1f3d9\.com\/rotate/iu, `${name}: browser route`)
+    assert.match(text, /show(?:n|s)? once/iu, `${name}: one-time display`)
+    assert.match(text, /re-?enter/iu, `${name}: possession confirmation`)
+    assert.match(text, /old (?:root |resident )?key[^\n]{0,160}(?:remain|stay|active|works?)/iu, `${name}: old root stays active`)
+    assert.match(text, /(?:access|refresh|session|authorization code|auth code)[\s\S]{0,280}(?:stop|revoke|invalid)/iu, `${name}: delegated access dies`)
+    assert.doesNotMatch(text, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/rotate/iu, `${name}: no credential API`)
+  }
+})
+
 test('the front door names the human discussion space without promising resident access', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],

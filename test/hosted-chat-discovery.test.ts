@@ -17,18 +17,55 @@ test('feature-off discovery stays byte-for-byte unchanged', () => {
   })
 
   assert.deepEqual(readiness, { ready: false })
-  assert.equal(hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true), FRONTDOOR)
-  assert.equal(hostedChatDiscovery(LLMS, readiness, 'llms', true), LLMS)
+  assert.equal(hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true), FRONTDOOR)
+  assert.equal(hostedChatDiscovery(LLMS, readiness, 'llms', true, true), LLMS)
 })
 
 test('recovery-off discovery does not advertise an unavailable browser route', () => {
   for (const [name, output] of [
-    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false)],
-    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false)],
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, true)],
   ] as const) {
     assert.equal(output.includes('/recovery'), false, name)
     assert.equal(output.includes('/join'), true, name)
+    assert.equal(output.includes('/rotate'), true, name)
     assert.match(output, /permanent (?:resident )?keys? never/iu, name)
+  }
+})
+
+test('rotation-off discovery strips only unavailable replacement guidance', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, false)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, false)],
+  ] as const) {
+    assert.equal(output.includes('/rotate'), false, name)
+    assert.equal(output.includes('/join'), true, name)
+    assert.equal(output.includes('/recovery'), true, name)
+  }
+})
+
+test('rotation-off discovery fails closed when its canonical block markers drift', () => {
+  const drifted = `private rotation moved: https://1f3d9.com/rotate\npublic reads remain\n`
+  assert.equal(
+    hostedChatDiscovery(drifted, { ready: false }, 'frontdoor', true, false),
+    'public reads remain\n',
+  )
+})
+
+test('recovery and rotation discovery gates are independent', () => {
+  for (const document of ['frontdoor', 'llms'] as const) {
+    const source = document === 'frontdoor' ? FRONTDOOR : LLMS
+    const neither = hostedChatDiscovery(source, { ready: false }, document, false, false)
+    assert.equal(neither.includes('/recovery'), false, document)
+    assert.equal(neither.includes('/rotate'), false, document)
+
+    const rotationOnly = hostedChatDiscovery(source, { ready: false }, document, false, true)
+    assert.equal(rotationOnly.includes('/recovery'), false, document)
+    assert.equal(rotationOnly.includes('/rotate'), true, document)
+
+    const recoveryOnly = hostedChatDiscovery(source, { ready: false }, document, true, false)
+    assert.equal(recoveryOnly.includes('/recovery'), true, document)
+    assert.equal(recoveryOnly.includes('/rotate'), false, document)
   }
 })
 
@@ -41,14 +78,15 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
 
   assert.deepEqual(readiness, { ready: true, origin: PREVIEW_ORIGIN })
   for (const [name, output] of [
-    ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true)],
-    ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true)],
+    ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true, true)],
   ] as const) {
     assert.match(output, /compatible hosted chats/iu, name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp/connect`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/join`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/recovery`), name)
+    assert.ok(output.includes(`${PREVIEW_ORIGIN}/rotate`), name)
     assert.match(output, /browser sign-in/iu, name)
     assert.match(output, /never paste (?:a |your )?resident key into chat/iu, name)
     assert.match(output, /(?:local|key-capable) clients/iu, name)
@@ -69,6 +107,7 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.equal(output.includes('https://1f3d9.com/mcp/connect'), false, name)
     assert.equal(output.includes('https://1f3d9.com/join'), false, name)
     assert.equal(output.includes('https://1f3d9.com/recovery'), false, name)
+    assert.equal(output.includes('https://1f3d9.com/rotate'), false, name)
   }
 })
 
@@ -148,6 +187,8 @@ function startupProbe(overrides: Record<string, string | undefined>) {
   environment.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
   delete environment.HOSTED_CHAT_OAUTH_CLIENTS
   delete environment.HOSTED_CHAT_CIMD_ORIGINS
+  delete environment.IDENTITY_RECOVERY_ENABLED
+  delete environment.IDENTITY_ROTATION_ENABLED
   for (const [name, value] of Object.entries(overrides)) {
     if (value === undefined) delete environment[name]
     else environment[name] = value
@@ -206,11 +247,11 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
     assert.equal(probe.oauthQueries, 0)
     assert.equal(
       probe.frontText,
-      hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false),
+      hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, false),
     )
     assert.equal(
       probe.llmsText,
-      hostedChatDiscovery(LLMS, { ready: false }, 'llms', false),
+      hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, false),
     )
   }
 })
@@ -220,6 +261,8 @@ test('a ready connector is advertised on both public discovery routes', () => {
     HOSTED_CHAT_SIGNIN_ENABLED: 'true',
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
     HOSTED_CHAT_CIMD_ORIGINS: '["https://chat.example.test"]',
+    IDENTITY_RECOVERY_ENABLED: 'true',
+    IDENTITY_ROTATION_ENABLED: 'true',
   })
   assert.equal(result.status, 0, result.stderr)
   const probe = JSON.parse(result.stdout) as {
@@ -238,6 +281,8 @@ test('a ready connector is advertised on both public discovery routes', () => {
   assert.equal(probe.metadata, 200)
   assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
   assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
-  assert.equal(probe.frontText.includes('/recovery'), false)
-  assert.equal(probe.llmsText.includes('/recovery'), false)
+  assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/recovery`))
+  assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/recovery`))
+  assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/rotate`))
+  assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/rotate`))
 })

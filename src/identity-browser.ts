@@ -8,6 +8,7 @@ export const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
 
 const JOIN_COOKIE = '__Host-1f3d9_join'
 const RECOVERY_COOKIE = '__Host-1f3d9_recovery'
+const ROTATION_COOKIE = '__Host-1f3d9_rotate'
 const MAX_FORM_BYTES = 8_192
 const ROOT_KEY = /^1f3d9_sk_[0-9a-f]{48}$/
 const RECOVERY_CODE = /^1f3d9_rc_[0-9a-f]{64}$/
@@ -192,6 +193,24 @@ function replacementKey(handle: string, residentKey: string, csrf: string): stri
 <form method="post" action="/recovery"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the recovery code</button></form>`
 }
 
+function rotationStart(csrf: string): string {
+  return `<h1>Rotate a resident key</h1>
+<p>Use the current permanent resident key to prepare a replacement. The old key remains active, and connector sessions and recovery codes remain unchanged, until the replacement is saved and re-entered.</p>
+<form method="post" action="/rotate"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<button type="submit">Show a replacement key</button></form>`
+}
+
+function rotationKey(handle: string, residentKey: string, csrf: string): string {
+  return `<h1>Save ${escapeHtml(handle)}'s replacement key</h1>
+<p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet. Store it outside chat, logs, notes, and public content.</p><code>${escapeHtml(residentKey)}</code>
+<p>Re-enter the saved key to replace the current key and revoke old connector sessions and recovery codes.</p>
+<form method="post" action="/rotate"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<button type="submit">Activate the replacement key</button></form>
+<form method="post" action="/rotate"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the current key</button></form>`
+}
+
 export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {}): void {
   const environment = options.environment ?? process.env
   const store = options.store ?? postgresIdentityStore
@@ -271,6 +290,81 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     setCookie(c, JOIN_COOKIE, session)
     return html(c, 200, 'Save the resident key', joinKey(staged.handle, residentKey, csrf))
   })
+
+  if (environment.IDENTITY_ROTATION_ENABLED === 'true') {
+    app.get('/rotate', c => {
+      const session = opaque()
+      const csrf = opaque()
+      setCookie(c, ROTATION_COOKIE, session)
+      return html(c, 200, 'Rotate a resident key', rotationStart(csrf))
+    })
+
+    app.post('/rotate', async c => {
+      if (c.req.header('origin') !== publicOrigin) return browserError(c, 403, 'This form did not come from 1F3D9.')
+      const values = await form(c)
+      const session = cookie(c, ROTATION_COOKIE)
+      const action = values ? one(values, 'action', 20) : null
+      const csrf = values ? one(values, 'csrf', 128) : null
+      if (!values || !session || !csrf || !['begin', 'confirm', 'cancel'].includes(action ?? '')) {
+        return browserError(c, 403, 'This rotation page expired or is incomplete.')
+      }
+      const fields = {
+        begin: ['action', 'csrf', 'resident_key'],
+        confirm: ['action', 'csrf', 'resident_key'],
+        cancel: ['action', 'csrf'],
+      } as const
+      if (!exactFields(values, fields[action as keyof typeof fields])) {
+        return browserError(c, 403, 'This rotation form contained unexpected information.')
+      }
+      const sessionHash = sha256(session)
+      const csrfHash = sha256(csrf)
+      const ip = clientAddress(c, environment)
+
+      if (action === 'cancel') {
+        await store.cancelRootRotation({ sessionHash, csrfHash })
+        clearCookie(c, ROTATION_COOKIE)
+        return html(c, 200, 'Rotation canceled', '<h1>Rotation canceled</h1><p>The old key, connector sessions, and recovery codes remain unchanged.</p>')
+      }
+
+      const residentKey = one(values, 'resident_key', 80)
+      if (!residentKey || !ROOT_KEY.test(residentKey)) {
+        return browserError(c, 403, action === 'begin'
+          ? 'That current resident key could not be verified.'
+          : 'That replacement key could not be verified.')
+      }
+
+      if (action === 'begin') {
+        if (!(await admitted(store, 'rotation_begin', [`ip:${ip}`], 5))) {
+          return browserError(c, 429, 'Too many rotation attempts. Try again in one hour.')
+        }
+        const replacementKey = newSecret()
+        const resident = await store.stageRootRotation({
+          sessionHash,
+          csrfHash,
+          residentSecretHash: sha256(residentKey),
+          replacementSecretHash: sha256(replacementKey),
+        })
+        if (!resident) return browserError(c, 403, 'That current resident key could not be verified.')
+        setCookie(c, ROTATION_COOKIE, session)
+        return html(c, 200, 'Save replacement key', rotationKey(resident.handle, replacementKey, csrf))
+      }
+
+      if (!(await admitted(store, 'rotation_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
+        return browserError(c, 429, 'Too many confirmation attempts. Try again in one hour.')
+      }
+      const resident = await store.confirmRootRotation({
+        sessionHash,
+        csrfHash,
+        replacementSecretHash: sha256(residentKey),
+      })
+      if (resident?.status === 'rate_limited') {
+        return browserError(c, 429, 'Too many key rotations. Try again later.')
+      }
+      if (!resident) return browserError(c, 403, 'That replacement key could not be verified or rotation expired.')
+      clearCookie(c, ROTATION_COOKIE)
+      return html(c, 200, 'Resident key rotated', `<h1>${escapeHtml(resident.handle)}'s key is rotated</h1><p>The old key, connector sessions, and recovery codes are revoked. The saved replacement key is active.</p>`)
+    })
+  }
 
   if (environment.IDENTITY_RECOVERY_ENABLED !== 'true') return
 

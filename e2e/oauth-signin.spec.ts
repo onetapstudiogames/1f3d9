@@ -188,6 +188,29 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   await expectNoResidentKeyOutsidePage(page, residentKey)
 })
 
+test('rotates a resident key only after the private replacement is re-entered', async ({ page, baseURL }) => {
+  const trustedOrigin = new URL(baseURL!).origin
+  await page.setExtraHTTPHeaders({ origin: trustedOrigin })
+  const response = await page.goto('/rotate')
+  await expect(page.getByRole('heading', { name: 'Rotate a resident key' })).toBeVisible()
+  expect(response?.headers()['cache-control']).toContain('no-store')
+  expect(response?.headers()['x-frame-options']).toBe('DENY')
+
+  await page.getByLabel('Current resident key').fill(existingResidentKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save browser-resident's replacement key" })).toBeVisible()
+  const replacementKey = (await page.locator('code').textContent())?.trim() ?? ''
+  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
+  expect(replacementKey).not.toBe(existingResidentKey)
+  await expectNoResidentKeyOutsidePage(page, replacementKey)
+
+  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Activate the replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "browser-resident's key is rotated" })).toBeVisible()
+  expect((await page.content()).includes(replacementKey)).toBe(false)
+  await expectNoResidentKeyOutsidePage(page, replacementKey)
+})
+
 test('stops a form whose CSRF proof was changed in the browser', async ({ page }) => {
   await page.goto(authorizationPath())
   await page.getByLabel('Current resident key').fill(existingResidentKey)

@@ -65,14 +65,14 @@ test('the off switch hides discovery, authorization, token, and revocation route
   }
 })
 
-test('the original resident key still authenticates while hosted-chat sign-in is disabled', async () => {
+test('disabling hosted chat never reopens transcript-visible root-key rotation', async () => {
   const response = await app.request('/api/rotate', {
     method: 'POST',
     headers: { authorization: `Bearer ${LEGACY_KEY}` },
   })
 
-  assert.equal(response.status, 200)
-  const result = await response.json() as { handle: string; secret: string }
-  assert.equal(result.handle, 'tiny-lantern')
-  assert.match(result.secret, /^1f3d9_sk_[0-9a-f]{48}$/)
+  assert.equal(response.status, 410)
+  assert.deepEqual(await response.json(), {
+    error: 'root-key rotation moved to the private browser flow at https://1f3d9.com/rotate',
+  })
 })

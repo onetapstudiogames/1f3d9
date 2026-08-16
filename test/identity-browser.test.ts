@@ -9,6 +9,7 @@ import {
 
 const ORIGIN = 'https://city.test'
 const ROOT_KEY = '1f3d9_sk_' + '11'.repeat(24)
+const OTHER_ROOT_KEY = '1f3d9_sk_' + '22'.repeat(24)
 
 type Registration = {
   sessionHash: string
@@ -46,7 +47,12 @@ function postForm(
   })
 }
 
-function memoryStore() {
+type MemoryStoreOptions = {
+  deniedAttemptKind?: 'rotation_begin' | 'rotation_confirm'
+  rotationConfirmRateLimited?: boolean
+}
+
+function memoryStore(options: MemoryStoreOptions = {}) {
   let registration: Registration | null = null
   let confirmed = false
   let recoveryGeneration = 0
@@ -58,12 +64,19 @@ function memoryStore() {
     recoveryCodeHash: string
   } | null = null
   let recovered = false
+  let stagedRotation: {
+    sessionHash: string
+    csrfHash: string
+    residentSecretHash: string
+    replacementSecretHash: string
+  } | null = null
+  let rotated = false
   const calls: Array<{ method: string; input: unknown }> = []
 
   const store = {
-    async consumeIdentityRateLimit(input: unknown) {
+    async consumeIdentityRateLimit(input: { attemptKind?: string }) {
       calls.push({ method: 'rate', input })
-      return true
+      return input.attemptKind !== options.deniedAttemptKind
     },
     async stageResidentRegistration(input: Registration) {
       calls.push({ method: 'stageRegistration', input })
@@ -131,6 +144,45 @@ function memoryStore() {
       stagedRecovery = null
       return true
     },
+    async stageRootRotation(input: {
+      sessionHash: string
+      csrfHash: string
+      residentSecretHash: string
+      replacementSecretHash: string
+    }) {
+      calls.push({ method: 'stageRootRotation', input })
+      if (input.residentSecretHash !== sha256(ROOT_KEY) || rotated) return null
+      stagedRotation = { ...input }
+      return { residentId: 7, handle: 'existing-resident' }
+    },
+    async confirmRootRotation(input: {
+      sessionHash: string
+      csrfHash: string
+      replacementSecretHash: string
+    }) {
+      calls.push({ method: 'confirmRootRotation', input })
+      if (options.rotationConfirmRateLimited) return { status: 'rate_limited' as const }
+      if (
+        rotated || !stagedRotation ||
+        stagedRotation.sessionHash !== input.sessionHash ||
+        stagedRotation.csrfHash !== input.csrfHash ||
+        stagedRotation.replacementSecretHash !== input.replacementSecretHash
+      ) return null
+      rotated = true
+      return { status: 'rotated' as const, residentId: 7, handle: 'existing-resident' }
+    },
+    async cancelRootRotation(input: {
+      sessionHash: string
+      csrfHash: string
+    }) {
+      calls.push({ method: 'cancelRootRotation', input })
+      if (
+        !stagedRotation || stagedRotation.sessionHash !== input.sessionHash ||
+        stagedRotation.csrfHash !== input.csrfHash
+      ) return false
+      stagedRotation = null
+      return true
+    },
   }
 
   return {
@@ -139,14 +191,21 @@ function memoryStore() {
     registration: () => registration,
     confirmed: () => confirmed,
     recovered: () => recovered,
+    stagedRotation: () => stagedRotation,
+    rotated: () => rotated,
   }
 }
 
-function appWithMemoryStore() {
+function appWithMemoryStore(options: MemoryStoreOptions = {}) {
   const app = new Hono()
-  const memory = memoryStore()
+  const memory = memoryStore(options)
   mountIdentityRoutes(app, {
-    environment: { PUBLIC_ORIGIN: ORIGIN, VERCEL: '1', IDENTITY_RECOVERY_ENABLED: 'true' },
+    environment: {
+      PUBLIC_ORIGIN: ORIGIN,
+      VERCEL: '1',
+      IDENTITY_RECOVERY_ENABLED: 'true',
+      IDENTITY_ROTATION_ENABLED: 'true',
+    },
     store: memory.store,
   })
   return { app, memory }
@@ -165,6 +224,53 @@ test('the recovery surface is absent unless its deployment switch is explicitly 
     assert.equal((await app.request('/recovery', { method: 'POST' })).status, 404)
     assert.equal(memory.calls.length, 0)
   }
+})
+
+test('rotation is absent unless explicitly enabled and its switch is independent of recovery', async () => {
+  for (const environment of [
+    { PUBLIC_ORIGIN: ORIGIN },
+    { PUBLIC_ORIGIN: ORIGIN, IDENTITY_ROTATION_ENABLED: 'false' },
+  ]) {
+    const app = new Hono()
+    const memory = memoryStore()
+    mountIdentityRoutes(app, { environment, store: memory.store })
+
+    assert.equal((await app.request('/rotate')).status, 404)
+    assert.equal((await app.request('/rotate', { method: 'POST' })).status, 404)
+    assert.equal(memory.calls.length, 0)
+  }
+
+  const rotationOnly = new Hono()
+  mountIdentityRoutes(rotationOnly, {
+    environment: { PUBLIC_ORIGIN: ORIGIN, IDENTITY_ROTATION_ENABLED: 'true' },
+    store: memoryStore().store,
+  })
+  assert.equal((await rotationOnly.request('/rotate')).status, 200)
+  assert.equal((await rotationOnly.request('/recovery')).status, 404)
+
+  const recoveryOnly = new Hono()
+  mountIdentityRoutes(recoveryOnly, {
+    environment: { PUBLIC_ORIGIN: ORIGIN, IDENTITY_RECOVERY_ENABLED: 'true' },
+    store: memoryStore().store,
+  })
+  assert.equal((await recoveryOnly.request('/recovery')).status, 200)
+  assert.equal((await recoveryOnly.request('/rotate')).status, 404)
+})
+
+test('rotation GET is private and uses a separate host-only session cookie', async () => {
+  const { app } = appWithMemoryStore()
+  const response = await app.request('/rotate')
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(response.headers.get('pragma'), 'no-cache')
+  assert.equal(response.headers.get('x-frame-options'), 'DENY')
+  assert.match(response.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
+  assert.equal(response.headers.get('access-control-allow-origin'), null)
+  const setCookie = response.headers.get('set-cookie') ?? ''
+  assert.match(setCookie, /^__Host-1f3d9_rotate=/)
+  assert.match(setCookie, /; Path=\/; Max-Age=900; Secure; HttpOnly; SameSite=Lax$/)
+  assert.doesNotMatch(setCookie, /(?:Domain=|join|recovery)/i)
 })
 
 test('legacy registration is retired before it can return a resident key', async () => {
@@ -274,6 +380,190 @@ test('identity throttling trusts only the platform-appended client address', asy
     },
   })
   assert.doesNotMatch(JSON.stringify(rateCalls), new RegExp(sha256('identity:join_stage:ip:198.51.100.9'), 'u'))
+})
+
+test('rotation stages hashes, shows the replacement once, and requires exact re-entry', async () => {
+  const { app, memory } = appWithMemoryStore()
+  const start = await pageState(await app.request('/rotate'))
+  assert.match(start.html, /old key.*remain(?:s)? active/i)
+
+  const stagedResponse = await postForm(app, '/rotate', start.cookie, {
+    action: 'begin', csrf: start.csrf, resident_key: ROOT_KEY,
+  })
+  assert.equal(stagedResponse.status, 200)
+  assert.equal(stagedResponse.headers.get('cache-control'), 'no-store')
+  const stagedHtml = await stagedResponse.text()
+  const replacementKey = stagedHtml.match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+  assert.ok(replacementKey)
+  assert.notEqual(replacementKey, ROOT_KEY)
+  assert.equal(memory.rotated(), false)
+  assert.equal(memory.stagedRotation()?.residentSecretHash, sha256(ROOT_KEY))
+  assert.equal(memory.stagedRotation()?.replacementSecretHash, sha256(replacementKey))
+  const stageCall = memory.calls.find(call => call.method === 'stageRootRotation')
+  assert.ok(stageCall)
+  assert.doesNotMatch(JSON.stringify(stageCall), /1f3d9_sk_/)
+
+  const wrong = await postForm(app, '/rotate', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: OTHER_ROOT_KEY,
+  })
+  assert.equal(wrong.status, 403)
+  assert.equal(memory.rotated(), false)
+
+  const confirmed = await postForm(app, '/rotate', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: replacementKey,
+  })
+  assert.equal(confirmed.status, 200)
+  assert.match(await confirmed.text(), /old key.*connector sessions.*recovery codes.*revoked/is)
+  assert.equal(memory.rotated(), true)
+  const confirmCall = memory.calls.find(call => call.method === 'confirmRootRotation')
+  assert.ok(confirmCall)
+  assert.doesNotMatch(JSON.stringify(confirmCall), /1f3d9_sk_/)
+})
+
+test('canceling a staged rotation keeps the old key and grants unchanged', async () => {
+  const { app, memory } = appWithMemoryStore()
+  const start = await pageState(await app.request('/rotate'))
+  const staged = await postForm(app, '/rotate', start.cookie, {
+    action: 'begin', csrf: start.csrf, resident_key: ROOT_KEY,
+  })
+  assert.equal(staged.status, 200)
+  assert.ok(memory.stagedRotation())
+
+  const canceled = await postForm(app, '/rotate', start.cookie, {
+    action: 'cancel', csrf: start.csrf,
+  })
+  assert.equal(canceled.status, 200)
+  assert.match(await canceled.text(), /old key.*connector sessions.*recovery codes.*remain unchanged/is)
+  assert.equal(memory.stagedRotation(), null)
+  assert.equal(memory.rotated(), false)
+})
+
+test('rotation reports an atomic confirmation rate limit without claiming success', async () => {
+  const { app, memory } = appWithMemoryStore({ rotationConfirmRateLimited: true })
+  const start = await pageState(await app.request('/rotate'))
+  const staged = await postForm(app, '/rotate', start.cookie, {
+    action: 'begin', csrf: start.csrf, resident_key: ROOT_KEY,
+  })
+  const replacementKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+  assert.ok(replacementKey)
+
+  const confirmed = await postForm(app, '/rotate', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: replacementKey,
+  })
+  assert.equal(confirmed.status, 429)
+  assert.doesNotMatch(await confirmed.text(), /is active/i)
+  assert.equal(memory.rotated(), false)
+})
+
+test('rotation rejects an incorrect old key and browser rate-limit denials', async () => {
+  const incorrect = appWithMemoryStore()
+  const incorrectStart = await pageState(await incorrect.app.request('/rotate'))
+  const rejected = await postForm(incorrect.app, '/rotate', incorrectStart.cookie, {
+    action: 'begin', csrf: incorrectStart.csrf, resident_key: OTHER_ROOT_KEY,
+  })
+  assert.equal(rejected.status, 403)
+  assert.equal(incorrect.memory.stagedRotation(), null)
+
+  const beginLimited = appWithMemoryStore({ deniedAttemptKind: 'rotation_begin' })
+  const beginStart = await pageState(await beginLimited.app.request('/rotate'))
+  const deniedBegin = await postForm(beginLimited.app, '/rotate', beginStart.cookie, {
+    action: 'begin', csrf: beginStart.csrf, resident_key: ROOT_KEY,
+  })
+  assert.equal(deniedBegin.status, 429)
+  assert.equal(beginLimited.memory.calls.some(call => call.method === 'stageRootRotation'), false)
+
+  const confirmLimited = appWithMemoryStore({ deniedAttemptKind: 'rotation_confirm' })
+  const confirmStart = await pageState(await confirmLimited.app.request('/rotate'))
+  const staged = await postForm(confirmLimited.app, '/rotate', confirmStart.cookie, {
+    action: 'begin', csrf: confirmStart.csrf, resident_key: ROOT_KEY,
+  })
+  const replacementKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+  assert.ok(replacementKey)
+  const deniedConfirm = await postForm(confirmLimited.app, '/rotate', confirmStart.cookie, {
+    action: 'confirm', csrf: confirmStart.csrf, resident_key: replacementKey,
+  })
+  assert.equal(deniedConfirm.status, 429)
+  assert.equal(confirmLimited.memory.calls.some(call => call.method === 'confirmRootRotation'), false)
+})
+
+test('rotation rejects hostile origins, unknown actions, and extra or duplicate fields', async () => {
+  const attempts: Array<(
+    app: Hono,
+    state: Awaited<ReturnType<typeof pageState>>,
+  ) => Response | Promise<Response>> = [
+    (app, state) => postForm(app, '/rotate', state.cookie, {
+      action: 'begin', csrf: state.csrf, resident_key: ROOT_KEY,
+    }, 'https://attacker.test'),
+    (app, state) => postForm(app, '/rotate', state.cookie, {
+      action: 'replace', csrf: state.csrf, resident_key: ROOT_KEY,
+    }),
+    (app, state) => postForm(app, '/rotate', state.cookie, {
+      action: 'begin', csrf: state.csrf, resident_key: ROOT_KEY, extra: 'nope',
+    }),
+    (app, state) => app.request('/rotate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: state.cookie, origin: ORIGIN },
+      body: JSON.stringify({ action: 'begin', csrf: state.csrf, resident_key: ROOT_KEY }),
+    }),
+    (app, state) => {
+      const values = new URLSearchParams({
+        action: 'begin', csrf: state.csrf, resident_key: ROOT_KEY,
+      })
+      values.append('resident_key', OTHER_ROOT_KEY)
+      return app.request('/rotate', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: state.cookie,
+          origin: ORIGIN,
+        },
+        body: values,
+      })
+    },
+  ]
+
+  for (const attempt of attempts) {
+    const { app, memory } = appWithMemoryStore()
+    const start = await pageState(await app.request('/rotate'))
+    assert.equal((await attempt(app, start)).status, 403)
+    assert.equal(memory.stagedRotation(), null)
+  }
+})
+
+test('rotation throttling sends only hashed IP and session buckets', async () => {
+  const { app, memory } = appWithMemoryStore()
+  const start = await pageState(await app.request('/rotate'))
+  const staged = await app.request('/rotate', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      cookie: start.cookie,
+      origin: ORIGIN,
+      'x-vercel-forwarded-for': '198.51.100.9, 203.0.113.17',
+    },
+    body: new URLSearchParams({
+      action: 'begin', csrf: start.csrf, resident_key: ROOT_KEY,
+    }),
+  })
+  const replacementKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+  assert.ok(replacementKey)
+  const confirmed = await postForm(app, '/rotate', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: replacementKey,
+  })
+  assert.equal(confirmed.status, 200)
+
+  const rateInputs = memory.calls.filter(call => call.method === 'rate').map(call => call.input)
+  assert.deepEqual(rateInputs[0], {
+    bucketHash: sha256('identity:rotation_begin:ip:203.0.113.17'),
+    attemptKind: 'rotation_begin',
+    maximum: 5,
+  })
+  assert.ok(rateInputs.some(input => (
+    input as { attemptKind?: string }
+  ).attemptKind === 'rotation_confirm'))
+  const rawSession = start.cookie.split('=', 2)[1]!
+  assert.doesNotMatch(JSON.stringify(rateInputs), /(?:198\.51\.100\.9|203\.0\.113\.17|__Host-1f3d9_rotate)/)
+  assert.doesNotMatch(JSON.stringify(rateInputs), new RegExp(rawSession, 'u'))
 })
 
 test('recovery codes and replacement key exist in plaintext only on one private page each', async () => {

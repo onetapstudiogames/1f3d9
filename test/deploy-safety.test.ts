@@ -47,6 +47,10 @@ const identityRecoveryMigrationUrl = new URL(
   '../db/migrations/20260816_identity_recovery.sql',
   import.meta.url,
 )
+const identityRotationMigrationUrl = new URL(
+  '../db/migrations/20260816_identity_rotation.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -535,7 +539,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|identity-recovery/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|identity-recovery\|identity-rotation/,
   )
 })
 
@@ -664,12 +668,34 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
     [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
     [readFileSync(identityRecoveryMigrationUrl, 'utf8'), 'identity-recovery'],
+    [readFileSync(identityRotationMigrationUrl, 'utf8'), 'identity-rotation'],
   ] as const) {
     const statements = label === 'payment-attempts'
       ? splitSqlStatements(migration).filter(statement =>
         /^(?:CREATE|COMMENT|DROP\s+TRIGGER|CREATE\s+TRIGGER)/i.test(statement.trim()),
       )
-      : splitSqlStatements(migration)
+      : label === 'identity-recovery'
+        ? splitSqlStatements(migration).filter(statement => {
+          const trimmed = statement.trim()
+          if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+identity_rate_limits\b/i.test(trimmed)) {
+            return false
+          }
+
+          return true
+        })
+        : label === 'identity-rotation'
+          ? splitSqlStatements(migration).filter(statement => {
+            const trimmed = statement.trim()
+            if (/^DO\s+\$identity_rotation_attempt_kinds\$/i.test(trimmed)) {
+              return false
+            }
+            if (/^ALTER\s+TABLE\s+identity_rate_limits\s+VALIDATE\s+CONSTRAINT\s+/i.test(trimmed)) {
+              return false
+            }
+
+            return true
+          })
+        : splitSqlStatements(migration)
     for (const statement of statements) {
       assert.ok(
         freshInstallStatements.has(normalize(statement)),
@@ -696,6 +722,8 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
   assert.match(packageJson.scripts['migrate:preview:identity-recovery'] ?? '', /--target preview --migration identity-recovery$/)
   assert.match(packageJson.scripts['migrate:production:identity-recovery'] ?? '', /--target production --migration identity-recovery$/)
+  assert.match(packageJson.scripts['migrate:preview:identity-rotation'] ?? '', /--target preview --migration identity-rotation$/)
+  assert.match(packageJson.scripts['migrate:production:identity-rotation'] ?? '', /--target production --migration identity-rotation$/)
 })
 
 test('identity recovery is an explicitly selected additive release with a PostgreSQL gate', () => {
@@ -734,6 +762,41 @@ test('identity recovery is an explicitly selected additive release with a Postgr
   )
   assert.equal(production.migrationFile, 'db/migrations/20260816_identity_recovery.sql')
   assert.match(packageJson.scripts['test:postgres'] ?? '', /identity-recovery-postgres\.test\.ts/)
+})
+
+test('identity rotation is additive, schema-complete, and covered by the existing identity PostgreSQL gate', () => {
+  const migration = readFileSync(identityRotationMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(migration)
+
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|DELETE|TRUNCATE)\b/im)
+  assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+resident_key_rotations/i)
+  assert.match(uncommented, /replacement_secret_hash\s+TEXT/i)
+  assert.doesNotMatch(uncommented, /\breplacement_secret\s+TEXT\b/i)
+  assert.match(uncommented, /replacement_secret_hash\s+IS\s+NULL/i)
+  for (const attemptKind of ['rotation_begin', 'rotation_confirm']) {
+    assert.match(uncommented, new RegExp(`'${attemptKind}'`))
+    assert.match(fullSchema, new RegExp(`'${attemptKind}'`))
+  }
+
+  const freshInstallStatements = new Set(splitSqlStatements(fullSchema).map(statement =>
+    statement.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').trim()
+  ))
+  const rotationObjects = statements.filter(statement =>
+    /^\s*CREATE\s+(?:TABLE|(?:UNIQUE\s+)?INDEX)\s+IF\s+NOT\s+EXISTS\b/i.test(statement)
+  )
+  assert.ok(rotationObjects.length >= 2)
+  for (const statement of rotationObjects) {
+    const normalized = statement.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').trim()
+    assert.ok(
+      freshInstallStatements.has(normalized),
+      'db/schema.sql drifted from the reviewed identity-rotation object',
+    )
+  }
+
+  const postgresCommand = packageJson.scripts['test:postgres'] ?? ''
+  assert.match(postgresCommand, /identity-recovery-postgres\.test\.ts/)
+  assert.doesNotMatch(postgresCommand, /identity-rotation-postgres\.test\.ts/)
 })
 
 test('payment attempts are an explicitly selected additive release', () => {

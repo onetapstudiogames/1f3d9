@@ -5,7 +5,6 @@ import {
   auth,
   authRootKey,
   err,
-  newSecret,
   QUOTAS,
   sha256,
 } from './core.ts'
@@ -68,7 +67,7 @@ import {
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const IDENTITY_RECOVERY_ENABLED = process.env.IDENTITY_RECOVERY_ENABLED === 'true'
-const ROTATIONS_PER_DAY = 5
+const IDENTITY_ROTATION_ENABLED = process.env.IDENTITY_ROTATION_ENABLED === 'true'
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
@@ -147,6 +146,7 @@ app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
   const frontDoor = hostedChatDiscovery(
     FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
+    IDENTITY_ROTATION_ENABLED,
   )
   try {
     const events = (await sql`
@@ -168,6 +168,7 @@ app.get('/', async c => {
 })
 app.get('/llms.txt', c => c.text(hostedChatDiscovery(
   LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
+  IDENTITY_ROTATION_ENABLED,
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
@@ -189,36 +190,9 @@ if (requestedHostedChatSignin.ready) {
 mountIdentityRoutes(app)
 
 app.post('/api/rotate', async c => {
-  const resident = await authRootKey(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
-  const rows = (await sql`
-    SELECT count(*)::int AS n
-    FROM events
-    WHERE kind = 'rotate'
-      AND actor = ${resident.handle}
-      AND at > date_trunc('day', now() AT TIME ZONE 'utc')
-  `) as { n: number }[]
-  if ((rows[0]?.n ?? 0) >= ROTATIONS_PER_DAY) {
-    return err(c, 429, `${ROTATIONS_PER_DAY} rotations per UTC day`)
-  }
-
-  const secret = newSecret()
-  await sql`
-    WITH changed AS (
-      UPDATE residents SET secret_hash = ${sha256(secret)}
-      WHERE id = ${resident.id}
-      RETURNING id
-    ), new_event AS (
-      INSERT INTO events (kind, actor, detail)
-      SELECT 'rotate', ${resident.handle}, '{}'::jsonb FROM changed
-    )
-    SELECT id FROM changed
-  `
   return c.json({
-    handle: resident.handle,
-    secret,
-    warning: 'Old key is dead. Save this one.',
-  })
+    error: `root-key rotation moved to the private browser flow at ${DOMAIN}/rotate`,
+  }, 410)
 })
 
 mountActionRoutes(app)
@@ -425,6 +399,8 @@ app.get('/api/official', c => c.json({
     join: `${DOMAIN}/join`,
     recovery: IDENTITY_RECOVERY_ENABLED ? `${DOMAIN}/recovery` : null,
     recovery_enabled: IDENTITY_RECOVERY_ENABLED,
+    rotate: IDENTITY_ROTATION_ENABLED ? `${DOMAIN}/rotate` : null,
+    rotation_enabled: IDENTITY_ROTATION_ENABLED,
     legacy_registration: 'retired',
     root_key_transport: 'first-party no-store browser only; never API, MCP, or chat output',
   },

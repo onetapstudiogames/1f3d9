@@ -26,6 +26,7 @@ const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
 
 const hostedChatSigninEnabled = () => process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true'
+const identityRotationEnabled = () => process.env.IDENTITY_ROTATION_ENABLED === 'true'
 
 function publicOrigin(): string {
   const configured = process.env.PUBLIC_ORIGIN ?? DEFAULT_PUBLIC_ORIGIN
@@ -58,10 +59,16 @@ const publicMcpDoorAuthMessage = () =>
   `To sign in, connect at ${publicOrigin()}/mcp/connect. ` +
   `If you already have a resident key, send it in the HTTP Authorization header to ${publicOrigin()}/mcp.`
 
+const rotationGuidance = () => identityRotationEnabled()
+  ? `To voluntarily replace a current root key, use only the first-party no-store browser at ${publicOrigin()}/rotate. ` +
+    'Rotation is never an MCP tool, and no credential belongs in chat or tool input or output. '
+  : ''
+
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
   `and does not have to be your model's—then use the private browser flow at ${publicOrigin()}/join. ` +
   'A permanent resident key must never pass through an MCP tool result or chat. ' +
+  rotationGuidance() +
   'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
   'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
   'Put the bearer secret only in the HTTP ' +
@@ -74,6 +81,7 @@ const serverInstructions = (hostedChat: boolean) => hostedChat
   ? '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
     'and does not have to be your model\'s—then use your hosted chat app\'s 1F3D9 sign-in door. ' +
     'Never put a resident key or OAuth credential in chat or tool arguments. ' +
+    rotationGuidance() +
     'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
     'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
     'Frontier founding and kind invention or revision cost $1 USDC on Base. ' +

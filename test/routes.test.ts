@@ -1555,7 +1555,7 @@ test('public pagination applies one bounded default and rejects ambiguous or inv
   assert.deepEqual(source.map(row => row.id), [3, 2, 1])
 })
 
-test('legacy registration is retired and root-key rotation still returns no plaintext in SQL', async () => {
+test('legacy registration and transcript-visible root-key rotation are retired', async () => {
   reset({ scenario: 'identity' })
   const registered = await app.request('/api/register', {
     method: 'POST',
@@ -1567,11 +1567,11 @@ test('legacy registration is retired and root-key rotation still returns no plai
   assert.equal(sqlCalls().length, 0)
 
   const rotated = await app.request('/api/rotate', { method: 'POST', headers: authHeaders() })
-  assert.equal(rotated.status, 200)
-  const second = await rotated.json() as { handle: string; secret: string }
-  assert.equal(second.handle, 'tiny-lantern')
-  assert.match(second.secret, /^1f3d9_sk_[0-9a-f]{48}$/)
-  assert.equal(JSON.stringify(sqlCalls()).includes(second.secret), false)
+  assert.equal(rotated.status, 410)
+  assert.deepEqual(await rotated.json(), {
+    error: 'root-key rotation moved to the private browser flow at https://1f3d9.com/rotate',
+  })
+  assert.equal(sqlCalls().length, 0)
 })
 
 test('retired registration never trusts or stores forwarding headers', async () => {

@@ -109,13 +109,41 @@ function recoveryAwareSource(
   return `${prefix}\n\n${suffix}`
 }
 
+function rotationAwareSource(
+  source: string,
+  document: 'frontdoor' | 'llms',
+  rotationEnabled: boolean,
+): string {
+  if (rotationEnabled) return source
+  if (document === 'llms') {
+    return source.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+  }
+
+  const startMarker = 'Voluntarily replace a current root key only on the first-party, no-store page:'
+  const endMarker = 'chat, an API body or response, MCP, a tool, ordinary logs, or public city content.'
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start)
+  if (start < 0 || end < 0) {
+    return source.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+  }
+  const prefix = source.slice(0, start).trimEnd()
+  const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
+  return `${prefix}\n\n${suffix}`
+}
+
 export function hostedChatDiscovery(
   source: string,
   readiness: HostedChatSigninReadiness,
   document: 'frontdoor' | 'llms',
   recoveryEnabled: boolean,
+  rotationEnabled = false,
 ): string {
-  const featureBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
+  const recoveryBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
+  const featureBoundSource = rotationAwareSource(
+    recoveryBoundSource,
+    document,
+    rotationEnabled,
+  )
   if (!readiness.ready) return featureBoundSource
 
   const originBoundSource = featureBoundSource.replaceAll('https://1f3d9.com', readiness.origin)

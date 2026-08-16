@@ -367,6 +367,34 @@ test('remote world-root topology selection requires its own destructive acknowle
   assert.equal(topology.migrationFile, 'db/migrations/20260814_world_root_topology.sql')
 })
 
+test('remote identity rotation is selected as its own additive release', () => {
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'identity-rotation'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260816_identity_rotation.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'identity-rotation'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'identity-rotation-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260816_identity_rotation.sql')
+})
+
 const publicPaginationIndexes = Object.freeze([
   'CREATE INDEX IF NOT EXISTS places_parent_id_desc ON places (parent_id, id DESC)',
   'CREATE INDEX IF NOT EXISTS places_owner_id_desc ON places (owner_id, id DESC)',

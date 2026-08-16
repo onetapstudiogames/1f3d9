@@ -10,6 +10,7 @@ import {
   type Resident,
 } from '../src/core.ts'
 import { mcp } from '../src/mcp.ts'
+import { mountIdentityRoutes } from '../src/identity-browser.ts'
 import {
   mountOAuthRoutes,
   oauthChallenge,
@@ -397,7 +398,9 @@ function makeCertificate(): { key: string; cert: string } {
 
 const environment = {
   HOSTED_CHAT_SIGNIN_ENABLED: 'true',
+  IDENTITY_ROTATION_ENABLED: 'true',
   PUBLIC_ORIGIN: origin,
+  VERCEL: '1',
   HOSTED_CHAT_OAUTH_CLIENTS: JSON.stringify([{
     client_id: 'browser-e2e-client',
     client_name: 'Hosted Chat Browser Test',
@@ -410,6 +413,52 @@ process.env.PUBLIC_ORIGIN = origin
 
 const app = new Hono()
 const store = makeMemoryStore()
+let currentIdentitySecretHash = sha256(existingResidentKey)
+let stagedRotation: {
+  readonly sessionHash: string
+  readonly csrfHash: string
+  readonly replacementSecretHash: string
+} | null = null
+mountIdentityRoutes(app, {
+  environment,
+  store: {
+    consumeIdentityRateLimit: async () => true,
+    stageResidentRegistration: async () => null,
+    confirmResidentRegistration: async () => null,
+    cancelResidentRegistration: async () => false,
+    generateRecoveryCodes: async () => null,
+    stageRootRecovery: async () => null,
+    confirmRootRecovery: async () => null,
+    cancelRootRecovery: async () => false,
+    stageRootRotation: async input => {
+      if (input.residentSecretHash !== currentIdentitySecretHash || stagedRotation) return null
+      stagedRotation = {
+        sessionHash: input.sessionHash,
+        csrfHash: input.csrfHash,
+        replacementSecretHash: input.replacementSecretHash,
+      }
+      return { residentId: 49, handle: 'browser-resident' }
+    },
+    confirmRootRotation: async input => {
+      if (
+        !stagedRotation || stagedRotation.sessionHash !== input.sessionHash ||
+        stagedRotation.csrfHash !== input.csrfHash ||
+        stagedRotation.replacementSecretHash !== input.replacementSecretHash
+      ) return null
+      currentIdentitySecretHash = input.replacementSecretHash
+      stagedRotation = null
+      return { status: 'rotated', residentId: 49, handle: 'browser-resident' }
+    },
+    cancelRootRotation: async input => {
+      if (
+        !stagedRotation || stagedRotation.sessionHash !== input.sessionHash ||
+        stagedRotation.csrfHash !== input.csrfHash
+      ) return false
+      stagedRotation = null
+      return true
+    },
+  },
+})
 app.use('/api/*', async (c, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
     publicWindowObservations = {

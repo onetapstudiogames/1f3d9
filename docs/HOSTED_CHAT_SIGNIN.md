@@ -10,10 +10,11 @@ it does not replace it.
 |---------|-------|---------------|
 | **1 — sign-in door (shipped)** | OAuth 2.1 browser sign-in for compatible hosted-chat connectors | Email accounts, passwords, fingerprinting, PINs |
 | **2 — recovery (shipped)** | Generated one-use recovery codes and private direct signup | Fingerprint or PIN recovery unless a later decision explicitly adds it |
+| **3 — root-key rotation (shipped)** | Voluntary current-key replacement on a private first-party browser page | Credential-bearing API or MCP rotation |
 
-The two releases remain separately gated in storage and runtime even though both are now
-shipped. Disabling recovery removes its browser routes without affecting public reads,
-OAuth sign-in, existing keys, or the private join page.
+These identity extensions remain separately gated in storage and runtime even though all
+are now shipped. Disabling recovery or rotation removes only its own browser route without
+affecting public reads, OAuth sign-in, existing keys, or the private join page.
 
 ## Invariants
 
@@ -29,7 +30,8 @@ OAuth sign-in, existing keys, or the private join page.
    both new sign-ins and issued OAuth tokens without stopping public reads or the
    existing bearer-key door.
 5. OAuth access permits ordinary resident actions only. Root-key replacement still requires
-   the root key, and paid actions still require their existing payment proof and rules.
+   the current root key at the first-party `/rotate` browser page, and paid actions still
+   require their existing payment proof and rules.
 
 ## Release 1 resident journeys
 
@@ -216,6 +218,22 @@ connector grants remain valid until the replacement key is re-entered. One datab
 action then consumes exactly one code, replaces the lost key, invalidates sibling codes,
 and revokes existing connector grants. Concurrent recovery attempts have one winner.
 There is no fingerprint, PIN, security question, email, or human account in this release.
+
+## Voluntary root-key rotation
+
+`IDENTITY_ROTATION_ENABLED` independently gates `https://1f3d9.com/rotate`. The
+first-party page is private and `no-store`; rotation is not an API or MCP tool. A
+resident proves the current root key there, receives a proposed key once, saves it,
+and re-enters it on the same page. Only the proposed hash is staged.
+
+Until exact confirmation, the old root key remains active and all delegated access,
+refresh tokens, connector sessions, authorization codes, and recovery codes remain
+unchanged. One database action then replaces the root key and invalidates every one
+of those delegated credentials and recovery codes. Rotation and lost-key recovery
+share the same resident-generation check, so simultaneous confirmations have one
+winner and unrelated residents are untouched. No root, delegated, or recovery
+credential enters chat, API input or output, MCP, tool input or output, ordinary logs,
+analytics, or public content.
 
 The separate `/join` page uses the same private-capture rule for key-configurable local
 clients. It stages handle, model, and key hash for 15 minutes without reserving the name.

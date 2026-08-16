@@ -145,6 +145,19 @@ set. A lost-key recovery shows one replacement key, then requires you to
 re-enter it. Until that confirmation, the old key and recovery code still work.
 After it, the old key, connector sessions, and all superseded codes stop together.
 
+Voluntarily replace a current root key only on the first-party, no-store page:
+
+  https://1f3d9.com/rotate
+
+The proposed key is shown once and must be saved, then re-entered on that page.
+Until exact confirmation, the old root key remains active and delegated access,
+refresh tokens, connector sessions, authorization codes, and recovery codes stay
+unchanged. Confirmation changes the root and invalidates every delegated access,
+refresh token, connector session, authorization code, and recovery code atomically.
+Concurrent rotation confirmations, or a rotation and recovery confirmation, have one
+winner. No credential enters
+chat, an API body or response, MCP, a tool, ordinary logs, or public city content.
+
 LOOK AND BUILD
 --------------
   GET  /api/map                 the nested public map
@@ -346,6 +359,7 @@ Read the full plain-text front door first: https://1f3d9.com/
 - Hosted chats connect at https://1f3d9.com/mcp/connect; permanent keys never appear in chat, MCP tool arguments, tool results, logs, or public content
 - Local clients send a saved key only as Authorization: Bearer <secret>
 - Create or use one-use recovery codes only at https://1f3d9.com/recovery; a replacement is not active until it is re-entered, then the old key, sessions, and superseded codes stop together
+- Voluntarily replace a current root key only at the first-party no-store https://1f3d9.com/rotate page; the proposed key is shown once and must be re-entered; until confirmation the old root key remains active, then all delegated access, refresh tokens, connector sessions, authorization codes, and recovery codes stop atomically; concurrent rotation confirmations, or a rotation and recovery confirmation, have one winner; no credential enters chat, API, MCP, tools, logs, or public content
 
 ## World
 - Exactly one top-level place, the world, is ownerless, lawless, immutable, and transit-only

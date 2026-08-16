@@ -8,6 +8,8 @@ export type IdentityAttemptKind =
   | 'recovery_generate'
   | 'recovery_begin'
   | 'recovery_confirm'
+  | 'rotation_begin'
+  | 'rotation_confirm'
 
 export interface RegistrationStageInput {
   sessionHash: string
@@ -209,6 +211,19 @@ export async function generateRecoveryCodes(input: {
         AND code.used_at IS NULL
         AND code.invalidated_at IS NULL
       RETURNING code.id
+    ), invalidated_rotations AS (
+      UPDATE resident_key_rotations rotation
+      SET invalidated_at = now(),
+          session_hash = NULL,
+          csrf_hash = NULL,
+          resident_secret_hash = NULL,
+          replacement_secret_hash = NULL
+      FROM advanced
+      WHERE rotation.resident_id = advanced.id
+        AND rotation.confirmed_at IS NULL
+        AND rotation.canceled_at IS NULL
+        AND rotation.invalidated_at IS NULL
+      RETURNING rotation.id
     ), inserted AS (
       INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
       SELECT advanced.id, advanced.recovery_generation, hash
@@ -323,6 +338,19 @@ export async function confirmRootRecovery(input: {
           AND code.used_at IS NULL
           AND code.invalidated_at IS NULL
         RETURNING code.id
+      ), invalidated_rotations AS (
+        UPDATE resident_key_rotations rotation
+        SET invalidated_at = now(),
+            session_hash = NULL,
+            csrf_hash = NULL,
+            resident_secret_hash = NULL,
+            replacement_secret_hash = NULL
+        FROM used
+        WHERE rotation.resident_id = used.resident_id
+          AND rotation.confirmed_at IS NULL
+          AND rotation.canceled_at IS NULL
+          AND rotation.invalidated_at IS NULL
+        RETURNING rotation.id
       ), revoked_families AS (
         UPDATE oauth_token_families family
         SET revoked_at = coalesce(family.revoked_at, now()),
@@ -334,8 +362,9 @@ export async function confirmRootRecovery(input: {
       ), revoked_tokens AS (
         UPDATE oauth_tokens token
         SET revoked_at = coalesce(token.revoked_at, now())
-        FROM revoked_families family
+        FROM oauth_token_families family, used
         WHERE token.family_id = family.id
+          AND family.resident_id = used.resident_id
         RETURNING token.id
       ), invalidated_codes AS (
         UPDATE oauth_authorization_codes code
@@ -383,6 +412,236 @@ export async function cancelRootRecovery(input: {
   return rows.length === 1
 }
 
+export async function stageRootRotation(input: {
+  sessionHash: string
+  csrfHash: string
+  residentSecretHash: string
+  replacementSecretHash: string
+}): Promise<IdentityResidentResult | null> {
+  try {
+    const rows = (await sql`
+      WITH cleared_expired AS (
+        UPDATE resident_key_rotations
+        SET canceled_at = now(),
+            session_hash = NULL,
+            csrf_hash = NULL,
+            resident_secret_hash = NULL,
+            replacement_secret_hash = NULL
+        WHERE expires_at <= now()
+          AND confirmed_at IS NULL
+          AND canceled_at IS NULL
+          AND invalidated_at IS NULL
+      ), proven AS MATERIALIZED (
+        SELECT resident.id, resident.handle, resident.secret_hash,
+          resident.recovery_generation
+        FROM residents resident
+        WHERE resident.secret_hash = ${input.residentSecretHash}
+          AND resident.secret_hash <> ${input.replacementSecretHash}
+        FOR UPDATE
+      ), staged AS (
+        INSERT INTO resident_key_rotations (
+          resident_id, recovery_generation, session_hash, csrf_hash,
+          resident_secret_hash, replacement_secret_hash, expires_at
+        )
+        SELECT proven.id, proven.recovery_generation, ${input.sessionHash},
+          ${input.csrfHash}, proven.secret_hash, ${input.replacementSecretHash},
+          now() + interval '15 minutes'
+        FROM proven
+        ON CONFLICT DO NOTHING
+        RETURNING resident_id
+      )
+      SELECT proven.id AS resident_id, proven.handle
+      FROM proven
+      JOIN staged ON staged.resident_id = proven.id
+    `) as { resident_id: number; handle: string }[]
+    const resident = rows[0]
+    return resident ? { residentId: resident.resident_id, handle: resident.handle } : null
+  } catch (error) {
+    if (postgresErrorCode(error) === '23505') return null
+    throw error
+  }
+}
+
+export type RootRotationResult =
+  | ({ status: 'rotated' } & IdentityResidentResult)
+  | { status: 'rate_limited' }
+
+export async function confirmRootRotation(input: {
+  sessionHash: string
+  csrfHash: string
+  replacementSecretHash: string
+}): Promise<RootRotationResult | null> {
+  try {
+    const rows = (await sql`
+      WITH cleared_expired AS (
+        UPDATE resident_key_rotations
+        SET canceled_at = now(),
+            session_hash = NULL,
+            csrf_hash = NULL,
+            resident_secret_hash = NULL,
+            replacement_secret_hash = NULL
+        WHERE expires_at <= now()
+          AND confirmed_at IS NULL
+          AND canceled_at IS NULL
+          AND invalidated_at IS NULL
+      ), eligible AS MATERIALIZED (
+        SELECT rotation.id AS rotation_id, rotation.resident_id,
+          rotation.recovery_generation, rotation.resident_secret_hash,
+          rotation.replacement_secret_hash, resident.handle
+        FROM resident_key_rotations rotation
+        JOIN residents resident ON resident.id = rotation.resident_id
+        WHERE rotation.session_hash = ${input.sessionHash}
+          AND rotation.csrf_hash = ${input.csrfHash}
+          AND rotation.replacement_secret_hash = ${input.replacementSecretHash}
+          AND rotation.expires_at > now()
+          AND rotation.confirmed_at IS NULL
+          AND rotation.canceled_at IS NULL
+          AND rotation.invalidated_at IS NULL
+          AND rotation.resident_secret_hash = resident.secret_hash
+          AND rotation.recovery_generation = resident.recovery_generation
+        FOR UPDATE OF rotation, resident
+      ), admission AS MATERIALIZED (
+        SELECT eligible.*,
+          (
+            SELECT count(*)::integer
+            FROM resident_key_rotations prior
+            WHERE prior.resident_id = eligible.resident_id
+              AND prior.confirmed_at >= date_trunc('day', now(), 'UTC')
+          ) AS daily_successes
+        FROM eligible
+      ), rate_limited AS (
+        UPDATE resident_key_rotations rotation
+        SET canceled_at = now(),
+            session_hash = NULL,
+            csrf_hash = NULL,
+            resident_secret_hash = NULL,
+            replacement_secret_hash = NULL
+        FROM admission
+        WHERE rotation.id = admission.rotation_id
+          AND admission.daily_successes >= 5
+        RETURNING rotation.id, rotation.resident_id
+      ), changed AS (
+        UPDATE residents resident
+        SET secret_hash = admission.replacement_secret_hash,
+            recovery_generation = resident.recovery_generation + 1
+        FROM admission
+        WHERE resident.id = admission.resident_id
+          AND admission.daily_successes < 5
+          AND resident.secret_hash = admission.resident_secret_hash
+          AND resident.recovery_generation = admission.recovery_generation
+        RETURNING resident.id, resident.handle
+      ), confirmed AS (
+        UPDATE resident_key_rotations rotation
+        SET confirmed_at = now(),
+            session_hash = NULL,
+            csrf_hash = NULL,
+            resident_secret_hash = NULL,
+            replacement_secret_hash = NULL
+        FROM admission
+        JOIN changed ON changed.id = admission.resident_id
+        WHERE rotation.id = admission.rotation_id
+        RETURNING rotation.id, changed.id AS resident_id, changed.handle
+      ), invalidated_rotation_siblings AS (
+        UPDATE resident_key_rotations rotation
+        SET invalidated_at = now(),
+            session_hash = NULL,
+            csrf_hash = NULL,
+            resident_secret_hash = NULL,
+            replacement_secret_hash = NULL
+        FROM confirmed
+        WHERE rotation.resident_id = confirmed.resident_id
+          AND rotation.id <> confirmed.id
+          AND rotation.confirmed_at IS NULL
+          AND rotation.canceled_at IS NULL
+          AND rotation.invalidated_at IS NULL
+        RETURNING rotation.id
+      ), invalidated_recovery AS (
+        UPDATE resident_recovery_codes code
+        SET invalidated_at = coalesce(code.invalidated_at, now()),
+            recovery_session_hash = NULL,
+            recovery_csrf_hash = NULL,
+            replacement_secret_hash = NULL,
+            recovery_expires_at = NULL,
+            staged_at = NULL
+        FROM confirmed
+        WHERE code.resident_id = confirmed.resident_id
+          AND code.used_at IS NULL
+          AND code.invalidated_at IS NULL
+        RETURNING code.id
+      ), revoked_families AS (
+        UPDATE oauth_token_families family
+        SET revoked_at = coalesce(family.revoked_at, now()),
+            revoke_reason = coalesce(family.revoke_reason, 'root key rotation')
+        FROM confirmed
+        WHERE family.resident_id = confirmed.resident_id
+        RETURNING family.id
+      ), revoked_tokens AS (
+        UPDATE oauth_tokens token
+        SET revoked_at = coalesce(token.revoked_at, now())
+        FROM oauth_token_families family, confirmed
+        WHERE token.family_id = family.id
+          AND family.resident_id = confirmed.resident_id
+        RETURNING token.id
+      ), invalidated_codes AS (
+        UPDATE oauth_authorization_codes code
+        SET used_at = coalesce(code.used_at, now())
+        FROM confirmed
+        WHERE code.resident_id = confirmed.resident_id
+          AND code.used_at IS NULL
+        RETURNING code.id
+      ), new_event AS (
+        INSERT INTO events (kind, actor, detail)
+        SELECT 'rotate', confirmed.handle, '{}'::jsonb FROM confirmed
+        RETURNING actor
+      )
+      SELECT 'rotated'::text AS status, confirmed.resident_id, confirmed.handle
+      FROM confirmed
+      WHERE EXISTS (SELECT 1 FROM new_event)
+      UNION ALL
+      SELECT 'rate_limited'::text AS status, NULL::integer AS resident_id, NULL::text AS handle
+      FROM rate_limited
+    `) as {
+      status: 'rotated' | 'rate_limited'
+      resident_id: number | null
+      handle: string | null
+    }[]
+    const result = rows[0]
+    if (!result) return null
+    if (result.status === 'rate_limited') return { status: 'rate_limited' }
+    if (result.resident_id === null || result.handle === null) return null
+    return {
+      status: 'rotated',
+      residentId: result.resident_id,
+      handle: result.handle,
+    }
+  } catch (error) {
+    if (postgresErrorCode(error) === '23505') return null
+    throw error
+  }
+}
+
+export async function cancelRootRotation(input: {
+  sessionHash: string
+  csrfHash: string
+}): Promise<boolean> {
+  const rows = (await sql`
+    UPDATE resident_key_rotations
+    SET canceled_at = now(),
+        session_hash = NULL,
+        csrf_hash = NULL,
+        resident_secret_hash = NULL,
+        replacement_secret_hash = NULL
+    WHERE session_hash = ${input.sessionHash}
+      AND csrf_hash = ${input.csrfHash}
+      AND expires_at > now()
+      AND confirmed_at IS NULL
+      AND canceled_at IS NULL
+      AND invalidated_at IS NULL
+    RETURNING id
+  `) as { id: number }[]
+  return rows.length === 1
+}
+
 export const postgresIdentityStore = {
   consumeIdentityRateLimit,
   stageResidentRegistration,
@@ -392,6 +651,9 @@ export const postgresIdentityStore = {
   stageRootRecovery,
   confirmRootRecovery,
   cancelRootRecovery,
+  stageRootRotation,
+  confirmRootRotation,
+  cancelRootRotation,
 } as const
 
 export type IdentityStore = typeof postgresIdentityStore
