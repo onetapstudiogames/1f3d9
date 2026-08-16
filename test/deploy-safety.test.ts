@@ -84,6 +84,27 @@ function removeDirectoryWithRetries(path: string): void {
   throw lastError
 }
 
+const preparationFixtureRoots = new Set<string>()
+
+function createPreparationFixtureRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  preparationFixtureRoots.add(root)
+  return root
+}
+
+function cleanupPreparationFixtureRoot(root: string): void {
+  removeDirectoryWithRetries(root)
+  preparationFixtureRoots.delete(root)
+}
+
+function cleanupRegisteredPreparationFixtureRoots(): void {
+  for (const root of [...preparationFixtureRoots].reverse()) {
+    cleanupPreparationFixtureRoot(root)
+  }
+}
+
+test.after(cleanupRegisteredPreparationFixtureRoots)
+
 test('the retired deploy helper is read-only outside local verification', () => {
   assert.doesNotMatch(deployScript, /RUN_MIGRATE|scripts\/migrate\.ts|npm run migrate/i)
   assert.doesNotMatch(deployScript, /\bVC\s+deploy\b|\bvercel(?:@latest)?\s+deploy\b/i)
@@ -209,11 +230,11 @@ type PreparationFixture = Readonly<{
 }>
 
 function createPreparationFixture(): PreparationFixture {
-  const root = mkdtempSync(join(tmpdir(), '1f3d9-deploy-prepare-'))
-  const remoteRoot = mkdtempSync(join(tmpdir(), '1f3d9-deploy-remote-'))
+  const root = createPreparationFixtureRoot('1f3d9-deploy-prepare-')
+  const remoteRoot = createPreparationFixtureRoot('1f3d9-deploy-remote-')
   const remote = join(remoteRoot, 'origin.git')
-  const hooks = mkdtempSync(join(tmpdir(), '1f3d9-deploy-hooks-'))
-  const bin = mkdtempSync(join(tmpdir(), '1f3d9-deploy-bin-'))
+  const hooks = createPreparationFixtureRoot('1f3d9-deploy-hooks-')
+  const bin = createPreparationFixtureRoot('1f3d9-deploy-bin-')
   const commandLog = join(bin, 'npm.log')
   const gitEnvironment = withoutGitHookEnvironment({
     GIT_CONFIG_NOSYSTEM: '1',
@@ -290,7 +311,7 @@ function createPreparationFixture(): PreparationFixture {
     }),
     cleanup: () => {
       for (const path of [bin, hooks, remoteRoot, root]) {
-        removeDirectoryWithRetries(path)
+        cleanupPreparationFixtureRoot(path)
       }
     },
   }

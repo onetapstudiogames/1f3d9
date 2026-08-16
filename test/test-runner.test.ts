@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   buildNodeTestArguments,
   buildTestEnvironment,
@@ -20,6 +21,37 @@ import {
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { scripts: Record<string, string> }
+
+const deploySafetyTestPath = fileURLToPath(
+  new URL('./deploy-safety.test.ts', import.meta.url),
+)
+const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+
+function directTestEnvironment(
+  tempRoot: string,
+  pathOverride?: string,
+): NodeJS.ProcessEnv {
+  const replacedNames = new Set([
+    'node_test_context',
+    'temp',
+    'tmp',
+    'tmpdir',
+    ...(pathOverride === undefined ? [] : ['path']),
+  ])
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !replacedNames.has(name.toLowerCase()),
+    ),
+  )
+
+  return {
+    ...environment,
+    ...(pathOverride === undefined ? {} : { PATH: pathOverride }),
+    TEMP: tempRoot,
+    TMP: tempRoot,
+    TMPDIR: tempRoot,
+  }
+}
 
 test('package test commands always use the isolated test runner', () => {
   assert.equal(
@@ -140,6 +172,50 @@ test('real failing Node test process still removes old deploy fixture behavior',
 
   assert.equal(result.status, 1)
   assert.equal(existsSync(result.root), false)
+})
+
+test('direct deploy-safety runs clean their exact TEMP subtree, including setup failure', () => {
+  withIsolatedTestEnvironment(({ root }) => {
+    const runDirectTest = (
+      name: string,
+      pathOverride?: string,
+    ): Readonly<{ entries: string[]; status: number }> => {
+      const exactTempRoot = join(root, name)
+      mkdirSync(exactTempRoot)
+      const child = spawnSync(process.execPath, [
+        '--test',
+        '--experimental-strip-types',
+        '--test-name-pattern',
+        '^manual deploy invocation fails closed',
+        deploySafetyTestPath,
+      ], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        env: directTestEnvironment(exactTempRoot, pathOverride),
+        windowsHide: true,
+      })
+
+      assert.equal(child.error, undefined, child.error?.message)
+      return {
+        entries: readdirSync(exactTempRoot),
+        status: child.status ?? 1,
+      }
+    }
+
+    const successfulRun = runDirectTest('successful-run')
+    assert.equal(successfulRun.status, 0)
+    assert.deepEqual(successfulRun.entries, [])
+
+    const noToolsDirectory = join(root, 'no-tools')
+    mkdirSync(noToolsDirectory)
+    const setupFailure = runDirectTest('setup-failure', noToolsDirectory)
+    assert.equal(setupFailure.status, 1)
+    assert.deepEqual(setupFailure.entries, [])
+  }, {
+    baseEnvironment: {},
+    platform: 'linux',
+    tempParent: tmpdir(),
+  })
 })
 
 test('suite-owned temp directory is removed after a failed run', () => {
