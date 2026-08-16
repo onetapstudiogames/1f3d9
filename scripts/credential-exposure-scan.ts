@@ -88,7 +88,7 @@ type IdentityRow = Readonly<{
   live: boolean
 }>
 
-const PUBLIC_EXPOSURE_SQL = `
+export const PUBLIC_EXPOSURE_SQL = `
   /* public_credential_exposures */
   SELECT id::bigint AS row_id, id AS publishing_resident_id, model AS content
   FROM residents WHERE model ~* $1
@@ -129,22 +129,6 @@ const PUBLIC_EXPOSURE_SQL = `
   SELECT id::bigint, actor_id, label FROM active_labels WHERE label ~* $1
   UNION ALL
   SELECT id::bigint, actor_id, reason FROM moderation_actions WHERE reason ~* $1
-  UNION ALL
-  SELECT id::bigint, reporter_id, reason FROM flags WHERE reason ~* $1
-  UNION ALL
-  SELECT id::bigint, actor_id, payload::text FROM action_runs WHERE payload::text ~* $1
-  UNION ALL
-  SELECT resolution.id::bigint, run.actor_id, resolution.detail::text
-  FROM action_resolutions resolution
-  JOIN action_runs run ON run.id = resolution.action_run_id
-  WHERE resolution.detail::text ~* $1
-  UNION ALL
-  SELECT id::bigint, actor_id, payload::text FROM pending_effects WHERE payload::text ~* $1
-  UNION ALL
-  SELECT resolution.id::bigint, effect.actor_id, resolution.detail::text
-  FROM effect_resolutions resolution
-  JOIN pending_effects effect ON effect.id = resolution.pending_effect_id
-  WHERE resolution.detail::text ~* $1
   UNION ALL
   SELECT event.id::bigint, resident.id, event.detail::text
   FROM events event LEFT JOIN residents resident ON resident.handle = event.actor

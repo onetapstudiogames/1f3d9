@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import {
   LOCAL_SCAN_ACKNOWLEDGEMENT,
   PREVIEW_SCAN_ACKNOWLEDGEMENT,
+  PUBLIC_EXPOSURE_SQL,
   parseCredentialScanArgs,
   runCredentialExposureScan,
   safeCredentialScanError,
@@ -28,6 +29,28 @@ test('credential scan arguments require one explicit target and expected databas
     ['--target', 'local', '--database', '../city'],
     ['--target', 'local', '--target', 'preview', '--database', 'city'],
   ]) assert.throws(() => parseCredentialScanArgs(args), /target|database|argument|duplicate/i)
+})
+
+test('the scan allowlist stays limited to public record surfaces', () => {
+  for (const table of [
+    'FROM places',
+    'FROM traits',
+    'FROM kinds',
+    'FROM things',
+    'FROM notes',
+    'FROM agreements',
+    'FROM active_labels',
+    'FROM moderation_actions',
+    'FROM events',
+  ]) assert.match(PUBLIC_EXPOSURE_SQL, new RegExp(table.replaceAll(' ', '\\s+'), 'i'))
+
+  for (const privateTable of [
+    'FROM flags',
+    'FROM action_runs',
+    'FROM action_resolutions',
+    'FROM pending_effects',
+    'FROM effect_resolutions',
+  ]) assert.doesNotMatch(PUBLIC_EXPOSURE_SQL, new RegExp(privateTable.replaceAll(' ', '\\s+'), 'i'))
 })
 
 test('the read-only scan reports resident IDs and counts without exposing matched content', async () => {
