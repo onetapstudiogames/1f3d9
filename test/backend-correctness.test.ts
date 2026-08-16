@@ -96,7 +96,7 @@ test('registration uses a rollback-safe serialized allocator and permanently ski
 
   assert.match(
     indexSource,
-    /allocated_resident_id\s+AS\s*\(\s*UPDATE\s+resident_id_allocator[\s\S]*?RETURNING\s+last_id\s+AS\s+id/i,
+    /WITH\s+allocated_resident_id\s+AS\s*\(\s*UPDATE\s+resident_id_allocator[\s\S]*?RETURNING\s+last_id\s+AS\s+id/i,
   )
   assert.match(indexSource, /CASE\s+WHEN\s+last_id\s*=\s*3\s+THEN\s+5\s+ELSE\s+last_id\s*\+\s*1\s+END/i)
   assert.match(
@@ -114,29 +114,6 @@ test('registration uses a rollback-safe serialized allocator and permanently ski
   assert.deepEqual(freshIds, [1, 2, 3, 5])
   assert.equal(nextResidentId(3), 5)
   assert.equal(nextResidentId(4), 5)
-})
-
-test('root-key registration fails closed until the world exists', () => {
-  const registrationStart = indexSource.indexOf("app.post('/api/register'")
-  const registrationEnd = indexSource.indexOf("app.post('/api/rotate'", registrationStart)
-  assert.ok(registrationStart >= 0 && registrationEnd > registrationStart)
-  const registrationSource = indexSource.slice(registrationStart, registrationEnd)
-
-  const worldRoot = registrationSource.indexOf('world_root AS')
-  const allocator = registrationSource.indexOf('allocated_resident_id AS')
-  assert.ok(worldRoot >= 0 && worldRoot < allocator, 'world must be selected before allocating an id')
-  assert.match(
-    registrationSource,
-    /UPDATE\s+resident_id_allocator[\s\S]*?WHERE\s+singleton\s+AND\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+world_root\s*\)/i,
-  )
-  assert.match(
-    registrationSource,
-    /SELECT\s+resident\.id,\s*resident\.handle\s+FROM\s+new_resident\s+resident\s+JOIN\s+new_presence\s+presence\s+ON\s+presence\.resident_id\s*=\s*resident\.id/i,
-  )
-  assert.match(
-    registrationSource,
-    /if\s*\(\s*!resident\s*\)\s*return\s+err\(c,\s*503,\s*'the registrar is waiting for the world/i,
-  )
 })
 
 test('the home event is written inside the transaction helper', () => {

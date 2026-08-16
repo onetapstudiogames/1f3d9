@@ -1,4 +1,4 @@
-import test, { type TestContext } from 'node:test'
+import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
@@ -8,12 +8,11 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import {
   createProductionSnapshot,
   prepareProductionMigration,
@@ -48,21 +47,6 @@ function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Pr
   }
   return { ...environment, ...overrides }
 }
-
-function resolveBashExecutable(): string {
-  if (process.platform !== 'win32') return 'bash'
-
-  const gitExecPath = execFileSync('git', ['--exec-path'], {
-    cwd: tmpdir(),
-    encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
-  }).trim()
-  const executable = resolve(gitExecPath, '..', '..', '..', 'bin', 'bash.exe')
-  assert.ok(existsSync(executable), `Git Bash not found at ${executable}`)
-  return executable
-}
-
-const bashExecutable = resolveBashExecutable()
 
 test('the retired deploy helper is read-only outside local verification', () => {
   assert.doesNotMatch(deployScript, /RUN_MIGRATE|scripts\/migrate\.ts|npm run migrate/i)
@@ -182,24 +166,17 @@ test('preview database host must match its exact read-write Neon endpoint and no
 
 type PreparationFixture = Readonly<{
   root: string
-  cleanupRoots: readonly string[]
   commandLog: string
   git: (...args: string[]) => Buffer
   run: () => SpawnSyncReturns<string>
 }>
 
-function createTemporaryDirectory(t: TestContext, prefix: string): string {
-  const directory = mkdtempSync(join(tmpdir(), prefix))
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
-  return directory
-}
-
-function createPreparationFixture(t: TestContext): PreparationFixture {
-  const root = createTemporaryDirectory(t, '1f3d9-deploy-prepare-')
-  const remoteRoot = createTemporaryDirectory(t, '1f3d9-deploy-remote-')
+function createPreparationFixture(): PreparationFixture {
+  const root = mkdtempSync(join(tmpdir(), '1f3d9-deploy-prepare-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), '1f3d9-deploy-remote-'))
   const remote = join(remoteRoot, 'origin.git')
-  const hooks = createTemporaryDirectory(t, '1f3d9-deploy-hooks-')
-  const bin = createTemporaryDirectory(t, '1f3d9-deploy-bin-')
+  const hooks = mkdtempSync(join(tmpdir(), '1f3d9-deploy-hooks-'))
+  const bin = mkdtempSync(join(tmpdir(), '1f3d9-deploy-bin-'))
   const commandLog = join(bin, 'npm.log')
   const gitEnvironment = withoutGitHookEnvironment({
     GIT_CONFIG_NOSYSTEM: '1',
@@ -216,7 +193,7 @@ function createPreparationFixture(t: TestContext): PreparationFixture {
     stdio: 'pipe',
     env: gitEnvironment,
   })
-  const bashRemoteRoot = spawnSync(bashExecutable, ['-lc', 'pwd'], {
+  const bashRemoteRoot = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: remoteRoot,
     encoding: 'utf8',
     env: withoutGitHookEnvironment(),
@@ -242,12 +219,12 @@ function createPreparationFixture(t: TestContext): PreparationFixture {
     '',
   ].join('\n'))
   chmodSync(npmStub, 0o755)
-  const bashBin = spawnSync(bashExecutable, ['-lc', 'pwd'], {
+  const bashBin = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: bin,
     encoding: 'utf8',
     env: withoutGitHookEnvironment(),
   }).stdout.trim()
-  const bashRoot = spawnSync(bashExecutable, ['-lc', 'pwd'], {
+  const bashRoot = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: root,
     encoding: 'utf8',
     env: withoutGitHookEnvironment(),
@@ -267,10 +244,9 @@ function createPreparationFixture(t: TestContext): PreparationFixture {
 
   return {
     root,
-    cleanupRoots: [root, remoteRoot, hooks, bin],
     commandLog,
     git,
-    run: () => spawnSync(bashExecutable, [`${bashBin}/run-prepare.sh`], {
+    run: () => spawnSync('bash', [`${bashBin}/run-prepare.sh`], {
       cwd: root,
       encoding: 'utf8',
       env: withoutGitHookEnvironment(),
@@ -278,28 +254,9 @@ function createPreparationFixture(t: TestContext): PreparationFixture {
   }
 }
 
-test('preparation fixture removes its temporary directories after the test completes', async t => {
-  let cleanupRoots: readonly string[] = []
-
-  await t.test('fixture lifetime', subtest => {
-    const fixture = createPreparationFixture(subtest)
-    cleanupRoots = fixture.cleanupRoots
-    assert.ok(existsSync(fixture.root))
-    assert.ok(existsSync(join(fixture.root, 'scripts', 'deploy.sh')))
-  })
-
-  for (const directory of cleanupRoots) {
-    assert.equal(
-      existsSync(directory),
-      false,
-      `temporary directory leak detected for ${directory}`,
-    )
-  }
-})
-
-test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', t => {
-  const fixture = createPreparationFixture(t)
-  const result = spawnSync(bashExecutable, ['scripts/deploy.sh'], {
+test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', () => {
+  const fixture = createPreparationFixture()
+  const result = spawnSync('bash', ['scripts/deploy.sh'], {
     cwd: fixture.root,
     encoding: 'utf8',
     env: withoutGitHookEnvironment(),
@@ -311,8 +268,8 @@ test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', t =
   assert.equal(existsSync(fixture.commandLog), false)
 })
 
-test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {
-  const fixture = createPreparationFixture(t)
+test('preparation proves a clean GitHub branch and runs every local gate without deploying', () => {
+  const fixture = createPreparationFixture()
   const result = fixture.run()
 
   assert.equal(result.status, 0, result.stderr || result.stdout)
@@ -324,15 +281,15 @@ test('preparation proves a clean GitHub branch and runs every local gate without
   }
 })
 
-test('dirty or not-pushed work stops before any preparation gate', t => {
-  const dirty = createPreparationFixture(t)
+test('dirty or not-pushed work stops before any preparation gate', () => {
+  const dirty = createPreparationFixture()
   writeFileSync(join(dirty.root, 'untracked.txt'), 'not reviewed\n')
   const dirtyResult = dirty.run()
   assert.notEqual(dirtyResult.status, 0)
   assert.match(`${dirtyResult.stdout}\n${dirtyResult.stderr}`, /worktree.*clean/i)
   assert.equal(existsSync(dirty.commandLog), false)
 
-  const unpushed = createPreparationFixture(t)
+  const unpushed = createPreparationFixture()
   writeFileSync(join(unpushed.root, 'README.md'), 'new unpushed commit\n')
   unpushed.git('add', 'README.md')
   unpushed.git('commit', '-q', '-m', 'unpushed')

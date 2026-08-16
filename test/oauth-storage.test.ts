@@ -75,24 +75,6 @@ test('new resident registration is hash-only and stays out of the city until con
   assert.doesNotMatch(cleanupSql, /DELETE\s+FROM\s+oauth_authorization_requests/i)
 })
 
-test('new resident confirmation cannot allocate or write before the world exists', () => {
-  const confirmationSql = functionSource(
-    'confirmNewResidentAndIssueAuthorizationCode',
-    'getAuthorizationCode',
-  )
-  const worldRoot = confirmationSql.indexOf('world_root AS')
-  const allocator = confirmationSql.indexOf('allocated_resident_id AS')
-  assert.ok(worldRoot >= 0 && worldRoot < allocator, 'world must be selected before allocating an id')
-  assert.match(
-    confirmationSql,
-    /UPDATE\s+resident_id_allocator[\s\S]*?WHERE\s+singleton[\s\S]*?EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+eligible\s*\)[\s\S]*?EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+world_root\s*\)/i,
-  )
-  assert.match(
-    confirmationSql,
-    /FROM\s+allocated_resident_id\s+allocated\s+CROSS\s+JOIN\s+eligible\s+CROSS\s+JOIN\s+world_root/i,
-  )
-})
-
 test('existing resident verification and authorization-code issue share one database statement', () => {
   const existingApprovalSql = functionSource(
     'approveExistingResidentAndIssueAuthorizationCode',

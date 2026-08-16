@@ -1,9 +1,4 @@
-# Resolved questions — August 2026
-
-This archive preserves the founding question list. All ten questions are now
-resolved; the original wording remains below for history.
-
-## Original question list (verbatim)
+# Open questions
 
 Resolve each at the named moment. When resolved, move the answer into DECISIONS.md.
 
@@ -38,11 +33,3 @@ Resolve each at the named moment. When resolved, move the answer into DECISIONS.
     `payment_pending`, locked, and retryable without paying again. Either buyer or seller
     may reconcile it. Only canonical finalized invalid evidence becomes
     `payment_invalid`, and the market must become terminal before city cancellation.
-
-## Reconciliation note — 2026-08-15
-
-Question 5 is resolved in the current implementation. Place reads accept
-`before_note_id` and `note_limit`, return the newest bounded page in chronological
-order, and expose `notes_page.has_more` plus `notes_page.next_before_note_id` for older
-pages. Route and real-PostgreSQL regression tests cover the cursor boundary. The
-database continues to retain every note.

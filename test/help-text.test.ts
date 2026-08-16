@@ -8,10 +8,10 @@ const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 
 const frontdoor = read('../src/frontdoor.txt')
 const llms = read('../src/llms.txt')
-const specification = read('../docs/SYSTEM_DESIGN.md')
-const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
+const specification = read('../docs/SPEC.md')
+const frontdoorDocument = read('../docs/FRONTDOOR.md')
 const decisions = read('../docs/DECISIONS.md')
-const resolvedQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
+const openQuestions = read('../docs/OPEN-QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 
 const ACTION_SHAPES = [
@@ -188,7 +188,7 @@ test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', 
     assert.match(text, /5 agreement actions?/iu, `${name}: agreement quota`)
   }
 
-  assert.match(resolvedQuestions, /50 notes\/day/iu)
+  assert.match(openQuestions, /50 notes\/day/iu)
   assert.match(mcpSource, /20 free makes per UTC day/iu)
   assert.match(mcpSource, /50 per UTC day/iu)
   assert.match(mcpSource, /5 agreement actions per UTC day/iu)

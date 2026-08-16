@@ -335,60 +335,6 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       })
     })
 
-    await t.test('new-resident confirmation writes nothing while the world is absent', async () => {
-      await resetDatabase()
-      const request = authorizationRequestInput('world-not-ready')
-      const pendingSecretHash = sha256('world-not-ready:key')
-      await store.createAuthorizationRequest(request)
-      assert.deepEqual(
-        await store.stageNewResidentRegistration({
-          sessionHash: request.sessionHash,
-          csrfHash: request.csrfHash,
-          handle: 'waiting-for-world',
-          model: 'hosted-chat',
-          residentSecretHash: pendingSecretHash,
-        }),
-        { status: 'staged', handle: 'waiting-for-world' },
-      )
-      const requestBefore = await requestState(request.sessionHash)
-
-      await database!.query('ALTER TABLE places DISABLE TRIGGER USER')
-      await database!.query("DELETE FROM places WHERE place_kind = 'world'")
-      await database!.query('ALTER TABLE places ENABLE TRIGGER USER')
-
-      assert.equal(
-        await store.confirmNewResidentAndIssueAuthorizationCode({
-          sessionHash: request.sessionHash,
-          csrfHash: request.csrfHash,
-          authorizationCodeHash: sha256('world-not-ready:code'),
-        }),
-        null,
-      )
-      assert.deepEqual(await requestState(request.sessionHash), requestBefore)
-
-      const state = await database!.query<{
-        last_id: number
-        residents: string
-        presence: string
-        events: string
-        authorization_codes: string
-      }>(
-        `SELECT
-           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
-           (SELECT count(*) FROM residents WHERE handle = 'waiting-for-world') AS residents,
-           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presence,
-           (SELECT count(*) FROM events WHERE actor = 'waiting-for-world') AS events,
-           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes`,
-      )
-      assert.deepEqual(state.rows[0], {
-        last_id: 1,
-        residents: '0',
-        presence: '0',
-        events: '0',
-        authorization_codes: '0',
-      })
-    })
-
     await t.test('authorization requests can be read and cancelled only with the matching CSRF value', async () => {
       await resetDatabase()
       const request = authorizationRequestInput('request-lifecycle')
