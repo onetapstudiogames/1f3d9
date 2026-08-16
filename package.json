@@ -14,9 +14,10 @@
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "test:coverage": "node --test --experimental-strip-types --experimental-test-coverage test/*.test.ts",
     "test:e2e": "playwright test",
-    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts test/integration/backup-restore-postgres.test.ts",
+    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts test/integration/backup-restore-postgres.test.ts test/integration/credential-exposure-scan-postgres.test.ts",
     "backup": "node --experimental-strip-types scripts/backup.ts",
     "restore:drill": "node --experimental-strip-types scripts/restore-drill.ts",
+    "credential:scan": "node --experimental-strip-types scripts/credential-exposure-scan.ts",
     "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
@@ -34,13 +35,13 @@
   "dependencies": {
     "@hono/node-server": "^2.1.0",
     "@neondatabase/serverless": "^1",
-    "hono": "^4"
+    "hono": "^4",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "^24",
     "@types/pg": "^8.21.0",
-    "pg": "^8.23.0",
     "typescript": "^5"
   }
 }

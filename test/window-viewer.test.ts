@@ -6,6 +6,7 @@ import * as windowClientModule from '../src/window-client.ts'
 import { WINDOW_JS, PUBLIC_EVENT_KINDS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
+import { PUBLIC_CREDENTIAL_REDACTION } from '../src/credential-safety.ts'
 
 test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /role="tablist"/)
@@ -282,6 +283,36 @@ test('snapshot row shapers reject malformed public data', () => {
 
   assert.match(WINDOW_JS, /Closed to later signers/)
   assert.match(WINDOW_JS, /Open to later signers/)
+})
+
+test('historical credential text is redacted without hiding window records', () => {
+  const credential = `1f3d9_sk_${'a1'.repeat(24)}`
+  const [note] = windowModule.publicWindowNotes([{
+    id: 71,
+    place_id: 2,
+    author: 'tiny-lantern',
+    body: `historical note ${credential}`,
+    created_at: '2026-08-11T00:00:00Z',
+  }])
+  const [thing] = windowModule.publicWindowThings([{
+    id: 72,
+    place_id: 2,
+    name: credential,
+    body: credential,
+    owner: 'tiny-lantern',
+    open_to_use: false,
+    kind: credential,
+    traits: [credential],
+    created_at: '2026-08-11T00:00:00Z',
+  }])
+
+  assert.equal(note?.id, 71)
+  assert.equal(note?.body, PUBLIC_CREDENTIAL_REDACTION)
+  assert.equal(thing?.id, 72)
+  assert.equal(thing?.name, PUBLIC_CREDENTIAL_REDACTION)
+  assert.equal(thing?.body, PUBLIC_CREDENTIAL_REDACTION)
+  assert.equal(thing?.kind, PUBLIC_CREDENTIAL_REDACTION)
+  assert.deepEqual(thing?.traits, [PUBLIC_CREDENTIAL_REDACTION])
 })
 
 test('agreement party previews declare when later signers are not shown', () => {

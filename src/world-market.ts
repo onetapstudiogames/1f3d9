@@ -13,6 +13,7 @@ import {
   type PaymentRequirements,
   type Settled,
 } from './pay.ts'
+import { publicJson } from './public-output.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -691,7 +692,7 @@ export function mountWorldMarketRoutes(
     if (!offerId) return err(c, 400, 'bad world offer id')
     const offer = await readOffer(dependencies, offerId)
     return offer
-      ? c.json({ offer: publicOffer(offer, dependencies.now()) })
+      ? publicJson(c, { offer: publicOffer(offer, dependencies.now()) })
       : err(c, 404, 'no such world offer')
   })
 

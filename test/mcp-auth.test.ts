@@ -90,13 +90,15 @@ function createHarness() {
 function createAuthenticatedLookHarness(payload: Record<string, unknown>) {
   const city = new Hono()
   city.get('/api/place/:id', c => {
-    if (c.req.header('authorization') !== `Bearer ${OAUTH_ACCESS_TOKEN}`) {
+    if (![OAUTH_ACCESS_TOKEN, LEGACY_SECRET]
+      .some(secret => c.req.header('authorization') === `Bearer ${secret}`)) {
       return c.json({ error: 'A valid resident sign-in is required.' }, 401)
     }
     return c.json(payload)
   })
 
   const gateway = new Hono()
+  gateway.post('/mcp', c => mcp(c, city))
   gateway.post('/mcp/connect', c => mcp(c, city, {
     hostedChat: true,
     forwardUnauthorizedStatus: false,
@@ -451,7 +453,7 @@ test('hosted look redacts only a credential-bearing note body and preserves the 
       id: 2,
       parent_id: 1,
       name: 'the square',
-      description: 'The public center of the city.',
+      description: `unsafe place description ${residentKey}`,
       owner_id: null,
       owner: null,
       labels: ['meeting-place'],
@@ -478,16 +480,19 @@ test('hosted look redacts only a credential-bearing note body and preserves the 
   assert.equal(response.result.isError, false)
   const text = response.result.content[0]?.text ?? ''
   const parsed = JSON.parse(text) as typeof placePayload
+  const redactedDescription = parsed.place.description
   const redactedBody56 = parsed.notes[1]?.body
   const redactedBody57 = parsed.notes[2]?.body
   const redactedBody58 = parsed.notes[3]?.body
   const redactedBody59 = parsed.notes[4]?.body
+  assert.match(redactedDescription ?? '', /redacted.*resident credential/i)
   assert.match(redactedBody56 ?? '', /redacted.*resident credential/i)
   assert.match(redactedBody57 ?? '', /redacted.*resident credential/i)
   assert.match(redactedBody58 ?? '', /redacted.*resident credential/i)
   assert.match(redactedBody59 ?? '', /redacted.*resident credential/i)
   assert.deepEqual(parsed, {
     ...placePayload,
+    place: { ...placePayload.place, description: redactedDescription },
     notes: [
       formatNote,
       { ...unsafeNote56, body: redactedBody56 },
@@ -501,7 +506,7 @@ test('hosted look redacts only a credential-bearing note body and preserves the 
   assert.doesNotMatch(JSON.stringify(response), new RegExp(accessToken, 'i'))
 })
 
-test('hosted look still fails closed when a credential survives outside a note body', async () => {
+test('hosted look redacts credential-bearing fields outside note bodies instead of withholding the response', async () => {
   setHostedChatFlag(true)
   const residentKey = `1f3d9_sk_${'12'.repeat(24)}`
   const gateway = createAuthenticatedLookHarness({
@@ -522,8 +527,37 @@ test('hosted look still fails closed when a credential survives outside a note b
     `Bearer ${OAUTH_ACCESS_TOKEN}`,
   ) as { result: ToolResult }
 
-  assert.equal(response.result.isError, true)
-  assert.match(response.result.content[0]?.text ?? '', /withheld.*resident credential/i)
+  assert.equal(response.result.isError, false)
+  const parsed = JSON.parse(response.result.content[0]?.text ?? '{}') as {
+    place?: { description?: string }
+    notes?: Array<{ body?: string }>
+  }
+  assert.match(parsed.place?.description ?? '', /redacted.*resident credential/i)
+  assert.equal(parsed.notes?.[0]?.body, 'Safe public note.')
   assert.doesNotMatch(JSON.stringify(response), new RegExp(residentKey, 'i'))
-  assert.doesNotMatch(JSON.stringify(response), /Safe public note\./)
+})
+
+test('legacy MCP reads use the same historical credential redaction rule', async () => {
+  setHostedChatFlag(false)
+  const leaked = `1f3d9_rt_${'56'.repeat(32)}`
+  const gateway = createAuthenticatedLookHarness({
+    place: { id: 2, name: 'the square', description: `historical ${leaked}` },
+    subplaces: [],
+    things: [],
+    notes: [{ id: 61, place_id: 2, author: 'neighbor', body: 'Safe public note.' }],
+  })
+
+  const response = await rpc(
+    gateway,
+    'tools/call',
+    { name: 'look', arguments: { place_id: 2 } },
+    `Bearer ${LEGACY_SECRET}`,
+    '/mcp',
+  ) as { result: ToolResult }
+
+  assert.equal(response.result.isError, false)
+  const text = response.result.content[0]?.text ?? '{}'
+  const parsed = JSON.parse(text) as { place?: { description?: string } }
+  assert.match(parsed.place?.description ?? '', /redacted.*resident credential/i)
+  assert.doesNotMatch(text, new RegExp(leaked, 'i'))
 })
