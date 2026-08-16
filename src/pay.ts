@@ -25,6 +25,11 @@ export interface PaymentRequirements {
   maxTimeoutSeconds: number
   asset: string
   extra: { name: 'USD Coin'; version: '2' }
+  extensions: {
+    'payment-identifier': {
+      info: { required: true }
+    }
+  }
 }
 
 export function requirements(
@@ -44,6 +49,11 @@ export function requirements(
     maxTimeoutSeconds: CLAIM_WINDOW_SECONDS,
     asset: USDC,
     extra: { name: 'USD Coin', version: '2' },
+    extensions: {
+      'payment-identifier': {
+        info: { required: true },
+      },
+    },
   }
 }
 
@@ -57,10 +67,19 @@ export interface Settled {
   raw: Record<string, unknown>
 }
 
+export interface SettledError {
+  error: string
+  code?: string
+}
+
+function settledError(error: string, code?: string): SettledError {
+  return code == null ? { error } : { error, code }
+}
+
 export async function settleX402(
   paymentHeader: string,
   accepted: PaymentRequirements,
-): Promise<Settled | { error: string }> {
+): Promise<Settled | SettledError> {
   let paymentPayload: unknown
   try {
     paymentPayload = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8'))
@@ -82,10 +101,13 @@ export async function settleX402(
   try {
     const verificationResponse = await fetch(`${FACILITATOR}/verify`, options)
     const verification = (await verificationResponse.json().catch(() => null)) as
-      | { isValid?: boolean; invalidReason?: string }
+      | { isValid?: boolean; invalidReason?: string; payer?: string }
       | null
     if (!verificationResponse.ok || !verification?.isValid) {
-      return { error: verification?.invalidReason ?? 'facilitator rejected the payment' }
+      return settledError(
+        verification?.invalidReason ?? 'facilitator rejected the payment',
+        verification?.invalidReason,
+      )
     }
 
     const settlementResponse = await fetch(`${FACILITATOR}/settle`, options)
@@ -93,7 +115,7 @@ export async function settleX402(
       | { success?: boolean; transaction?: string; payer?: string; errorReason?: string }
       | null
     if (!settlementResponse.ok || !settlement?.success || !settlement.transaction) {
-      return { error: settlement?.errorReason ?? 'settlement failed' }
+      return settledError(settlement?.errorReason ?? 'settlement failed', settlement?.errorReason)
     }
     const transaction = canonicalTxHash(settlement.transaction)
     if (!transaction) return { error: 'settlement returned an invalid transaction hash' }
@@ -104,7 +126,7 @@ export async function settleX402(
     )
     return {
       transaction,
-      payer: settlement.payer ?? embeddedPayer,
+      payer: settlement.payer ?? verification?.payer ?? embeddedPayer,
       raw: settlement as Record<string, unknown>,
     }
   } catch {
@@ -139,9 +161,7 @@ export async function classifyDirectPayment(
     (options.exactAmount === true && transfer.amount !== expectedUnits)
   ) return { state: 'invalid_final', reason: 'confirmed_mismatch' }
   if (transfer.blockTime < notBefore || (notAfter != null && transfer.blockTime > notAfter)) {
-    return transfer.finalized
-      ? { state: 'invalid_final', reason: 'confirmed_mismatch' }
-      : { state: 'pending' }
+    return { state: 'invalid_final', reason: 'confirmed_mismatch' }
   }
   return {
     state: 'matched',

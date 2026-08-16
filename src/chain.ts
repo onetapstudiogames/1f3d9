@@ -62,7 +62,7 @@ export interface VerifiedTransfer {
 }
 
 export type TransferCheck =
-  | ({ state: 'matched'; finalized: boolean } & VerifiedTransfer)
+  | ({ state: 'matched' } & VerifiedTransfer)
   | { state: 'pending' }
   | { state: 'invalid_final'; reason: 'failed_transaction' | 'confirmed_mismatch' }
 
@@ -149,6 +149,7 @@ export async function classifyUsdcTransfer(
   }
   const fromTopic = transfer.log.topics[1]
   if (!fromTopic || !/^0x[0-9a-fA-F]{64}$/u.test(fromTopic)) return { state: 'pending' }
+  if (await finalizedReceipt(receipt) !== 'finalized') return { state: 'pending' }
 
   const block = await rpc<{ timestamp?: unknown }>('eth_getBlockByHash', [receipt.blockHash, false])
   if (!block || typeof block.timestamp !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(block.timestamp)) {
@@ -156,10 +157,8 @@ export async function classifyUsdcTransfer(
   }
   const blockTime = new Date(Number(BigInt(block.timestamp)) * 1000)
   if (Number.isNaN(blockTime.getTime())) return { state: 'pending' }
-  const finalized = await finalizedReceipt(receipt) === 'finalized'
   return {
     state: 'matched',
-    finalized,
     from: addressFromTopic(fromTopic),
     to,
     amount: transfer.amount,

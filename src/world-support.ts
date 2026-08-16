@@ -18,6 +18,12 @@ import {
   verifyDirectPayment,
   type Settled,
 } from './pay.ts'
+import { sql } from './db.ts'
+import {
+  markX402PaymentSettled,
+  PAYMENT_ATTEMPT_CONFLICT,
+  startX402PaymentAttempt,
+} from './payment-attempts.ts'
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DIRECT_FEE_MAX_AGE_MS = 60 * 60 * 1000
@@ -30,6 +36,7 @@ interface FeePayment {
   txHash: string
   payerWallet: string
   settled: Settled | null
+  attemptKey: string | null
 }
 
 export interface PlaceRow {
@@ -128,20 +135,51 @@ export async function treasuryFee(
   body: JsonObject,
   resource: string,
   description: string,
+  actorId: number,
+  purpose: string,
 ): Promise<FeePayment | Response> {
   const accepted = requirements(TREASURY, CLAIM_FEE_USDC, resource, description)
   const paymentHeader = c.req.header('x-payment')
 
   if (paymentHeader) {
+    const started = await startX402PaymentAttempt(sql.query, {
+      actorId,
+      purpose,
+      payeeWallet: TREASURY,
+      amountUsdc: CLAIM_FEE_USDC,
+      paymentHeader,
+      accepted,
+    })
+    if ('error' in started) {
+      if (started.code === PAYMENT_ATTEMPT_CONFLICT) return err(c, 409, started.error)
+      return challenge402(c, accepted, started.error)
+    }
+    if (started.attempt.transactionHash) {
+      return {
+        txHash: started.attempt.transactionHash,
+        payerWallet: started.attempt.payerWallet,
+        settled: null,
+        attemptKey: started.attempt.paymentKey,
+      }
+    }
     const settled = await settleX402(paymentHeader, accepted)
     if ('error' in settled) return challenge402(c, accepted, settled.error)
     if (!WALLET_RE.test(settled.payer)) {
       return challenge402(c, accepted, 'settlement did not identify a valid payer wallet')
     }
+    const settledAttempt = await markX402PaymentSettled(
+      sql.query,
+      started.attempt.paymentKey,
+      settled.transaction,
+    )
+    if (!settledAttempt?.transactionHash) {
+      return err(c, 503, 'payment settled but its durable attempt record is unavailable')
+    }
     return {
-      txHash: settled.transaction,
-      payerWallet: settled.payer.toLowerCase(),
+      txHash: settledAttempt.transactionHash,
+      payerWallet: settledAttempt.payerWallet,
       settled,
+      attemptKey: settledAttempt.paymentKey,
     }
   }
 
@@ -172,7 +210,7 @@ export async function treasuryFee(
   if (direct.from.toLowerCase() !== payerWallet.toLowerCase()) {
     return err(c, 402, 'payment must come from the declared payer_wallet')
   }
-  return { txHash, payerWallet: payerWallet.toLowerCase(), settled: null }
+  return { txHash, payerWallet: payerWallet.toLowerCase(), settled: null, attemptKey: null }
 }
 
 export function setPaymentHeader(c: Context, fee: FeePayment): void {

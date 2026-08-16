@@ -121,6 +121,23 @@ test('fresh and upgraded world constraints use one stable set of names', () => {
   }
 })
 
+test('x402 payment attempts are durable before settlement or final product writes', () => {
+  const attempts = schemaStatement('payment_attempts')
+
+  assert.match(attempts, /payment_key\s+TEXT\s+NOT NULL\s+UNIQUE/i)
+  assert.match(attempts, /payment_kind\s+TEXT\s+NOT NULL\s+CHECK\s*\(payment_kind\s+IN\s*\('x402'\)\)/i)
+  assert.match(attempts, /status\s+TEXT\s+NOT NULL\s+CHECK\s*\(status\s+IN\s*\('initiated',\s*'settled',\s*'completed',\s*'failed'\)\)/i)
+  assert.match(attempts, /payer_wallet\s+TEXT\s+NOT NULL/i)
+  assert.match(attempts, /payee_wallet\s+TEXT\s+NOT NULL/i)
+  assert.match(attempts, /amount_usdc\s+NUMERIC\(12,6\)\s+NOT NULL/i)
+  assert.match(attempts, /payment_payload\s+JSONB\s+NOT NULL/i)
+  assert.match(attempts, /transaction_hash\s+TEXT/i)
+  assert.match(attempts, /completion_tx_hash\s+TEXT/i)
+  assert.match(attempts, /purpose\s+TEXT\s+NOT NULL/i)
+  assert.match(attempts, /actor_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\(id\)/i)
+  assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_actor_created/i)
+})
+
 test('round-two state tables are created idempotently', () => {
   for (const table of [
     'resident_presence',
@@ -132,6 +149,7 @@ test('round-two state tables are created idempotently', () => {
     'pending_effects',
     'effect_resolutions',
     'moderation_actions',
+    'payment_attempts',
   ]) {
     schemaStatement(table)
   }

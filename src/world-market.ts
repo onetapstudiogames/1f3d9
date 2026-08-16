@@ -13,6 +13,12 @@ import {
   type PaymentRequirements,
   type Settled,
 } from './pay.ts'
+import {
+  markX402PaymentCompleted,
+  markX402PaymentSettled,
+  PAYMENT_ATTEMPT_CONFLICT,
+  startX402PaymentAttempt,
+} from './payment-attempts.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -950,6 +956,7 @@ export function mountWorldMarketRoutes(
     let verifiedVia: 'x402' | 'claim'
     let blockTime: string | null
     let responseHeader: string | null = null
+    let paymentAttemptKey: string | null = null
     if (pendingAtStart) {
       txHash = offer.pending_x402_tx_hash!
       const confirmed = await confirmedSettlement(
@@ -976,18 +983,47 @@ export function mountWorldMarketRoutes(
       verifiedVia = 'x402'
       blockTime = confirmed.blockTime.toISOString()
     } else if (paymentHeader) {
-      const embeddedPayer = x402Payer(paymentHeader)
-      if (!embeddedPayer || embeddedPayer !== offer.buyer_wallet) {
+      const started = await startX402PaymentAttempt(dependencies.query, {
+        actorId: buyer.id,
+        purpose: 'sale',
+        payeeWallet: offer.seller_wallet,
+        amountUsdc: offer.price_usdc,
+        paymentHeader,
+        accepted,
+      })
+      if ('error' in started) {
+        if (started.code === PAYMENT_ATTEMPT_CONFLICT) return err(c, 409, started.error)
+        return challenge402(c, accepted, started.error)
+      }
+      if (started.payerWallet !== offer.buyer_wallet) {
         return challenge402(c, accepted, 'X-PAYMENT payer must match the reservation wallet')
       }
-      const settled = await dependencies.settleX402(paymentHeader, accepted)
-      if ('error' in settled) return challenge402(c, accepted, settled.error)
-      const settledPayer = wallet(settled.payer)
-      const settledHash = canonicalTxHash(settled.transaction)
-      if (!settledPayer || settledPayer !== offer.buyer_wallet || !settledHash) {
-        return challenge402(c, accepted, 'settled payment does not match the reservation')
+      paymentAttemptKey = started.attempt.paymentKey
+      let settledHash = started.attempt.transactionHash
+      let settledPayer = started.attempt.transactionHash ? started.attempt.payerWallet : null
+      if (!settledHash) {
+        const settled = await dependencies.settleX402(paymentHeader, accepted)
+        if ('error' in settled) return challenge402(c, accepted, settled.error)
+        settledPayer = wallet(settled.payer)
+        if (settledPayer && settledPayer !== started.payerWallet) {
+          return challenge402(c, accepted, 'settled payer does not match the signed X-PAYMENT payer')
+        }
+        settledHash = canonicalTxHash(settled.transaction)
+        if (!settledPayer || settledPayer !== offer.buyer_wallet || !settledHash) {
+          return challenge402(c, accepted, 'settled payment does not match the reservation')
+        }
+        const settledAttempt = await markX402PaymentSettled(
+          dependencies.query,
+          started.attempt.paymentKey,
+          settledHash,
+        )
+        if (!settledAttempt?.transactionHash) {
+          return err(c, 503, 'payment settled but its durable attempt record is unavailable')
+        }
+        settledHash = settledAttempt.transactionHash
+        settledPayer = settledAttempt.payerWallet
+        responseHeader = dependencies.paymentResponseHeader(settled)
       }
-      responseHeader = dependencies.paymentResponseHeader(settled)
       try {
         const rows = await dependencies.query(`
           /* world-market:pending-x402 */
@@ -1200,6 +1236,13 @@ export function mountWorldMarketRoutes(
       }
       const claimed = await readOffer(dependencies, offer.id)
       if (!claimed) return err(c, 500, 'claimed world receipt is unavailable')
+      if (paymentAttemptKey) {
+        await markX402PaymentCompleted(dependencies.query, paymentAttemptKey, {
+          completionTxHash: txHash,
+          completionKind: 'world_offer',
+          completionId: offer.id,
+        })
+      }
       if (responseHeader) c.header('X-PAYMENT-RESPONSE', responseHeader)
       return c.json({ offer: publicOffer(claimed, dependencies.now()) })
     } catch (error) {

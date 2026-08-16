@@ -81,6 +81,17 @@ test('classification checks every transfer log before calling a finalized receip
   if (result.state === 'matched') assert.equal(result.from, BUYER)
 })
 
+test('an exact matching transfer remains pending until its canonical block is finalized', async () => {
+  reset({ logs: [transfer(BUYER, 2_000_000n)], finalizedNumber: '0xff' })
+
+  const result = await classifyUsdcTransfer(TX, SELLER, 2_000_000n, {
+    expectedFrom: BUYER,
+    exactAmount: true,
+  })
+
+  assert.deepEqual(result, { state: 'pending' })
+})
+
 test('a nine-log receipt ignores four empty-data logs and matches the later exact $1 transfer', async () => {
   reset({
     logs: [
@@ -103,7 +114,6 @@ test('a nine-log receipt ignores four empty-data logs and matches the later exac
 
   assert.equal(result.state, 'matched')
   if (result.state === 'matched') {
-    assert.equal(result.finalized, true)
     assert.equal(result.from, BUYER)
     assert.equal(result.to, SELLER)
     assert.equal(result.amount, 1_000_000n)

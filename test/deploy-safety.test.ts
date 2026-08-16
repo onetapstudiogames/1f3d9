@@ -39,6 +39,10 @@ const openToUseMigrationUrl = new URL(
   '../db/migrations/20260815_open_to_use.sql',
   import.meta.url,
 )
+const paymentAttemptsMigrationUrl = new URL(
+  '../db/migrations/20260816_payment_attempts.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -527,7 +531,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts/,
   )
 })
 
@@ -654,6 +658,7 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [oauthMigration, 'hosted-chat'],
     [agreementAccessionMigration, 'agreement-accession'],
     [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
+    [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
   ] as const) {
     for (const statement of splitSqlStatements(migration)) {
       assert.ok(
@@ -677,6 +682,48 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:agreement-accession'] ?? '', /--target production --migration agreement-accession$/)
   assert.match(packageJson.scripts['migrate:preview:open-to-use'] ?? '', /--target preview --migration open-to-use$/)
   assert.match(packageJson.scripts['migrate:production:open-to-use'] ?? '', /--target production --migration open-to-use$/)
+  assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
+  assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
+})
+
+test('payment attempts are an explicitly selected additive release', () => {
+  const paymentAttemptsMigration = readFileSync(paymentAttemptsMigrationUrl, 'utf8')
+  const uncommented = paymentAttemptsMigration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(paymentAttemptsMigration)
+
+  assert.equal(statements.length, 3)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP|UPDATE|DELETE|TRUNCATE)\b/im)
+  assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+payment_attempts/i)
+  assert.match(uncommented, /payment_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i)
+  assert.match(uncommented, /status\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(status\s+IN\s+\('initiated',\s*'settled',\s*'completed',\s*'failed'\)\)/i)
+  assert.match(uncommented, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_actor_created/i)
+  assert.match(uncommented, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_completion/i)
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-attempts'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260816_payment_attempts.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-attempts'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-attempts-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260816_payment_attempts.sql')
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {

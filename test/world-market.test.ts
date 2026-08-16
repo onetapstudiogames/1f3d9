@@ -12,7 +12,17 @@ const SELLER_WALLET = '0x1111111111111111111111111111111111111111'
 const BUYER_WALLET = '0x2222222222222222222222222222222222222222'
 const OTHER_WALLET = '0x3333333333333333333333333333333333333333'
 const TX = '0x' + 'ab'.repeat(32)
+const PAYMENT_ID = 'pay_world_offer_1234567890abcdef'
 const X_PAYMENT = Buffer.from(JSON.stringify({
+  payload: { authorization: { from: BUYER_WALLET } },
+  extensions: {
+    'payment-identifier': {
+      info: { required: true },
+      id: PAYMENT_ID,
+    },
+  },
+})).toString('base64')
+const X_PAYMENT_NO_ID = Buffer.from(JSON.stringify({
   payload: { authorization: { from: BUYER_WALLET } },
 })).toString('base64')
 const NOW = new Date('2026-08-12T12:00:00.000Z')
@@ -73,6 +83,21 @@ interface FakeState {
   directVerificationInvalid: boolean
   directBlockTime: string
   facilitatorSettlements: number
+  paymentAttempts: Map<string, {
+    payment_key: string
+    payment_kind: 'x402'
+    status: 'initiated' | 'settled' | 'completed' | 'failed'
+    actor_id: number
+    purpose: string
+    payer_wallet: string
+    payee_wallet: string
+    amount_usdc: number
+    transaction_hash: string | null
+    completion_tx_hash: string | null
+    completion_kind: string | null
+    completion_id: number | null
+    completion_revision: number | null
+  }>
   now: string
   queries: Array<{ text: string; params: readonly unknown[] }>
 }
@@ -171,6 +196,7 @@ function initialState(patch: Partial<FakeState> = {}): FakeState {
     directVerificationInvalid: false,
     directBlockTime: NOW.toISOString(),
     facilitatorSettlements: 0,
+    paymentAttempts: new Map(),
     now: NOW.toISOString(),
     queries: [],
     ...patch,
@@ -211,6 +237,63 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       return [offer]
     }
     if (text.includes('world-market:read-offer')) return state.offer ? [{ ...state.offer }] : []
+    if (text.includes('payment-attempts:initiate')) {
+      const key = String(params[0])
+      if (!state.paymentAttempts.has(key)) {
+        const next = new Map(state.paymentAttempts)
+        next.set(key, {
+          payment_key: key,
+          payment_kind: 'x402',
+          status: 'initiated',
+          actor_id: Number(params[1]),
+          purpose: String(params[2]),
+          payer_wallet: String(params[3]).toLowerCase(),
+          payee_wallet: String(params[4]).toLowerCase(),
+          amount_usdc: Number(params[5]),
+          transaction_hash: null,
+          completion_tx_hash: null,
+          completion_kind: null,
+          completion_id: null,
+          completion_revision: null,
+        })
+        state = { ...state, paymentAttempts: next }
+      }
+      return []
+    }
+    if (text.includes('payment-attempts:read')) {
+      const row = state.paymentAttempts.get(String(params[0]))
+      return row ? [{ ...row }] : []
+    }
+    if (text.includes('payment-attempts:settled')) {
+      const key = String(params[0])
+      const current = state.paymentAttempts.get(key)
+      if (!current) return []
+      const next = new Map(state.paymentAttempts)
+      next.set(key, {
+        ...current,
+        status: current.status === 'completed' ? 'completed' : 'settled',
+        transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
+      })
+      state = { ...state, paymentAttempts: next }
+      return [{ ...next.get(key)! }]
+    }
+    if (text.includes('payment-attempts:completed')) {
+      const key = String(params[0])
+      const current = state.paymentAttempts.get(key)
+      if (!current) return []
+      const next = new Map(state.paymentAttempts)
+      next.set(key, {
+        ...current,
+        status: 'completed',
+        transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
+        completion_tx_hash: String(params[1]).toLowerCase(),
+        completion_kind: String(params[2]),
+        completion_id: Number(params[3]),
+        completion_revision: params[4] == null ? null : Number(params[4]),
+      })
+      state = { ...state, paymentAttempts: next }
+      return [{ ...next.get(key)! }]
+    }
     if (text.includes('world-market:reserve')) {
       const offer = state.offer
       if (!offer || offer.status !== 'open') return []
@@ -551,6 +634,29 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.equal(harness.getState().directVerifications, 1)
 })
 
+test('world x402 claim requires a payment-identifier for safe retries', async () => {
+  const reserved = openOffer({
+    buyer_id: 8,
+    buyer: 'neighbor',
+    reserved_by: 8,
+    buyer_wallet: BUYER_WALLET,
+    market_listing_id: 91,
+    market_checkout_id: 81,
+    reserved_at: NOW.toISOString(),
+    reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+  })
+  const harness = makeHarness({ offer: reserved, thingLocked: true, marketFailure: true })
+  const response = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT_NO_ID },
+    body: '{}',
+  })
+
+  assert.equal(response.status, 402)
+  assert.match(await response.text(), /payment-identifier/i)
+  assert.equal(harness.getState().facilitatorSettlements, 0)
+})
+
 test('x402 claims re-read the confirmed transfer and publish its in-window block time', async () => {
   const reserved = openOffer({
     buyer_id: 8,
@@ -609,6 +715,10 @@ test('a settled x402 payment stays locked while Base indexing catches up and fin
   assert.equal(pending.pending_x402_tx_hash, TX)
   assert.equal(harness.getState().facilitatorSettlements, 1)
   assert.equal(harness.getState().thingLocked, true)
+  const attemptIndex = harness.getState().queries.findIndex(call =>
+    /insert\s+into\s+payment_attempts/i.test(call.text))
+  const pendingIndex = harness.getState().queries.findIndex(call => call.text.includes('world-market:pending-x402'))
+  assert.ok(attemptIndex >= 0 && pendingIndex > attemptIndex)
 
   harness.setState(current => ({
     ...current,

@@ -26,7 +26,17 @@ const OTHER_SECRET = '1f3d9_sk_' + 'cd'.repeat(24)
 const TX1 = '0x' + '11'.repeat(32)
 const TX2 = '0x' + '22'.repeat(32)
 const TX_CASE_UPPER = '0x' + 'AB'.repeat(32)
+const PAYMENT_ID = 'pay_frontier_retry_1234567890abcdef'
 const X_PAYMENT = Buffer.from(JSON.stringify({
+  payload: { authorization: { from: BUYER_WALLET } },
+  extensions: {
+    'payment-identifier': {
+      info: { required: true },
+      id: PAYMENT_ID,
+    },
+  },
+})).toString('base64')
+const X_PAYMENT_NO_ID = Buffer.from(JSON.stringify({
   payload: { authorization: { from: BUYER_WALLET } },
 })).toString('base64')
 
@@ -89,9 +99,25 @@ interface FakeState {
   chainTo: string
   chainAgeSeconds: number
   paymentHashes: Set<string>
+  paymentAttempts: Map<string, {
+    payment_key: string
+    payment_kind: 'x402'
+    status: 'initiated' | 'settled' | 'completed' | 'failed'
+    actor_id: number
+    purpose: string
+    payer_wallet: string
+    payee_wallet: string
+    amount_usdc: number
+    transaction_hash: string | null
+    completion_tx_hash: string | null
+    completion_kind: string | null
+    completion_id: number | null
+    completion_revision: number | null
+  }>
   facilitatorVerify: boolean
   facilitatorSettle: boolean
   anonymousFlagsUsed: number
+  failPaidWriteOnce: boolean
 }
 
 const initialState = (): FakeState => ({
@@ -143,9 +169,11 @@ const initialState = (): FakeState => ({
   chainTo: TREASURY,
   chainAgeSeconds: 60,
   paymentHashes: new Set<string>(),
+  paymentAttempts: new Map(),
   facilitatorVerify: false,
   facilitatorSettle: false,
   anonymousFlagsUsed: 0,
+  failPaidWriteOnce: false,
 })
 
 let state = initialState()
@@ -338,6 +366,7 @@ function setActor(id: number, handle: string) {
 
 function recordPayment(query: string, params: unknown[]) {
   if (!/insert\s+into\s+payment_uses/i.test(query)) return
+  if (state.failPaidWriteOnce && /insert\s+into\s+places/i.test(query)) return
   const raw = params.find(value => /^0x[0-9a-fA-F]{64}$/.test(String(value)))
   if (!raw) return
   const canonical = String(raw).toLowerCase()
@@ -350,6 +379,64 @@ function recordPayment(query: string, params: unknown[]) {
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  if (q.includes('/* payment-attempts:initiate */')) {
+    const key = String(params[0])
+    if (!state.paymentAttempts.has(key)) {
+      const next = new Map(state.paymentAttempts)
+      next.set(key, {
+        payment_key: key,
+        payment_kind: 'x402',
+        status: 'initiated',
+        actor_id: Number(params[1]),
+        purpose: String(params[2]),
+        payer_wallet: String(params[3]).toLowerCase(),
+        payee_wallet: String(params[4]).toLowerCase(),
+        amount_usdc: Number(params[5]),
+        transaction_hash: null,
+        completion_tx_hash: null,
+        completion_kind: null,
+        completion_id: null,
+        completion_revision: null,
+      })
+      state = { ...state, paymentAttempts: next }
+    }
+    return []
+  }
+  if (q.includes('/* payment-attempts:read */')) {
+    const row = state.paymentAttempts.get(String(params[0]))
+    return row ? [{ ...row }] : []
+  }
+  if (q.includes('/* payment-attempts:settled */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (!current) return []
+    const next = new Map(state.paymentAttempts)
+    next.set(key, {
+      ...current,
+      status: current.status === 'completed' ? 'completed' : 'settled',
+      transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
+    })
+    state = { ...state, paymentAttempts: next }
+    return [{ ...next.get(key)! }]
+  }
+  if (q.includes('/* payment-attempts:completed */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (!current) return []
+    const next = new Map(state.paymentAttempts)
+    next.set(key, {
+      ...current,
+      status: 'completed',
+      transaction_hash: current.transaction_hash ?? String(params[1]).toLowerCase(),
+      completion_tx_hash: String(params[1]).toLowerCase(),
+      completion_kind: String(params[2]),
+      completion_id: Number(params[3]),
+      completion_revision: params[4] == null ? null : Number(params[4]),
+    })
+    state = { ...state, paymentAttempts: next }
+    return [{ ...next.get(key)! }]
+  }
 
   // link_kind_revision_traits refuses a trait nobody has coined yet.
   if (state.scenario === 'uncoined kind trait' &&
@@ -756,7 +843,13 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
 
   if (q.includes('with recursive place_tree')) return [placeRow(1, null), placeRow(2, 1)]
-  if (q.includes('insert into places')) return [placeRow(3, 2)]
+  if (q.includes('insert into places')) {
+    if (state.failPaidWriteOnce) {
+      state = { ...state, failPaidWriteOnce: false }
+      return []
+    }
+    return [placeRow(3, 2)]
+  }
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
     return [placeRow(2, 1)]
   }
@@ -1947,9 +2040,61 @@ test('x402 payer must match the wallet bound to the active reservation', async (
   assert.equal(networkCalled('/settle'), true)
   assert.equal(inserted('sale_payments'), 0)
   assert.equal(state.offer.status, 'open')
+  const attemptIndex = state.calls.findIndex(call => /insert\s+into\s+payment_attempts/i.test(call.query ?? ''))
+  const settleIndex = state.calls.findIndex(call => call.url.includes('/settle'))
+  assert.ok(attemptIndex >= 0 && settleIndex > attemptIndex)
 })
 
-test('frontier x402 settles before creation and one tx proof cannot pay twice', async () => {
+test('x402 paid creation requires a payment-identifier for safe retries', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+  })
+  const response = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT_NO_ID },
+    body: JSON.stringify({ parent_id: null, name: 'Needs Id', description: 'frontier' }),
+  })
+
+  assert.equal(response.status, 402)
+  assert.match(await response.text(), /payment-identifier/i)
+  assert.equal(networkCalled('/settle'), false)
+})
+
+test('the same x402 payment identifier cannot be rebound to a different paid purpose', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+  })
+  const frontier = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ parent_id: null, name: 'Bound Continent', description: 'frontier' }),
+  })
+  assert.equal(frontier.status, 201, await frontier.clone().text())
+
+  const rebound = await app.request('/api/kind', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      name: 'rebound-lantern',
+      description: 'should fail',
+      traits: [],
+      recipe: [],
+    }),
+  })
+  assert.equal(rebound.status, 409, await rebound.clone().text())
+  assert.match(await rebound.text(), /payment-identifier.*different/i)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+})
+
+test('frontier x402 records a durable attempt before settlement and one tx proof cannot pay twice', async () => {
   reset({
     scenario: 'paid claims', facilitatorVerify: true, facilitatorSettle: true,
     chainFrom: SELLER_WALLET, chainTo: TREASURY,
@@ -1959,11 +2104,12 @@ test('frontier x402 settles before creation and one tx proof cannot pay twice', 
     headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
     body: JSON.stringify({ parent_id: null, name: 'Second Continent', description: 'frontier' }),
   })
-  assert.equal(frontier.status, 201)
+  assert.equal(frontier.status, 201, await frontier.clone().text())
   const verifyIndex = state.calls.findIndex(call => call.url.includes('/verify'))
   const settleIndex = state.calls.findIndex(call => call.url.includes('/settle'))
+  const attemptIndex = state.calls.findIndex(call => /insert\s+into\s+payment_attempts/i.test(call.query ?? ''))
   const insertIndex = state.calls.findIndex(call => /insert\s+into\s+places/i.test(call.query ?? ''))
-  assert.ok(verifyIndex >= 0 && settleIndex > verifyIndex && insertIndex > settleIndex)
+  assert.ok(verifyIndex >= 0 && attemptIndex >= 0 && settleIndex > attemptIndex && insertIndex > settleIndex)
 
   const first = await app.request('/api/kind', {
     method: 'POST', headers: authHeaders(),
@@ -1983,6 +2129,40 @@ test('frontier x402 settles before creation and one tx proof cannot pay twice', 
   })
   assert.equal(replay.status, 409)
   assert.match(JSON.stringify(await replay.json()), /used|payment|proof/i)
+})
+
+test('frontier x402 retry uses the same payment identifier and does not settle twice', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    failPaidWriteOnce: true,
+  })
+  const requestBody = JSON.stringify({
+    parent_id: null,
+    name: 'Retry Continent',
+    description: 'same logical purchase',
+  })
+
+  const first = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: requestBody,
+  })
+  assert.equal(first.status, 202, await first.clone().text())
+  assert.match(await first.text(), /pending|payment/i)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+
+  const retry = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: requestBody,
+  })
+  assert.equal(retry.status, 201)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+  assert.equal(state.paymentHashes.size, 1)
 })
 
 test('events keep the public contract while paging stably by kind and id', async () => {

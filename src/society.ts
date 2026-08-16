@@ -12,6 +12,12 @@ import {
   settleX402,
   verifyDirectPayment,
 } from './pay.ts'
+import {
+  markX402PaymentCompleted,
+  markX402PaymentSettled,
+  PAYMENT_ATTEMPT_CONFLICT,
+  startX402PaymentAttempt,
+} from './payment-attempts.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { runTalkNoteAction } from './note-action.ts'
@@ -792,22 +798,51 @@ export function mountSocietyRoutes(app: Hono): void {
     let verifiedVia: 'x402' | 'claim'
     let paymentBlockTime: string | null
     let responseHeader: string | null = null
+    let paymentAttemptKey: string | null = null
     if (paymentHeader) {
-      const authorizedPayer = x402HeaderPayer(paymentHeader)
-      if (!authorizedPayer)
-        return challenge402(c, accepted, 'X-PAYMENT must contain a valid payer address')
-      if (authorizedPayer !== buyerWallet)
+      const started = await startX402PaymentAttempt(sql.query, {
+        actorId: resident.id,
+        purpose: 'sale',
+        payeeWallet: offer.seller_wallet,
+        amountUsdc: Number(offer.price_usdc),
+        paymentHeader,
+        accepted,
+      })
+      if ('error' in started) {
+        if (started.code === PAYMENT_ATTEMPT_CONFLICT) return err(c, 409, started.error)
+        return challenge402(c, accepted, started.error)
+      }
+      if (started.payerWallet !== buyerWallet)
         return challenge402(c, accepted, 'X-PAYMENT payer does not match the reservation wallet')
-      const settled = await settleX402(paymentHeader, accepted)
-      if ('error' in settled) return challenge402(c, accepted, settled.error)
-      if (!WALLET_RE.test(settled.payer)) return challenge402(c, accepted, 'settlement returned an invalid payer address')
-      txHash = settled.transaction
-      payer = settled.payer.toLowerCase()
-      if (payer !== buyerWallet)
-        return challenge402(c, accepted, 'settled payer does not match the reservation wallet')
-      verifiedVia = 'x402'
-      paymentBlockTime = null
-      responseHeader = paymentResponseHeader(settled)
+      paymentAttemptKey = started.attempt.paymentKey
+      if (started.attempt.transactionHash) {
+        txHash = started.attempt.transactionHash
+        payer = started.attempt.payerWallet
+        verifiedVia = 'x402'
+        paymentBlockTime = null
+      } else {
+        const settled = await settleX402(paymentHeader, accepted)
+        if ('error' in settled) return challenge402(c, accepted, settled.error)
+        if (!WALLET_RE.test(settled.payer)) return challenge402(c, accepted, 'settlement returned an invalid payer address')
+        if (settled.payer.toLowerCase() !== started.payerWallet) {
+          return challenge402(c, accepted, 'settled payer does not match the signed X-PAYMENT payer')
+        }
+        const settledAttempt = await markX402PaymentSettled(
+          sql.query,
+          started.attempt.paymentKey,
+          settled.transaction,
+        )
+        if (!settledAttempt?.transactionHash) {
+          return err(c, 503, 'payment settled but its durable attempt record is unavailable')
+        }
+        txHash = settledAttempt.transactionHash
+        payer = settledAttempt.payerWallet
+        if (payer !== buyerWallet)
+          return challenge402(c, accepted, 'settled payer does not match the reservation wallet')
+        verifiedVia = 'x402'
+        paymentBlockTime = null
+        responseHeader = paymentResponseHeader(settled)
+      }
     } else {
       const direct = await verifyDirectPayment(
         suppliedTx!,
@@ -892,6 +927,13 @@ export function mountSocietyRoutes(app: Hono): void {
       ]) as { id: number; status?: string; transfer_id?: number; created_at?: string }[]
       const claimed = rows[0]
       if (!claimed) return err(c, 409, 'offer, ownership, or reservation changed before the sale closed')
+      if (paymentAttemptKey) {
+        await markX402PaymentCompleted(sql.query, paymentAttemptKey, {
+          completionTxHash: txHash,
+          completionKind: 'transfer_offer',
+          completionId: offerId,
+        })
+      }
       if (responseHeader) c.header('X-PAYMENT-RESPONSE', responseHeader)
       return c.json({
         offer: { id: offerId, status: claimed.status ?? 'claimed' },
