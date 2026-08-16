@@ -3,6 +3,14 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { neon } from '@neondatabase/serverless'
+import {
+  isSafeIdentifier,
+  requireDirectPostgresUrl,
+  requireLoopbackPostgresUrl,
+  requiredIdentifier,
+  responseJson,
+  verifyNeonDatabaseTarget,
+} from './database-target.ts'
 
 type SqlMode = 'normal' | 'single-quote' | 'double-quote' | 'line-comment' | 'block-comment' | 'dollar-quote'
 type MigrationTarget = 'local' | 'preview' | 'production'
@@ -45,7 +53,6 @@ const PRODUCTION_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION'
 const PREVIEW_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW'
 const LOCAL_ACKNOWLEDGEMENT = 'APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE'
 const WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT = 'REPARENT_CONTINENTS_UNDER_UNOWNED_WORLD_ROOT'
-const NEON_ID = /^[a-z0-9-]{1,60}$/
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
 const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'hosted-chat-signin': 'db/migrations/20260813_hosted_chat_signin.sql',
@@ -73,38 +80,6 @@ function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
     )
   }
   return requested as RemoteMigration
-}
-
-function requireDirectPostgresUrl(value: string | undefined, variableName: string): string {
-  if (!value) throw new Error(`${variableName} not set`)
-
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    throw new Error(`${variableName} must be a valid Postgres connection URL`)
-  }
-
-  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
-    throw new Error(`${variableName} must be a Postgres connection URL`)
-  }
-  if (parsed.hostname.includes('-pooler')) {
-    throw new Error(`${variableName} must use a direct, non-pooled connection`)
-  }
-  return value
-}
-
-function requireLoopbackPostgresUrl(value: string): string {
-  const hostname = new URL(value).hostname.toLowerCase()
-  if (!['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
-    throw new Error('local migration requires a loopback Postgres host')
-  }
-  return value
-}
-
-function requiredIdentifier(value: string | undefined, variableName: string): string {
-  if (!value || !NEON_ID.test(value)) throw new Error(`${variableName} is invalid or missing`)
-  return value
 }
 
 /**
@@ -218,79 +193,6 @@ type SnapshotResponse = Readonly<{
   operations?: readonly Readonly<{ id?: unknown; status?: unknown }>[]
 }>
 
-type EndpointsResponse = Readonly<{
-  endpoints?: unknown
-}>
-
-type DatabaseTarget = Readonly<{
-  projectId: string
-  branchId: string
-}>
-
-async function responseJson(response: Response, label: string): Promise<Record<string, unknown>> {
-  if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`)
-  const decoded = await response.json().catch(() => null)
-  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
-    throw new Error(`${label} returned an invalid response`)
-  }
-  return decoded as Record<string, unknown>
-}
-
-async function verifyNeonDatabaseTarget(
-  target: DatabaseTarget,
-  databaseUrl: string,
-  apiKey: string,
-  label: 'preview' | 'production',
-  fetcher: typeof fetch = fetch,
-): Promise<void> {
-  const failure = `Could not prove the ${label} database target`
-  if (!apiKey.trim()) throw new Error(failure)
-
-  let databaseHost: string
-  try {
-    databaseHost = new URL(
-      requireDirectPostgresUrl(
-        databaseUrl,
-        label === 'preview'
-          ? 'PREVIEW_DATABASE_URL_UNPOOLED'
-          : 'PRODUCTION_DATABASE_URL_UNPOOLED',
-      ),
-    ).hostname.toLowerCase()
-  } catch {
-    throw new Error(failure)
-  }
-
-  const base = `https://console.neon.tech/api/v2/projects/${target.projectId}`
-  const response = await responseJson(await fetcher(
-    `${base}/branches/${target.branchId}/endpoints`,
-    {
-      method: 'GET',
-      redirect: 'error',
-      headers: { accept: 'application/json', authorization: `Bearer ${apiKey}` },
-    },
-  ), `Neon ${label} endpoint verification`) as EndpointsResponse
-
-  if (!Array.isArray(response.endpoints)) {
-    throw new Error(failure)
-  }
-
-  const matchingEndpoints = response.endpoints.filter(endpoint => {
-    if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) return false
-    const record = endpoint as Record<string, unknown>
-    return (
-      typeof record.id === 'string' && NEON_ID.test(record.id) &&
-      typeof record.host === 'string' && record.host.toLowerCase() === databaseHost &&
-      record.project_id === target.projectId &&
-      record.branch_id === target.branchId &&
-      record.type === 'read_write'
-    )
-  })
-
-  if (matchingEndpoints.length !== 1) {
-    throw new Error(failure)
-  }
-}
-
 /**
  * Prove that the preview URL belongs to the exact isolated read-write Neon branch.
  * This read-only API check finishes before a database client is created.
@@ -342,7 +244,7 @@ export async function createProductionSnapshot(
   }), 'Neon snapshot creation') as SnapshotResponse
   const record = created.snapshot
   if (
-    !record || typeof record.id !== 'string' || !NEON_ID.test(record.id) ||
+    !record || !isSafeIdentifier(record.id) ||
     record.name !== snapshot.name || record.source_branch_id !== snapshot.branchId
   ) {
     throw new Error('Neon did not confirm the requested production snapshot')
