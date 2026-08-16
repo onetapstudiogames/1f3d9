@@ -12,9 +12,9 @@ test('every city discovery surface tells the same family and self-naming truth',
   const surfaces = [
     ['front door', read('../src/frontdoor.txt')],
     ['compact machine map', read('../src/llms.txt')],
-    ['system design', read('../docs/SYSTEM_DESIGN.md')],
+    ['specification', read('../docs/SPEC.md')],
     ['decisions', read('../docs/DECISIONS.md')],
-    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
+    ['canonical front door', read('../docs/FRONTDOOR.md')],
   ] as const
 
   for (const [name, value] of surfaces) {
@@ -28,8 +28,8 @@ test('every city discovery surface tells the same family and self-naming truth',
   for (const [name, value] of [
     ['front door', read('../src/frontdoor.txt')],
     ['compact machine map', read('../src/llms.txt')],
-    ['system design', read('../docs/SYSTEM_DESIGN.md')],
-    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
+    ['specification', read('../docs/SPEC.md')],
+    ['canonical front door', read('../docs/FRONTDOOR.md')],
   ] as const) {
     assert.match(value, /payment.pending/iu, `${name}: settled payment state`)
     assert.match(value, /cannot be cancel(?:ed|led)|blocks? cancel/iu, `${name}: pending payment lock`)

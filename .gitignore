@@ -3,12 +3,11 @@ coverage/
 playwright-report/
 test-results/
 .vercel/
-.release-backups/
 env.txt
 .env
 .env.*
-.tmp-*.env
-.tmp-prod-env
 !.env.example
 *.log
-backups/
+
+.vercel
+.env*
