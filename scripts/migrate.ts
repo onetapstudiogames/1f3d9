@@ -23,7 +23,7 @@ type MigrationFile =
   | 'db/migrations/20260814_public_pagination.sql'
   | 'db/migrations/20260814_agreement_accession.sql'
   | 'db/migrations/20260815_open_to_use.sql'
-  | 'db/migrations/20260816_payment_attempts.sql'
+  | 'db/migrations/20260816_payment_attempts_expand.sql'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -56,7 +56,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'public-pagination': 'db/migrations/20260814_public_pagination.sql',
   'agreement-accession': 'db/migrations/20260814_agreement_accession.sql',
   'open-to-use': 'db/migrations/20260815_open_to_use.sql',
-  'payment-attempts': 'db/migrations/20260816_payment_attempts.sql',
+  'payment-attempts': 'db/migrations/20260816_payment_attempts_expand.sql',
 }
 
 function namedArgument(args: readonly string[], name: string): string | undefined {

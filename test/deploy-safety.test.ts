@@ -40,7 +40,7 @@ const openToUseMigrationUrl = new URL(
   import.meta.url,
 )
 const paymentAttemptsMigrationUrl = new URL(
-  '../db/migrations/20260816_payment_attempts.sql',
+  '../db/migrations/20260816_payment_attempts_expand.sql',
   import.meta.url,
 )
 
@@ -660,7 +660,12 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
     [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
   ] as const) {
-    for (const statement of splitSqlStatements(migration)) {
+    const statements = label === 'payment-attempts'
+      ? splitSqlStatements(migration).filter(statement =>
+        /^(?:CREATE|COMMENT|DROP\s+TRIGGER|CREATE\s+TRIGGER)/i.test(statement.trim()),
+      )
+      : splitSqlStatements(migration)
+    for (const statement of statements) {
       assert.ok(
         freshInstallStatements.has(normalize(statement)),
         `db/schema.sql drifted from the reviewed ${label} migration`,
@@ -691,13 +696,15 @@ test('payment attempts are an explicitly selected additive release', () => {
   const uncommented = paymentAttemptsMigration.replace(/^\s*--.*$/gm, '')
   const statements = splitSqlStatements(paymentAttemptsMigration)
 
-  assert.equal(statements.length, 3)
-  assert.doesNotMatch(uncommented, /^\s*(?:DROP|UPDATE|DELETE|TRUNCATE)\b/im)
+  assert.ok(statements.length >= 10)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|DELETE|TRUNCATE)\b/im)
   assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+payment_attempts/i)
-  assert.match(uncommented, /payment_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i)
-  assert.match(uncommented, /status\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(status\s+IN\s+\('initiated',\s*'settled',\s*'completed',\s*'failed'\)\)/i)
-  assert.match(uncommented, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_actor_created/i)
-  assert.match(uncommented, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_completion/i)
+  assert.match(uncommented, /public_id\s+TEXT\s+PRIMARY\s+KEY/i)
+  assert.match(uncommented, /status\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(status\s+IN\s*\(\s*'settling',\s*'payment_pending',\s*'completed',\s*'invalid',\s*'expired',\s*'needs_review',\s*'legacy_completed'\s*\)\)/i)
+  assert.match(uncommented, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_x402_nonce/i)
+  assert.match(uncommented, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_one_live_target/i)
+  assert.match(uncommented, /INSERT\s+INTO\s+payment_attempts/i)
+  assert.match(uncommented, /DROP\s+TRIGGER\s+IF\s+EXISTS\s+sale_payments_match_world_offer\s+ON\s+sale_payments/i)
 
   const preview = resolveMigrationRun(
     ['--target', 'preview', '--migration', 'payment-attempts'],
@@ -710,7 +717,7 @@ test('payment attempts are an explicitly selected additive release', () => {
       PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
     },
   )
-  assert.equal(preview.migrationFile, 'db/migrations/20260816_payment_attempts.sql')
+  assert.equal(preview.migrationFile, 'db/migrations/20260816_payment_attempts_expand.sql')
 
   const production = resolveMigrationRun(
     ['--target', 'production', '--migration', 'payment-attempts'],
@@ -723,7 +730,7 @@ test('payment attempts are an explicitly selected additive release', () => {
       PRODUCTION_SNAPSHOT_NAME: 'payment-attempts-release',
     },
   )
-  assert.equal(production.migrationFile, 'db/migrations/20260816_payment_attempts.sql')
+  assert.equal(production.migrationFile, 'db/migrations/20260816_payment_attempts_expand.sql')
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {

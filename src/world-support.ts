@@ -145,7 +145,7 @@ export async function treasuryFee(
   const paymentHeader = c.req.header('x-payment')
 
   if (paymentHeader) {
-    const started = await startX402PaymentAttempt(sql.query, {
+    const started = await startX402PaymentAttempt({ query: sql.query }, {
       actorId,
       purpose,
       payeeWallet: TREASURY,
@@ -171,7 +171,7 @@ export async function treasuryFee(
       return challenge402(c, accepted, 'settlement did not identify a valid payer wallet')
     }
     const settledAttempt = await markX402PaymentSettled(
-      sql.query,
+      { query: sql.query },
       started.attempt.paymentKey,
       settled.transaction,
     )
