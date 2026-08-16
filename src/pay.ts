@@ -15,9 +15,10 @@ const PAYMENT_CUSTODY_UNAVAILABLE =
 export function paymentCustodyReady(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-  const hostedProduction = environment.VERCEL_ENV === 'production'
-    || (environment.VERCEL_ENV == null && environment.NODE_ENV === 'production')
-  return !hostedProduction || environment.PAYMENT_CUSTODY_READY === '1'
+  const hosted = environment.NODE_ENV === 'production'
+    || environment.VERCEL === '1'
+    || environment.VERCEL_ENV != null
+  return !hosted || environment.PAYMENT_CUSTODY_READY === '1'
 }
 
 export function paymentReadinessResponse(c: Context): Response | null {

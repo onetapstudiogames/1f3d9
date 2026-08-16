@@ -14,7 +14,7 @@ import {
   sha256,
   utcToday,
 } from '../src/core.ts'
-import { canonicalTxHash, requirements } from '../src/pay.ts'
+import { canonicalTxHash, paymentCustodyReady, requirements } from '../src/pay.ts'
 
 const TREASURY = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 
@@ -79,6 +79,15 @@ test('a one-dollar claim challenge names Base USDC and the real treasury', () =>
   assert.equal(result.payTo, TREASURY)
   assert.equal(result.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913')
   assert.deepEqual(result.extra, { name: 'USD Coin', version: '2' })
+})
+
+test('payment custody readiness blocks every hosted environment until explicitly enabled', () => {
+  assert.equal(paymentCustodyReady({}), true)
+  assert.equal(paymentCustodyReady({ VERCEL: '1' }), false)
+  assert.equal(paymentCustodyReady({ VERCEL_ENV: 'preview' }), false)
+  assert.equal(paymentCustodyReady({ NODE_ENV: 'production' }), false)
+  assert.equal(paymentCustodyReady({ VERCEL_ENV: 'production' }), false)
+  assert.equal(paymentCustodyReady({ VERCEL_ENV: 'production', PAYMENT_CUSTODY_READY: '1' }), true)
 })
 
 test('OAuth access resolves only for a server-marked hosted-connector request while enabled', async () => {
