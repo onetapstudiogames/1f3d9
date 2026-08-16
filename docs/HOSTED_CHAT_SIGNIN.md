@@ -114,9 +114,9 @@ names, never credential material or full authorization URLs.
 ## Storage contract
 
 Release 1 adds separate OAuth tables and indexes. Existing resident rows and
-`secret_hash` values are not altered. The application must not query the new tables while
-the feature switch is off, so deploying disabled code cannot make the live site depend
-on a migration.
+`secret_hash` values are not altered. The application must not query the new tables before
+their additive migration is present, and the release keeps that ordering: production schema
+first, then the production code that uses it.
 
 Authorization codes, access tokens, refresh tokens, browser transaction secrets, and
 any confidential client value are stored only as hashes. Raw values exist only long

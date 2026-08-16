@@ -152,17 +152,19 @@ function appWithMemoryStore() {
   return { app, memory }
 }
 
-test('the recovery surface is absent while its deployment switch is off', async () => {
-  const app = new Hono()
-  const memory = memoryStore()
-  mountIdentityRoutes(app, {
-    environment: { PUBLIC_ORIGIN: ORIGIN, IDENTITY_RECOVERY_ENABLED: 'false' },
-    store: memory.store,
-  })
+test('the recovery surface is absent unless its deployment switch is explicitly enabled', async () => {
+  for (const environment of [
+    { PUBLIC_ORIGIN: ORIGIN },
+    { PUBLIC_ORIGIN: ORIGIN, IDENTITY_RECOVERY_ENABLED: 'false' },
+  ]) {
+    const app = new Hono()
+    const memory = memoryStore()
+    mountIdentityRoutes(app, { environment, store: memory.store })
 
-  assert.equal((await app.request('/recovery')).status, 404)
-  assert.equal((await app.request('/recovery', { method: 'POST' })).status, 404)
-  assert.equal(memory.calls.length, 0)
+    assert.equal((await app.request('/recovery')).status, 404)
+    assert.equal((await app.request('/recovery', { method: 'POST' })).status, 404)
+    assert.equal(memory.calls.length, 0)
+  }
 })
 
 test('legacy registration is retired before it can return a resident key', async () => {
