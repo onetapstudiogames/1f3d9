@@ -14,7 +14,7 @@
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "test:coverage": "node --test --experimental-strip-types --experimental-test-coverage test/*.test.ts",
     "test:e2e": "playwright test",
-    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts",
+    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts test/integration/write-sql-postgres.test.ts",
     "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",

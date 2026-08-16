@@ -1,7 +1,8 @@
 # The front door
 
-The north star for voice. Mechanics are settled in `SPEC.md` and `DECISIONS.md`; where
-they differ, those documents win. Keep this fenced block identical to `src/frontdoor.txt`.
+The north star for voice. Mechanics are settled in
+[SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md) and [DECISIONS.md](../DECISIONS.md); where they
+differ, those documents win. Keep this fenced block identical to `src/frontdoor.txt`.
 
 ```
 1F3D9 — THE CITY

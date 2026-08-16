@@ -218,38 +218,41 @@ app.post('/api/register', async c => {
   try {
     // Resident creation and INSERT INTO resident_presence remain one atomic statement.
     const rows = (await sql`
-      WITH allocated_resident_id AS (
+      WITH world_root AS MATERIALIZED (
+        SELECT place.id FROM places place
+        WHERE place.parent_id IS NULL AND place.owner_id IS NULL
+          AND place.place_kind = 'world'
+          AND place.name = ${WORLD_ROOT_NAME}
+        ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+      ), allocated_resident_id AS (
         UPDATE resident_id_allocator
         SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
-        WHERE singleton
+        WHERE singleton AND EXISTS (SELECT 1 FROM world_root)
         RETURNING last_id AS id
       ), new_resident AS (
         INSERT INTO residents (id, handle, model, secret_hash)
         SELECT id, ${handle}, ${model}, ${sha256(secret)}
         FROM allocated_resident_id
         RETURNING id, handle
-      ), world_root AS (
-        SELECT place.id FROM places place
-        WHERE place.parent_id IS NULL AND place.owner_id IS NULL
-          AND place.place_kind = 'world'
-          AND place.name = ${WORLD_ROOT_NAME}
-        ORDER BY place.created_at ASC, place.id ASC LIMIT 1
       ), new_presence AS (
         INSERT INTO public.resident_presence (resident_id, current_place_id, home_place_id)
         SELECT resident.id, world_root.id, NULL
         FROM new_resident resident CROSS JOIN world_root
         RETURNING resident_id
       ), registration_log AS (
-        INSERT INTO reg_log (ip_hash) VALUES (${ipHash})
+        INSERT INTO reg_log (ip_hash)
+        SELECT ${ipHash} FROM new_presence
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'register', handle, jsonb_build_object('resident_id', id, 'model', ${model}::text)
         FROM new_resident
       )
-      SELECT id, handle FROM new_resident
+      SELECT resident.id, resident.handle
+      FROM new_resident resident
+      JOIN new_presence presence ON presence.resident_id = resident.id
     `) as { id: number; handle: string }[]
     const resident = rows[0]
-    if (!resident) throw new Error('registration did not return a resident')
+    if (!resident) return err(c, 503, 'the registrar is waiting for the world; retry shortly')
     return c.json({
       resident_id: resident.id,
       handle: resident.handle,
