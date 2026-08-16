@@ -204,8 +204,14 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
     assert.equal(probe.connector, 404)
     assert.equal(probe.metadata, 404)
     assert.equal(probe.oauthQueries, 0)
-    assert.equal(probe.frontText, FRONTDOOR)
-    assert.equal(probe.llmsText, LLMS)
+    assert.equal(
+      probe.frontText,
+      hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false),
+    )
+    assert.equal(
+      probe.llmsText,
+      hostedChatDiscovery(LLMS, { ready: false }, 'llms', false),
+    )
   }
 })
 
@@ -232,4 +238,6 @@ test('a ready connector is advertised on both public discovery routes', () => {
   assert.equal(probe.metadata, 200)
   assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
   assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
+  assert.equal(probe.frontText.includes('/recovery'), false)
+  assert.equal(probe.llmsText.includes('/recovery'), false)
 })
