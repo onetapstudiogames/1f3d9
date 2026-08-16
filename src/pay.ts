@@ -9,6 +9,21 @@ export const CLAIM_WINDOW_SECONDS = 300
 
 const FACILITATOR = process.env.FACILITATOR_URL ?? 'https://facilitator.payai.network'
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/
+const PAYMENT_CUSTODY_UNAVAILABLE =
+  'payments are temporarily unavailable while durable payment custody is being upgraded; do not pay or retry yet'
+
+export function paymentCustodyReady(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  const hostedProduction = environment.VERCEL_ENV === 'production'
+    || (environment.VERCEL_ENV == null && environment.NODE_ENV === 'production')
+  return !hostedProduction || environment.PAYMENT_CUSTODY_READY === '1'
+}
+
+export function paymentReadinessResponse(c: Context): Response | null {
+  if (paymentCustodyReady()) return null
+  return c.json({ error: PAYMENT_CUSTODY_UNAVAILABLE }, 503)
+}
 
 export function canonicalTxHash(value: unknown): string | null {
   return typeof value === 'string' && TX_HASH_RE.test(value) ? value.toLowerCase() : null

@@ -657,6 +657,45 @@ test('world x402 claim requires a payment-identifier for safe retries', async ()
   assert.equal(harness.getState().facilitatorSettlements, 0)
 })
 
+test('hosted world claims fail closed before custody schema readiness', async () => {
+  const previousVercel = process.env.VERCEL
+  const previousVercelEnv = process.env.VERCEL_ENV
+  const previousReady = process.env.PAYMENT_CUSTODY_READY
+  process.env.VERCEL = '1'
+  process.env.VERCEL_ENV = 'production'
+  delete process.env.PAYMENT_CUSTODY_READY
+  try {
+    const harness = makeHarness({
+      thingLocked: true,
+      offer: openOffer({
+        buyer_id: 8,
+        buyer: 'neighbor',
+        reserved_by: 8,
+        buyer_wallet: BUYER_WALLET,
+        reserved_at: NOW.toISOString(),
+        reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+      }),
+    })
+    const response = await harness.app.request('/api/world/offer/101/claim', {
+      method: 'POST',
+      headers: { ...jsonHeaders(BUYER_SECRET), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
+    })
+
+    assert.equal(response.status, 503, await response.clone().text())
+    assert.match(await response.text(), /payments are temporarily unavailable/i)
+    assert.equal(harness.getState().facilitatorSettlements, 0)
+    assert.equal(harness.getState().queries.length, 0)
+  } finally {
+    if (previousVercel == null) delete process.env.VERCEL
+    else process.env.VERCEL = previousVercel
+    if (previousVercelEnv == null) delete process.env.VERCEL_ENV
+    else process.env.VERCEL_ENV = previousVercelEnv
+    if (previousReady == null) delete process.env.PAYMENT_CUSTODY_READY
+    else process.env.PAYMENT_CUSTODY_READY = previousReady
+  }
+})
+
 test('x402 claims re-read the confirmed transfer and publish its in-window block time', async () => {
   const reserved = openOffer({
     buyer_id: 8,

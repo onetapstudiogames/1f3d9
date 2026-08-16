@@ -6,6 +6,7 @@ import {
   canonicalTxHash,
   challenge402,
   classifyDirectPayment,
+  paymentReadinessResponse,
   paymentResponseHeader,
   requirements,
   settleX402,
@@ -792,6 +793,8 @@ export function mountWorldMarketRoutes(
   app.post('/api/world/offer/:offerId/claim', async c => {
     const buyer = await dependencies.authenticate(c)
     if (!buyer) return err(c, 401, 'bad or missing bearer secret; move into the city before paying')
+    const unavailable = paymentReadinessResponse(c)
+    if (unavailable) return unavailable
     const offerId = positiveId(c.req.param('offerId'))
     if (!offerId) return err(c, 400, 'bad world offer id')
     const body = await jsonObject(c)

@@ -7,6 +7,7 @@ import {
   canonicalTxHash,
   challenge402,
   CLAIM_WINDOW_SECONDS,
+  paymentReadinessResponse,
   paymentResponseHeader,
   requirements,
   settleX402,
@@ -697,6 +698,8 @@ export function mountSocietyRoutes(app: Hono): void {
   app.post('/api/transfer/:offerId/claim', async c => {
     const resident = await auth(c)
     if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    const unavailable = paymentReadinessResponse(c)
+    if (unavailable) return unavailable
     const offerId = positiveId(c.req.param('offerId'))
     if (!offerId) return err(c, 400, 'bad offer id')
     const body = await jsonObject(c)

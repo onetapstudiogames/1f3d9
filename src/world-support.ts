@@ -11,6 +11,7 @@ import {
   canonicalTxHash,
   challenge402,
   CLAIM_FEE_USDC,
+  paymentReadinessResponse,
   paymentResponseHeader,
   requirements,
   settleX402,
@@ -138,6 +139,8 @@ export async function treasuryFee(
   actorId: number,
   purpose: string,
 ): Promise<FeePayment | Response> {
+  const unavailable = paymentReadinessResponse(c)
+  if (unavailable) return unavailable
   const accepted = requirements(TREASURY, CLAIM_FEE_USDC, resource, description)
   const paymentHeader = c.req.header('x-payment')
 

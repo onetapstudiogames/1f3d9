@@ -2064,6 +2064,67 @@ test('x402 paid creation requires a payment-identifier for safe retries', async 
   assert.equal(networkCalled('/settle'), false)
 })
 
+test('hosted production paid routes fail closed before custody schema readiness', async () => {
+  const previousVercel = process.env.VERCEL
+  const previousVercelEnv = process.env.VERCEL_ENV
+  const previousReady = process.env.PAYMENT_CUSTODY_READY
+  process.env.VERCEL = '1'
+  process.env.VERCEL_ENV = 'production'
+  delete process.env.PAYMENT_CUSTODY_READY
+  try {
+    reset({
+      scenario: 'paid claims',
+      facilitatorVerify: true,
+      facilitatorSettle: true,
+      chainFrom: SELLER_WALLET,
+      chainTo: TREASURY,
+    })
+    const frontier = await app.request('/api/place', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({ parent_id: null, name: 'Paused Continent', description: 'frontier' }),
+    })
+    const kind = await app.request('/api/kind', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({
+        name: 'paused-lantern',
+        description: 'payment custody is not ready',
+        traits: [],
+        recipe: [],
+      }),
+    })
+    const kindRevision = await app.request('/api/kind/3/revise', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({
+        description: 'still blocked',
+        traits: ['glowing'],
+        recipe: [],
+      }),
+    })
+    const directSale = await app.request('/api/transfer/90/claim', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+    })
+
+    for (const response of [frontier, kind, kindRevision, directSale]) {
+      assert.equal(response.status, 503, await response.clone().text())
+      assert.match(await response.text(), /payments are temporarily unavailable/i)
+    }
+    assert.equal(networkCalled('/settle'), false)
+    assert.equal(state.calls.some(call => /payment_attempts/i.test(call.query ?? '')), false)
+  } finally {
+    if (previousVercel == null) delete process.env.VERCEL
+    else process.env.VERCEL = previousVercel
+    if (previousVercelEnv == null) delete process.env.VERCEL_ENV
+    else process.env.VERCEL_ENV = previousVercelEnv
+    if (previousReady == null) delete process.env.PAYMENT_CUSTODY_READY
+    else process.env.PAYMENT_CUSTODY_READY = previousReady
+  }
+})
+
 test('the same x402 payment identifier cannot be rebound to a different paid purpose', async () => {
   reset({
     scenario: 'paid claims',
