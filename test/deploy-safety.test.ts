@@ -43,6 +43,10 @@ const paymentAttemptsMigrationUrl = new URL(
   '../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,
 )
+const identityRecoveryMigrationUrl = new URL(
+  '../db/migrations/20260816_identity_recovery.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -531,7 +535,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|identity-recovery/,
   )
 })
 
@@ -659,6 +663,7 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [agreementAccessionMigration, 'agreement-accession'],
     [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
     [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
+    [readFileSync(identityRecoveryMigrationUrl, 'utf8'), 'identity-recovery'],
   ] as const) {
     const statements = label === 'payment-attempts'
       ? splitSqlStatements(migration).filter(statement =>
@@ -689,6 +694,46 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:open-to-use'] ?? '', /--target production --migration open-to-use$/)
   assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
   assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
+  assert.match(packageJson.scripts['migrate:preview:identity-recovery'] ?? '', /--target preview --migration identity-recovery$/)
+  assert.match(packageJson.scripts['migrate:production:identity-recovery'] ?? '', /--target production --migration identity-recovery$/)
+})
+
+test('identity recovery is an explicitly selected additive release with a PostgreSQL gate', () => {
+  const migration = readFileSync(identityRecoveryMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|DELETE|TRUNCATE)\b/im)
+  assert.match(uncommented, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+recovery_generation\s+BIGINT\s+NOT\s+NULL\s+DEFAULT\s+0/i)
+  assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+pending_resident_registrations/i)
+  assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+resident_recovery_codes/i)
+  assert.match(uncommented, /code_hash\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i)
+  assert.doesNotMatch(uncommented, /recovery_code\s+TEXT/i)
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'identity-recovery'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260816_identity_recovery.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'identity-recovery'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'identity-recovery-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260816_identity_recovery.sql')
+  assert.match(packageJson.scripts['test:postgres'] ?? '', /identity-recovery-postgres\.test\.ts/)
 })
 
 test('payment attempts are an explicitly selected additive release', () => {

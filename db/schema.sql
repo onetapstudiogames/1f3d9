@@ -12,9 +12,26 @@ CREATE TABLE IF NOT EXISTS residents (
   quota_day                 DATE NOT NULL DEFAULT (now() AT TIME ZONE 'utc')::date,
   things_today              INTEGER NOT NULL DEFAULT 0 CHECK (things_today >= 0),
   notes_today               INTEGER NOT NULL DEFAULT 0 CHECK (notes_today >= 0),
-  agreement_actions_today   INTEGER NOT NULL DEFAULT 0 CHECK (agreement_actions_today >= 0)
+  agreement_actions_today   INTEGER NOT NULL DEFAULT 0 CHECK (agreement_actions_today >= 0),
+  recovery_generation       BIGINT NOT NULL DEFAULT 0 CHECK (recovery_generation >= 0)
 );
 ALTER TABLE residents ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE residents
+  ADD COLUMN IF NOT EXISTS recovery_generation BIGINT NOT NULL DEFAULT 0;
+DO $resident_recovery_generation$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'residents'::regclass
+      AND conname = 'residents_recovery_generation_nonnegative'
+  ) THEN
+    ALTER TABLE residents
+      ADD CONSTRAINT residents_recovery_generation_nonnegative
+      CHECK (recovery_generation >= 0) NOT VALID;
+  END IF;
+END
+$resident_recovery_generation$;
+ALTER TABLE residents VALIDATE CONSTRAINT residents_recovery_generation_nonnegative;
 ALTER TABLE residents DROP CONSTRAINT IF EXISTS residents_id_landmark;
 ALTER TABLE residents ADD CONSTRAINT residents_id_landmark CHECK (id > 0 AND id <> 4);
 CREATE INDEX IF NOT EXISTS residents_joined ON residents (joined_at, id);
@@ -42,6 +59,97 @@ CREATE TABLE IF NOT EXISTS reg_log (
 );
 CREATE INDEX IF NOT EXISTS reg_log_ip ON reg_log (ip_hash, created_at);
 CREATE INDEX IF NOT EXISTS reg_log_created ON reg_log (created_at);
+
+-- First-party registration stages only credential hashes. Pending names are not
+-- public or exclusive; the residents unique constraint decides the one winner
+-- only after the displayed key is re-entered.
+CREATE TABLE IF NOT EXISTS pending_resident_registrations (
+  session_hash  TEXT PRIMARY KEY CHECK (session_hash ~ '^[0-9a-f]{64}$'),
+  csrf_hash     TEXT NOT NULL UNIQUE CHECK (csrf_hash ~ '^[0-9a-f]{64}$'),
+  ip_hash       TEXT CHECK (ip_hash IS NULL OR ip_hash ~ '^[0-9a-f]{64}$'),
+  handle        TEXT CHECK (handle IS NULL OR handle ~ '^[a-z0-9][a-z0-9-]{2,31}$'),
+  model         TEXT CHECK (model IS NULL OR char_length(model) <= 120),
+  secret_hash   TEXT CHECK (secret_hash IS NULL OR secret_hash ~ '^[0-9a-f]{64}$'),
+  resident_id   INTEGER UNIQUE REFERENCES residents(id) ON DELETE RESTRICT,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  confirmed_at  TIMESTAMPTZ,
+  canceled_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (
+    (resident_id IS NULL AND confirmed_at IS NULL AND canceled_at IS NULL
+      AND ip_hash IS NOT NULL AND handle IS NOT NULL AND model IS NOT NULL AND secret_hash IS NOT NULL)
+    OR
+    (resident_id IS NOT NULL AND confirmed_at IS NOT NULL AND canceled_at IS NULL
+      AND ip_hash IS NULL AND handle IS NULL AND model IS NULL AND secret_hash IS NULL)
+    OR
+    (resident_id IS NULL AND confirmed_at IS NULL AND canceled_at IS NOT NULL
+      AND ip_hash IS NULL AND handle IS NULL AND model IS NULL AND secret_hash IS NULL)
+  ),
+  CHECK (expires_at > created_at AND expires_at <= created_at + interval '15 minutes'),
+  CHECK (confirmed_at IS NULL OR confirmed_at >= created_at),
+  CHECK (canceled_at IS NULL OR canceled_at >= created_at)
+);
+CREATE INDEX IF NOT EXISTS pending_resident_registrations_expiry
+  ON pending_resident_registrations (expires_at, session_hash)
+  WHERE confirmed_at IS NULL AND canceled_at IS NULL;
+
+-- Recovery codes are high-entropy bearer proofs. Only their SHA-256 hashes and
+-- the hash of a not-yet-confirmed replacement root key are ever persisted.
+CREATE TABLE IF NOT EXISTS resident_recovery_codes (
+  id                       BIGSERIAL PRIMARY KEY,
+  resident_id              INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  generation               BIGINT NOT NULL CHECK (generation > 0),
+  code_hash                TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  recovery_session_hash    TEXT UNIQUE CHECK (
+                             recovery_session_hash IS NULL OR recovery_session_hash ~ '^[0-9a-f]{64}$'
+                           ),
+  recovery_csrf_hash       TEXT UNIQUE CHECK (
+                             recovery_csrf_hash IS NULL OR recovery_csrf_hash ~ '^[0-9a-f]{64}$'
+                           ),
+  replacement_secret_hash TEXT CHECK (
+                             replacement_secret_hash IS NULL OR replacement_secret_hash ~ '^[0-9a-f]{64}$'
+                           ),
+  recovery_expires_at      TIMESTAMPTZ,
+  staged_at                TIMESTAMPTZ,
+  used_at                  TIMESTAMPTZ,
+  invalidated_at           TIMESTAMPTZ,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (used_at IS NULL OR invalidated_at IS NULL),
+  CHECK (
+    (recovery_session_hash IS NULL AND recovery_csrf_hash IS NULL
+      AND replacement_secret_hash IS NULL AND recovery_expires_at IS NULL AND staged_at IS NULL)
+    OR
+    (recovery_session_hash IS NOT NULL AND recovery_csrf_hash IS NOT NULL
+      AND replacement_secret_hash IS NOT NULL AND recovery_expires_at IS NOT NULL AND staged_at IS NOT NULL
+      AND used_at IS NULL AND invalidated_at IS NULL)
+  ),
+  CHECK (
+    recovery_expires_at IS NULL
+    OR (recovery_expires_at > staged_at AND recovery_expires_at <= staged_at + interval '15 minutes')
+  ),
+  CHECK (used_at IS NULL OR used_at >= created_at),
+  CHECK (invalidated_at IS NULL OR invalidated_at >= created_at)
+);
+CREATE INDEX IF NOT EXISTS resident_recovery_codes_resident
+  ON resident_recovery_codes (resident_id, generation, id);
+CREATE INDEX IF NOT EXISTS resident_recovery_codes_active
+  ON resident_recovery_codes (resident_id, generation, id)
+  WHERE used_at IS NULL AND invalidated_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS identity_rate_limits (
+  bucket_hash   TEXT NOT NULL CHECK (bucket_hash ~ '^[0-9a-f]{64}$'),
+  attempt_kind  TEXT NOT NULL CHECK (
+                  attempt_kind IN (
+                    'join_stage', 'join_confirm', 'recovery_generate',
+                    'recovery_begin', 'recovery_confirm'
+                  )
+                ),
+  window_start  TIMESTAMPTZ NOT NULL,
+  used          SMALLINT NOT NULL DEFAULT 1 CHECK (used BETWEEN 1 AND 10000),
+  PRIMARY KEY (bucket_hash, attempt_kind, window_start)
+);
+CREATE INDEX IF NOT EXISTS identity_rate_limits_expiry
+  ON identity_rate_limits (window_start, attempt_kind);
 
 -- Release 1 hosted-chat sign-in is deliberately isolated from resident identity.
 -- These tables are additive and contain only hashes of browser/session credentials,

@@ -10,10 +10,10 @@ const MALFORMED_PUBLIC_TEXT = new RegExp(
 
 // A published resident key or connector credential is an unwitting transfer of
 // authority. Every public write path refuses text that carries one.
-export const BEARER_SECRET_RE = /1f3d9_(?:sk|at|rt|ac)_[0-9a-f]{8,}/i
+export const BEARER_SECRET_RE = /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/i
 
 export const SECRET_REJECTION =
-  'that looks like a credential. Never publish it — anywhere, ever. If this is your resident key, POST /api/rotate right now: the leaked key dies, and you, your property, and your history all stay'
+  'that looks like a credential. Never publish it — anywhere, ever. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set'
 
 export function containsBearerSecret(value: unknown): boolean {
   return typeof value === 'string' && BEARER_SECRET_RE.test(value)

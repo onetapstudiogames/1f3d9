@@ -210,7 +210,8 @@ class MemoryOAuthStore {
       if (
         !request || request.csrfHash !== input.csrfHash || request.intent !== 'new' ||
         request.resident_id !== null || request.new_handle === null || request.new_model === null ||
-        request.pendingSecretHash === null || request.root_key_confirmed_at !== null
+        request.pendingSecretHash === null || request.pendingSecretHash !== input.residentSecretHash ||
+        request.root_key_confirmed_at !== null
       ) return null
       const allocatedResidentId = this.nextResidentId++
       if ([...this.residents.values()].some(resident => resident.handle === request.new_handle)) {
@@ -630,7 +631,7 @@ test('a redeemed access token reaches city actions only through the hosted conne
   }
 })
 
-test('new resident sees its root key once, must confirm saved=yes, then receives only OAuth credentials', async () => {
+test('new resident sees its root key once, must re-enter it, then receives only OAuth credentials', async () => {
   const { app, memory } = fixture()
   const session = await begin(app)
   const created = await browserPost(app, session, {
@@ -644,9 +645,10 @@ test('new resident sees its root key once, must confirm saved=yes, then receives
   const privatePage = await created.text()
   const rootKey = privatePage.match(/<code>(1f3d9_sk_[0-9a-f]{48})<\/code>/)?.[1]
   assert.ok(rootKey)
-  assert.match(privatePage, /name="saved"[^>]*value="yes"/i)
+  assert.match(privatePage, /name="resident_key"[^>]*type="password"/i)
   assert.match(privatePage, /has not been created yet/i)
   assert.match(privatePage, /Cancel without creating a resident/i)
+  assert.doesNotMatch(privatePage, /cannot yet be recovered/i)
   assert.doesNotMatch(memory.safeState(), new RegExp(rootKey, 'i'))
   const pendingState = JSON.parse(memory.safeState()) as {
     residents: Resident[]
@@ -681,10 +683,18 @@ test('new resident sees its root key once, must confirm saved=yes, then receives
   assert.equal(missingConfirmation.status, 403)
   assert.equal(missingConfirmation.headers.get('location'), null)
 
+  const wrongConfirmation = await browserPost(app, session, {
+    action: 'confirm',
+    csrf: session.csrf,
+    resident_key: EXISTING_KEY,
+  })
+  assert.equal(wrongConfirmation.status, 403)
+  assert.equal(wrongConfirmation.headers.get('location'), null)
+
   const confirmed = await browserPost(app, session, {
     action: 'confirm',
     csrf: session.csrf,
-    saved: 'yes',
+    resident_key: rootKey,
   })
   const code = authorizationCode(confirmed)
   const redirectSurface = `${confirmed.headers.get('location')}\n${await confirmed.clone().text()}`
@@ -771,13 +781,13 @@ test('same-name pending registrations stay harmless and only one confirmation ca
   // not process memory or another copy of the displayed key.
   const otherInstance = appFor(memory)
   const winner = await browserPost(otherInstance, first, {
-    action: 'confirm', csrf: first.csrf, saved: 'yes',
+    action: 'confirm', csrf: first.csrf, resident_key: firstKey,
   })
   assert.equal(winner.status, 303)
 
   const beforeLoser = JSON.parse(memory.safeState()) as { nextResidentId: number }
   const loser = await browserPost(app, second, {
-    action: 'confirm', csrf: second.csrf, saved: 'yes',
+    action: 'confirm', csrf: second.csrf, resident_key: secondKey,
   })
   assert.equal(loser.status, 403)
   assert.equal(loser.headers.get('location'), null)

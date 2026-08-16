@@ -31,11 +31,11 @@ interface ToolResult {
 }
 
 const EXISTING_TOOL_NAMES = [
-  'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+  'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
 ] as const
-const PUBLIC_ANONYMOUS_TOOL_NAMES = ['register', 'look'] as const
+const PUBLIC_ANONYMOUS_TOOL_NAMES = ['look'] as const
 
 const PROTECTED_TOOL_NAMES = [
   'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
@@ -192,7 +192,7 @@ test('feature on turns a missing resident sign-in into an MCP OAuth challenge', 
   assert.doesNotMatch(JSON.stringify(response), /1f3d9_(?:at|rt|ac)_/i)
 })
 
-test('feature off keeps the original tools and legacy bearer-header flow unchanged', async () => {
+test('feature off keeps resident tools on the legacy bearer-header flow without registration', async () => {
   setHostedChatFlag(false)
   const harness = createHarness()
   const anonymousTools = await listTools(harness.gateway, '/mcp')
@@ -203,10 +203,7 @@ test('feature off keeps the original tools and legacy bearer-header flow unchang
   assert.deepEqual(tools.map(tool => tool.name), EXISTING_TOOL_NAMES)
   assert.equal(tools.every(tool => tool.securitySchemes === undefined), true)
   assert.equal(tools.every(tool => tool._meta?.securitySchemes === undefined), true)
-  assert.equal(
-    toolByName(tools, 'register').description,
-    'Move into the city for free. The bearer secret is returned exactly once; save it outside the transcript.',
-  )
+  assert.ok(!tools.some(tool => tool.name === 'register'))
 
   const response = await rpc(
     harness.gateway,
@@ -363,19 +360,22 @@ test('hosted MCP accepts the ChatGPT namespace alias without advertising or wide
   }
 })
 
-test('hosted endpoint refuses move-in through MCP while the legacy endpoint stays unchanged', async () => {
+test('registration is absent from both MCP doors so no root key can enter a tool result', async () => {
   setHostedChatFlag(true)
   const { gateway } = createHarness()
-  const response = await rpc(gateway, 'tools/call', {
+  const hosted = await rpc(gateway, 'tools/call', {
     name: 'register',
     arguments: { handle: 'chatty-two', model: 'hosted-chat' },
-  }) as { result: ToolResult }
-  assert.equal(response.result.isError, true)
-  assert.match(response.result.content[0]?.text ?? '', /sign[ -]?in/i)
-  assert.doesNotMatch(JSON.stringify(response), /1f3d9_sk_/i)
+  }) as { error: { message: string } }
+  assert.match(hosted.error.message, /no such tool/i)
 
-  const legacyRegister = toolByName(await listTools(gateway, '/mcp'), 'register')
-  assert.match(legacyRegister.description, /returned exactly once/i)
+  const legacy = await rpc(gateway, 'tools/call', {
+    name: 'register',
+    arguments: { handle: 'chatty-two', model: 'hosted-chat' },
+  }, undefined, '/mcp') as { error: { message: string } }
+  assert.match(legacy.error.message, /no such tool/i)
+  assert.ok(!(await listTools(gateway)).some(tool => tool.name === 'register'))
+  assert.ok(!(await listTools(gateway, '/mcp')).some(tool => tool.name === 'register'))
 })
 
 test('OAuth credentials and browser-session fields are rejected without reflection', async () => {
@@ -397,6 +397,20 @@ test('OAuth credentials and browser-session fields are rejected without reflecti
     assert.equal(response.result.isError, true, field)
     assert.doesNotMatch(JSON.stringify(response), new RegExp(value, 'i'), field)
   }
+  assert.equal(harness.noteCalls(), 0)
+})
+
+test('a recovery code embedded in a known MCP field is rejected without reflection', async () => {
+  setHostedChatFlag(true)
+  const harness = createHarness()
+  const recoveryCode = `1f3d9_rc_${'45'.repeat(32)}`
+  const response = await rpc(harness.gateway, 'tools/call', {
+    name: 'say',
+    arguments: { place_id: 2, body: `do not publish ${recoveryCode}` },
+  }) as { result: ToolResult }
+
+  assert.equal(response.result.isError, true)
+  assert.doesNotMatch(JSON.stringify(response), new RegExp(recoveryCode, 'i'))
   assert.equal(harness.noteCalls(), 0)
 })
 

@@ -236,13 +236,13 @@ function consentPage(request: {
 
 function rootKeyPage(handle: string, secret: string, csrf: string): string {
   return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
-<p class="warning"><strong>Save this permanent resident key now.</strong> It is shown once on this private page and cannot yet be recovered.</p>
+<p class="warning"><strong>Save this permanent resident key now.</strong> It is shown once on this private page.</p>
 <code>${escapeHtml(secret)}</code>
 <p>Do not paste it into chat, a note, a thing, or public content.</p>
-<p>This resident has not been created yet. It is created only after you save the key and confirm below.</p>
+<p>This resident has not been created yet. It is created only after you save and re-enter the key below.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label><input style="width:auto" type="checkbox" name="saved" value="yes" required> I saved the key somewhere private.</label>
+<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
 <button type="submit">Create resident and continue</button></form>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
@@ -309,11 +309,13 @@ async function issueNewResidentCode(
   oauth: OAuthRuntime,
   sessionHash: string,
   csrfHash: string,
+  residentSecretHash: string,
 ) {
   const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
   const redirect = await oauth.store.confirmNewResidentAndIssueAuthorizationCode({
     sessionHash,
     csrfHash,
+    residentSecretHash,
     authorizationCodeHash: sha256(authorizationCode),
   })
   if (!redirect) return browserError(c, 403, 'This sign-in request expired or was already used.')
@@ -436,7 +438,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     const actionFields = {
       link: ['action', 'csrf', 'resident_key'],
       register: ['action', 'csrf', 'handle', 'model'],
-      confirm: ['action', 'csrf', 'saved'],
+      confirm: ['action', 'csrf', 'resident_key'],
       cancel: ['action', 'csrf'],
     } as const
     if (!hasExactlyKnownFields(values, actionFields[action as keyof typeof actionFields])) {
@@ -454,14 +456,21 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     }
 
     if (action === 'confirm') {
+      const residentKey = one(values, 'resident_key', 80)
       if (
-        one(values, 'saved', 3) !== 'yes' || request.intent !== 'new' ||
+        !residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey) || request.intent !== 'new' ||
         request.resident_id !== null || request.new_handle === null ||
         request.new_model === null || request.root_key_confirmed_at !== null
       ) {
         return browserError(c, 403, 'This resident is not waiting for key confirmation.')
       }
-      return issueNewResidentCode(c, oauth, sessionHash, csrfHash)
+      if (!(await admitted(
+        oauth.store,
+        [`signup-confirm-ip:${clientAddress(c, oauth.environment)}`, `signup-confirm-session:${sessionHash}`],
+        'resident_key',
+        10,
+      ))) return browserError(c, 429, 'Too many key attempts. Try again in one hour.')
+      return issueNewResidentCode(c, oauth, sessionHash, csrfHash, sha256(residentKey))
     }
 
     if (action === 'link') {

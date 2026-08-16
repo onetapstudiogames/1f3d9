@@ -14,7 +14,7 @@ const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
 const MAX_STATE = 4_096
 const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
-const CREDENTIAL = /1f3d9_(?:sk|at|rt|ac)_[0-9a-f]{8,}/i
+const CREDENTIAL = /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/i
 
 export type OAuthEnvironment = Readonly<Record<string, string | undefined>>
 

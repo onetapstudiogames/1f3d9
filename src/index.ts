@@ -5,9 +5,7 @@ import {
   auth,
   authRootKey,
   err,
-  HANDLE_RE,
   newSecret,
-  postgresErrorCode,
   QUOTAS,
   sha256,
 } from './core.ts'
@@ -29,6 +27,7 @@ import { mountSocietyRoutes } from './society.ts'
 import { mountWorldRoutes } from './world.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
+import { mountIdentityRoutes } from './identity-browser.ts'
 import {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
   MAX_PENDING_EFFECTS_PER_ACTOR,
@@ -58,7 +57,6 @@ import {
   windowSnapshot,
   windowStyle,
 } from './window.ts'
-import { WORLD_ROOT_NAME } from './world-root.ts'
 import {
   finalizePublicPage,
   loadPublicEventRows,
@@ -69,8 +67,7 @@ import {
 } from './public-pagination.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
-const REGISTRATIONS_PER_IP_HOUR = 3
-const REGISTRATIONS_GLOBAL_HOUR = 300
+const IDENTITY_RECOVERY_ENABLED = process.env.IDENTITY_RECOVERY_ENABLED === 'true'
 const ROTATIONS_PER_DAY = 5
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 
@@ -148,7 +145,9 @@ app.onError((error, c) => {
 
 app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
-  const frontDoor = hostedChatDiscovery(FRONTDOOR, hostedChatSignin, 'frontdoor')
+  const frontDoor = hostedChatDiscovery(
+    FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
+  )
   try {
     const events = (await sql`
       SELECT at, kind, actor, detail
@@ -167,7 +166,9 @@ app.get('/', async c => {
     return c.text(frontDoor)
   }
 })
-app.get('/llms.txt', c => c.text(hostedChatDiscovery(LLMS, hostedChatSignin, 'llms')))
+app.get('/llms.txt', c => c.text(hostedChatDiscovery(
+  LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
+)))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
 app.get('/window', windowPage)
@@ -185,83 +186,7 @@ if (requestedHostedChatSignin.ready) {
   }
 }
 
-app.post('/api/register', async c => {
-  const ip = clientAddress(c)
-  const ipHash = sha256(`reg:${ip}`)
-  await sql`DELETE FROM reg_log WHERE created_at < now() - interval '24 hours'`
-  const counts = (await sql`
-    SELECT
-      count(*) FILTER (
-        WHERE ip_hash = ${ipHash} AND created_at > now() - interval '1 hour'
-      )::int AS ip,
-      count(*) FILTER (WHERE created_at > now() - interval '1 hour')::int AS all
-    FROM reg_log
-  `) as { ip: number; all: number }[]
-  if (
-    (counts[0]?.ip ?? 0) >= REGISTRATIONS_PER_IP_HOUR ||
-    (counts[0]?.all ?? 0) >= REGISTRATIONS_GLOBAL_HOUR
-  ) {
-    return err(c, 429, 'the registrar is busy. Come back in an hour.')
-  }
-
-  const body = await c.req.json().catch(() => null)
-  const handle = String(body?.handle ?? '').toLowerCase().trim()
-  const modelCandidate = String(body?.model ?? '').trim().slice(0, 120)
-  const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-  if (!HANDLE_RE.test(handle)) {
-    return err(c, 400, 'handle must match ^[a-z0-9][a-z0-9-]{2,31}$')
-  }
-  if (modelText === null) return err(c, 400, 'model must be readable public text of at most 120 characters')
-  const model = modelText.trim()
-
-  const secret = newSecret()
-  try {
-    // Resident creation and INSERT INTO resident_presence remain one atomic statement.
-    const rows = (await sql`
-      WITH allocated_resident_id AS (
-        UPDATE resident_id_allocator
-        SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
-        WHERE singleton
-        RETURNING last_id AS id
-      ), new_resident AS (
-        INSERT INTO residents (id, handle, model, secret_hash)
-        SELECT id, ${handle}, ${model}, ${sha256(secret)}
-        FROM allocated_resident_id
-        RETURNING id, handle
-      ), world_root AS (
-        SELECT place.id FROM places place
-        WHERE place.parent_id IS NULL AND place.owner_id IS NULL
-          AND place.place_kind = 'world'
-          AND place.name = ${WORLD_ROOT_NAME}
-        ORDER BY place.created_at ASC, place.id ASC LIMIT 1
-      ), new_presence AS (
-        INSERT INTO public.resident_presence (resident_id, current_place_id, home_place_id)
-        SELECT resident.id, world_root.id, NULL
-        FROM new_resident resident CROSS JOIN world_root
-        RETURNING resident_id
-      ), registration_log AS (
-        INSERT INTO reg_log (ip_hash) VALUES (${ipHash})
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'register', handle, jsonb_build_object('resident_id', id, 'model', ${model}::text)
-        FROM new_resident
-      )
-      SELECT id, handle FROM new_resident
-    `) as { id: number; handle: string }[]
-    const resident = rows[0]
-    if (!resident) throw new Error('registration did not return a resident')
-    return c.json({
-      resident_id: resident.id,
-      handle: resident.handle,
-      secret,
-      warning:
-        'Names are permanent. Save this secret. It is shown exactly once. There is no recovery. Whoever holds it IS the resident.',
-    }, 201)
-  } catch (error) {
-    if (postgresErrorCode(error) === '23505') return err(c, 409, 'handle taken')
-    throw error
-  }
-})
+mountIdentityRoutes(app)
 
 app.post('/api/rotate', async c => {
   const resident = await authRootKey(c)
@@ -496,6 +421,13 @@ app.get('/api/official', c => c.json({
   paid_actions: ['frontier_founding', 'kind_invention', 'kind_revision'],
   market: process.env.MARKET_ORIGIN ?? 'https://1f3ea.com',
   city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
+  identity: {
+    join: `${DOMAIN}/join`,
+    recovery: IDENTITY_RECOVERY_ENABLED ? `${DOMAIN}/recovery` : null,
+    recovery_enabled: IDENTITY_RECOVERY_ENABLED,
+    legacy_registration: 'retired',
+    root_key_transport: 'first-party no-store browser only; never API, MCP, or chat output',
+  },
   market_bridge: {
     market_origin: process.env.MARKET_ORIGIN ?? 'https://1f3ea.com',
     authority: 'city ownership and payment; public records only; no shared secrets',

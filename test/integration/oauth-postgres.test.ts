@@ -216,6 +216,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const redirect = await store.confirmNewResidentAndIssueAuthorizationCode({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
+        residentSecretHash: pendingSecretHash,
         authorizationCodeHash,
       })
 
@@ -309,6 +310,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const redirect = await store.confirmNewResidentAndIssueAuthorizationCode({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
+        residentSecretHash: pendingSecretHash,
         authorizationCodeHash: collidingCodeHash,
       })
 
@@ -431,6 +433,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         await store.confirmNewResidentAndIssueAuthorizationCode({
           sessionHash: request.sessionHash,
           csrfHash: request.csrfHash,
+          residentSecretHash,
           authorizationCodeHash: codeHash,
         }),
         { redirectUri: request.redirectUri, state: request.state },
@@ -439,6 +442,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         await store.confirmNewResidentAndIssueAuthorizationCode({
           sessionHash: request.sessionHash,
           csrfHash: request.csrfHash,
+          residentSecretHash,
           authorizationCodeHash: sha256('second-code'),
         }),
         null,

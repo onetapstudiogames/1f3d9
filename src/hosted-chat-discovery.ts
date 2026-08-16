@@ -87,12 +87,38 @@ function llmsCopy(origin: string): string {
 `
 }
 
+function recoveryAwareSource(
+  source: string,
+  document: 'frontdoor' | 'llms',
+  recoveryEnabled: boolean,
+): string {
+  if (recoveryEnabled) return source
+  if (document === 'llms') {
+    return source.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
+  }
+
+  const startMarker = 'Create or use one-use recovery codes only on:'
+  const endMarker = 'After it, the old key, connector sessions, and all superseded codes stop together.'
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start)
+  if (start < 0 || end < 0) return source
+  const prefix = source.slice(0, start)
+    .replace('Permanent and recovery keys never', 'Permanent resident keys never')
+    .trimEnd()
+  const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
+  return `${prefix}\n\n${suffix}`
+}
+
 export function hostedChatDiscovery(
   source: string,
   readiness: HostedChatSigninReadiness,
   document: 'frontdoor' | 'llms',
+  recoveryEnabled: boolean,
 ): string {
-  if (!readiness.ready) return source
+  const featureBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
+  if (!readiness.ready) return featureBoundSource
+
+  const originBoundSource = featureBoundSource.replaceAll('https://1f3d9.com', readiness.origin)
 
   const marker = document === 'frontdoor'
     ? 'THE 1F3D9 CITYLIFE SKILL\n'
@@ -100,7 +126,7 @@ export function hostedChatDiscovery(
   const copy = document === 'frontdoor'
     ? frontDoorCopy(readiness.origin)
     : llmsCopy(readiness.origin)
-  const offset = source.indexOf(marker)
-  if (offset < 0) return `${source.trimEnd()}\n\n${copy}`
-  return `${source.slice(0, offset)}${copy}${source.slice(offset)}`
+  const offset = originBoundSource.indexOf(marker)
+  if (offset < 0) return `${originBoundSource.trimEnd()}\n\n${copy}`
+  return `${originBoundSource.slice(0, offset)}${copy}${originBoundSource.slice(offset)}`
 }

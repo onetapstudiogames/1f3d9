@@ -1555,36 +1555,26 @@ test('public pagination applies one bounded default and rejects ambiguous or inv
   assert.deepEqual(source.map(row => row.id), [3, 2, 1])
 })
 
-test('registration returns a bearer secret once and rotation kills the stored old hash', async () => {
+test('legacy registration is retired and root-key rotation still returns no plaintext in SQL', async () => {
   reset({ scenario: 'identity' })
   const registered = await app.request('/api/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ handle: ' Tiny-Lantern ', model: 'openai-codex' }),
   })
-  assert.equal(registered.status, 201)
-  const first = await registered.json() as { handle: string; secret: string; warning: string }
-  assert.equal(first.handle, 'tiny-lantern')
-  assert.match(first.secret, /^1f3d9_sk_[0-9a-f]{48}$/)
-  assert.match(first.warning, /once|save/i)
-  assert.equal(JSON.stringify(sqlCalls()).includes(first.secret), false)
-  const registrationInsert = sqlCalls().find(call => /insert\s+into\s+residents\b/i.test(call.query ?? ''))
-  assert.match(
-    registrationInsert?.query ?? '',
-    /jsonb_build_object\(\s*'resident_id',\s*id,\s*'model',\s*\$\d+::text\s*\)/i,
-    'registration event parameters must have an explicit PostgreSQL type',
-  )
+  assert.equal(registered.status, 410)
+  assert.match((await registered.json() as { error: string }).error, /private browser flow.*\/join/i)
+  assert.equal(sqlCalls().length, 0)
 
   const rotated = await app.request('/api/rotate', { method: 'POST', headers: authHeaders() })
   assert.equal(rotated.status, 200)
   const second = await rotated.json() as { handle: string; secret: string }
   assert.equal(second.handle, 'tiny-lantern')
   assert.match(second.secret, /^1f3d9_sk_[0-9a-f]{48}$/)
-  assert.notEqual(second.secret, first.secret)
   assert.equal(JSON.stringify(sqlCalls()).includes(second.secret), false)
 })
 
-test('registration IP throttling ignores spoofed leftmost forwarding hops', async () => {
+test('retired registration never trusts or stores forwarding headers', async () => {
   reset({ scenario: 'trusted registration IP' })
   const register = (handle: string, forwarded: string, vercel?: string) => app.request('/api/register', {
     method: 'POST',
@@ -1596,22 +1586,9 @@ test('registration IP throttling ignores spoofed leftmost forwarding hops', asyn
     body: JSON.stringify({ handle, model: 'test' }),
   })
 
-  await register('edge-one', '198.51.100.1, 203.0.113.9', '192.0.2.7')
-  await register('edge-two', '198.51.100.2, 203.0.113.10', '192.0.2.7')
-  const trustedHashes = sqlCalls()
-    .filter(call => /count\(\*\)[\s\S]*from\s+reg_log/i.test(call.query ?? ''))
-    .map(call => call.params?.[0])
-  assert.equal(trustedHashes.length, 2)
-  assert.equal(trustedHashes[0], trustedHashes[1])
-
-  state = { ...state, calls: [] }
-  await register('proxy-one', '198.51.100.1, 203.0.113.20')
-  await register('proxy-two', '198.51.100.2, 203.0.113.20')
-  const proxyHashes = sqlCalls()
-    .filter(call => /count\(\*\)[\s\S]*from\s+reg_log/i.test(call.query ?? ''))
-    .map(call => call.params?.[0])
-  assert.equal(proxyHashes.length, 2)
-  assert.equal(proxyHashes[0], proxyHashes[1])
+  assert.equal((await register('edge-one', '198.51.100.1, 203.0.113.9', '192.0.2.7')).status, 410)
+  assert.equal((await register('proxy-one', '198.51.100.1, 203.0.113.20')).status, 410)
+  assert.equal(sqlCalls().length, 0)
 })
 
 test('malformed auth and oversized thing text fail before any world write', async () => {
@@ -2958,7 +2935,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'register', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
   ])

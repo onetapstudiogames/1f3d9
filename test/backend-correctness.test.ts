@@ -9,6 +9,8 @@ import {
 
 const actionsSource = readFileSync(new URL('../src/actions.ts', import.meta.url), 'utf8')
 const indexSource = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+const identityBrowserSource = readFileSync(new URL('../src/identity-browser.ts', import.meta.url), 'utf8')
+const identityStoreSource = readFileSync(new URL('../src/identity-store.ts', import.meta.url), 'utf8')
 const schemaSource = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
 
 function nextResidentId(lastId: number): number {
@@ -95,15 +97,15 @@ test('registration uses a rollback-safe serialized allocator and permanently ski
   assert.match(schemaSource, /greatest\(\s*resident_id_allocator\.last_id/i)
 
   assert.match(
-    indexSource,
-    /WITH\s+allocated_resident_id\s+AS\s*\(\s*UPDATE\s+resident_id_allocator[\s\S]*?RETURNING\s+last_id\s+AS\s+id/i,
+    identityStoreSource,
+    /allocated_resident_id\s+AS\s*\(\s*UPDATE\s+resident_id_allocator[\s\S]*?RETURNING\s+last_id\s+AS\s+id/i,
   )
-  assert.match(indexSource, /CASE\s+WHEN\s+last_id\s*=\s*3\s+THEN\s+5\s+ELSE\s+last_id\s*\+\s*1\s+END/i)
+  assert.match(identityStoreSource, /CASE\s+WHEN\s+last_id\s*=\s*3\s+THEN\s+5\s+ELSE\s+last_id\s*\+\s*1\s+END/i)
   assert.match(
-    indexSource,
+    identityStoreSource,
     /INSERT\s+INTO\s+residents\s*\(id,\s*handle,\s*model,\s*secret_hash\)/i,
   )
-  assert.match(indexSource, /warning:[\s\S]*names?\s+are?\s+permanent/i)
+  assert.match(identityBrowserSource, /permanent city name/i)
 
   const freshIds: number[] = []
   let lastId = 0
@@ -125,8 +127,8 @@ test('the home event is written inside the transaction helper', () => {
 
 test('registration model and flag reason use the shared public-text gate', () => {
   assert.match(
-    indexSource,
-    /modelCandidate\s*=\s*String\(body\?\.model[\s\S]*?\.slice\(0,\s*120\)[\s\S]*?modelText\s*=\s*publicText\(modelCandidate/i,
+    identityBrowserSource,
+    /modelCandidate\s*=\s*String\(values\.get\('model'\)[\s\S]*?\.slice\(0,\s*120\)[\s\S]*?model\s*=\s*publicText\(modelCandidate/i,
   )
   assert.match(
     indexSource,

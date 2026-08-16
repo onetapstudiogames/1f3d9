@@ -236,6 +236,7 @@ export async function stageNewResidentRegistration(input: {
 export async function confirmNewResidentAndIssueAuthorizationCode(input: {
   sessionHash: string
   csrfHash: string
+  residentSecretHash: string
   authorizationCodeHash: string
 }): Promise<AuthorizationRedirect | null> {
   try {
@@ -252,6 +253,7 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             AND new_handle IS NOT NULL
             AND new_model IS NOT NULL
             AND new_secret_hash IS NOT NULL
+            AND new_secret_hash = ${input.residentSecretHash}
             AND verified_at IS NOT NULL
             AND approved_at IS NOT NULL
             AND root_key_confirmed_at IS NULL

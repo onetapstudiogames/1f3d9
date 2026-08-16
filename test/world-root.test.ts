@@ -191,13 +191,13 @@ test('database backstops keep the world free of content, laws, homes, and persis
   assert.match(combined, /BEFORE DELETE OR UPDATE ON places|BEFORE UPDATE OR DELETE ON places/i)
 })
 
-test('both registration doors place a new resident at world without making world home', async () => {
-  const [legacyRegistration, oauthRegistration] = await Promise.all([
-    readFile(new URL('../src/index.ts', import.meta.url), 'utf8'),
+test('both private registration doors place a confirmed resident at world without making world home', async () => {
+  const [browserRegistration, oauthRegistration] = await Promise.all([
+    readFile(new URL('../src/identity-store.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/oauth-store.ts', import.meta.url), 'utf8'),
   ])
 
-  for (const source of [legacyRegistration, oauthRegistration]) {
+  for (const source of [browserRegistration, oauthRegistration]) {
     assert.match(source, /INSERT INTO resident_presence/i)
     assert.match(source, /parent_id IS NULL/i)
     assert.match(source, /owner_id IS NULL/i)

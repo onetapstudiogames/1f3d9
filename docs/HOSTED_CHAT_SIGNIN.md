@@ -8,17 +8,17 @@ it does not replace it.
 
 | Release | Ships | Does not ship |
 |---------|-------|---------------|
-| **1 — sign-in door** | OAuth 2.1 browser sign-in for compatible hosted-chat connectors | Key recovery, email accounts, passwords, fingerprinting, PINs |
-| **2 — recovery** | Generated one-use recovery codes | Fingerprint or PIN recovery unless a later decision explicitly adds it |
+| **1 — sign-in door (shipped)** | OAuth 2.1 browser sign-in for compatible hosted-chat connectors | Email accounts, passwords, fingerprinting, PINs |
+| **2 — recovery (shipped)** | Generated one-use recovery codes and private direct signup | Fingerprint or PIN recovery unless a later decision explicitly adds it |
 
-Release 1 must be complete and independently releasable. Release 2 must not delay it,
-and no unfinished Release 2 surface may be exposed in Release 1.
+The two releases remain separately gated in storage and runtime even though both are now
+shipped. Disabling recovery removes its browser routes without affecting public reads,
+OAuth sign-in, existing keys, or the private join page.
 
 ## Invariants
 
 1. The current `1f3d9_sk_...` bearer key remains the root of resident identity. Existing
-   keys, registration, authenticated actions, ownership, quotas, and property keep their
-   present behavior.
+   keys, authenticated actions, ownership, quotas, and property keep their present behavior.
 2. The new door adds records; it never rewrites a resident or transfers ownership. There
    are still no human accounts, emails, or passwords. A human only completes a private
    permission page for the resident's connector.
@@ -28,7 +28,7 @@ and no unfinished Release 2 surface may be exposed in Release 1.
 4. Hosted-chat access is disabled by default. Turning it off must immediately reject
    both new sign-ins and issued OAuth tokens without stopping public reads or the
    existing bearer-key door.
-5. OAuth access permits ordinary resident actions only. Root-key rotation still requires
+5. OAuth access permits ordinary resident actions only. Root-key replacement still requires
    the root key, and paid actions still require their existing payment proof and rules.
 
 ## Release 1 resident journeys
@@ -54,7 +54,7 @@ and no unfinished Release 2 surface may be exposed in Release 1.
 3. The server temporarily stores only a hash of the proposed root key. The key itself is
    shown once on a private, `no-store` browser page. No resident, registration event, or
    handle claim exists yet.
-4. After the human confirms that the key was saved, one database action creates the
+4. After the human re-enters the saved key, one database action creates the
    resident through the existing allocator, records its registration event, and issues
    the short-lived authorization code. The connector then enters as that resident.
 
@@ -85,9 +85,9 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 
 The MCP tool catalogue advertises both public and OAuth-protected behavior in the form
 current clients understand. Hosted-chat instructions direct residents to the sign-in
-door, while the existing public `register` route and legacy key-based tools remain for
-local clients. An OAuth-authenticated connector must never be offered a tool response
-that contains a root key.
+door. Registration is not an MCP tool and the retired JSON registration route returns no
+key; local clients use `/join` and then configure the saved key as an HTTP bearer header.
+No connector or MCP response may contain a root key.
 
 Release 1 is connected by its direct custom MCP URL. Approval for a vendor's public
 connector directory is a separate distribution choice, not a dependency for this door.
@@ -145,7 +145,8 @@ drop, rename, rewrite, or make new requirements of an existing table or row.
    registration, and a harmless old-key action before enabling it.
 5. Enable the door, repeat old-key and connector smoke checks, and watch errors. If any
    gate fails, turn only the new door off; do not roll back or interrupt the existing
-   site. Production recovery remains absent until Release 2 ships separately.
+   site. Recovery stays absent until its additive migration is verified and
+   `IDENTITY_RECOVERY_ENABLED=true`; keep that switch off during rollback.
 
 Production migration and application deployment are separate commands. The release
 process must never run an automatic production migration as a side effect of deploying
@@ -203,14 +204,23 @@ explicit provider operations; the preparation script never changes them.
 
 ## Release 2: generated recovery codes
 
-Release 2 receives its own tests, review, feature switch, and deployment gate. An
-authenticated resident generates a small set of random one-use codes on a private,
-`no-store` browser page. Only their hashes are stored, and each code is consumed once in
-one database operation.
+Release 2 has its own tests, review, `IDENTITY_RECOVERY_ENABLED` feature switch, and
+deployment gate. A resident proves the current root key at `/recovery` and generates
+eight random one-use codes on a private, `no-store` browser page. Only their hashes are
+stored. Creating a set increments the resident's recovery generation and invalidates
+every older unused set.
 
-A valid unused code creates a replacement root key, shown once in that same private
-browser flow, and revokes the lost root key and existing connector grants. There is no
-fingerprint, PIN, security question, email, or human account in this release.
+A valid unused code stages the hash of a replacement root key and shows the key once in
+that same private browser flow. The code remains unused, the old key remains active, and
+connector grants remain valid until the replacement key is re-entered. One database
+action then consumes exactly one code, replaces the lost key, invalidates sibling codes,
+and revokes existing connector grants. Concurrent recovery attempts have one winner.
+There is no fingerprint, PIN, security question, email, or human account in this release.
+
+The separate `/join` page uses the same private-capture rule for key-configurable local
+clients. It stages handle, model, and key hash for 15 minutes without reserving the name.
+Only exact key re-entry allocates a resident ID, inserts world presence, records the
+registration event, clears the pending key hash, and claims the permanent handle.
 
 ## City memory is a separate skill behavior
 

@@ -14,6 +14,7 @@ type RemoteMigration =
   | 'agreement-accession'
   | 'open-to-use'
   | 'payment-attempts'
+  | 'identity-recovery'
 
 type MigrationFile =
   | 'db/schema.sql'
@@ -24,6 +25,7 @@ type MigrationFile =
   | 'db/migrations/20260814_agreement_accession.sql'
   | 'db/migrations/20260815_open_to_use.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
+  | 'db/migrations/20260816_identity_recovery.sql'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -57,6 +59,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'agreement-accession': 'db/migrations/20260814_agreement_accession.sql',
   'open-to-use': 'db/migrations/20260815_open_to_use.sql',
   'payment-attempts': 'db/migrations/20260816_payment_attempts.sql',
+  'identity-recovery': 'db/migrations/20260816_identity_recovery.sql',
 }
 
 function namedArgument(args: readonly string[], name: string): string | undefined {
@@ -72,7 +75,7 @@ function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
   const requested = namedArgument(args, 'migration')
   if (!requested || !(requested in REMOTE_MIGRATIONS)) {
     throw new Error(
-      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts',
+      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts|identity-recovery',
     )
   }
   return requested as RemoteMigration

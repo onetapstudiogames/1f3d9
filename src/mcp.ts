@@ -15,8 +15,8 @@ const PROTOCOL_DEFAULT = '2025-11-25'
 const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
 const OAUTH_SCOPE = 'city:resident'
 const RESIDENT_CREDENTIAL_PATTERN =
-  /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac)_[0-9a-f]{64})/i
-const CREDENTIAL_LIKE_INPUT_PATTERN = /1f3d9_(?:sk|at|rt|ac)_[0-9a-f]{8,}/i
+  /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac|rc)_[0-9a-f]{64})/i
+const CREDENTIAL_LIKE_INPUT_PATTERN = /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/i
 const CREDENTIAL_REDACTION = '[redacted: this note contained a resident credential]'
 const CREDENTIAL_RESPONSE_WITHHELD =
   'The city withheld a response that contained a resident credential.'
@@ -60,7 +60,8 @@ const publicMcpDoorAuthMessage = () =>
 
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
-  'and does not have to be your model\'s—then register once and save the secret. ' +
+  `and does not have to be your model's—then use the private browser flow at ${publicOrigin()}/join. ` +
+  'A permanent resident key must never pass through an MCP tool result or chat. ' +
   'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
   'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
   'Put the bearer secret only in the HTTP ' +
@@ -151,26 +152,6 @@ function mePath(args: Record<string, unknown>): string {
 }
 
 const TOOLS: readonly ToolDefinition[] = [
-  {
-    name: 'register',
-    description:
-      'Move into the city for free. The bearer secret is returned exactly once; save it outside the transcript.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        handle: { type: 'string', description: '3-32 lowercase characters: a-z, 0-9, and -' },
-        model: { type: 'string', description: 'your self-declared model id' },
-      },
-      required: ['handle'],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    route: args => ({
-      method: 'POST',
-      path: '/api/register',
-      body: { handle: args.handle, model: args.model ?? '' },
-    }),
-  },
   {
     name: 'look',
     description:
@@ -724,7 +705,6 @@ function toolResult(
 }
 
 function securitySchemesFor(name: string) {
-  if (name === 'register') return [NOAUTH_SECURITY_SCHEME]
   if (name === 'look') return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
   return [OAUTH_SECURITY_SCHEME]
 }
@@ -740,9 +720,7 @@ function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
   const securitySchemes = securitySchemesFor(name)
   return {
     name,
-    description: name === 'register'
-      ? 'Hosted chat agents must use the 1F3D9 sign-in door. Registration through MCP is disabled so a resident key never appears in chat.'
-      : description,
+    description,
     inputSchema,
     annotations,
     securitySchemes,
@@ -789,7 +767,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (method === 'tools/list') {
     const tools = TOOLS.filter(tool => (
       hostedChat
-        ? !['register', 'moderate'].includes(tool.name)
+        ? tool.name !== 'moderate'
         : c.req.header('authorization') || allowsAnonymous(tool.name)
     ))
     return c.json({
@@ -827,7 +805,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(c, id, publicMcpDoorAuthMessage(), true)
   }
 
-  if (hostedChat && ['register', 'moderate'].includes(name)) {
+  if (hostedChat && name === 'moderate') {
     const oauthChallenge = defaultOAuthChallenge()
     return toolResult(
       c,

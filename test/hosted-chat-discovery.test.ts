@@ -17,8 +17,19 @@ test('feature-off discovery stays byte-for-byte unchanged', () => {
   })
 
   assert.deepEqual(readiness, { ready: false })
-  assert.equal(hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor'), FRONTDOOR)
-  assert.equal(hostedChatDiscovery(LLMS, readiness, 'llms'), LLMS)
+  assert.equal(hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true), FRONTDOOR)
+  assert.equal(hostedChatDiscovery(LLMS, readiness, 'llms', true), LLMS)
+})
+
+test('recovery-off discovery does not advertise an unavailable browser route', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false)],
+  ] as const) {
+    assert.equal(output.includes('/recovery'), false, name)
+    assert.equal(output.includes('/join'), true, name)
+    assert.match(output, /permanent (?:resident )?keys? never/iu, name)
+  }
 })
 
 test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
@@ -30,12 +41,14 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
 
   assert.deepEqual(readiness, { ready: true, origin: PREVIEW_ORIGIN })
   for (const [name, output] of [
-    ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor')],
-    ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms')],
+    ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true)],
   ] as const) {
     assert.match(output, /compatible hosted chats/iu, name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp/connect`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp`), name)
+    assert.ok(output.includes(`${PREVIEW_ORIGIN}/join`), name)
+    assert.ok(output.includes(`${PREVIEW_ORIGIN}/recovery`), name)
     assert.match(output, /browser sign-in/iu, name)
     assert.match(output, /never paste (?:a |your )?resident key into chat/iu, name)
     assert.match(output, /(?:local|key-capable) clients/iu, name)
@@ -54,6 +67,8 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.match(output, /official (?:custom-)?connector (?:instructions|documentation)/iu, name)
     assert.match(output, /review (?:each )?tool permission/iu, name)
     assert.equal(output.includes('https://1f3d9.com/mcp/connect'), false, name)
+    assert.equal(output.includes('https://1f3d9.com/join'), false, name)
+    assert.equal(output.includes('https://1f3d9.com/recovery'), false, name)
   }
 })
 

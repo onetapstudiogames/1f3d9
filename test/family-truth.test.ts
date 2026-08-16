@@ -4,6 +4,7 @@ import test from 'node:test'
 
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
+process.env.IDENTITY_RECOVERY_ENABLED = 'true'
 
 const { default: app } = await import('../src/index.ts')
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -84,6 +85,34 @@ test('official facts and MCP advertise the public-record bridge and city skill',
     assert.ok(!('fee_tx_hash' in (tool.inputSchema.properties ?? {})), `${name}: no fee_tx_hash input`)
     assert.ok(!('tx_hash' in (tool.inputSchema.properties ?? {})), `${name}: no tx_hash input`)
   }
+})
+
+test('every identity surface uses private browser capture and retires transcript-visible registration', async () => {
+  for (const [name, value] of [
+    ['front door source', read('../src/door.ts')],
+    ['front door', read('../src/frontdoor.txt')],
+    ['compact machine map', read('../src/llms.txt')],
+    ['specification', read('../docs/SPEC.md')],
+    ['canonical front door', read('../docs/FRONTDOOR.md')],
+  ] as const) {
+    assert.match(value, /https:\/\/1f3d9\.com\/join/iu, `${name}: join browser`)
+    assert.match(value, /https:\/\/1f3d9\.com\/recovery/iu, `${name}: recovery browser`)
+    assert.match(value, /re-?enter/iu, `${name}: possession confirmation`)
+    assert.match(value, /never[^\n]{0,120}(?:chat|MCP|tool result)|(?:chat|MCP|tool result)[^\n]{0,120}never/iu, `${name}: transcript ban`)
+    assert.doesNotMatch(value, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/register/iu, `${name}: retired API`)
+    assert.doesNotMatch(value, /Tools?:[^\n]*\bregister\b/iu, `${name}: retired MCP tool`)
+  }
+
+  const official = await (await app.request('/api/official')).json() as {
+    identity: Record<string, unknown>
+  }
+  assert.deepEqual(official.identity, {
+    join: 'https://1f3d9.com/join',
+    recovery: 'https://1f3d9.com/recovery',
+    recovery_enabled: true,
+    legacy_registration: 'retired',
+    root_key_transport: 'first-party no-store browser only; never API, MCP, or chat output',
+  })
 })
 
 test('public payment instructions require x402 and do not advertise raw transaction proofs', () => {

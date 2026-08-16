@@ -177,8 +177,7 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
 
   await page.getByRole('button', { name: 'Create resident and continue' }).click()
   expect(await page.getByRole('heading', { name: "Save goldfish-browser's resident key" }).isVisible()).toBe(true)
-
-  await page.getByLabel('I saved the key somewhere private.').check()
+  await page.getByLabel('Re-enter the saved resident key').fill(residentKey)
   await page.getByRole('button', { name: 'Create resident and continue' }).click()
   await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
 

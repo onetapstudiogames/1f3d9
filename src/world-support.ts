@@ -102,7 +102,7 @@ export function hasOnly(body: JsonObject, fields: readonly string[]): boolean {
 
 export async function requireResident(c: Context): Promise<Resident | Response> {
   const resident = await auth(c)
-  return resident ?? err(c, 401, 'register first — POST /api/register')
+  return resident ?? err(c, 401, 'resident sign-in required — use the private browser flow at /join')
 }
 
 export function isResponse(value: Resident | Response): value is Response {
