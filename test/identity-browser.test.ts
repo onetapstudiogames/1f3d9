@@ -11,6 +11,19 @@ import {
 const ORIGIN = 'https://city.test'
 const ROOT_KEY = '1f3d9_sk_' + '11'.repeat(24)
 const OTHER_ROOT_KEY = '1f3d9_sk_' + '22'.repeat(24)
+const RECOVERY_CODE_HASH = /^[0-9a-f]{64}$/
+
+function validRecoveryCodeHashes(hashes: readonly string[]): boolean {
+  return hashes.length === 8 &&
+    new Set(hashes).size === 8 &&
+    hashes.every(hash => RECOVERY_CODE_HASH.test(hash))
+}
+
+function requireRecoveryCodeHashes(hashes: readonly string[]): void {
+  if (!validRecoveryCodeHashes(hashes)) {
+    throw new Error('exactly eight unique recovery-code hashes are required')
+  }
+}
 
 function assertSecretsAbsent(surface: string, secrets: readonly string[]): void {
   for (const secret of secrets) assert.equal(surface.includes(secret), false)
@@ -100,7 +113,8 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       if (options.registrationStageOutcome === 'error') throw new Error('registration store unavailable')
       if (options.registrationStageOutcome === 'missing') return null
       if (options.registrationStageOutcome === 'handle_taken') return { status: 'handle_taken' as const }
-      registration = { ...input }
+      requireRecoveryCodeHashes(input.recoveryCodeHashes)
+      registration = { ...input, recoveryCodeHashes: [...input.recoveryCodeHashes] }
       return { status: 'staged' as const, handle: input.handle }
     },
     async confirmResidentRegistration(input: {
@@ -114,7 +128,8 @@ function memoryStore(options: MemoryStoreOptions = {}) {
         confirmed || !registration ||
         registration.sessionHash !== input.sessionHash ||
         registration.csrfHash !== input.csrfHash ||
-        registration.residentSecretHash !== input.residentSecretHash
+        registration.residentSecretHash !== input.residentSecretHash ||
+        !validRecoveryCodeHashes(registration.recoveryCodeHashes)
       ) return null
       confirmed = true
       recoveryGeneration += 1
@@ -132,6 +147,7 @@ function memoryStore(options: MemoryStoreOptions = {}) {
     }) {
       calls.push({ method: 'generateRecoveryCodes', input })
       if (input.residentSecretHash !== sha256(ROOT_KEY)) return null
+      requireRecoveryCodeHashes(input.codeHashes)
       recoveryGeneration += 1
       recoveryCodeHashes = [...input.codeHashes]
       return { residentId: 7, handle: 'existing-resident', generation: recoveryGeneration }
@@ -211,7 +227,9 @@ function memoryStore(options: MemoryStoreOptions = {}) {
   return {
     store,
     calls,
-    registration: () => registration,
+    registration: () => registration
+      ? { ...registration, recoveryCodeHashes: [...registration.recoveryCodeHashes] }
+      : null,
     confirmed: () => confirmed,
     recovered: () => recovered,
     stagedRotation: () => stagedRotation,
