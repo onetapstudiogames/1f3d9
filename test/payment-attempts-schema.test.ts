@@ -16,6 +16,10 @@ const responseBodyMigrationDdl = readFileSync(
   new URL('../db/migrations/20260817_payment_response_body_replay.sql', import.meta.url),
   'utf8',
 )
+const responseBodyValidationMigrationDdl = readFileSync(
+  new URL('../db/migrations/20260817_payment_response_body_validate.sql', import.meta.url),
+  'utf8',
+)
 
 function createPaymentAttemptsStatement(ddl: string): string {
   const statement = splitSqlStatements(ddl).find(candidate =>
@@ -199,6 +203,8 @@ test('exact response bodies are bounded, validated, immutable, and added without
   assert.equal(upgrade, fresh)
   assert.match(schemaDdl, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+response_body_bytes\s+BYTEA/iu)
   assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+response_body_bytes\s+BYTEA/iu)
+  assert.match(migration, /ADD\s+CONSTRAINT\s+payment_attempts_response_body_bytes_valid[\s\S]*?\)\s+NOT\s+VALID\s*;/iu)
+  assert.doesNotMatch(migration, /VALIDATE\s+CONSTRAINT/iu)
   assert.match(migration, /octet_length\s*\(\s*response_body_bytes\s*\)\s+BETWEEN\s+2\s+AND\s+200000/iu)
   assert.match(migration, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+validate_payment_response_body/iu)
   assert.match(migration, /convert_from\s*\(\s*NEW\.response_body_bytes\s*,\s*'UTF8'\s*\)\s*::\s*jsonb/iu)
@@ -214,6 +220,18 @@ test('exact response bodies are bounded, validated, immutable, and added without
       /^(?:UPDATE|DELETE|TRUNCATE|DROP\s+TABLE|DROP\s+COLUMN)\b/iu,
     )
   }
+})
+
+test('response-body backfill validation is a separately committed one-statement phase', () => {
+  const statements = splitSqlStatements(responseBodyValidationMigrationDdl)
+    .map(statement => statement.replace(/^\s*--.*$/gmu, '').trim())
+    .filter(Boolean)
+  assert.equal(statements.length, 1)
+  assert.match(
+    statements[0] ?? '',
+    /^ALTER\s+TABLE\s+payment_attempts\s+VALIDATE\s+CONSTRAINT\s+payment_attempts_response_body_bytes_valid\s*;?$/iu,
+  )
+  assert.match(schemaDdl, /VALIDATE\s+CONSTRAINT\s+payment_attempts_response_body_bytes_valid/iu)
 })
 
 test('a recorded facilitator response header is immutable before and after completion', () => {

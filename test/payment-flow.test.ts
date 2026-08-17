@@ -91,6 +91,7 @@ function dependencies(
   const parsed = parseX402Payment(paymentHeader, accepted)
   assert.ok(!('error' in parsed))
   return {
+    custodyReady: async () => { events.push('schema'); return true },
     currentBlock: async () => { events.push('block'); return 100n },
     createOrRead: async () => {
       events.push('create')
@@ -172,7 +173,7 @@ test('custody exists before settlement and final evidence becomes ready exactly 
     assert.ok(result.paymentResponseHeader)
   }
   assert.deepEqual(events, [
-    'block', 'create', 'lease', 'verify', 'settle',
+    'block', 'create', 'schema', 'lease', 'verify', 'settle',
     'bind-tx', 'classify', 'bind-final',
   ])
 })
@@ -186,6 +187,26 @@ test('a reservation wallet mismatch is rejected before custody or settlement', a
 
   assert.equal(result.state, 'rejected')
   assert.deepEqual(events, [])
+})
+
+test('new payment fails closed before verification or settlement when byte replay schema is absent', async () => {
+  const events: string[] = []
+  const result = await runDurableX402(input, dependencies(events, {
+    custodyReady: async () => {
+      events.push('schema')
+      return false
+    },
+  }))
+
+  assert.equal(result.state, 'unavailable')
+  if (result.state === 'unavailable') {
+    assert.equal(result.status, 503)
+    assert.equal(result.body.do_not_pay_again, true)
+    assert.match(result.body.error, /temporarily unavailable|upgraded/iu)
+  }
+  assert.deepEqual(events, ['block', 'create', 'schema'])
+  assert.equal(events.includes('verify'), false)
+  assert.equal(events.includes('settle'), false)
 })
 
 test('a persisted transaction skips verification and settlement on retry', async () => {
@@ -206,7 +227,7 @@ test('a persisted transaction skips verification and settlement on retry', async
   })
 
   assert.equal((await runDurableX402(input, deps)).state, 'ready')
-  assert.deepEqual(events, ['block', 'create', 'lease', 'classify', 'bind-final'])
+  assert.deepEqual(events, ['block', 'create', 'schema', 'lease', 'classify', 'bind-final'])
 })
 
 test('an ambiguous settlement becomes durable review and never invites a new payment', async () => {
@@ -221,7 +242,7 @@ test('an ambiguous settlement becomes durable review and never invites a new pay
 
   assert.equal(result.state, 'payment_pending')
   if (result.state === 'payment_pending') assert.equal(result.body.do_not_pay_again, true)
-  assert.deepEqual(events, ['block', 'create', 'lease', 'verify', 'settle', 'review'])
+  assert.deepEqual(events, ['block', 'create', 'schema', 'lease', 'verify', 'settle', 'review'])
 })
 
 test('unfinalized evidence stays pending and releases the worker lease', async () => {
@@ -233,7 +254,7 @@ test('unfinalized evidence stays pending and releases the worker lease', async (
 
   assert.equal(result.state, 'payment_pending')
   assert.deepEqual(events, [
-    'block', 'create', 'lease', 'verify', 'settle', 'bind-tx', 'classify', 'release',
+    'block', 'create', 'schema', 'lease', 'verify', 'settle', 'bind-tx', 'classify', 'release',
   ])
 })
 
@@ -283,6 +304,10 @@ test('a completed retry returns the stored canonical response without chain or f
 test('a pre-upgrade completed row uses the compatibility receipt without another settlement', async () => {
   const events: string[] = []
   const deps = dependencies(events, {
+    custodyReady: async () => {
+      events.push('schema')
+      return false
+    },
     createOrRead: async () => {
       events.push('create')
       return {
@@ -309,6 +334,36 @@ test('a pre-upgrade completed row uses the compatibility receipt without another
   }
   assert.deepEqual(events, ['block', 'create'])
   assert.equal(events.includes('settle'), false)
+})
+
+test('schema capability is required before a custody lease or settlement', async () => {
+  const events: string[] = []
+  const result = await runDurableX402(input, dependencies(events, {
+    custodyReady: async () => { events.push('schema'); return false },
+  }))
+
+  assert.equal(result.state, 'unavailable')
+  assert.deepEqual(events, ['block', 'create', 'schema'])
+})
+
+test('pending payment resume fails closed before chain work when byte replay schema is absent', async () => {
+  const events: string[] = []
+  const stored = attempt({ status: 'payment_pending', txHash: TX })
+  const result = await resumeDurableX402({
+    database: input.database,
+    attempt: stored,
+    actorId: stored.actorId,
+  }, dependencies(events, {
+    custodyReady: async () => {
+      events.push('schema')
+      return false
+    },
+  }))
+
+  assert.equal(result.state, 'unavailable')
+  assert.deepEqual(events, ['schema'])
+  assert.equal(events.includes('lease'), false)
+  assert.equal(events.includes('classify'), false)
 })
 
 test('a finalized transfer outside the conservative window is terminally rejected', async () => {
@@ -355,7 +410,7 @@ test('a stored pending attempt can finish after wall-clock expiry when its block
   }))
 
   assert.equal(result.state, 'ready')
-  assert.deepEqual(events, ['lease', 'classify', 'bind-final'])
+  assert.deepEqual(events, ['schema', 'lease', 'classify', 'bind-final'])
 })
 
 test('resume never settles an attempt whose transaction outcome is still unknown', async () => {
@@ -377,6 +432,6 @@ test('resume never settles an attempt whose transaction outcome is still unknown
   }))
 
   assert.equal(result.state, 'payment_pending')
-  assert.deepEqual(events, ['lease', 'recover', 'review'])
+  assert.deepEqual(events, ['schema', 'lease', 'recover', 'review'])
   assert.equal(events.includes('settle'), false)
 })

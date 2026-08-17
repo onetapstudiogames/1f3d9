@@ -15,7 +15,7 @@ const NONCE_RE = /^0x[0-9a-fA-F]{64}$/
 const MAX_PAYMENT_HEADER_BYTES = 32_768
 const MAX_FACILITATOR_RESPONSE_BYTES = 65_536
 const FACILITATOR_TIMEOUT_MS = 8_000
-const PAYMENT_CUSTODY_UNAVAILABLE =
+export const PAYMENT_CUSTODY_UNAVAILABLE =
   'payments are temporarily unavailable while durable payment custody is being upgraded; do not pay or retry yet'
 
 export function paymentCustodyReady(

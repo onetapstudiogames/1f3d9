@@ -22,6 +22,10 @@ const responseBodyMigrationDdl = await readFile(
   new URL('../../db/migrations/20260817_payment_response_body_replay.sql', import.meta.url),
   'utf8',
 )
+const responseBodyValidationMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260817_payment_response_body_validate.sql', import.meta.url),
+  'utf8',
+)
 
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
 const SELLER_WALLET = `0x${'1'.repeat(40)}`
@@ -246,6 +250,49 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         `SELECT to_regclass('public.payment_attempts')::text AS table_name`,
       )
       assert.deepEqual(table.rows, [{ table_name: 'payment_attempts' }])
+    })
+
+    await t.test('response-body validation commits in a separate idempotent phase', async () => {
+      await resetFresh(postgres.client)
+      await postgres.client.query(`
+        ALTER TABLE payment_attempts
+          DROP CONSTRAINT payment_attempts_response_body_bytes_valid
+      `)
+      await postgres.client.query(responseBodyMigrationDdl)
+      await postgres.client.query(responseBodyMigrationDdl)
+      const phaseA = await postgres.client.query<{ convalidated: boolean }>(`
+        SELECT convalidated
+        FROM pg_catalog.pg_constraint
+        WHERE conrelid = 'payment_attempts'::regclass
+          AND conname = 'payment_attempts_response_body_bytes_valid'
+      `)
+      assert.deepEqual(phaseA.rows, [{ convalidated: false }])
+      const overloads = await postgres.client.query<{
+        legacy_completion: string | null
+        exact_completion: string | null
+      }>(`
+        SELECT
+          to_regprocedure(
+            'public.complete_payment_attempt(text,text,jsonb,smallint,jsonb)'
+          )::text AS legacy_completion,
+          to_regprocedure(
+            'public.complete_payment_attempt(text,text,jsonb,smallint,jsonb,bytea)'
+          )::text AS exact_completion
+      `)
+      assert.deepEqual(overloads.rows, [{
+        legacy_completion: 'complete_payment_attempt(text,text,jsonb,smallint,jsonb)',
+        exact_completion: 'complete_payment_attempt(text,text,jsonb,smallint,jsonb,bytea)',
+      }])
+
+      await postgres.client.query(responseBodyValidationMigrationDdl)
+      await postgres.client.query(responseBodyValidationMigrationDdl)
+      const phaseB = await postgres.client.query<{ convalidated: boolean }>(`
+        SELECT convalidated
+        FROM pg_catalog.pg_constraint
+        WHERE conrelid = 'payment_attempts'::regclass
+          AND conname = 'payment_attempts_response_body_bytes_valid'
+      `)
+      assert.deepEqual(phaseB.rows, [{ convalidated: true }])
     })
 
     await t.test('an issued world payment parks after reservation expiry and keeps the offer locked', async () => {

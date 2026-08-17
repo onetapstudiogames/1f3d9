@@ -8,7 +8,7 @@ import {
   paymentReadinessResponse,
   requirements,
 } from './pay.ts'
-import { findPaymentAttempt } from './payment-attempts.ts'
+import { findPaymentAttempt, findReplayableTargetPaymentAttempt } from './payment-attempts.ts'
 import {
   completedPaymentResponse,
   paymentJsonResponse,
@@ -16,6 +16,7 @@ import {
   runDurableX402,
   type DurableX402Result,
 } from './payment-flow.ts'
+import { PaymentAttemptConflictError } from './payment-attempts.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -919,18 +920,44 @@ export function mountWorldMarketRoutes(
       if (offer.buyer_id !== buyer.id) {
         return err(c, 403, 'this world offer was claimed by another resident')
       }
-      const completedAttempt = await dependencies.findPayment({ query: dependencies.query }, {
-        actorId: buyer.id,
-        operation: 'world_sale',
-        offerId: offer.id,
-      })
-      if (completedAttempt?.status === 'completed') {
-        const replay = await dependencies.resumePayment({
-          database: { query: dependencies.query },
-          attempt: completedAttempt,
+      if (checkoutId != null && checkoutId !== offer.market_checkout_id) {
+        return err(c, 409, 'market_checkout_id does not match the settled payment')
+      }
+      if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
+        return err(c, 409, 'buyer_wallet does not match the settled payment')
+      }
+      try {
+        const completedAttempt = await findReplayableTargetPaymentAttempt({ query: dependencies.query }, {
           actorId: buyer.id,
+          counterpartyId: offer.seller_id,
+          operation: 'world_sale',
+          targetKey: `world-sale:${offer.id}`,
+          offerId: offer.id,
+          assetType: 'thing',
+          assetId: offer.asset_id,
+          request: {
+            offer_id: offer.id,
+            market_checkout_id: offer.market_checkout_id,
+            market_listing_id: offer.market_listing_id,
+            market_draft_id: offer.market_draft_id,
+            market_buyer: offer.market_buyer,
+            buyer_wallet: offer.buyer_wallet,
+            seller_wallet: offer.seller_wallet,
+            price_usdc: offer.price_usdc,
+            asset_id: offer.asset_id,
+          },
         })
-        if (replay.state === 'completed') return completedPaymentResponse(replay)
+        if (completedAttempt?.status === 'completed') {
+          const replay = await dependencies.resumePayment({
+            database: { query: dependencies.query },
+            attempt: completedAttempt,
+            actorId: buyer.id,
+          })
+          if (replay.state === 'completed') return completedPaymentResponse(replay)
+        }
+      } catch (error) {
+        if (error instanceof PaymentAttemptConflictError) return err(c, 409, error.message)
+        throw error
       }
       return c.json({ offer: publicOffer(offer, dependencies.now()) })
     }

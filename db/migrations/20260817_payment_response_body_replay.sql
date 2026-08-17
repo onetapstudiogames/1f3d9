@@ -18,7 +18,7 @@ BEGIN
           AND response_json IS NOT NULL
           AND octet_length(response_body_bytes) BETWEEN 2 AND 200000
         )
-      );
+      ) NOT VALID;
   END IF;
 END
 $$;

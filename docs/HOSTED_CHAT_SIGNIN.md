@@ -185,7 +185,12 @@ and canonical-response replay first, then run
 `npm run migrate:preview:payment-response-body-replay`. It applies only
 `db/migrations/20260817_payment_response_body_replay.sql`. The migration adds the
 nullable `payment_attempts.response_body_bytes` field; `NULL` remains the honest legacy
-state when the original response bytes were never stored.
+state when the original response bytes were never stored. This Phase A migration adds
+the size/status check as `NOT VALID`, so it enforces new writes without scanning all
+existing attempts while the migration runner still holds the ADD lock. After Phase A
+commits and the new application is healthy, run
+`npm run migrate:preview:payment-response-body-validate`. That separately committed,
+one-statement Phase B migration validates the existing rows.
 
 Production requires a real Neon snapshot, not a typed promise that one exists. The
 operator provides `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PRODUCTION_BRANCH_ID`, a safe
@@ -200,8 +205,13 @@ that one migration in one transaction.
 
 For production byte replay, use
 `npm run migrate:production:payment-response-body-replay` only after the payment custody
-and canonical-response migrations are present. It is additive and idempotent, validates
-new stored bodies at 2–200,000 bytes, and does not rewrite legacy completed rows.
+and canonical-response migrations are present. It is additive and idempotent, enforces
+new stored bodies at 2–200,000 bytes, and does not rewrite legacy completed rows. After
+the application is healthy (or during a quieter window), run
+`npm run migrate:production:payment-response-body-validate` as a separate invocation.
+Do not combine Phase A and Phase B in one migration-runner transaction: PostgreSQL keeps
+the Phase A table lock until commit. Before declaring the release complete, verify the
+named check exists with `pg_constraint.convalidated = true`.
 
 The full fresh-install schema has no generic `npm run migrate` shortcut. It can run only
 as `npm run migrate:local`, with `LOCAL_DATABASE_URL_UNPOOLED` pointing to a loopback host

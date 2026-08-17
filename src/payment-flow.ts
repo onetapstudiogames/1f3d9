@@ -11,6 +11,7 @@ import {
   createOrReadPaymentAttempt,
   invalidatePaymentAttempt,
   markPaymentAttemptNeedsReview,
+  paymentResponseReplayReady,
   PaymentAttemptConflictError,
   releaseSettlementLease,
   toPublicPaymentAttempt,
@@ -19,6 +20,7 @@ import {
   type PaymentAttemptRecord,
 } from './payment-attempts.ts'
 import {
+  PAYMENT_CUSTODY_UNAVAILABLE,
   parseX402Payment,
   paymentResponseHeader,
   settleVerifiedX402,
@@ -50,6 +52,7 @@ export interface DurableX402Input {
 }
 
 export interface PaymentFlowDependencies {
+  custodyReady(database: PaymentAttemptDatabase): Promise<boolean>
   currentBlock(): Promise<bigint | null>
   createOrRead: typeof createOrReadPaymentAttempt
   acquireLease: typeof acquireSettlementLease
@@ -107,6 +110,7 @@ export type DurableX402Result =
   | { state: 'unavailable'; status: 503; body: { error: string; do_not_pay_again: boolean } }
 
 const defaultDependencies: PaymentFlowDependencies = {
+  custodyReady: paymentResponseReplayReady,
   currentBlock: currentBaseBlockNumber,
   createOrRead: createOrReadPaymentAttempt,
   acquireLease: acquireSettlementLease,
@@ -263,6 +267,7 @@ export async function resumeDurableX402(
   if (input.attempt.status === 'invalid' || input.attempt.status === 'expired') {
     return rejected(input.attempt.invalidReason ?? 'payment attempt is no longer valid', 409, true)
   }
+  if (!await deps.custodyReady(input.database)) return unavailable(PAYMENT_CUSTODY_UNAVAILABLE)
   const leased = await deps.acquireLease(input.database, {
     publicId: input.attempt.publicId,
     actorId: input.actorId,
@@ -435,6 +440,7 @@ export async function runDurableX402(
   if (created.attempt.status === 'invalid' || created.attempt.status === 'expired') {
     return rejected(created.attempt.invalidReason ?? 'payment attempt is no longer valid', 409, true)
   }
+  if (!await deps.custodyReady(input.database)) return unavailable(PAYMENT_CUSTODY_UNAVAILABLE)
 
   const leased = await deps.acquireLease(
     input.database,

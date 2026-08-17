@@ -11,6 +11,8 @@ import {
 } from './pay.ts'
 import {
   findPaymentAttempt,
+  findReplayableTargetPaymentAttempt,
+  PaymentAttemptConflictError,
 } from './payment-attempts.ts'
 import {
   completedPaymentResponse,
@@ -718,18 +720,42 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!type) return err(c, 409, 'offer refers to an unsupported asset type')
     if (offer.status !== 'open') {
       if (offer.status === 'claimed' && offer.buyer_id === resident.id) {
-        const completedAttempt = await findPaymentAttempt({ query: sql.query }, {
-          actorId: resident.id,
-          operation: 'direct_sale',
-          offerId,
-        })
-        if (completedAttempt?.status === 'completed') {
-          const replay = await resumeDurableX402({
-            database: { query: sql.query },
-            attempt: completedAttempt,
+        const settledBuyerWallet = typeof offer.buyer_wallet === 'string'
+          && WALLET_RE.test(offer.buyer_wallet)
+          ? offer.buyer_wallet.toLowerCase()
+          : null
+        if (settledBuyerWallet == null || requestedWallet !== settledBuyerWallet) {
+          return err(c, 409, 'buyer_wallet does not match the settled payment')
+        }
+        try {
+          const completedAttempt = await findReplayableTargetPaymentAttempt({ query: sql.query }, {
             actorId: resident.id,
+            counterpartyId: offer.seller_id,
+            operation: 'direct_sale',
+            targetKey: `direct-sale:${offerId}`,
+            offerId,
+            assetType: type,
+            assetId: offer.asset_id,
+            request: {
+              offer_id: offerId,
+              buyer_wallet: requestedWallet,
+              seller_wallet: offer.seller_wallet,
+              price_usdc: Number(offer.price_usdc),
+              asset_type: type,
+              asset_id: offer.asset_id,
+            },
           })
-          if (replay.state === 'completed') return completedPaymentResponse(replay)
+          if (completedAttempt?.status === 'completed') {
+            const replay = await resumeDurableX402({
+              database: { query: sql.query },
+              attempt: completedAttempt,
+              actorId: resident.id,
+            })
+            if (replay.state === 'completed') return completedPaymentResponse(replay)
+          }
+        } catch (error) {
+          if (error instanceof PaymentAttemptConflictError) return err(c, 409, error.message)
+          throw error
         }
       }
       return err(c, 409, `offer is ${offer.status}`)

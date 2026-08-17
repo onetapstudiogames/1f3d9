@@ -14,8 +14,19 @@ import {
   TREASURY,
 } from './pay.ts'
 import { sql } from './db.ts'
-import { completedPaymentResponse, paymentJsonResponse, runDurableX402 } from './payment-flow.ts'
-import { releaseSettlementLease, type PaymentAttemptRecord } from './payment-attempts.ts'
+import {
+  completedPaymentResponse,
+  paymentJsonResponse,
+  resumeDurableX402,
+  runDurableX402,
+  type DurableX402Result,
+} from './payment-flow.ts'
+import {
+  findReplayableTargetPaymentAttempt,
+  PaymentAttemptConflictError,
+  releaseSettlementLease,
+  type PaymentAttemptRecord,
+} from './payment-attempts.ts'
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export const DESCRIPTION_MAX = 4_000
@@ -142,19 +153,62 @@ export async function treasuryFee(
   if (unavailable) return unavailable
   const accepted = requirements(TREASURY, CLAIM_FEE_USDC, resource, description)
   const paymentHeader = c.req.header('x-payment')
-  if (!paymentHeader) return challenge402(c, accepted, 'costs $1 USDC through x402; send the X-PAYMENT header')
+  const payment = paymentHeader
+    ? await runDurableX402({
+      database: { query: sql.query },
+      paymentHeader,
+      accepted,
+      actorId,
+      operation: details.operation,
+      targetKey: details.targetKey,
+      ...(details.assetType !== undefined ? { assetType: details.assetType } : {}),
+      ...(details.assetId !== undefined ? { assetId: details.assetId } : {}),
+      request: details.request,
+    })
+    : await replayTreasuryFee({
+      accepted,
+      actorId,
+      details,
+      challenge: () => challenge402(c, accepted, 'costs $1 USDC through x402; send the X-PAYMENT header'),
+    })
+  if (payment instanceof Response) return payment
+  return treasuryFeeFromPayment(c, payment)
+}
 
-  const payment = await runDurableX402({
-    database: { query: sql.query },
-    paymentHeader,
-    accepted,
-    actorId,
-    operation: details.operation,
-    targetKey: details.targetKey,
-    ...(details.assetType !== undefined ? { assetType: details.assetType } : {}),
-    ...(details.assetId !== undefined ? { assetId: details.assetId } : {}),
-    request: details.request,
-  })
+async function replayTreasuryFee(input: {
+  accepted: ReturnType<typeof requirements>
+  actorId: number
+  details: TreasuryFeeOperation
+  challenge: () => Response
+}): Promise<DurableX402Result | Response> {
+  try {
+    const existing = await findReplayableTargetPaymentAttempt({ query: sql.query }, {
+      actorId: input.actorId,
+      operation: input.details.operation,
+      targetKey: input.details.targetKey,
+      ...(input.details.assetType !== undefined ? { assetType: input.details.assetType } : {}),
+      ...(input.details.assetId !== undefined ? { assetId: input.details.assetId } : {}),
+      request: input.details.request,
+    })
+    if (!existing) return input.challenge()
+    return resumeDurableX402({
+      database: { query: sql.query },
+      attempt: existing,
+      actorId: input.actorId,
+    })
+  } catch (error) {
+    if (!(error instanceof PaymentAttemptConflictError)) throw error
+    return new Response(JSON.stringify({ error: error.message, do_not_pay_again: true }), {
+      status: 409,
+      headers: { 'content-type': 'application/json; charset=UTF-8' },
+    })
+  }
+}
+
+function treasuryFeeFromPayment(
+  c: Context,
+  payment: DurableX402Result,
+): FeePayment | Response {
   if (payment.state === 'completed') {
     return completedPaymentResponse(payment)
   }

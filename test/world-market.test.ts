@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Hono, type Context } from 'hono'
 import { mountWorldMarketRoutes, type WorldMarketDependencies } from '../src/world-market.ts'
 import { mcp } from '../src/mcp.ts'
-import type { PaymentAttemptRecord } from '../src/payment-attempts.ts'
+import { canonicalPaymentRequest, type PaymentAttemptRecord } from '../src/payment-attempts.ts'
 
 const MARKET = 'https://1f3ea.com'
 const SELLER_SECRET = 'Bearer seller-secret'
@@ -13,6 +13,17 @@ const SELLER_WALLET = '0x1111111111111111111111111111111111111111'
 const BUYER_WALLET = '0x2222222222222222222222222222222222222222'
 const OTHER_WALLET = '0x3333333333333333333333333333333333333333'
 const TX = '0x' + 'ab'.repeat(32)
+const SETTLED_RESPONSE = Buffer.from(JSON.stringify({
+  success: true,
+  transaction: TX,
+  payer: BUYER_WALLET,
+})).toString('base64')
+const COMPLETED_RESPONSE = Buffer.from(JSON.stringify({
+  success: true,
+  transaction: TX,
+  payer: BUYER_WALLET,
+  replay: true,
+})).toString('base64')
 const ATTEMPT_ID = 'pay_world_offer_1234567890abcdef'
 const PAYMENT_ID = 'pay_world_offer_1234567890abcdef'
 const X_PAYMENT = Buffer.from(JSON.stringify({
@@ -239,6 +250,23 @@ function fakePaymentAttempt(now: string): PaymentAttemptRecord {
   }
 }
 
+function worldSaleRequestHash(offer: Pick<
+  FakeOffer,
+  'id' | 'market_checkout_id' | 'market_listing_id' | 'market_draft_id' | 'market_buyer' | 'buyer_wallet' | 'seller_wallet' | 'price_usdc' | 'asset_id'
+>): string {
+  return canonicalPaymentRequest({
+    offer_id: offer.id,
+    market_checkout_id: offer.market_checkout_id,
+    market_listing_id: offer.market_listing_id,
+    market_draft_id: offer.market_draft_id,
+    market_buyer: offer.market_buyer,
+    buyer_wallet: offer.buyer_wallet,
+    seller_wallet: offer.seller_wallet,
+    price_usdc: offer.price_usdc,
+    asset_id: offer.asset_id,
+  }).hash
+}
+
 function makeHarness(patch: Partial<FakeState> = {}) {
   let state = initialState(patch)
   if (state.offer?.pending_payment_attempt_id && state.paymentAttempt == null) {
@@ -247,6 +275,20 @@ function makeHarness(patch: Partial<FakeState> = {}) {
 
   const query = async (text: string, params: readonly unknown[]) => {
     state = { ...state, queries: [...state.queries, { text, params }] }
+    if (text.includes('payment-attempts:find-replayable-target')) {
+      return state.paymentAttempt ? [{
+        ...state.paymentAttempt,
+        public_id: state.paymentAttempt.publicId,
+        actor_id: state.paymentAttempt.actorId,
+        counterparty_id: state.paymentAttempt.counterpartyId,
+        operation: state.paymentAttempt.operation,
+        target_key: state.paymentAttempt.targetKey,
+        offer_id: state.paymentAttempt.offerId,
+        asset_type: state.paymentAttempt.assetType,
+        asset_id: state.paymentAttempt.assetId,
+        request_hash: state.paymentAttempt.requestHash,
+      }] : []
+    }
     if (text.includes('world-market:resident')) {
       const handle = String(params[0])
       return ['tiny-lantern', 'neighbor', 'someone-else'].includes(handle) ? [{ handle }] : []
@@ -393,7 +435,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
             responseStatus: 200,
             response,
             responseBody,
-            paymentResponseHeader: state.paymentAttempt.paymentResponseHeader ?? 'settled-response',
+            paymentResponseHeader: state.paymentAttempt.paymentResponseHeader ?? SETTLED_RESPONSE,
             completedAt: state.now,
             updatedAt: state.now,
           }
@@ -450,16 +492,23 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           status: state.paymentAttempt.responseStatus ?? 200,
           body: state.paymentAttempt.response,
           responseBody: state.paymentAttempt.responseBody ?? null,
-          paymentResponseHeader: state.paymentAttempt.paymentResponseHeader ?? 'completed-response',
+          paymentResponseHeader: state.paymentAttempt.paymentResponseHeader ?? COMPLETED_RESPONSE,
         }
       }
       const created = state.paymentAttempt == null
       const attempt = state.paymentAttempt ?? fakePaymentAttempt(state.now)
+      const boundAttempt = state.offer
+        ? {
+          ...attempt,
+          requestHash: worldSaleRequestHash(state.offer),
+          paymentResponseHeader: attempt.paymentResponseHeader ?? SETTLED_RESPONSE,
+        }
+        : attempt
       state = {
         ...state,
         facilitatorSettlements: state.facilitatorSettlements + (created ? 1 : 0),
         directVerifications: state.directVerifications + 1,
-        paymentAttempt: attempt,
+        paymentAttempt: boundAttempt,
         queries: created
           ? [...state.queries, { text: '/* payment-attempts:create */ INSERT INTO payment_attempts', params: [] }]
           : state.queries,
@@ -467,7 +516,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       if (state.directVerificationInvalid) {
         state = {
           ...state,
-          paymentAttempt: { ...attempt, status: 'invalid', invalidReason: 'confirmed_mismatch' },
+          paymentAttempt: { ...boundAttempt, status: 'invalid', invalidReason: 'confirmed_mismatch' },
         }
         return {
           state: 'rejected',
@@ -479,17 +528,17 @@ function makeHarness(patch: Partial<FakeState> = {}) {
         return {
           state: 'payment_pending',
           status: 202,
-          attemptId: attempt.publicId,
-          payerWallet: attempt.payerWallet,
-          txHash: attempt.txHash,
-          body: { payment: 'pending', payment_attempt_id: attempt.publicId, do_not_pay_again: true },
+          attemptId: boundAttempt.publicId,
+          payerWallet: boundAttempt.payerWallet,
+          txHash: boundAttempt.txHash,
+          body: { payment: 'pending', payment_attempt_id: boundAttempt.publicId, do_not_pay_again: true },
         }
       }
       const finalizedAt = new Date(Date.parse(state.directBlockTime) + 60_000).toISOString()
       state = {
         ...state,
         paymentAttempt: {
-          ...attempt,
+          ...boundAttempt,
           leaseOwner: 'world-payment-lease',
           finalizedBlockNumber: 16n,
           finalizedBlockHash: '0x' + '44'.repeat(32),
@@ -499,7 +548,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       }
       return {
         state: 'ready',
-        attemptId: attempt.publicId,
+        attemptId: boundAttempt.publicId,
         leaseOwner: 'world-payment-lease',
         txHash: TX,
         payerWallet: BUYER_WALLET,
@@ -507,7 +556,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
         blockHash: '0x' + '44'.repeat(32),
         blockTime: state.directBlockTime,
         finalizedAt,
-        paymentResponseHeader: 'settled-response',
+        paymentResponseHeader: SETTLED_RESPONSE,
       }
     },
     resumePayment: async ({ attempt }) => {
@@ -517,7 +566,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           status: attempt.responseStatus ?? 200,
           body: attempt.response,
           responseBody: attempt.responseBody ?? null,
-          paymentResponseHeader: attempt.paymentResponseHeader ?? 'completed-response',
+          paymentResponseHeader: attempt.paymentResponseHeader ?? COMPLETED_RESPONSE,
         }
       }
       state = { ...state, directVerifications: state.directVerifications + 1 }
@@ -564,7 +613,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
         blockHash: '0x' + '44'.repeat(32),
         blockTime: state.directBlockTime,
         finalizedAt,
-        paymentResponseHeader: 'settled-response',
+        paymentResponseHeader: SETTLED_RESPONSE,
       }
     },
   }
@@ -759,7 +808,7 @@ test('payment closes ownership atomically and a retry returns the same public re
   const pay = () => harness.app.request('/api/world/offer/101/claim', {
     method: 'POST',
     headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT },
-    body: '{}',
+    body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
   })
   const first = await pay()
   assert.equal(first.status, 200, await first.clone().text())
@@ -779,6 +828,19 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.match(guardedClaim?.text ?? '', /date_trunc\('second', reserved_at\)/i)
   assert.match(guardedClaim?.text ?? '', /complete_payment_attempt/i)
 
+  const changedWallet = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ buyer_wallet: OTHER_WALLET }),
+  })
+  assert.equal(changedWallet.status, 409)
+  const changedCheckout = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ market_checkout_id: 82 }),
+  })
+  assert.equal(changedCheckout.status, 409)
+
   const retry = await pay()
   assert.equal(retry.status, 200)
   assert.equal(await retry.clone().text(), firstText)
@@ -789,24 +851,26 @@ test('payment closes ownership atomically and a retry returns the same public re
 
 test('a completed payment replay preserves its x402 response header', async () => {
   const now = NOW.toISOString()
+  const settledOffer = openOffer({
+    buyer_id: 8,
+    buyer: 'neighbor',
+    reserved_by: 8,
+    buyer_wallet: BUYER_WALLET,
+    market_listing_id: 91,
+    market_checkout_id: 81,
+    reserved_at: now,
+    reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+  })
   const paymentAttempt = {
     ...fakePaymentAttempt(now),
     status: 'completed' as const,
+    requestHash: worldSaleRequestHash(settledOffer),
     responseStatus: 200,
     response: { offer: { id: 101, phase: 'claimed' } },
     completedAt: now,
   }
   const harness = makeHarness({
-    offer: openOffer({
-      buyer_id: 8,
-      buyer: 'neighbor',
-      reserved_by: 8,
-      buyer_wallet: BUYER_WALLET,
-      market_listing_id: 91,
-      market_checkout_id: 81,
-      reserved_at: now,
-      reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
-    }),
+    offer: settledOffer,
     thingLocked: true,
     paymentAttempt,
   })
@@ -814,12 +878,55 @@ test('a completed payment replay preserves its x402 response header', async () =
   const response = await harness.app.request('/api/world/offer/101/claim', {
     method: 'POST',
     headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT },
-    body: '{}',
+    body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
   })
 
   assert.equal(response.status, 200, await response.clone().text())
-  assert.equal(response.headers.get('X-PAYMENT-RESPONSE'), 'completed-response')
+  assert.equal(response.headers.get('X-PAYMENT-RESPONSE'), COMPLETED_RESPONSE)
   assert.equal(harness.getState().facilitatorSettlements, 0)
+})
+
+test('a claimed world replay rejects a different checkout binding', async () => {
+  const reserved = openOffer({
+    buyer_id: 8,
+    buyer: 'neighbor',
+    reserved_by: 8,
+    buyer_wallet: BUYER_WALLET,
+    market_listing_id: 91,
+    market_checkout_id: 81,
+    reserved_at: NOW.toISOString(),
+    reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+  })
+  const harness = makeHarness({
+    offer: reserved,
+    thingLocked: true,
+    marketFailure: true,
+    draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'withdrawn' }),
+  })
+  const first = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT },
+    body: '{}',
+  })
+  assert.equal(first.status, 200, await first.clone().text())
+  const verificationsBeforeReplay = harness.getState().directVerifications
+
+  const replay = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ market_checkout_id: 82 }),
+  })
+  assert.equal(replay.status, 409, await replay.clone().text())
+  assert.match(await replay.text(), /market_checkout_id does not match the settled payment/i)
+  assert.equal(harness.getState().directVerifications, verificationsBeforeReplay)
+
+  const exactRetry = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: '{}',
+  })
+  assert.equal(exactRetry.status, 200, await exactRetry.clone().text())
+  assert.equal(harness.getState().directVerifications, verificationsBeforeReplay)
 })
 
 test('world x402 claim uses the signed authorization nonce without a payment-identifier extension', async () => {
@@ -902,7 +1009,7 @@ test('x402 claims re-read the confirmed transfer and publish its in-window block
   })
 
   assert.equal(response.status, 200, await response.clone().text())
-  assert.equal(response.headers.get('x-payment-response'), 'settled-response')
+  assert.equal(response.headers.get('x-payment-response'), SETTLED_RESPONSE)
   const offer = (await response.json() as { offer: FakeOffer }).offer
   assert.equal(offer.verified_via, 'x402')
   assert.equal(offer.block_time, NOW.toISOString())

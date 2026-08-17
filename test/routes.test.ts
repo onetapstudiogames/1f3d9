@@ -2,6 +2,7 @@
 // No live database, wallet, payment, deployment, or network service is touched.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   PUBLIC_PAGE_DEFAULT,
   PUBLIC_PAGE_MAX,
@@ -155,6 +156,7 @@ interface FakeState {
   chainAgeSeconds: number
   paymentHashes: Set<string>
   paymentAttempts: Map<string, FakePaymentAttempt>
+  paymentReplaySchemaReady: boolean
   facilitatorVerify: boolean
   facilitatorSettle: boolean
   anonymousFlagsUsed: number
@@ -211,6 +213,7 @@ const initialState = (): FakeState => ({
   chainAgeSeconds: 60,
   paymentHashes: new Set<string>(),
   paymentAttempts: new Map(),
+  paymentReplaySchemaReady: true,
   facilitatorVerify: false,
   facilitatorSettle: false,
   anonymousFlagsUsed: 0,
@@ -426,6 +429,17 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       attempt.actor_id === Number(params[0])
       && attempt.operation === String(params[1])
       && attempt.offer_id === Number(params[2]))
+    return row ? [{ ...row }] : []
+  }
+  if (q.includes('/* payment-attempts:response-replay-ready */')) {
+    return [{ ready: state.paymentReplaySchemaReady }]
+  }
+  if (q.includes('/* payment-attempts:find-replayable-target */')) {
+    const row = [...state.paymentAttempts.values()].reverse().find(attempt =>
+      attempt.actor_id === Number(params[0])
+      && attempt.operation === String(params[1])
+      && attempt.target_key === String(params[2])
+      && ['settling', 'payment_pending', 'needs_review', 'completed'].includes(attempt.status))
     return row ? [{ ...row }] : []
   }
   if (q.includes('/* payment-attempts:find */')) {
@@ -1061,6 +1075,37 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       return []
     }
     const returned = placeRow(3, 2)
+    if (q.includes('complete_payment_attempt')) {
+      const attemptId = String(params.find(value => typeof value === 'string' && value.startsWith('pay_')) ?? '')
+      const attempt = state.paymentAttempts.get(attemptId)
+      if (attempt) {
+        const responseBody = JSON.stringify({ place: returned, fee_tx: TX1.toLowerCase() })
+        const durable = attempt.response_json?.__1f3d9_x402_response_v1
+        const header = durable && typeof durable === 'object' && !Array.isArray(durable)
+          ? String((durable as Record<string, unknown>).header ?? '')
+          : ''
+        state = {
+          ...state,
+          paymentAttempts: new Map(state.paymentAttempts).set(attemptId, {
+            ...attempt,
+            status: 'completed',
+            lease_owner: null,
+            lease_expires_at: null,
+            result_json: { kind: 'place', id: returned.id },
+            response_status: 201,
+            response_json: {
+              __1f3d9_x402_response_v1: {
+                ...(header ? { header } : {}),
+                body: JSON.parse(responseBody) as Record<string, unknown>,
+              },
+            },
+            response_body_bytes: Buffer.from(responseBody, 'utf8'),
+            updated_at: '2026-08-11T00:00:00.000Z',
+            completed_at: '2026-08-11T00:00:00.000Z',
+          }),
+        }
+      }
+    }
     return [{
       ...returned,
       ...(q.includes('complete_payment_attempt') ? {
@@ -1077,6 +1122,37 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
 
   if (q.includes('insert into kinds') || q.includes('insert into kind_revisions') || q.includes('update kinds')) {
     const returned = { ...kindRow(), revision: state.kindRevision + 1 }
+    if (q.includes('complete_payment_attempt')) {
+      const attemptId = String(params.find(value => typeof value === 'string' && value.startsWith('pay_')) ?? '')
+      const attempt = state.paymentAttempts.get(attemptId)
+      if (attempt) {
+        const responseBody = JSON.stringify({ kind: returned, fee_tx: TX1.toLowerCase() })
+        const durable = attempt.response_json?.__1f3d9_x402_response_v1
+        const header = durable && typeof durable === 'object' && !Array.isArray(durable)
+          ? String((durable as Record<string, unknown>).header ?? '')
+          : ''
+        state = {
+          ...state,
+          paymentAttempts: new Map(state.paymentAttempts).set(attemptId, {
+            ...attempt,
+            status: 'completed',
+            lease_owner: null,
+            lease_expires_at: null,
+            result_json: { kind: 'kind_revision', id: returned.id, revision: returned.revision },
+            response_status: q.includes('insert into kinds') ? 201 : 200,
+            response_json: {
+              __1f3d9_x402_response_v1: {
+                ...(header ? { header } : {}),
+                body: JSON.parse(responseBody) as Record<string, unknown>,
+              },
+            },
+            response_body_bytes: Buffer.from(responseBody, 'utf8'),
+            updated_at: '2026-08-11T00:00:00.000Z',
+            completed_at: '2026-08-11T00:00:00.000Z',
+          }),
+        }
+      }
+    }
     return [{
       ...returned,
       ...(q.includes('complete_payment_attempt') ? {
@@ -2252,6 +2328,16 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
     /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? '')))
 
   const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
+  const missingWallet = await app.request('/api/transfer/90/claim', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET), body: '{}',
+  })
+  assert.equal(missingWallet.status, 409)
+  const changedWallet = await app.request('/api/transfer/90/claim', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ buyer_wallet: STRANGER_WALLET }),
+  })
+  assert.equal(changedWallet.status, 409)
+
   const replay = await app.request('/api/transfer/90/claim', {
     method: 'POST', headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': SALE_X_PAYMENT },
     body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
@@ -2288,7 +2374,14 @@ test('a completed direct-sale replay preserves its x402 response header', async 
     offer_id: 90,
     asset_type: 'thing',
     asset_id: 42,
-    request_hash: '99'.repeat(32),
+    request_hash: canonicalPaymentRequest({
+      offer_id: 90,
+      buyer_wallet: BUYER_WALLET,
+      seller_wallet: SELLER_WALLET,
+      price_usdc: 2,
+      asset_type: 'thing',
+      asset_id: 41,
+    }).hash,
     method: 'x402',
     network: 'base',
     token: USDC.toLowerCase(),
@@ -2345,6 +2438,41 @@ test('a completed direct-sale replay preserves its x402 response header', async 
   assert.equal(await replay.text(), exactBody)
   assert.ok(replay.headers.get('X-PAYMENT-RESPONSE'))
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 0)
+})
+
+test('a completed direct-sale replay rejects a different buyer wallet without settling again', async () => {
+  reset({
+    scenario: 'direct sale',
+    chainFrom: BUYER_WALLET,
+    chainTo: SELLER_WALLET,
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    offer: { id: 90, status: 'open', reservedUntil: null },
+  })
+  setActor(8, 'neighbor')
+  const reservation = await app.request('/api/transfer/90/claim', {
+    method: 'POST', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(reservation.status, 402)
+  state = { ...state, chainAgeSeconds: 0 }
+
+  const settled = await app.request('/api/transfer/90/claim', {
+    method: 'POST',
+    headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': SALE_X_PAYMENT },
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(settled.status, 200, await settled.clone().text())
+  const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
+
+  const replay = await app.request('/api/transfer/90/claim', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ buyer_wallet: STRANGER_WALLET }),
+  })
+  assert.equal(replay.status, 409, await replay.clone().text())
+  assert.match(await replay.text(), /buyer_wallet does not match the settled payment/i)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, settlementsBeforeReplay)
 })
 
 test('raw transaction proof cannot create a payment window or bypass its buyer binding', async () => {
@@ -2486,6 +2614,32 @@ test('hosted production paid routes fail closed before custody schema readiness'
   }
 })
 
+test('paid routes never verify or settle when exact replay storage is absent', async () => {
+  reset({
+    scenario: 'paid claims',
+    paymentReplaySchemaReady: false,
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+  })
+  const response = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ parent_id: null, name: 'Schema Guard', description: 'must not settle' }),
+  })
+
+  assert.equal(response.status, 503, await response.clone().text())
+  assert.deepEqual(await response.json(), {
+    error: 'payments are temporarily unavailable while durable payment custody is being upgraded; do not pay or retry yet',
+    do_not_pay_again: true,
+  })
+  assert.equal(networkCalled('/verify'), false)
+  assert.equal(networkCalled('/settle'), false)
+  assert.ok(state.calls.some(call =>
+    call.query?.includes('payment-attempts:response-replay-ready')))
+})
+
 test('the same signed x402 nonce cannot be rebound to a different paid purpose', async () => {
   reset({
     scenario: 'paid claims',
@@ -2586,6 +2740,110 @@ test('frontier x402 retry uses the same signed authorization and does not settle
   assert.ok(retry.headers.get('X-PAYMENT-RESPONSE'))
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
   assert.equal(state.paymentHashes.size, 1)
+})
+
+test('frontier x402 retry can resume the same pending payment without replaying X-PAYMENT', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    failPaidWriteOnce: true,
+  })
+  const requestBody = JSON.stringify({
+    parent_id: null,
+    name: 'Headerless Retry Continent',
+    description: 'same logical purchase',
+  })
+
+  const first = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: requestBody,
+  })
+  assert.equal(first.status, 202, await first.clone().text())
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+
+  const retry = await app.request('/api/place', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: requestBody,
+  })
+  assert.equal(retry.status, 201, await retry.clone().text())
+  assert.ok(retry.headers.get('X-PAYMENT-RESPONSE'))
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+  assert.equal(state.paymentHashes.size, 1)
+})
+
+test('frontier x402 headerless retry fails closed when the request body changed', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    failPaidWriteOnce: true,
+  })
+  const first = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      parent_id: null,
+      name: 'Frozen Continent',
+      description: 'original body',
+    }),
+  })
+  assert.equal(first.status, 202, await first.clone().text())
+
+  const retry = await app.request('/api/place', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      parent_id: null,
+      name: 'Frozen Continent',
+      description: 'mutated body',
+    }),
+  })
+  assert.equal(retry.status, 409, await retry.clone().text())
+  assert.match(await retry.text(), /payment attempt|immutable|different/i)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+})
+
+test('kind invention can replay its completed canonical response without replaying X-PAYMENT', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+  })
+  const requestBody = JSON.stringify({
+    name: 'replayable-kind',
+    description: 'paid once',
+    traits: [],
+    recipe: [],
+  })
+
+  const first = await app.request('/api/kind', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: requestBody,
+  })
+  assert.equal(first.status, 201, await first.clone().text())
+  const firstPaymentResponse = first.headers.get('X-PAYMENT-RESPONSE')
+  const firstText = await first.clone().text()
+  assert.ok(firstPaymentResponse)
+
+  const replay = await app.request('/api/kind', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: requestBody,
+  })
+  assert.equal(replay.status, 201, await replay.clone().text())
+  assert.equal(replay.headers.get('X-PAYMENT-RESPONSE'), firstPaymentResponse)
+  assert.equal(await replay.text(), firstText)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
 })
 
 test('events keep the public contract while paging stably by kind and id', async () => {
