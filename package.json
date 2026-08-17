@@ -30,6 +30,7 @@
     "migrate:preview:payment-response-body-validate": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-response-body-validate",
     "migrate:preview:identity-recovery": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-recovery",
     "migrate:preview:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-rotation",
+    "migrate:preview:initial-recovery-codes": "node --experimental-strip-types scripts/migrate.ts --target preview --migration initial-recovery-codes",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:public-pagination": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-pagination",
@@ -41,7 +42,8 @@
     "migrate:production:payment-response-body-rollout": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-body-rollout",
     "migrate:production:payment-response-body-validate": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-body-validate",
     "migrate:production:identity-recovery": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-recovery",
-    "migrate:production:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-rotation"
+    "migrate:production:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-rotation",
+    "migrate:production:initial-recovery-codes": "node --experimental-strip-types scripts/migrate.ts --target production --migration initial-recovery-codes"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

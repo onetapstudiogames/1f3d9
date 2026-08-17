@@ -19,6 +19,10 @@ const rotationMigrationDdl = await readFile(
   new URL('../../db/migrations/20260816_identity_rotation.sql', import.meta.url),
   'utf8',
 )
+const initialRecoveryCodesMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260817_initial_recovery_codes.sql', import.meta.url),
+  'utf8',
+)
 
 let database: Pool | null = null
 
@@ -109,6 +113,10 @@ function registration(label: string, handle = 'new-resident') {
     handle,
     model: 'postgres-test',
     residentSecretHash: sha256(`${label}:root-key`),
+    recoveryCodeHashes: Array.from(
+      { length: 8 },
+      (_, index) => sha256(`${label}:recovery:${index}`),
+    ),
   }
 }
 
@@ -193,6 +201,80 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       }])
     })
 
+    await t.test('the initial-code migration is idempotent and old staged rows remain writable but fail closed', async () => {
+      await resetDatabase()
+      await database!.query(initialRecoveryCodesMigrationDdl)
+      await database!.query(initialRecoveryCodesMigrationDdl)
+      const legacy = registration('legacy-no-codes', 'legacy-no-codes')
+      await database!.query(
+        `INSERT INTO pending_resident_registrations (
+           session_hash, csrf_hash, ip_hash, handle, model, secret_hash, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '15 minutes')`,
+        [
+          legacy.sessionHash, legacy.csrfHash, legacy.ipHash, legacy.handle,
+          legacy.model, legacy.residentSecretHash,
+        ],
+      )
+
+      assert.equal(await store.confirmResidentRegistration({
+        sessionHash: legacy.sessionHash,
+        csrfHash: legacy.csrfHash,
+        residentSecretHash: legacy.residentSecretHash,
+      }), null)
+      const state = await database!.query(
+        `SELECT
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+             WHERE registration_session_hash = $2) AS pending_codes,
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id`,
+        [legacy.handle, legacy.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        residents: '0', presences: '0', active_codes: '0', pending_codes: '0', last_id: 1,
+      }])
+
+      await database!.query(
+        `UPDATE pending_resident_registrations
+         SET created_at = now() - interval '16 minutes',
+             expires_at = now() - interval '1 minute'
+         WHERE session_hash = $1`,
+        [legacy.sessionHash],
+      )
+      assert.equal(
+        (await store.stageResidentRegistration(registration('legacy-cleanup-trigger', 'legacy-cleanup-trigger')))?.status,
+        'staged',
+      )
+      const expired = await database!.query(
+        `SELECT handle, model, secret_hash, ip_hash, canceled_at IS NOT NULL AS canceled
+         FROM pending_resident_registrations WHERE session_hash = $1`,
+        [legacy.sessionHash],
+      )
+      assert.deepEqual(expired.rows, [{
+        handle: null, model: null, secret_hash: null, ip_hash: null, canceled: true,
+      }])
+    })
+
+    await t.test('registration rejects every non-exact, malformed, or duplicate initial-code set', async () => {
+      await resetDatabase()
+      const valid = registration('invalid-code-set')
+      const attempts = [
+        { ...valid, recoveryCodeHashes: valid.recoveryCodeHashes.slice(0, 7) },
+        { ...valid, recoveryCodeHashes: [...valid.recoveryCodeHashes, sha256('ninth-code')] },
+        { ...valid, recoveryCodeHashes: valid.recoveryCodeHashes.map((hash, index) => index === 7 ? valid.recoveryCodeHashes[0]! : hash) },
+        { ...valid, recoveryCodeHashes: valid.recoveryCodeHashes.map((hash, index) => index === 7 ? 'A'.repeat(64) : hash) },
+      ]
+      for (const attempt of attempts) {
+        await assert.rejects(
+          store.stageResidentRegistration(attempt),
+          /exactly eight unique sha256 recovery-code hashes are required/i,
+        )
+      }
+      assert.equal((await database!.query('SELECT count(*) FROM pending_resident_registrations')).rows[0]!.count, '0')
+      assert.equal((await database!.query('SELECT count(*) FROM pending_resident_registration_recovery_codes')).rows[0]!.count, '0')
+    })
+
     await t.test('registration stores only hashes and creates nothing before exact key confirmation', async () => {
       await resetDatabase()
       const pending = registration('staged')
@@ -213,6 +295,17 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         confirmed_at: null,
         canceled_at: null,
       }])
+      const pendingCodes = await database!.query(
+        `SELECT ordinal, code_hash
+         FROM pending_resident_registration_recovery_codes
+         WHERE registration_session_hash = $1
+         ORDER BY ordinal`,
+        [pending.sessionHash],
+      )
+      assert.deepEqual(
+        pendingCodes.rows,
+        pending.recoveryCodeHashes.map((code_hash, index) => ({ ordinal: index + 1, code_hash })),
+      )
       assert.equal((await database!.query("SELECT count(*) FROM residents WHERE handle = 'new-resident'")).rows[0]!.count, '0')
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE actor = 'new-resident'")).rows[0]!.count, '0')
 
@@ -240,6 +333,23 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       assert.deepEqual(after.rows, [{
         handle: null, model: null, secret_hash: null, ip_hash: null,
         resident_id: 2, confirmed: true,
+      }])
+      const recoveryState = await database!.query(
+        `SELECT resident.recovery_generation,
+           array_agg(code.code_hash ORDER BY code.code_hash) AS code_hashes,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+             WHERE registration_session_hash = $1) AS pending_codes
+         FROM residents resident
+         JOIN resident_recovery_codes code ON code.resident_id = resident.id
+         WHERE resident.id = 2 AND code.generation = 1
+           AND code.used_at IS NULL AND code.invalidated_at IS NULL
+         GROUP BY resident.recovery_generation`,
+        [pending.sessionHash],
+      )
+      assert.deepEqual(recoveryState.rows, [{
+        recovery_generation: '1',
+        code_hashes: [...pending.recoveryCodeHashes].sort(),
+        pending_codes: '0',
       }])
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE kind = 'register' AND actor = 'new-resident'")).rows[0]!.count, '1')
       assert.equal((await database!.query('SELECT last_id FROM resident_id_allocator WHERE singleton')).rows[0]!.last_id, 2)
@@ -272,6 +382,153 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         residents: '0', presences: '0', events: '0', last_id: 1,
         resident_id: null, confirmed_at: null,
       }])
+      assert.equal(
+        (await database!.query(
+          `SELECT count(*) FROM pending_resident_registration_recovery_codes
+           WHERE registration_session_hash = $1`,
+          [pending.sessionHash],
+        )).rows[0]!.count,
+        '8',
+      )
+    })
+
+    await t.test('registration cancellation and expiry scrub every pending recovery hash', async () => {
+      await resetDatabase()
+      const canceled = registration('canceled-registration', 'canceled-registration')
+      assert.equal((await store.stageResidentRegistration(canceled))?.status, 'staged')
+      assert.equal(await store.cancelResidentRegistration({
+        sessionHash: canceled.sessionHash,
+        csrfHash: canceled.csrfHash,
+      }), true)
+
+      const expired = registration('expired-registration', 'expired-registration')
+      assert.equal((await store.stageResidentRegistration(expired))?.status, 'staged')
+      await database!.query(
+        `UPDATE pending_resident_registrations
+         SET created_at = now() - interval '16 minutes',
+             expires_at = now() - interval '1 minute'
+         WHERE session_hash = $1`,
+        [expired.sessionHash],
+      )
+      assert.equal(
+        (await store.stageResidentRegistration(registration('cleanup-trigger', 'cleanup-trigger')))?.status,
+        'staged',
+      )
+
+      const state = await database!.query(
+        `SELECT pending.session_hash, pending.handle, pending.model, pending.secret_hash,
+           pending.ip_hash, pending.canceled_at IS NOT NULL AS canceled,
+           count(code.code_hash) AS pending_codes
+         FROM pending_resident_registrations pending
+         LEFT JOIN pending_resident_registration_recovery_codes code
+           ON code.registration_session_hash = pending.session_hash
+         WHERE pending.session_hash IN ($1, $2)
+         GROUP BY pending.session_hash, pending.handle, pending.model, pending.secret_hash,
+           pending.ip_hash, pending.canceled_at
+         ORDER BY pending.session_hash`,
+        [canceled.sessionHash, expired.sessionHash],
+      )
+      assert.equal(state.rows.length, 2)
+      for (const row of state.rows) {
+        assert.deepEqual({
+          handle: row.handle,
+          model: row.model,
+          secret_hash: row.secret_hash,
+          ip_hash: row.ip_hash,
+          canceled: row.canceled,
+          pending_codes: row.pending_codes,
+        }, {
+          handle: null,
+          model: null,
+          secret_hash: null,
+          ip_hash: null,
+          canceled: true,
+          pending_codes: '0',
+        })
+      }
+    })
+
+    await t.test('an active-code collision rolls back resident creation and keeps the pending set retryable', async () => {
+      await resetDatabase()
+      const pending = registration('active-code-collision', 'collision-resident')
+      await database!.query('UPDATE residents SET recovery_generation = 1 WHERE id = 1')
+      await database!.query(
+        `INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
+         VALUES (1, 1, $1)`,
+        [pending.recoveryCodeHashes[3]],
+      )
+      assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
+
+      assert.equal(await store.confirmResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+      }), null)
+      const state = await database!.query(
+        `SELECT
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM events WHERE actor = $1) AS events,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+             WHERE registration_session_hash = $2) AS pending_codes,
+           (SELECT secret_hash FROM pending_resident_registrations
+             WHERE session_hash = $2) AS pending_secret_hash`,
+        [pending.handle, pending.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        last_id: 1,
+        residents: '0',
+        presences: '0',
+        events: '0',
+        active_codes: '0',
+        pending_codes: '8',
+        pending_secret_hash: pending.residentSecretHash,
+      }])
+    })
+
+    await t.test('a downstream event failure rolls the allocator, resident, presence, and initial codes back', async () => {
+      await resetDatabase()
+      const pending = registration('event-rollback', 'event-rollback')
+      assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
+      await database!.query(`
+        CREATE FUNCTION fail_registration_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.kind = 'register' AND NEW.actor = 'event-rollback' THEN
+            RAISE EXCEPTION 'injected registration event failure';
+          END IF;
+          RETURN NEW;
+        END
+        $$;
+        CREATE TRIGGER events_fail_registration
+          BEFORE INSERT ON events
+          FOR EACH ROW EXECUTE FUNCTION fail_registration_event();
+      `)
+
+      await assert.rejects(
+        store.confirmResidentRegistration({
+          sessionHash: pending.sessionHash,
+          csrfHash: pending.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+        }),
+        /injected registration event failure/i,
+      )
+      const state = await database!.query(
+        `SELECT
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM events WHERE actor = $1) AS events,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+             WHERE registration_session_hash = $2) AS pending_codes`,
+        [pending.handle, pending.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        last_id: 1, residents: '0', presences: '0', events: '0',
+        active_codes: '0', pending_codes: '8',
+      }])
     })
 
     await t.test('two pending claims for one handle have one winner and no leaked ID', async () => {
@@ -294,6 +551,23 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       assert.equal((await database!.query("SELECT count(*) FROM residents WHERE handle = 'raced-name'")).rows[0]!.count, '1')
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE actor = 'raced-name'")).rows[0]!.count, '1')
       assert.equal((await database!.query('SELECT last_id FROM resident_id_allocator WHERE singleton')).rows[0]!.last_id, 2)
+      const winner = results[0] ? first : second
+      const loser = results[0] ? second : first
+      const codes = await database!.query(
+        `SELECT
+           (SELECT count(*) FROM resident_recovery_codes code
+             JOIN residents resident ON resident.id = code.resident_id
+             WHERE resident.handle = 'raced-name' AND code.generation = 1
+               AND code.used_at IS NULL AND code.invalidated_at IS NULL) AS active_codes,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+             WHERE registration_session_hash = $1) AS winner_pending_codes,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+             WHERE registration_session_hash = $2) AS loser_pending_codes`,
+        [winner.sessionHash, loser.sessionHash],
+      )
+      assert.deepEqual(codes.rows, [{
+        active_codes: '8', winner_pending_codes: '0', loser_pending_codes: '8',
+      }])
     })
 
     await t.test('abandoned or canceled recovery preserves the old key, code, and connector grant', async () => {

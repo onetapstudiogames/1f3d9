@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { auth, setOAuthResidentResolver, sha256, type Resident } from '../src/core.ts'
 import { mcp } from '../src/mcp.ts'
 import {
+  collectRecoveryCodeSet,
   mountOAuthRoutes,
   residentByOAuthAccessToken,
 } from '../src/oauth.ts'
@@ -31,6 +32,10 @@ const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
 const CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
 const EXISTING_KEY = `1f3d9_sk_${'ab'.repeat(24)}`
 
+function assertSecretsAbsent(surface: string, secrets: readonly string[]): void {
+  for (const secret of secrets) assert.equal(surface.includes(secret), false)
+}
+
 const environment = {
   PUBLIC_ORIGIN: ORIGIN,
   HOSTED_CHAT_SIGNIN_ENABLED: 'true',
@@ -46,6 +51,7 @@ interface MemoryAuthorizationRequest extends AuthorizationRequestRecord {
   sessionHash: string
   csrfHash: string
   pendingSecretHash: string | null
+  pendingRecoveryCodeHashes: string[] | null
   expiresAt: number
   used: boolean
 }
@@ -93,6 +99,7 @@ class MemoryOAuthStore {
   private readonly tokens = new Map<string, MemoryToken>()
   private readonly residents = new Map<number, Resident>([[49, existingResident()]])
   private readonly residentSecretHashes = new Map<string, number>([[sha256(EXISTING_KEY), 49]])
+  private readonly recoveryCodes = new Map<number, string[]>()
   private readonly events: { kind: string; actor: string; residentId: number }[] = []
   private nextRequestId = 1
   private nextResidentId = 50
@@ -105,13 +112,14 @@ class MemoryOAuthStore {
         if (
           pending.resident_id === null && !pending.used && pending.expiresAt <= Date.now() &&
           (pending.intent !== null || pending.new_handle !== null || pending.new_model !== null ||
-            pending.pendingSecretHash !== null)
+            pending.pendingSecretHash !== null || pending.pendingRecoveryCodeHashes !== null)
         ) {
           pending.used = true
           pending.intent = null
           pending.new_handle = null
           pending.new_model = null
           pending.pendingSecretHash = null
+          pending.pendingRecoveryCodeHashes = null
         }
       }
       this.requests.set(input.sessionHash, {
@@ -131,6 +139,7 @@ class MemoryOAuthStore {
         new_model: null,
         root_key_confirmed_at: null,
         pendingSecretHash: null,
+        pendingRecoveryCodeHashes: null,
         expiresAt: Date.now() + 15 * 60_000,
         used: false,
       })
@@ -186,6 +195,7 @@ class MemoryOAuthStore {
       request.new_handle = input.handle
       request.new_model = input.model
       request.pendingSecretHash = input.residentSecretHash
+      request.pendingRecoveryCodeHashes = [...input.recoveryCodeHashes]
       return { status: 'staged' as const, handle: input.handle }
     },
 
@@ -200,6 +210,7 @@ class MemoryOAuthStore {
       request.new_handle = null
       request.new_model = null
       request.pendingSecretHash = null
+      request.pendingRecoveryCodeHashes = null
       return { redirectUri: request.redirect_uri, state: request.state }
     },
 
@@ -211,7 +222,9 @@ class MemoryOAuthStore {
         !request || request.csrfHash !== input.csrfHash || request.intent !== 'new' ||
         request.resident_id !== null || request.new_handle === null || request.new_model === null ||
         request.pendingSecretHash === null || request.pendingSecretHash !== input.residentSecretHash ||
-        request.root_key_confirmed_at !== null
+        request.root_key_confirmed_at !== null || request.pendingRecoveryCodeHashes === null ||
+        request.pendingRecoveryCodeHashes.length !== 8 ||
+        request.pendingRecoveryCodeHashes.some(hash => !/^[0-9a-f]{64}$/.test(hash))
       ) return null
       const allocatedResidentId = this.nextResidentId++
       if ([...this.residents.values()].some(resident => resident.handle === request.new_handle)) {
@@ -233,9 +246,11 @@ class MemoryOAuthStore {
       }
       this.residents.set(resident.id, resident)
       this.residentSecretHashes.set(request.pendingSecretHash, resident.id)
+      this.recoveryCodes.set(resident.id, [...request.pendingRecoveryCodeHashes])
       this.events.push({ kind: 'register', actor: resident.handle, residentId: resident.id })
       request.resident_id = resident.id
       request.pendingSecretHash = null
+      request.pendingRecoveryCodeHashes = null
       const residentId = request.resident_id
       request.used = true
       request.root_key_confirmed_at = new Date().toISOString()
@@ -349,6 +364,7 @@ class MemoryOAuthStore {
       tokens: [...this.tokens.values()],
       residents: [...this.residents.values()],
       residentSecretHashes: [...this.residentSecretHashes.entries()],
+      recoveryCodes: [...this.recoveryCodes.entries()],
       events: [...this.events],
       nextResidentId: this.nextResidentId,
       duplicateHandleRollbacks: this.duplicateHandleRollbacks,
@@ -402,6 +418,7 @@ interface TokenPair {
 
 function appFor(memory: MemoryOAuthStore): Hono {
   const app = new Hono()
+  app.onError(() => new Response('Internal Server Error', { status: 500 }))
   mountOAuthRoutes(app, {
     environment,
     store: memory.api,
@@ -559,6 +576,7 @@ test('authorization accepts a bounded language hint without relaxing unknown-fie
 
 test('existing resident completes browser proof, PKCE exchange, resolver, replay rejection, and revocation', async () => {
   const { app, memory } = fixture()
+  const recoveryCodesBefore = (JSON.parse(memory.safeState()) as { recoveryCodes: unknown[] }).recoveryCodes
   const { code } = await authorizeExisting(app)
 
   assert.doesNotMatch(memory.safeState(), new RegExp(EXISTING_KEY, 'i'))
@@ -582,6 +600,8 @@ test('existing resident completes browser proof, PKCE exchange, resolver, replay
   assert.equal(revoked.status, 200)
   assertPrivate(revoked)
   assert.equal(await residentByOAuthAccessToken(pair.access_token, environment, memory.api), null)
+  const recoveryCodesAfter = (JSON.parse(memory.safeState()) as { recoveryCodes: unknown[] }).recoveryCodes
+  assert.deepEqual(recoveryCodesAfter, recoveryCodesBefore, 'linking must not generate or replace recovery codes')
 })
 
 test('a redeemed access token reaches city actions only through the hosted connector', async () => {
@@ -650,14 +670,20 @@ test('new resident sees its root key once, must re-enter it, then receives only 
   const privatePage = await created.text()
   const rootKey = privatePage.match(/<code>(1f3d9_sk_[0-9a-f]{48})<\/code>/)?.[1]
   assert.ok(rootKey)
+  const recoveryCodes = privatePage.match(/1f3d9_rc_[0-9a-f]{64}/g) ?? []
   assert.match(privatePage, /name="resident_key"[^>]*type="password"/i)
   assert.match(privatePage, /has not been created yet/i)
   assert.match(privatePage, /Cancel without creating a resident/i)
-  assert.doesNotMatch(privatePage, /cannot yet be recovered/i)
+  assert.equal(recoveryCodes.length, 8)
+  assert.equal(new Set(recoveryCodes).size, 8)
+  const initialSecrets = [rootKey, ...recoveryCodes]
+  assertSecretsAbsent(JSON.stringify([...created.headers]), initialSecrets)
   assert.doesNotMatch(memory.safeState(), new RegExp(rootKey, 'i'))
+  assert.doesNotMatch(memory.safeState(), /1f3d9_rc_[0-9a-f]{64}/i)
   const pendingState = JSON.parse(memory.safeState()) as {
     residents: Resident[]
     residentSecretHashes: [string, number][]
+    recoveryCodes: [number, string[]][]
     events: unknown[]
   }
   assert.deepEqual(
@@ -670,6 +696,7 @@ test('new resident sees its root key once, must re-enter it, then receives only 
     1,
     'the pending key hash must not be attached to a resident before confirmation',
   )
+  assert.equal(pendingState.recoveryCodes.length, 0, 'pending recovery codes must stay unattached')
   assert.equal(pendingState.events.length, 0, 'registration history starts only after confirmation')
 
   const repeatedRegistration = await browserPost(app, session, {
@@ -679,7 +706,7 @@ test('new resident sees its root key once, must re-enter it, then receives only 
     model: 'hosted-chat',
   })
   assert.equal(repeatedRegistration.status, 403)
-  assert.doesNotMatch(await repeatedRegistration.text(), /1f3d9_sk_[0-9a-f]{48}/i)
+  assertSecretsAbsent(await repeatedRegistration.text(), initialSecrets)
 
   const missingConfirmation = await browserPost(app, session, {
     action: 'confirm',
@@ -687,6 +714,7 @@ test('new resident sees its root key once, must re-enter it, then receives only 
   })
   assert.equal(missingConfirmation.status, 403)
   assert.equal(missingConfirmation.headers.get('location'), null)
+  assertSecretsAbsent(await missingConfirmation.text(), initialSecrets)
 
   const wrongConfirmation = await browserPost(app, session, {
     action: 'confirm',
@@ -695,6 +723,7 @@ test('new resident sees its root key once, must re-enter it, then receives only 
   })
   assert.equal(wrongConfirmation.status, 403)
   assert.equal(wrongConfirmation.headers.get('location'), null)
+  assertSecretsAbsent(await wrongConfirmation.text(), initialSecrets)
 
   const confirmed = await browserPost(app, session, {
     action: 'confirm',
@@ -703,16 +732,169 @@ test('new resident sees its root key once, must re-enter it, then receives only 
   })
   const code = authorizationCode(confirmed)
   const redirectSurface = `${confirmed.headers.get('location')}\n${await confirmed.clone().text()}`
-  assert.doesNotMatch(redirectSurface, new RegExp(rootKey, 'i'))
+  assertSecretsAbsent(redirectSurface, initialSecrets)
 
   const pair = await readTokenPair(await exchangeCode(app, code))
-  assert.doesNotMatch(JSON.stringify(pair), new RegExp(rootKey, 'i'))
+  assertSecretsAbsent(JSON.stringify(pair), initialSecrets)
   const resident = await residentByOAuthAccessToken(pair.access_token, environment, memory.api)
   assert.equal(resident?.handle, 'goldfish-agent')
-  assert.doesNotMatch(JSON.stringify(resident), new RegExp(rootKey, 'i'))
-  assert.doesNotMatch(memory.safeState(), new RegExp(rootKey, 'i'))
-  const confirmedState = JSON.parse(memory.safeState()) as { events: { actor: string }[] }
+  assertSecretsAbsent(JSON.stringify(resident), initialSecrets)
+  assertSecretsAbsent(memory.safeState(), initialSecrets)
+  const confirmedState = JSON.parse(memory.safeState()) as {
+    recoveryCodes: [number, string[]][]
+    events: { actor: string }[]
+  }
+  assert.equal(confirmedState.recoveryCodes.length, 1)
+  assert.equal(confirmedState.recoveryCodes[0]?.[1]?.length, 8)
   assert.deepEqual(confirmedState.events.map(event => event.actor), ['goldfish-agent'])
+})
+
+test('connector signup retries a random collision until all eight initial recovery codes are unique', async () => {
+  const byteValues = [1, 1, 2, 3, 4, 5, 6, 7, 8]
+  let draw = 0
+  const codes = collectRecoveryCodeSet(() =>
+    `1f3d9_rc_${(byteValues[draw++] ?? 255).toString(16).padStart(64, '0')}`)
+
+  assert.equal(codes.length, 8)
+  assert.equal(new Set(codes).size, 8)
+  assert.equal(draw, 9)
+
+  let stalledDraws = 0
+  assert.throws(
+    () => collectRecoveryCodeSet(() => {
+      stalledDraws += 1
+      return `1f3d9_rc_${'00'.repeat(32)}`
+    }),
+    /secure recovery-code generation failed/,
+  )
+  assert.equal(stalledDraws, 64)
+})
+
+test('connector signup discloses no generated secrets when throttling or staging fails closed', async () => {
+  for (const deniedCall of [1, 2, 3]) {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    let rateCall = 0
+    Object.assign(memory.api, {
+      consumeOAuthRateLimit: async () => {
+        rateCall += 1
+        return rateCall !== deniedCall
+      },
+    })
+
+    const response = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: `limited-agent-${deniedCall}`, model: 'hosted-chat',
+    })
+    const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
+    assert.equal(response.status, 429)
+    assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
+  }
+
+  for (const stageFailure of ['missing', 'duplicate', 'unique_error', 'error'] as const) {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    if (stageFailure === 'missing') {
+      Object.assign(memory.api, { stageNewResidentRegistration: async () => null })
+    } else if (stageFailure === 'unique_error') {
+      Object.assign(memory.api, {
+        stageNewResidentRegistration: async () => {
+          throw Object.assign(new Error('duplicate handle'), { code: '23505' })
+        },
+      })
+    } else if (stageFailure === 'error') {
+      Object.assign(memory.api, {
+        stageNewResidentRegistration: async () => {
+          throw new Error('registration store unavailable')
+        },
+      })
+    }
+
+    const response = await browserPost(app, session, {
+      action: 'register',
+      csrf: session.csrf,
+      handle: stageFailure === 'duplicate'
+        ? 'chatty'
+        : `failed-agent-${stageFailure.replace('_', '-')}`,
+      model: 'hosted-chat',
+    })
+    const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
+    const state = JSON.parse(memory.safeState()) as {
+      residents: Resident[]
+      recoveryCodes: unknown[]
+      events: unknown[]
+    }
+
+    assert.equal({ missing: 403, duplicate: 409, unique_error: 409, error: 500 }[stageFailure], response.status)
+    assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
+    assert.deepEqual(state.residents.map(resident => resident.id), [49])
+    assert.equal(state.recoveryCodes.length, 0)
+    assert.equal(state.events.length, 0)
+  }
+})
+
+test('connector signup rejects an invalid identity before generating or staging secrets', async () => {
+  const { app, memory } = fixture()
+  const session = await begin(app)
+  const response = await browserPost(app, session, {
+    action: 'register', csrf: session.csrf, handle: 'invalid_handle', model: 'hosted-chat',
+  })
+  const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
+  const state = JSON.parse(memory.safeState()) as {
+    residents: Resident[]
+    recoveryCodes: unknown[]
+    events: unknown[]
+  }
+
+  assert.equal(response.status, 400)
+  assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
+  assert.deepEqual(state.residents.map(resident => resident.id), [49])
+  assert.equal(state.recoveryCodes.length, 0)
+  assert.equal(state.events.length, 0)
+})
+
+test('connector signup confirmation stays uncommitted when its rate limit or store fails closed', async () => {
+  for (const confirmFailure of ['rate_limit', 'missing', 'error'] as const) {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register',
+      csrf: session.csrf,
+      handle: `unconfirmed-${confirmFailure.replace('_', '-')}`,
+      model: 'hosted-chat',
+    })
+    const stagePage = await staged.text()
+    const rootKey = stagePage.match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+    const recoveryCodes = stagePage.match(/1f3d9_rc_[0-9a-f]{64}/g) ?? []
+    assert.ok(rootKey)
+
+    if (confirmFailure === 'rate_limit') {
+      Object.assign(memory.api, { consumeOAuthRateLimit: async () => false })
+    } else if (confirmFailure === 'missing') {
+      Object.assign(memory.api, { confirmNewResidentAndIssueAuthorizationCode: async () => null })
+    } else {
+      Object.assign(memory.api, {
+        confirmNewResidentAndIssueAuthorizationCode: async () => {
+          throw new Error('registration confirmation unavailable')
+        },
+      })
+    }
+
+    const response = await browserPost(app, session, {
+      action: 'confirm', csrf: session.csrf, resident_key: rootKey,
+    })
+    const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
+    const state = JSON.parse(memory.safeState()) as {
+      residents: Resident[]
+      recoveryCodes: unknown[]
+      events: unknown[]
+    }
+
+    assert.equal({ rate_limit: 429, missing: 403, error: 500 }[confirmFailure], response.status)
+    assertSecretsAbsent(surface, [rootKey, ...recoveryCodes])
+    assert.deepEqual(state.residents.map(resident => resident.id), [49])
+    assert.equal(state.recoveryCodes.length, 0)
+    assert.equal(state.events.length, 0)
+  }
 })
 
 test('cancelling or abandoning key confirmation creates no resident, event, or handle claim', async () => {
@@ -731,10 +913,12 @@ test('cancelling or abandoning key confirmation creates no resident, event, or h
     const state = JSON.parse(memory.safeState()) as {
       residents: Resident[]
       residentSecretHashes: [string, number][]
+      recoveryCodes: [number, string[]][]
       events: unknown[]
     }
     assert.deepEqual(state.residents.map(resident => resident.id), [49])
     assert.equal(state.residentSecretHashes.length, 1)
+    assert.equal(state.recoveryCodes.length, 0)
     assert.equal(state.events.length, 0)
   }
 

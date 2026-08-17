@@ -187,6 +187,7 @@ interface StoredRequest extends AuthorizationRequestRecord {
   readonly sessionHash: string
   readonly csrfHash: string
   readonly newSecretHash: string | null
+  readonly newRecoveryCodeHashes: readonly string[] | null
   readonly used: boolean
 }
 
@@ -244,6 +245,7 @@ function makeMemoryStore(): OAuthStore {
         sessionHash: input.sessionHash,
         csrfHash: input.csrfHash,
         newSecretHash: null,
+        newRecoveryCodeHashes: null,
         used: false,
       }
       requests.set(input.sessionHash, record)
@@ -263,6 +265,7 @@ function makeMemoryStore(): OAuthStore {
         new_handle: null,
         new_model: null,
         newSecretHash: null,
+        newRecoveryCodeHashes: null,
         used: true,
       })
       return { redirectUri: request.redirect_uri, state: request.state }
@@ -301,6 +304,7 @@ function makeMemoryStore(): OAuthStore {
         new_handle: input.handle,
         new_model: input.model,
         newSecretHash: input.residentSecretHash,
+        newRecoveryCodeHashes: [...input.recoveryCodeHashes],
       })
       return { status: 'staged', handle: input.handle }
     },
@@ -309,7 +313,9 @@ function makeMemoryStore(): OAuthStore {
       const request = eligible(input.sessionHash, input.csrfHash)
       if (
         !request || request.intent !== 'new' || request.resident_id !== null ||
-        request.new_handle === null || request.new_model === null || request.newSecretHash === null
+        request.new_handle === null || request.new_model === null || request.newSecretHash === null ||
+        request.newRecoveryCodeHashes === null || request.newRecoveryCodeHashes.length !== 8 ||
+        input.residentSecretHash !== request.newSecretHash
       ) return null
       if ([...residents.values()].some(resident => resident.handle === request.new_handle)) return null
       const residentId = nextResidentId++
@@ -323,10 +329,22 @@ function makeMemoryStore(): OAuthStore {
         notes_today: 0,
         agreement_actions_today: 0,
       })
+      identityResidents = new Map(identityResidents).set(residentId, {
+        id: residentId,
+        handle: request.new_handle,
+        secretHash: request.newSecretHash,
+        generation: 1,
+      })
+      const nextRecoveryCodes = new Map(recoveryCodes)
+      for (const codeHash of request.newRecoveryCodeHashes) {
+        nextRecoveryCodes.set(codeHash, { residentId, generation: 1, used: false })
+      }
+      recoveryCodes = nextRecoveryCodes
       requests.set(input.sessionHash, {
         ...request,
         resident_id: residentId,
         newSecretHash: null,
+        newRecoveryCodeHashes: null,
         root_key_confirmed_at: new Date().toISOString(),
         used: true,
       })
@@ -437,6 +455,7 @@ let stagedRegistrations = new Map<string, Readonly<{
   handle: string
   model: string
   residentSecretHash: string
+  recoveryCodeHashes: readonly string[]
 }>>()
 let recoveryCodes = new Map<string, Readonly<{
   residentId: number
@@ -476,6 +495,7 @@ mountIdentityRoutes(app, {
         handle: input.handle,
         model: input.model,
         residentSecretHash: input.residentSecretHash,
+        recoveryCodeHashes: [...input.recoveryCodeHashes],
       })
       return { status: 'staged', handle: input.handle }
     },
@@ -490,9 +510,14 @@ mountIdentityRoutes(app, {
         id: nextIdentityResidentId++,
         handle: staged.handle,
         secretHash: input.residentSecretHash,
-        generation: 0,
+        generation: 1,
       }
       identityResidents = new Map(identityResidents).set(resident.id, resident)
+      const nextCodes = new Map(recoveryCodes)
+      for (const codeHash of staged.recoveryCodeHashes) {
+        nextCodes.set(codeHash, { residentId: resident.id, generation: 1, used: false })
+      }
+      recoveryCodes = nextCodes
       stagedRegistrations = deleteMapKey(stagedRegistrations, input.sessionHash)
       return { residentId: resident.id, handle: resident.handle }
     },

@@ -15,6 +15,7 @@ const MAX_FORM_BYTES = 8_192
 const ROOT_KEY = /^1f3d9_sk_[0-9a-f]{48}$/
 const RECOVERY_CODE = /^1f3d9_rc_[0-9a-f]{64}$/
 const RECOVERY_CODE_COUNT = 8
+type RecoveryCodeSet = readonly [string, string, string, string, string, string, string, string]
 
 type IdentityEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -29,6 +30,23 @@ function opaque(): string {
 
 function newRecoveryCode(): string {
   return RECOVERY_CODE_PREFIX + randomBytes(32).toString('hex')
+}
+
+export function collectRecoveryCodeSet(makeCode: () => string): RecoveryCodeSet {
+  const codes = new Set<string>()
+  for (let attempt = 0; codes.size < RECOVERY_CODE_COUNT; attempt += 1) {
+    if (attempt >= 64) throw new Error('secure recovery-code generation failed')
+    codes.add(makeCode())
+  }
+  const values = [...codes]
+  return [
+    values[0]!, values[1]!, values[2]!, values[3]!,
+    values[4]!, values[5]!, values[6]!, values[7]!,
+  ]
+}
+
+function newRecoveryCodeSet(): RecoveryCodeSet {
+  return collectRecoveryCodeSet(newRecoveryCode)
 }
 
 function escapeHtml(value: string): string {
@@ -143,10 +161,17 @@ function joinStart(csrf: string): string {
 <button type="submit">Show the new resident key</button></form>`
 }
 
-function joinKey(handle: string, residentKey: string, csrf: string): string {
+function joinKeyWithRecoveryCodes(
+  handle: string,
+  residentKey: string,
+  recoveryCodes: RecoveryCodeSet,
+  csrf: string,
+): string {
   return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
 <p class="warning"><strong>This key is shown once.</strong> Put it in a secure credential store, never in chat, logs, notes, or public content.</p>
 <code>${escapeHtml(residentKey)}</code>
+<p class="warning"><strong>These recovery codes are also shown once.</strong> Save all eight outside chat. Each one works once, and making a new set later invalidates these.</p>
+${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 <p>This resident has not been created. Re-enter the key to prove it was captured correctly.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
@@ -270,6 +295,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       return browserError(c, 429, 'The registrar is busy. Try again in one hour.')
     }
     const residentKey = newSecret()
+    const recoveryCodes = newRecoveryCodeSet()
     const staged = await store.stageResidentRegistration({
       sessionHash,
       csrfHash,
@@ -277,11 +303,17 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       handle,
       model: model.trim(),
       residentSecretHash: sha256(residentKey),
+      recoveryCodeHashes: recoveryCodes.map(sha256),
     })
     if (!staged) return browserError(c, 403, 'This join page was already used.')
     if (staged.status === 'handle_taken') return browserError(c, 409, 'That resident name is already taken.')
     setCookie(c, JOIN_COOKIE, session)
-    return html(c, 200, 'Save the resident key', joinKey(staged.handle, residentKey, csrf))
+    return html(
+      c,
+      200,
+      'Save the resident key',
+      joinKeyWithRecoveryCodes(staged.handle, residentKey, recoveryCodes, csrf),
+    )
   })
 
   if (environment.IDENTITY_ROTATION_ENABLED === 'true') {
@@ -402,7 +434,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       if (!(await admitted(store, 'recovery_generate', [`ip:${ip}`], 5))) {
         return browserError(c, 429, 'Too many recovery-set attempts. Try again in one hour.')
       }
-      const codes = Array.from({ length: RECOVERY_CODE_COUNT }, newRecoveryCode)
+      const codes = newRecoveryCodeSet()
       const resident = await store.generateRecoveryCodes({
         residentSecretHash: sha256(residentKey),
         codeHashes: codes.map(sha256),

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { devices, expect, test, type Page } from '@playwright/test'
 
 const existingResidentKey = `1f3d9_sk_${'ab'.repeat(24)}`
 const recoveryResidentKey = `1f3d9_sk_${'cd'.repeat(24)}`
@@ -17,6 +17,12 @@ interface McpResponse {
     readonly content?: Array<{ readonly type?: unknown; readonly text?: unknown }>
     readonly isError?: unknown
   }
+}
+
+interface SecretSurfaceObservations {
+  readonly requestUrls: string[]
+  readonly browserLogs: string[]
+  readonly browserErrors: string[]
 }
 
 test.afterEach(async ({ page }) => {
@@ -49,13 +55,39 @@ async function browserStorage(page: Page): Promise<string> {
   }))
 }
 
-async function expectNoResidentKeyOutsidePage(page: Page, key?: string): Promise<void> {
+function observeSecretSurfaces(page: Page): SecretSurfaceObservations {
+  const observations: SecretSurfaceObservations = {
+    requestUrls: [],
+    browserLogs: [],
+    browserErrors: [],
+  }
+  page.on('request', request => observations.requestUrls.push(request.url()))
+  page.on('console', message => observations.browserLogs.push(`${message.type()}: ${message.text()}`))
+  page.on('pageerror', error => observations.browserErrors.push(error.message))
+  return observations
+}
+
+async function expectNoResidentKeyOutsidePage(
+  page: Page,
+  secretOrSecrets?: string | readonly string[],
+  observations?: SecretSurfaceObservations,
+): Promise<void> {
   const cookies = JSON.stringify(await page.context().cookies())
   const storage = await browserStorage(page)
-  const forbidden = key ?? '1f3d9_sk_'
-  expect(page.url().includes(forbidden)).toBe(false)
-  expect(cookies.includes(forbidden)).toBe(false)
-  expect(storage.includes(forbidden)).toBe(false)
+  const forbidden = typeof secretOrSecrets === 'string'
+    ? [secretOrSecrets]
+    : (secretOrSecrets ?? ['1f3d9_sk_', '1f3d9_rc_'])
+  const surfaces = [
+    page.url(),
+    cookies,
+    storage,
+    observations?.requestUrls.join('\n') ?? '',
+    observations?.browserLogs.join('\n') ?? '',
+    observations?.browserErrors.join('\n') ?? '',
+  ]
+  for (const surface of surfaces) {
+    for (const secret of forbidden) expect(surface.includes(secret)).toBe(false)
+  }
 }
 
 function callbackCode(page: Page): string {
@@ -182,17 +214,23 @@ test('signs in, redeems the callback code, and enters through the protected conn
 })
 
 test('shows a new resident key once and waits for saved confirmation', async ({ page }) => {
+  const observations = observeSecretSurfaces(page)
   await page.goto(authorizationPath())
   await page.getByLabel('Agent-chosen city name').fill('goldfish-browser')
   await page.getByLabel('Model label (optional)').fill('browser-test-model')
   await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
 
   expect(await page.getByRole('heading', { name: "Save goldfish-browser's resident key" }).isVisible()).toBe(true)
-  const residentKey = (await page.locator('code').textContent())?.trim() ?? ''
+  const codeValues = (await page.locator('code').allTextContents()).map(text => text.trim())
+  const residentKey = codeValues.find(text => /^1f3d9_sk_[0-9a-f]{48}$/.test(text)) ?? ''
+  const recoveryCodes = codeValues.filter(text => /^1f3d9_rc_[0-9a-f]{64}$/.test(text))
   expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)).toBe(true)
+  expect(recoveryCodes).toHaveLength(8)
+  expect(new Set(recoveryCodes).size).toBe(8)
+  const initialSecrets = [residentKey, ...recoveryCodes]
   expect(await page.getByText('It is shown once').isVisible()).toBe(true)
   expect(await page.getByText('This resident has not been created yet.').isVisible()).toBe(true)
-  await expectNoResidentKeyOutsidePage(page, residentKey)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
   await page.getByRole('button', { name: 'Create resident and continue' }).click()
   expect(await page.getByRole('heading', { name: "Save goldfish-browser's resident key" }).isVisible()).toBe(true)
@@ -203,11 +241,60 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   const callback = new URL(page.url())
   expect(callback.searchParams.get('state')).toBe(state)
   callbackCode(page)
-  expect((await page.content()).includes(residentKey)).toBe(false)
-  await expectNoResidentKeyOutsidePage(page, residentKey)
+  const callbackPage = await page.content()
+  for (const secret of initialSecrets) expect(callbackPage.includes(secret)).toBe(false)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
+
+  await page.goto('/recovery')
+  await page.getByLabel('Unused recovery code').fill(recoveryCodes[0]!)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save goldfish-browser's replacement key" })).toBeVisible()
+  const replacementKey = (await page.locator('code').textContent())?.trim() ?? ''
+  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
+  initialSecrets.push(replacementKey)
+  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Replace the lost key' }).click()
+  await expect(page.getByRole('heading', { name: 'goldfish-browser is recovered' })).toBeVisible()
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(residentKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: 'Request stopped' })).toBeVisible()
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save goldfish-browser's replacement key" })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel and keep the current key' }).click()
+  await expect(page.getByRole('heading', { name: 'Rotation canceled' })).toBeVisible()
+
+  await page.goto('/recovery')
+  await page.getByLabel('Unused recovery code').fill(recoveryCodes[1]!)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: 'Request stopped' })).toBeVisible()
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 })
 
-test('joins through the first-party page and the generated root key works', async ({ page }) => {
+test('rejects a different well-formed key during new-resident confirmation', async ({ page }) => {
+  const observations = observeSecretSurfaces(page)
+  await page.goto(authorizationPath())
+  await page.getByLabel('Agent-chosen city name').fill('wrong-confirmation-browser')
+  await page.getByLabel('Model label (optional)').fill('browser-test-model')
+  await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
+  const initialSecrets = (await page.locator('code').allTextContents()).map(text => text.trim())
+  expect(initialSecrets).toHaveLength(9)
+
+  await page.getByLabel('Re-enter the saved resident key').fill(existingResidentKey)
+  await page.getByRole('button', { name: 'Create resident and continue' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
+  const errorPage = await page.content()
+  for (const secret of initialSecrets) expect(errorPage.includes(secret)).toBe(false)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
+})
+
+test('joins through the first-party page and an initial recovery code works', async ({ page }) => {
+  const observations = observeSecretSurfaces(page)
   const response = await page.goto('/join')
   await expect(page.getByRole('heading', { name: 'Move into 1F3D9' })).toBeVisible()
   expect(response?.headers()['cache-control']).toContain('no-store')
@@ -217,48 +304,146 @@ test('joins through the first-party page and the generated root key works', asyn
   await page.getByLabel('Model label (optional)').fill('browser-test-model')
   await page.getByRole('button', { name: 'Show the new resident key' }).click()
   await expect(page.getByRole('heading', { name: "Save standalone-browser's resident key" })).toBeVisible()
-  const residentKey = (await page.locator('code').textContent())?.trim() ?? ''
+  const codeValues = (await page.locator('code').allTextContents()).map(code => code.trim())
+  const residentKey = codeValues.find(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code)) ?? ''
+  const recoveryCodes = codeValues.filter(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))
   expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)).toBe(true)
-  await expectNoResidentKeyOutsidePage(page, residentKey)
+  expect(recoveryCodes).toHaveLength(8)
+  expect(new Set(recoveryCodes).size).toBe(8)
+  const initialSecrets = [residentKey, ...recoveryCodes]
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
   await page.getByLabel('Re-enter the saved resident key').fill(residentKey)
   await page.getByRole('button', { name: 'Create this resident' }).click()
   await expect(page.getByRole('heading', { name: 'standalone-browser now lives in 1F3D9' })).toBeVisible()
-  expect((await page.content()).includes(residentKey)).toBe(false)
+  const successPage = await page.content()
+  for (const secret of initialSecrets) expect(successPage.includes(secret)).toBe(false)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
+
+  await page.goto('/recovery')
+  await page.getByLabel('Unused recovery code').fill(recoveryCodes[0]!)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save standalone-browser's replacement key" })).toBeVisible()
+  const replacementKey = (await page.locator('code').textContent())?.trim() ?? ''
+  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
+  initialSecrets.push(replacementKey)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
+  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Replace the lost key' }).click()
+  await expect(page.getByRole('heading', { name: 'standalone-browser is recovered' })).toBeVisible()
+  const recoverySuccess = await page.content()
+  for (const secret of initialSecrets) expect(recoverySuccess.includes(secret)).toBe(false)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
   await page.goto('/rotate')
   await page.getByLabel('Current resident key').fill(residentKey)
   await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: 'Request stopped' })).toBeVisible()
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
   await expect(page.getByRole('heading', { name: "Save standalone-browser's replacement key" })).toBeVisible()
   await page.getByRole('button', { name: 'Cancel and keep the current key' }).click()
   await expect(page.getByRole('heading', { name: 'Rotation canceled' })).toBeVisible()
-})
-
-test('identity pages still work when mobile browsers strip Origin and Referer on submit', async ({ page }) => {
-  await page.goto('/join')
-  await page.getByLabel('City name').fill('mobile-header-join')
-  await page.getByLabel('Model label (optional)').fill('browser-test-model')
-  await withStrippedBrowserHeaders(page, '/join', async () => {
-    await page.getByRole('button', { name: 'Show the new resident key' }).click()
-  })
-  await expect(page.getByRole('heading', { name: "Save mobile-header-join's resident key" })).toBeVisible()
-  const joinedKey = (await page.locator('code').textContent())?.trim() ?? ''
-  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(joinedKey)).toBe(true)
-
-  await page.goto('/rotate')
-  await page.getByLabel('Current resident key').fill(existingResidentKey)
-  await withStrippedBrowserHeaders(page, '/rotate', async () => {
-    await page.getByRole('button', { name: 'Show a replacement key' }).click()
-  })
-  await expect(page.getByRole('heading', { name: "Save browser-resident's replacement key" })).toBeVisible()
 
   await page.goto('/recovery')
-  await page.getByLabel('Current resident key').fill(recoveryResidentKey)
-  await withStrippedBrowserHeaders(page, '/recovery', async () => {
-    await page.getByRole('button', { name: 'Create recovery codes' }).click()
-  })
-  await expect(page.getByRole('heading', { name: "Save recovery-browser's recovery codes" })).toBeVisible()
+  await page.getByLabel('Unused recovery code').fill(recoveryCodes[1]!)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: 'Request stopped' })).toBeVisible()
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 })
+
+for (const profile of [
+  { label: 'desktop', device: devices['Desktop Chrome'] },
+  { label: 'mobile', device: devices['Pixel 5'] },
+] as const) {
+  test(`${profile.label} signup works when the browser strips Origin and Referer`, async ({ browser, baseURL }) => {
+    const context = await browser.newContext({
+      ...profile.device,
+      baseURL,
+      ignoreHTTPSErrors: true,
+    })
+    const page = await context.newPage()
+    const observations = observeSecretSurfaces(page)
+    const observedSecrets: string[] = []
+
+    try {
+      const joinHandle = `${profile.label}-header-join`
+      await page.goto('/join')
+      await page.getByLabel('City name').fill(joinHandle)
+      await page.getByLabel('Model label (optional)').fill('browser-test-model')
+      await withStrippedBrowserHeaders(page, '/join', async () => {
+        await page.getByRole('button', { name: 'Show the new resident key' }).click()
+      })
+      await expect(page.getByRole('heading', { name: `Save ${joinHandle}'s resident key` })).toBeVisible()
+      const joinedSecrets = (await page.locator('code').allTextContents()).map(code => code.trim())
+      expect(joinedSecrets.filter(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code))).toHaveLength(1)
+      expect(joinedSecrets.filter(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))).toHaveLength(8)
+      expect(new Set(joinedSecrets).size).toBe(9)
+      observedSecrets.push(...joinedSecrets)
+      await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
+      const joinedKey = joinedSecrets.find(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code)) ?? ''
+      await page.getByLabel('Re-enter the saved resident key').fill(joinedKey)
+      await withStrippedBrowserHeaders(page, '/join', async () => {
+        await page.getByRole('button', { name: 'Create this resident' }).click()
+      })
+      await expect(page.getByRole('heading', { name: `${joinHandle} now lives in 1F3D9` })).toBeVisible()
+      const joinSuccess = await page.content()
+      for (const secret of joinedSecrets) expect(joinSuccess.includes(secret)).toBe(false)
+      await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
+
+      await page.goto('/rotate')
+      await page.getByLabel('Current resident key').fill(existingResidentKey)
+      await withStrippedBrowserHeaders(page, '/rotate', async () => {
+        await page.getByRole('button', { name: 'Show a replacement key' }).click()
+      })
+      await expect(page.getByRole('heading', { name: "Save browser-resident's replacement key" })).toBeVisible()
+
+      await page.goto('/recovery')
+      await page.getByLabel('Current resident key').fill(recoveryResidentKey)
+      await withStrippedBrowserHeaders(page, '/recovery', async () => {
+        await page.getByRole('button', { name: 'Create recovery codes' }).click()
+      })
+      await expect(page.getByRole('heading', { name: "Save recovery-browser's recovery codes" })).toBeVisible()
+
+      const oauthHandle = `${profile.label}-header-oauth`
+      await page.goto(authorizationPath())
+      await page.getByLabel('Agent-chosen city name').fill(oauthHandle)
+      await page.getByLabel('Model label (optional)').fill('browser-test-model')
+      await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
+        await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
+      })
+      await expect(page.getByRole('heading', { name: `Save ${oauthHandle}'s resident key` })).toBeVisible()
+      const oauthSecrets = (await page.locator('code').allTextContents()).map(code => code.trim())
+      expect(oauthSecrets.filter(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code))).toHaveLength(1)
+      expect(oauthSecrets.filter(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))).toHaveLength(8)
+      expect(new Set(oauthSecrets).size).toBe(9)
+      observedSecrets.push(...oauthSecrets)
+      await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
+      const oauthKey = oauthSecrets.find(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code)) ?? ''
+      await page.getByLabel('Re-enter the saved resident key').fill(oauthKey)
+      await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
+        await page.getByRole('button', { name: 'Create resident and continue' }).click()
+      })
+      await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
+      const oauthSuccess = await page.content()
+      for (const secret of oauthSecrets) expect(oauthSuccess.includes(secret)).toBe(false)
+      await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
+
+      await page.goto(authorizationPath())
+      await page.getByLabel('Current resident key').fill(existingResidentKey)
+      await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
+        await page.getByRole('button', { name: 'Approve and connect this resident' }).click()
+      })
+      await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
+      observedSecrets.push(existingResidentKey)
+      await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
+    } finally {
+      await context.close()
+    }
+  })
+}
 
 test('rotates a resident key only after the private replacement is re-entered', async ({ page }) => {
   const response = await page.goto('/rotate')

@@ -51,6 +51,9 @@ const MAX_UI_LOCALES = 256
 const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
 const ACCESS_TOKEN_SECONDS = 10 * 60
 const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
+const RECOVERY_CODE_COUNT = 8
+const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
+type RecoveryCodeSet = readonly [string, string, string, string, string, string, string, string]
 
 type OAuthStore = typeof postgresOAuthStore
 
@@ -72,6 +75,27 @@ interface OAuthRuntime {
 
 function opaque(prefix = ''): string {
   return prefix + randomBytes(32).toString('hex')
+}
+
+function newRecoveryCode(): string {
+  return RECOVERY_CODE_PREFIX + randomBytes(32).toString('hex')
+}
+
+export function collectRecoveryCodeSet(makeCode: () => string): RecoveryCodeSet {
+  const codes = new Set<string>()
+  for (let attempt = 0; codes.size < RECOVERY_CODE_COUNT; attempt += 1) {
+    if (attempt >= 64) throw new Error('secure recovery-code generation failed')
+    codes.add(makeCode())
+  }
+  const values = [...codes]
+  return [
+    values[0]!, values[1]!, values[2]!, values[3]!,
+    values[4]!, values[5]!, values[6]!, values[7]!,
+  ]
+}
+
+function newRecoveryCodeSet(): RecoveryCodeSet {
+  return collectRecoveryCodeSet(newRecoveryCode)
 }
 
 function lastAddress(value: string | undefined): string | undefined {
@@ -235,10 +259,17 @@ function consentPage(request: {
 <button type="submit">Cancel</button></form>`
 }
 
-function rootKeyPage(handle: string, secret: string, csrf: string): string {
+function rootKeyPage(
+  handle: string,
+  secret: string,
+  recoveryCodes: RecoveryCodeSet,
+  csrf: string,
+): string {
   return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
 <p class="warning"><strong>Save this permanent resident key now.</strong> It is shown once on this private page.</p>
 <code>${escapeHtml(secret)}</code>
+<p class="warning"><strong>Save these recovery codes now too.</strong> They are shown once on this private page, each works once, and generating a later set invalidates them.</p>
+${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 <p>Do not paste it into chat, a note, a thing, or public content.</p>
 <p>This resident has not been created yet. It is created only after you save and re-enter the key below.</p>
 <form method="post" action="/oauth/authorize">
@@ -522,6 +553,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     ))) return browserError(c, 429, 'The registrar is busy. Try again in one hour.')
 
     const residentSecret = newSecret()
+    const recoveryCodes = newRecoveryCodeSet()
     try {
       const pending = await oauth.store.stageNewResidentRegistration({
         sessionHash,
@@ -529,6 +561,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         handle,
         model: modelText.trim(),
         residentSecretHash: sha256(residentSecret),
+        recoveryCodeHashes: recoveryCodes.map(sha256),
       })
       if (!pending) return browserError(c, 403, 'This sign-in request expired or was already used.')
       if (pending.status === 'handle_taken') {
@@ -539,7 +572,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         c,
         200,
         'Save the resident key',
-        rootKeyPage(pending.handle, residentSecret, csrf),
+        rootKeyPage(pending.handle, residentSecret, recoveryCodes, csrf),
         registeredCallbackOrigin(request.redirect_uri),
       )
     } catch (error) {

@@ -69,6 +69,10 @@ const identityRotationMigrationUrl = new URL(
   '../db/migrations/20260816_identity_rotation.sql',
   import.meta.url,
 )
+const initialRecoveryCodesMigrationUrl = new URL(
+  '../db/migrations/20260817_initial_recovery_codes.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -611,7 +615,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|payment-response-replay\|payment-response-body-replay\|payment-response-body-rollout\|payment-response-body-validate\|identity-recovery\|identity-rotation/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|payment-response-replay\|payment-response-body-replay\|payment-response-body-rollout\|payment-response-body-validate\|identity-recovery\|identity-rotation\|initial-recovery-codes/,
   )
 })
 
@@ -744,6 +748,7 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [readFileSync(paymentResponseBodyValidationMigrationUrl, 'utf8'), 'payment-response-body-validate'],
     [readFileSync(identityRecoveryMigrationUrl, 'utf8'), 'identity-recovery'],
     [readFileSync(identityRotationMigrationUrl, 'utf8'), 'identity-rotation'],
+    [readFileSync(initialRecoveryCodesMigrationUrl, 'utf8'), 'initial-recovery-codes'],
   ] as const) {
     const statements = label === 'payment-attempts'
       ? splitSqlStatements(migration).filter(statement => {
@@ -809,6 +814,8 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:identity-recovery'] ?? '', /--target production --migration identity-recovery$/)
   assert.match(packageJson.scripts['migrate:preview:identity-rotation'] ?? '', /--target preview --migration identity-rotation$/)
   assert.match(packageJson.scripts['migrate:production:identity-rotation'] ?? '', /--target production --migration identity-rotation$/)
+  assert.match(packageJson.scripts['migrate:preview:initial-recovery-codes'] ?? '', /--target preview --migration initial-recovery-codes$/)
+  assert.match(packageJson.scripts['migrate:production:initial-recovery-codes'] ?? '', /--target production --migration initial-recovery-codes$/)
 })
 
 test('identity recovery is an explicitly selected additive release with a PostgreSQL gate', () => {
@@ -882,6 +889,59 @@ test('identity rotation is additive, schema-complete, and covered by the existin
   const postgresCommand = packageJson.scripts['test:postgres'] ?? ''
   assert.match(postgresCommand, /identity-recovery-postgres\.test\.ts/)
   assert.doesNotMatch(postgresCommand, /identity-rotation-postgres\.test\.ts/)
+})
+
+test('initial recovery codes use two additive normalized pending tables', () => {
+  const migration = readFileSync(initialRecoveryCodesMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(migration)
+
+  assert.equal(statements.length, 2)
+  assert.doesNotMatch(uncommented, /^\s*(?:ALTER|DROP|INSERT|UPDATE|DELETE|TRUNCATE)\b/im)
+  assert.doesNotMatch(uncommented, /\b(?:recovery_code_hashes|new_recovery_code_hashes)\b/i)
+  assert.doesNotMatch(uncommented, /\bTEXT\s*\[\s*\]/i)
+  assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+pending_resident_registration_recovery_codes/i)
+  assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+oauth_authorization_request_recovery_codes/i)
+
+  for (const statement of statements) {
+    assert.match(statement, /^\s*(?:--.*\s+)*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/i)
+    assert.match(statement, /code_hash\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i)
+    assert.match(statement, /code_hash\s+~\s+'\^\[0-9a-f\]\{64\}\$'/i)
+    assert.match(statement, /ordinal\s+SMALLINT\s+NOT\s+NULL\s+CHECK\s*\(ordinal\s+BETWEEN\s+1\s+AND\s+8\)/i)
+    assert.match(statement, /ON\s+DELETE\s+CASCADE/i)
+  }
+})
+
+test('initial recovery codes are selected as one separate preview or production migration', () => {
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'initial-recovery-codes'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260817_initial_recovery_codes.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'initial-recovery-codes'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'initial-recovery-codes-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260817_initial_recovery_codes.sql')
+
+  const postgresCommand = packageJson.scripts['test:postgres'] ?? ''
+  assert.match(postgresCommand, /identity-recovery-postgres\.test\.ts/)
+  assert.match(postgresCommand, /oauth-postgres\.test\.ts/)
 })
 
 test('payment attempts are an explicitly selected additive release', () => {

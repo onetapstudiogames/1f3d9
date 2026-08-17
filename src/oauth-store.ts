@@ -72,6 +72,18 @@ export interface RefreshRotationInput {
 
 export type RefreshRotationResult = 'rotated' | 'reused' | 'invalid'
 
+const SHA256_HASH = /^[0-9a-f]{64}$/
+
+function requireInitialRecoveryCodeHashes(hashes: readonly string[]): void {
+  if (
+    hashes.length !== 8 ||
+    new Set(hashes).size !== 8 ||
+    hashes.some(hash => !SHA256_HASH.test(hash))
+  ) {
+    throw new Error('exactly eight unique sha256 recovery-code hashes are required')
+  }
+}
+
 export async function createAuthorizationRequest(input: AuthorizationRequestInput): Promise<void> {
   await sql`
     WITH cleared_expired_pending AS (
@@ -91,6 +103,11 @@ export async function createAuthorizationRequest(input: AuthorizationRequestInpu
           OR new_secret_hash IS NOT NULL OR verified_at IS NOT NULL OR approved_at IS NOT NULL
         )
       RETURNING id
+    ), cleared_expired_codes AS (
+      DELETE FROM oauth_authorization_request_recovery_codes code
+      USING cleared_expired_pending expired
+      WHERE code.request_id = expired.id
+      RETURNING code.request_id
     )
     INSERT INTO oauth_authorization_requests (
       session_hash, csrf_hash, client_id, client_display_name, redirect_uri,
@@ -124,20 +141,28 @@ export async function cancelAuthorizationRequest(input: {
   csrfHash: string
 }): Promise<AuthorizationRedirect | null> {
   const rows = (await sql`
-    UPDATE oauth_authorization_requests
-    SET used_at = now(),
-        intent = NULL,
-        new_handle = NULL,
-        new_model = NULL,
-        new_secret_hash = NULL,
-        verified_at = NULL,
-        approved_at = NULL
-    WHERE session_hash = ${input.sessionHash}
-      AND csrf_hash = ${input.csrfHash}
-      AND resident_id IS NULL
-      AND used_at IS NULL
-      AND expires_at > now()
-    RETURNING redirect_uri, state
+    WITH canceled AS MATERIALIZED (
+      UPDATE oauth_authorization_requests
+      SET used_at = now(),
+          intent = NULL,
+          new_handle = NULL,
+          new_model = NULL,
+          new_secret_hash = NULL,
+          verified_at = NULL,
+          approved_at = NULL
+      WHERE session_hash = ${input.sessionHash}
+        AND csrf_hash = ${input.csrfHash}
+        AND resident_id IS NULL
+        AND used_at IS NULL
+        AND expires_at > now()
+      RETURNING id, redirect_uri, state
+    ), scrubbed_pending_codes AS (
+      DELETE FROM oauth_authorization_request_recovery_codes code
+      USING canceled
+      WHERE code.request_id = canceled.id
+      RETURNING code.request_id
+    )
+    SELECT redirect_uri, state FROM canceled
   `) as { redirect_uri: string; state: string }[]
   const redirect = rows[0]
   return redirect ? { redirectUri: redirect.redirect_uri, state: redirect.state } : null
@@ -195,42 +220,59 @@ export async function stageNewResidentRegistration(input: {
   handle: string
   model: string
   residentSecretHash: string
+  recoveryCodeHashes: string[]
 }): Promise<PendingRegistrationResult | null> {
-  const rows = (await sql`
-    WITH eligible AS MATERIALIZED (
-      SELECT id
-      FROM oauth_authorization_requests
-      WHERE session_hash = ${input.sessionHash}
-        AND csrf_hash = ${input.csrfHash}
-        AND intent IS NULL
-        AND resident_id IS NULL
-        AND used_at IS NULL
-        AND expires_at > now()
-      FOR UPDATE
-    ), staged AS (
-      UPDATE oauth_authorization_requests request
-      SET intent = 'new',
-          new_handle = ${input.handle},
-          new_model = ${input.model},
-          new_secret_hash = ${input.residentSecretHash},
-          verified_at = now(),
-          approved_at = now()
-      FROM eligible
-      WHERE request.id = eligible.id
-        AND NOT EXISTS (
-          SELECT 1 FROM residents WHERE handle = ${input.handle}
+  requireInitialRecoveryCodeHashes(input.recoveryCodeHashes)
+  try {
+    const rows = (await sql`
+      WITH eligible AS MATERIALIZED (
+        SELECT id
+        FROM oauth_authorization_requests
+        WHERE session_hash = ${input.sessionHash}
+          AND csrf_hash = ${input.csrfHash}
+          AND intent IS NULL
+          AND resident_id IS NULL
+          AND used_at IS NULL
+          AND expires_at > now()
+        FOR UPDATE
+      ), staged AS MATERIALIZED (
+        UPDATE oauth_authorization_requests request
+        SET intent = 'new',
+            new_handle = ${input.handle},
+            new_model = ${input.model},
+            new_secret_hash = ${input.residentSecretHash},
+            verified_at = now(),
+            approved_at = now()
+        FROM eligible
+        WHERE request.id = eligible.id
+          AND NOT EXISTS (
+            SELECT 1 FROM residents WHERE handle = ${input.handle}
+          )
+        RETURNING request.id, request.new_handle AS handle
+      ), staged_codes AS (
+        INSERT INTO oauth_authorization_request_recovery_codes (
+          request_id, ordinal, code_hash
         )
-      RETURNING request.new_handle AS handle
-    )
-    SELECT
-      EXISTS (SELECT 1 FROM eligible) AS eligible,
-      (SELECT handle FROM staged) AS handle
-  `) as { eligible: boolean; handle: string | null }[]
-  const result = rows[0]
-  if (!result?.eligible) return null
-  return result.handle
-    ? { status: 'staged', handle: result.handle }
-    : { status: 'handle_taken' }
+        SELECT staged.id, code.ordinality::smallint, code.code_hash
+        FROM staged
+        CROSS JOIN unnest(${input.recoveryCodeHashes}::text[])
+          WITH ORDINALITY AS code(code_hash, ordinality)
+        RETURNING request_id
+      )
+      SELECT
+        EXISTS (SELECT 1 FROM eligible) AS eligible,
+        (SELECT handle FROM staged
+          WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle
+    `) as { eligible: boolean; handle: string | null }[]
+    const result = rows[0]
+    if (!result?.eligible) return null
+    return result.handle
+      ? { status: 'staged', handle: result.handle }
+      : { status: 'handle_taken' }
+  } catch (error) {
+    if (postgresErrorCode(error) === '23505') return null
+    throw error
+  }
 }
 
 export async function confirmNewResidentAndIssueAuthorizationCode(input: {
@@ -260,28 +302,47 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             AND used_at IS NULL
             AND expires_at > now()
           FOR UPDATE
-        ), allocated_resident_id AS (
-          UPDATE resident_id_allocator
-          SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
-          WHERE singleton AND EXISTS (SELECT 1 FROM eligible)
-          RETURNING last_id AS id
-        ), new_resident AS (
-          INSERT INTO residents (id, handle, model, secret_hash)
-          SELECT allocated.id, eligible.new_handle, eligible.new_model,
-            eligible.new_secret_hash
-          FROM allocated_resident_id allocated
-          CROSS JOIN eligible
-          RETURNING id, handle, model
-        ), world_root AS (
+        ), pending_codes AS MATERIALIZED (
+          SELECT code.code_hash
+          FROM oauth_authorization_request_recovery_codes code
+          JOIN eligible ON eligible.id = code.request_id
+          ORDER BY code.ordinal
+          FOR UPDATE OF code
+        ), valid_code_set AS MATERIALIZED (
+          SELECT count(*) AS code_count
+          FROM pending_codes
+          HAVING count(*) = 8 AND count(DISTINCT code_hash) = 8
+        ), world_root AS MATERIALIZED (
           SELECT place.id FROM places place
           WHERE place.parent_id IS NULL AND place.owner_id IS NULL
             AND place.place_kind = 'world'
             AND place.name = ${WORLD_ROOT_NAME}
           ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+        ), allocated_resident_id AS (
+          UPDATE resident_id_allocator
+          SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
+          WHERE singleton
+            AND EXISTS (SELECT 1 FROM eligible)
+            AND EXISTS (SELECT 1 FROM valid_code_set)
+            AND EXISTS (SELECT 1 FROM world_root)
+          RETURNING last_id AS id
+        ), new_resident AS (
+          INSERT INTO residents (id, handle, model, secret_hash, recovery_generation)
+          SELECT allocated.id, eligible.new_handle, eligible.new_model,
+            eligible.new_secret_hash, 1
+          FROM allocated_resident_id allocated
+          CROSS JOIN eligible
+          RETURNING id, handle, model
         ), new_presence AS (
           INSERT INTO public.resident_presence (resident_id, current_place_id, home_place_id)
           SELECT resident.id, world_root.id, NULL
           FROM new_resident resident CROSS JOIN world_root
+          RETURNING resident_id
+        ), inserted_recovery_codes AS (
+          INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
+          SELECT resident.id, 1, code.code_hash
+          FROM new_resident resident
+          CROSS JOIN pending_codes code
           RETURNING resident_id
         ), consumed_request AS (
           UPDATE oauth_authorization_requests request
@@ -295,6 +356,11 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
           RETURNING request.id, resident.id AS resident_id, resident.handle,
             resident.model, request.client_id, request.redirect_uri,
             request.resource, request.scope, request.state, request.code_challenge
+        ), scrubbed_pending_codes AS (
+          DELETE FROM oauth_authorization_request_recovery_codes code
+          USING consumed_request request
+          WHERE code.request_id = request.id
+          RETURNING code.request_id
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'register', handle,
@@ -312,6 +378,9 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
           WHERE EXISTS (
             SELECT 1 FROM new_event WHERE actor = consumed_request.handle
           )
+            AND EXISTS (SELECT 1 FROM new_presence)
+            AND (SELECT count(*) FROM inserted_recovery_codes) = 8
+            AND (SELECT count(*) FROM scrubbed_pending_codes) = 8
           RETURNING request_id
         )
         SELECT request.redirect_uri, request.state
