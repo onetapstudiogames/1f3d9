@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { trustedBrowserForm } from './browser-form.ts'
 import {
   HANDLE_RE,
   newSecret,
@@ -425,7 +426,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   })
 
   app.post('/oauth/authorize', async c => {
-    if (c.req.header('origin') !== oauth.origin) {
+    if (!trustedBrowserForm(c, oauth.origin)) {
       return browserError(c, 403, 'This approval did not come from the 1F3D9 sign-in page.')
     }
     const values = await form(c)

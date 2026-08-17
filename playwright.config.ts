@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
 const baseURL = `https://127.0.0.1:${port}`
+const mobile = process.env.E2E_MOBILE === 'true'
 
 export default defineConfig({
   testDir: './e2e',
@@ -20,7 +21,10 @@ export default defineConfig({
     screenshot: 'off',
     video: 'off',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [{
+    name: mobile ? 'mobile-chromium' : 'chromium',
+    use: { ...devices[mobile ? 'Pixel 5' : 'Desktop Chrome'] },
+  }],
   webServer: {
     command: 'node --experimental-strip-types e2e/oauth-test-server.ts',
     url: `${baseURL}/__e2e/health`,

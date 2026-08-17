@@ -28,6 +28,7 @@ const port = Number(process.env.E2E_PORT ?? 41_739)
 const origin = `https://127.0.0.1:${port}`
 const callbackUri = `https://localhost:${port}/oauth/callback`
 const existingResidentKey = `1f3d9_sk_${'ab'.repeat(24)}`
+const recoveryResidentKey = `1f3d9_sk_${'cd'.repeat(24)}`
 const placeDescription = 'A quiet test square with a brass observatory window.'
 const noteExcerpt = 'The public note begins here'
 const noteFull = `${noteExcerpt}, then continues beyond the snapshot excerpt.`
@@ -398,6 +399,7 @@ function makeCertificate(): { key: string; cert: string } {
 
 const environment = {
   HOSTED_CHAT_SIGNIN_ENABLED: 'true',
+  IDENTITY_RECOVERY_ENABLED: 'true',
   IDENTITY_ROTATION_ENABLED: 'true',
   PUBLIC_ORIGIN: origin,
   VERCEL: '1',
@@ -413,48 +415,181 @@ process.env.PUBLIC_ORIGIN = origin
 
 const app = new Hono()
 const store = makeMemoryStore()
-let currentIdentitySecretHash = sha256(existingResidentKey)
-let stagedRotation: {
+type TestIdentityResident = Readonly<{
+  id: number
+  handle: string
+  secretHash: string
+  generation: number
+}>
+type StagedIdentityChange = Readonly<{
   readonly sessionHash: string
   readonly csrfHash: string
   readonly replacementSecretHash: string
-} | null = null
+  readonly residentId: number
+}>
+
+let identityResidents = new Map<number, TestIdentityResident>([
+  [49, { id: 49, handle: 'browser-resident', secretHash: sha256(existingResidentKey), generation: 0 }],
+  [50, { id: 50, handle: 'recovery-browser', secretHash: sha256(recoveryResidentKey), generation: 0 }],
+])
+let stagedRegistrations = new Map<string, Readonly<{
+  csrfHash: string
+  handle: string
+  model: string
+  residentSecretHash: string
+}>>()
+let recoveryCodes = new Map<string, Readonly<{
+  residentId: number
+  generation: number
+  used: boolean
+}>>()
+let stagedRecoveries = new Map<string, StagedIdentityChange & Readonly<{ recoveryCodeHash: string }>>()
+let stagedRotations = new Map<string, StagedIdentityChange>()
+let nextIdentityResidentId = 200
+
+const identityResidentForSecret = (secretHash: string): TestIdentityResident | null =>
+  [...identityResidents.values()].find(resident => resident.secretHash === secretHash) ?? null
+
+const deleteMapKey = <K, V>(source: ReadonlyMap<K, V>, key: K): Map<K, V> => {
+  const next = new Map(source)
+  next.delete(key)
+  return next
+}
+
+const deleteResidentRecoveryCodes = (residentId: number): Map<string, Readonly<{
+  residentId: number
+  generation: number
+  used: boolean
+}>> => new Map([...recoveryCodes].filter(([, code]) => code.residentId !== residentId))
+
 mountIdentityRoutes(app, {
   environment,
   store: {
     consumeIdentityRateLimit: async () => true,
-    stageResidentRegistration: async () => null,
-    confirmResidentRegistration: async () => null,
-    cancelResidentRegistration: async () => false,
-    generateRecoveryCodes: async () => null,
-    stageRootRecovery: async () => null,
-    confirmRootRecovery: async () => null,
-    cancelRootRecovery: async () => false,
-    stageRootRotation: async input => {
-      if (input.residentSecretHash !== currentIdentitySecretHash || stagedRotation) return null
-      stagedRotation = {
+    stageResidentRegistration: async input => {
+      if (stagedRegistrations.has(input.sessionHash)) return null
+      if ([...identityResidents.values()].some(resident => resident.handle === input.handle)) {
+        return { status: 'handle_taken' }
+      }
+      stagedRegistrations = new Map(stagedRegistrations).set(input.sessionHash, {
+        csrfHash: input.csrfHash,
+        handle: input.handle,
+        model: input.model,
+        residentSecretHash: input.residentSecretHash,
+      })
+      return { status: 'staged', handle: input.handle }
+    },
+    confirmResidentRegistration: async input => {
+      const staged = stagedRegistrations.get(input.sessionHash)
+      if (
+        !staged || staged.csrfHash !== input.csrfHash ||
+        staged.residentSecretHash !== input.residentSecretHash ||
+        [...identityResidents.values()].some(resident => resident.handle === staged.handle)
+      ) return null
+      const resident = {
+        id: nextIdentityResidentId++,
+        handle: staged.handle,
+        secretHash: input.residentSecretHash,
+        generation: 0,
+      }
+      identityResidents = new Map(identityResidents).set(resident.id, resident)
+      stagedRegistrations = deleteMapKey(stagedRegistrations, input.sessionHash)
+      return { residentId: resident.id, handle: resident.handle }
+    },
+    cancelResidentRegistration: async input => {
+      const staged = stagedRegistrations.get(input.sessionHash)
+      if (!staged || staged.csrfHash !== input.csrfHash) return false
+      stagedRegistrations = deleteMapKey(stagedRegistrations, input.sessionHash)
+      return true
+    },
+    generateRecoveryCodes: async input => {
+      const resident = identityResidentForSecret(input.residentSecretHash)
+      if (!resident) return null
+      const generation = resident.generation + 1
+      identityResidents = new Map(identityResidents).set(resident.id, { ...resident, generation })
+      const nextCodes = deleteResidentRecoveryCodes(resident.id)
+      for (const codeHash of input.codeHashes) {
+        nextCodes.set(codeHash, { residentId: resident.id, generation, used: false })
+      }
+      recoveryCodes = nextCodes
+      return { residentId: resident.id, handle: resident.handle, generation }
+    },
+    stageRootRecovery: async input => {
+      const code = recoveryCodes.get(input.recoveryCodeHash)
+      const resident = code ? identityResidents.get(code.residentId) : null
+      if (
+        !code || code.used || !resident || code.generation !== resident.generation ||
+        stagedRecoveries.has(input.sessionHash)
+      ) return null
+      stagedRecoveries = new Map(stagedRecoveries).set(input.sessionHash, {
         sessionHash: input.sessionHash,
         csrfHash: input.csrfHash,
         replacementSecretHash: input.replacementSecretHash,
-      }
-      return { residentId: 49, handle: 'browser-resident' }
+        residentId: resident.id,
+        recoveryCodeHash: input.recoveryCodeHash,
+      })
+      return { residentId: resident.id, handle: resident.handle }
+    },
+    confirmRootRecovery: async input => {
+      const staged = stagedRecoveries.get(input.sessionHash)
+      const resident = staged ? identityResidents.get(staged.residentId) : null
+      const code = staged ? recoveryCodes.get(staged.recoveryCodeHash) : null
+      if (
+        !staged || !resident || !code || code.used ||
+        staged.csrfHash !== input.csrfHash ||
+        staged.replacementSecretHash !== input.replacementSecretHash ||
+        code.generation !== resident.generation
+      ) return null
+      identityResidents = new Map(identityResidents).set(resident.id, {
+        ...resident,
+        secretHash: input.replacementSecretHash,
+        generation: resident.generation + 1,
+      })
+      recoveryCodes = deleteResidentRecoveryCodes(resident.id)
+      stagedRecoveries = deleteMapKey(stagedRecoveries, input.sessionHash)
+      return { residentId: resident.id, handle: resident.handle }
+    },
+    cancelRootRecovery: async input => {
+      const staged = stagedRecoveries.get(input.sessionHash)
+      if (!staged || staged.csrfHash !== input.csrfHash) return false
+      stagedRecoveries = deleteMapKey(stagedRecoveries, input.sessionHash)
+      return true
+    },
+    stageRootRotation: async input => {
+      const resident = identityResidentForSecret(input.residentSecretHash)
+      if (!resident || stagedRotations.has(input.sessionHash)) return null
+      stagedRotations = new Map(stagedRotations).set(input.sessionHash, {
+        sessionHash: input.sessionHash,
+        csrfHash: input.csrfHash,
+        replacementSecretHash: input.replacementSecretHash,
+        residentId: resident.id,
+      })
+      return { residentId: resident.id, handle: resident.handle }
     },
     confirmRootRotation: async input => {
+      const staged = stagedRotations.get(input.sessionHash)
+      const resident = staged ? identityResidents.get(staged.residentId) : null
       if (
-        !stagedRotation || stagedRotation.sessionHash !== input.sessionHash ||
-        stagedRotation.csrfHash !== input.csrfHash ||
-        stagedRotation.replacementSecretHash !== input.replacementSecretHash
+        !staged || !resident || staged.sessionHash !== input.sessionHash ||
+        staged.csrfHash !== input.csrfHash ||
+        staged.replacementSecretHash !== input.replacementSecretHash
       ) return null
-      currentIdentitySecretHash = input.replacementSecretHash
-      stagedRotation = null
-      return { status: 'rotated', residentId: 49, handle: 'browser-resident' }
+      identityResidents = new Map(identityResidents).set(resident.id, {
+        ...resident,
+        secretHash: input.replacementSecretHash,
+        generation: resident.generation + 1,
+      })
+      recoveryCodes = deleteResidentRecoveryCodes(resident.id)
+      stagedRotations = deleteMapKey(stagedRotations, input.sessionHash)
+      return { status: 'rotated', residentId: resident.id, handle: resident.handle }
     },
     cancelRootRotation: async input => {
+      const staged = stagedRotations.get(input.sessionHash)
       if (
-        !stagedRotation || stagedRotation.sessionHash !== input.sessionHash ||
-        stagedRotation.csrfHash !== input.csrfHash
+        !staged || staged.sessionHash !== input.sessionHash ||
+        staged.csrfHash !== input.csrfHash
       ) return false
-      stagedRotation = null
+      stagedRotations = deleteMapKey(stagedRotations, input.sessionHash)
       return true
     },
   },

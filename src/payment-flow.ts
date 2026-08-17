@@ -173,9 +173,12 @@ function completed(attempt: PaymentAttemptRecord): DurableX402Result {
     state: 'completed',
     status: attempt.responseStatus,
     body: attempt.response,
-    paymentResponseHeader: attempt.txHash && attempt.payerWallet
+    // Historical rows completed before receipt persistence cannot recover bytes that
+    // were never stored. Keep their canonical compatibility receipt so paid work is
+    // not stranded; new rows always take the durable header branch.
+    paymentResponseHeader: attempt.paymentResponseHeader ?? (attempt.txHash && attempt.payerWallet
       ? settlementHeader(attempt.txHash, attempt.payerWallet)
-      : null,
+      : null),
   }
 }
 
@@ -338,7 +341,8 @@ export async function resumeDurableX402(
     blockHash: check.blockHash,
     blockTime,
     finalizedAt,
-    paymentResponseHeader: settlementHeader(txHash, attempt.payerWallet),
+    paymentResponseHeader: attempt.paymentResponseHeader
+      ?? settlementHeader(txHash, attempt.payerWallet),
   }
 }
 
@@ -424,6 +428,7 @@ export async function runDurableX402(
   const leaseOwner = leased.leaseOwner
   let txHash = attempt.txHash
   let settlementRaw: Record<string, unknown> | undefined
+  let settledResponseHeader: string | undefined
 
   if (txHash == null && created.disposition === 'existing') {
     txHash = await deps.recoverTransaction(
@@ -465,7 +470,10 @@ export async function runDurableX402(
 
     const settlement = await deps.settle(verified)
     txHash = settlement.transaction
-    if (settlement.state === 'settled') settlementRaw = settlement.response
+    if (settlement.state === 'settled') {
+      settlementRaw = settlement.response
+      settledResponseHeader = settlementHeader(txHash!, parsed.authorization.payer, settlementRaw)
+    }
     if (txHash == null) {
       const review = await deps.needsReview(input.database, {
         publicId: attempt.publicId,
@@ -481,6 +489,7 @@ export async function runDurableX402(
       leaseOwner,
       txHash,
       finality: null,
+      ...(settledResponseHeader ? { paymentResponseHeader: settledResponseHeader } : {}),
     })
   }
 
@@ -543,6 +552,8 @@ export async function runDurableX402(
     blockHash: check.blockHash,
     blockTime,
     finalizedAt,
-    paymentResponseHeader: settlementHeader(txHash, parsed.authorization.payer, settlementRaw),
+    paymentResponseHeader: attempt.paymentResponseHeader
+      ?? settledResponseHeader
+      ?? settlementHeader(txHash, parsed.authorization.payer, settlementRaw),
   }
 }

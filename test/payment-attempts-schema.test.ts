@@ -8,6 +8,10 @@ const migrationDdl = readFileSync(
   new URL('../db/migrations/20260816_payment_attempts.sql', import.meta.url),
   'utf8',
 )
+const replayMigrationDdl = readFileSync(
+  new URL('../db/migrations/20260816_payment_response_replay.sql', import.meta.url),
+  'utf8',
+)
 
 function createPaymentAttemptsStatement(ddl: string): string {
   const statement = splitSqlStatements(ddl).find(candidate =>
@@ -30,6 +34,14 @@ function completionFunctionStatement(ddl: string): string {
     /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt\s*\(/iu.test(candidate),
   )
   assert.ok(statement, 'missing atomic payment-attempt completion function')
+  return statement.replace(/^\s*--.*$/gmu, '').replace(/\s+/gu, ' ').trim()
+}
+
+function attemptHistoryFunctionStatement(ddl: string): string {
+  const statement = splitSqlStatements(ddl).find(candidate =>
+    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history\s*\(\s*\)/iu.test(candidate),
+  )
+  assert.ok(statement, 'missing payment-attempt history function')
   return statement.replace(/^\s*--.*$/gmu, '').replace(/\s+/gu, ' ').trim()
 }
 
@@ -145,9 +157,11 @@ test('terminal results and finality facts are complete, and immutable transition
 
 test('business writes can complete exactly one finalized attempt inside the same SQL statement', () => {
   const fresh = completionFunctionStatement(schemaDdl)
-  const upgrade = completionFunctionStatement(migrationDdl)
+  const initialUpgrade = completionFunctionStatement(migrationDdl)
+  const replayUpgrade = completionFunctionStatement(replayMigrationDdl)
 
-  assert.equal(upgrade, fresh)
+  assert.equal(replayUpgrade, fresh)
+  assert.match(initialUpgrade, /response_json\s*=\s*completion_response/iu)
   assert.match(fresh, /RETURNS\s+payment_attempts/iu)
   assert.match(fresh, /UPDATE\s+payment_attempts/iu)
   assert.match(fresh, /status\s*=\s*'completed'/iu)
@@ -159,7 +173,21 @@ test('business writes can complete exactly one finalized attempt inside the same
   assert.match(fresh, /finalized_block_hash\s+IS\s+NOT\s+NULL/iu)
   assert.match(fresh, /finalized_block_time\s+IS\s+NOT\s+NULL/iu)
   assert.match(fresh, /finalized_at\s+IS\s+NOT\s+NULL/iu)
+  assert.match(fresh, /response_json\s*#>>\s*'\{__1f3d9_x402_response_v1,header\}'/iu)
+  assert.match(fresh, /'body'\s*,\s*completion_response/iu)
   assert.match(fresh, /IF\s+NOT\s+FOUND[\s\S]*RAISE\s+EXCEPTION/iu)
+})
+
+test('a recorded facilitator response header is immutable before and after completion', () => {
+  const fresh = attemptHistoryFunctionStatement(schemaDdl)
+  const replayUpgrade = attemptHistoryFunctionStatement(replayMigrationDdl)
+
+  assert.equal(replayUpgrade, fresh)
+  assert.match(
+    fresh,
+    /OLD\.response_json\s*#>>\s*'\{__1f3d9_x402_response_v1,header\}'\s+IS\s+NOT\s+NULL/iu,
+  )
+  assert.match(fresh, /payment facilitator response is immutable/iu)
 })
 
 test('the global payment-use ledger is owned by one exact attempt and validates effects', () => {

@@ -26,6 +26,13 @@ const PAYEE = '0x2222222222222222222222222222222222222222'
 const NONCE = `0x${'33'.repeat(32)}`
 const TX = `0x${'44'.repeat(32)}`
 const BLOCK_HASH = `0x${'55'.repeat(32)}`
+const FACILITATOR_RESPONSE_HEADER = Buffer.from(JSON.stringify({
+  success: true,
+  transaction: TX,
+  payer: PAYER,
+  network: 'base',
+  facilitator: 'https://facilitator.example.test',
+})).toString('base64')
 
 class QueuedDatabase implements PaymentAttemptQueryable {
   readonly calls: { text: string; params: readonly unknown[] }[] = []
@@ -300,6 +307,69 @@ test('transaction and finality evidence bind once under the lease', async () => 
   assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*\$\d+/iu)
 })
 
+test('facilitator response bytes survive evidence binding and durable row reload', async () => {
+  const pending = {
+    ...row({
+      status: 'payment_pending',
+      leaseOwner: 'lease_winner',
+      txHash: TX,
+      response: {
+        __1f3d9_x402_response_v1: { header: FACILITATOR_RESPONSE_HEADER },
+      },
+    }),
+  }
+  const database = new QueuedDatabase([pending])
+
+  const rebound = await bindPaymentEvidence(database, {
+    publicId: pending.publicId,
+    leaseOwner: 'lease_winner',
+    txHash: TX,
+    finality: null,
+    paymentResponseHeader: FACILITATOR_RESPONSE_HEADER,
+  })
+
+  assert.equal(database.calls[0]?.params[7], FACILITATOR_RESPONSE_HEADER)
+  assert.equal(rebound.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+  assert.equal(rebound.response, null)
+
+  const completed = {
+    ...pending,
+    status: 'completed' as const,
+    responseStatus: 201,
+    response: {
+      __1f3d9_x402_response_v1: {
+        header: FACILITATOR_RESPONSE_HEADER,
+        body: { ok: true, thing: { id: 42 } },
+      },
+    },
+  }
+  const reloaded = await findPaymentAttempt(new QueuedDatabase([completed]), {
+    actorId: completed.actorId,
+    operation: 'direct_sale',
+    offerId: completed.offerId!,
+  })
+
+  assert.equal(reloaded?.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+  assert.deepEqual(reloaded?.response, { ok: true, thing: { id: 42 } })
+})
+
+test('facilitator response persistence rejects malformed or oversized headers before SQL', async () => {
+  for (const paymentResponseHeader of ['not base64', 'A'.repeat(87_385)]) {
+    const database = new QueuedDatabase()
+    await assert.rejects(
+      bindPaymentEvidence(database, {
+        publicId: row().publicId,
+        leaseOwner: 'lease_winner',
+        txHash: TX,
+        finality: null,
+        paymentResponseHeader,
+      }),
+      (error: unknown) => error instanceof TypeError,
+    )
+    assert.equal(database.calls.length, 0)
+  }
+})
+
 test('evidence cannot overwrite a different transaction', async () => {
   const different = row({ status: 'payment_pending', leaseOwner: 'lease_winner', txHash: `0x${'77'.repeat(32)}` })
   const database = new QueuedDatabase([], [different])
@@ -403,6 +473,7 @@ test('public pending/completed views say not to pay again and omit payment secre
       responseStatus: 200,
       response: { ok: true },
     }),
+    paymentResponseHeader: FACILITATOR_RESPONSE_HEADER,
     request_json: { authorization: { signature: 'secret' } },
     x402_payload_digest: '66'.repeat(32),
   }
@@ -418,6 +489,7 @@ test('public pending/completed views say not to pay again and omit payment secre
     response: { ok: true },
   })
   assert.doesNotMatch(encoded, /authorization|signature|payload_digest|nonce/iu)
+  assert.equal(encoded.includes(FACILITATOR_RESPONSE_HEADER), false)
 
   assert.equal(toPublicPaymentAttempt(row({ status: 'payment_pending' })).do_not_pay_again, true)
   assert.equal(toPublicPaymentAttempt(row({ status: 'expired' })).do_not_pay_again, false)

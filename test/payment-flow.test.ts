@@ -6,13 +6,21 @@ import {
   runDurableX402,
   type PaymentFlowDependencies,
 } from '../src/payment-flow.ts'
-import type { PaymentAttemptRecord } from '../src/payment-attempts.ts'
+import { findPaymentAttempt, type PaymentAttemptRecord } from '../src/payment-attempts.ts'
 
 const PAYER = '0x1111111111111111111111111111111111111111'
 const PAYEE = '0x2222222222222222222222222222222222222222'
 const TX = `0x${'33'.repeat(32)}`
 const BLOCK_HASH = `0x${'44'.repeat(32)}`
 const NONCE = `0x${'55'.repeat(32)}`
+const FACILITATOR_RESPONSE = {
+  success: true,
+  transaction: TX,
+  payer: PAYER,
+  network: 'base',
+  facilitator: 'https://facilitator.example.test',
+}
+const FACILITATOR_RESPONSE_HEADER = Buffer.from(JSON.stringify(FACILITATOR_RESPONSE)).toString('base64')
 const accepted = requirements(PAYEE, 2, '/api/transfer', 'test sale')
 const paymentHeader = Buffer.from(JSON.stringify({
   x402Version: 1,
@@ -97,7 +105,7 @@ function dependencies(
     verify: async () => { events.push('verify'); return { ...parsed, state: 'verified', verificationPayer: PAYER } },
     settle: async () => {
       events.push('settle')
-      return { state: 'settled', transaction: TX, payer: PAYER, response: { success: true, transaction: TX } }
+      return { state: 'settled', transaction: TX, payer: PAYER, response: FACILITATOR_RESPONSE }
     },
     bindEvidence: async (_database, input) => {
       events.push(input.finality ? 'bind-final' : 'bind-tx')
@@ -229,16 +237,28 @@ test('unfinalized evidence stays pending and releases the worker lease', async (
 
 test('a completed retry returns the stored canonical response without chain or facilitator calls', async () => {
   const events: string[] = []
+  const stored = attempt({
+    status: 'completed', responseStatus: 201,
+    txHash: TX,
+    response: {
+      __1f3d9_x402_response_v1: {
+        header: FACILITATOR_RESPONSE_HEADER,
+        body: { ok: true, thing: { id: 42 } },
+      },
+    },
+  })
+  const persisted = await findPaymentAttempt({ query: async () => [stored] }, {
+    actorId: stored.actorId,
+    operation: 'direct_sale',
+    offerId: stored.offerId!,
+  })
+  assert.ok(persisted)
   const deps = dependencies(events, {
     createOrRead: async () => {
       events.push('create')
       return {
         disposition: 'existing',
-        attempt: attempt({
-          status: 'completed', responseStatus: 201,
-          txHash: TX,
-          response: { ok: true, thing: { id: 42 } },
-        }),
+        attempt: persisted,
       }
     },
   })
@@ -248,13 +268,40 @@ test('a completed retry returns the stored canonical response without chain or f
   if (result.state === 'completed') {
     assert.equal(result.status, 201)
     assert.deepEqual(result.body, { ok: true, thing: { id: 42 } })
-    assert.ok(result.paymentResponseHeader)
+    assert.equal(result.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+    assert.deepEqual(JSON.parse(Buffer.from(result.paymentResponseHeader, 'base64').toString('utf8')), FACILITATOR_RESPONSE)
+  }
+  assert.deepEqual(events, ['block', 'create'])
+})
+
+test('a pre-upgrade completed row uses the compatibility receipt without another settlement', async () => {
+  const events: string[] = []
+  const deps = dependencies(events, {
+    createOrRead: async () => {
+      events.push('create')
+      return {
+        disposition: 'existing',
+        attempt: attempt({
+          status: 'completed',
+          responseStatus: 201,
+          txHash: TX,
+          response: { ok: true, thing: { id: 42 } },
+        }),
+      }
+    },
+  })
+
+  const result = await runDurableX402(input, deps)
+
+  assert.equal(result.state, 'completed')
+  if (result.state === 'completed') {
     assert.deepEqual(
-      JSON.parse(Buffer.from(result.paymentResponseHeader, 'base64').toString('utf8')),
+      JSON.parse(Buffer.from(result.paymentResponseHeader!, 'base64').toString('utf8')),
       { success: true, transaction: TX, payer: PAYER },
     )
   }
   assert.deepEqual(events, ['block', 'create'])
+  assert.equal(events.includes('settle'), false)
 })
 
 test('a finalized transfer outside the conservative window is terminally rejected', async () => {

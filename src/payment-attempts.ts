@@ -5,6 +5,10 @@ const HASH_RE = /^0x[0-9a-f]{64}$/u
 const SHA256_RE = /^[0-9a-f]{64}$/u
 const TOKEN_RE = /^0x[0-9a-f]{40}$/u
 const PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]+$/u
+const PAYMENT_RESPONSE_HEADER_RE = /^[A-Za-z0-9+/]+={0,2}$/u
+const MAX_FACILITATOR_RESPONSE_BYTES = 65_536
+const MAX_PAYMENT_RESPONSE_HEADER_LENGTH = 4 * Math.ceil(MAX_FACILITATOR_RESPONSE_BYTES / 3)
+const DURABLE_X402_RESPONSE_KEY = '__1f3d9_x402_response_v1'
 
 export type PaymentAttemptStatus =
   | 'settling'
@@ -50,6 +54,7 @@ export interface PaymentAttemptRecord {
   result: Record<string, unknown> | null
   responseStatus: number | null
   response: Record<string, unknown> | null
+  paymentResponseHeader?: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
@@ -219,6 +224,44 @@ function objectValue(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
+function paymentResponseHeaderValue(value: unknown): string | null {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_PAYMENT_RESPONSE_HEADER_LENGTH
+    || !PAYMENT_RESPONSE_HEADER_RE.test(value)
+  ) return null
+  try {
+    const decoded = Buffer.from(value, 'base64')
+    if (
+      decoded.byteLength === 0
+      || decoded.byteLength > MAX_FACILITATOR_RESPONSE_BYTES
+      || decoded.toString('base64') !== value
+    ) return null
+    const parsed = JSON.parse(decoded.toString('utf8')) as unknown
+    return parsed != null && typeof parsed === 'object' && !Array.isArray(parsed) ? value : null
+  } catch {
+    return null
+  }
+}
+
+function durablePaymentResponse(value: Record<string, unknown> | null): {
+  header: string
+  body: Record<string, unknown> | null
+} | null {
+  if (!value || Object.keys(value).length !== 1) return null
+  const envelopeValue = value[DURABLE_X402_RESPONSE_KEY]
+  if (!envelopeValue || typeof envelopeValue !== 'object' || Array.isArray(envelopeValue)) return null
+  const envelope = envelopeValue as Record<string, unknown>
+  if (Object.keys(envelope).some(key => key !== 'header' && key !== 'body')) return null
+  const header = paymentResponseHeaderValue(envelope.header)
+  if (!header) return null
+  if (!Object.hasOwn(envelope, 'body')) return { header, body: null }
+  const body = envelope.body
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  return { header, body: body as Record<string, unknown> }
+}
+
 function textValue(value: unknown): string | null {
   return value == null ? null : String(value)
 }
@@ -237,6 +280,12 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
   if (!['settling', 'payment_pending', 'completed', 'invalid', 'expired', 'needs_review', 'legacy_completed'].includes(status)) {
     throw new TypeError('invalid status row')
   }
+  const storedResponse = objectValue(rowValue(row, 'response', 'response_json'))
+  const durableResponse = durablePaymentResponse(storedResponse)
+  const directPaymentResponseHeader = paymentResponseHeaderValue(
+    rowValue(row, 'paymentResponseHeader', 'payment_response_header'),
+  )
+  const paymentResponseHeader = durableResponse?.header ?? directPaymentResponseHeader
   return {
     publicId,
     actorId,
@@ -271,7 +320,8 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
     invalidReason: textValue(rowValue(row, 'invalidReason', 'invalid_reason')),
     result: objectValue(rowValue(row, 'result', 'result_json')),
     responseStatus: integer(rowValue(row, 'responseStatus', 'response_status')),
-    response: objectValue(rowValue(row, 'response', 'response_json')),
+    response: durableResponse ? durableResponse.body : storedResponse,
+    ...(paymentResponseHeader ? { paymentResponseHeader } : {}),
     createdAt: isoString(rowValue(row, 'createdAt', 'created_at')) ?? new Date(0).toISOString(),
     updatedAt: isoString(rowValue(row, 'updatedAt', 'updated_at')) ?? new Date(0).toISOString(),
     completedAt: isoString(rowValue(row, 'completedAt', 'completed_at')),
@@ -440,8 +490,15 @@ export async function bindPaymentEvidence(
       blockTime: string
       finalizedAt: string
     }
+    paymentResponseHeader?: string | null
   },
 ): Promise<PaymentAttemptRecord> {
+  const responseHeader = input.paymentResponseHeader == null
+    ? null
+    : paymentResponseHeaderValue(input.paymentResponseHeader)
+  if (input.paymentResponseHeader != null && !responseHeader) {
+    throw new TypeError('invalid payment response header')
+  }
   const updated = paymentAttemptFromRow((await runQuery(database, `
     /* payment-attempts:bind-evidence */
     UPDATE payment_attempts
@@ -451,12 +508,24 @@ export async function bindPaymentEvidence(
       finalized_block_hash = coalesce(finalized_block_hash, lower($5)),
       finalized_block_time = coalesce(finalized_block_time, $6::timestamptz),
       finalized_at = coalesce(finalized_at, $7::timestamptz),
+      response_json = CASE
+        WHEN $8::text IS NULL THEN response_json
+        WHEN response_json IS NULL THEN jsonb_build_object(
+          '${DURABLE_X402_RESPONSE_KEY}', jsonb_build_object('header', $8::text)
+        )
+        ELSE response_json
+      END,
       updated_at = clock_timestamp()
     WHERE public_id = $1
       AND lease_owner = $2
       AND status IN ('settling', 'payment_pending', 'needs_review')
       AND (tx_hash IS NULL OR tx_hash = $3)
       AND ($5::text IS NULL OR finalized_block_hash IS NULL OR finalized_block_hash = $5)
+      AND (
+        $8::text IS NULL
+        OR response_json IS NULL
+        OR response_json #>> '{${DURABLE_X402_RESPONSE_KEY},header}' = $8::text
+      )
     RETURNING *
   `, [
     input.publicId,
@@ -466,6 +535,7 @@ export async function bindPaymentEvidence(
     input.finality?.blockHash ?? null,
     input.finality?.blockTime ?? null,
     input.finality?.finalizedAt ?? null,
+    responseHeader,
   ]))[0] as Record<string, unknown> | undefined)
   if (updated) return updated
   const current = paymentAttemptFromRow((await runQuery(database, `
@@ -477,6 +547,9 @@ export async function bindPaymentEvidence(
   `, [input.publicId]))[0] as Record<string, unknown> | undefined)
   if (!current || (current.txHash != null && current.txHash !== input.txHash.toLowerCase())) {
     conflict('payment evidence conflicts with an existing transaction')
+  }
+  if (responseHeader != null && current.paymentResponseHeader !== responseHeader) {
+    conflict('payment evidence conflicts with an existing facilitator response')
   }
   return current
 }
@@ -521,7 +594,16 @@ export async function completePaymentAttempt(
     SET status = 'completed',
       result_json = $3::jsonb,
       response_status = $4,
-      response_json = $5::jsonb,
+      response_json = CASE
+        WHEN response_json #>> '{${DURABLE_X402_RESPONSE_KEY},header}' IS NULL THEN $5::jsonb
+        ELSE jsonb_build_object(
+          '${DURABLE_X402_RESPONSE_KEY}',
+          jsonb_build_object(
+            'header', response_json #>> '{${DURABLE_X402_RESPONSE_KEY},header}',
+            'body', $5::jsonb
+          )
+        )
+      END,
       completed_at = coalesce(completed_at, clock_timestamp()),
       lease_owner = NULL,
       lease_expires_at = NULL,
