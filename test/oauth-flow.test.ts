@@ -31,6 +31,19 @@ const STATE = 'client-state-that-must-survive'
 const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
 const CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
 const EXISTING_KEY = `1f3d9_sk_${'ab'.repeat(24)}`
+const RECOVERY_CODE_HASH = /^[0-9a-f]{64}$/
+
+function validRecoveryCodeHashes(hashes: readonly string[]): boolean {
+  return hashes.length === 8 &&
+    new Set(hashes).size === 8 &&
+    hashes.every(hash => RECOVERY_CODE_HASH.test(hash))
+}
+
+function requireRecoveryCodeHashes(hashes: readonly string[]): void {
+  if (!validRecoveryCodeHashes(hashes)) {
+    throw new Error('exactly eight unique recovery-code hashes are required')
+  }
+}
 
 function assertSecretsAbsent(surface: string, secrets: readonly string[]): void {
   for (const secret of secrets) assert.equal(surface.includes(secret), false)
@@ -191,6 +204,7 @@ class MemoryOAuthStore {
       if ([...this.residents.values()].some(resident => resident.handle === input.handle)) {
         return { status: 'handle_taken' as const }
       }
+      requireRecoveryCodeHashes(input.recoveryCodeHashes)
       request.intent = 'new'
       request.new_handle = input.handle
       request.new_model = input.model
@@ -223,8 +237,7 @@ class MemoryOAuthStore {
         request.resident_id !== null || request.new_handle === null || request.new_model === null ||
         request.pendingSecretHash === null || request.pendingSecretHash !== input.residentSecretHash ||
         request.root_key_confirmed_at !== null || request.pendingRecoveryCodeHashes === null ||
-        request.pendingRecoveryCodeHashes.length !== 8 ||
-        request.pendingRecoveryCodeHashes.some(hash => !/^[0-9a-f]{64}$/.test(hash))
+        !validRecoveryCodeHashes(request.pendingRecoveryCodeHashes)
       ) return null
       const allocatedResidentId = this.nextResidentId++
       if ([...this.residents.values()].some(resident => resident.handle === request.new_handle)) {

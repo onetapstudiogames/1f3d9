@@ -29,6 +29,18 @@ const origin = `https://127.0.0.1:${port}`
 const callbackUri = `https://localhost:${port}/oauth/callback`
 const existingResidentKey = `1f3d9_sk_${'ab'.repeat(24)}`
 const recoveryResidentKey = `1f3d9_sk_${'cd'.repeat(24)}`
+const RECOVERY_CODE_HASH = /^[0-9a-f]{64}$/
+
+const validRecoveryCodeHashes = (hashes: readonly string[]): boolean =>
+  hashes.length === 8 &&
+  new Set(hashes).size === 8 &&
+  hashes.every(hash => RECOVERY_CODE_HASH.test(hash))
+
+const requireRecoveryCodeHashes = (hashes: readonly string[]): void => {
+  if (!validRecoveryCodeHashes(hashes)) {
+    throw new Error('exactly eight unique recovery-code hashes are required')
+  }
+}
 const placeDescription = 'A quiet test square with a brass observatory window.'
 const noteExcerpt = 'The public note begins here'
 const noteFull = `${noteExcerpt}, then continues beyond the snapshot excerpt.`
@@ -298,6 +310,7 @@ function makeMemoryStore(): OAuthStore {
       if (!request || request.intent !== null || request.resident_id !== null) return null
       const handleTaken = [...residents.values()].some(resident => resident.handle === input.handle)
       if (handleTaken) return { status: 'handle_taken' }
+      requireRecoveryCodeHashes(input.recoveryCodeHashes)
       requests.set(input.sessionHash, {
         ...request,
         intent: 'new',
@@ -314,7 +327,7 @@ function makeMemoryStore(): OAuthStore {
       if (
         !request || request.intent !== 'new' || request.resident_id !== null ||
         request.new_handle === null || request.new_model === null || request.newSecretHash === null ||
-        request.newRecoveryCodeHashes === null || request.newRecoveryCodeHashes.length !== 8 ||
+        request.newRecoveryCodeHashes === null || !validRecoveryCodeHashes(request.newRecoveryCodeHashes) ||
         input.residentSecretHash !== request.newSecretHash
       ) return null
       if ([...residents.values()].some(resident => resident.handle === request.new_handle)) return null
@@ -490,6 +503,7 @@ mountIdentityRoutes(app, {
       if ([...identityResidents.values()].some(resident => resident.handle === input.handle)) {
         return { status: 'handle_taken' }
       }
+      requireRecoveryCodeHashes(input.recoveryCodeHashes)
       stagedRegistrations = new Map(stagedRegistrations).set(input.sessionHash, {
         csrfHash: input.csrfHash,
         handle: input.handle,
@@ -504,6 +518,7 @@ mountIdentityRoutes(app, {
       if (
         !staged || staged.csrfHash !== input.csrfHash ||
         staged.residentSecretHash !== input.residentSecretHash ||
+        !validRecoveryCodeHashes(staged.recoveryCodeHashes) ||
         [...identityResidents.values()].some(resident => resident.handle === staged.handle)
       ) return null
       const resident = {
@@ -530,6 +545,7 @@ mountIdentityRoutes(app, {
     generateRecoveryCodes: async input => {
       const resident = identityResidentForSecret(input.residentSecretHash)
       if (!resident) return null
+      requireRecoveryCodeHashes(input.codeHashes)
       const generation = resident.generation + 1
       identityResidents = new Map(identityResidents).set(resident.id, { ...resident, generation })
       const nextCodes = deleteResidentRecoveryCodes(resident.id)
