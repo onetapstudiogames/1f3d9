@@ -275,6 +275,27 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       assert.equal((await database!.query('SELECT count(*) FROM pending_resident_registration_recovery_codes')).rows[0]!.count, '0')
     })
 
+    await t.test('recovery-set generation rejects every non-exact, malformed, or duplicate hash set', async () => {
+      await resetDatabase()
+      const valid = Array.from({ length: 8 }, (_, index) => sha256(`generated-set:${index}`))
+      const attempts = [
+        valid.slice(0, 7),
+        [...valid, sha256('generated-set:ninth')],
+        valid.map((hash, index) => index === 7 ? valid[0]! : hash),
+        valid.map((hash, index) => index === 7 ? 'A'.repeat(64) : hash),
+      ]
+      for (const codeHashes of attempts) {
+        await assert.rejects(
+          store.generateRecoveryCodes({
+            residentSecretHash: sha256('existing-root-key'),
+            codeHashes,
+          }),
+          /exactly eight unique sha256 recovery-code hashes are required/i,
+        )
+      }
+      assert.equal((await database!.query('SELECT count(*) FROM resident_recovery_codes')).rows[0]!.count, '0')
+    })
+
     await t.test('registration stores only hashes and creates nothing before exact key confirmation', async () => {
       await resetDatabase()
       const pending = registration('staged')

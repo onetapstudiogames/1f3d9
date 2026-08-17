@@ -36,7 +36,7 @@ export interface RecoveryGenerationResult extends IdentityResidentResult {
 
 const SHA256_HASH = /^[0-9a-f]{64}$/
 
-function requireInitialRecoveryCodeHashes(hashes: readonly string[]): void {
+function requireRecoveryCodeHashes(hashes: readonly string[]): void {
   if (
     hashes.length !== 8 ||
     new Set(hashes).size !== 8 ||
@@ -74,7 +74,7 @@ export async function consumeIdentityRateLimit(input: {
 export async function stageResidentRegistration(
   input: RegistrationStageInput,
 ): Promise<RegistrationStageResult | null> {
-  requireInitialRecoveryCodeHashes(input.recoveryCodeHashes)
+  requireRecoveryCodeHashes(input.recoveryCodeHashes)
   try {
     const rows = (await sql`
       WITH cleared_expired AS MATERIALIZED (
@@ -253,9 +253,7 @@ export async function generateRecoveryCodes(input: {
   residentSecretHash: string
   codeHashes: string[]
 }): Promise<RecoveryGenerationResult | null> {
-  if (input.codeHashes.length !== 8 || input.codeHashes.some(hash => !/^[0-9a-f]{64}$/.test(hash))) {
-    throw new Error('exactly eight recovery-code hashes are required')
-  }
+  requireRecoveryCodeHashes(input.codeHashes)
   const rows = (await sql`
     WITH proven AS MATERIALIZED (
       SELECT id, handle, recovery_generation
