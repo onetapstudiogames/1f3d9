@@ -16,6 +16,7 @@ type RemoteMigration =
   | 'payment-attempts'
   | 'payment-response-replay'
   | 'payment-response-body-replay'
+  | 'payment-response-body-rollout'
   | 'payment-response-body-validate'
   | 'identity-recovery'
   | 'identity-rotation'
@@ -31,7 +32,8 @@ type MigrationFile =
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
-  | 'db/migrations/20260817_payment_response_body_validate.sql'
+  | 'db/migrations/20260818_payment_response_body_rollout.sql'
+  | 'db/migrations/20260818_payment_response_body_validate.sql'
   | 'db/migrations/20260816_identity_recovery.sql'
   | 'db/migrations/20260816_identity_rotation.sql'
 
@@ -69,7 +71,8 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'payment-attempts': 'db/migrations/20260816_payment_attempts.sql',
   'payment-response-replay': 'db/migrations/20260816_payment_response_replay.sql',
   'payment-response-body-replay': 'db/migrations/20260817_payment_response_body_replay.sql',
-  'payment-response-body-validate': 'db/migrations/20260817_payment_response_body_validate.sql',
+  'payment-response-body-rollout': 'db/migrations/20260818_payment_response_body_rollout.sql',
+  'payment-response-body-validate': 'db/migrations/20260818_payment_response_body_validate.sql',
   'identity-recovery': 'db/migrations/20260816_identity_recovery.sql',
   'identity-rotation': 'db/migrations/20260816_identity_rotation.sql',
 }
@@ -87,7 +90,7 @@ function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
   const requested = namedArgument(args, 'migration')
   if (!requested || !(requested in REMOTE_MIGRATIONS)) {
     throw new Error(
-      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts|payment-response-replay|payment-response-body-replay|payment-response-body-validate|identity-recovery|identity-rotation',
+      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts|payment-response-replay|payment-response-body-replay|payment-response-body-rollout|payment-response-body-validate|identity-recovery|identity-rotation',
     )
   }
   return requested as RemoteMigration

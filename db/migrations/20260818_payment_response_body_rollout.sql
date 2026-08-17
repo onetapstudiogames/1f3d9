@@ -1,4 +1,4 @@
--- Preserve the literal UTF-8 bytes returned by a completed paid operation.
+-- Safe Phase A for targets that have not installed byte-exact response replay.
 -- Legacy completed rows remain NULL because their original bytes cannot be recovered.
 ALTER TABLE payment_attempts
   ADD COLUMN IF NOT EXISTS response_body_bytes BYTEA;
@@ -18,7 +18,7 @@ BEGIN
           AND response_json IS NOT NULL
           AND octet_length(response_body_bytes) BETWEEN 2 AND 200000
         )
-      );
+      ) NOT VALID;
   END IF;
 END
 $$;

@@ -26,6 +26,7 @@
     "migrate:preview:payment-attempts": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-attempts",
     "migrate:preview:payment-response-replay": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-response-replay",
     "migrate:preview:payment-response-body-replay": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-response-body-replay",
+    "migrate:preview:payment-response-body-rollout": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-response-body-rollout",
     "migrate:preview:payment-response-body-validate": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-response-body-validate",
     "migrate:preview:identity-recovery": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-recovery",
     "migrate:preview:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-rotation",
@@ -37,6 +38,7 @@
     "migrate:production:payment-attempts": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-attempts",
     "migrate:production:payment-response-replay": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-replay",
     "migrate:production:payment-response-body-replay": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-body-replay",
+    "migrate:production:payment-response-body-rollout": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-body-rollout",
     "migrate:production:payment-response-body-validate": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-body-validate",
     "migrate:production:identity-recovery": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-recovery",
     "migrate:production:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-rotation"

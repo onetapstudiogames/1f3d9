@@ -564,7 +564,7 @@ export async function findReplayableTargetPaymentAttempt(
       AND operation = $2
       AND target_key = $3
       AND status IN ('settling', 'payment_pending', 'needs_review', 'completed')
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, public_id DESC
     LIMIT 1
   `, [
     input.actorId,

@@ -5,7 +5,12 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { bindPaymentEvidence, findPaymentAttempt } from '../../src/payment-attempts.ts'
+import {
+  bindPaymentEvidence,
+  canonicalPaymentRequest,
+  findPaymentAttempt,
+  findReplayableTargetPaymentAttempt,
+} from '../../src/payment-attempts.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'payment_integration'
@@ -22,8 +27,12 @@ const responseBodyMigrationDdl = await readFile(
   new URL('../../db/migrations/20260817_payment_response_body_replay.sql', import.meta.url),
   'utf8',
 )
+const responseBodyRolloutMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260818_payment_response_body_rollout.sql', import.meta.url),
+  'utf8',
+)
 const responseBodyValidationMigrationDdl = await readFile(
-  new URL('../../db/migrations/20260817_payment_response_body_validate.sql', import.meta.url),
+  new URL('../../db/migrations/20260818_payment_response_body_validate.sql', import.meta.url),
   'utf8',
 )
 
@@ -149,6 +158,8 @@ interface AttemptInput {
   payerWallet?: string | null
   nonce?: string | null
   txHash?: string | null
+  requestHash?: string | null
+  createdAt?: string | null
 }
 
 async function insertAttempt(database: Pool, input: AttemptInput): Promise<void> {
@@ -159,15 +170,17 @@ async function insertAttempt(database: Pool, input: AttemptInput): Promise<void>
   await database.query(`
     INSERT INTO payment_attempts (
       public_id, actor_id, counterparty_id, operation, target_key,
-      method, network, token, payer_wallet, payee_wallet, amount_units,
+      request_hash, method, network, token, payer_wallet, payee_wallet, amount_units,
       x402_nonce, status, tx_hash,
       finalized_block_number, finalized_block_hash, finalized_block_time,
-      finalized_at, result_json, response_status, response_json, completed_at
+      finalized_at, result_json, response_status, response_json, completed_at,
+      created_at
     ) VALUES (
       $1, $2, $3, $4, $5,
-      $6, $7, $8, $9, $10, $11,
-      $12, $13, $14,
-      $15, $16, $17, $18, $19::jsonb, $20, $21::jsonb, $22
+      $6, $7, $8, $9, $10, $11, $12,
+      $13, $14, $15,
+      $16, $17, $18, $19, $20::jsonb, $21, $22::jsonb, $23,
+      COALESCE($24::timestamptz, now())
     )
   `, [
     input.publicId,
@@ -175,6 +188,7 @@ async function insertAttempt(database: Pool, input: AttemptInput): Promise<void>
     input.counterpartyId ?? null,
     input.operation,
     input.targetKey ?? null,
+    input.requestHash ?? null,
     x402 ? 'x402' : null,
     x402 ? 'base' : null,
     x402 ? BASE_USDC : null,
@@ -192,6 +206,7 @@ async function insertAttempt(database: Pool, input: AttemptInput): Promise<void>
     input.status === 'completed' ? 200 : null,
     input.status === 'completed' ? JSON.stringify({ ok: true }) : null,
     completedAt,
+    input.createdAt ?? null,
   ])
 }
 
@@ -252,14 +267,61 @@ test('payment custody invariants hold in PostgreSQL', async t => {
       assert.deepEqual(table.rows, [{ table_name: 'payment_attempts' }])
     })
 
+    await t.test('headerless replay deterministically selects the higher public id on equal timestamps', async () => {
+      await resetFresh(postgres.client)
+      const request = { purchase: 'same-target' }
+      const requestHash = canonicalPaymentRequest(request).hash
+      const targetKey = 'direct_sale:offer:91:v3'
+      const createdAt = '2026-08-16T12:00:01Z'
+      await insertAttempt(postgres.client, {
+        publicId: 'pay_replay_tie_0001',
+        actorId: 2,
+        counterpartyId: 1,
+        operation: 'direct_sale',
+        targetKey,
+        status: 'completed',
+        payerWallet: BUYER_WALLET,
+        nonce: hash('a'),
+        txHash: hash('b'),
+        requestHash,
+        createdAt,
+      })
+      await insertAttempt(postgres.client, {
+        publicId: 'pay_replay_tie_0002',
+        actorId: 2,
+        counterpartyId: 1,
+        operation: 'direct_sale',
+        targetKey,
+        status: 'completed',
+        payerWallet: BUYER_WALLET,
+        nonce: hash('c'),
+        txHash: hash('d'),
+        requestHash,
+        createdAt,
+      })
+
+      const found = await findReplayableTargetPaymentAttempt(
+        async (text, params = []) => (await postgres.client.query(text, [...params])).rows,
+        {
+          actorId: 2,
+          counterpartyId: 1,
+          operation: 'direct_sale',
+          targetKey,
+          request,
+        },
+      )
+
+      assert.equal(found?.publicId, 'pay_replay_tie_0002')
+    })
+
     await t.test('response-body validation commits in a separate idempotent phase', async () => {
       await resetFresh(postgres.client)
       await postgres.client.query(`
         ALTER TABLE payment_attempts
           DROP CONSTRAINT payment_attempts_response_body_bytes_valid
       `)
-      await postgres.client.query(responseBodyMigrationDdl)
-      await postgres.client.query(responseBodyMigrationDdl)
+      await postgres.client.query(responseBodyRolloutMigrationDdl)
+      await postgres.client.query(responseBodyRolloutMigrationDdl)
       const phaseA = await postgres.client.query<{ convalidated: boolean }>(`
         SELECT convalidated
         FROM pg_catalog.pg_constraint
