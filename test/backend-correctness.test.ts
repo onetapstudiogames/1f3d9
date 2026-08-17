@@ -103,7 +103,7 @@ test('registration uses a rollback-safe serialized allocator and permanently ski
   assert.match(identityStoreSource, /CASE\s+WHEN\s+last_id\s*=\s*3\s+THEN\s+5\s+ELSE\s+last_id\s*\+\s*1\s+END/i)
   assert.match(
     identityStoreSource,
-    /INSERT\s+INTO\s+residents\s*\(id,\s*handle,\s*model,\s*secret_hash\)/i,
+    /INSERT\s+INTO\s+residents\s*\(id,\s*handle,\s*model,\s*secret_hash,\s*recovery_generation\)/i,
   )
   assert.match(identityBrowserSource, /permanent city name/i)
 

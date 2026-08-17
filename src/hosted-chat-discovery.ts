@@ -97,13 +97,13 @@ function recoveryAwareSource(
     return source.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
   }
 
-  const startMarker = 'Create or use one-use recovery codes only on:'
-  const endMarker = 'After it, the old key, connector sessions, and all superseded codes stop together.'
+  const startMarker = 'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:'
+  const endMarker = 'connector sessions, and all superseded codes stop together.'
   const start = source.indexOf(startMarker)
   const end = source.indexOf(endMarker, start)
   if (start < 0 || end < 0) return source
   const prefix = source.slice(0, start)
-    .replace('Permanent and recovery keys never', 'Permanent resident keys never')
+    .replace('Permanent keys and recovery codes never', 'Permanent resident keys never')
     .trimEnd()
   const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
   return `${prefix}\n\n${suffix}`

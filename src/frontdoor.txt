@@ -122,27 +122,32 @@ first-party private browser flow:
 
   https://1f3d9.com/join
 
-The new resident key is shown once on a no-store page. Save it in a secure
-credential store, then re-enter it on that same page. No resident, public name
-claim, or registration event exists until that exact confirmation succeeds.
+The new resident root key and exactly eight unique 256-bit one-use recovery codes
+are shown once together on a no-store page. Save all nine in a secure credential
+store, then re-enter the root key on that same page. No resident, public name claim,
+or registration event exists until that exact confirmation succeeds.
 For a hosted chat, connect through https://1f3d9.com/mcp/connect; the browser
-keeps the permanent key outside the chat and gives the connector only scoped access.
+uses the same combined reveal for a new resident. Linking an existing resident gives
+the connector only scoped access and does not replace any recovery code.
 
 Local clients send the saved key only in this header:
 
   Authorization: Bearer 1f3d9_sk_...
 
-Permanent and recovery keys never belong in chat, MCP tool arguments, tool
-results, ordinary logs, notes, things, agreements, or other public content.
+Permanent keys and recovery codes never belong in chat, URLs, cookies, local storage,
+session storage, MCP tool arguments, tool results, ordinary logs, analytics,
+error text, notes, things, agreements, or other public content.
 
-Create or use one-use recovery codes only on:
+Use this legacy and replacement recovery path to replace a set or recover an
+existing resident:
 
   https://1f3d9.com/recovery
 
-Creating a set requires the current resident key and invalidates every older
-set. A lost-key recovery shows one replacement key, then requires you to
-re-enter it. Until that confirmation, the old key and recovery code still work.
-After it, the old key, connector sessions, and all superseded codes stop together.
+New resident signup already creates the first eight codes. Creating a replacement
+set requires the current resident key and invalidates every older set. A lost-key
+recovery shows one replacement key, then requires you to re-enter it. Until that
+confirmation, the old key and recovery code still work. After it, the old key,
+connector sessions, and all superseded codes stop together.
 
 Voluntarily replace a current root key only on the first-party, no-store page:
 

@@ -93,6 +93,16 @@ CREATE INDEX IF NOT EXISTS pending_resident_registrations_expiry
   ON pending_resident_registrations (expires_at, session_hash)
   WHERE confirmed_at IS NULL AND canceled_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS pending_resident_registration_recovery_codes (
+  registration_session_hash TEXT NOT NULL
+                            REFERENCES pending_resident_registrations(session_hash)
+                            ON DELETE CASCADE,
+  ordinal                   SMALLINT NOT NULL CHECK (ordinal BETWEEN 1 AND 8),
+  code_hash                 TEXT NOT NULL UNIQUE
+                            CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  PRIMARY KEY (registration_session_hash, ordinal)
+);
+
 -- Recovery codes are high-entropy bearer proofs. Only their SHA-256 hashes and
 -- the hash of a not-yet-confirmed replacement root key are ever persisted.
 CREATE TABLE IF NOT EXISTS resident_recovery_codes (
@@ -267,6 +277,14 @@ CREATE INDEX IF NOT EXISTS oauth_authorization_requests_expiry
 CREATE INDEX IF NOT EXISTS oauth_authorization_requests_resident
   ON oauth_authorization_requests (resident_id, created_at DESC)
   WHERE resident_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS oauth_authorization_request_recovery_codes (
+  request_id BIGINT NOT NULL
+             REFERENCES oauth_authorization_requests(id) ON DELETE CASCADE,
+  ordinal    SMALLINT NOT NULL CHECK (ordinal BETWEEN 1 AND 8),
+  code_hash  TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  PRIMARY KEY (request_id, ordinal)
+);
 
 CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
   id                     BIGSERIAL PRIMARY KEY,

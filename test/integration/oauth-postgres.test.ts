@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
-import { Client } from 'pg'
+import { Client, Pool } from 'pg'
 
 type OAuthStore = typeof import('../../src/oauth-store.ts')
 
@@ -23,8 +23,12 @@ interface AuthorizationRequestState {
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'oauth_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const initialRecoveryCodesMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260817_initial_recovery_codes.sql', import.meta.url),
+  'utf8',
+)
 
-let database: Client | null = null
+let database: Pool | null = null
 
 const sql = async (
   strings: TemplateStringsArray,
@@ -56,7 +60,7 @@ function runDocker(args: readonly string[]): string {
   return result.stdout.trim()
 }
 
-async function startPostgres(): Promise<{ client: Client; containerName: string }> {
+async function startPostgres(): Promise<{ client: Pool; containerName: string }> {
   const containerName = `1f3d9-oauth-test-${process.pid}-${randomBytes(4).toString('hex')}`
   const password = randomBytes(24).toString('hex')
 
@@ -75,18 +79,16 @@ async function startPostgres(): Promise<{ client: Client; containerName: string 
 
     const deadline = Date.now() + 30_000
     let lastError: unknown = null
+    const connection = {
+      host: '127.0.0.1', port, user: 'postgres', password,
+      database: POSTGRES_DATABASE, ssl: false,
+    } as const
     while (Date.now() < deadline) {
-      const client = new Client({
-        host: '127.0.0.1',
-        port,
-        user: 'postgres',
-        password,
-        database: POSTGRES_DATABASE,
-        ssl: false,
-      })
+      const client = new Client(connection)
       try {
         await client.connect()
-        return { client, containerName }
+        await client.end()
+        return { client: new Pool(connection), containerName }
       } catch (error) {
         lastError = error
         await client.end().catch(() => undefined)
@@ -139,6 +141,20 @@ async function requestState(sessionHash: string): Promise<AuthorizationRequestSt
   return result.rows[0]!
 }
 
+function stagedRegistration(label: string, handle = 'goldfish-agent') {
+  return {
+    sessionHash: sha256(`${label}:session`),
+    csrfHash: sha256(`${label}:csrf`),
+    handle,
+    model: 'hosted-chat',
+    residentSecretHash: sha256(`${label}:resident-key`),
+    recoveryCodeHashes: Array.from(
+      { length: 8 },
+      (_, index) => sha256(`${label}:recovery:${index}`),
+    ),
+  }
+}
+
 async function seedAuthorizationCode(
   store: OAuthStore,
   label: string,
@@ -187,10 +203,101 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
   try {
     const store = await import('../../src/oauth-store.ts')
 
+    await t.test('the initial-code migration is idempotent and legacy new-resident requests fail closed', async () => {
+      await resetDatabase()
+      await database!.query(initialRecoveryCodesMigrationDdl)
+      await database!.query(initialRecoveryCodesMigrationDdl)
+      const request = authorizationRequestInput('legacy-oauth-no-codes')
+      const staged = stagedRegistration('legacy-oauth-no-codes', 'legacy-oauth-no-codes')
+      await store.createAuthorizationRequest(request)
+      await database!.query(
+        `UPDATE oauth_authorization_requests
+         SET intent = 'new', new_handle = $1, new_model = $2,
+             new_secret_hash = $3, verified_at = now(), approved_at = now()
+         WHERE session_hash = $4`,
+        [staged.handle, staged.model, staged.residentSecretHash, request.sessionHash],
+      )
+
+      assert.equal(await store.confirmNewResidentAndIssueAuthorizationCode({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+        residentSecretHash: staged.residentSecretHash,
+        authorizationCodeHash: sha256('legacy-oauth-no-codes:authorization-code'),
+      }), null)
+      const state = await database!.query(
+        `SELECT
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $2) AS pending_codes,
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id`,
+        [staged.handle, request.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        residents: '0', presences: '0', active_codes: '0', authorization_codes: '0',
+        pending_codes: '0', last_id: 1,
+      }])
+
+      await database!.query(
+        `UPDATE oauth_authorization_requests
+         SET created_at = now() - interval '16 minutes',
+             expires_at = now() - interval '1 minute'
+         WHERE session_hash = $1`,
+        [request.sessionHash],
+      )
+      await store.createAuthorizationRequest(authorizationRequestInput('legacy-oauth-cleanup-trigger'))
+      const expired = await requestState(request.sessionHash)
+      assert.deepEqual({
+        intent: expired.intent,
+        new_handle: expired.new_handle,
+        new_model: expired.new_model,
+        new_secret_hash: expired.new_secret_hash,
+        used: expired.used_at !== null,
+      }, {
+        intent: null, new_handle: null, new_model: null, new_secret_hash: null, used: true,
+      })
+    })
+
+    await t.test('OAuth registration rejects every non-exact, malformed, or duplicate initial-code set', async () => {
+      await resetDatabase()
+      const valid = stagedRegistration('invalid-oauth-code-set', 'invalid-oauth-code-set')
+      const attempts = [
+        valid.recoveryCodeHashes.slice(0, 7),
+        [...valid.recoveryCodeHashes, sha256('oauth-ninth-code')],
+        valid.recoveryCodeHashes.map((hash, index) => index === 7 ? valid.recoveryCodeHashes[0]! : hash),
+        valid.recoveryCodeHashes.map((hash, index) => index === 7 ? 'not-a-sha256-hash' : hash),
+      ]
+      for (const [index, recoveryCodeHashes] of attempts.entries()) {
+        const request = authorizationRequestInput(`invalid-oauth-code-set:${index}`)
+        await store.createAuthorizationRequest(request)
+        await assert.rejects(
+          store.stageNewResidentRegistration({
+            ...valid,
+            sessionHash: request.sessionHash,
+            csrfHash: request.csrfHash,
+            recoveryCodeHashes,
+          }),
+          /exactly eight unique sha256 recovery-code hashes are required/i,
+        )
+      }
+      assert.equal((await database!.query('SELECT count(*) FROM oauth_authorization_request_recovery_codes')).rows[0]!.count, '0')
+      assert.equal(
+        (await database!.query("SELECT count(*) FROM oauth_authorization_requests WHERE intent = 'new'")).rows[0]!.count,
+        '0',
+      )
+    })
+
     await t.test('a duplicate-handle race leaks no resident ID, row, event, or authorization code', async () => {
       await resetDatabase()
       const request = authorizationRequestInput('duplicate-handle')
       const pendingSecretHash = sha256('pending-new-resident-key')
+      const pendingRecoveryCodeHashes = Array.from(
+        { length: 8 },
+        (_, index) => sha256(`duplicate-handle:recovery:${index}`),
+      )
       const authorizationCodeHash = sha256('duplicate-handle-code')
 
       await store.createAuthorizationRequest(request)
@@ -201,6 +308,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           handle: 'raced-handle',
           model: 'pending-model',
           residentSecretHash: pendingSecretHash,
+          recoveryCodeHashes: pendingRecoveryCodeHashes,
         }),
         { status: 'staged', handle: 'raced-handle' },
       )
@@ -294,6 +402,10 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
 
       const request = authorizationRequestInput('new-target')
       const pendingSecretHash = sha256('atomic-new-resident-key')
+      const pendingRecoveryCodeHashes = Array.from(
+        { length: 8 },
+        (_, index) => sha256(`new-target:recovery:${index}`),
+      )
       await store.createAuthorizationRequest(request)
       assert.deepEqual(
         await store.stageNewResidentRegistration({
@@ -302,6 +414,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           handle: 'atomic-new-agent',
           model: 'hosted-chat',
           residentSecretHash: pendingSecretHash,
+          recoveryCodeHashes: pendingRecoveryCodeHashes,
         }),
         { status: 'staged', handle: 'atomic-new-agent' },
       )
@@ -381,10 +494,189 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       assert.ok((await requestState(request.sessionHash)).used_at)
     })
 
+    await t.test('OAuth cancellation and expiry scrub every pending recovery hash', async () => {
+      await resetDatabase()
+      const canceledRequest = authorizationRequestInput('oauth-canceled-registration')
+      const canceled = stagedRegistration('oauth-canceled-registration', 'oauth-canceled-registration')
+      await store.createAuthorizationRequest(canceledRequest)
+      assert.equal((await store.stageNewResidentRegistration(canceled))?.status, 'staged')
+      assert.deepEqual(await store.cancelAuthorizationRequest({
+        sessionHash: canceledRequest.sessionHash,
+        csrfHash: canceledRequest.csrfHash,
+      }), { redirectUri: canceledRequest.redirectUri, state: canceledRequest.state })
+
+      const expiredRequest = authorizationRequestInput('oauth-expired-registration')
+      const expired = stagedRegistration('oauth-expired-registration', 'oauth-expired-registration')
+      await store.createAuthorizationRequest(expiredRequest)
+      assert.equal((await store.stageNewResidentRegistration(expired))?.status, 'staged')
+      await database!.query(
+        `UPDATE oauth_authorization_requests
+         SET created_at = now() - interval '16 minutes',
+             expires_at = now() - interval '1 minute'
+         WHERE session_hash = $1`,
+        [expiredRequest.sessionHash],
+      )
+      await store.createAuthorizationRequest(authorizationRequestInput('oauth-cleanup-trigger'))
+
+      const state = await database!.query(
+        `SELECT request.session_hash, request.intent, request.new_handle, request.new_model,
+           request.new_secret_hash, request.used_at IS NOT NULL AS used,
+           count(code.code_hash) AS pending_codes
+         FROM oauth_authorization_requests request
+         LEFT JOIN oauth_authorization_request_recovery_codes code ON code.request_id = request.id
+         WHERE request.session_hash IN ($1, $2)
+         GROUP BY request.id
+         ORDER BY request.session_hash`,
+        [canceledRequest.sessionHash, expiredRequest.sessionHash],
+      )
+      assert.equal(state.rows.length, 2)
+      for (const row of state.rows) {
+        assert.deepEqual({
+          intent: row.intent,
+          new_handle: row.new_handle,
+          new_model: row.new_model,
+          new_secret_hash: row.new_secret_hash,
+          used: row.used,
+          pending_codes: row.pending_codes,
+        }, {
+          intent: null,
+          new_handle: null,
+          new_model: null,
+          new_secret_hash: null,
+          used: true,
+          pending_codes: '0',
+        })
+      }
+    })
+
+    await t.test('a missing world root leaves OAuth resident creation entirely pending', async () => {
+      await resetDatabase()
+      await database!.query('DROP TRIGGER places_protect_topology_write ON places')
+      await database!.query("DELETE FROM places WHERE place_kind = 'world'")
+      const request = authorizationRequestInput('oauth-missing-world')
+      const pending = stagedRegistration('oauth-missing-world', 'oauth-missing-world')
+      await store.createAuthorizationRequest(request)
+      assert.equal((await store.stageNewResidentRegistration(pending))?.status, 'staged')
+
+      assert.equal(await store.confirmNewResidentAndIssueAuthorizationCode({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+        authorizationCodeHash: sha256('oauth-missing-world:authorization-code'),
+      }), null)
+      const state = await database!.query(
+        `SELECT
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM events WHERE actor = $1) AS events,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $2) AS pending_codes`,
+        [pending.handle, request.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        last_id: 1, residents: '0', presences: '0', events: '0', active_codes: '0',
+        authorization_codes: '0', pending_codes: '8',
+      }])
+    })
+
+    await t.test('an active recovery-code collision rolls the OAuth resident and authorization code back', async () => {
+      await resetDatabase()
+      const request = authorizationRequestInput('oauth-active-code-collision')
+      const pending = stagedRegistration('oauth-active-code-collision', 'oauth-code-collision')
+      await database!.query('UPDATE residents SET recovery_generation = 1 WHERE id = 1')
+      await database!.query(
+        `INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
+         VALUES (1, 1, $1)`,
+        [pending.recoveryCodeHashes[5]],
+      )
+      await store.createAuthorizationRequest(request)
+      assert.equal((await store.stageNewResidentRegistration(pending))?.status, 'staged')
+
+      assert.equal(await store.confirmNewResidentAndIssueAuthorizationCode({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+        authorizationCodeHash: sha256('oauth-active-code-collision:authorization-code'),
+      }), null)
+      const state = await database!.query(
+        `SELECT
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM events WHERE actor = $1) AS events,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $2) AS pending_codes`,
+        [pending.handle, request.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        last_id: 1, residents: '0', presences: '0', events: '0', active_codes: '0',
+        authorization_codes: '0', pending_codes: '8',
+      }])
+    })
+
+    await t.test('an OAuth registration event failure rolls every creation write back', async () => {
+      await resetDatabase()
+      const request = authorizationRequestInput('oauth-event-rollback')
+      const pending = stagedRegistration('oauth-event-rollback', 'oauth-event-rollback')
+      await store.createAuthorizationRequest(request)
+      assert.equal((await store.stageNewResidentRegistration(pending))?.status, 'staged')
+      await database!.query(`
+        CREATE FUNCTION fail_oauth_registration_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.kind = 'register' AND NEW.actor = 'oauth-event-rollback' THEN
+            RAISE EXCEPTION 'injected OAuth registration event failure';
+          END IF;
+          RETURN NEW;
+        END
+        $$;
+        CREATE TRIGGER events_fail_oauth_registration
+          BEFORE INSERT ON events
+          FOR EACH ROW EXECUTE FUNCTION fail_oauth_registration_event();
+      `)
+
+      await assert.rejects(
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+          authorizationCodeHash: sha256('oauth-event-rollback:authorization-code'),
+        }),
+        /injected OAuth registration event failure/i,
+      )
+      const state = await database!.query(
+        `SELECT
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
+           (SELECT count(*) FROM resident_presence WHERE resident_id <> 1) AS presences,
+           (SELECT count(*) FROM events WHERE actor = $1) AS events,
+           (SELECT count(*) FROM resident_recovery_codes WHERE resident_id <> 1) AS active_codes,
+           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $2) AS pending_codes`,
+        [pending.handle, request.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        last_id: 1, residents: '0', presences: '0', events: '0', active_codes: '0',
+        authorization_codes: '0', pending_codes: '8',
+      }])
+    })
+
     await t.test('new-resident registration stays staged until confirmation, then issues one code', async () => {
       await resetDatabase()
       const request = authorizationRequestInput('new-resident-success')
       const residentSecretHash = sha256('new-resident-success:key')
+      const recoveryCodeHashes = Array.from(
+        { length: 8 },
+        (_, index) => sha256(`new-resident-success:recovery:${index}`),
+      )
       const codeHash = sha256('new-resident-success:code')
       await store.createAuthorizationRequest(request)
 
@@ -395,6 +687,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           handle: 'new-resident',
           model: 'hosted-chat',
           residentSecretHash,
+          recoveryCodeHashes,
         }),
         null,
       )
@@ -405,6 +698,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           handle: 'existing-agent',
           model: 'hosted-chat',
           residentSecretHash,
+          recoveryCodeHashes,
         }),
         { status: 'handle_taken' },
       )
@@ -415,6 +709,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           handle: 'new-resident',
           model: 'hosted-chat',
           residentSecretHash,
+          recoveryCodeHashes,
         }),
         { status: 'staged', handle: 'new-resident' },
       )
@@ -423,6 +718,18 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       assert.equal(staged.intent, 'new')
       assert.equal(staged.resident_id, null)
       assert.equal(staged.new_secret_hash, residentSecretHash)
+      const pendingCodes = await database!.query(
+        `SELECT code.ordinal, code.code_hash
+         FROM oauth_authorization_request_recovery_codes code
+         JOIN oauth_authorization_requests request ON request.id = code.request_id
+         WHERE request.session_hash = $1
+         ORDER BY code.ordinal`,
+        [request.sessionHash],
+      )
+      assert.deepEqual(
+        pendingCodes.rows,
+        recoveryCodeHashes.map((code_hash, index) => ({ ordinal: index + 1, code_hash })),
+      )
       assert.equal(
         (await database!.query("SELECT count(*) FROM residents WHERE handle = 'new-resident'"))
           .rows[0]!.count,
@@ -453,12 +760,30 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         handle: string
         model: string
         secret_hash: string
-      }>("SELECT id, handle, model, secret_hash FROM residents WHERE handle = 'new-resident'")
+        recovery_generation: string
+      }>("SELECT id, handle, model, secret_hash, recovery_generation FROM residents WHERE handle = 'new-resident'")
       assert.deepEqual(resident.rows, [{
         id: 2,
         handle: 'new-resident',
         model: 'hosted-chat',
         secret_hash: residentSecretHash,
+        recovery_generation: '1',
+      }])
+      const initialRecoveryCodes = await database!.query<{
+        code_hashes: string[]
+        pending_codes: string
+      }>(
+        `SELECT array_agg(code_hash ORDER BY code_hash) AS code_hashes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $1) AS pending_codes
+         FROM resident_recovery_codes
+         WHERE resident_id = 2 AND generation = 1
+           AND used_at IS NULL AND invalidated_at IS NULL`,
+        [request.sessionHash],
+      )
+      assert.deepEqual(initialRecoveryCodes.rows, [{
+        code_hashes: [...recoveryCodeHashes].sort(), pending_codes: '0',
       }])
       assert.deepEqual(await store.getAuthorizationCode(codeHash), {
         residentId: 2,
@@ -473,6 +798,92 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           .rows[0]!.count,
         '1',
       )
+    })
+
+    await t.test('two concurrent OAuth claims for one handle create one complete resident only', async () => {
+      await resetDatabase()
+      const firstRequest = authorizationRequestInput('oauth-race-first')
+      const secondRequest = authorizationRequestInput('oauth-race-second')
+      const first = stagedRegistration('oauth-race-first', 'oauth-raced-name')
+      const second = stagedRegistration('oauth-race-second', 'oauth-raced-name')
+      await Promise.all([
+        store.createAuthorizationRequest(firstRequest),
+        store.createAuthorizationRequest(secondRequest),
+      ])
+      assert.equal((await store.stageNewResidentRegistration(first))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(second))?.status, 'staged')
+
+      const results = await Promise.all([
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: firstRequest.sessionHash,
+          csrfHash: firstRequest.csrfHash,
+          residentSecretHash: first.residentSecretHash,
+          authorizationCodeHash: sha256('oauth-race-first:authorization-code'),
+        }),
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: secondRequest.sessionHash,
+          csrfHash: secondRequest.csrfHash,
+          residentSecretHash: second.residentSecretHash,
+          authorizationCodeHash: sha256('oauth-race-second:authorization-code'),
+        }),
+      ])
+      assert.equal(results.filter(Boolean).length, 1)
+      const winner = results[0] ? first : second
+      const loser = results[0] ? second : first
+      const state = await database!.query(
+        `SELECT
+           (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
+           (SELECT count(*) FROM residents WHERE handle = 'oauth-raced-name') AS residents,
+           (SELECT count(*) FROM resident_presence presence
+             JOIN residents resident ON resident.id = presence.resident_id
+             WHERE resident.handle = 'oauth-raced-name') AS presences,
+           (SELECT count(*) FROM events WHERE actor = 'oauth-raced-name') AS events,
+           (SELECT count(*) FROM oauth_authorization_codes) AS authorization_codes,
+           (SELECT count(*) FROM resident_recovery_codes code
+             JOIN residents resident ON resident.id = code.resident_id
+             WHERE resident.handle = 'oauth-raced-name' AND code.generation = 1
+               AND code.used_at IS NULL AND code.invalidated_at IS NULL) AS active_codes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $1) AS winner_pending_codes,
+           (SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+             JOIN oauth_authorization_requests request ON request.id = code.request_id
+             WHERE request.session_hash = $2) AS loser_pending_codes`,
+        [winner.sessionHash, loser.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        last_id: 2, residents: '1', presences: '1', events: '1', authorization_codes: '1',
+        active_codes: '8', winner_pending_codes: '0', loser_pending_codes: '8',
+      }])
+    })
+
+    await t.test('existing-resident linking leaves recovery generation and codes unchanged', async () => {
+      await resetDatabase()
+      const recoveryCodeHashes = Array.from(
+        { length: 8 },
+        (_, index) => sha256(`existing-link:recovery:${index}`),
+      )
+      await database!.query('UPDATE residents SET recovery_generation = 1 WHERE id = 1')
+      await database!.query(
+        `INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
+         SELECT 1, 1, code_hash
+         FROM unnest($1::text[]) AS code_hash`,
+        [recoveryCodeHashes],
+      )
+      await seedAuthorizationCode(store, 'existing-link', sha256('existing-link:authorization-code'))
+
+      const state = await database!.query(
+        `SELECT resident.recovery_generation,
+           array_agg(code.code_hash ORDER BY code.code_hash) AS code_hashes,
+           count(*) FILTER (WHERE code.used_at IS NOT NULL OR code.invalidated_at IS NOT NULL) AS inactive
+         FROM residents resident
+         JOIN resident_recovery_codes code ON code.resident_id = resident.id
+         WHERE resident.id = 1
+         GROUP BY resident.recovery_generation`,
+      )
+      assert.deepEqual(state.rows, [{
+        recovery_generation: '1', code_hashes: [...recoveryCodeHashes].sort(), inactive: '0',
+      }])
     })
 
     await t.test('authorization-code exchange is exact, single-use, and creates one complete token family', async () => {

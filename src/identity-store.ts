@@ -18,6 +18,7 @@ export interface RegistrationStageInput {
   handle: string
   model: string
   residentSecretHash: string
+  recoveryCodeHashes: string[]
 }
 
 export type RegistrationStageResult =
@@ -31,6 +32,18 @@ export interface IdentityResidentResult {
 
 export interface RecoveryGenerationResult extends IdentityResidentResult {
   generation: number
+}
+
+const SHA256_HASH = /^[0-9a-f]{64}$/
+
+function requireInitialRecoveryCodeHashes(hashes: readonly string[]): void {
+  if (
+    hashes.length !== 8 ||
+    new Set(hashes).size !== 8 ||
+    hashes.some(hash => !SHA256_HASH.test(hash))
+  ) {
+    throw new Error('exactly eight unique sha256 recovery-code hashes are required')
+  }
 }
 
 export async function consumeIdentityRateLimit(input: {
@@ -61,29 +74,52 @@ export async function consumeIdentityRateLimit(input: {
 export async function stageResidentRegistration(
   input: RegistrationStageInput,
 ): Promise<RegistrationStageResult | null> {
-  const rows = (await sql`
-    WITH cleared_expired AS (
-      UPDATE pending_resident_registrations
-      SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL, ip_hash = NULL
-      WHERE confirmed_at IS NULL AND canceled_at IS NULL AND expires_at <= now()
-    ), staged AS (
-      INSERT INTO pending_resident_registrations (
-        session_hash, csrf_hash, ip_hash, handle, model, secret_hash, expires_at
+  requireInitialRecoveryCodeHashes(input.recoveryCodeHashes)
+  try {
+    const rows = (await sql`
+      WITH cleared_expired AS MATERIALIZED (
+        UPDATE pending_resident_registrations
+        SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL,
+            ip_hash = NULL
+        WHERE confirmed_at IS NULL AND canceled_at IS NULL AND expires_at <= now()
+        RETURNING session_hash
+      ), cleared_expired_codes AS (
+        DELETE FROM pending_resident_registration_recovery_codes code
+        USING cleared_expired expired
+        WHERE code.registration_session_hash = expired.session_hash
+        RETURNING code.registration_session_hash
+      ), staged AS MATERIALIZED (
+        INSERT INTO pending_resident_registrations (
+          session_hash, csrf_hash, ip_hash, handle, model, secret_hash, expires_at
+        )
+        SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
+          ${input.model}, ${input.residentSecretHash}, now() + interval '15 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
+        ON CONFLICT DO NOTHING
+        RETURNING session_hash, handle
+      ), staged_codes AS (
+        INSERT INTO pending_resident_registration_recovery_codes (
+          registration_session_hash, ordinal, code_hash
+        )
+        SELECT staged.session_hash, code.ordinality::smallint, code.code_hash
+        FROM staged
+        CROSS JOIN unnest(${input.recoveryCodeHashes}::text[])
+          WITH ORDINALITY AS code(code_hash, ordinality)
+        RETURNING registration_session_hash
       )
-      SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
-        ${input.model}, ${input.residentSecretHash}, now() + interval '15 minutes'
-      WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
-      ON CONFLICT DO NOTHING
-      RETURNING handle
-    )
-    SELECT
-      EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle}) AS handle_taken,
-      (SELECT handle FROM staged) AS handle
-  `) as { handle_taken: boolean; handle: string | null }[]
-  const result = rows[0]
-  if (result?.handle) return { status: 'staged', handle: result.handle }
-  if (result?.handle_taken) return { status: 'handle_taken' }
-  return null
+      SELECT
+        EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle}) AS handle_taken,
+        (SELECT handle FROM staged
+          WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle
+    `) as { handle_taken: boolean; handle: string | null }[]
+    const result = rows[0]
+    if (result?.handle) return { status: 'staged', handle: result.handle }
+    if (result?.handle_taken) return { status: 'handle_taken' }
+    return null
+  } catch (error) {
+    if (postgresErrorCode(error) === '23505') return null
+    throw error
+  }
 }
 
 export async function confirmResidentRegistration(input: {
@@ -103,6 +139,16 @@ export async function confirmResidentRegistration(input: {
           AND canceled_at IS NULL
           AND expires_at > now()
         FOR UPDATE
+      ), pending_codes AS MATERIALIZED (
+        SELECT code.code_hash
+        FROM pending_resident_registration_recovery_codes code
+        JOIN eligible ON eligible.session_hash = code.registration_session_hash
+        ORDER BY code.ordinal
+        FOR UPDATE OF code
+      ), valid_code_set AS MATERIALIZED (
+        SELECT count(*) AS code_count
+        FROM pending_codes
+        HAVING count(*) = 8 AND count(DISTINCT code_hash) = 8
       ), world_root AS MATERIALIZED (
         SELECT place.id FROM places place
         WHERE place.parent_id IS NULL AND place.owner_id IS NULL
@@ -113,17 +159,24 @@ export async function confirmResidentRegistration(input: {
         SET last_id = CASE WHEN last_id = 3 THEN 5 ELSE last_id + 1 END
         WHERE singleton
           AND EXISTS (SELECT 1 FROM eligible)
+          AND EXISTS (SELECT 1 FROM valid_code_set)
           AND EXISTS (SELECT 1 FROM world_root)
         RETURNING last_id AS id
       ), new_resident AS (
-        INSERT INTO residents (id, handle, model, secret_hash)
-        SELECT allocated.id, eligible.handle, eligible.model, eligible.secret_hash
+        INSERT INTO residents (id, handle, model, secret_hash, recovery_generation)
+        SELECT allocated.id, eligible.handle, eligible.model, eligible.secret_hash, 1
         FROM allocated_resident_id allocated CROSS JOIN eligible
         RETURNING id, handle, model
       ), new_presence AS (
         INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
         SELECT resident.id, world_root.id, NULL
         FROM new_resident resident CROSS JOIN world_root
+        RETURNING resident_id
+      ), inserted_recovery_codes AS (
+        INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
+        SELECT resident.id, 1, code.code_hash
+        FROM new_resident resident
+        CROSS JOIN pending_codes code
         RETURNING resident_id
       ), consumed AS (
         UPDATE pending_resident_registrations pending
@@ -135,7 +188,13 @@ export async function confirmResidentRegistration(input: {
             ip_hash = NULL
         FROM eligible CROSS JOIN new_resident resident
         WHERE pending.session_hash = eligible.session_hash
-        RETURNING resident.id, resident.handle, resident.model, eligible.ip_hash
+        RETURNING resident.id, resident.handle, resident.model, eligible.ip_hash,
+          eligible.session_hash
+      ), scrubbed_pending_codes AS (
+        DELETE FROM pending_resident_registration_recovery_codes code
+        USING consumed
+        WHERE code.registration_session_hash = consumed.session_hash
+        RETURNING code.registration_session_hash
       ), registration_log AS (
         INSERT INTO reg_log (ip_hash)
         SELECT ip_hash FROM consumed
@@ -150,6 +209,8 @@ export async function confirmResidentRegistration(input: {
       SELECT consumed.id AS resident_id, consumed.handle
       FROM consumed
       WHERE EXISTS (SELECT 1 FROM new_presence)
+        AND (SELECT count(*) FROM inserted_recovery_codes) = 8
+        AND (SELECT count(*) FROM scrubbed_pending_codes) = 8
         AND EXISTS (SELECT 1 FROM registration_log)
         AND EXISTS (SELECT 1 FROM new_event)
     `) as { resident_id: number; handle: string }[]
@@ -166,15 +227,24 @@ export async function cancelResidentRegistration(input: {
   csrfHash: string
 }): Promise<boolean> {
   const rows = (await sql`
-    UPDATE pending_resident_registrations
-    SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL, ip_hash = NULL
-    WHERE session_hash = ${input.sessionHash}
-      AND csrf_hash = ${input.csrfHash}
-      AND resident_id IS NULL
-      AND confirmed_at IS NULL
-      AND canceled_at IS NULL
-      AND expires_at > now()
-    RETURNING session_hash
+    WITH canceled AS MATERIALIZED (
+      UPDATE pending_resident_registrations
+      SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL,
+          ip_hash = NULL
+      WHERE session_hash = ${input.sessionHash}
+        AND csrf_hash = ${input.csrfHash}
+        AND resident_id IS NULL
+        AND confirmed_at IS NULL
+        AND canceled_at IS NULL
+        AND expires_at > now()
+      RETURNING session_hash
+    ), scrubbed_pending_codes AS (
+      DELETE FROM pending_resident_registration_recovery_codes code
+      USING canceled
+      WHERE code.registration_session_hash = canceled.session_hash
+      RETURNING code.registration_session_hash
+    )
+    SELECT session_hash FROM canceled
   `) as { session_hash: string }[]
   return rows.length === 1
 }
