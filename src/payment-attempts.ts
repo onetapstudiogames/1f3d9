@@ -177,6 +177,37 @@ async function runQuery(
     : await database.query(text, params)
 }
 
+export async function paymentResponseReplayReady(
+  database: PaymentAttemptDatabase,
+): Promise<boolean> {
+  try {
+    const row = (await runQuery(database, `
+      /* payment-attempts:response-replay-ready */
+      SELECT (
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_attribute attribute
+          JOIN pg_catalog.pg_class relation
+            ON relation.oid = attribute.attrelid
+          JOIN pg_catalog.pg_namespace namespace
+            ON namespace.oid = relation.relnamespace
+          WHERE namespace.nspname = 'public'
+            AND relation.relname = 'payment_attempts'
+            AND attribute.attname = 'response_body_bytes'
+            AND attribute.attnum > 0
+            AND NOT attribute.attisdropped
+        )
+        AND to_regprocedure(
+          'public.complete_payment_attempt(text,text,jsonb,smallint,jsonb,bytea)'
+        ) IS NOT NULL
+      ) AS ready
+    `, []))[0] as Record<string, unknown> | undefined
+    return row?.ready === true || row?.ready === 't'
+  } catch {
+    return false
+  }
+}
+
 function isoString(value: unknown): string | null {
   if (value == null) return null
   const date = value instanceof Date ? value : new Date(String(value))
@@ -485,6 +516,66 @@ function readByTargetOrNonce(input: PaymentAttemptInput): { text: string; params
       input.payerWallet ?? null,
     ],
   }
+}
+
+function sameReplayableTargetTerms(
+  attempt: PaymentAttemptRecord,
+  input: {
+    actorId: number
+    counterpartyId?: number | null
+    operation: Exclude<PaymentAttemptRecord['operation'], 'legacy'>
+    targetKey: string
+    offerId?: number | null
+    assetType?: PaymentAttemptRecord['assetType']
+    assetId?: number | null
+  },
+  requestHash: string,
+): boolean {
+  return attempt.actorId === input.actorId
+    && attempt.counterpartyId === (input.counterpartyId ?? null)
+    && attempt.operation === input.operation
+    && attempt.targetKey === input.targetKey
+    && attempt.offerId === (input.offerId ?? null)
+    && attempt.assetType === (input.assetType ?? null)
+    && attempt.assetId === (input.assetId ?? null)
+    && attempt.requestHash === requestHash
+    && attempt.method === 'x402'
+}
+
+export async function findReplayableTargetPaymentAttempt(
+  database: PaymentAttemptDatabase,
+  input: {
+    actorId: number
+    counterpartyId?: number | null
+    operation: Exclude<PaymentAttemptRecord['operation'], 'legacy'>
+    targetKey: string
+    offerId?: number | null
+    assetType?: PaymentAttemptRecord['assetType']
+    assetId?: number | null
+    request: unknown
+  },
+): Promise<PaymentAttemptRecord | null> {
+  const request = canonicalPaymentRequest(input.request)
+  const existing = paymentAttemptFromRow((await runQuery(database, `
+    /* payment-attempts:find-replayable-target */
+    SELECT *
+    FROM payment_attempts
+    WHERE actor_id = $1
+      AND operation = $2
+      AND target_key = $3
+      AND status IN ('settling', 'payment_pending', 'needs_review', 'completed')
+    ORDER BY created_at DESC, public_id DESC
+    LIMIT 1
+  `, [
+    input.actorId,
+    input.operation,
+    input.targetKey,
+  ]))[0] as Record<string, unknown> | undefined)
+  if (!existing) return null
+  if (!sameReplayableTargetTerms(existing, input, request.hash)) {
+    conflict()
+  }
+  return existing
 }
 
 export async function createOrReadPaymentAttempt(

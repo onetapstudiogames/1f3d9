@@ -1700,10 +1700,12 @@ BEGIN
           AND response_json IS NOT NULL
           AND octet_length(response_body_bytes) BETWEEN 2 AND 200000
         )
-      );
+      ) NOT VALID;
   END IF;
 END
 $$;
+ALTER TABLE payment_attempts
+  VALIDATE CONSTRAINT payment_attempts_response_body_bytes_valid;
 
 COMMENT ON COLUMN payment_attempts.response_body_bytes IS
   'Literal UTF-8 JSON response bytes for byte-exact paid-operation replay; NULL means unavailable, never reconstructed';

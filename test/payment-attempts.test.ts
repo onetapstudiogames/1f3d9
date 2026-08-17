@@ -9,6 +9,7 @@ import {
   createOrReadPaymentAttempt,
   expirePaymentAttempt,
   findPaymentAttempt,
+  findReplayableTargetPaymentAttempt,
   getPaymentAttempt,
   invalidatePaymentAttempt,
   markPaymentAttemptNeedsReview,
@@ -161,6 +162,34 @@ test('the x402 nonce key binds network, exact token, payer, and nonce', () => {
   assert.throws(
     () => x402NonceKey({ network: 'base', token: USDC, payerWallet: PAYEE, nonce: '33' }),
     /nonce/iu,
+  )
+})
+
+test('headerless recovery is actor-, target-, and immutable-request-bound', async () => {
+  const existing = row({ status: 'completed' })
+  const database = new QueuedDatabase([existing], [existing])
+  const recovery = {
+    actorId: 7,
+    counterpartyId: 8,
+    operation: 'direct_sale' as const,
+    targetKey: 'direct_sale:offer:91:v3',
+    offerId: 91,
+    assetType: 'thing' as const,
+    assetId: 42,
+    request: { offer_id: 91, nested: { a: 1, b: 2 } },
+  }
+
+  assert.equal(
+    (await findReplayableTargetPaymentAttempt(database, recovery))?.publicId,
+    existing.publicId,
+  )
+  assert.deepEqual(database.calls[0]?.params, [7, 'direct_sale', 'direct_sale:offer:91:v3'])
+  await assert.rejects(
+    findReplayableTargetPaymentAttempt(database, {
+      ...recovery,
+      request: { offer_id: 91, nested: { a: 1, b: 3 } },
+    }),
+    (error: unknown) => error instanceof PaymentAttemptConflictError,
   )
 })
 

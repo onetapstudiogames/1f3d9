@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   copyFileSync,
   chmodSync,
@@ -50,6 +51,14 @@ const paymentResponseReplayMigrationUrl = new URL(
 )
 const paymentResponseBodyReplayMigrationUrl = new URL(
   '../db/migrations/20260817_payment_response_body_replay.sql',
+  import.meta.url,
+)
+const paymentResponseBodyRolloutMigrationUrl = new URL(
+  '../db/migrations/20260818_payment_response_body_rollout.sql',
+  import.meta.url,
+)
+const paymentResponseBodyValidationMigrationUrl = new URL(
+  '../db/migrations/20260818_payment_response_body_validate.sql',
   import.meta.url,
 )
 const identityRecoveryMigrationUrl = new URL(
@@ -602,7 +611,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|payment-response-replay\|payment-response-body-replay\|identity-recovery\|identity-rotation/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|payment-response-replay\|payment-response-body-replay\|payment-response-body-rollout\|payment-response-body-validate\|identity-recovery\|identity-rotation/,
   )
 })
 
@@ -731,7 +740,8 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
     [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
     [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
-    [readFileSync(paymentResponseBodyReplayMigrationUrl, 'utf8'), 'payment-response-body-replay'],
+    [readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8'), 'payment-response-body-rollout'],
+    [readFileSync(paymentResponseBodyValidationMigrationUrl, 'utf8'), 'payment-response-body-validate'],
     [readFileSync(identityRecoveryMigrationUrl, 'utf8'), 'identity-recovery'],
     [readFileSync(identityRotationMigrationUrl, 'utf8'), 'identity-rotation'],
   ] as const) {
@@ -791,6 +801,10 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:payment-response-replay'] ?? '', /--target production --migration payment-response-replay$/)
   assert.match(packageJson.scripts['migrate:preview:payment-response-body-replay'] ?? '', /--target preview --migration payment-response-body-replay$/)
   assert.match(packageJson.scripts['migrate:production:payment-response-body-replay'] ?? '', /--target production --migration payment-response-body-replay$/)
+  assert.match(packageJson.scripts['migrate:preview:payment-response-body-rollout'] ?? '', /--target preview --migration payment-response-body-rollout$/)
+  assert.match(packageJson.scripts['migrate:production:payment-response-body-rollout'] ?? '', /--target production --migration payment-response-body-rollout$/)
+  assert.match(packageJson.scripts['migrate:preview:payment-response-body-validate'] ?? '', /--target preview --migration payment-response-body-validate$/)
+  assert.match(packageJson.scripts['migrate:production:payment-response-body-validate'] ?? '', /--target production --migration payment-response-body-validate$/)
   assert.match(packageJson.scripts['migrate:preview:identity-recovery'] ?? '', /--target preview --migration identity-recovery$/)
   assert.match(packageJson.scripts['migrate:production:identity-recovery'] ?? '', /--target production --migration identity-recovery$/)
   assert.match(packageJson.scripts['migrate:preview:identity-rotation'] ?? '', /--target preview --migration identity-rotation$/)
@@ -957,20 +971,12 @@ test('payment response replay is an explicitly selected idempotent function repa
   assert.equal(production.migrationFile, 'db/migrations/20260816_payment_response_replay.sql')
 })
 
-test('byte-exact payment replay is an explicitly selected additive migration', () => {
-  const migration = readFileSync(paymentResponseBodyReplayMigrationUrl, 'utf8')
-  const uncommented = migration.replace(/^\s*--.*$/gm, '')
-
-  assert.match(uncommented, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+response_body_bytes\s+BYTEA/i)
-  assert.match(uncommented, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt/i)
-  assert.match(uncommented, /completion_response_body\s+BYTEA/i)
-  for (const statement of splitSqlStatements(migration)) {
-    assert.doesNotMatch(
-      statement.replace(/^\s*--.*$/gm, '').trim(),
-      /^(?:UPDATE|DELETE|TRUNCATE|DROP\s+TABLE|DROP\s+COLUMN)\b/i,
-    )
-  }
-
+test('the applied byte-exact replay migration remains byte-for-byte immutable', () => {
+  const migration = readFileSync(paymentResponseBodyReplayMigrationUrl)
+  assert.equal(
+    createHash('sha256').update(migration).digest('hex'),
+    'f2bb76aba013c5ff493920bae6d481106781e10cacd78ab28211614b27b12feb',
+  )
   const preview = resolveMigrationRun(
     ['--target', 'preview', '--migration', 'payment-response-body-replay'],
     {
@@ -983,19 +989,90 @@ test('byte-exact payment replay is an explicitly selected additive migration', (
     },
   )
   assert.equal(preview.migrationFile, 'db/migrations/20260817_payment_response_body_replay.sql')
+})
+
+test('byte-exact payment replay has an explicitly selected lock-safe rollout', () => {
+  const migration = readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  const constraintBlock = uncommented.match(
+    /ADD\s+CONSTRAINT\s+payment_attempts_response_body_bytes_valid[\s\S]*?END\s+IF\s*;/i,
+  )?.[0] ?? ''
+
+  assert.match(uncommented, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+response_body_bytes\s+BYTEA/i)
+  assert.match(constraintBlock, /\)\s+NOT\s+VALID\s*;\s*END\s+IF\s*;$/i)
+  assert.doesNotMatch(uncommented, /VALIDATE\s+CONSTRAINT/i)
+  assert.match(uncommented, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt/i)
+  assert.match(uncommented, /completion_response_body\s+BYTEA/i)
+  for (const statement of splitSqlStatements(migration)) {
+    assert.doesNotMatch(
+      statement.replace(/^\s*--.*$/gm, '').trim(),
+      /^(?:UPDATE|DELETE|TRUNCATE|DROP\s+TABLE|DROP\s+COLUMN)\b/i,
+    )
+  }
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-response-body-rollout'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260818_payment_response_body_rollout.sql')
 
   const production = resolveMigrationRun(
-    ['--target', 'production', '--migration', 'payment-response-body-replay'],
+    ['--target', 'production', '--migration', 'payment-response-body-rollout'],
     {
       CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
       NEON_API_KEY: 'secret-neon-key',
       NEON_PROJECT_ID: 'project-one',
       NEON_PRODUCTION_BRANCH_ID: 'branch-production',
       PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
-      PRODUCTION_SNAPSHOT_NAME: 'payment-response-body-replay-release',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-response-body-rollout-release',
     },
   )
-  assert.equal(production.migrationFile, 'db/migrations/20260817_payment_response_body_replay.sql')
+  assert.equal(production.migrationFile, 'db/migrations/20260818_payment_response_body_rollout.sql')
+})
+
+test('byte-exact response constraint validation is one separately committed named migration', () => {
+  const migration = readFileSync(paymentResponseBodyValidationMigrationUrl, 'utf8')
+  const statements = splitSqlStatements(migration)
+    .map(statement => statement.replace(/^\s*--.*$/gm, '').trim())
+    .filter(Boolean)
+  assert.equal(statements.length, 1)
+  assert.match(
+    statements[0] ?? '',
+    /^ALTER\s+TABLE\s+payment_attempts\s+VALIDATE\s+CONSTRAINT\s+payment_attempts_response_body_bytes_valid\s*;?$/i,
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-response-body-validate'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260818_payment_response_body_validate.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-response-body-validate'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-response-body-validate-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260818_payment_response_body_validate.sql')
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {

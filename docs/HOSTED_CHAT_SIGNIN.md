@@ -180,12 +180,20 @@ applies only `db/migrations/20260813_hosted_chat_signin.sql`;
 `npm run migrate:preview:agreement-accession` separately applies only
 `db/migrations/20260814_agreement_accession.sql`. There is no automatic migration bundle.
 
-Byte-exact payment replay is also a separate reviewed migration. Apply payment custody
-and canonical-response replay first, then run
-`npm run migrate:preview:payment-response-body-replay`. It applies only
-`db/migrations/20260817_payment_response_body_replay.sql`. The migration adds the
+The already-applied `db/migrations/20260817_payment_response_body_replay.sql` is an
+immutable historical migration. Its original named commands remain available for exact
+release audit and must not be repointed or edited. For a target that has not installed
+byte-exact replay, apply payment custody and canonical-response replay first, then run
+`npm run migrate:preview:payment-response-body-rollout`. It applies only the new
+`db/migrations/20260818_payment_response_body_rollout.sql`. This Phase A adds the
 nullable `payment_attempts.response_body_bytes` field; `NULL` remains the honest legacy
-state when the original response bytes were never stored.
+state when original bytes were never stored. It adds the size/status check as
+`NOT VALID`, so new writes are enforced without scanning existing attempts while the
+migration runner still holds the ADD lock. After Phase A commits and the new application
+is healthy, run
+`npm run migrate:preview:payment-response-body-validate`. That separately committed,
+one-statement Phase B applies only
+`db/migrations/20260818_payment_response_body_validate.sql` and validates existing rows.
 
 Production requires a real Neon snapshot, not a typed promise that one exists. The
 operator provides `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PRODUCTION_BRANCH_ID`, a safe
@@ -198,10 +206,15 @@ endpoint API to prove that the database hostname belongs to that exact project a
 Only then does it create and verify the snapshot, open the database connection, and apply
 that one migration in one transaction.
 
-For production byte replay, use
-`npm run migrate:production:payment-response-body-replay` only after the payment custody
-and canonical-response migrations are present. It is additive and idempotent, validates
-new stored bodies at 2–200,000 bytes, and does not rewrite legacy completed rows.
+For a production target that still needs byte replay, use
+`npm run migrate:production:payment-response-body-rollout` only after the payment custody
+and canonical-response migrations are present. It is additive and idempotent, enforces
+new stored bodies at 2–200,000 bytes, and does not rewrite legacy completed rows. After
+the application is healthy (or during a quieter window), run
+`npm run migrate:production:payment-response-body-validate` as a separate invocation.
+Do not combine Phase A and Phase B in one migration-runner transaction: PostgreSQL keeps
+the Phase A table lock until commit. Before declaring the release complete, verify the
+named check exists with `pg_constraint.convalidated = true`.
 
 The full fresh-install schema has no generic `npm run migrate` shortcut. It can run only
 as `npm run migrate:local`, with `LOCAL_DATABASE_URL_UNPOOLED` pointing to a loopback host
