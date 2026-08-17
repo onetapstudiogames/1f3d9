@@ -12,7 +12,12 @@ import {
 import {
   findPaymentAttempt,
 } from './payment-attempts.ts'
-import { resumeDurableX402, runDurableX402 } from './payment-flow.ts'
+import {
+  completedPaymentResponse,
+  paymentJsonResponse,
+  resumeDurableX402,
+  runDurableX402,
+} from './payment-flow.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { runTalkNoteAction } from './note-action.ts'
@@ -711,7 +716,24 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!offer) return err(c, 404, 'no such transfer offer')
     const type = assetType(offer.asset_type)
     if (!type) return err(c, 409, 'offer refers to an unsupported asset type')
-    if (offer.status !== 'open') return err(c, 409, `offer is ${offer.status}`)
+    if (offer.status !== 'open') {
+      if (offer.status === 'claimed' && offer.buyer_id === resident.id) {
+        const completedAttempt = await findPaymentAttempt({ query: sql.query }, {
+          actorId: resident.id,
+          operation: 'direct_sale',
+          offerId,
+        })
+        if (completedAttempt?.status === 'completed') {
+          const replay = await resumeDurableX402({
+            database: { query: sql.query },
+            attempt: completedAttempt,
+            actorId: resident.id,
+          })
+          if (replay.state === 'completed') return completedPaymentResponse(replay)
+        }
+      }
+      return err(c, 409, `offer is ${offer.status}`)
+    }
     if (offer.buyer_id !== resident.id) return err(c, 403, 'only the named buyer may claim this offer')
     const owner = await ownerOf(type, offer.asset_id)
     if (!owner || owner.owner_id !== offer.seller_id)
@@ -825,15 +847,7 @@ export function mountSocietyRoutes(app: Hono): void {
       })
 
     if (payment.state === 'completed') {
-      return new Response(JSON.stringify(payment.body), {
-        status: payment.status,
-        headers: {
-          'content-type': 'application/json; charset=UTF-8',
-          ...(payment.paymentResponseHeader
-            ? { 'X-PAYMENT-RESPONSE': payment.paymentResponseHeader }
-            : {}),
-        },
-      })
+      return completedPaymentResponse(payment)
     }
     if (payment.state === 'payment_pending') return c.json(payment.body, 202)
     if (payment.state === 'unavailable') return c.json(payment.body, 503)
@@ -922,35 +936,47 @@ export function mountSocietyRoutes(app: Hono): void {
         ), response_row AS (
           SELECT o.id, 'claimed'::text AS status, t.id AS transfer_id, t.created_at
           FROM claimed_offer o CROSS JOIN new_transfer t
+        ), response_payload AS (
+          SELECT jsonb_build_object(
+            'offer', jsonb_build_object('id', $1::integer, 'status', 'claimed'),
+            'transfer', jsonb_build_object(
+              'id', response_row.transfer_id,
+              'type', $4::text,
+              'asset_id', $5::integer,
+              'from', $11::text,
+              'to', $10::text,
+              'price_usdc', $6::numeric,
+              'tx_hash', $8::text,
+              'created_at', response_row.created_at
+            )
+          ) AS body
+          FROM response_row
         ), completed_attempt AS (
           SELECT complete_payment_attempt(
             $17,
             $18,
             jsonb_build_object('kind', 'transfer_offer', 'id', $1::integer),
             200::smallint,
-            jsonb_build_object(
-              'offer', jsonb_build_object('id', $1::integer, 'status', 'claimed'),
-              'transfer', jsonb_build_object(
-                'id', response_row.transfer_id,
-                'type', $4::text,
-                'asset_id', $5::integer,
-                'from', $11::text,
-                'to', $10::text,
-                'price_usdc', $6::numeric,
-                'tx_hash', $8::text,
-                'created_at', response_row.created_at
-              )
-            )
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
-          FROM response_row CROSS JOIN claimed_payment_use
+          FROM response_row CROSS JOIN claimed_payment_use CROSS JOIN response_payload
         )
-        SELECT response_row.* FROM response_row CROSS JOIN completed_attempt
+        SELECT response_row.*,
+          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
+        FROM response_row CROSS JOIN completed_attempt
       `, [
         offerId, offer.seller_id, resident.id, type, offer.asset_id, Number(offer.price_usdc),
         offer.seller_wallet, txHash, payer, resident.handle, offer.seller,
         'x402', paymentBlockTime, buyerWallet, offer.reserved_at!, offer.reserved_until!,
         payment.attemptId, payment.leaseOwner,
-      ]) as { id: number; status?: string; transfer_id?: number; created_at?: string }[]
+      ]) as Array<{
+        id: number
+        status?: string
+        transfer_id?: number
+        created_at?: string
+        response_body: string
+      }>
       const claimed = rows[0]
       if (!claimed) {
         return c.json({
@@ -961,20 +987,7 @@ export function mountSocietyRoutes(app: Hono): void {
           retry: 'retry this same claim; the recorded payment remains reserved',
         }, 202)
       }
-      c.header('X-PAYMENT-RESPONSE', payment.paymentResponseHeader)
-      return c.json({
-        offer: { id: offerId, status: claimed.status ?? 'claimed' },
-        transfer: {
-          id: claimed.transfer_id,
-          type,
-          asset_id: offer.asset_id,
-          from: offer.seller,
-          to: resident.handle,
-          price_usdc: Number(offer.price_usdc),
-          tx_hash: txHash,
-          ...(claimed.created_at ? { created_at: claimed.created_at } : {}),
-        },
-      })
+      return paymentJsonResponse(claimed.response_body, 200, payment.paymentResponseHeader)
     } catch (error) {
       if (postgresErrorCode(error) === '23505') return err(c, 409, 'that payment transaction was already used')
       throw error

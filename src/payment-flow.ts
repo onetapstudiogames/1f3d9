@@ -92,6 +92,7 @@ export type DurableX402Result =
       state: 'completed'
       status: number
       body: Record<string, unknown>
+      responseBody: string | null
       paymentResponseHeader: string | null
     }
   | {
@@ -173,6 +174,7 @@ function completed(attempt: PaymentAttemptRecord): DurableX402Result {
     state: 'completed',
     status: attempt.responseStatus,
     body: attempt.response,
+    responseBody: attempt.responseBody ?? null,
     // Historical rows completed before receipt persistence cannot recover bytes that
     // were never stored. Keep their canonical compatibility receipt so paid work is
     // not stranded; new rows always take the durable header branch.
@@ -180,6 +182,32 @@ function completed(attempt: PaymentAttemptRecord): DurableX402Result {
       ? settlementHeader(attempt.txHash, attempt.payerWallet)
       : null),
   }
+}
+
+export function completedPaymentResponse(
+  payment: Extract<DurableX402Result, { state: 'completed' }>,
+): Response {
+  return paymentJsonResponse(
+    payment.responseBody ?? JSON.stringify(payment.body),
+    payment.status,
+    payment.paymentResponseHeader,
+  )
+}
+
+export function paymentJsonResponse(
+  responseBody: string,
+  status: number,
+  paymentResponseHeader: string | null,
+): Response {
+  return new Response(responseBody, {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=UTF-8',
+      ...(paymentResponseHeader
+        ? { 'X-PAYMENT-RESPONSE': paymentResponseHeader }
+        : {}),
+    },
+  })
 }
 
 function rejected(error: string, status: 400 | 409 = 400, doNotPayAgain = false): DurableX402Result {

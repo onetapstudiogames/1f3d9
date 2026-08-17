@@ -21,6 +21,7 @@ const FACILITATOR_RESPONSE = {
   facilitator: 'https://facilitator.example.test',
 }
 const FACILITATOR_RESPONSE_HEADER = Buffer.from(JSON.stringify(FACILITATOR_RESPONSE)).toString('base64')
+const EXACT_RESPONSE_BODY = '{\n  "thing": { "id": 42 },\n  "ok": true\n}'
 const accepted = requirements(PAYEE, 2, '/api/transfer', 'test sale')
 const paymentHeader = Buffer.from(JSON.stringify({
   x402Version: 1,
@@ -75,6 +76,7 @@ function attempt(overrides: Partial<PaymentAttemptRecord> = {}): PaymentAttemptR
     result: null,
     responseStatus: null,
     response: null,
+    responseBody: null,
     createdAt: '2027-01-15T08:00:00.000Z',
     updatedAt: '2027-01-15T08:00:00.000Z',
     completedAt: null,
@@ -237,7 +239,8 @@ test('unfinalized evidence stays pending and releases the worker lease', async (
 
 test('a completed retry returns the stored canonical response without chain or facilitator calls', async () => {
   const events: string[] = []
-  const stored = attempt({
+  const stored = {
+    ...attempt({
     status: 'completed', responseStatus: 201,
     txHash: TX,
     response: {
@@ -246,7 +249,9 @@ test('a completed retry returns the stored canonical response without chain or f
         body: { ok: true, thing: { id: 42 } },
       },
     },
-  })
+    }),
+    responseBody: EXACT_RESPONSE_BODY,
+  } as PaymentAttemptRecord
   const persisted = await findPaymentAttempt({ query: async () => [stored] }, {
     actorId: stored.actorId,
     operation: 'direct_sale',
@@ -268,6 +273,7 @@ test('a completed retry returns the stored canonical response without chain or f
   if (result.state === 'completed') {
     assert.equal(result.status, 201)
     assert.deepEqual(result.body, { ok: true, thing: { id: 42 } })
+    assert.equal(result.responseBody, EXACT_RESPONSE_BODY)
     assert.equal(result.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
     assert.deepEqual(JSON.parse(Buffer.from(result.paymentResponseHeader, 'base64').toString('utf8')), FACILITATOR_RESPONSE)
   }
@@ -295,6 +301,7 @@ test('a pre-upgrade completed row uses the compatibility receipt without another
 
   assert.equal(result.state, 'completed')
   if (result.state === 'completed') {
+    assert.equal(result.responseBody, null)
     assert.deepEqual(
       JSON.parse(Buffer.from(result.paymentResponseHeader!, 'base64').toString('utf8')),
       { success: true, transaction: TX, payer: PAYER },

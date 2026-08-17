@@ -25,6 +25,7 @@ import {
 } from './world-root.ts'
 import {
   buildPlaceTree,
+  completedTreasuryFeeResponse,
   conflictMessage,
   DESCRIPTION_MAX,
   DOMAIN,
@@ -35,7 +36,6 @@ import {
   openOffer,
   releasePaymentLease,
   requireResident,
-  setPaymentHeader,
   THING_BODY_MAX_BYTES,
   treasuryFee,
   unknownTraitMessage,
@@ -366,24 +366,29 @@ export function mountWorldRoutes(app: Hono): void {
             'place_id', id, 'parent_id', parent_id, 'name', name,
             'frontier', true, 'fee_tx_hash', ${fee.txHash}::text
           ) FROM new_place
+        ), response_payload AS (
+          SELECT jsonb_build_object(
+            'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text),
+            'fee_tx', ${fee.txHash}::text
+          ) AS body
+          FROM new_place
         ), completed_attempt AS (
           SELECT complete_payment_attempt(
             ${fee.attemptId},
             ${fee.leaseOwner},
             jsonb_build_object('kind', 'place', 'id', new_place.id),
             201::smallint,
-            jsonb_build_object(
-              'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text),
-              'fee_tx', ${fee.txHash}::text
-            )
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
-          FROM new_place CROSS JOIN payment_use
+          FROM new_place CROSS JOIN payment_use CROSS JOIN response_payload
         )
-        SELECT new_place.*, ${resident.handle}::text AS owner
+        SELECT new_place.*, ${resident.handle}::text AS owner,
+          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
         FROM new_place CROSS JOIN completed_attempt
-      `) as PlaceRow[]
-      const place = rows[0]
-      if (!place) {
+      `) as Array<PlaceRow & { response_body: string }>
+      const returned = rows[0]
+      if (!returned) {
         await releasePaymentLease(fee)
         return c.json({
           payment: 'pending',
@@ -393,8 +398,8 @@ export function mountWorldRoutes(app: Hono): void {
           retry: 'retry this same request with the same X-PAYMENT header',
         }, 202)
       }
-      setPaymentHeader(c, fee)
-      return c.json({ place, fee_tx: fee.txHash }, 201)
+      const { response_body: responseBody } = returned
+      return completedTreasuryFeeResponse(fee, responseBody, 201)
     } catch (error) {
       const message = conflictMessage(error, 'place name or payment proof already used')
       if (message) return err(c, 409, message)
@@ -600,18 +605,27 @@ export function mountWorldRoutes(app: Hono): void {
             new_revision.revision, new_revision.description, new_revision.traits,
             new_revision.recipe, new_kind.created_at
           FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
+        ), response_payload AS (
+          SELECT jsonb_build_object(
+            'kind', to_jsonb(result_row),
+            'fee_tx', ${fee.txHash}::text
+          ) AS body
+          FROM result_row
         ), completed_attempt AS (
           SELECT complete_payment_attempt(
             ${fee.attemptId},
             ${fee.leaseOwner},
             jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
             201::smallint,
-            jsonb_build_object('kind', to_jsonb(result_row), 'fee_tx', ${fee.txHash}::text)
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
-          FROM result_row CROSS JOIN payment_use
+          FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
         )
-        SELECT result_row.* FROM result_row CROSS JOIN completed_attempt
-      `) as KindRow[]
+        SELECT result_row.*,
+          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
+        FROM result_row CROSS JOIN completed_attempt
+      `) as Array<KindRow & { response_body: string }>
       const returned = rows[0]
       if (!returned) {
         await releasePaymentLease(fee)
@@ -623,9 +637,7 @@ export function mountWorldRoutes(app: Hono): void {
           retry: 'retry this same request with the same X-PAYMENT header',
         }, 202)
       }
-      const kind = { ...returned, revision: 1 }
-      setPaymentHeader(c, fee)
-      return c.json({ kind, fee_tx: fee.txHash }, 201)
+      return completedTreasuryFeeResponse(fee, returned.response_body, 201)
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
       if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
@@ -755,20 +767,29 @@ export function mountWorldRoutes(app: Hono): void {
             new_revision.description, new_revision.traits, new_revision.recipe,
             changed_kind.created_at
           FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
+        ), response_payload AS (
+          SELECT jsonb_build_object(
+            'kind', to_jsonb(result_row),
+            'fee_tx', ${fee.txHash}::text
+          ) AS body
+          FROM result_row
         ), completed_attempt AS (
           SELECT complete_payment_attempt(
             ${fee.attemptId},
             ${fee.leaseOwner},
             jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
             200::smallint,
-            jsonb_build_object('kind', to_jsonb(result_row), 'fee_tx', ${fee.txHash}::text)
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
-          FROM result_row CROSS JOIN payment_use
+          FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
         )
-        SELECT result_row.* FROM result_row CROSS JOIN completed_attempt
-      `) as KindRow[]
-      const kind = rows[0]
-      if (!kind) {
+        SELECT result_row.*,
+          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
+        FROM result_row CROSS JOIN completed_attempt
+      `) as Array<KindRow & { response_body: string }>
+      const returned = rows[0]
+      if (!returned) {
         await releasePaymentLease(fee)
         return c.json({
           payment: 'pending',
@@ -778,8 +799,7 @@ export function mountWorldRoutes(app: Hono): void {
           retry: 'retry this same request with the same X-PAYMENT header',
         }, 202)
       }
-      setPaymentHeader(c, fee)
-      return c.json({ kind, fee_tx: fee.txHash })
+      return completedTreasuryFeeResponse(fee, returned.response_body, 200)
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
       if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)

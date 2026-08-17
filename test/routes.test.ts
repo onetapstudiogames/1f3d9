@@ -99,6 +99,7 @@ interface FakePaymentAttempt {
   result_json: Record<string, unknown> | null
   response_status: number | null
   response_json: Record<string, unknown> | null
+  response_body_bytes?: Buffer | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -544,6 +545,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       finalized_block_hash: current.finalized_block_hash ?? (params[4] == null ? null : String(params[4]).toLowerCase()),
       finalized_block_time: current.finalized_block_time ?? (params[5] == null ? null : String(params[5])),
       finalized_at: current.finalized_at ?? (params[6] == null ? null : String(params[6])),
+      response_json: current.response_json ?? (params[7] == null ? null : {
+        __1f3d9_x402_response_v1: { header: String(params[7]) },
+      }),
       updated_at: new Date().toISOString(),
     }
     const next = new Map(state.paymentAttempts).set(key, updated)
@@ -1056,7 +1060,13 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       state = { ...state, failPaidWriteOnce: false }
       return []
     }
-    return [placeRow(3, 2)]
+    const returned = placeRow(3, 2)
+    return [{
+      ...returned,
+      ...(q.includes('complete_payment_attempt') ? {
+        response_body: JSON.stringify({ place: returned, fee_tx: TX1.toLowerCase() }),
+      } : {}),
+    }]
   }
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
     return [placeRow(2, 1)]
@@ -1065,8 +1075,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('update places set'))
     return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
 
-  if (q.includes('insert into kinds') || q.includes('insert into kind_revisions') || q.includes('update kinds'))
-    return [{ ...kindRow(), revision: state.kindRevision + 1 }]
+  if (q.includes('insert into kinds') || q.includes('insert into kind_revisions') || q.includes('update kinds')) {
+    const returned = { ...kindRow(), revision: state.kindRevision + 1 }
+    return [{
+      ...returned,
+      ...(q.includes('complete_payment_attempt') ? {
+        response_body: JSON.stringify({ kind: returned, fee_tx: TX1.toLowerCase() }),
+      } : {}),
+    }]
+  }
   if (q.includes('from kind_revisions') || q.includes('from kinds')) {
     if (q.includes('insert into') || q.includes('update kinds')) return [{ ...kindRow(), revision: state.kindRevision + 1 }]
     return [kindRow()]
@@ -1216,11 +1233,66 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('update transfer_offers') && (q.includes('claim') || q.includes('closed'))) {
     if (state.offer.status !== 'open') return []
     state = { ...state, offer: { ...state.offer, status: 'claimed' } }
-    return [{ id: state.offer.id, status: 'claimed', new_owner: state.actorHandle }]
+    const createdAt = '2026-08-11T00:00:00.000Z'
+    const responseBody = JSON.stringify({
+      offer: { id: state.offer.id, status: 'claimed' },
+      transfer: {
+        id: 91,
+        type: String(params[3] ?? 'thing'),
+        asset_id: Number(params[4] ?? 41),
+        from: String(params[10] ?? 'tiny-lantern'),
+        to: String(params[9] ?? state.actorHandle),
+        price_usdc: Number(params[5] ?? 2),
+        tx_hash: String(params[7] ?? TX1).toLowerCase(),
+        created_at: createdAt,
+      },
+    })
+    if (q.includes('complete_payment_attempt')) {
+      const attemptId = String(params[16])
+      const attempt = state.paymentAttempts.get(attemptId)
+      if (attempt) {
+        const durable = attempt.response_json?.__1f3d9_x402_response_v1
+        const header = durable && typeof durable === 'object' && !Array.isArray(durable)
+          ? String((durable as Record<string, unknown>).header ?? '')
+          : ''
+        const completed: FakePaymentAttempt = {
+          ...attempt,
+          status: 'completed',
+          lease_owner: null,
+          lease_expires_at: null,
+          result_json: { kind: 'transfer_offer', id: state.offer.id },
+          response_status: 200,
+          response_json: {
+            __1f3d9_x402_response_v1: {
+              ...(header ? { header } : {}),
+              body: JSON.parse(responseBody) as Record<string, unknown>,
+            },
+          },
+          response_body_bytes: Buffer.from(responseBody, 'utf8'),
+          updated_at: createdAt,
+          completed_at: createdAt,
+        }
+        state = {
+          ...state,
+          paymentAttempts: new Map(state.paymentAttempts).set(attemptId, completed),
+        }
+      }
+    }
+    return [{
+      id: state.offer.id,
+      status: 'claimed',
+      new_owner: state.actorHandle,
+      ...(q.includes('complete_payment_attempt') ? {
+        transfer_id: 91,
+        created_at: createdAt,
+        response_body: responseBody,
+      } : {}),
+    }]
   }
   if (q.includes('from transfer_offers') && !q.includes('from things thing') && !q.includes('update things')) {
     const directOnlyWorld = q.includes("o.channel = 'direct'") && state.offer.channel === 'world'
-    return state.offer.status === 'open' && !directOnlyWorld ? [{
+    const openOnly = q.includes("status = 'open'")
+    return !directOnlyWorld && (!openOnly || state.offer.status === 'open') ? [{
     id: state.offer.id,
     type: 'thing',
     asset_id: 41,
@@ -1410,6 +1482,7 @@ function pgArray(values: unknown[]) {
 function neonEncode(rows: Record<string, unknown>[]) {
   const keys = Object.keys(rows[0] ?? {})
   const typeOf = (value: unknown) => {
+    if (Buffer.isBuffer(value)) return 17
     if (typeof value === 'boolean') return 16
     if (typeof value === 'number') return Number.isInteger(value) ? 23 : 701
     if (Array.isArray(value)) {
@@ -1420,6 +1493,7 @@ function neonEncode(rows: Record<string, unknown>[]) {
   }
   const encode = (value: unknown) => {
     if (value === null) return null
+    if (Buffer.isBuffer(value)) return `\\x${value.toString('hex')}`
     if (typeof value === 'boolean') return value ? 't' : 'f'
     if (Array.isArray(value)) {
       return value.some(item => item != null && typeof item === 'object')
@@ -2169,11 +2243,23 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
     body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
   })
   assert.equal(settled.status, 200)
+  const settledText = await settled.clone().text()
+  const settledPaymentResponse = settled.headers.get('X-PAYMENT-RESPONSE')
   const body = await settled.json() as { offer: { status: string }; transfer: { to: string } }
   assert.equal(body.offer.status, 'claimed')
   assert.equal(body.transfer.to, 'neighbor')
   assert.ok(sqlCalls().some(call =>
     /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? '')))
+
+  const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
+  const replay = await app.request('/api/transfer/90/claim', {
+    method: 'POST', headers: { ...authHeaders(OTHER_SECRET), 'X-PAYMENT': SALE_X_PAYMENT },
+    body: JSON.stringify({ buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(replay.status, 200)
+  assert.equal(await replay.text(), settledText)
+  assert.equal(replay.headers.get('X-PAYMENT-RESPONSE'), settledPaymentResponse)
+  assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, settlementsBeforeReplay)
 })
 
 test('a completed direct-sale replay preserves its x402 response header', async () => {
@@ -2192,6 +2278,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
   })
   assert.equal(reservation.status, 402)
 
+  const exactBody = '{\n  "transfer": {"id":91,"type":"thing","asset_id":42,"from":"tiny-lantern","to":"neighbor","price_usdc":2,"tx_hash":"' + TX1.toLowerCase() + '"},\n  "offer": {"status":"claimed","id":90}\n}'
   const completedAttempt: FakePaymentAttempt = {
     public_id: 'pay_' + '88'.repeat(32),
     actor_id: 8,
@@ -2238,6 +2325,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
         tx_hash: TX1.toLowerCase(),
       },
     },
+    response_body_bytes: Buffer.from(exactBody, 'utf8'),
     created_at: new Date(Date.now() - 60_000).toISOString(),
     updated_at: new Date().toISOString(),
     completed_at: new Date().toISOString(),
@@ -2254,6 +2342,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
   })
 
   assert.equal(replay.status, 200, await replay.clone().text())
+  assert.equal(await replay.text(), exactBody)
   assert.ok(replay.headers.get('X-PAYMENT-RESPONSE'))
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 0)
 })

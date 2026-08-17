@@ -180,6 +180,13 @@ applies only `db/migrations/20260813_hosted_chat_signin.sql`;
 `npm run migrate:preview:agreement-accession` separately applies only
 `db/migrations/20260814_agreement_accession.sql`. There is no automatic migration bundle.
 
+Byte-exact payment replay is also a separate reviewed migration. Apply payment custody
+and canonical-response replay first, then run
+`npm run migrate:preview:payment-response-body-replay`. It applies only
+`db/migrations/20260817_payment_response_body_replay.sql`. The migration adds the
+nullable `payment_attempts.response_body_bytes` field; `NULL` remains the honest legacy
+state when the original response bytes were never stored.
+
 Production requires a real Neon snapshot, not a typed promise that one exists. The
 operator provides `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PRODUCTION_BRANCH_ID`, a safe
 `PRODUCTION_SNAPSHOT_NAME`, and `PRODUCTION_DATABASE_URL_UNPOOLED`, then sets
@@ -190,6 +197,11 @@ only agreement accession. Before any write, the command asks Neon's read-only br
 endpoint API to prove that the database hostname belongs to that exact project and branch.
 Only then does it create and verify the snapshot, open the database connection, and apply
 that one migration in one transaction.
+
+For production byte replay, use
+`npm run migrate:production:payment-response-body-replay` only after the payment custody
+and canonical-response migrations are present. It is additive and idempotent, validates
+new stored bodies at 2–200,000 bytes, and does not rewrite legacy completed rows.
 
 The full fresh-install schema has no generic `npm run migrate` shortcut. It can run only
 as `npm run migrate:local`, with `LOCAL_DATABASE_URL_UNPOOLED` pointing to a loopback host

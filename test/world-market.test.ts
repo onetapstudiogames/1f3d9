@@ -232,6 +232,7 @@ function fakePaymentAttempt(now: string): PaymentAttemptRecord {
     result: null,
     responseStatus: null,
     response: null,
+    responseBody: null,
     createdAt: now,
     updatedAt: now,
     completedAt: null,
@@ -378,6 +379,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           to: claimed.to,
         },
       }
+      const responseBody = JSON.stringify(response)
       state = {
         ...state,
         offer: claimed,
@@ -390,12 +392,14 @@ function makeHarness(patch: Partial<FakeState> = {}) {
             result: { kind: 'world_offer', id: offer.id },
             responseStatus: 200,
             response,
+            responseBody,
+            paymentResponseHeader: state.paymentAttempt.paymentResponseHeader ?? 'settled-response',
             completedAt: state.now,
             updatedAt: state.now,
           }
           : null,
       }
-      return [{ response }]
+      return [{ response, response_body: responseBody }]
     }
     if (text.includes('world-market:cancel')) {
       const offer = state.offer
@@ -445,7 +449,8 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           state: 'completed',
           status: state.paymentAttempt.responseStatus ?? 200,
           body: state.paymentAttempt.response,
-          paymentResponseHeader: 'completed-response',
+          responseBody: state.paymentAttempt.responseBody ?? null,
+          paymentResponseHeader: state.paymentAttempt.paymentResponseHeader ?? 'completed-response',
         }
       }
       const created = state.paymentAttempt == null
@@ -506,15 +511,16 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       }
     },
     resumePayment: async ({ attempt }) => {
-      state = { ...state, directVerifications: state.directVerifications + 1 }
       if (attempt.status === 'completed' && attempt.response) {
         return {
           state: 'completed',
           status: attempt.responseStatus ?? 200,
           body: attempt.response,
-          paymentResponseHeader: 'completed-response',
+          responseBody: attempt.responseBody ?? null,
+          paymentResponseHeader: attempt.paymentResponseHeader ?? 'completed-response',
         }
       }
+      state = { ...state, directVerifications: state.directVerifications + 1 }
       if (state.directVerificationInvalid || attempt.status === 'invalid') {
         state = {
           ...state,
@@ -757,6 +763,8 @@ test('payment closes ownership atomically and a retry returns the same public re
   })
   const first = await pay()
   assert.equal(first.status, 200, await first.clone().text())
+  const firstText = await first.clone().text()
+  const firstPaymentResponse = first.headers.get('X-PAYMENT-RESPONSE')
   const firstBody = await first.json() as { offer: FakeOffer & { phase: string } }
   assert.equal(firstBody.offer.phase, 'claimed')
   assert.equal(firstBody.offer.buyer, 'neighbor')
@@ -773,6 +781,8 @@ test('payment closes ownership atomically and a retry returns the same public re
 
   const retry = await pay()
   assert.equal(retry.status, 200)
+  assert.equal(await retry.clone().text(), firstText)
+  assert.equal(retry.headers.get('X-PAYMENT-RESPONSE'), firstPaymentResponse)
   assert.deepEqual(await retry.json(), firstBody)
   assert.equal(harness.getState().directVerifications, 1)
 })

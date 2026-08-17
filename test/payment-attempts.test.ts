@@ -33,6 +33,7 @@ const FACILITATOR_RESPONSE_HEADER = Buffer.from(JSON.stringify({
   network: 'base',
   facilitator: 'https://facilitator.example.test',
 })).toString('base64')
+const EXACT_RESPONSE_BODY = '{\n  "thing": { "id": 42 },\n  "ok": true\n}'
 
 class QueuedDatabase implements PaymentAttemptQueryable {
   readonly calls: { text: string; params: readonly unknown[] }[] = []
@@ -112,6 +113,7 @@ function row(overrides: Partial<PaymentAttemptRecord> = {}): PaymentAttemptRecor
     result: null,
     responseStatus: null,
     response: null,
+    responseBody: null,
     createdAt: '2026-08-16T12:00:01.000Z',
     updatedAt: '2026-08-16T12:00:01.000Z',
     completedAt: null,
@@ -222,6 +224,35 @@ test('create-or-read rejects changed immutable terms for a live target', async (
       (error: unknown) => error instanceof PaymentAttemptConflictError,
     )
   }
+})
+
+test('a completed nonce replays across a server-derived target change but not a changed request', async () => {
+  const completed = row({
+    status: 'completed',
+    responseStatus: 200,
+    response: { ok: true },
+    responseBody: '{"ok":true}',
+  })
+  const replay = await createOrReadPaymentAttempt(
+    new QueuedDatabase([completed]),
+    input({ targetKey: 'direct-sale:91:state-after-completion' }),
+    () => 'pay_new_0000000001',
+  )
+
+  assert.equal(replay.disposition, 'existing')
+  assert.equal(replay.attempt.publicId, completed.publicId)
+
+  await assert.rejects(
+    createOrReadPaymentAttempt(
+      new QueuedDatabase([completed]),
+      input({
+        targetKey: 'direct-sale:91:state-after-completion',
+        request: { offer_id: 91, nested: { a: 1, b: 999 } },
+      }),
+      () => 'pay_new_0000000001',
+    ),
+    (error: unknown) => error instanceof PaymentAttemptConflictError,
+  )
 })
 
 test('a concurrent insert conflict is re-read by target or exact x402 nonce', async () => {
@@ -342,7 +373,8 @@ test('facilitator response bytes survive evidence binding and durable row reload
         body: { ok: true, thing: { id: 42 } },
       },
     },
-  }
+    responseBody: EXACT_RESPONSE_BODY,
+  } as PaymentAttemptRecord
   const reloaded = await findPaymentAttempt(new QueuedDatabase([completed]), {
     actorId: completed.actorId,
     operation: 'direct_sale',
@@ -351,6 +383,48 @@ test('facilitator response bytes survive evidence binding and durable row reload
 
   assert.equal(reloaded?.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
   assert.deepEqual(reloaded?.response, { ok: true, thing: { id: 42 } })
+  assert.equal(reloaded?.responseBody, EXACT_RESPONSE_BODY)
+})
+
+test('durable response bodies reject malformed, mismatched, and oversized database bytes', async () => {
+  const response = {
+    __1f3d9_x402_response_v1: {
+      header: FACILITATOR_RESPONSE_HEADER,
+      body: { ok: true, thing: { id: 42 } },
+    },
+  }
+  for (const responseBody of [
+    Buffer.from('not json', 'utf8'),
+    Buffer.from('{"ok":false,"thing":{"id":42}}', 'utf8'),
+    Buffer.alloc(200_001, 0x20),
+  ]) {
+    await assert.rejects(
+      findPaymentAttempt(new QueuedDatabase([{
+        ...row({ status: 'completed', responseStatus: 201, response }),
+        responseBody: responseBody as unknown as string,
+      } as PaymentAttemptRecord]), {
+        actorId: 7,
+        operation: 'direct_sale',
+        offerId: 91,
+      }),
+      (error: unknown) => error instanceof TypeError,
+    )
+  }
+})
+
+test('legacy completed rows fall back without claiming byte-exact response storage', async () => {
+  const legacy = await findPaymentAttempt(new QueuedDatabase([row({
+    status: 'completed',
+    responseStatus: 200,
+    response: { ok: true },
+  })]), {
+    actorId: 7,
+    operation: 'direct_sale',
+    offerId: 91,
+  })
+
+  assert.deepEqual(legacy?.response, { ok: true })
+  assert.equal(legacy?.responseBody, null)
 })
 
 test('facilitator response persistence rejects malformed or oversized headers before SQL', async () => {
@@ -407,12 +481,40 @@ test('completion requires pending finalized evidence and preserves the canonical
     result: { thing_id: 42 },
     responseStatus: 200,
     response: { ok: true, thing: { id: 42 } },
+    responseBody: EXACT_RESPONSE_BODY,
   })
 
   assert.equal(result.status, 'completed')
   assert.match(database.calls[0]?.text ?? '', /status\s*=\s*'payment_pending'/iu)
   assert.match(database.calls[0]?.text ?? '', /finalized_block_number\s+IS\s+NOT\s+NULL/iu)
   assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*NULL/iu)
+  assert.match(database.calls[0]?.text ?? '', /response_body_bytes\s*=\s*decode\s*\(/iu)
+  assert.equal(
+    Buffer.from(String(database.calls[0]?.params[5]), 'base64').toString('utf8'),
+    EXACT_RESPONSE_BODY,
+  )
+})
+
+test('completion rejects non-object, mismatched, or oversized exact response bodies before SQL', async () => {
+  for (const responseBody of [
+    '[]',
+    '{"ok":false}',
+    `{"padding":"${'x'.repeat(200_000)}"}`,
+  ]) {
+    const database = new QueuedDatabase()
+    await assert.rejects(
+      completePaymentAttempt(database, {
+        publicId: 'pay_existing_0001',
+        leaseOwner: 'lease_winner',
+        result: { thing_id: 42 },
+        responseStatus: 200,
+        response: { ok: true },
+        responseBody,
+      }),
+      (error: unknown) => error instanceof TypeError,
+    )
+    assert.equal(database.calls.length, 0)
+  }
 })
 
 test('invalid and expired are forward-only terminal transitions', async () => {

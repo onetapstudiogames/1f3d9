@@ -14,7 +14,7 @@ import {
   TREASURY,
 } from './pay.ts'
 import { sql } from './db.ts'
-import { runDurableX402 } from './payment-flow.ts'
+import { completedPaymentResponse, paymentJsonResponse, runDurableX402 } from './payment-flow.ts'
 import { releaseSettlementLease, type PaymentAttemptRecord } from './payment-attempts.ts'
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
@@ -156,15 +156,7 @@ export async function treasuryFee(
     request: details.request,
   })
   if (payment.state === 'completed') {
-    return new Response(JSON.stringify(payment.body), {
-      status: payment.status,
-      headers: {
-        'content-type': 'application/json; charset=UTF-8',
-        ...(payment.paymentResponseHeader
-          ? { 'X-PAYMENT-RESPONSE': payment.paymentResponseHeader }
-          : {}),
-      },
-    })
+    return completedPaymentResponse(payment)
   }
   if (payment.state === 'payment_pending') return c.json(payment.body, 202)
   if (payment.state === 'unavailable') return c.json(payment.body, 503)
@@ -186,6 +178,14 @@ export async function treasuryFee(
 
 export function setPaymentHeader(c: Context, fee: FeePayment): void {
   c.header('X-PAYMENT-RESPONSE', fee.responseHeader)
+}
+
+export function completedTreasuryFeeResponse(
+  fee: FeePayment,
+  responseBody: string,
+  status: number,
+): Response {
+  return paymentJsonResponse(responseBody, status, fee.responseHeader)
 }
 
 export async function releasePaymentLease(

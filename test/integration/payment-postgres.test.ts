@@ -18,6 +18,10 @@ const replayMigrationDdl = await readFile(
   new URL('../../db/migrations/20260816_payment_response_replay.sql', import.meta.url),
   'utf8',
 )
+const responseBodyMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260817_payment_response_body_replay.sql', import.meta.url),
+  'utf8',
+)
 
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
 const SELLER_WALLET = `0x${'1'.repeat(40)}`
@@ -116,7 +120,10 @@ async function resetLegacy(database: Pool): Promise<void> {
     DROP TRIGGER IF EXISTS sale_payments_match_attempt ON sale_payments;
     DROP TRIGGER IF EXISTS payment_attempts_keep_history ON payment_attempts;
     DROP TRIGGER IF EXISTS transfer_offers_keep_pending_attempt ON transfer_offers;
+    DROP TRIGGER IF EXISTS payment_attempts_validate_response_body ON payment_attempts;
+    DROP FUNCTION IF EXISTS complete_payment_attempt(TEXT, TEXT, JSONB, SMALLINT, JSONB, BYTEA);
     DROP FUNCTION IF EXISTS complete_payment_attempt(TEXT, TEXT, JSONB, SMALLINT, JSONB);
+    DROP FUNCTION IF EXISTS validate_payment_response_body();
     DROP FUNCTION IF EXISTS protect_pending_payment_attempt_link();
     ALTER TABLE payment_uses DROP CONSTRAINT IF EXISTS payment_uses_exact_attempt;
     ALTER TABLE transfer_offers DROP CONSTRAINT IF EXISTS transfer_offers_pending_attempt_owner;
@@ -482,13 +489,14 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         FROM business_effect
       `)
       const completed = await postgres.client.query(
-        `SELECT status, response_status, response_json FROM payment_attempts
+        `SELECT status, response_status, response_json, response_body_bytes FROM payment_attempts
          WHERE public_id = 'attempt_atomic_completion_01'`,
       )
       assert.deepEqual(completed.rows, [{
         status: 'completed',
         response_status: 201,
         response_json: { ok: true },
+        response_body_bytes: null,
       }])
     })
 
@@ -496,6 +504,8 @@ test('payment custody invariants hold in PostgreSQL', async t => {
       await resetFresh(postgres.client)
       await postgres.client.query(replayMigrationDdl)
       await postgres.client.query(replayMigrationDdl)
+      await postgres.client.query(responseBodyMigrationDdl)
+      await postgres.client.query(responseBodyMigrationDdl)
       const txHash = hash('4')
       await postgres.client.query(`
         INSERT INTO payment_attempts (
@@ -535,17 +545,20 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         WHERE public_id = 'attempt_exact_response_01'
       `), '55000')
 
+      const exactBody = '{\n  "thing": { "id": 42 },\n  "ok": true\n}'
       await postgres.client.query(`
         SELECT complete_payment_attempt(
           'attempt_exact_response_01',
           'response-lease',
           jsonb_build_object('thing_id', 42),
           201::smallint,
-          jsonb_build_object('ok', true, 'thing', jsonb_build_object('id', 42))
+          jsonb_build_object('ok', true, 'thing', jsonb_build_object('id', 42)),
+          convert_to($1, 'UTF8')
         )
-      `)
+      `, [exactBody])
       const stored = await postgres.client.query(`
-        SELECT response_json FROM payment_attempts
+        SELECT response_json, convert_from(response_body_bytes, 'UTF8') AS response_body
+        FROM payment_attempts
         WHERE public_id = 'attempt_exact_response_01'
       `)
       assert.deepEqual(stored.rows, [{
@@ -555,6 +568,7 @@ test('payment custody invariants hold in PostgreSQL', async t => {
             body: { ok: true, thing: { id: 42 } },
           },
         },
+        response_body: exactBody,
       }])
 
       const reloaded = await findPaymentAttempt(database, {
@@ -564,6 +578,53 @@ test('payment custody invariants hold in PostgreSQL', async t => {
       })
       assert.equal(reloaded?.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
       assert.deepEqual(reloaded?.response, { ok: true, thing: { id: 42 } })
+      assert.equal(reloaded?.responseBody, exactBody)
+      await rejectsWithCode(postgres.client.query(`
+        UPDATE payment_attempts SET response_body_bytes = convert_to('{"ok":false}', 'UTF8')
+        WHERE public_id = 'attempt_exact_response_01'
+      `), '55000')
+    })
+
+    await t.test('byte-exact completion rejects invalid, mismatched, and oversized bodies atomically', async () => {
+      for (const [suffix, body] of [
+        ['invalid', '[]'],
+        ['mismatch', '{"ok":false}'],
+        ['oversized', `{"padding":"${'x'.repeat(200_000)}"}`],
+      ] as const) {
+        await resetFresh(postgres.client)
+        await postgres.client.query(`
+          INSERT INTO payment_attempts (
+            public_id, actor_id, operation, target_key, request_hash, request_json,
+            method, network, token, payer_wallet, payee_wallet, amount_units,
+            x402_nonce, x402_payload_digest, x402_valid_after, x402_valid_before,
+            start_block, start_time, end_time, status, lease_owner, lease_expires_at,
+            tx_hash, finalized_block_number, finalized_block_hash,
+            finalized_block_time, finalized_at
+          ) VALUES (
+            $1, 1, 'frontier', $2, repeat('a', 64), '{}'::jsonb,
+            'x402', 'base', $3, $4, $5, 1000000,
+            $6, repeat('b', 64), 1, 9999999999,
+            10, '2026-08-16T12:00:00Z', '2026-08-16T12:05:00Z',
+            'payment_pending', 'body-lease', clock_timestamp() + interval '1 minute',
+            $7, 11, $8, '2026-08-16T12:01:00Z', '2026-08-16T12:02:00Z'
+          )
+        `, [
+          `attempt_body_${suffix}_01`, `frontier:body-${suffix}`, BASE_USDC,
+          BUYER_WALLET, SELLER_WALLET, hash(suffix === 'invalid' ? '1' : suffix === 'mismatch' ? '2' : '3'),
+          hash(suffix === 'invalid' ? '4' : suffix === 'mismatch' ? '5' : '6'),
+          hash(suffix === 'invalid' ? '7' : suffix === 'mismatch' ? '8' : '9'),
+        ])
+        await rejectsWithCode(postgres.client.query(`
+          SELECT complete_payment_attempt(
+            $1, 'body-lease', '{"thing_id":42}'::jsonb, 201::smallint,
+            '{"ok":true}'::jsonb, convert_to($2, 'UTF8')
+          )
+        `, [`attempt_body_${suffix}_01`, body]), '23514')
+        assert.equal((await postgres.client.query(
+          'SELECT status FROM payment_attempts WHERE public_id = $1',
+          [`attempt_body_${suffix}_01`],
+        )).rows[0]!.status, 'payment_pending')
+      }
     })
 
     await t.test('upgrade backfills recorded legacy facts and leaves unknown facts null', async () => {

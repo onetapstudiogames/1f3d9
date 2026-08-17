@@ -12,6 +12,10 @@ const replayMigrationDdl = readFileSync(
   new URL('../db/migrations/20260816_payment_response_replay.sql', import.meta.url),
   'utf8',
 )
+const responseBodyMigrationDdl = readFileSync(
+  new URL('../db/migrations/20260817_payment_response_body_replay.sql', import.meta.url),
+  'utf8',
+)
 
 function createPaymentAttemptsStatement(ddl: string): string {
   const statement = splitSqlStatements(ddl).find(candidate =>
@@ -31,9 +35,18 @@ function worldPaymentValidationStatement(ddl: string): string {
 
 function completionFunctionStatement(ddl: string): string {
   const statement = splitSqlStatements(ddl).find(candidate =>
-    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt\s*\(/iu.test(candidate),
+    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt\s*\(/iu.test(candidate)
+      && !/completion_response_body\s+BYTEA/iu.test(candidate),
   )
   assert.ok(statement, 'missing atomic payment-attempt completion function')
+  return statement.replace(/^\s*--.*$/gmu, '').replace(/\s+/gu, ' ').trim()
+}
+
+function exactCompletionFunctionStatement(ddl: string): string {
+  const statement = splitSqlStatements(ddl).find(candidate =>
+    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt\s*\([\s\S]*completion_response_body\s+BYTEA/iu.test(candidate),
+  )
+  assert.ok(statement, 'missing byte-exact payment-attempt completion function')
   return statement.replace(/^\s*--.*$/gmu, '').replace(/\s+/gu, ' ').trim()
 }
 
@@ -176,6 +189,31 @@ test('business writes can complete exactly one finalized attempt inside the same
   assert.match(fresh, /response_json\s*#>>\s*'\{__1f3d9_x402_response_v1,header\}'/iu)
   assert.match(fresh, /'body'\s*,\s*completion_response/iu)
   assert.match(fresh, /IF\s+NOT\s+FOUND[\s\S]*RAISE\s+EXCEPTION/iu)
+})
+
+test('exact response bodies are bounded, validated, immutable, and added without rewriting legacy rows', () => {
+  const migration = responseBodyMigrationDdl.replace(/^\s*--.*$/gmu, '')
+  const fresh = exactCompletionFunctionStatement(schemaDdl)
+  const upgrade = exactCompletionFunctionStatement(responseBodyMigrationDdl)
+
+  assert.equal(upgrade, fresh)
+  assert.match(schemaDdl, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+response_body_bytes\s+BYTEA/iu)
+  assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+response_body_bytes\s+BYTEA/iu)
+  assert.match(migration, /octet_length\s*\(\s*response_body_bytes\s*\)\s+BETWEEN\s+2\s+AND\s+200000/iu)
+  assert.match(migration, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+validate_payment_response_body/iu)
+  assert.match(migration, /convert_from\s*\(\s*NEW\.response_body_bytes\s*,\s*'UTF8'\s*\)\s*::\s*jsonb/iu)
+  assert.match(migration, /payment response body does not match its canonical response/iu)
+  assert.match(migration, /CREATE\s+TRIGGER\s+payment_attempts_validate_response_body/iu)
+  assert.match(fresh, /completion_response_body\s+BYTEA/iu)
+  assert.match(fresh, /response_body_bytes\s*=\s*completion_response_body/iu)
+  assert.match(fresh, /octet_length\s*\(\s*completion_response_body\s*\)\s+NOT\s+BETWEEN\s+2\s+AND\s+200000/iu)
+  assert.match(fresh, /convert_from\s*\(\s*completion_response_body\s*,\s*'UTF8'\s*\)\s*::\s*jsonb/iu)
+  for (const statement of splitSqlStatements(responseBodyMigrationDdl)) {
+    assert.doesNotMatch(
+      statement.replace(/^\s*--.*$/gmu, '').trim(),
+      /^(?:UPDATE|DELETE|TRUNCATE|DROP\s+TABLE|DROP\s+COLUMN)\b/iu,
+    )
+  }
 })
 
 test('a recorded facilitator response header is immutable before and after completion', () => {

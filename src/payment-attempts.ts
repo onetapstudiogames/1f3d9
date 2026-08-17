@@ -8,6 +8,7 @@ const PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]+$/u
 const PAYMENT_RESPONSE_HEADER_RE = /^[A-Za-z0-9+/]+={0,2}$/u
 const MAX_FACILITATOR_RESPONSE_BYTES = 65_536
 const MAX_PAYMENT_RESPONSE_HEADER_LENGTH = 4 * Math.ceil(MAX_FACILITATOR_RESPONSE_BYTES / 3)
+const MAX_PAYMENT_RESPONSE_BODY_BYTES = 200_000
 const DURABLE_X402_RESPONSE_KEY = '__1f3d9_x402_response_v1'
 
 export type PaymentAttemptStatus =
@@ -54,6 +55,7 @@ export interface PaymentAttemptRecord {
   result: Record<string, unknown> | null
   responseStatus: number | null
   response: Record<string, unknown> | null
+  responseBody?: string | null
   paymentResponseHeader?: string | null
   createdAt: string
   updatedAt: string
@@ -224,6 +226,82 @@ function objectValue(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => jsonValuesEqual(value, right[index]))
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).sort()
+  const rightKeys = Object.keys(rightRecord).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index]
+      && jsonValuesEqual(leftRecord[key], rightRecord[key]))
+}
+
+function rawResponseBodyBytes(value: unknown): Buffer | null {
+  if (value == null) return null
+  if (typeof value === 'string') {
+    if (/^\\x[0-9a-f]*$/iu.test(value)) return Buffer.from(value.slice(2), 'hex')
+    return Buffer.from(value, 'utf8')
+  }
+  if (value instanceof Uint8Array) return Buffer.from(value)
+  throw new TypeError('invalid payment response body row')
+}
+
+function paymentResponseBodyValue(
+  value: unknown,
+  expectedResponse: Record<string, unknown> | null,
+): string | null {
+  const bytes = rawResponseBodyBytes(value)
+  if (bytes == null) return null
+  if (bytes.byteLength < 2 || bytes.byteLength > MAX_PAYMENT_RESPONSE_BODY_BYTES) {
+    throw new TypeError('invalid payment response body row')
+  }
+  const text = bytes.toString('utf8')
+  if (!Buffer.from(text, 'utf8').equals(bytes)) throw new TypeError('invalid payment response body row')
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(text)
+  } catch {
+    throw new TypeError('invalid payment response body row')
+  }
+  if (
+    !decoded || typeof decoded !== 'object' || Array.isArray(decoded)
+    || expectedResponse == null
+    || !jsonValuesEqual(decoded, expectedResponse)
+  ) throw new TypeError('invalid payment response body row')
+  return text
+}
+
+function encodeValidatedResponseBody(
+  responseBody: string,
+  expectedResponse: Record<string, unknown>,
+): string {
+  const bytes = Buffer.from(responseBody, 'utf8')
+  if (
+    responseBody.length === 0
+    || bytes.byteLength < 2
+    || bytes.byteLength > MAX_PAYMENT_RESPONSE_BODY_BYTES
+  ) throw new TypeError('invalid payment response body')
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(responseBody)
+  } catch {
+    throw new TypeError('invalid payment response body')
+  }
+  if (
+    !decoded || typeof decoded !== 'object' || Array.isArray(decoded)
+    || !jsonValuesEqual(decoded, expectedResponse)
+  ) throw new TypeError('invalid payment response body')
+  return bytes.toString('base64')
+}
+
 function paymentResponseHeaderValue(value: unknown): string | null {
   if (
     typeof value !== 'string'
@@ -286,6 +364,11 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
     rowValue(row, 'paymentResponseHeader', 'payment_response_header'),
   )
   const paymentResponseHeader = durableResponse?.header ?? directPaymentResponseHeader
+  const response = durableResponse ? durableResponse.body : storedResponse
+  const responseBody = paymentResponseBodyValue(
+    rowValue(row, 'responseBody', 'response_body_bytes'),
+    response,
+  )
   return {
     publicId,
     actorId,
@@ -320,7 +403,8 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
     invalidReason: textValue(rowValue(row, 'invalidReason', 'invalid_reason')),
     result: objectValue(rowValue(row, 'result', 'result_json')),
     responseStatus: integer(rowValue(row, 'responseStatus', 'response_status')),
-    response: durableResponse ? durableResponse.body : storedResponse,
+    response,
+    responseBody,
     ...(paymentResponseHeader ? { paymentResponseHeader } : {}),
     createdAt: isoString(rowValue(row, 'createdAt', 'created_at')) ?? new Date(0).toISOString(),
     updatedAt: isoString(rowValue(row, 'updatedAt', 'updated_at')) ?? new Date(0).toISOString(),
@@ -328,11 +412,16 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
   }
 }
 
-function sameImmutableTerms(attempt: PaymentAttemptRecord, input: PaymentAttemptInput, requestHash: string): boolean {
+function sameImmutableTerms(
+  attempt: PaymentAttemptRecord,
+  input: PaymentAttemptInput,
+  requestHash: string,
+  allowCompletedTargetChange = false,
+): boolean {
   return attempt.actorId === input.actorId
     && attempt.counterpartyId === (input.counterpartyId ?? null)
     && attempt.operation === input.operation
-    && attempt.targetKey === (input.targetKey ?? null)
+    && (allowCompletedTargetChange || attempt.targetKey === (input.targetKey ?? null))
     && attempt.offerId === (input.offerId ?? null)
     && attempt.assetType === (input.assetType ?? null)
     && attempt.assetId === (input.assetId ?? null)
@@ -349,6 +438,18 @@ function sameImmutableTerms(attempt: PaymentAttemptRecord, input: PaymentAttempt
     && attempt.x402ValidBefore === (input.x402ValidBefore ?? null)
     && attempt.startTime === (input.startTime ?? null)
     && attempt.endTime === (input.endTime ?? null)
+}
+
+function canReplayExistingAttempt(
+  attempt: PaymentAttemptRecord,
+  input: PaymentAttemptInput,
+  requestHash: string,
+): boolean {
+  return sameImmutableTerms(attempt, input, requestHash)
+    || (
+      attempt.status === 'completed'
+      && sameImmutableTerms(attempt, input, requestHash, true)
+    )
 }
 
 function conflict(message = 'payment attempt is already bound to different immutable terms'): never {
@@ -395,7 +496,7 @@ export async function createOrReadPaymentAttempt(
   const lookup = readByTargetOrNonce(input)
   const existing = paymentAttemptFromRow((await runQuery(database, lookup.text, lookup.params))[0] as Record<string, unknown> | undefined)
   if (existing) {
-    if (!sameImmutableTerms(existing, input, request.hash)) conflict()
+    if (!canReplayExistingAttempt(existing, input, request.hash)) conflict()
     return { disposition: 'existing', attempt: existing }
   }
 
@@ -442,7 +543,7 @@ export async function createOrReadPaymentAttempt(
   if (created) return { disposition: 'created', attempt: created }
 
   const raced = paymentAttemptFromRow((await runQuery(database, lookup.text, lookup.params))[0] as Record<string, unknown> | undefined)
-  if (!raced || !sameImmutableTerms(raced, input, request.hash)) conflict()
+  if (!raced || !canReplayExistingAttempt(raced, input, request.hash)) conflict()
   return { disposition: 'existing', attempt: raced }
 }
 
@@ -586,8 +687,10 @@ export async function completePaymentAttempt(
     result: Record<string, unknown>
     responseStatus: number
     response: Record<string, unknown>
+    responseBody: string
   },
 ): Promise<PaymentAttemptRecord> {
+  const encodedResponseBody = encodeValidatedResponseBody(input.responseBody, input.response)
   const completed = paymentAttemptFromRow((await runQuery(database, `
     /* payment-attempts:complete */
     UPDATE payment_attempts
@@ -604,6 +707,7 @@ export async function completePaymentAttempt(
           )
         )
       END,
+      response_body_bytes = decode($6, 'base64'),
       completed_at = coalesce(completed_at, clock_timestamp()),
       lease_owner = NULL,
       lease_expires_at = NULL,
@@ -623,6 +727,7 @@ export async function completePaymentAttempt(
     JSON.stringify(input.result),
     input.responseStatus,
     JSON.stringify(input.response),
+    encodedResponseBody,
   ]))[0] as Record<string, unknown> | undefined)
   if (completed) return completed
   const current = paymentAttemptFromRow((await runQuery(database, `
