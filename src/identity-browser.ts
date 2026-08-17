@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { trustedBrowserForm } from './browser-form.ts'
 import { HANDLE_RE, newSecret, sha256 } from './core.ts'
 import { publicText } from './input.ts'
 import { postgresIdentityStore, type IdentityStore } from './identity-store.ts'
+import { publicOrigin as configuredPublicOrigin } from './oauth-config.ts'
 
 export const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
 
@@ -46,7 +48,7 @@ function page(title: string, body: string): string {
 function privateHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
-  c.header('Referrer-Policy', 'no-referrer')
+  c.header('Referrer-Policy', 'same-origin')
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('X-Frame-Options', 'DENY')
   c.header(
@@ -69,15 +71,6 @@ function browserError(c: Context, status: 400 | 403 | 409 | 429, message: string
     'Request stopped',
     `<h1>Request stopped</h1><p>${escapeHtml(message)}</p><p class="muted">No identity change was made.</p>`,
   )
-}
-
-function origin(environment: IdentityEnvironment): string {
-  const value = environment.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
-  try {
-    return new URL(value).origin
-  } catch {
-    return 'https://1f3d9.com'
-  }
 }
 
 function clientAddress(c: Context, environment: IdentityEnvironment): string {
@@ -214,7 +207,7 @@ function rotationKey(handle: string, residentKey: string, csrf: string): string 
 export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {}): void {
   const environment = options.environment ?? process.env
   const store = options.store ?? postgresIdentityStore
-  const publicOrigin = origin(environment)
+  const publicOrigin = configuredPublicOrigin(environment)
 
   app.post('/api/register', c => c.json({
     error: `registration moved to the private browser flow at ${publicOrigin}/join`,
@@ -228,7 +221,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
   })
 
   app.post('/join', async c => {
-    if (c.req.header('origin') !== publicOrigin) return browserError(c, 403, 'This form did not come from 1F3D9.')
+    if (!trustedBrowserForm(c, publicOrigin)) return browserError(c, 403, 'This form did not come from 1F3D9.')
     const values = await form(c)
     const session = cookie(c, JOIN_COOKIE)
     const action = values ? one(values, 'action', 20) : null
@@ -300,7 +293,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     })
 
     app.post('/rotate', async c => {
-      if (c.req.header('origin') !== publicOrigin) return browserError(c, 403, 'This form did not come from 1F3D9.')
+      if (!trustedBrowserForm(c, publicOrigin)) return browserError(c, 403, 'This form did not come from 1F3D9.')
       const values = await form(c)
       const session = cookie(c, ROTATION_COOKIE)
       const action = values ? one(values, 'action', 20) : null
@@ -376,7 +369,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
   })
 
   app.post('/recovery', async c => {
-    if (c.req.header('origin') !== publicOrigin) return browserError(c, 403, 'This form did not come from 1F3D9.')
+    if (!trustedBrowserForm(c, publicOrigin)) return browserError(c, 403, 'This form did not come from 1F3D9.')
     const values = await form(c)
     const session = cookie(c, RECOVERY_COOKIE)
     const action = values ? one(values, 'action', 20) : null

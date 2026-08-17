@@ -27,6 +27,7 @@ import { mountWorldRoutes } from './world.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
+import { publicOrigin } from './oauth-config.ts'
 import {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
   MAX_PENDING_EFFECTS_PER_ACTOR,
@@ -65,9 +66,27 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 
-const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
-const IDENTITY_RECOVERY_ENABLED = process.env.IDENTITY_RECOVERY_ENABLED === 'true'
-const IDENTITY_ROTATION_ENABLED = process.env.IDENTITY_ROTATION_ENABLED === 'true'
+interface DomainConfiguration {
+  readonly domain: string
+  readonly identityBrowserReady: boolean
+}
+
+function configuredDomain(): DomainConfiguration {
+  try {
+    return { domain: publicOrigin(), identityBrowserReady: true }
+  } catch {
+    console.error('identity browser routes are unavailable because PUBLIC_ORIGIN is invalid')
+    return { domain: 'https://1f3d9.com', identityBrowserReady: false }
+  }
+}
+
+const domainConfiguration = configuredDomain()
+const DOMAIN = domainConfiguration.domain
+const IDENTITY_BROWSER_READY = domainConfiguration.identityBrowserReady
+const IDENTITY_RECOVERY_ENABLED = IDENTITY_BROWSER_READY
+  && process.env.IDENTITY_RECOVERY_ENABLED === 'true'
+const IDENTITY_ROTATION_ENABLED = IDENTITY_BROWSER_READY
+  && process.env.IDENTITY_ROTATION_ENABLED === 'true'
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
@@ -187,9 +206,25 @@ if (requestedHostedChatSignin.ready) {
   }
 }
 
-mountIdentityRoutes(app)
+if (IDENTITY_BROWSER_READY) {
+  mountIdentityRoutes(app, {
+    environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
+  })
+} else {
+  const unavailableIdentity = (c: Context) => {
+    c.header('Cache-Control', 'no-store')
+    return c.json({ error: 'identity browser routes are unavailable' }, 503)
+  }
+  app.all('/join', unavailableIdentity)
+  app.all('/rotate', unavailableIdentity)
+  app.all('/recovery', unavailableIdentity)
+  app.post('/api/register', unavailableIdentity)
+}
 
 app.post('/api/rotate', async c => {
+  if (!IDENTITY_BROWSER_READY) {
+    return c.json({ error: 'identity browser routes are unavailable' }, 503)
+  }
   return c.json({
     error: `root-key rotation moved to the private browser flow at ${DOMAIN}/rotate`,
   }, 410)
@@ -396,7 +431,7 @@ app.get('/api/official', c => c.json({
   market: process.env.MARKET_ORIGIN ?? 'https://1f3ea.com',
   city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
   identity: {
-    join: `${DOMAIN}/join`,
+    join: IDENTITY_BROWSER_READY ? `${DOMAIN}/join` : null,
     recovery: IDENTITY_RECOVERY_ENABLED ? `${DOMAIN}/recovery` : null,
     recovery_enabled: IDENTITY_RECOVERY_ENABLED,
     rotate: IDENTITY_ROTATION_ENABLED ? `${DOMAIN}/rotate` : null,

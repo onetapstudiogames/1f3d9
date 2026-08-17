@@ -34,15 +34,20 @@ function postForm(
   path: string,
   cookie: string,
   values: Record<string, string>,
-  origin = ORIGIN,
+  origin: string | null = ORIGIN,
+  referer?: string,
+  extraHeaders: Record<string, string> = {},
 ) {
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    cookie,
+    ...extraHeaders,
+  }
+  if (origin !== null) headers.origin = origin
+  if (referer !== undefined) headers.referer = referer
   return app.request(path, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      cookie,
-      origin,
-    },
+    headers,
     body: new URLSearchParams(values),
   })
 }
@@ -211,6 +216,23 @@ function appWithMemoryStore(options: MemoryStoreOptions = {}) {
   return { app, memory }
 }
 
+test('identity browser rejects a PUBLIC_ORIGIN that is not one exact HTTPS origin', () => {
+  for (const publicOrigin of [
+    'http://city.test',
+    'https://city.test/path',
+    'https://city.test?query=yes',
+    'not-an-origin',
+  ]) {
+    assert.throws(
+      () => mountIdentityRoutes(new Hono(), {
+        environment: { PUBLIC_ORIGIN: publicOrigin },
+        store: memoryStore().store,
+      }),
+      /PUBLIC_ORIGIN must be an HTTPS origin/,
+    )
+  }
+})
+
 test('the recovery surface is absent unless its deployment switch is explicitly enabled', async () => {
   for (const environment of [
     { PUBLIC_ORIGIN: ORIGIN },
@@ -264,6 +286,7 @@ test('rotation GET is private and uses a separate host-only session cookie', asy
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal(response.headers.get('pragma'), 'no-cache')
+  assert.equal(response.headers.get('referrer-policy'), 'same-origin')
   assert.equal(response.headers.get('x-frame-options'), 'DENY')
   assert.match(response.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
   assert.equal(response.headers.get('access-control-allow-origin'), null)
@@ -271,6 +294,111 @@ test('rotation GET is private and uses a separate host-only session cookie', asy
   assert.match(setCookie, /^__Host-1f3d9_rotate=/)
   assert.match(setCookie, /; Path=\/; Max-Age=900; Secure; HttpOnly; SameSite=Lax$/)
   assert.doesNotMatch(setCookie, /(?:Domain=|join|recovery)/i)
+})
+
+test('real browser form posts can use a same-origin referrer when Origin is withheld', async () => {
+  const join = appWithMemoryStore()
+  const joinStart = await pageState(await join.app.request('/join'))
+  const joined = await postForm(join.app, '/join', joinStart.cookie, {
+    action: 'stage', csrf: joinStart.csrf, handle: 'mobile-join', model: '',
+  }, null, `${ORIGIN}/join`)
+  assert.equal(joined.status, 200)
+  assert.equal(join.memory.registration()?.handle, 'mobile-join')
+
+  const rotation = appWithMemoryStore()
+  const rotationStart = await pageState(await rotation.app.request('/rotate'))
+  const rotated = await postForm(rotation.app, '/rotate', rotationStart.cookie, {
+    action: 'begin', csrf: rotationStart.csrf, resident_key: ROOT_KEY,
+  }, 'null', `${ORIGIN}/rotate`)
+  assert.equal(rotated.status, 200)
+  assert.ok(rotation.memory.stagedRotation())
+
+  const recovery = appWithMemoryStore()
+  const recoveryStart = await pageState(await recovery.app.request('/recovery'))
+  const generated = await postForm(recovery.app, '/recovery', recoveryStart.cookie, {
+    action: 'generate', csrf: recoveryStart.csrf, resident_key: ROOT_KEY,
+  }, null, `${ORIGIN}/recovery`)
+  assert.equal(generated.status, 200)
+  const recoveryHtml = await generated.text()
+  assert.equal((recoveryHtml.match(/1f3d9_rc_[0-9a-f]{64}/g) ?? []).length, 8)
+})
+
+test('identity forms accept same-origin fetch metadata when privacy browsers omit Origin and Referer', async () => {
+  const fetchMetadata = {
+    'sec-fetch-site': 'same-origin',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-dest': 'document',
+  }
+
+  const join = appWithMemoryStore()
+  const joinStart = await pageState(await join.app.request('/join'))
+  const joined = await postForm(join.app, '/join', joinStart.cookie, {
+    action: 'stage', csrf: joinStart.csrf, handle: 'metadata-join', model: '',
+  }, null, undefined, fetchMetadata)
+  assert.equal(joined.status, 200)
+  assert.equal(join.memory.registration()?.handle, 'metadata-join')
+
+  const rotation = appWithMemoryStore()
+  const rotationStart = await pageState(await rotation.app.request('/rotate'))
+  const rotated = await postForm(rotation.app, '/rotate', rotationStart.cookie, {
+    action: 'begin', csrf: rotationStart.csrf, resident_key: ROOT_KEY,
+  }, null, undefined, fetchMetadata)
+  assert.equal(rotated.status, 200)
+  assert.ok(rotation.memory.stagedRotation())
+
+  const recovery = appWithMemoryStore()
+  const recoveryStart = await pageState(await recovery.app.request('/recovery'))
+  const generated = await postForm(recovery.app, '/recovery', recoveryStart.cookie, {
+    action: 'generate', csrf: recoveryStart.csrf, resident_key: ROOT_KEY,
+  }, null, undefined, fetchMetadata)
+  assert.equal(generated.status, 200)
+  const recoveryHtml = await generated.text()
+  assert.equal((recoveryHtml.match(/1f3d9_rc_[0-9a-f]{64}/g) ?? []).length, 8)
+})
+
+test('identity forms still reject absent or conflicting same-site evidence', async () => {
+  const absent = appWithMemoryStore()
+  const absentStart = await pageState(await absent.app.request('/join'))
+  const noEvidence = await postForm(absent.app, '/join', absentStart.cookie, {
+    action: 'stage', csrf: absentStart.csrf, handle: 'no-evidence', model: '',
+  }, null)
+  assert.equal(noEvidence.status, 403)
+  assert.equal(absent.memory.registration(), null)
+
+  const conflicting = appWithMemoryStore()
+  const conflictingStart = await pageState(await conflicting.app.request('/rotate'))
+  const hostileOrigin = await postForm(conflicting.app, '/rotate', conflictingStart.cookie, {
+    action: 'begin', csrf: conflictingStart.csrf, resident_key: ROOT_KEY,
+  }, 'https://attacker.test', `${ORIGIN}/rotate`)
+  assert.equal(hostileOrigin.status, 403)
+  assert.equal(conflicting.memory.stagedRotation(), null)
+
+  const hostileMetadata = appWithMemoryStore()
+  const hostileMetadataStart = await pageState(await hostileMetadata.app.request('/join'))
+  const crossSiteFetch = await postForm(hostileMetadata.app, '/join', hostileMetadataStart.cookie, {
+    action: 'stage', csrf: hostileMetadataStart.csrf, handle: 'hostile-metadata', model: '',
+  }, null, undefined, {
+    'sec-fetch-site': 'cross-site',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-dest': 'document',
+  })
+  assert.equal(crossSiteFetch.status, 403)
+  assert.equal(hostileMetadata.memory.registration(), null)
+
+  for (const referer of [
+    'https://attacker.test/recovery',
+    'http://city.test/recovery',
+    'https://city.test:444/recovery',
+    'not-a-url',
+  ]) {
+    const hostileReferrer = appWithMemoryStore()
+    const hostileStart = await pageState(await hostileReferrer.app.request('/recovery'))
+    const missingOrigin = await postForm(hostileReferrer.app, '/recovery', hostileStart.cookie, {
+      action: 'generate', csrf: hostileStart.csrf, resident_key: ROOT_KEY,
+    }, null, referer)
+    assert.equal(missingOrigin.status, 403)
+    assert.equal(hostileReferrer.memory.calls.length, 0)
+  }
 })
 
 test('legacy registration is retired before it can return a resident key', async () => {

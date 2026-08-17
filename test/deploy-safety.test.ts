@@ -44,6 +44,10 @@ const paymentAttemptsMigrationUrl = new URL(
   '../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,
 )
+const paymentResponseReplayMigrationUrl = new URL(
+  '../db/migrations/20260816_payment_response_replay.sql',
+  import.meta.url,
+)
 const identityRecoveryMigrationUrl = new URL(
   '../db/migrations/20260816_identity_recovery.sql',
   import.meta.url,
@@ -594,7 +598,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|identity-recovery\|identity-rotation/,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|public-pagination\|agreement-accession\|open-to-use\|payment-attempts\|payment-response-replay\|identity-recovery\|identity-rotation/,
   )
 })
 
@@ -722,13 +726,16 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [agreementAccessionMigration, 'agreement-accession'],
     [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
     [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
+    [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
     [readFileSync(identityRecoveryMigrationUrl, 'utf8'), 'identity-recovery'],
     [readFileSync(identityRotationMigrationUrl, 'utf8'), 'identity-rotation'],
   ] as const) {
     const statements = label === 'payment-attempts'
-      ? splitSqlStatements(migration).filter(statement =>
-        /^(?:CREATE|COMMENT|DROP\s+TRIGGER|CREATE\s+TRIGGER)/i.test(statement.trim()),
-      )
+      ? splitSqlStatements(migration).filter(statement => {
+        const trimmed = statement.trim()
+        return /^(?:CREATE|COMMENT|DROP\s+TRIGGER|CREATE\s+TRIGGER)/i.test(trimmed)
+          && !/^CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:complete_payment_attempt|protect_payment_attempt_history)\s*\(/i.test(trimmed)
+      })
       : label === 'identity-recovery'
         ? splitSqlStatements(migration).filter(statement => {
           const trimmed = statement.trim()
@@ -775,6 +782,8 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:open-to-use'] ?? '', /--target production --migration open-to-use$/)
   assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
   assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
+  assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)
+  assert.match(packageJson.scripts['migrate:production:payment-response-replay'] ?? '', /--target production --migration payment-response-replay$/)
   assert.match(packageJson.scripts['migrate:preview:identity-recovery'] ?? '', /--target preview --migration identity-recovery$/)
   assert.match(packageJson.scripts['migrate:production:identity-recovery'] ?? '', /--target production --migration identity-recovery$/)
   assert.match(packageJson.scripts['migrate:preview:identity-rotation'] ?? '', /--target preview --migration identity-rotation$/)
@@ -894,6 +903,51 @@ test('payment attempts are an explicitly selected additive release', () => {
     },
   )
   assert.equal(production.migrationFile, 'db/migrations/20260816_payment_attempts.sql')
+})
+
+test('payment response replay is an explicitly selected idempotent function repair', () => {
+  const migration = readFileSync(paymentResponseReplayMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(migration)
+
+  assert.equal(statements.length, 2)
+  assert.match(uncommented, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+complete_payment_attempt/i)
+  assert.match(uncommented, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/i)
+  assert.match(uncommented, /__1f3d9_x402_response_v1/i)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|ALTER\s+TABLE|DELETE|TRUNCATE)\b/im)
+
+  const normalize = (statement: string) => statement
+    .replace(/^\s*--.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const freshFunctions = new Set(splitSqlStatements(fullSchema).map(normalize))
+  for (const statement of statements) assert.ok(freshFunctions.has(normalize(statement)))
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-response-replay'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260816_payment_response_replay.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-response-replay'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-response-replay-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260816_payment_response_replay.sql')
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {

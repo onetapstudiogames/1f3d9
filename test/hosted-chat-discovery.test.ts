@@ -154,7 +154,7 @@ function startupProbe(overrides: Record<string, string | undefined>) {
     }
     const { default: app } = await import('./src/index.ts')
     const corsHeaders = { origin: 'https://reader.example.test' }
-    const [front, llms, legacy, connector, metadata] = await Promise.all([
+    const [front, llms, legacy, connector, metadata, join, official] = await Promise.all([
       app.request('/', { headers: corsHeaders }),
       app.request('/llms.txt', { headers: corsHeaders }),
       app.request('/mcp', {
@@ -168,7 +168,10 @@ function startupProbe(overrides: Record<string, string | undefined>) {
         body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
       }),
       app.request('/.well-known/oauth-authorization-server'),
+      app.request('/join'),
+      app.request('/api/official'),
     ])
+    const officialBody = await official.json()
     const oauthQueries = globalThis.__queries.filter(query => /oauth_/i.test(query))
     process.stdout.write(JSON.stringify({
       front: front.status,
@@ -180,6 +183,8 @@ function startupProbe(overrides: Record<string, string | undefined>) {
       legacy: legacy.status,
       connector: connector.status,
       metadata: metadata.status,
+      join: join.status,
+      officialJoin: officialBody.identity?.join ?? null,
       oauthQueries: oauthQueries.length,
     }))
   `
@@ -235,6 +240,8 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
       legacy: number
       connector: number
       metadata: number
+      join: number
+      officialJoin: string | null
       oauthQueries: number
     }
     assert.equal(probe.front, 200)
@@ -245,6 +252,13 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
     assert.equal(probe.connector, 404)
     assert.equal(probe.metadata, 404)
     assert.equal(probe.oauthQueries, 0)
+    if (overrides.PUBLIC_ORIGIN === 'not-an-origin') {
+      assert.equal(probe.join, 503)
+      assert.equal(probe.officialJoin, null)
+    } else {
+      assert.equal(probe.join, 200)
+      assert.equal(probe.officialJoin, `${PREVIEW_ORIGIN}/join`)
+    }
     assert.equal(
       probe.frontText,
       hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, false),

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const existingResidentKey = `1f3d9_sk_${'ab'.repeat(24)}`
+const recoveryResidentKey = `1f3d9_sk_${'cd'.repeat(24)}`
 const challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
 const state = 'browser-client-state'
 const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
@@ -103,6 +104,24 @@ async function callMeTool(page: Page, endpoint: '/mcp' | '/mcp/connect', accessT
   })
 }
 
+async function withStrippedBrowserHeaders(page: Page, path: string, action: () => Promise<void>) {
+  await page.route(`**${path}`, async route => {
+    if (route.request().method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    const headers = { ...route.request().headers() }
+    delete headers.origin
+    delete headers.referer
+    await route.continue({ headers })
+  })
+  try {
+    await action()
+  } finally {
+    await page.unroute(`**${path}`)
+  }
+}
+
 test('shows a clear consent page without exposing a resident key', async ({ page }) => {
   const response = await page.goto(authorizationPath())
 
@@ -188,9 +207,60 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   await expectNoResidentKeyOutsidePage(page, residentKey)
 })
 
-test('rotates a resident key only after the private replacement is re-entered', async ({ page, baseURL }) => {
-  const trustedOrigin = new URL(baseURL!).origin
-  await page.setExtraHTTPHeaders({ origin: trustedOrigin })
+test('joins through the first-party page and the generated root key works', async ({ page }) => {
+  const response = await page.goto('/join')
+  await expect(page.getByRole('heading', { name: 'Move into 1F3D9' })).toBeVisible()
+  expect(response?.headers()['cache-control']).toContain('no-store')
+  expect(response?.headers()['referrer-policy']).toBe('same-origin')
+
+  await page.getByLabel('City name').fill('standalone-browser')
+  await page.getByLabel('Model label (optional)').fill('browser-test-model')
+  await page.getByRole('button', { name: 'Show the new resident key' }).click()
+  await expect(page.getByRole('heading', { name: "Save standalone-browser's resident key" })).toBeVisible()
+  const residentKey = (await page.locator('code').textContent())?.trim() ?? ''
+  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)).toBe(true)
+  await expectNoResidentKeyOutsidePage(page, residentKey)
+
+  await page.getByLabel('Re-enter the saved resident key').fill(residentKey)
+  await page.getByRole('button', { name: 'Create this resident' }).click()
+  await expect(page.getByRole('heading', { name: 'standalone-browser now lives in 1F3D9' })).toBeVisible()
+  expect((await page.content()).includes(residentKey)).toBe(false)
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(residentKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save standalone-browser's replacement key" })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel and keep the current key' }).click()
+  await expect(page.getByRole('heading', { name: 'Rotation canceled' })).toBeVisible()
+})
+
+test('identity pages still work when mobile browsers strip Origin and Referer on submit', async ({ page }) => {
+  await page.goto('/join')
+  await page.getByLabel('City name').fill('mobile-header-join')
+  await page.getByLabel('Model label (optional)').fill('browser-test-model')
+  await withStrippedBrowserHeaders(page, '/join', async () => {
+    await page.getByRole('button', { name: 'Show the new resident key' }).click()
+  })
+  await expect(page.getByRole('heading', { name: "Save mobile-header-join's resident key" })).toBeVisible()
+  const joinedKey = (await page.locator('code').textContent())?.trim() ?? ''
+  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(joinedKey)).toBe(true)
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(existingResidentKey)
+  await withStrippedBrowserHeaders(page, '/rotate', async () => {
+    await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  })
+  await expect(page.getByRole('heading', { name: "Save browser-resident's replacement key" })).toBeVisible()
+
+  await page.goto('/recovery')
+  await page.getByLabel('Current resident key').fill(recoveryResidentKey)
+  await withStrippedBrowserHeaders(page, '/recovery', async () => {
+    await page.getByRole('button', { name: 'Create recovery codes' }).click()
+  })
+  await expect(page.getByRole('heading', { name: "Save recovery-browser's recovery codes" })).toBeVisible()
+})
+
+test('rotates a resident key only after the private replacement is re-entered', async ({ page }) => {
   const response = await page.goto('/rotate')
   await expect(page.getByRole('heading', { name: 'Rotate a resident key' })).toBeVisible()
   expect(response?.headers()['cache-control']).toContain('no-store')
@@ -209,6 +279,46 @@ test('rotates a resident key only after the private replacement is re-entered', 
   await expect(page.getByRole('heading', { name: "browser-resident's key is rotated" })).toBeVisible()
   expect((await page.content()).includes(replacementKey)).toBe(false)
   await expectNoResidentKeyOutsidePage(page, replacementKey)
+})
+
+test('generated recovery codes replace a lost key once and revoke the old key and siblings', async ({ page }) => {
+  const response = await page.goto('/recovery')
+  await expect(page.getByRole('heading', { name: 'Resident-key recovery' })).toBeVisible()
+  expect(response?.headers()['cache-control']).toContain('no-store')
+  expect(response?.headers()['referrer-policy']).toBe('same-origin')
+
+  await page.getByLabel('Current resident key').fill(recoveryResidentKey)
+  await page.getByRole('button', { name: 'Create recovery codes' }).click()
+  await expect(page.getByRole('heading', { name: "Save recovery-browser's recovery codes" })).toBeVisible()
+  const codes = (await page.locator('code').allTextContents()).map(code => code.trim())
+  expect(codes).toHaveLength(8)
+  expect(new Set(codes).size).toBe(8)
+  expect(codes.every(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))).toBe(true)
+
+  await page.goto('/recovery')
+  await page.getByLabel('Unused recovery code').fill(codes[0]!)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save recovery-browser's replacement key" })).toBeVisible()
+  const replacementKey = (await page.locator('code').textContent())?.trim() ?? ''
+  expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
+  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Replace the lost key' }).click()
+  await expect(page.getByRole('heading', { name: 'recovery-browser is recovered' })).toBeVisible()
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(recoveryResidentKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: 'Request stopped' })).toBeVisible()
+
+  await page.goto('/rotate')
+  await page.getByLabel('Current resident key').fill(replacementKey)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: "Save recovery-browser's replacement key" })).toBeVisible()
+
+  await page.goto('/recovery')
+  await page.getByLabel('Unused recovery code').fill(codes[1]!)
+  await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  await expect(page.getByRole('heading', { name: 'Request stopped' })).toBeVisible()
 })
 
 test('stops a form whose CSRF proof was changed in the browser', async ({ page }) => {

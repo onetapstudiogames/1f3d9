@@ -467,15 +467,20 @@ async function browserPost(
   app: Hono,
   session: BrowserSession,
   fields: Record<string, string> | URLSearchParams,
-  origin = ORIGIN,
+  origin: string | null = ORIGIN,
+  referer?: string,
+  extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    cookie: session.cookie,
+    ...extraHeaders,
+  }
+  if (origin !== null) headers.origin = origin
+  if (referer !== undefined) headers.referer = referer
   return app.request('/oauth/authorize', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      cookie: session.cookie,
-      origin,
-    },
+    headers,
     body: fields instanceof URLSearchParams ? fields : new URLSearchParams(fields),
   })
 }
@@ -886,6 +891,30 @@ test('browser approval rejects wrong origin and CSRF without reflecting the resi
   })
   assert.equal(wrongCsrf.status, 403)
   assert.doesNotMatch(await wrongCsrf.text(), new RegExp(EXISTING_KEY, 'i'))
+})
+
+test('browser approval accepts a same-origin referrer when Origin is withheld', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const approved = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  }, 'null', `${ORIGIN}/oauth/authorize`)
+
+  authorizationCode(approved)
+})
+
+test('browser approval accepts same-origin fetch metadata when privacy browsers omit Origin and Referer', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const approved = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  }, null, undefined, {
+    'sec-fetch-site': 'same-origin',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-dest': 'document',
+  })
+
+  authorizationCode(approved)
 })
 
 test('browser approval rejects unknown and duplicate fields instead of guessing intent', async () => {

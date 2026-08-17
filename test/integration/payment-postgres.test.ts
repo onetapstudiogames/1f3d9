@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Pool } from 'pg'
+import { bindPaymentEvidence, findPaymentAttempt } from '../../src/payment-attempts.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'payment_integration'
@@ -13,11 +14,22 @@ const migrationDdl = await readFile(
   new URL('../../db/migrations/20260816_payment_attempts.sql', import.meta.url),
   'utf8',
 )
+const replayMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260816_payment_response_replay.sql', import.meta.url),
+  'utf8',
+)
 
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
 const SELLER_WALLET = `0x${'1'.repeat(40)}`
 const BUYER_WALLET = `0x${'2'.repeat(40)}`
 const OTHER_WALLET = `0x${'3'.repeat(40)}`
+const FACILITATOR_RESPONSE_HEADER = Buffer.from(JSON.stringify({
+  success: true,
+  transaction: hash('4'),
+  payer: BUYER_WALLET,
+  network: 'base',
+  facilitator: 'https://facilitator.example.test',
+})).toString('base64')
 
 function hash(digit: string): string {
   return `0x${digit.repeat(64)}`
@@ -478,6 +490,80 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         response_status: 201,
         response_json: { ok: true },
       }])
+    })
+
+    await t.test('completion preserves exact facilitator response bytes across a database reload', async () => {
+      await resetFresh(postgres.client)
+      await postgres.client.query(replayMigrationDdl)
+      await postgres.client.query(replayMigrationDdl)
+      const txHash = hash('4')
+      await postgres.client.query(`
+        INSERT INTO payment_attempts (
+          public_id, actor_id, operation, target_key, offer_id, request_hash, request_json,
+          method, network, token, payer_wallet, payee_wallet, amount_units,
+          x402_nonce, x402_payload_digest, x402_valid_after, x402_valid_before,
+          start_block, start_time, end_time, status, lease_owner, lease_expires_at
+        ) VALUES (
+          'attempt_exact_response_01', 2, 'frontier', 'frontier:exact-response', 91,
+          repeat('a', 64), '{}'::jsonb,
+          'x402', 'base', $1, $2, $3, 1000000,
+          $4, repeat('b', 64), 1, 9999999999,
+          10, '2026-08-16T12:00:00Z', '2026-08-16T12:05:00Z',
+          'settling', 'response-lease', clock_timestamp() + interval '1 minute'
+        )
+      `, [BASE_USDC, BUYER_WALLET, SELLER_WALLET, hash('5')])
+      const database = {
+        query: async (text: string, params: readonly unknown[] = []) =>
+          (await postgres.client.query(text, [...params])).rows,
+      }
+
+      const pending = await bindPaymentEvidence(database, {
+        publicId: 'attempt_exact_response_01',
+        leaseOwner: 'response-lease',
+        txHash,
+        finality: {
+          blockNumber: 11n,
+          blockHash: hash('6'),
+          blockTime: '2026-08-16T12:01:00Z',
+          finalizedAt: '2026-08-16T12:02:00Z',
+        },
+        paymentResponseHeader: FACILITATOR_RESPONSE_HEADER,
+      })
+      assert.equal(pending.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+      await rejectsWithCode(postgres.client.query(`
+        UPDATE payment_attempts SET response_json = '{}'::jsonb
+        WHERE public_id = 'attempt_exact_response_01'
+      `), '55000')
+
+      await postgres.client.query(`
+        SELECT complete_payment_attempt(
+          'attempt_exact_response_01',
+          'response-lease',
+          jsonb_build_object('thing_id', 42),
+          201::smallint,
+          jsonb_build_object('ok', true, 'thing', jsonb_build_object('id', 42))
+        )
+      `)
+      const stored = await postgres.client.query(`
+        SELECT response_json FROM payment_attempts
+        WHERE public_id = 'attempt_exact_response_01'
+      `)
+      assert.deepEqual(stored.rows, [{
+        response_json: {
+          __1f3d9_x402_response_v1: {
+            header: FACILITATOR_RESPONSE_HEADER,
+            body: { ok: true, thing: { id: 42 } },
+          },
+        },
+      }])
+
+      const reloaded = await findPaymentAttempt(database, {
+        actorId: 2,
+        operation: 'frontier',
+        offerId: 91,
+      })
+      assert.equal(reloaded?.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+      assert.deepEqual(reloaded?.response, { ok: true, thing: { id: 42 } })
     })
 
     await t.test('upgrade backfills recorded legacy facts and leaves unknown facts null', async () => {

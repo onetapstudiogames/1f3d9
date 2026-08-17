@@ -24,6 +24,7 @@
     "migrate:preview:agreement-accession": "node --experimental-strip-types scripts/migrate.ts --target preview --migration agreement-accession",
     "migrate:preview:open-to-use": "node --experimental-strip-types scripts/migrate.ts --target preview --migration open-to-use",
     "migrate:preview:payment-attempts": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-attempts",
+    "migrate:preview:payment-response-replay": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-response-replay",
     "migrate:preview:identity-recovery": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-recovery",
     "migrate:preview:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-rotation",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
@@ -32,6 +33,7 @@
     "migrate:production:agreement-accession": "node --experimental-strip-types scripts/migrate.ts --target production --migration agreement-accession",
     "migrate:production:open-to-use": "node --experimental-strip-types scripts/migrate.ts --target production --migration open-to-use",
     "migrate:production:payment-attempts": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-attempts",
+    "migrate:production:payment-response-replay": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-response-replay",
     "migrate:production:identity-recovery": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-recovery",
     "migrate:production:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-rotation"
   },

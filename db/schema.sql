@@ -1791,6 +1791,11 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'payment attempt finality is immutable' USING ERRCODE = '55000';
   END IF;
+  IF OLD.response_json #>> '{__1f3d9_x402_response_v1,header}' IS NOT NULL
+    AND NEW.response_json #>> '{__1f3d9_x402_response_v1,header}' IS DISTINCT FROM
+      OLD.response_json #>> '{__1f3d9_x402_response_v1,header}' THEN
+    RAISE EXCEPTION 'payment facilitator response is immutable' USING ERRCODE = '55000';
+  END IF;
 
   IF OLD.status IN ('completed', 'invalid', 'expired', 'legacy_completed')
     AND NEW IS DISTINCT FROM OLD THEN
@@ -1834,7 +1839,17 @@ BEGIN
   SET status = 'completed',
     result_json = completion_result,
     response_status = completion_response_status,
-    response_json = completion_response,
+    response_json = CASE
+      WHEN response_json #>> '{__1f3d9_x402_response_v1,header}' IS NULL
+        THEN completion_response
+      ELSE jsonb_build_object(
+        '__1f3d9_x402_response_v1',
+        jsonb_build_object(
+          'header', response_json #>> '{__1f3d9_x402_response_v1,header}',
+          'body', completion_response
+        )
+      )
+    END,
     completed_at = clock_timestamp(),
     lease_owner = NULL,
     lease_expires_at = NULL,
@@ -1847,6 +1862,7 @@ BEGIN
     AND finalized_block_hash IS NOT NULL
     AND finalized_block_time IS NOT NULL
     AND finalized_at IS NOT NULL
+    AND jsonb_typeof(completion_response) = 'object'
   RETURNING * INTO completed;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'finalized payment attempt is not owned by this completion'
