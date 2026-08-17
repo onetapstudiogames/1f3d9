@@ -8,10 +8,10 @@ const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 
 const frontdoor = read('../src/frontdoor.txt')
 const llms = read('../src/llms.txt')
-const specification = read('../docs/SPEC.md')
-const frontdoorDocument = read('../docs/FRONTDOOR.md')
+const specification = read('../docs/SYSTEM_DESIGN.md')
+const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
 const decisions = read('../docs/DECISIONS.md')
-const openQuestions = read('../docs/OPEN-QUESTIONS.md')
+const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 
 const ACTION_SHAPES = [

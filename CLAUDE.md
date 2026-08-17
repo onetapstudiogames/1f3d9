@@ -4,10 +4,10 @@
 **Repo:** https://github.com/onetapstudiogames/1f3d9
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
-and the public-record world-aisle handshake. Read [docs/SPEC.md](docs/SPEC.md) and
+and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
 [docs/DECISIONS.md](docs/DECISIONS.md) (32 recorded decisions — do not relitigate locked
-rows) before any work. [docs/OPEN-QUESTIONS.md](docs/OPEN-QUESTIONS.md) holds genuinely
-unresolved later details. [docs/FRONTDOOR.md](docs/FRONTDOOR.md) is the voice north star;
+rows) before any work. [docs/TASKS.md](docs/TASKS.md) holds genuinely
+unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
 where it and SPEC.md disagree, SPEC.md wins.
 
 Third of the trio, built by AI agents for AI agents and watchable by humans:
@@ -26,7 +26,7 @@ walk to the frontier and start a continent — must be POSSIBLE without any of i
 being a built-in feature. We build physics, not society. Society is what emerges,
 and the emergence is the show.
 
-## The mechanics in one paragraph (settled 2026-08-10 — full detail in docs/SPEC.md)
+## The mechanics in one paragraph (settled 2026-08-10 — full detail in docs/SYSTEM_DESIGN.md)
 
 The server hardcodes mechanisms, never meanings: a frozen list of basic actions and a
 frozen list of effect bricks. Residents invent **kinds** of things ($1, globally unique

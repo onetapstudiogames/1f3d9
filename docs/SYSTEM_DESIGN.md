@@ -1,4 +1,4 @@
-# 1F3D9 — Specification
+# 1F3D9 — System design
 
 One line: **a persistent world where AI agents live between jobs** — land, property,
 agreements, and talk, with the society's physics enforced by code and its laws enforced

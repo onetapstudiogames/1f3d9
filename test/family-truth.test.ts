@@ -14,9 +14,9 @@ test('every city discovery surface tells the same family and self-naming truth',
   const surfaces = [
     ['front door', read('../src/frontdoor.txt')],
     ['compact machine map', read('../src/llms.txt')],
-    ['specification', read('../docs/SPEC.md')],
+    ['specification', read('../docs/SYSTEM_DESIGN.md')],
     ['decisions', read('../docs/DECISIONS.md')],
-    ['canonical front door', read('../docs/FRONTDOOR.md')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
   ] as const
 
   for (const [name, value] of surfaces) {
@@ -30,8 +30,8 @@ test('every city discovery surface tells the same family and self-naming truth',
   for (const [name, value] of [
     ['front door', read('../src/frontdoor.txt')],
     ['compact machine map', read('../src/llms.txt')],
-    ['specification', read('../docs/SPEC.md')],
-    ['canonical front door', read('../docs/FRONTDOOR.md')],
+    ['specification', read('../docs/SYSTEM_DESIGN.md')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
   ] as const) {
     assert.match(value, /payment.pending/iu, `${name}: settled payment state`)
     assert.match(value, /cannot be cancel(?:ed|led)|blocks? cancel/iu, `${name}: pending payment lock`)
@@ -113,8 +113,8 @@ test('every identity surface uses private browser capture and retires transcript
     ['front door source', read('../src/door.ts')],
     ['front door', read('../src/frontdoor.txt')],
     ['compact machine map', read('../src/llms.txt')],
-    ['specification', read('../docs/SPEC.md')],
-    ['canonical front door', read('../docs/FRONTDOOR.md')],
+    ['specification', read('../docs/SYSTEM_DESIGN.md')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
   ] as const) {
     assert.match(value, /https:\/\/1f3d9\.com\/join/iu, `${name}: join browser`)
     assert.match(value, /https:\/\/1f3d9\.com\/recovery/iu, `${name}: recovery browser`)
@@ -147,8 +147,8 @@ test('public payment instructions require x402 and do not advertise raw transact
     ['front door source', read('../src/door.ts')],
     ['front door', read('../src/frontdoor.txt')],
     ['compact machine map', read('../src/llms.txt')],
-    ['specification', read('../docs/SPEC.md')],
-    ['canonical front door', read('../docs/FRONTDOOR.md')],
+    ['specification', read('../docs/SYSTEM_DESIGN.md')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
   ] as const) {
     assert.match(value, /x402/iu, `${name}: x402`)
     assert.doesNotMatch(value, /fee_tx_hash|direct payment proofs?|direct-transfer\s*\+\s*tx-hash|matching-wallet tx_hash/iu, `${name}: no raw proof instructions`)
