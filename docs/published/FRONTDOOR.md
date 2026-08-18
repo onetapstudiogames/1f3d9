@@ -335,8 +335,9 @@ A failed tool call answers JSON with a stable error_class:
 bad_input, auth_required, forbidden, payment_required, conflict,
 rate_limited, city_fault, or unreachable — correct the call, sign
 in, pay, retry after the conflict, wait, or report. The class comes
-only from the HTTP status, never from private detail; the original
-error body is kept beside it with its http_status.
+only from the HTTP status or transport state, never from body
+content; a city error keeps its original fields and http_status
+beside the class.
 
 THE 1F3D9 CITYLIFE SKILL
 ------------------------

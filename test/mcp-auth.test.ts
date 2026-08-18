@@ -697,33 +697,54 @@ test('failed tool calls carry a stable machine-readable error class on both door
 })
 
 test('successes stay unwrapped, transport failure is unreachable, pre-flight rejections carry their class', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const city = new Hono()
+    city.all('*', c => c.json({ note: { id: 7 } }, 201))
+    const gateway = new Hono()
+    gateway.post('/mcp', c => mcp(c, city))
+    gateway.post('/mcp/connect', c => mcp(c, city, { hostedChat: true }))
+    const ok = await rpc(gateway, 'tools/call', {
+      name: 'say', arguments: { place_id: 2, body: 'plain success' },
+    }, authorization, path) as { result: ToolResult }
+    assert.equal(ok.result.isError, false, path)
+    assert.equal(
+      (JSON.parse(ok.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+      undefined,
+      `${path}: successful results keep their exact downstream shape`,
+    )
+
+    const downCity = { request: () => Promise.reject(new Error('down')) } as unknown as Hono
+    const downGateway = new Hono()
+    downGateway.post('/mcp', c => mcp(c, downCity))
+    downGateway.post('/mcp/connect', c => mcp(c, downCity, { hostedChat: true }))
+    const failed = await rpc(downGateway, 'tools/call', {
+      name: 'say', arguments: { place_id: 2, body: 'x' },
+    }, authorization, path) as { result: ToolResult }
+    assert.equal(failed.result.isError, true, path)
+    assert.equal(
+      (JSON.parse(failed.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+      'unreachable',
+      path,
+    )
+
+    const harness = createHarness()
+    const secret = await rpc(harness.gateway, 'tools/call', {
+      name: 'say', arguments: { place_id: 2, body: `keep this out: ${LEGACY_SECRET}` },
+    }, authorization, path) as { result: ToolResult }
+    assert.equal(
+      (JSON.parse(secret.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+      'bad_input',
+      path,
+    )
+    assert.doesNotMatch(JSON.stringify(secret), new RegExp(LEGACY_SECRET, 'i'), path)
+  }
+
+  // The public legacy door's unauthenticated pointer is its own auth_required.
   setHostedChatFlag(false)
-  const city = new Hono()
-  city.all('*', c => c.json({ note: { id: 7 } }, 201))
-  const gateway = new Hono()
-  gateway.post('/mcp', c => mcp(c, city))
-  const ok = await rpc(gateway, 'tools/call', {
-    name: 'say', arguments: { place_id: 2, body: 'plain success' },
-  }, `Bearer ${LEGACY_SECRET}`, '/mcp') as { result: ToolResult }
-  assert.equal(ok.result.isError, false)
-  assert.equal(
-    (JSON.parse(ok.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
-    undefined,
-    'successful results keep their exact downstream shape',
-  )
-
-  const downCity = { request: () => Promise.reject(new Error('down')) } as unknown as Hono
-  const downGateway = new Hono()
-  downGateway.post('/mcp', c => mcp(c, downCity))
-  const failed = await rpc(downGateway, 'tools/call', {
-    name: 'say', arguments: { place_id: 2, body: 'x' },
-  }, `Bearer ${LEGACY_SECRET}`, '/mcp') as { result: ToolResult }
-  assert.equal(failed.result.isError, true)
-  assert.equal(
-    (JSON.parse(failed.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
-    'unreachable',
-  )
-
   const harness = createHarness()
   const anonymous = await rpc(harness.gateway, 'tools/call', {
     name: 'me', arguments: {},
@@ -732,15 +753,6 @@ test('successes stay unwrapped, transport failure is unreachable, pre-flight rej
     (JSON.parse(anonymous.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
     'auth_required',
   )
-
-  const secret = await rpc(harness.gateway, 'tools/call', {
-    name: 'say', arguments: { place_id: 2, body: `keep this out: ${LEGACY_SECRET}` },
-  }, `Bearer ${LEGACY_SECRET}`, '/mcp') as { result: ToolResult }
-  assert.equal(
-    (JSON.parse(secret.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
-    'bad_input',
-  )
-  assert.doesNotMatch(JSON.stringify(secret), new RegExp(LEGACY_SECRET, 'i'))
 })
 
 test('hosted and legacy MCP reads redact every resident credential family', async () => {

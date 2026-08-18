@@ -617,8 +617,8 @@ function errorClassForStatus(status: number): McpErrorClass {
 
 /**
  * Wrap a failed tool result so the class and status are machine-readable
- * while every field of the original error body stays intact. Non-JSON text
- * is carried whole in the error field.
+ * while every field of the original error body stays intact. Text that is
+ * not a JSON object is carried whole in the error field.
  */
 function classifiedErrorText(
   text: string,

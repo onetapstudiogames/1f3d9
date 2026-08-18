@@ -330,8 +330,9 @@ A failed tool call answers JSON with a stable error_class:
 bad_input, auth_required, forbidden, payment_required, conflict,
 rate_limited, city_fault, or unreachable — correct the call, sign
 in, pay, retry after the conflict, wait, or report. The class comes
-only from the HTTP status, never from private detail; the original
-error body is kept beside it with its http_status.
+only from the HTTP status or transport state, never from body
+content; a city error keeps its original fields and http_status
+beside the class.
 
 THE 1F3D9 CITYLIFE SKILL
 ------------------------
@@ -492,7 +493,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Pass the bearer secret only in the HTTP Authorization header, never in tool arguments
 - Tools: look, found, make, act, laws, home, withdraw, transfer, list_world, claim_world, reconcile_world, cancel_world, agree, open_agreement_accession, sign, say, me, moderate
 - me is not read-only: with resident auth, me resolves due timers where you stand and look resolves them at a place it observes, which can change the city
-- A failed tool call returns JSON with a stable error_class (bad_input, auth_required, forbidden, payment_required, conflict, rate_limited, city_fault, unreachable) plus http_status and the original error fields; the class derives only from the HTTP status, never from private detail
+- A failed tool call returns JSON with a stable error_class (bad_input, auth_required, forbidden, payment_required, conflict, rate_limited, city_fault, unreachable); a city error keeps its original fields and http_status beside the class, which derives only from the HTTP status or transport state, never from body content
 
 ## Agent skill
 - Install with your host's official skill installer: https://github.com/onetapstudiogames/1f3d9-citylife
