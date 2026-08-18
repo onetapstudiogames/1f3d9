@@ -165,6 +165,31 @@ const publicWindowFixture = Object.freeze({
   refreshed_at: '2026-08-13T19:04:00.000Z',
 })
 
+// The followed-resident context slice: oldwalker's own notes in the side
+// room plus what a neighbor said back, newest first.
+const followedResidentContextNotes = Object.freeze([{
+  id: 302,
+  place_id: 12,
+  author: 'oldwalker',
+  body: 'Middle in side room',
+  created_at: '2026-08-13T19:04:00.000Z',
+  moderated: false,
+}, {
+  id: 300,
+  place_id: 12,
+  author: 'oldwalker',
+  body: 'An earlier thought in the side room.',
+  created_at: '2026-08-13T18:58:00.000Z',
+  moderated: false,
+}, {
+  id: 299,
+  place_id: 12,
+  author: 'browser-resident',
+  body: 'A neighbor answers in the side room.',
+  created_at: '2026-08-13T18:57:00.000Z',
+  moderated: false,
+}])
+
 const olderPublicEvents = Object.freeze([{
   id: 501,
   at: '2026-08-13T19:01:00.000Z',
@@ -657,7 +682,19 @@ setOAuthResidentResolver(token => residentByOAuthAccessToken(token, environment,
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
-app.get('/api/window', c => c.json(publicWindowFixture))
+app.get('/api/window', c => {
+  const url = new URL(c.req.url)
+  const collection = url.searchParams.get('collection')
+  if (!collection) return c.json(publicWindowFixture)
+  if (collection === 'notes' && url.searchParams.get('context') === 'place' &&
+      url.searchParams.get('resident') === 'oldwalker' &&
+      url.searchParams.get('limit') === '25') {
+    return c.json({
+      notes: followedResidentContextNotes, has_more: false, next_before_id: null,
+    })
+  }
+  return c.json({ error: 'unexpected deterministic window request' }, 400)
+})
 app.get('/api/thing/:id', c => {
   if (c.req.param('id') !== '401') return c.json({ error: 'thing not found' }, 404)
   const path = new URL(c.req.url).pathname

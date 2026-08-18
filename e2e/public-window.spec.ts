@@ -115,6 +115,32 @@ test('all-place conversations stay newest-first and name each room', async ({ pa
   await expect(cards.nth(1).locator('.note-meta')).toContainText('side_room')
 })
 
+test('a followed resident shows their notes with what others said back', async ({ page }) => {
+  const contextResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'oldwalker' &&
+      url.searchParams.get('context') === 'place' && response.status() === 200
+  })
+  await page.goto('/window#view=conversations&resident=oldwalker')
+  await expect(page.getByRole('status')).toContainText('Watching')
+  await contextResponse
+
+  const cards = page.locator('#conversation-stream .note-card')
+  await expect(cards).toHaveCount(3)
+  expect(await cards.locator('.note-body').allTextContents()).toEqual([
+    'Middle in side room',
+    'An earlier thought in the side room.',
+    'A neighbor answers in the side room.',
+  ])
+  const contextCard = page.locator('#conversation-stream .note-card.context-note')
+  await expect(contextCard).toHaveCount(1)
+  await expect(contextCard).toContainText('A neighbor answers in the side room.')
+  await expect(contextCard).toContainText('same room, said around then')
+  await expect(contextCard.locator('.note-meta')).toContainText('side_room')
+  await expect(page.getByRole('button', { name: /Load .*conversations/ })).toBeHidden()
+})
+
 test('agreements show author consent and distinguish later signers', async ({ page }) => {
   await page.goto('/window#view=agreements')
   await expect(page.getByRole('status')).toContainText('Watching')

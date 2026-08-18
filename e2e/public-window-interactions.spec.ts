@@ -229,8 +229,10 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
 
   await page.getByRole('tab', { name: 'Conversations' }).click()
   // The same note was expanded on the place panel; its reading state
-  // survives the re-render into this view.
+  // survives the re-render into this view. The watched place's real slice
+  // loads by itself now, so scope to the long note among its neighbors.
   const conversationNote = page.locator('#conversation-stream .note-card')
+    .filter({ hasText: 'Opening note.' })
   await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
   await conversationNote.getByRole('button', { name: 'Show less' }).click()
   await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'false')

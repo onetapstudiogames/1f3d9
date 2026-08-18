@@ -337,7 +337,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function historyKey(collection, filters) {
     const place = collection === 'agreements' ? '' : String(filters.placeId || '')
     if (!place && !filters.resident) return 'all'
-    return 'place:' + place + '|resident:' + String(filters.resident || '')
+    return (filters.context ? 'context|' : '') +
+      'place:' + place + '|resident:' + String(filters.resident || '')
   }
 
   function filterHistoryRows(collection, rows, filters, snapshot) {
@@ -394,7 +395,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ...state.histories[collection],
           [key]: Object.freeze({
             ...entry,
-            filters: Object.freeze({ placeId: filters.placeId, resident: filters.resident }),
+            filters: Object.freeze({
+              placeId: filters.placeId,
+              resident: filters.resident,
+              context: filters.context === true,
+            }),
           }),
         },
       },
@@ -823,16 +828,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderConversations(snapshot) {
     if (!nodes.conversations) return
-    const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
-    const notes = historyEntry('notes', filters).rows
+    // Following one resident fetches their bounded server-side slice plus
+    // same-place context, so an active resident never looks falsely silent
+    // just because the newest city-wide page missed them.
+    const filters = Object.freeze({
+      placeId: state.placeId,
+      resident: state.resident,
+      context: Boolean(state.resident),
+    })
+    autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
+    const entry = historyEntry('notes', filters)
+    const notes = entry.rows
     const placeOf = placeId => snapshot.flatPlaces.find(candidate => candidate.id === placeId) || null
     const place = state.placeId ? placeOf(state.placeId) : null
     if (!notes.length || (state.placeId && !place)) {
-      renderEmpty(nodes.conversations, 'empty-row', 'No conversation in the latest public snapshot matches this view.')
+      renderEmpty(nodes.conversations, 'empty-row', entry.loading
+        ? 'Fetching this conversation…'
+        : 'No conversation in the latest public snapshot matches this view.')
       renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
       return
     }
-    if (place) {
+    if (place && !state.resident) {
       const group = element('section', 'conversation-group')
       const heading = element('header', '')
       heading.append(
@@ -845,9 +861,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.conversations.replaceChildren(group)
     } else {
       // Every room at once. The server pages notes newest first, so retain that
-      // order and name each room without regrouping the stream by place.
+      // order and name each room without regrouping the stream by place. When
+      // following a resident, what others said in the same room stays visible
+      // as marked context — a contextual view, not a reply thread.
       const list = element('div', 'note-list')
-      list.append(...notes.map(note => noteCard(note, placeOf(note.place_id))))
+      list.append(...notes.map(note => {
+        const card = noteCard(note, placeOf(note.place_id))
+        if (state.resident && note.author !== state.resident) {
+          card.classList.add('context-note')
+          card.append(element('span', 'context-mark', 'same room, said around then'))
+        }
+        return card
+      }))
       nodes.conversations.replaceChildren(list)
     }
     renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
@@ -992,7 +1017,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       collection === 'events' ? '/api/events' : '/api/window',
       window.location.origin,
     )
-    url.searchParams.set('limit', '50')
+    // Context pages carry up to four neighbors per own note, so they use a
+    // smaller page to stay well inside the client's 200-row safety cap.
+    url.searchParams.set('limit', filters.context ? '25' : '50')
     if (collection === 'events') {
       if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
       if (filters.resident) url.searchParams.set('actor', filters.resident)
@@ -1000,6 +1027,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       url.searchParams.set('collection', collection)
       if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
       if (filters.resident) url.searchParams.set('resident', filters.resident)
+      if (filters.context) url.searchParams.set('context', 'place')
     }
     if (entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
@@ -1053,13 +1081,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
-  function refreshFilteredHappenings() {
-    if (state.view !== 'happenings') return
-    const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
-    if (!filters.placeId && !filters.resident) return
-    const entry = historyEntry('events', filters)
-    if (!entry.initialized || entry.loading) return
-    void forwardRefreshHistory('events', filters)
+  function refreshFilteredViews() {
+    if (state.view === 'happenings') {
+      const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
+      if (!filters.placeId && !filters.resident) return
+      const entry = historyEntry('events', filters)
+      if (!entry.initialized || entry.loading) return
+      void forwardRefreshHistory('events', filters)
+    } else if (state.view === 'conversations' && state.resident) {
+      const filters = Object.freeze({
+        placeId: state.placeId, resident: state.resident, context: true,
+      })
+      const entry = historyEntry('notes', filters)
+      if (!entry.initialized || entry.loading) return
+      void forwardRefreshHistory('notes', filters)
+    }
   }
 
   async function loadHistory(collection, filters) {
@@ -1245,7 +1281,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state = { ...state, snapshot, histories, hasSnapshot: true, failures: 0 }
       populateFilters(snapshot)
       renderAll()
-      refreshFilteredHappenings()
+      refreshFilteredViews()
       setStatus(snapshot.refreshedAt ? 'Watching · checked ' + snapshot.refreshedAt.toLocaleTimeString([], {
         hour: 'numeric', minute: '2-digit',
       }) : 'Watching the public streets', 'live')

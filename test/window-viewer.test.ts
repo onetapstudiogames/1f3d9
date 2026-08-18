@@ -76,7 +76,7 @@ test('filtered happenings fetch their real slice from the server', () => {
   // An initialized filtered view keeps learning: each snapshot refresh
   // silently refetches the newest filtered page and merges it.
   assert.match(WINDOW_JS, /function forwardRefreshHistory\(collection, filters\)/)
-  assert.match(WINDOW_JS, /refreshFilteredHappenings\(\)/)
+  assert.match(WINDOW_JS, /refreshFilteredViews\(\)/)
   // The interim load control stays focusable; disabled buttons cannot
   // receive restored focus. Arrow-key tab roving must not flood history.
   assert.match(WINDOW_JS, /aria-busy/)
@@ -172,15 +172,30 @@ test('window history queries accept only one safe value for each supported filte
 
   assert.deepEqual(parse({ collection: ['notes'] }), {
     collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: null,
+    context: false,
   })
   assert.deepEqual(parse({
     collection: ['things'], before_id: ['91'], limit: ['12'],
     place_id: ['7'], resident: ['tiny-lantern'],
   }), {
     collection: 'things', beforeId: 91, limit: 12, placeId: 7, resident: 'tiny-lantern',
+    context: false,
   })
   assert.deepEqual(parse({ collection: ['agreements'], resident: ['tiny-lantern'] }), {
     collection: 'agreements', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
+    context: false,
+  })
+  assert.deepEqual(parse({
+    collection: ['notes'], resident: ['tiny-lantern'], context: ['place'],
+  }), {
+    collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
+    context: true,
+  })
+  assert.deepEqual(parse({
+    collection: ['notes'], resident: ['tiny-lantern'], context: ['place'], place_id: ['7'],
+  }), {
+    collection: 'notes', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
+    context: true,
   })
 
   for (const unsafe of [
@@ -194,6 +209,11 @@ test('window history queries accept only one safe value for each supported filte
     { collection: ['notes'], resident: ['not safe!'] },
     { collection: ['agreements'], place_id: ['7'] },
     { collection: ['notes'], nonce: ['cache-bust'] },
+    { collection: ['notes'], context: ['place'] },
+    { collection: ['notes'], resident: ['tiny-lantern'], context: ['thread'] },
+    { collection: ['notes'], resident: ['tiny-lantern'], context: ['place', 'place'] },
+    { collection: ['things'], resident: ['tiny-lantern'], context: ['place'] },
+    { collection: ['agreements'], resident: ['tiny-lantern'], context: ['place'] },
   ]) assert.equal(parse(unsafe), null)
 })
 
@@ -233,6 +253,23 @@ test('window collection statements enforce limit plus one without client SQL ide
   assert.match(agreements.text, /AS acceded/i)
   assert.match(agreements.text, /LIMIT 32/i)
   assert.deepEqual(agreements.values, [61, 'tiny-lantern', 51])
+
+  // The context variant drives the page from the resident's own notes and
+  // carries bounded same-place neighbors on each side.
+  const context = statement({
+    collection: 'notes', beforeId: 91, limit: 25, placeId: null,
+    resident: 'tiny-lantern', context: true,
+  })
+  assert.match(context.text, /WITH resident_notes AS/i)
+  assert.match(context.text, /author\.handle = \$3::text/i)
+  assert.match(context.text, /CROSS JOIN LATERAL/i)
+  assert.match(context.text, /DISTINCT ON \(ctx\.id\)/i)
+  assert.match(context.text, /neighbor\.id < own\.id/i)
+  assert.match(context.text, /neighbor\.id > own\.id/i)
+  assert.match(context.text, /LIMIT 2\)/)
+  assert.match(context.text, /NOT IN \(SELECT own_note\.id FROM resident_notes own_note\)/i)
+  assert.match(context.text, /UNION ALL/i)
+  assert.deepEqual(context.values, [91, null, 'tiny-lantern', 26])
 })
 
 test('window histories merge immutably, dedupe by id, and stay newest first', () => {
@@ -278,9 +315,22 @@ test('every paged window view has an accessible older-history surface', () => {
 })
 
 test('all-place conversations preserve the server newest-first order', () => {
-  assert.match(WINDOW_JS, /const notes = historyEntry\('notes', filters\)\.rows/)
-  assert.match(WINDOW_JS, /notes\.map\(note => noteCard\(note, placeOf\(note\.place_id\)\)\)/)
+  assert.match(WINDOW_JS, /const notes = entry\.rows/)
+  assert.match(WINDOW_JS, /noteCard\(note, placeOf\(note\.place_id\)\)/)
   assert.doesNotMatch(WINDOW_JS, /const placeIds = \[\.\.\.new Set\(notes\.map/)
+})
+
+test('a followed resident never looks falsely silent', () => {
+  // The conversations view fetches the resident's own server-side slice with
+  // same-place context, pages it, refreshes it, and marks context notes.
+  assert.match(WINDOW_JS, /context: Boolean\(state\.resident\)/)
+  assert.match(WINDOW_JS, /autoLoadFilteredHistory\('notes', filters, historyEntry\('notes', filters\)\)/)
+  assert.match(WINDOW_JS, /url\.searchParams\.set\('context', 'place'\)/)
+  assert.match(WINDOW_JS, /filters\.context \? '25' : '50'/)
+  assert.match(WINDOW_JS, /context-note/)
+  assert.match(WINDOW_JS, /same room, said around then/)
+  assert.match(WINDOW_CSS, /\.context-note/)
+  assert.match(WINDOW_CSS, /\.context-mark/)
 })
 
 test('snapshot row shapers reject malformed public data', () => {
