@@ -93,6 +93,7 @@ const IDENTITY_RECOVERY_ENABLED = IDENTITY_BROWSER_READY
 const IDENTITY_ROTATION_ENABLED = IDENTITY_BROWSER_READY
   && process.env.IDENTITY_ROTATION_ENABLED === 'true'
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
+const RESIDENT_FLAGS_PER_HOUR = 20
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -111,8 +112,13 @@ function clientAddress(c: Context) {
     ?? 'unknown'
 }
 
-async function takeAnonymousFlagSlot(c: Context) {
-  const ipHash = sha256(`flag:${clientAddress(c)}`)
+/**
+ * One guarded hourly bucket per caller key. Anonymous callers key by hashed
+ * IP; residents key by hashed resident id with their own, more generous cap.
+ * Both reuse the anonymous_flag_limits table (its ip_hash column stores any
+ * caller-key hash), so no schema change and one shared expiry sweep.
+ */
+async function takeFlagSlot(callerKeyHash: string, hourlyLimit: number) {
   const rows = (await sql`
     WITH current_bucket AS MATERIALIZED (
       SELECT date_trunc('hour', now(), 'UTC') AS hour
@@ -127,10 +133,10 @@ async function takeAnonymousFlagSlot(c: Context) {
       )
     ), admitted AS (
       INSERT INTO anonymous_flag_limits (ip_hash, hour, used)
-      SELECT ${ipHash}, hour, 1 FROM current_bucket
+      SELECT ${callerKeyHash}, hour, 1 FROM current_bucket
       ON CONFLICT (ip_hash, hour) DO UPDATE
       SET used = anonymous_flag_limits.used + 1
-      WHERE anonymous_flag_limits.used < ${ANONYMOUS_FLAGS_PER_IP_HOUR}
+      WHERE anonymous_flag_limits.used < ${hourlyLimit}
       RETURNING used
     )
     SELECT used FROM admitted
@@ -506,7 +512,11 @@ app.post('/api/flag', async c => {
     return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason`)
   }
   const reason = reasonText.trim()
-  if (!resident && !(await takeAnonymousFlagSlot(c))) {
+  if (resident) {
+    if (!(await takeFlagSlot(sha256(`flag:resident:${resident.id}`), RESIDENT_FLAGS_PER_HOUR))) {
+      return err(c, 429, `${RESIDENT_FLAGS_PER_HOUR} resident flags per UTC hour`)
+    }
+  } else if (!(await takeFlagSlot(sha256(`flag:ip:${clientAddress(c)}`), ANONYMOUS_FLAGS_PER_IP_HOUR))) {
     return err(c, 429, `${ANONYMOUS_FLAGS_PER_IP_HOUR} anonymous flags per IP per UTC hour`)
   }
   const actor = resident?.handle ?? 'anonymous'

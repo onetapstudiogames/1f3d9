@@ -2,6 +2,7 @@
 // No live database, wallet, payment, deployment, or network service is touched.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   PUBLIC_PAGE_DEFAULT,
@@ -159,7 +160,7 @@ interface FakeState {
   paymentReplaySchemaReady: boolean
   facilitatorVerify: boolean
   facilitatorSettle: boolean
-  anonymousFlagsUsed: number
+  flagSlotsUsed: Record<string, number>
   failPaidWriteOnce: boolean
   placeDescription: string
   noteBody: string
@@ -219,7 +220,7 @@ const initialState = (): FakeState => ({
   paymentReplaySchemaReady: true,
   facilitatorVerify: false,
   facilitatorSettle: false,
-  anonymousFlagsUsed: 0,
+  flagSlotsUsed: {},
   failPaidWriteOnce: false,
   placeDescription: 'a place made from words',
   noteBody: 'hello from the square',
@@ -973,10 +974,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return []
   }
   if (q.includes('insert into anonymous_flag_limits')) {
-    if (state.anonymousFlagsUsed >= 5) return []
-    const used = state.anonymousFlagsUsed + 1
-    state = { ...state, anonymousFlagsUsed: used }
-    return [{ used }]
+    const callerKey = String(params[0])
+    const hourlyLimit = Number(params[1])
+    const used = state.flagSlotsUsed[callerKey] ?? 0
+    if (used >= hourlyLimit) return []
+    state = { ...state, flagSlotsUsed: { ...state.flagSlotsUsed, [callerKey]: used + 1 } }
+    return [{ used: used + 1 }]
   }
   if (q.includes('from reg_log')) return [{ ip: 0, all: 0 }]
   if (q.includes('insert into residents')) return [{ id: 7, handle: 'tiny-lantern' }]
@@ -3425,6 +3428,13 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
     })
     assert.equal(accepted.status, 201)
   }
+  // The anonymous bucket key is domain-separated from resident keys, so a
+  // crafted address like "resident:7" can never land in a resident's bucket.
+  const anonymousSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+  assert.equal(
+    String(anonymousSlot?.params?.[0]),
+    createHash('sha256').update('flag:ip:203.0.113.30', 'utf8').digest('hex'),
+  )
   const limited = await app.request('/api/flag', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': 'other-spoof, 203.0.113.30' },
@@ -3441,7 +3451,40 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
     method: 'POST', headers: authHeaders(), body,
   })
   assert.equal(authenticated.status, 201)
-  assert.equal(sqlCalls().some(call => /anonymous_flag_limits/i.test(call.query ?? '')), false)
+  // A resident takes a slot in its own bucket, so an exhausted anonymous IP
+  // bucket never blocks a signed-in report.
+  const residentSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+  assert.ok(residentSlot, 'resident flags take their own limited slot')
+  assert.equal(Number(residentSlot.params?.[1]), 20)
+  assert.equal(
+    String(residentSlot.params?.[0]),
+    createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
+  )
+})
+
+test('resident flags are bounded in their own hourly bucket', async () => {
+  reset({ scenario: 'flag quota' })
+  const body = JSON.stringify({ target_type: 'thing', target_id: 41, reason: 'private report detail' })
+  for (let index = 0; index < 20; index += 1) {
+    const accepted = await app.request('/api/flag', {
+      method: 'POST', headers: authHeaders(), body,
+    })
+    assert.equal(accepted.status, 201, `resident flag ${index + 1}`)
+  }
+  const limited = await app.request('/api/flag', {
+    method: 'POST', headers: authHeaders(), body,
+  })
+  assert.equal(limited.status, 429)
+  assert.match(JSON.stringify(await limited.json()), /20 resident flags per UTC hour/)
+  assert.equal(inserted('flags'), 20)
+
+  // The resident's exhausted bucket leaves anonymous reporting untouched.
+  const anonymous = await app.request('/api/flag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.77' },
+    body,
+  })
+  assert.equal(anonymous.status, 201)
 })
 
 test('MCP advertises the city tools and dispatches through bearer-header API auth', async () => {

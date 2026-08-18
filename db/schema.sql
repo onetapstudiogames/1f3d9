@@ -381,7 +381,7 @@ CREATE INDEX IF NOT EXISTS oauth_rate_limits_expiry
 CREATE TABLE IF NOT EXISTS anonymous_flag_limits (
   ip_hash   TEXT NOT NULL CHECK (char_length(ip_hash) BETWEEN 32 AND 128),
   hour      TIMESTAMPTZ NOT NULL CHECK (hour = date_trunc('hour', hour, 'UTC')),
-  used      SMALLINT NOT NULL DEFAULT 1 CHECK (used BETWEEN 1 AND 5),
+  used      SMALLINT NOT NULL DEFAULT 1 CHECK (used >= 1),
   PRIMARY KEY (ip_hash, hour)
 );
 

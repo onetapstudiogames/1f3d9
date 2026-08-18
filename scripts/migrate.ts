@@ -30,6 +30,7 @@ type RemoteMigration =
   | 'identity-rotation'
   | 'initial-recovery-codes'
   | 'signin-retention'
+  | 'flag-limits'
 
 type MigrationFile =
   | 'db/schema.sql'
@@ -48,6 +49,7 @@ type MigrationFile =
   | 'db/migrations/20260816_identity_rotation.sql'
   | 'db/migrations/20260817_initial_recovery_codes.sql'
   | 'db/migrations/20260818_signin_retention.sql'
+  | 'db/migrations/20260818_flag_limits.sql'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -88,6 +90,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'identity-rotation': 'db/migrations/20260816_identity_rotation.sql',
   'initial-recovery-codes': 'db/migrations/20260817_initial_recovery_codes.sql',
   'signin-retention': 'db/migrations/20260818_signin_retention.sql',
+  'flag-limits': 'db/migrations/20260818_flag_limits.sql',
 }
 
 function namedArgument(args: readonly string[], name: string): string | undefined {
@@ -103,7 +106,7 @@ function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
   const requested = namedArgument(args, 'migration')
   if (!requested || !(requested in REMOTE_MIGRATIONS)) {
     throw new Error(
-      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts|payment-response-replay|payment-response-body-replay|payment-response-body-rollout|payment-response-body-validate|identity-recovery|identity-rotation|initial-recovery-codes|signin-retention',
+      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts|payment-response-replay|payment-response-body-replay|payment-response-body-rollout|payment-response-body-validate|identity-recovery|identity-rotation|initial-recovery-codes|signin-retention|flag-limits',
     )
   }
   return requested as RemoteMigration
