@@ -74,6 +74,16 @@ export type RefreshRotationResult = 'rotated' | 'reused' | 'invalid'
 
 const SHA256_HASH = /^[0-9a-f]{64}$/
 
+// Sign-in records stay readable for incident forensics for this long after the
+// last moment they could have authenticated anything, then leave the live
+// database. Documented in docs/runbooks/SIGNIN_RETENTION.md; the unit tests
+// keep this constant and that document in agreement.
+const SIGNIN_RETENTION_WINDOW = '30 days'
+
+// The city has no cron: retention deletion rides every OAuth throttle check in
+// bounded batches so one request never does unbounded cleanup work.
+const SIGNIN_RETENTION_BATCH = 50
+
 function requireInitialRecoveryCodeHashes(hashes: readonly string[]): void {
   if (
     hashes.length !== 8 ||
@@ -611,12 +621,74 @@ export async function consumeOAuthRateLimit(input: {
   attemptKind: OAuthAttemptKind
   maximum: number
 }): Promise<boolean> {
+  // Every OAuth route passes through this throttle, so sign-in retention rides
+  // the same statement as the existing rate-limit prune. Each record type is
+  // deleted only after SIGNIN_RETENTION_WINDOW past its own expiry, in bounded
+  // batches. Order protects the foreign keys: an authorization code goes before
+  // the request it references, and every token row of a family goes (newest
+  // rotation link first) before the family row itself, which keeps refresh
+  // reuse detection intact for the family's whole forensic window.
   const rows = (await sql`
     WITH current_window AS MATERIALIZED (
       SELECT date_trunc('hour', now(), 'UTC') AS window_start
     ), cleanup AS (
       DELETE FROM oauth_rate_limits
       WHERE window_start < (SELECT window_start FROM current_window) - interval '24 hours'
+    ), retired_codes AS MATERIALIZED (
+      SELECT id
+      FROM oauth_authorization_codes
+      WHERE expires_at <= now() - ${SIGNIN_RETENTION_WINDOW}::interval
+      ORDER BY expires_at, id
+      LIMIT ${SIGNIN_RETENTION_BATCH}
+    ), pruned_codes AS (
+      DELETE FROM oauth_authorization_codes code
+      USING retired_codes retired
+      WHERE code.id = retired.id
+      RETURNING code.id
+    ), retired_requests AS MATERIALIZED (
+      SELECT request.id
+      FROM oauth_authorization_requests request
+      WHERE request.expires_at <= now() - ${SIGNIN_RETENTION_WINDOW}::interval
+        AND NOT EXISTS (
+          SELECT 1 FROM oauth_authorization_codes code
+          WHERE code.request_id = request.id
+            AND code.id NOT IN (SELECT id FROM retired_codes)
+        )
+      ORDER BY request.expires_at, request.id
+      LIMIT ${SIGNIN_RETENTION_BATCH}
+    ), pruned_requests AS (
+      DELETE FROM oauth_authorization_requests request
+      USING retired_requests retired
+      WHERE request.id = retired.id
+      RETURNING request.id
+    ), retired_tokens AS MATERIALIZED (
+      SELECT token.id
+      FROM oauth_tokens token
+      JOIN oauth_token_families family ON family.id = token.family_id
+      WHERE family.expires_at <= now() - ${SIGNIN_RETENTION_WINDOW}::interval
+      ORDER BY token.id DESC
+      LIMIT ${SIGNIN_RETENTION_BATCH}
+    ), pruned_tokens AS (
+      DELETE FROM oauth_tokens token
+      USING retired_tokens retired
+      WHERE token.id = retired.id
+      RETURNING token.id
+    ), retired_families AS MATERIALIZED (
+      SELECT family.id
+      FROM oauth_token_families family
+      WHERE family.expires_at <= now() - ${SIGNIN_RETENTION_WINDOW}::interval
+        AND NOT EXISTS (
+          SELECT 1 FROM oauth_tokens token
+          WHERE token.family_id = family.id
+            AND token.id NOT IN (SELECT id FROM retired_tokens)
+        )
+      ORDER BY family.expires_at, family.id
+      LIMIT ${SIGNIN_RETENTION_BATCH}
+    ), pruned_families AS (
+      DELETE FROM oauth_token_families family
+      USING retired_families retired
+      WHERE family.id = retired.id
+      RETURNING family.id
     ), admitted AS (
       INSERT INTO oauth_rate_limits (bucket_hash, attempt_kind, window_start, used)
       SELECT ${input.bucketHash}, ${input.attemptKind}, window_start, 1
