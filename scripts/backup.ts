@@ -324,12 +324,16 @@ function parseWindowsAclEvidence(value: unknown): WindowsAclEvidence {
 }
 
 async function inspectWindowsAcl(directory: string): Promise<WindowsAclEvidence> {
+  // A PowerShell 7 parent exports its own PSModulePath, which breaks module
+  // autoloading (Get-Acl) inside the Windows PowerShell 5.1 child. Let the
+  // child rebuild its default module path instead of inheriting a wrong one.
+  const { PSModulePath: _ignoredModulePath, ...inheritedEnvironment } = process.env
   const result = await runCommand('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_ACL_SCRIPT,
   ], {
     maxOutput: 64 * 1024,
     environment: {
-      ...process.env,
+      ...inheritedEnvironment,
       ONEF3D9_BACKUP_DIRECTORY: directory,
     },
   })
