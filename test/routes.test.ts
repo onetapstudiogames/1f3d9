@@ -161,6 +161,8 @@ interface FakeState {
   facilitatorSettle: boolean
   anonymousFlagsUsed: number
   failPaidWriteOnce: boolean
+  placeDescription: string
+  noteBody: string
 }
 
 const initialState = (): FakeState => ({
@@ -218,6 +220,8 @@ const initialState = (): FakeState => ({
   facilitatorSettle: false,
   anonymousFlagsUsed: 0,
   failPaidWriteOnce: false,
+  placeDescription: 'a place made from words',
+  noteBody: 'hello from the square',
 })
 
 let state = initialState()
@@ -239,7 +243,7 @@ const placeRow = (id = 2, parentId: number | null = 1) => ({
   id,
   parent_id: parentId,
   name: id === 1 ? 'First Continent' : id === 2 ? 'Lantern Town' : 'Small Plot',
-  description: 'a place made from words',
+  description: state.placeDescription,
   owner_id: id === 3 ? state.actorId : state.placeOwnerId,
   owner: id === 3 ? state.actorHandle : 'founder',
   open_to_building: state.openToBuilding,
@@ -1068,7 +1072,17 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return descendingPage(paginationNotes(), params[1], params[2])
   }
 
-  if (q.includes('with recursive place_tree')) return [placeRow(1, null), placeRow(2, 1)]
+  if (q.includes('with recursive place_tree')) {
+    if (state.scenario === 'large map') {
+      const rows = [placeRow(1, null)]
+      for (let id = 2; id <= 1401; id += 1) rows.push(placeRow(id, 1))
+      for (let step = 0; step < 16; step += 1) {
+        rows.push(placeRow(3000 + step, step === 0 ? 1 : 2999 + step))
+      }
+      return rows
+    }
+    return [placeRow(1, null), placeRow(2, 1)]
+  }
   if (q.includes('insert into places')) {
     if (state.failPaidWriteOnce) {
       state = { ...state, failPaidWriteOnce: false }
@@ -1211,7 +1225,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       id: 51,
       place_id: 2,
       author: 'tiny-lantern',
-      body: 'hello from the square',
+      body: state.noteBody,
       created_at: '2026-08-11T00:00:00.000Z',
       pinned: state.notePinned,
     }]
@@ -1804,6 +1818,23 @@ test('the public map is a recursive owner-attributed tree', async () => {
   assert.ok(sqlCalls().some(call => /with\s+recursive/i.test(call.query ?? '')))
 })
 
+test('a large, deep, credential-free map is served instead of withheld', async () => {
+  reset({ scenario: 'large map' })
+  const response = await app.request('/api/map')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { places: Array<{ id: number; children: Array<{ id: number }> }> }
+  assert.equal(body.places[0]?.id, 1)
+  assert.ok((body.places[0]?.children.length ?? 0) >= 1400)
+  let depth = 0
+  let cursor = body.places[0]?.children.find(child => child.id === 3000) as
+    { id: number; children: { id: number; children: unknown[] }[] } | undefined
+  while (cursor) {
+    depth += 1
+    cursor = cursor.children[0] as typeof cursor
+  }
+  assert.equal(depth, 16)
+})
+
 test('busy places serve the newest notes and expose an older-note cursor', async () => {
   reset({ scenario: 'busy place' })
   const first = await app.request('/api/place/2?note_limit=200')
@@ -1967,6 +1998,68 @@ test('duplicate trait names fail before charging for a kind', async () => {
   assert.match(JSON.stringify(await response.json()), /duplicate|unique/i)
   assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false)
   assert.equal(inserted('kinds'), 0)
+})
+
+test('credential-shaped names and recipes fail before any public write or payment', async () => {
+  const paidFields = { payer_wallet: SELLER_WALLET, fee_tx_hash: TX1 }
+  const credentials = [
+    `1f3d9_sk_${'a1'.repeat(24)}`,
+    `1f3d9_at_${'b2'.repeat(32)}`,
+    `1f3d9_rt_${'c3'.repeat(32)}`,
+    `1f3d9_ac_${'d4'.repeat(32)}`,
+  ]
+
+  for (const leaked of credentials) {
+    const cases = [
+      ['/api/kind', 'POST', {
+        name: leaked, description: 'safe', traits: [], recipe: [], ...paidFields,
+      }],
+      ['/api/kind', 'POST', {
+        name: 'safe-kind', description: 'safe', traits: [leaked], recipe: [], ...paidFields,
+      }],
+      ['/api/kind', 'POST', {
+        name: 'safe-kind', description: 'safe', traits: [],
+        recipe: [{ kind: leaked, quantity: 1 }], ...paidFields,
+      }],
+      ['/api/kind/3/revise', 'POST', {
+        description: 'safe', traits: [leaked], recipe: [], ...paidFields,
+      }],
+      ['/api/kind/3/revise', 'POST', {
+        description: 'safe', traits: [], recipe: [{ kind: leaked, quantity: 1 }], ...paidFields,
+      }],
+      ['/api/trait', 'POST', { name: leaked, description: 'safe' }],
+      ['/api/trait', 'POST', {
+        name: 'safe-trait', description: 'safe',
+        recipe: { use: [{ effect: 'label', target: 'actor', label: leaked }] },
+      }],
+      ['/api/trait', 'POST', {
+        name: 'safe-trait', description: 'safe',
+        recipe: { use: [{ effect: 'check_label', target: 'actor', label: leaked, then: [] }] },
+      }],
+      ['/api/place/2/laws', 'PUT', { traits: [leaked] }],
+    ] as const
+
+    for (const [path, method, body] of cases) {
+      reset({ scenario: `credential write guard ${path}` })
+      const response = await app.request(path, {
+        method,
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      })
+      assert.equal(response.status, 400, `${path}: ${await response.clone().text()}`)
+      assert.doesNotMatch(await response.text(), new RegExp(leaked, 'i'), path)
+      assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false, path)
+      assert.equal(
+        sqlCalls().some(call => (
+          /\b(?:insert|update|delete)\b/i.test(call.query ?? '') &&
+          /\b(?:kinds|kind_revisions|traits|place_law_changes|payment_uses|fees|events)\b/i
+            .test(call.query ?? '')
+        )),
+        false,
+        `${path}: ${JSON.stringify(sqlCalls())}`,
+      )
+    }
+  }
 })
 
 test('an uncoined kind trait answers with the reason, not "internal"', async () => {
@@ -2984,6 +3077,36 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     const response = await app.request(path)
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
+  }
+})
+
+test('raw public place reads redact historical resident credentials without dropping the response', async () => {
+  const credentials = [
+    `1f3d9_sk_${'a1'.repeat(24)}`,
+    `1f3d9_at_${'b2'.repeat(32)}`,
+    `1f3d9_rt_${'c3'.repeat(32)}`,
+    `1f3d9_ac_${'d4'.repeat(32)}`,
+  ]
+
+  for (const credential of credentials) {
+    reset({
+      scenario: 'public credential redaction',
+      placeDescription: `unsafe place description ${credential}`,
+      noteBody: `unsafe historical note ${credential}`,
+    })
+
+    const response = await app.request('/api/place/2')
+    assert.equal(response.status, 200)
+    const body = await response.json() as {
+      place: { description: string; id: number }
+      notes: Array<{ body: string }>
+      things: Array<{ id: number }>
+    }
+    assert.equal(body.place.id, 2)
+    assert.match(body.place.description, /redacted.*resident credential/i)
+    assert.match(body.notes[0]?.body ?? '', /redacted.*resident credential/i)
+    assert.equal(body.things[0]?.id, 41)
+    assert.doesNotMatch(JSON.stringify(body), new RegExp(credential, 'i'))
   }
 })
 

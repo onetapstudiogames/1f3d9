@@ -1,12 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { publicLabel, publicText, containsBearerSecret, SECRET_REJECTION } from '../src/input.ts'
+import {
+  publicLabel,
+  publicText,
+  containsBearerSecret,
+  SECRET_REJECTION,
+  stringList,
+  worldName,
+} from '../src/input.ts'
 
 test('public text preserves valid Unicode punctuation', () => {
   const text = '“The inn’s open”—bring maps… 🗺️'
+  const decomposedLabel = 'Cafe\u0301 — east wing'
 
   assert.equal(publicText(text, { maximumCharacters: 80 }), text)
   assert.equal(publicLabel('Café — east wing'), 'Café — east wing')
+  assert.equal(publicLabel(decomposedLabel), decomposedLabel)
 })
 
 test('public text and labels reject Unicode replacement characters', () => {
@@ -51,4 +60,14 @@ test('OAuth and recovery credentials are refused on every public write surface',
     assert.equal(publicLabel(leaked), null, prefix)
     assert.equal(containsBearerSecret(leaked), true, prefix)
   }
+})
+
+test('credential-shaped names and name lists are refused on public writes', () => {
+  for (const prefix of ['1f3d9_sk_', '1f3d9_at_', '1f3d9_rt_', '1f3d9_ac_']) {
+    const leaked = `${prefix}${'ab'.repeat(24)}`
+    assert.equal(worldName(leaked), null, prefix)
+    assert.equal(stringList(['safe-name', leaked]), null, prefix)
+  }
+  assert.equal(worldName('1f3d9_sk_...'), null)
+  assert.deepEqual(stringList([' Safe_Name ', 'safe_name']), ['safe_name'])
 })

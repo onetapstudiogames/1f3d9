@@ -4,6 +4,7 @@
  * New recipes are rejected as a whole when malformed. Stored recipes use
  * `loadTraitRecipe`, which turns malformed legacy data into an inert program.
  */
+import { containsPublicCredential } from './credential-safety.ts'
 
 export const BASIC_ACTIONS = Object.freeze([
   'talk',
@@ -199,7 +200,9 @@ function canonicalToken(value: unknown, choices: ReadonlySet<string>): string | 
 function canonicalName(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 128) return null
   const normalized = value.toLowerCase().trim()
-  return WORLD_NAME_RE.test(normalized) ? normalized : null
+  return WORLD_NAME_RE.test(normalized) && !containsPublicCredential(normalized)
+    ? normalized
+    : null
 }
 
 function boundedInteger(value: unknown, minimum: number, maximum: number): number | null {

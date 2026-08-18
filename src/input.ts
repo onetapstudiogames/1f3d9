@@ -1,4 +1,5 @@
 import { WORLD_NAME_RE } from './core.ts'
+import { CREDENTIAL_LIKE_INPUT_RE, containsCredentialLikeInput } from './credential-safety.ts'
 
 const UNSAFE_PUBLIC_TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uD800-\uDFFF\u061C\u200E\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069]/u
 const MOJIBAKE_CONTINUATION = '\\u00A0-\\u00BF\\u0152\\u0153\\u0160\\u0161\\u0178\\u017D\\u017E\\u0192\\u02C6\\u02DC\\u2013-\\u2022\\u2026\\u2030\\u2039\\u203A\\u20AC\\u2122'
@@ -10,17 +11,19 @@ const MALFORMED_PUBLIC_TEXT = new RegExp(
 
 // A published resident key or connector credential is an unwitting transfer of
 // authority. Every public write path refuses text that carries one.
-export const BEARER_SECRET_RE = /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/i
+export const BEARER_SECRET_RE = CREDENTIAL_LIKE_INPUT_RE
 
 export const SECRET_REJECTION =
   'that looks like a credential. Never publish it — anywhere, ever. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set'
 
 export function containsBearerSecret(value: unknown): boolean {
-  return typeof value === 'string' && BEARER_SECRET_RE.test(value)
+  return containsCredentialLikeInput(value)
 }
 
 function unsafePublicText(value: string): boolean {
-  return UNSAFE_PUBLIC_TEXT.test(value) || MALFORMED_PUBLIC_TEXT.test(value) || BEARER_SECRET_RE.test(value)
+  return UNSAFE_PUBLIC_TEXT.test(value)
+    || MALFORMED_PUBLIC_TEXT.test(value)
+    || containsCredentialLikeInput(value)
 }
 
 export function publicLabel(value: unknown, maximum = 120): string | null {
@@ -45,7 +48,7 @@ export function publicText(
 export function worldName(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.toLowerCase().trim()
-  return WORLD_NAME_RE.test(normalized) ? normalized : null
+  return WORLD_NAME_RE.test(normalized) && !unsafePublicText(normalized) ? normalized : null
 }
 
 export function positiveId(value: unknown): number | null {

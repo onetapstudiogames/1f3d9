@@ -20,6 +20,10 @@ import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS, WINDOW_JS } from './window-cli
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
+import {
+  PUBLIC_CREDENTIAL_REDACTION,
+  containsPublicCredential,
+} from './credential-safety.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -191,6 +195,9 @@ function safePublicText(
   allowEmpty = false,
 ): { text: string; truncated: boolean } | null {
   if (typeof value !== 'string') return null
+  if (containsPublicCredential(value)) {
+    return { text: PUBLIC_CREDENTIAL_REDACTION, truncated: false }
+  }
   let normalized: string
   try {
     normalized = value.normalize('NFC').trim()
@@ -206,6 +213,7 @@ function safePublicText(
 }
 
 function safeWorldName(value: unknown): string | null {
+  if (containsPublicCredential(value)) return PUBLIC_CREDENTIAL_REDACTION
   return typeof value === 'string' && (WORLD_NAME_RE.test(value) || value === MODERATED_TEXT)
     ? value
     : null

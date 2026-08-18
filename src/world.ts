@@ -49,6 +49,7 @@ import {
   parsePublicPage,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { publicJson } from './public-output.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -102,6 +103,10 @@ export function mountWorldRoutes(app: Hono): void {
       ORDER BY tree.path
     `) as PlaceRow[]
     const publicRows = await moderatePublicRows('place', rows)
+    // The map tree is unbounded, so the proactive traversal budgets in
+    // publicJson would withhold a large credential-free city. The app-wide
+    // publicResponseSafety middleware still guards this response and only
+    // parses it when the raw text actually matches the credential rule.
     return c.json({ places: buildPlaceTree(publicRows as PlaceRow[], null) })
   })
 
@@ -155,7 +160,7 @@ export function mountWorldRoutes(app: Hono): void {
       moderatePlaceDetails(thingsPage.items, laws),
       moderatePublicRows('note', notesPage.items),
     ])
-    return c.json({
+    return publicJson(c, {
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       subplaces: publicSubplaces,
       things: publicDetails.things,
@@ -190,7 +195,7 @@ export function mountWorldRoutes(app: Hono): void {
     ` as ThingRow[]
     if (!rows[0]) return err(c, 404, 'thing not found')
     const publicDetails = await moderatePlaceDetails(rows, [])
-    return c.json({ thing: publicDetails.things[0] })
+    return publicJson(c, { thing: publicDetails.things[0] })
   })
 
   app.post('/api/place', async c => {
@@ -513,7 +518,7 @@ export function mountWorldRoutes(app: Hono): void {
       LIMIT $2::integer
     `, [parsed.cursor, parsed.fetchLimit])
     const page = finalizePublicPage(rows as unknown as readonly KindRow[], parsed.limit)
-    return c.json({
+    return publicJson(c, {
       kinds: await moderatePublicKinds(page.items),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
@@ -827,7 +832,7 @@ export function mountWorldRoutes(app: Hono): void {
       rows as Array<Record<string, unknown> & { id: number }>,
       parsed.limit,
     )
-    return c.json({
+    return publicJson(c, {
       traits: await moderatePublicRows(
         'trait',
         page.items,
