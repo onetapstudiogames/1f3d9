@@ -17,7 +17,7 @@ still need it.
 
 | Record | Live lifetime | Terminal states | Removed from the live database |
 |---|---|---|---|
-| `oauth_authorization_requests` | 15 minutes | used, canceled, expired (secret hashes scrubbed at the terminal state) | 30 days after `expires_at`, and only once no authorization code references the row |
+| `oauth_authorization_requests` | 15 minutes | used, canceled, expired (staged new-resident secrets scrubbed at the terminal state) | 30 days after `expires_at`, and only once no authorization code references the row |
 | `oauth_authorization_request_recovery_codes` | with their request | deleted when the request reaches a terminal state | at the latest with their request (`ON DELETE CASCADE`) |
 | `oauth_authorization_codes` | 5 minutes | used, expired | 30 days after `expires_at` |
 | `oauth_token_families` | up to 30 days | expired, revoked | 30 days after `expires_at`, whether or not the family was revoked earlier |
@@ -37,8 +37,13 @@ Why the token rows and families share one clock:
 
 Expired authorization requests and codes keep their metadata (client, redirect
 URI, timestamps) for the same window because that metadata is what reconstructs
-a phishing or client-impersonation attempt. Their secret hashes never wait for
-retention: they are scrubbed the moment the row reaches a terminal state.
+a phishing or client-impersonation attempt. Staged new-resident material — the
+proposed key hash and pending recovery-code hashes — is scrubbed when the row
+reaches a terminal state (lazily for expiry, during the next sign-in request).
+The rows' own lookup hashes (`code_hash`, `session_hash`, `csrf_hash`) are
+schema-required and remain until the retention delete; none of them can
+authenticate anything once expired, because every consumption path requires
+`expires_at` to still be in the future.
 
 ## How deletion runs without a cron
 
