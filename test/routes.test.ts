@@ -163,6 +163,7 @@ interface FakeState {
   failPaidWriteOnce: boolean
   placeDescription: string
   noteBody: string
+  actionResolved?: boolean
 }
 
 const initialState = (): FakeState => ({
@@ -427,6 +428,15 @@ function recordPayment(query: string, params: unknown[]) {
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  // Once the action resolution committed, every later presence read breaks.
+  if (state.scenario === 'post-action observation failure'
+    && state.actionResolved && q.includes('resident_presence')) {
+    throw Object.assign(
+      new Error('connection reset while re-reading presence'),
+      { code: '57P01' },
+    )
+  }
 
   if (q.includes('/* payment-attempts:find-operation */')) {
     const row = [...state.paymentAttempts.values()].reverse().find(attempt =>
@@ -720,7 +730,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('as place_pending')) return [{ place_pending: 0, actor_pending: 0 }]
   if (q.includes('pg_advisory_xact_lock')) return []
   if (q.includes('from active_blocks')) return [{ blocked: state.actionBlocked }]
-  if (q.includes('insert into action_resolutions')) return [{ id: 201 }]
+  if (q.includes('insert into action_resolutions')) {
+    state = { ...state, actionResolved: true }
+    return [{ id: 201 }]
+  }
   if (q.includes('with recursive ancestry') && q.includes('update things set withdrawn_at')) {
     const target = Number(params.find(value => [41, 42].includes(Number(value))) ?? 41)
     if (target === 42 && !state.targetThingWithdrawn) {
@@ -3577,6 +3590,18 @@ test('go_home remains available when ordinary movement is actively blocked', asy
   const body = await home.json() as { action: { action: string; place_id: number } }
   assert.equal(body.action.action, 'go_home')
   assert.equal(body.action.place_id, 2)
+})
+
+test('a committed action answers success even when the after-action observation fails', async () => {
+  reset({ scenario: 'post-action observation failure' })
+  const response = await app.request('/api/go-home', { method: 'POST', headers: authHeaders() })
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    action: { action: string; status: string; place_id: number | null }
+  }
+  assert.equal(body.action.action, 'go_home')
+  assert.equal(body.action.status, 'applied')
+  assert.equal(body.action.place_id, 3)
 })
 
 test('thing withdrawal is owner-only, one-way, and refused during an open sale', async () => {

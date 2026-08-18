@@ -1,4 +1,5 @@
 import { Pool, type PoolClient } from '@neondatabase/serverless'
+import { COLLISION_CONFLICT_MESSAGE, isRetryableCollision } from './core.ts'
 import { runtimeDatabaseUrl, sql } from './db.ts'
 import {
   effectsForAction,
@@ -69,6 +70,29 @@ function clientSql(client: PoolClient): TaggedSql {
   return tagged
 }
 
+/**
+ * COMMIT itself failed, so the transaction may or may not have applied.
+ * Callers must resolve the canonical stored outcome instead of assuming either.
+ */
+export class CommitOutcomeUnknownError extends Error {
+  readonly sourceError: unknown
+
+  constructor(sourceError: unknown) {
+    super('transaction commit outcome is unknown')
+    this.name = 'CommitOutcomeUnknownError'
+    this.sourceError = sourceError
+  }
+}
+
+/** The transaction is already doomed; a failed ROLLBACK must not mask the cause. */
+async function rollbackQuietly(client: PoolClient): Promise<void> {
+  try {
+    await client.query('ROLLBACK')
+  } catch {
+    // A dead connection cannot roll back; releasing it discards the transaction.
+  }
+}
+
 /** Production actions use one interactive transaction; tagged fakes stay injectable. */
 export async function withEngineTransaction<T>(
   db: TaggedSql,
@@ -79,12 +103,20 @@ export async function withEngineTransaction<T>(
   const client = await pool().connect()
   try {
     await client.query('BEGIN')
-    const result = await work(clientSql(client), true)
-    await client.query('COMMIT')
+    let result: T
+    try {
+      result = await work(clientSql(client), true)
+    } catch (error) {
+      await rollbackQuietly(client)
+      throw error
+    }
+    try {
+      await client.query('COMMIT')
+    } catch (error) {
+      await rollbackQuietly(client)
+      throw new CommitOutcomeUnknownError(error)
+    }
     return result
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
   } finally {
     client.release()
   }
@@ -564,6 +596,100 @@ async function recordActionResolution(
   `)
 }
 
+export const UNCONFIRMED_ACTION_ERROR =
+  'the action outcome could not be confirmed; re-read your state before repeating it'
+
+function resolutionDetail(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    try {
+      return objectRecord(JSON.parse(value)) ?? {}
+    } catch {
+      return {}
+    }
+  }
+  return objectRecord(value) ?? {}
+}
+
+/** The resolution row commits atomically with the action, so it is the canonical outcome. */
+async function committedResolution(
+  actionId: number,
+  db: TaggedSql,
+): Promise<ActionExecution | null> {
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT status, detail FROM action_resolutions WHERE action_run_id = ${actionId}
+  `)
+  const row = rows[0]
+  if (!row) return null
+  const detail = resolutionDetail(row.detail)
+  if (row.status === 'applied' || row.status === 'noop') {
+    return {
+      actionId,
+      status: row.status,
+      httpStatus: 200,
+      error: null,
+      effectsApplied: integer(detail.effects_applied) ?? 0,
+    }
+  }
+  if (row.status === 'blocked') {
+    const message = typeof detail.error === 'string'
+      ? detail.error
+      : 'action is temporarily blocked'
+    return { actionId, status: 'blocked', httpStatus: 403, error: message, effectsApplied: 0 }
+  }
+  return null
+}
+
+function failureFromError(error: unknown): EngineError {
+  if (error instanceof EngineError) return error
+  if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
+  return new EngineError(500, 'effect execution failed')
+}
+
+async function recordFailedExecution(
+  actionId: number,
+  actorHandle: string,
+  error: unknown,
+  db: TaggedSql,
+): Promise<ActionExecution> {
+  const failure = failureFromError(error)
+  await recordActionResolution(actionId, actorHandle, 'failed', { error: failure.message }, db)
+  return {
+    actionId,
+    status: 'failed',
+    httpStatus: failure.status,
+    error: failure.message,
+    effectsApplied: 0,
+  }
+}
+
+/**
+ * The commit outcome is unknown, so the stored record decides: a committed
+ * resolution is returned as-is, a missing one proves the rollback and becomes
+ * a plain failure, and an unreadable record must never claim failure or invite
+ * repeating work that may already have applied.
+ */
+async function resolveUncertainCommit(
+  actionId: number,
+  actorHandle: string,
+  failure: CommitOutcomeUnknownError,
+  db: TaggedSql,
+): Promise<ActionExecution> {
+  let committed: ActionExecution | null
+  try {
+    committed = await committedResolution(actionId, db)
+  } catch {
+    return {
+      actionId,
+      status: 'failed',
+      httpStatus: 500,
+      error: UNCONFIRMED_ACTION_ERROR,
+      effectsApplied: 0,
+    }
+  }
+  if (committed) return committed
+  return recordFailedExecution(actionId, actorHandle, failure.sourceError, db)
+}
+
 async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (input.sourceThingId === null) return null
   const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
@@ -752,11 +878,9 @@ export async function runAction(
       return { actionId, status, httpStatus: 200, error: null, effectsApplied }
     })
   } catch (error) {
-    const failure = error instanceof EngineError ? error : new EngineError(500, 'effect execution failed')
-    await recordActionResolution(actionId, input.actorHandle, 'failed', { error: failure.message }, db)
-    return {
-      actionId, status: 'failed', httpStatus: failure.status,
-      error: failure.message, effectsApplied: 0,
+    if (error instanceof CommitOutcomeUnknownError) {
+      return resolveUncertainCommit(actionId, input.actorHandle, error, db)
     }
+    return recordFailedExecution(actionId, input.actorHandle, error, db)
   }
 }
