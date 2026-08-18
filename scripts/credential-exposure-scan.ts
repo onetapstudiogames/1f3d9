@@ -73,6 +73,7 @@ export type CredentialExposureScanResult = Readonly<{
     oauth_access_token: number
     oauth_refresh_token: number
     oauth_authorization_code: number
+    recovery_code: number
   }>
 }>
 
@@ -161,6 +162,10 @@ const IDENTITY_MATCH_SQL = `
   FROM public.oauth_tokens token
   JOIN public.oauth_token_families family ON family.id = token.family_id
   WHERE token.token_hash = ANY($1::text[])
+  UNION ALL
+  SELECT code.code_hash, 'recovery_code'::text, code.resident_id,
+    (code.used_at IS NULL AND code.invalidated_at IS NULL) AS live
+  FROM public.resident_recovery_codes code WHERE code.code_hash = ANY($1::text[])
 `
 
 function argumentValue(args: readonly string[], index: number, flag: string): string {
@@ -319,6 +324,7 @@ function buildResult(
     oauth_access_token: 0,
     oauth_refresh_token: 0,
     oauth_authorization_code: 0,
+    recovery_code: 0,
   }
   let exactCredentials = 0
   let partialShapes = 0

@@ -51,6 +51,9 @@ Do not run the production scan until all of these gates are satisfied:
 3. Resident recovery is available for anyone who could be locked out.
 4. Root rotation revokes every resident OAuth family and outstanding code.
 
-This repository slice does not revoke credentials. Current root rotation does
-not revoke resident-wide OAuth grants, so live containment remains blocked on
-the identity-lifecycle work.
+Gates 3 and 4 are satisfied on main: recovery replaces a lost key with one-use
+codes, and rotation or recovery revokes the prior root key, every OAuth token
+family, and outstanding authorization codes in the same transaction. The scan
+itself never revokes anything. Containment for a found live credential is the
+affected resident rotating or recovering at the first-party browser pages;
+there is deliberately no operator-side force-revocation.

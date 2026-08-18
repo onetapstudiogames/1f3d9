@@ -15,6 +15,7 @@ const rootKey = `1f3d9_sk_${'a1'.repeat(24)}`
 const accessToken = `1f3d9_at_${'b2'.repeat(32)}`
 const refreshToken = `1f3d9_rt_${'b2'.repeat(32)}`
 const authorizationCode = `1f3d9_ac_${'d4'.repeat(32)}`
+const recoveryCode = `1f3d9_rc_${'e5'.repeat(32)}`
 const partialAccessToken = `1f3d9_at_${'c3'.repeat(6)}`
 const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
 
@@ -64,6 +65,7 @@ test('the read-only scan reports resident IDs and counts without exposing matche
     Object.freeze({ associated_resident_id: 7, content: `historical ${rootKey}` }),
     Object.freeze({ associated_resident_id: 11, content: `historical ${accessToken}` }),
     Object.freeze({ associated_resident_id: 12, content: `historical ${authorizationCode}` }),
+    Object.freeze({ associated_resident_id: 13, content: `historical ${recoveryCode}` }),
     Object.freeze({ associated_resident_id: null, content: `partial ${partialAccessToken}` }),
   ])
   const originalRows = structuredClone(exposureRows)
@@ -93,6 +95,10 @@ test('the read-only scan reports resident IDs and counts without exposing matche
             credential_hash: digest(authorizationCode), credential_kind: 'oauth_authorization_code',
             resident_id: 12, live: false,
           },
+          {
+            credential_hash: digest(recoveryCode), credential_kind: 'recovery_code',
+            resident_id: 13, live: true,
+          },
         ] }
       }
       return { rows: [] }
@@ -114,20 +120,21 @@ test('the read-only scan reports resident IDs and counts without exposing matche
   assert.equal(connected, 1)
   assert.equal(ended, 1)
   assert.deepEqual(exposureRows, originalRows)
-  assert.deepEqual(result.associated_resident_ids, [7, 8, 11, 12])
-  assert.deepEqual(result.credential_owner_resident_ids, [9, 10, 11, 12])
-  assert.deepEqual(result.live_credential_owner_resident_ids, [9, 11])
+  assert.deepEqual(result.associated_resident_ids, [7, 8, 11, 12, 13])
+  assert.deepEqual(result.credential_owner_resident_ids, [9, 10, 11, 12, 13])
+  assert.deepEqual(result.live_credential_owner_resident_ids, [9, 11, 13])
   assert.deepEqual(result.counts, {
-    public_fields: 5,
-    exact_credentials: 4,
+    public_fields: 6,
+    exact_credentials: 5,
     partial_shapes: 1,
-    live_credentials: 2,
+    live_credentials: 3,
     inactive_credentials: 2,
     unresolved_credentials: 0,
     resident_key: 1,
     oauth_access_token: 1,
     oauth_refresh_token: 1,
     oauth_authorization_code: 1,
+    recovery_code: 1,
   })
   assert.match(statements.join('\n'), /BEGIN[^;]*READ ONLY/i)
   assert.match(statements.join('\n'), /statement_timeout/i)
@@ -137,7 +144,7 @@ test('the read-only scan reports resident IDs and counts without exposing matche
 
   const publicOutput = JSON.stringify({ result, logLines })
   for (const forbidden of [
-    rootKey, accessToken, refreshToken, authorizationCode, partialAccessToken, 'password@', 'postgres://',
+    rootKey, accessToken, refreshToken, authorizationCode, recoveryCode, partialAccessToken, 'password@', 'postgres://',
   ]) {
     assert.equal(publicOutput.includes(forbidden), false, forbidden)
   }
