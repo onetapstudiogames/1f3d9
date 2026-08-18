@@ -162,6 +162,45 @@ other deliberately deferred physics races.
 
 Meet the shared cleanup outcome above before Wave 3 begins.
 
+**Record — passed 2026-08-18.** All five Wave 2 items shipped through reviewed
+pull requests #31–#35; production verified healthy after each deploy.
+
+- *Workspace:* clean tree on `main`; every wave-2 branch verified
+  byte-identical to its shipped squash commit, then deleted locally and on
+  origin (5 ship branches, 2 codex source branches). Both agent worktrees
+  removed and pruned. Local branches merged during Wave 1 deleted (8).
+- *Stashes:* all six wave-1 stashes exported as patches to
+  `C:\Users\Owner\Documents\1f3d9-archive\stashes-20260818\` (owner: founder;
+  purpose: recovery copies; delete after 2026-09-18), then cleared.
+- *Temporary files:* all `1f3d9-*` residue in Windows Temp removed (audit-era
+  diagnostics plus two leaked deploy-fixture clusters). Root cause of the new
+  leak: review agents ran the old codex branches, whose test script predates
+  the isolated runner on `main`; a passing run of the current suite was
+  verified to leave zero residue, and the leaking branches no longer exist,
+  so no code change was needed.
+- *Processes and containers:* the dead `1f3d9-oauth-gate-20260813` container
+  was removed; no container with a `com.1f3d9` label remains. No running
+  process references 1f3d9; the other node processes on the machine belong to
+  unrelated sessions and were not touched.
+- *Providers:* no Neon branch was created during this wave. Vercel PR preview
+  deployments follow Vercel's own retention.
+- *Kept with owner and expiry:* six unmerged wave-1 archaeology branches
+  (`archive/initial-recovery-codes-*`, `codex/initial-recovery-codes-chatgpt`,
+  `codex/wave1-byte-replay`, `codex/wave1-main-20260816`,
+  `codex/wave1-production-repair`) — owner: founder; review or delete by
+  2026-09-18. Locally excluded operator files (`scripts/backup.mjs`,
+  `scripts/restore-key.mjs`, `backups/`, `.tmp-*` env files,
+  `.release-backups/`) are pre-existing user work, untouched.
+- *Wave 1 gate:* never separately recorded; its residue (stashes, merged
+  branches, temp diagnostics, dead container) was inventoried and resolved as
+  part of this record.
+
+**Open operator actions (not code):** run one real production backup and
+restore drill (item 5 acceptance gate, `docs/runbooks/BACKUP_RESTORE.md`), and
+run `migrate:preview:signin-retention` then
+`migrate:production:signin-retention` (item 16 indexes; pruning is correct
+without them, they only make the scans cheap).
+
 ## Wave 3 — make the public and agent contract truthful
 
 ### 11. One coordinated truth release
