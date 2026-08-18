@@ -2,6 +2,7 @@
 // No live database, wallet, payment, deployment, or network service is touched.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   PUBLIC_PAGE_DEFAULT,
@@ -3427,6 +3428,13 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
     })
     assert.equal(accepted.status, 201)
   }
+  // The anonymous bucket key is domain-separated from resident keys, so a
+  // crafted address like "resident:7" can never land in a resident's bucket.
+  const anonymousSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+  assert.equal(
+    String(anonymousSlot?.params?.[0]),
+    createHash('sha256').update('flag:ip:203.0.113.30', 'utf8').digest('hex'),
+  )
   const limited = await app.request('/api/flag', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': 'other-spoof, 203.0.113.30' },
@@ -3448,6 +3456,10 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
   const residentSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
   assert.ok(residentSlot, 'resident flags take their own limited slot')
   assert.equal(Number(residentSlot.params?.[1]), 20)
+  assert.equal(
+    String(residentSlot.params?.[0]),
+    createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
+  )
 })
 
 test('resident flags are bounded in their own hourly bucket', async () => {

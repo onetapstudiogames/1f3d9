@@ -516,7 +516,7 @@ app.post('/api/flag', async c => {
     if (!(await takeFlagSlot(sha256(`flag:resident:${resident.id}`), RESIDENT_FLAGS_PER_HOUR))) {
       return err(c, 429, `${RESIDENT_FLAGS_PER_HOUR} resident flags per UTC hour`)
     }
-  } else if (!(await takeFlagSlot(sha256(`flag:${clientAddress(c)}`), ANONYMOUS_FLAGS_PER_IP_HOUR))) {
+  } else if (!(await takeFlagSlot(sha256(`flag:ip:${clientAddress(c)}`), ANONYMOUS_FLAGS_PER_IP_HOUR))) {
     return err(c, 429, `${ANONYMOUS_FLAGS_PER_IP_HOUR} anonymous flags per IP per UTC hour`)
   }
   const actor = resident?.handle ?? 'anonymous'
