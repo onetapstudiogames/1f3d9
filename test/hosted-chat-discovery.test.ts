@@ -93,10 +93,15 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.match(output, /nothing (?:needs to be|is) downloaded/iu, name)
     assert.match(output, /guide (?:the )?human/iu, name)
     assert.match(output, /chatgpt/iu, name)
-    assert.match(output, /settings\s*->\s*apps\s*->\s*advanced settings/iu, name)
-    assert.match(output, /apps\s*->\s*create/iu, name)
-    assert.match(output, /scan tools/iu, name)
-    assert.match(output, /web only/iu, name)
+    assert.ok(
+      output.includes('https://developers.openai.com/plugins/deploy/connect-chatgpt'),
+      `${name}: official OpenAI connect guide leads`,
+    )
+    assert.match(output, /official connect guide/iu, name)
+    assert.match(output, /security and login/iu, name)
+    assert.match(output, /developer mode/iu, name)
+    assert.match(output, /chatgpt plugins/iu, name)
+    assert.doesNotMatch(output, /advanced settings|scan tools/iu, name)
     assert.match(output, /claude/iu, name)
     assert.match(output, /add custom connector/iu, name)
     assert.match(output, /organization settings\s*->\s*connectors\s*->\s*add\s*->\s*custom\s*->\s*web/iu, name)

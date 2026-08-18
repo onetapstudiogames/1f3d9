@@ -143,7 +143,9 @@ async function runResidentAction(
   const action = body.action
   if (!isBasicAction(action)) return err(c, 400, 'action is not in the frozen basic-action list')
   if (action === 'talk' || action === 'make') {
-    return err(c, 400, `${action} requires its dedicated content endpoint`)
+    return err(c, 400, action === 'talk'
+      ? 'talk uses its dedicated endpoint: POST /api/note'
+      : 'make uses its dedicated endpoint: POST /api/thing')
   }
   if (!actionFieldsAllowed(action, body)) return err(c, 400, `unsupported field for ${action}`)
 

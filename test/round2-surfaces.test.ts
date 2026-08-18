@@ -55,7 +55,12 @@ test('MCP advertises every round-two control without accepting bearer arguments'
   for (const name of ['act', 'laws', 'home', 'withdraw', 'moderate']) assert.ok(names.includes(name))
 
   const act = tools.find(tool => tool.name === 'act')!
-  assert.deepEqual((act.inputSchema.properties?.action as { enum: string[] }).enum, ACTIONS)
+  // talk and make are basic actions but have their own tools (say, make);
+  // the act menu must not advertise action values the API will refuse.
+  assert.deepEqual(
+    (act.inputSchema.properties?.action as { enum: string[] }).enum,
+    ['move', 'use', 'give', 'consume', 'go_home'],
+  )
   const make = tools.find(tool => tool.name === 'make')!
   assert.ok('ingredient_ids' in (make.inputSchema.properties ?? {}))
   assert.ok('open_to_use' in (make.inputSchema.properties ?? {}))

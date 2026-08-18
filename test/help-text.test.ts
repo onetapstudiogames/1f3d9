@@ -43,6 +43,29 @@ test('public help gives exact action shapes and required combinations', () => {
   }
 })
 
+test('the truth release keeps every public surface honest', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    // /api/action performs five of the seven basic actions; talk and make route elsewhere
+    assert.match(text, /\/api\/action[^\n]*perform move, use, give, consume, or go_home/iu, name)
+    assert.doesNotMatch(text, /\/api\/action[^\n]*seven basic actions/iu, name)
+    // the anonymous reporting exception is disclosed, without leaking report text
+    assert.match(text, /\/api\/flag/u, `${name}: flag route`)
+    assert.match(text, /(?:report\s+text|reason)\s+stays\s+private/iu, `${name}: private reason`)
+    assert.match(text, /never the report text/iu, `${name}: no report text in events`)
+    // withdrawal is permanent on the route line itself
+    assert.match(text, /withdraw[^\n]*permanent|permanent[^\n]*withdraw/iu, `${name}: permanent withdraw`)
+    // speaking is local, reading is global
+    assert.match(text, /public record, readable/iu, `${name}: notes readable from anywhere`)
+    // join reveals the key and the first recovery codes together
+    assert.match(text, /eight[\s\S]{0,60}recovery codes\s+are shown once/iu, `${name}: join reveals codes`)
+  }
+})
+
 test('public help states the speech-location and permanent-handle rules', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

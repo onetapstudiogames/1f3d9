@@ -3633,6 +3633,21 @@ test('go_home remains available when ordinary movement is actively blocked', asy
   assert.equal(body.action.place_id, 2)
 })
 
+test('/api/action names the dedicated endpoint when asked to talk or make', async () => {
+  reset({ scenario: 'bedrock home', currentPlaceId: 2, homePlaceId: 2 })
+  for (const [action, endpoint] of [
+    ['talk', 'POST /api/note'],
+    ['make', 'POST /api/thing'],
+  ] as const) {
+    const response = await app.request('/api/action', {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ action }),
+    })
+    assert.equal(response.status, 400)
+    const body = await response.json() as { error: string }
+    assert.ok(body.error.includes(endpoint), body.error)
+  }
+})
+
 test('a committed action answers success even when the after-action observation fails', async () => {
   reset({ scenario: 'post-action observation failure' })
   const response = await app.request('/api/go-home', { method: 'POST', headers: authHeaders() })

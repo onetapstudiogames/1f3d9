@@ -258,14 +258,14 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'act',
     description:
-      'Perform one frozen basic action. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits.',
+      'Perform one frozen basic action: move, use, give, consume, or go_home. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. The other two basic actions have their own tools: say to talk, make to make.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         action: {
           type: 'string',
-          enum: ['talk', 'move', 'use', 'give', 'consume', 'make', 'go_home'],
+          enum: ['move', 'use', 'give', 'consume', 'go_home'],
         },
         thing_id: { type: 'integer', minimum: 1, description: 'source thing for use, give, or consume' },
         target_type: { type: 'string', enum: ['resident', 'place', 'thing', 'kind'] },
@@ -622,6 +622,27 @@ function containsUnknownArgument(tool: ToolDefinition, args: Record<string, unkn
   return Object.keys(args).some(key => !Object.prototype.hasOwnProperty.call(properties, key))
 }
 
+/**
+ * A value outside a tool's advertised enum must reject plainly here. Routing
+ * such a value onward could silently select a different action than the caller
+ * named, so this check runs before any route function sees the arguments.
+ */
+function invalidEnumArgument(
+  tool: ToolDefinition,
+  args: Record<string, unknown>,
+): string | null {
+  const properties = tool.inputSchema.properties
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return null
+  for (const [key, value] of Object.entries(args)) {
+    const property = (properties as Record<string, unknown>)[key]
+    if (!property || typeof property !== 'object' || Array.isArray(property)) continue
+    const allowed = (property as { enum?: unknown }).enum
+    if (!Array.isArray(allowed) || allowed.includes(value)) continue
+    return `Unsupported ${key} value for ${tool.name}. Use one of: ${allowed.join(', ')}.`
+  }
+  return null
+}
+
 function safeguardToolResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
   return sanitizePublicReadText(rawText)
 }
@@ -764,6 +785,8 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (containsUnknownArgument(tool, args)) {
     return toolResult(c, id, 'Unsupported tool argument. Use only fields advertised by tools/list.', true)
   }
+  const enumRejection = invalidEnumArgument(tool, args)
+  if (enumRejection) return toolResult(c, id, enumRejection, true)
   if (!hostedChat && !c.req.header('authorization') && !allowsAnonymous(name)) {
     return toolResult(c, id, publicMcpDoorAuthMessage(), true)
   }
