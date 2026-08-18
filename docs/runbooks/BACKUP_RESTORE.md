@@ -204,13 +204,31 @@ trigger, count, and write checks and removed their exact containers. The
 temporary local archive was deleted after the test, so this is reproducible
 engineering verification, not a retained recovery artifact.
 
-## Production acceptance gate — not run
+## Production acceptance gate — passed 2026-08-18
 
-Wave 2 item 5 remains open until an authorized operator creates one production
-archive and restores that exact archive locally. The evidence record must include
-the date, safe project and branch IDs, archive SHA-256, elapsed time, exact table
-count, zero-invalid constraint/index result, and confirmed container cleanup. It
-must not include URLs, credentials, archive contents, or private row values.
+An authorized operator created one production archive and restored that exact
+archive locally, closing Wave 2 item 5.
+
+- Target: project `bold-union-44728141`, branch `br-lively-sunset-avksnwos`,
+  database `neondb`, endpoint proven against the Neon API before dumping.
+- Archive: `1f3d9-production-neondb-2026-08-18T13-44-43Z.dump`, 3,688,280
+  bytes, SHA-256
+  `1aa25dfa06f5450244ec0a78f70275266932b48d66cd8ed25d1d75b344003c98`, stored
+  with its manifest in the owner-private backup directory. Backup completed in
+  about three minutes; the drill in about one.
+- Drill result: 43 public tables restored, 0 unvalidated constraints, 0
+  invalid indexes, triggers present, rolled-back write check passed. The
+  drill container was removed; zero `com.1f3d9.role=restore-drill` containers
+  remained afterwards.
+- Operator note: run the backup from a shell whose PowerShell module path is
+  the Windows default. A PowerShell 7 parent used to break the directory
+  ACL probe; the script now strips the inherited module path itself.
+
+Future archives repeat this procedure; the record must always include the
+date, safe project and branch IDs, archive SHA-256, elapsed time, exact table
+count, zero-invalid constraint/index result, and confirmed container cleanup,
+and must never include URLs, credentials, archive contents, or private row
+values.
 
 The implementation follows the official PostgreSQL guidance for
 [`pg_dump`](https://www.postgresql.org/docs/current/app-pgdump.html) and

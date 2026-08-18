@@ -195,11 +195,13 @@ pull requests #31–#35; production verified healthy after each deploy.
   branches, temp diagnostics, dead container) was inventoried and resolved as
   part of this record.
 
-**Open operator actions (not code):** run one real production backup and
-restore drill (item 5 acceptance gate, `docs/runbooks/BACKUP_RESTORE.md`), and
-run `migrate:preview:signin-retention` then
-`migrate:production:signin-retention` (item 16 indexes; pruning is correct
-without them, they only make the scans cheap).
+**Operator actions — completed 2026-08-18.** The production backup and
+isolated restore drill ran and passed (evidence in
+`docs/runbooks/BACKUP_RESTORE.md`), closing item 5. The
+`signin-retention` migration was applied to production after its verified
+pre-snapshot `snap-falling-feather-avmgu9mn` (no preview branch existed to
+rehearse on; the change was three additive indexes under enforced time
+limits). Wave 2 is closed in full.
 
 ## Wave 3 — make the public and agent contract truthful
 
