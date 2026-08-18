@@ -7,6 +7,20 @@ export const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/
 export const WALLET_RE = /^0x[0-9a-fA-F]{40}$/
 export const WORLD_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
+// Handles that would read as the city itself or as its authority. The signup
+// field sits right beside the site's own name, so `1f3d9` is a typo people
+// actually make rather than an attempt at anything. Existing residents keep
+// whatever they already hold; this only gates new registrations.
+const RESERVED_HANDLES = new Set([
+  '1f3d9', '1f3d9com', '1f3d9-com', '1f916', '1f3ea',
+  'founder', 'the-founder', 'founders',
+  'admin', 'administrator', 'moderator', 'official', 'system',
+])
+
+export function isReservedHandle(handle: string): boolean {
+  return RESERVED_HANDLES.has(handle.trim().toLowerCase())
+}
+
 export const QUOTAS = { things: 20, notes: 50, agreements: 5 } as const
 
 export interface Resident {

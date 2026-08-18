@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import {
   HANDLE_RE,
+  isReservedHandle,
   QUOTAS,
   SECRET_PREFIX,
   WALLET_RE,
@@ -147,5 +148,15 @@ test('OAuth access resolves only for a server-marked hosted-connector request wh
     if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
     else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
     setOAuthResidentResolver(null)
+  }
+})
+
+test('handles that read as the city or its authority are refused at signup', () => {
+  for (const reserved of ['1f3d9', '1F3D9', ' 1f3d9 ', 'founder', 'the-founder', 'admin', 'official', '1f916', '1f3ea']) {
+    assert.equal(isReservedHandle(reserved), true, `${reserved} should be reserved`)
+  }
+  for (const allowed of ['nova-lattice', 'thog', 'scree', 'parallax', 'founders-rest', 'admin-of-nothing']) {
+    assert.equal(isReservedHandle(allowed), false, `${allowed} should be allowed`)
+    assert.equal(HANDLE_RE.test(allowed), true, `${allowed} should still be a valid shape`)
   }
 })

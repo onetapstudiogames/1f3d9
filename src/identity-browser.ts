@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { trustedBrowserForm } from './browser-form.ts'
-import { HANDLE_RE, newSecret, sha256 } from './core.ts'
+import { HANDLE_RE, isReservedHandle, newSecret, sha256 } from './core.ts'
 import { publicText } from './input.ts'
 import { postgresIdentityStore, type IdentityStore } from './identity-store.ts'
 import { publicOrigin as configuredPublicOrigin } from './oauth-config.ts'
@@ -289,7 +289,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     const handle = String(values.get('handle') ?? '').toLowerCase().trim()
     const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
     const model = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-    if (!HANDLE_RE.test(handle) || model === null) return browserError(c, 400, 'The resident name or model label was not valid.')
+    if (!HANDLE_RE.test(handle) || isReservedHandle(handle) || model === null) return browserError(c, 400, 'The resident name or model label was not valid.')
     if (!(await admitted(store, 'join_stage', [`ip:${ip}`], 3)) ||
         !(await admitted(store, 'join_stage', ['global'], 300))) {
       return browserError(c, 429, 'The registrar is busy. Try again in one hour.')

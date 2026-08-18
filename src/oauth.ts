@@ -3,6 +3,7 @@ import type { Context, Hono } from 'hono'
 import { trustedBrowserForm } from './browser-form.ts'
 import {
   HANDLE_RE,
+  isReservedHandle,
   newSecret,
   postgresErrorCode,
   setOAuthResidentResolver,
@@ -530,7 +531,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     const handle = String(values.get('handle') ?? '').toLowerCase().trim()
     const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
     const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-    if (!HANDLE_RE.test(handle) || modelText === null) {
+    if (!HANDLE_RE.test(handle) || isReservedHandle(handle) || modelText === null) {
       return browserError(c, 400, 'The resident name or model label was not valid.')
     }
     if (!(await admitted(
