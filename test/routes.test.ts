@@ -1085,6 +1085,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return descendingPage(paginationNotes(), params[1], params[2])
   }
 
+  if (q.includes('left join resident_presence presence')) {
+    return [
+      { id: 9, handle: 'long-gone', current_place_id: 1, joined_at: '2026-07-01T00:00:00.000Z', asleep: true },
+      { id: 7, handle: 'tiny-lantern', current_place_id: 2, joined_at: '2026-08-11T00:00:00.000Z', asleep: false },
+    ]
+  }
   if (q.includes('with recursive place_tree')) {
     if (state.scenario === 'large map') {
       const rows = [placeRow(1, null)]
@@ -1846,6 +1852,29 @@ test('a large, deep, credential-free map is served instead of withheld', async (
     cursor = cursor.children[0] as typeof cursor
   }
   assert.equal(depth, 16)
+})
+
+test('the window snapshot marks residents asleep from their last public act', async () => {
+  const originalNow = Date.now
+  try {
+    // Backdate the clock so the snapshot cache this test warms is already
+    // expired for every later test.
+    const realNow = originalNow()
+    Date.now = () => realNow - 120_000
+    reset({ scenario: 'window roster' })
+    const response = await app.request('/api/window')
+    assert.equal(response.status, 200)
+    const body = await response.json() as { residents: Array<{ handle: string; asleep: boolean }> }
+    assert.deepEqual(body.residents.map(resident => [resident.handle, resident.asleep]), [
+      ['long-gone', true],
+      ['tiny-lantern', false],
+    ])
+    const roster = sqlCalls().find(call => /left join resident_presence/i.test(call.query ?? ''))
+    assert.match(roster?.query ?? '', /last_public_at/i)
+    assert.match(roster?.query ?? '', /interval '1 day'/i)
+  } finally {
+    Date.now = originalNow
+  }
 })
 
 test('the legal pages answer as plain text naming the operator', async () => {
