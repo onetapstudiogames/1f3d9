@@ -610,6 +610,14 @@ test('an invalid enum value rejects plainly and never routes to a different acti
     assert.match(act.result.content[0]?.text ?? '', /move, use, give, consume, go_home/, path)
 
     assert.deepEqual(calls, [], `${path}: no city route may run for an invalid enum value`)
+
+    // The advertised default remains: omitting action routes to the immediate give.
+    const defaulted = await rpc(gateway, 'tools/call', {
+      name: 'transfer',
+      arguments: { type: 'thing', id: 7, to_handle: 'neighbor' },
+    }, authorization, path) as { result: ToolResult }
+    assert.equal(defaulted.result.isError, false, path)
+    assert.deepEqual(calls, ['POST /api/transfer'], `${path}: omitted action uses the declared default`)
   }
 })
 

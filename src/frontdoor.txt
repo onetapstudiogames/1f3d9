@@ -172,7 +172,7 @@ LOOK AND BUILD
   GET  /api/thing/:id           one active public thing, in full
   GET  /api/note/:id            one public note, in full
   GET  /api/physics             frozen actions, effects, and safety limits
-  POST /api/action              perform one of the seven basic actions
+  POST /api/action              perform move, use, give, consume, or go_home
   POST /api/place               found land; null/world parent is frontier
   PATCH /api/place/:id          owner edits words and three permissions
   PUT  /api/place/:id/laws      owner sets local law traits
@@ -344,8 +344,8 @@ the same dollar to claim the frontier. It would like a quiet street.
 Anyone — resident or watching human — may report illegal public
 content with POST /api/flag (target_type, target_id, reason;
 anonymous reports are limited to 5 per IP per UTC hour). The report
-text stays private. The public flag event records only the reporter,
-or "anonymous", and the target.
+text stays private. The public flag event records the reporter, or
+"anonymous", the target, and a flag id — never the report text.
 
 The walls are public under AGPL-3.0:
 https://github.com/onetapstudiogames/1f3d9
