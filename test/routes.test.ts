@@ -1829,32 +1829,59 @@ test('note validation distinguishes place errors and preserves valid Unicode exa
   assert.equal(acceptedBody.note.body, body)
 })
 
-test('the public map is a recursive owner-attributed tree', async () => {
-  reset({ scenario: 'map' })
-  const response = await app.request('/api/map')
-  assert.equal(response.status, 200)
-  const body = await response.json() as { places: { id: number; owner: string; children: { id: number }[] }[] }
-  assert.equal(body.places[0]?.id, 1)
-  assert.equal(body.places[0]?.owner, 'founder')
-  assert.equal(body.places[0]?.children[0]?.id, 2)
-  assert.ok(sqlCalls().some(call => /with\s+recursive/i.test(call.query ?? '')))
+test('the public map is a recursive owner-attributed tree with a short shared cache', async () => {
+  const originalNow = Date.now
+  try {
+    // Backdate the clock so the map cache this test warms is already expired
+    // for every later test.
+    const realNow = originalNow()
+    Date.now = () => realNow - 180_000
+    reset({ scenario: 'map' })
+    const response = await app.request('/api/map')
+    assert.equal(response.status, 200)
+    assert.equal(
+      response.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const body = await response.json() as { places: { id: number; owner: string; children: { id: number }[] }[] }
+    assert.equal(body.places[0]?.id, 1)
+    assert.equal(body.places[0]?.owner, 'founder')
+    assert.equal(body.places[0]?.children[0]?.id, 2)
+    assert.ok(sqlCalls().some(call => /with\s+recursive/i.test(call.query ?? '')))
+
+    const queriesAfterFirst = sqlCalls().length
+    const cached = await app.request('/api/map')
+    assert.equal(cached.status, 200)
+    assert.equal(sqlCalls().length, queriesAfterFirst, 'a map within the TTL reuses the shared build')
+  } finally {
+    Date.now = originalNow
+  }
 })
 
 test('a large, deep, credential-free map is served instead of withheld', async () => {
-  reset({ scenario: 'large map' })
-  const response = await app.request('/api/map')
-  assert.equal(response.status, 200)
-  const body = await response.json() as { places: Array<{ id: number; children: Array<{ id: number }> }> }
-  assert.equal(body.places[0]?.id, 1)
-  assert.ok((body.places[0]?.children.length ?? 0) >= 1400)
-  let depth = 0
-  let cursor = body.places[0]?.children.find(child => child.id === 3000) as
-    { id: number; children: { id: number; children: unknown[] }[] } | undefined
-  while (cursor) {
-    depth += 1
-    cursor = cursor.children[0] as typeof cursor
+  const originalNow = Date.now
+  try {
+    // A different backdate than the previous map test so its cache entry is
+    // already stale here, and this test's own entry is stale for later ones.
+    const realNow = originalNow()
+    Date.now = () => realNow - 120_000
+    reset({ scenario: 'large map' })
+    const response = await app.request('/api/map')
+    assert.equal(response.status, 200)
+    const body = await response.json() as { places: Array<{ id: number; children: Array<{ id: number }> }> }
+    assert.equal(body.places[0]?.id, 1)
+    assert.ok((body.places[0]?.children.length ?? 0) >= 1400)
+    let depth = 0
+    let cursor = body.places[0]?.children.find(child => child.id === 3000) as
+      { id: number; children: { id: number; children: unknown[] }[] } | undefined
+    while (cursor) {
+      depth += 1
+      cursor = cursor.children[0] as typeof cursor
+    }
+    assert.equal(depth, 16)
+  } finally {
+    Date.now = originalNow
   }
-  assert.equal(depth, 16)
 })
 
 test('the window snapshot marks residents asleep from their last public act', async () => {

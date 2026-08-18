@@ -74,40 +74,65 @@ async function activePlaceLabels(placeId: number): Promise<string[]> {
   return rows.map(row => row.label)
 }
 
+async function readPublicMap(): Promise<{ places: unknown[] }> {
+  const rows = (await sql`
+    WITH RECURSIVE place_tree AS (
+      SELECT p.id, p.parent_id, p.name, p.description, p.owner_id,
+        p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
+        ARRAY[p.id] AS path
+      FROM places p
+      WHERE p.parent_id IS NULL
+      UNION ALL
+      SELECT child.id, child.parent_id, child.name, child.description, child.owner_id,
+        child.open_to_building, child.open_to_things, child.open_to_notes, child.created_at,
+        parent.path || child.id
+      FROM places child
+      JOIN place_tree parent ON parent.id = child.parent_id
+      WHERE NOT child.id = ANY(parent.path)
+    )
+    SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.owner_id,
+      owner.handle AS owner, tree.open_to_building, tree.open_to_things,
+      tree.open_to_notes, tree.created_at,
+      (SELECT count(*)::int FROM places child WHERE child.parent_id = tree.id) AS places,
+      (SELECT count(*)::int FROM things thing
+        WHERE thing.place_id = tree.id AND thing.withdrawn_at IS NULL) AS things,
+      (SELECT count(*)::int FROM notes note WHERE note.place_id = tree.id) AS notes
+    FROM place_tree tree
+    LEFT JOIN residents owner ON owner.id = tree.owner_id
+    ORDER BY tree.path
+  `) as PlaceRow[]
+  const publicRows = await moderatePublicRows('place', rows)
+  return { places: buildPlaceTree(publicRows as PlaceRow[], null) }
+}
+
+// The whole-city rebuild is the busiest anonymous read, so one short-lived
+// build is shared by every request in the window (same shape and TTL as the
+// window snapshot cache in window.ts).
+type PublicMap = Awaited<ReturnType<typeof readPublicMap>>
+let mapCache: { expiresAt: number; pending: Promise<PublicMap> } | null = null
+
+async function cachedPublicMap() {
+  const now = Date.now()
+  if (mapCache && mapCache.expiresAt > now) return mapCache.pending
+  const pending = readPublicMap()
+  mapCache = { expiresAt: now + 30_000, pending }
+  try {
+    return await pending
+  } catch (error) {
+    if (mapCache?.pending === pending) mapCache = null
+    throw error
+  }
+}
+
 export function mountWorldRoutes(app: Hono): void {
   app.get('/api/map', async c => {
-    const rows = (await sql`
-      WITH RECURSIVE place_tree AS (
-        SELECT p.id, p.parent_id, p.name, p.description, p.owner_id,
-          p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
-          ARRAY[p.id] AS path
-        FROM places p
-        WHERE p.parent_id IS NULL
-        UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.description, child.owner_id,
-          child.open_to_building, child.open_to_things, child.open_to_notes, child.created_at,
-          parent.path || child.id
-        FROM places child
-        JOIN place_tree parent ON parent.id = child.parent_id
-        WHERE NOT child.id = ANY(parent.path)
-      )
-      SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.owner_id,
-        owner.handle AS owner, tree.open_to_building, tree.open_to_things,
-        tree.open_to_notes, tree.created_at,
-        (SELECT count(*)::int FROM places child WHERE child.parent_id = tree.id) AS places,
-        (SELECT count(*)::int FROM things thing
-          WHERE thing.place_id = tree.id AND thing.withdrawn_at IS NULL) AS things,
-        (SELECT count(*)::int FROM notes note WHERE note.place_id = tree.id) AS notes
-      FROM place_tree tree
-      LEFT JOIN residents owner ON owner.id = tree.owner_id
-      ORDER BY tree.path
-    `) as PlaceRow[]
-    const publicRows = await moderatePublicRows('place', rows)
+    const body = await cachedPublicMap()
     // The map tree is unbounded, so the proactive traversal budgets in
     // publicJson would withhold a large credential-free city. The app-wide
     // publicResponseSafety middleware still guards this response and only
     // parses it when the raw text actually matches the credential rule.
-    return c.json({ places: buildPlaceTree(publicRows as PlaceRow[], null) })
+    c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+    return c.json(body)
   })
 
   app.get('/api/place/:id', async c => {
