@@ -1848,6 +1848,18 @@ test('a large, deep, credential-free map is served instead of withheld', async (
   assert.equal(depth, 16)
 })
 
+test('the legal pages answer as plain text naming the operator', async () => {
+  for (const path of ['/terms', '/privacy']) {
+    const response = await app.request(path)
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('content-type') ?? '', /text\/plain/)
+    const body = await response.text()
+    assert.match(body, /TWAMD LLC/)
+    assert.match(body, /adam@twamd\.com/)
+    assert.doesNotMatch(body, /1f3d9_(?:sk|at|rt|ac|rc)_/)
+  }
+})
+
 test('busy places serve the newest notes and expose an older-note cursor', async () => {
   reset({ scenario: 'busy place' })
   const first = await app.request('/api/place/2?note_limit=200')
