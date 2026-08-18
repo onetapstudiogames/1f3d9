@@ -1399,7 +1399,7 @@ test('an uncertain commit resolves to the recorded outcome instead of a failure'
   assert.equal(failedResolutionWrites(calls).length, 0)
 })
 
-test('an uncertain commit with no stored record is a plain retryable conflict', async () => {
+test('an uncertain commit whose failure record wins is a plain retryable conflict', async () => {
   const { db, calls } = fakeSql(uncertainCommitResponder(() => []))
   setEngineTransactionRunnerForTests(async (database, work) => {
     await work(database, true)
@@ -1418,6 +1418,41 @@ test('an uncertain commit with no stored record is a plain retryable conflict', 
   assert.equal(failedResolutionWrites(calls).length, 1)
 })
 
+test('an uncertain commit that lands after the readback still answers with the committed outcome', async () => {
+  let resolutionReads = 0
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/SELECT status, detail FROM action_resolutions/.test(text)) {
+      resolutionReads += 1
+      // Invisible on the first read; the in-doubt commit lands while the
+      // failure insert waits on the unique index and loses the conflict.
+      return resolutionReads === 1 ? [] : [{ status: 'applied', detail: { effects_applied: 1 } }]
+    }
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 240 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/INSERT INTO action_resolutions/.test(text)) return []
+    return []
+  })
+  setEngineTransactionRunnerForTests(async (database, work) => {
+    await work(database, true)
+    throw new CommitOutcomeUnknownError(new Error('connection closed before the commit reply'))
+  })
+  try {
+    const result = await runAction(UNCERTAIN_COMMIT_ACTION, db)
+    assert.equal(result.status, 'applied')
+    assert.equal(result.httpStatus, 200)
+    assert.equal(result.error, null)
+    assert.equal(result.effectsApplied, 1)
+  } finally {
+    setEngineTransactionRunnerForTests(null)
+  }
+  assert.equal(resolutionReads, 2)
+  assert.ok(calls.some(call =>
+    /INSERT INTO action_resolutions/.test(call.text) && call.values[1] === 'failed'))
+})
+
 test('an unreadable outcome record never claims failure or invites a retry', async () => {
   const { db, calls } = fakeSql(uncertainCommitResponder(() => {
     throw Object.assign(new Error('the record read failed too'), { code: '57P01' })
@@ -1428,6 +1463,7 @@ test('an unreadable outcome record never claims failure or invites a retry', asy
   })
   try {
     const result = await runAction(UNCERTAIN_COMMIT_ACTION, db)
+    assert.equal(result.status, 'unconfirmed')
     assert.equal(result.httpStatus, 500)
     assert.equal(result.error, UNCONFIRMED_ACTION_ERROR)
     assert.doesNotMatch(result.error ?? '', /retry/)

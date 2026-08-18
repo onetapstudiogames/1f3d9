@@ -126,6 +126,8 @@ const MAX_JSON_BYTES = 65_536
 type EngineStatus = 400 | 403 | 404 | 409 | 429 | 500
 export type TargetType = 'resident' | 'place' | 'thing' | 'kind'
 export type ResolutionStatus = 'applied' | 'blocked' | 'noop' | 'failed'
+/** What a caller may see: stored statuses plus the honest not-knowable one. */
+export type ActionOutcomeStatus = ResolutionStatus | 'unconfirmed'
 
 export class EngineError extends Error {
   readonly status: EngineStatus
@@ -190,7 +192,7 @@ export type ActionInput = BaseActionInput & (
 
 export interface ActionExecution {
   readonly actionId: number
-  readonly status: ResolutionStatus
+  readonly status: ActionOutcomeStatus
   readonly httpStatus: number
   readonly error: string | null
   readonly effectsApplied: number
@@ -583,7 +585,7 @@ async function recordActionResolution(
   detail: Readonly<Record<string, unknown>>,
   db: TaggedSql,
 ) {
-  await queryRows(db`
+  const rows = await queryRows(db`
     WITH resolution AS (
       INSERT INTO action_resolutions (action_run_id, status, detail)
       VALUES (${actionId}, ${status}, ${json(detail)}::jsonb)
@@ -594,6 +596,10 @@ async function recordActionResolution(
       ${json({ action_id: actionId, status, ...detail })}::jsonb FROM resolution
     RETURNING id
   `)
+  // The unique action_run_id index makes this insert wait on any in-doubt
+  // transaction for the same run, so losing the conflict proves an earlier
+  // resolution committed and is now visible.
+  return rows.length > 0
 }
 
 export const UNCONFIRMED_ACTION_ERROR =
@@ -652,7 +658,16 @@ async function recordFailedExecution(
   db: TaggedSql,
 ): Promise<ActionExecution> {
   const failure = failureFromError(error)
-  await recordActionResolution(actionId, actorHandle, 'failed', { error: failure.message }, db)
+  const won = await recordActionResolution(
+    actionId, actorHandle, 'failed', { error: failure.message }, db,
+  )
+  if (!won) {
+    // A resolution already committed — possibly the very transaction whose
+    // commit acknowledgement was lost. That stored row is the one canonical
+    // outcome, so it wins over the failure this call meant to record.
+    const committed = await committedResolution(actionId, db)
+    if (committed) return committed
+  }
   return {
     actionId,
     status: 'failed',
@@ -663,10 +678,12 @@ async function recordFailedExecution(
 }
 
 /**
- * The commit outcome is unknown, so the stored record decides: a committed
- * resolution is returned as-is, a missing one proves the rollback and becomes
- * a plain failure, and an unreadable record must never claim failure or invite
- * repeating work that may already have applied.
+ * The commit outcome is unknown, so the database decides. A visible committed
+ * resolution is returned as-is. Otherwise the failure insert settles the race:
+ * its unique index waits out the in-doubt transaction, and losing the conflict
+ * means the action committed after all, so the stored outcome is returned. An
+ * unreadable record must never claim failure or invite repeating work that may
+ * already have applied.
  */
 async function resolveUncertainCommit(
   actionId: number,
@@ -674,20 +691,19 @@ async function resolveUncertainCommit(
   failure: CommitOutcomeUnknownError,
   db: TaggedSql,
 ): Promise<ActionExecution> {
-  let committed: ActionExecution | null
   try {
-    committed = await committedResolution(actionId, db)
+    const committed = await committedResolution(actionId, db)
+    if (committed) return committed
+    return await recordFailedExecution(actionId, actorHandle, failure.sourceError, db)
   } catch {
     return {
       actionId,
-      status: 'failed',
+      status: 'unconfirmed',
       httpStatus: 500,
       error: UNCONFIRMED_ACTION_ERROR,
       effectsApplied: 0,
     }
   }
-  if (committed) return committed
-  return recordFailedExecution(actionId, actorHandle, failure.sourceError, db)
 }
 
 async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
