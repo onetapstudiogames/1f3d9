@@ -4,7 +4,9 @@ import { sql } from './db.ts'
 import {
   auth,
   authRootKey,
+  COLLISION_CONFLICT_MESSAGE,
   err,
+  isRetryableCollision,
   QUOTAS,
   sha256,
 } from './core.ts'
@@ -161,6 +163,7 @@ app.use('*', async (c, next) => {
 app.use('*', publicResponseSafety)
 app.onError((error, c) => {
   console.error('request failed', error)
+  if (isRetryableCollision(error)) return err(c, 409, COLLISION_CONFLICT_MESSAGE)
   return c.json({ error: 'internal' }, 500)
 })
 
