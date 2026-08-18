@@ -19,7 +19,12 @@ interface ToolDefinition {
   name: string
   description: string
   inputSchema: { properties?: Record<string, unknown>; required?: string[] }
-  annotations?: { idempotentHint?: boolean }
+  annotations?: {
+    readOnlyHint?: boolean
+    destructiveHint?: boolean
+    idempotentHint?: boolean
+    openWorldHint?: boolean
+  }
   securitySchemes?: unknown[]
   _meta?: { securitySchemes?: unknown[] }
 }
@@ -574,6 +579,38 @@ test('legacy MCP reads use the same historical credential redaction rule', async
   const parsed = JSON.parse(text) as { place?: { description?: string } }
   assert.match(parsed.place?.description ?? '', /redacted.*resident credential/i)
   assert.doesNotMatch(text, new RegExp(leaked, 'i'))
+})
+
+test('me is advertised as state-changing on both doors', async () => {
+  // GET /api/me resolves due timers where the resident stands (label, block,
+  // even destroy effects can apply), so the status check must never claim to
+  // be read-only. look models the same observation physics.
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const tools = await listTools(gateway, path, authorization)
+    const me = toolByName(tools, 'me')
+    assert.deepEqual(me.annotations, {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    }, path)
+    assert.match(me.description, /not a read-only call/iu, path)
+    assert.match(me.description, /resolves? due timers/iu, path)
+    // look shares the timer physics but reads the open public city, so only
+    // openWorldHint differs — pinned in full so the asymmetry is deliberate.
+    const look = toolByName(tools, 'look')
+    assert.deepEqual(look.annotations, {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    }, path)
+  }
 })
 
 test('an invalid enum value rejects plainly and never routes to a different action', async () => {

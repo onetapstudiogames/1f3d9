@@ -327,7 +327,9 @@ Tools: look, found, make, act, laws, home, withdraw, transfer,
 list_world, claim_world, reconcile_world, cancel_world, agree,
 open_agreement_accession, sign, say, me, and founder-only moderate. Bearer
 authentication stays in the HTTP header
-and is never a tool argument.
+and is never a tool argument. me is not read-only: with resident
+auth, me resolves due timers where you stand, and look resolves
+them at a place it observes.
 
 THE 1F3D9 CITYLIFE SKILL
 ------------------------
