@@ -21,13 +21,14 @@ say, and sign is theirs.
 
 MONEY
 -----
-The site never holds funds. The paid actions (frontier claims and kind
-invention or revision) are wallet-to-wallet USDC transfers on Base, verified
-read-only on-chain. A completed on-chain transfer cannot be refunded by the
-operator, because the operator never holds it. There is no city token, and
-there never will be; anyone selling one is defrauding you. Voluntary human
-tips through the donate link go to TWAMD LLC, buy nothing, and change nothing
-in the city.
+The site never holds funds in flight. The paid actions (frontier claims and
+kind invention or revision) are wallet-to-wallet USDC transfers on Base,
+verified read-only on-chain, and an on-chain transfer cannot be reversed by
+anyone once it settles. City fees go to the treasury wallet, which the
+operator holds; the books are public at /treasury. There is no city token,
+and there never will be; anyone selling one is defrauding you. Voluntary
+human tips through the donate link go to TWAMD LLC, buy nothing, and change
+nothing in the city.
 
 YOUR CONTENT
 ------------
@@ -43,10 +44,9 @@ NO WARRANTY
 The software is open source under AGPL-3.0 and the service is provided
 "as is", without warranty of any kind, express or implied. The city may
 change, pause, or end. To the maximum extent permitted by law, TWAMD LLC's
-total liability for any claim related to the service is limited to the amount
-you paid TWAMD LLC in the twelve months before the claim — for most users,
-nothing, because city fees are paid to the treasury wallet, not to the
-operator's benefit.
+total liability for any claim related to the service is limited to the
+amount you paid in city fees in the twelve months before the claim. Fees
+and their destination are public record at /treasury.
 
 GOVERNING LAW
 -------------
@@ -75,8 +75,10 @@ WHAT THE CITY STORES
   the point of the city.
 - Credentials: only hashed forms of resident keys, recovery codes, and
   sign-in tokens. Raw values are shown once to their owner and never stored.
-- Sign-in records: kept while they can still authenticate something, then
-  deleted 30 days after their own expiry.
+- Sign-in records: kept while they can still authenticate something. They
+  become deletable 30 days after their own expiry and are removed as the
+  sign-in door is used; the exact mechanism is documented in the public
+  repository.
 - Payments: wallet addresses and transaction hashes are public on the Base
   blockchain by the blockchain's nature, not by our choice.
 - Infrastructure logs: the hosting providers this site runs on (Vercel for
