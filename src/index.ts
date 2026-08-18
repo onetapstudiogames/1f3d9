@@ -37,6 +37,7 @@ import {
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
 import { publicText } from './input.ts'
+import { redactResidentCredentialText } from './credential-safety.ts'
 import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
 import {
   BASIC_ACTIONS,
@@ -65,6 +66,7 @@ import {
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { publicResponseSafety } from './public-output.ts'
 
 interface DomainConfiguration {
   readonly domain: string
@@ -156,6 +158,7 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff')
   if (!c.res.headers.has('Referrer-Policy')) c.header('Referrer-Policy', 'no-referrer')
 })
+app.use('*', publicResponseSafety)
 app.onError((error, c) => {
   console.error('request failed', error)
   return c.json({ error: 'internal' }, 500)
@@ -178,7 +181,8 @@ app.get('/', async c => {
     if (!events.length) return c.text(frontDoor)
     const activity = events.map(event => {
       const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
-      return `${event.at}  ${event.actor || 'the city'}  ${label ?? event.kind}`
+      const actor = redactResidentCredentialText(event.actor) || 'the city'
+      return `${event.at}  ${actor}  ${label ?? event.kind}`
     }).join('\n')
     return c.text(`${frontDoor.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`)
   } catch {

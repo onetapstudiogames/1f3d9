@@ -1,5 +1,9 @@
 import type { Context, Hono } from 'hono'
 import { allowOAuthForHostedConnectorRequest } from './core.ts'
+import {
+  containsCredentialLikeInput,
+  sanitizePublicReadText,
+} from './credential-safety.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
 import { PUBLIC_PAGE_DEFAULT, PUBLIC_PAGE_MAX } from './public-pagination.ts'
 
@@ -14,12 +18,6 @@ import { PUBLIC_PAGE_DEFAULT, PUBLIC_PAGE_MAX } from './public-pagination.ts'
 const PROTOCOL_DEFAULT = '2025-11-25'
 const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
 const OAUTH_SCOPE = 'city:resident'
-const RESIDENT_CREDENTIAL_PATTERN =
-  /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac|rc)_[0-9a-f]{64})/i
-const CREDENTIAL_LIKE_INPUT_PATTERN = /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/i
-const CREDENTIAL_REDACTION = '[redacted: this note contained a resident credential]'
-const CREDENTIAL_RESPONSE_WITHHELD =
-  'The city withheld a response that contained a resident credential.'
 const HOSTED_TOOL_NAMESPACE = 'mcp_for_1f3d9_'
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
@@ -609,7 +607,7 @@ const SENSITIVE_ARGUMENT_KEYS = new Set([
 ])
 
 function containsSecretArgument(value: unknown, depth = 0): boolean {
-  if (typeof value === 'string') return CREDENTIAL_LIKE_INPUT_PATTERN.test(value)
+  if (typeof value === 'string') return containsCredentialLikeInput(value)
   if (!value || typeof value !== 'object' || depth > 8) return false
   if (Array.isArray(value)) return value.some(item => containsSecretArgument(item, depth + 1))
   return Object.entries(value).some(([key, nested]) =>
@@ -624,51 +622,8 @@ function containsUnknownArgument(tool: ToolDefinition, args: Record<string, unkn
   return Object.keys(args).some(key => !Object.prototype.hasOwnProperty.call(properties, key))
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-/**
- * Historical notes can predate the public-write credential guard. Preserve the
- * containing response and the note's public metadata, replacing only an unsafe
- * note body. The final response scan below remains the backstop for credentials
- * found anywhere else or beyond this bounded traversal.
- */
-function redactCredentialBearingNoteBodies(value: unknown, depth = 0): unknown {
-  if (depth > 32) return value
-  if (Array.isArray(value)) {
-    return value.map(item => redactCredentialBearingNoteBodies(item, depth + 1))
-  }
-  if (!isRecord(value)) return value
-
-  return Object.fromEntries(Object.entries(value).map(([key, nested]) => {
-    if (key !== 'notes' || !Array.isArray(nested)) {
-      return [key, redactCredentialBearingNoteBodies(nested, depth + 1)]
-    }
-
-    return [key, nested.map(note => {
-      if (!isRecord(note)) return redactCredentialBearingNoteBodies(note, depth + 1)
-      const redacted = typeof note.body === 'string' && RESIDENT_CREDENTIAL_PATTERN.test(note.body)
-        ? { ...note, body: CREDENTIAL_REDACTION }
-        : note
-      return redactCredentialBearingNoteBodies(redacted, depth + 1)
-    })]
-  }))
-}
-
-function safeguardHostedResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
-  if (!RESIDENT_CREDENTIAL_PATTERN.test(rawText)) return { text: rawText, withheld: false }
-
-  try {
-    const redactedText = JSON.stringify(redactCredentialBearingNoteBodies(JSON.parse(rawText)))
-    if (typeof redactedText === 'string' && !RESIDENT_CREDENTIAL_PATTERN.test(redactedText)) {
-      return { text: redactedText, withheld: false }
-    }
-  } catch {
-    // Malformed or unexpected credential-bearing responses stay fail-closed.
-  }
-
-  return { text: CREDENTIAL_RESPONSE_WITHHELD, withheld: true }
+function safeguardToolResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
+  return sanitizePublicReadText(rawText)
 }
 
 function safeOAuthChallenge(candidate: string | null): string {
@@ -679,7 +634,7 @@ function safeOAuthChallenge(candidate: string | null): string {
     /^Bearer(?:\s|$)/i.test(candidate) &&
     candidate.includes(expectedMetadata) &&
     !/[\u0000-\u001f\u007f]/.test(candidate) &&
-    !CREDENTIAL_LIKE_INPUT_PATTERN.test(candidate)
+    !containsCredentialLikeInput(candidate)
   ) {
     return candidate
   }
@@ -839,9 +794,12 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       ? await app.request(hostedBackingRequest(route.path, init))
       : await app.request(route.path, init)
     const rawText = await response.text()
-    const safeguarded = hostedChat
-      ? safeguardHostedResponse(rawText)
-      : { text: rawText, withheld: false }
+    // Registration is the one legacy identity response that intentionally
+    // returns a new key. Every other legacy and hosted tool response is a
+    // public/transcript surface and shares the same credential backstop.
+    const safeguarded = name === 'register'
+      ? { text: rawText, withheld: false }
+      : safeguardToolResponse(rawText)
     if (hostedChat && response.status === 401) {
       const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
       return toolResult(c, id, safeguarded.text, true, {

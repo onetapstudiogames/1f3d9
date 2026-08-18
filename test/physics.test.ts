@@ -291,3 +291,16 @@ test('kind recipes reject duplicates, invalid shapes, unsafe counts, and excess 
     { kind: 'rope', quantity: MAX_CRAFT_INGREDIENTS / 2 },
   ])
 })
+
+test('trait labels and kind ingredients refuse credential-shaped public names', () => {
+  for (const prefix of ['1f3d9_sk_', '1f3d9_at_', '1f3d9_rt_', '1f3d9_ac_']) {
+    const leaked = `${prefix}${'ab'.repeat(24)}`
+    assert.equal(parseKindRecipe([{ kind: leaked, quantity: 1 }]), null, prefix)
+    assert.equal(parseTraitRecipe({
+      use: [{ effect: 'label', target: 'actor', label: leaked }],
+    }), null, prefix)
+    assert.equal(parseTraitRecipe({
+      use: [{ effect: 'check_label', target: 'actor', label: leaked, then: [] }],
+    }), null, prefix)
+  }
+})

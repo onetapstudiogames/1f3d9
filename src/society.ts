@@ -30,6 +30,7 @@ import {
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { publicJson } from './public-output.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const NOTE_CHARACTERS = 4_000
@@ -179,7 +180,7 @@ export function mountSocietyRoutes(app: Hono): void {
     ` as Array<Record<string, unknown> & { id: number }>
     if (!rows[0]) return err(c, 404, 'note not found')
     const notes = await moderatePublicRows('note', rows)
-    return c.json({ note: notes[0] })
+    return publicJson(c, { note: notes[0] })
   })
 
   app.post('/api/note', async c => {
@@ -511,7 +512,7 @@ export function mountSocietyRoutes(app: Hono): void {
       rows as Array<Record<string, unknown> & { id: number }>, parsed.limit,
     )
     const agreements = page.items.map(agreementState)
-    return c.json({
+    return publicJson(c, {
       agreements: await moderatePublicRows('agreement', agreements),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
