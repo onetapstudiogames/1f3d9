@@ -68,6 +68,7 @@ import {
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { mountLegalRoutes } from './legal.ts'
 import { publicResponseSafety } from './public-output.ts'
 
 interface DomainConfiguration {
@@ -198,6 +199,7 @@ app.get('/llms.txt', c => c.text(hostedChatDiscovery(
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
+mountLegalRoutes(app)
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
