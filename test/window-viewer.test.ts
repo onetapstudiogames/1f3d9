@@ -48,9 +48,80 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.doesNotThrow(() => new Function(WINDOW_JS))
 })
 
+test('deliberate navigation makes real history and refresh keeps reading state', () => {
+  // Tabs, place and resident choices, and filter changes push a history
+  // entry; only unchanged-hash renders fall through to replaceState.
+  assert.match(WINDOW_JS, /function navigate\(next\)/)
+  assert.match(WINDOW_JS, /history\.pushState/)
+  assert.match(WINDOW_JS, /if \(window\.location\.hash === hash\) return/)
+  assert.match(WINDOW_JS, /navigate\(\{ view, placeId \}\)/)
+  assert.match(WINDOW_JS, /navigate\(\{ placeId: safeId\(nodes\.placeFilter\.value\) \}\)/)
+  assert.match(WINDOW_JS, /navigate\(\{ resident: safeHandle\(nodes\.residentFilter\.value\) \}\)/)
+  // Expanded bodies are keyed state, and focus lands back on the rebuilt
+  // control after a background refresh re-renders the DOM.
+  assert.match(WINDOW_JS, /expandedBodies: \[\]/)
+  assert.match(WINDOW_JS, /state\.expandedBodies\.includes\(bodyKey\)/)
+  assert.match(WINDOW_JS, /function restoreFocus\(focusKey\)/)
+  assert.match(WINDOW_JS, /focus\(\{ preventScroll: true \}\)/)
+  assert.match(WINDOW_JS, /data-focus-key/)
+})
+
+test('filtered happenings fetch their real slice from the server', () => {
+  assert.match(WINDOW_JS, /function autoLoadFilteredHistory\(collection, filters, entry\)/)
+  assert.match(WINDOW_JS, /autoLoadFilteredHistory\('events', filters, historyEntry\('events', filters\)\)/)
+  // The events history request carries the active filters so a busy city
+  // cannot push a watched place or followed resident out of the page.
+  assert.match(WINDOW_JS, /url\.searchParams\.set\('place_id', String\(filters\.placeId\)\)/)
+  assert.match(WINDOW_JS, /url\.searchParams\.set\('actor', filters\.resident\)/)
+  // An initialized filtered view keeps learning: each snapshot refresh
+  // silently refetches the newest filtered page and merges it.
+  assert.match(WINDOW_JS, /function forwardRefreshHistory\(collection, filters\)/)
+  assert.match(WINDOW_JS, /refreshFilteredHappenings\(\)/)
+  // The interim load control stays focusable; disabled buttons cannot
+  // receive restored focus. Arrow-key tab roving must not flood history.
+  assert.match(WINDOW_JS, /aria-busy/)
+  assert.doesNotMatch(WINDOW_JS, /button\.disabled = entry\.loading/)
+  assert.match(WINDOW_JS, /rovingTabActivation = true/)
+})
+
+test('every event kind an emitter writes is advertised public window life', async () => {
+  // The world_* kinds went missing because nothing tied emitters to the
+  // label list; this scan fails the moment a new INSERT INTO events kind
+  // is not also public window vocabulary.
+  const { readdir, readFile } = await import('node:fs/promises')
+  const sourceDir = new URL('../src/', import.meta.url)
+  const written = new Set<string>()
+  for (const name of await readdir(sourceDir)) {
+    if (!name.endsWith('.ts')) continue
+    const source = await readFile(new URL(name, sourceDir), 'utf8')
+    for (const match of source.matchAll(
+      /INSERT INTO events \(kind, actor, detail\)\s*(?:SELECT\s*'([a-z_]+)'|VALUES \(\s*'([a-z_]+)')/g,
+    )) {
+      written.add(match[1] ?? match[2] ?? '')
+    }
+  }
+  written.delete('')
+  assert.ok(written.size >= 15, `the emitter scan must find real kinds, saw ${written.size}`)
+  const advertised = new Set(PUBLIC_EVENT_KINDS)
+  const hidden = [...written].filter(kind => !advertised.has(kind))
+  assert.deepEqual(hidden, [], 'every written event kind must be public window life')
+})
+
 test('the window covers the whole public life of the city', () => {
   assert.ok(PUBLIC_EVENT_KINDS.includes('home_set'))
   assert.ok(PUBLIC_EVENT_KINDS.includes('agreement_accession'))
+  // The full enumeration is a truth surface: every kind the city writes for a
+  // public act must be listed, or the window silently hides that life. The
+  // world_* kinds are the market bridge — their absence hid every market sale.
+  assert.deepEqual(PUBLIC_EVENT_KINDS, [
+    'register', 'rotate', 'home_set', 'place_created', 'place_edited',
+    'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
+    'thing_crafted', 'thing_edited', 'thing_upgraded', 'thing_withdrawn',
+    'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note',
+    'agreement', 'agreement_accession', 'agreement_sign', 'transfer',
+    'transfer_offer', 'sale', 'transfer_cancel', 'world_listed', 'world_sale',
+    'world_cancel', 'flag', 'moderation',
+  ])
   for (const phrase of [
     'Who is standing where',
     'Conversations by place',
@@ -200,8 +271,9 @@ test('every paged window view has an accessible older-history surface', () => {
   assert.match(WINDOW_JS, /collection.*notes/)
   assert.match(WINDOW_JS, /collection.*things/)
   assert.match(WINDOW_JS, /\/api\/events/)
-  assert.match(WINDOW_JS, /Loading older/)
-  assert.match(WINDOW_JS, /Retry loading older/)
+  assert.match(WINDOW_JS, /'Loading ' \+ older \+ label/)
+  assert.match(WINDOW_JS, /'Retry loading ' \+ older \+ label/)
+  assert.match(WINDOW_JS, /entry\.loading && !entry\.initialized \? '' : 'older '/)
   assert.match(WINDOW_CSS, /\.history-page/)
 })
 

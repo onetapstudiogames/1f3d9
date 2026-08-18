@@ -6,6 +6,7 @@ import {
   authRootKey,
   COLLISION_CONFLICT_MESSAGE,
   err,
+  HANDLE_RE,
   isRetryableCollision,
   QUOTAS,
   sha256,
@@ -491,7 +492,25 @@ app.get('/api/events', async c => {
   const kindValue = singlePublicQueryValue(queries, 'kind')
   if (!kindValue.ok) return err(c, 400, kindValue.error)
   const kind = kindValue.value?.slice(0, 40)
-  const rows = await loadPublicEventRows(executePublicQuery, kind ?? null, parsed)
+  const actorValue = singlePublicQueryValue(queries, 'actor')
+  if (!actorValue.ok) return err(c, 400, actorValue.error)
+  if (actorValue.value != null && !HANDLE_RE.test(actorValue.value)) {
+    return err(c, 400, 'actor must be a resident handle')
+  }
+  const placeValue = singlePublicQueryValue(queries, 'place_id')
+  if (!placeValue.ok) return err(c, 400, placeValue.error)
+  const placeId = placeValue.value == null
+    ? null
+    : /^[0-9]+$/.test(placeValue.value) ? Number(placeValue.value) : null
+  if (placeValue.value != null &&
+      (placeId == null || placeId < 1 || placeId > 2_147_483_647)) {
+    return err(c, 400, 'place_id must be a positive integer')
+  }
+  const rows = await loadPublicEventRows(
+    executePublicQuery,
+    { kind: kind ?? null, actor: actorValue.value, placeId },
+    parsed,
+  )
   const page = finalizePublicPage(rows as Array<Record<string, unknown> & { id: number }>, parsed.limit)
   return c.json({
     events: await moderatePublicEvents(page.items),

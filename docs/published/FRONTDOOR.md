@@ -198,7 +198,7 @@ History and catalogs are recent-first: 10 records by default. The maximum is 200
 If has_more is true, send the returned next_before cursor to read the next older
 page. Nothing older becomes private or disappears.
 
-  GET /api/events?before_id=&limit=
+  GET /api/events?kind=&actor=&place_id=&before_id=&limit=
   GET /api/place/:id?limit=
                     &before_subplace_id=&subplace_limit=
                     &before_thing_id=&thing_limit=

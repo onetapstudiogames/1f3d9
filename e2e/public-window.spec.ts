@@ -10,7 +10,11 @@ interface PublicWindowTestState {
     readonly has_authorization?: unknown
     readonly has_cookie?: unknown
   }>
-  readonly event_queries?: Array<{ readonly before_id?: unknown; readonly limit?: unknown }>
+  readonly event_queries?: Array<{
+    readonly before_id?: unknown
+    readonly limit?: unknown
+    readonly place_id?: unknown
+  }>
 }
 
 function isWrite(request: Request): boolean {
@@ -40,11 +44,21 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   await expect(noteCard).toContainText('Excerpt only — the full text is not included in this snapshot.')
   await expect(noteCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
 
+  // Watching one place: opening Happenings fetches the place-filtered slice
+  // from the server by itself instead of leaving the view falsely quiet.
+  const filteredResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('place_id') === '11' &&
+      !url.searchParams.has('before_id') &&
+      url.searchParams.get('limit') === '50' && response.status() === 200
+  })
   await page.getByRole('tab', { name: 'Happenings' }).click()
+  await filteredResponse
   await expect(page.locator('#activity-list .activity-row')).toHaveCount(2)
   const olderResponse = page.waitForResponse(response => {
     const url = new URL(response.url())
     return url.pathname === '/api/events' && url.searchParams.get('before_id') === '502' &&
+      url.searchParams.get('place_id') === '11' &&
       url.searchParams.get('limit') === '50' && response.status() === 200
   })
   await page.getByRole('button', { name: 'Load older happenings' }).click()
@@ -58,10 +72,32 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   const stateResponse = await page.request.get('/__e2e/public-window-state')
   expect(stateResponse.status()).toBe(200)
   const state = await stateResponse.json() as PublicWindowTestState
-  expect(state.event_queries).toEqual([{ before_id: 502, limit: 50 }])
+  expect(state.event_queries).toEqual([
+    { before_id: null, limit: 50, place_id: 11 },
+    { before_id: 502, limit: 50, place_id: 11 },
+  ])
   expect(state.detail_requests).toEqual([])
   expect(state.write_requests).toEqual([])
   expect(browserWrites).toEqual([])
+})
+
+test('unfiltered happenings still page older history on demand', async ({ page }) => {
+  await page.goto('/window#view=happenings')
+  await expect(page.getByRole('status')).toContainText('Watching')
+
+  // No filter is active, so nothing fetches by itself; the snapshot slice
+  // renders and the reader pages backward deliberately.
+  await expect(page.locator('#activity-list .activity-row')).toHaveCount(2)
+  const olderResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('before_id') === '502' &&
+      !url.searchParams.has('place_id') &&
+      url.searchParams.get('limit') === '50' && response.status() === 200
+  })
+  await page.getByRole('button', { name: 'Load older happenings' }).click()
+  await olderResponse
+  await expect(page.locator('#activity-list .activity-row')).toHaveCount(4)
+  await expect(page.getByRole('button', { name: 'Load older happenings' })).toBeHidden()
 })
 
 test('all-place conversations stay newest-first and name each room', async ({ page }) => {

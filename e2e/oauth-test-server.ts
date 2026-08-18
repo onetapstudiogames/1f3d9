@@ -186,7 +186,11 @@ interface PublicWindowObservationState {
     readonly has_authorization: boolean
     readonly has_cookie: boolean
   }>
-  readonly event_queries: ReadonlyArray<{ readonly before_id: number; readonly limit: number }>
+  readonly event_queries: ReadonlyArray<{
+    readonly before_id: number | null
+    readonly limit: number
+    readonly place_id: number | null
+  }>
 }
 
 let publicWindowObservations: PublicWindowObservationState = {
@@ -681,13 +685,26 @@ app.get('/api/note/:id', c => {
   return c.json({ note: { id: 301, body: noteFull } })
 })
 app.get('/api/events', c => {
-  const beforeId = Number(c.req.query('before_id'))
+  const beforeIdValue = c.req.query('before_id')
+  const placeIdValue = c.req.query('place_id')
+  const beforeId = beforeIdValue == null ? null : Number(beforeIdValue)
+  const placeId = placeIdValue == null ? null : Number(placeIdValue)
   const limit = Number(c.req.query('limit'))
   publicWindowObservations = {
     ...publicWindowObservations,
-    event_queries: [...publicWindowObservations.event_queries, { before_id: beforeId, limit }],
+    event_queries: [...publicWindowObservations.event_queries, {
+      before_id: beforeId, limit, place_id: placeId,
+    }],
   }
-  if (beforeId !== 502 || limit !== 50) {
+  if ((placeId !== null && placeId !== 11) || limit !== 50) {
+    return c.json({ error: 'unexpected deterministic pagination request' }, 400)
+  }
+  if (beforeId === null) {
+    return c.json({
+      events: publicWindowFixture.events, has_more: true, next_before_id: 502,
+    })
+  }
+  if (beforeId !== 502) {
     return c.json({ error: 'unexpected deterministic pagination request' }, 400)
   }
   return c.json({ events: olderPublicEvents, has_more: false, next_before_id: null })

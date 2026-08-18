@@ -1227,6 +1227,86 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     body: String(params[3] ?? 'hello from the square'),
     created_at: '2026-08-11T00:00:00.000Z',
   }]
+  // Event reads name things and notes inside their EXISTS place guards, so
+  // they must dispatch on their distinctive SELECT list before the generic
+  // notes/things branches can swallow them.
+  if (q.includes('select id, at, kind, actor, detail') ||
+      q.includes('select at, kind, actor, detail')) {
+    if (state.scenario === 'public pagination') {
+      const kind = params[0] == null ? null : String(params[0])
+      const actor = params[1] == null ? null : String(params[1])
+      const placeId = params[2] == null ? null : Number(params[2])
+      const matching = paginationEvents().filter(event =>
+        (kind == null || event.kind === kind) &&
+        (actor == null || event.actor === actor) &&
+        (placeId == null ||
+          Number((event.detail as Record<string, unknown>).place_id) === placeId))
+      return descendingPage(matching, params[3], params[4])
+    }
+    if (state.scenario === 'event pagination') {
+      const beforeId = params[3] == null ? null : Number(params[3])
+      const limit = q.includes('limit $5') ? Number(params[4]) : 200
+      return [205, 204, 203, 202, 201]
+        .filter(id => beforeId == null || id < beforeId)
+        .slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
+        .map(id => ({
+          id,
+          at: new Date(Date.UTC(2026, 7, 11, 0, 0, id - 200)).toISOString(),
+          kind: 'note',
+          actor: 'tiny-lantern',
+          detail: { note_id: id, place_id: 2 },
+        }))
+    }
+    if (state.scenario === 'activity surfaces') return [
+      {
+        id: 70, at: '2026-08-11T00:00:00.000Z', kind: 'place_created',
+        actor: 'tiny-lantern', detail: { place_id: 2 },
+      },
+      {
+        id: 71, at: '2026-08-11T00:01:00.000Z', kind: 'sale',
+        actor: 'neighbor', detail: { transfer_id: 5 },
+      },
+      {
+        id: 72, at: '2026-08-11T00:02:00.000Z', kind: 'transfer_cancel',
+        actor: 'tiny-lantern', detail: { offer_id: 90 },
+      },
+      {
+        id: 73, at: '2026-08-11T00:03:00.000Z', kind: 'world_sale',
+        actor: 'neighbor', detail: { transfer_id: 6, offer_id: 91, thing_id: 9 },
+      },
+    ]
+    if (state.scenario === 'nested moderation events') return [
+      {
+        id: 80, at: '2026-08-11T00:06:00.000Z', kind: 'laws_changed',
+        actor: 'tiny-lantern', detail: { place_id: 2, traits: ['quiet-hours', 'safe-trait'] },
+      },
+      {
+        id: 81, at: '2026-08-11T00:07:00.000Z', kind: 'kind_invented',
+        actor: 'tiny-lantern', detail: {
+          kind_id: 3,
+          name: 'lantern',
+          traits: ['glowing', 'safe-trait'],
+          recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
+        },
+      },
+      {
+        id: 82, at: '2026-08-11T00:08:00.000Z', kind: 'kind_revised',
+        actor: 'neighbor', detail: {
+          kind_id: 9,
+          name: 'safe-tool',
+          traits: ['glowing', 'safe-trait'],
+          recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
+        },
+      },
+    ]
+    return [{
+      id: 70,
+      at: '2026-08-11T00:00:00.000Z',
+      kind: 'register',
+      actor: 'tiny-lantern',
+      detail: { resident_id: 7 },
+    }]
+  }
   if (q.includes('from notes')) {
     if (state.scenario === 'busy place') {
       const beforeId = params[1] == null ? null : Number(params[1])
@@ -1506,71 +1586,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('from residents')) return [residentRow(), {
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
   }]
-  if (q.includes('from events') && state.scenario === 'public pagination') {
-    const kind = params[0] == null ? null : String(params[0])
-    const matching = paginationEvents().filter(event => kind == null || event.kind === kind)
-    return descendingPage(matching, params[1], params[2])
-  }
   if (q.includes('from events') && q.includes('count(')) return [{ n: 0 }]
-  if (q.includes('from events') && state.scenario === 'event pagination') {
-    const beforeId = params[1] == null ? null : Number(params[1])
-    const limit = q.includes('limit $3') ? Number(params[2]) : 200
-    return [205, 204, 203, 202, 201]
-      .filter(id => beforeId == null || id < beforeId)
-      .slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
-      .map(id => ({
-        id,
-        at: new Date(Date.UTC(2026, 7, 11, 0, 0, id - 200)).toISOString(),
-        kind: 'note',
-        actor: 'tiny-lantern',
-        detail: { note_id: id, place_id: 2 },
-      }))
-  }
-  if (q.includes('from events') && state.scenario === 'activity surfaces') return [
-    {
-      id: 70, at: '2026-08-11T00:00:00.000Z', kind: 'place_created',
-      actor: 'tiny-lantern', detail: { place_id: 2 },
-    },
-    {
-      id: 71, at: '2026-08-11T00:01:00.000Z', kind: 'sale',
-      actor: 'neighbor', detail: { transfer_id: 5 },
-    },
-    {
-      id: 72, at: '2026-08-11T00:02:00.000Z', kind: 'transfer_cancel',
-      actor: 'tiny-lantern', detail: { offer_id: 90 },
-    },
-  ]
-  if (q.includes('from events') && state.scenario === 'nested moderation events') return [
-    {
-      id: 80, at: '2026-08-11T00:06:00.000Z', kind: 'laws_changed',
-      actor: 'tiny-lantern', detail: { place_id: 2, traits: ['quiet-hours', 'safe-trait'] },
-    },
-    {
-      id: 81, at: '2026-08-11T00:07:00.000Z', kind: 'kind_invented',
-      actor: 'tiny-lantern', detail: {
-        kind_id: 3,
-        name: 'lantern',
-        traits: ['glowing', 'safe-trait'],
-        recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
-      },
-    },
-    {
-      id: 82, at: '2026-08-11T00:08:00.000Z', kind: 'kind_revised',
-      actor: 'neighbor', detail: {
-        kind_id: 9,
-        name: 'safe-tool',
-        traits: ['glowing', 'safe-trait'],
-        recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
-      },
-    },
-  ]
-  if (q.includes('from events')) return [{
-    id: 70,
-    at: '2026-08-11T00:00:00.000Z',
-    kind: 'register',
-    actor: 'tiny-lantern',
-    detail: { resident_id: 7 },
-  }]
   if (q.includes('sum(') && (q.includes('fees') || q.includes('payment_uses'))) return [{ collected: 1, n: 1 }]
   if (q.includes('from fees')) return [{
     amount_usdc: 1, tx_hash: TX1, handle: 'tiny-lantern', purpose: 'kind', created_at: '2026-08-11T00:00:00.000Z',
@@ -3037,11 +3053,11 @@ test('events keep the public contract while paging stably by kind and id', async
   assert.equal(first.next_before_id, 60)
   const firstRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
   assert.deepEqual(
-    firstRead?.params?.map((value, index) => index === 0 ? value : Number(value)),
-    ['note_created', 65, 4],
+    firstRead?.params?.map((value, index) => index >= 3 ? Number(value) : value),
+    ['note_created', null, null, 65, 4],
     'the database fetches one lookahead row',
   )
-  assert.match(firstRead?.query ?? '', /id\s*<\s*\$2::integer/i)
+  assert.match(firstRead?.query ?? '', /id\s*<\s*\$4::integer/i)
   assert.match(firstRead?.query ?? '', /order\s+by\s+id\s+desc/i)
 
   state = { ...state, calls: [] }
@@ -3596,6 +3612,7 @@ test('front door and human window surface the event names the world actually emi
   assert.match(frontText, /founded a place/i)
   assert.match(frontText, /bought property/i)
   assert.match(frontText, /canceled a sale offer/i)
+  assert.match(frontText, /bought a thing through the world market/i)
 
   state = { ...state, calls: [] }
   const snapshot = await app.request('/api/window')
@@ -3604,10 +3621,13 @@ test('front door and human window surface the event names the world actually emi
     events: { kind: string }[]
     body_limits: { notes: number; things: number; agreements: number }
   }
-  assert.deepEqual(payload.events.map(event => event.kind), ['place_created', 'sale', 'transfer_cancel'])
+  assert.deepEqual(
+    payload.events.map(event => event.kind),
+    ['place_created', 'sale', 'transfer_cancel', 'world_sale'],
+  )
   assert.deepEqual(payload.body_limits, { notes: 2_000, things: 1_000, agreements: 4_000 })
   const eventKindParams = JSON.stringify(sqlCalls().flatMap(call => call.params ?? []))
-  for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel']) {
+  for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel', 'world_listed', 'world_sale', 'world_cancel']) {
     assert.ok(eventKindParams.includes(kind), `public event query should include ${kind}`)
   }
 
@@ -3616,6 +3636,9 @@ test('front door and human window surface the event names the world actually emi
   assert.match(source, /place_created[^\n]*founded a place/i)
   assert.match(source, /sale[^\n]*bought property/i)
   assert.match(source, /transfer_cancel[^\n]*canceled a sale offer/i)
+  assert.match(source, /world_sale[^\n]*bought a thing through the world market/i)
+  assert.match(source, /world_listed[^\n]*listed a thing on the world market/i)
+  assert.match(source, /world_cancel[^\n]*canceled a world market listing/i)
 })
 
 test('the human window is hardened, query-blind, credential-blind, and read-only', async () => {
@@ -4207,14 +4230,48 @@ test('event history supports bounded cursor pages without changing the events ar
   assert.equal(body.next_before_id, 202)
   const eventRead = sqlCalls().find(call => /select\s+id,\s*at,\s*kind,\s*actor,\s*detail[\s\S]*from\s+events/i
     .test(call.query ?? ''))
-  assert.match(eventRead?.query ?? '', /\$2::integer\s+is\s+null\s+or\s+id\s*<\s*\$2::integer/i)
-  assert.match(eventRead?.query ?? '', /limit\s+\$3::integer/i)
-  assert.deepEqual(eventRead?.params, ['note', '204', '3'])
+  assert.match(eventRead?.query ?? '', /\$4::integer\s+is\s+null\s+or\s+id\s*<\s*\$4::integer/i)
+  assert.match(eventRead?.query ?? '', /limit\s+\$5::integer/i)
+  assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3'])
 
   reset({ scenario: 'event pagination' })
   assert.equal((await app.request('/api/events?before_id=nope')).status, 400)
   assert.equal((await app.request('/api/events?limit=0')).status, 400)
   assert.equal((await app.request('/api/events?limit=201')).status, 400)
+})
+
+test('event history narrows by actor and by observed place', async () => {
+  reset({ scenario: 'public pagination' })
+  const byActor = await app.request('/api/events?actor=tiny-lantern&limit=3')
+  assert.equal(byActor.status, 200)
+  const actorBody = await byActor.json() as { events: Array<{ id: number }> }
+  assert.deepEqual(actorBody.events.map(event => event.id), [70, 69, 68])
+  const actorRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
+  assert.match(actorRead?.query ?? '', /\$2::text\s+is\s+null\s+or\s+actor\s*=\s*\$2::text/i)
+  assert.match(actorRead?.query ?? '', /detail->>'place_id'\s*=\s*\(\$3::integer\)::text/i)
+  assert.match(actorRead?.query ?? '', /detail->>'thing_id'[\s\S]*from\s+things/i)
+  assert.match(actorRead?.query ?? '', /detail->>'note_id'[\s\S]*from\s+notes/i)
+  assert.match(actorRead?.query ?? '', /detail->>'asset_type'\s*=\s*'thing'/i)
+  assert.match(actorRead?.query ?? '', /detail->>'asset_type'\s*=\s*'place'/i)
+  assert.match(actorRead?.query ?? '', /detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
+  assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
+  assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4'])
+
+  const invalid = [
+    '/api/events?actor=Not%20A%20Handle',
+    '/api/events?actor=x',
+    '/api/events?actor=tiny-lantern&actor=neighbor',
+    '/api/events?place_id=0',
+    '/api/events?place_id=nope',
+    '/api/events?place_id=2147483648',
+    '/api/events?place_id=2&place_id=3',
+  ]
+  for (const path of invalid) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
+  }
 })
 
 test('removed authored names are tombstoned inside append-only event details', async () => {

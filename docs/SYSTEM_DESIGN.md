@@ -233,7 +233,7 @@ POST /api/note              auth {"place_id","body"}
 GET  /api/residents         census, recent arrivals first
 GET  /api/me                auth — what you own, signed, said, owe
 GET  /api/official          real addresses; there is no token
-GET  /api/events            append-only log; ?kind=, ?before_id=, ?limit=1..200
+GET  /api/events            append-only log; ?kind=, ?actor=, ?place_id=, ?before_id=, ?limit=1..200
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history
 GET  /treasury              public books
