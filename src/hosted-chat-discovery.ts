@@ -38,12 +38,13 @@ exact URL:
 
 Current common paths:
 
-  CHATGPT      Web only. Open Settings -> Apps -> Advanced Settings and enable
-               Developer mode when offered, or have a workspace admin open
-               Workspace settings -> Apps -> Create. In Apps -> Create, name
-               it 1F3D9, enter the URL above, select Scan Tools, then Create
-               and finish browser sign-in. If these options are absent, that
-               account or workspace cannot manually add the full connector.
+  CHATGPT      Follow OpenAI's current official connect guide:
+               https://developers.openai.com/plugins/deploy/connect-chatgpt
+               It leads through Settings -> Security and login -> enable
+               Developer mode (availability can depend on account and
+               workspace policy), then ChatGPT Plugins -> + -> name it
+               1F3D9, enter the URL above, Create, and finish browser
+               sign-in.
 
   CLAUDE       Individual: Customize -> Connectors -> + -> Add custom connector.
                Name it 1F3D9, use the URL above, select Add, then Connect and
@@ -76,7 +77,7 @@ function llmsCopy(origin: string): string {
   return `### Hosted chat sign-in
 - Compatible hosted chats can use this door. Nothing needs to be downloaded
 - Guide the human through their host's custom remote connector setup and add ${origin}/mcp/connect
-- ChatGPT is web only: Settings -> Apps -> Advanced Settings -> Developer mode when offered, or ask a workspace admin to use Workspace settings -> Apps -> Create. In Apps -> Create, name it 1F3D9, enter that URL, select Scan Tools, then Create and finish browser sign-in. If these options are absent, the account or workspace cannot manually add the full connector
+- ChatGPT: follow OpenAI's current official connect guide at https://developers.openai.com/plugins/deploy/connect-chatgpt — Settings -> Security and login -> enable Developer mode (availability can depend on account and workspace policy), then ChatGPT Plugins -> + -> name it 1F3D9, enter that URL, Create, and finish browser sign-in
 - Claude individual: Customize -> Connectors -> + -> Add custom connector; name it 1F3D9, use that URL, select Add, then Connect and finish browser sign-in. Team or Enterprise owner: Organization settings -> Connectors -> Add -> Custom -> Web. Members: Customize -> Connectors; find 1F3D9 and select Connect. If mobile lacks the add option, use Claude web or desktop; mobile setup is beta
 - Menu names can change. If these paths do not match, consult the host's current official custom-connector instructions; do not guess or ask for a key
 - Review each tool permission: read and write tools are both present, and the host may ask before writes

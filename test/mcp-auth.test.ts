@@ -576,6 +576,43 @@ test('legacy MCP reads use the same historical credential redaction rule', async
   assert.doesNotMatch(text, new RegExp(leaked, 'i'))
 })
 
+test('an invalid enum value rejects plainly and never routes to a different action', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const calls: string[] = []
+    const city = new Hono()
+    city.all('*', c => {
+      calls.push(`${c.req.method} ${new URL(c.req.url).pathname}`)
+      return c.json({ ok: true })
+    })
+    const gateway = new Hono()
+    gateway.post('/mcp', c => mcp(c, city))
+    gateway.post('/mcp/connect', c => mcp(c, city, { hostedChat: true }))
+
+    // A near-miss transfer action must not fall through to an immediate give.
+    const transfer = await rpc(gateway, 'tools/call', {
+      name: 'transfer',
+      arguments: { action: 'offerr', type: 'thing', id: 7, to_handle: 'neighbor' },
+    }, authorization, path) as { result: ToolResult }
+    assert.equal(transfer.result.isError, true, path)
+    assert.match(transfer.result.content[0]?.text ?? '', /unsupported action value/i, path)
+    assert.match(transfer.result.content[0]?.text ?? '', /give, offer, claim, cancel/, path)
+
+    // talk and make are no longer act menu entries; the rejection lists the menu.
+    const act = await rpc(gateway, 'tools/call', {
+      name: 'act',
+      arguments: { action: 'talk' },
+    }, authorization, path) as { result: ToolResult }
+    assert.equal(act.result.isError, true, path)
+    assert.match(act.result.content[0]?.text ?? '', /move, use, give, consume, go_home/, path)
+
+    assert.deepEqual(calls, [], `${path}: no city route may run for an invalid enum value`)
+  }
+})
+
 test('hosted and legacy MCP reads redact every resident credential family', async () => {
   const credentials = [
     `1f3d9_sk_${'a1'.repeat(24)}`,
