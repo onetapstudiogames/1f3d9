@@ -9,6 +9,7 @@ import {
   runAction,
   setHome,
   withEngineTransaction,
+  type ActionExecution,
   type Presence,
   type TaggedSql,
   type RuntimeTarget,
@@ -96,6 +97,44 @@ function actionFieldsAllowed(action: BasicAction, body: JsonObject): boolean {
   return hasOnly(body, ACTION_FIELDS)
 }
 
+function expectedPlaceAfterAction(
+  action: BasicAction,
+  result: ActionExecution,
+  before: Presence,
+  destinationPlaceId: number | null,
+): number | null {
+  if (result.httpStatus !== 200) return before.currentPlaceId
+  if (action === 'move') return destinationPlaceId
+  if (action === 'go_home') return before.homePlaceId
+  return before.currentPlaceId
+}
+
+/**
+ * The action outcome is already durably recorded, so observing the city after
+ * it is best-effort: a failed read or due-effect pass must never repaint a
+ * committed action as an error. Deferred effects stay due for the next observer.
+ */
+async function observePlaceAfterAction(
+  residentId: number,
+  action: BasicAction,
+  result: ActionExecution,
+  before: Presence,
+  destinationPlaceId: number | null,
+): Promise<number | null> {
+  let placeId = expectedPlaceAfterAction(action, result, before, destinationPlaceId)
+  try {
+    const after = await residentPresence(residentId)
+    placeId = after.currentPlaceId
+    if (result.httpStatus === 200 && after.currentPlaceId !== null
+      && after.currentPlaceId !== before.currentPlaceId) {
+      await resolveDueEffects(after.currentPlaceId)
+    }
+  } catch (error) {
+    console.error('post-action observation failed', error)
+  }
+  return placeId
+}
+
 async function runResidentAction(
   c: Context,
   resident: Resident,
@@ -146,16 +185,14 @@ async function runResidentAction(
       recipientId: toResidentId,
       payload: {},
     })
-    const after = await residentPresence(resident.id)
-    if (result.httpStatus === 200 && after.currentPlaceId !== null
-      && after.currentPlaceId !== before.currentPlaceId) {
-      await resolveDueEffects(after.currentPlaceId)
-    }
+    const placeId = await observePlaceAfterAction(
+      resident.id, action, result, before, destinationPlaceId,
+    )
     const publicAction = {
       id: result.actionId,
       action,
       status: result.status,
-      place_id: after.currentPlaceId,
+      place_id: placeId,
       effects_applied: result.effectsApplied,
     }
     if (result.error) {

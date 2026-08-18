@@ -123,6 +123,22 @@ export function postgresErrorMessage(error: unknown, depth = 0): string | null {
   return postgresErrorMessage(candidate.sourceError, depth + 1)
 }
 
+/**
+ * Ordinary write collisions: serialization failure, deadlock, an unavailable
+ * lock, and a unique-key race no named handler claimed. Each one means another
+ * action touched the same records first, so a plain retry is the honest answer.
+ */
+const RETRYABLE_COLLISION_CODES: readonly string[] = Object.freeze([
+  '40001', '40P01', '55P03', '23505',
+])
+
+export const COLLISION_CONFLICT_MESSAGE = 'another action changed the same records; retry'
+
+export function isRetryableCollision(error: unknown): boolean {
+  const code = postgresErrorCode(error)
+  return code !== null && RETRYABLE_COLLISION_CODES.includes(code)
+}
+
 type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500 | 502 | 503
 
 export function err(c: Context, status: ErrorStatus, message: string) {
