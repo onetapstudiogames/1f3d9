@@ -535,7 +535,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'me',
     description:
-      `Read what you own, signed, said, and currently owe, plus today's remaining free-action quotas. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records.`,
+      `Read what you own, signed, said, and currently owe, plus today's remaining free-action quotas. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -554,7 +554,7 @@ const TOOLS: readonly ToolDefinition[] = [
         offer_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
       },
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     route: args => ({ method: 'GET', path: mePath(args) }),
   },
   {
