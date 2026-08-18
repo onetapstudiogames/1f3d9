@@ -658,6 +658,91 @@ test('an invalid enum value rejects plainly and never routes to a different acti
   }
 })
 
+test('failed tool calls carry a stable machine-readable error class on both doors', async () => {
+  const statuses = [
+    [400, 'bad_input'],
+    [404, 'bad_input'],
+    [401, 'auth_required'],
+    [402, 'payment_required'],
+    [403, 'forbidden'],
+    [409, 'conflict'],
+    [429, 'rate_limited'],
+    [500, 'city_fault'],
+  ] as const
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    for (const [status, expected] of statuses) {
+      const city = new Hono()
+      city.all('*', c => c.json({ error: 'downstream detail' }, status))
+      const gateway = new Hono()
+      gateway.post('/mcp', c => mcp(c, city))
+      gateway.post('/mcp/connect', c => mcp(c, city, { hostedChat: true }))
+      const response = await rpc(gateway, 'tools/call', {
+        name: 'say', arguments: { place_id: 2, body: 'hello square' },
+      }, authorization, path) as { result: ToolResult }
+      assert.equal(response.result.isError, true, `${path} ${status}`)
+      const parsed = JSON.parse(response.result.content[0]?.text ?? '{}') as {
+        error_class?: string
+        http_status?: number
+        error?: string
+      }
+      assert.equal(parsed.error_class, expected, `${path} ${status}`)
+      assert.equal(parsed.http_status, status, `${path} ${status}`)
+      assert.equal(parsed.error, 'downstream detail', `${path} ${status}: body fields preserved`)
+    }
+  }
+})
+
+test('successes stay unwrapped, transport failure is unreachable, pre-flight rejections carry their class', async () => {
+  setHostedChatFlag(false)
+  const city = new Hono()
+  city.all('*', c => c.json({ note: { id: 7 } }, 201))
+  const gateway = new Hono()
+  gateway.post('/mcp', c => mcp(c, city))
+  const ok = await rpc(gateway, 'tools/call', {
+    name: 'say', arguments: { place_id: 2, body: 'plain success' },
+  }, `Bearer ${LEGACY_SECRET}`, '/mcp') as { result: ToolResult }
+  assert.equal(ok.result.isError, false)
+  assert.equal(
+    (JSON.parse(ok.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+    undefined,
+    'successful results keep their exact downstream shape',
+  )
+
+  const downCity = { request: () => Promise.reject(new Error('down')) } as unknown as Hono
+  const downGateway = new Hono()
+  downGateway.post('/mcp', c => mcp(c, downCity))
+  const failed = await rpc(downGateway, 'tools/call', {
+    name: 'say', arguments: { place_id: 2, body: 'x' },
+  }, `Bearer ${LEGACY_SECRET}`, '/mcp') as { result: ToolResult }
+  assert.equal(failed.result.isError, true)
+  assert.equal(
+    (JSON.parse(failed.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+    'unreachable',
+  )
+
+  const harness = createHarness()
+  const anonymous = await rpc(harness.gateway, 'tools/call', {
+    name: 'me', arguments: {},
+  }, undefined, '/mcp') as { result: ToolResult }
+  assert.equal(
+    (JSON.parse(anonymous.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+    'auth_required',
+  )
+
+  const secret = await rpc(harness.gateway, 'tools/call', {
+    name: 'say', arguments: { place_id: 2, body: `keep this out: ${LEGACY_SECRET}` },
+  }, `Bearer ${LEGACY_SECRET}`, '/mcp') as { result: ToolResult }
+  assert.equal(
+    (JSON.parse(secret.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
+    'bad_input',
+  )
+  assert.doesNotMatch(JSON.stringify(secret), new RegExp(LEGACY_SECRET, 'i'))
+})
+
 test('hosted and legacy MCP reads redact every resident credential family', async () => {
   const credentials = [
     `1f3d9_sk_${'a1'.repeat(24)}`,

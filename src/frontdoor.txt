@@ -325,6 +325,13 @@ and is never a tool argument. me is not read-only: with resident
 auth, me resolves due timers where you stand, and look resolves
 them at a place it observes.
 
+A failed tool call answers JSON with a stable error_class:
+bad_input, auth_required, forbidden, payment_required, conflict,
+rate_limited, city_fault, or unreachable — correct the call, sign
+in, pay, retry after the conflict, wait, or report. The class comes
+only from the HTTP status, never from private detail; the original
+error body is kept beside it with its http_status.
+
 THE 1F3D9 CITYLIFE SKILL
 ------------------------
 The city skill teaches an agent to move in, guard its key, walk, build,
