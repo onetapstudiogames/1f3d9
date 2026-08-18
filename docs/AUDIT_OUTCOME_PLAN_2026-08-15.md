@@ -271,6 +271,53 @@ Other public-read findings from the live check:
 
 Meet the shared cleanup outcome above before Wave 4 begins.
 
+**Record — passed 2026-08-18.** All five Wave 3 items shipped through reviewed
+pull requests #40–#44, each independently adversarially reviewed, gated with
+`deploy.sh --prepare`, verified on its Vercel preview, squash-merged, and
+verified live in production after deploy:
+
+- *Item 11* (#40) — the coordinated truth release, plus the matching external
+  skill release (onetapstudiogames/1f3d9-citylife#2) merged immediately after
+  the city deploy.
+- *Item 12* (#41) — `me` (and `look`) advertise honest annotations; a resolved
+  timer can run any effect brick, so both carry `destructiveHint: true`.
+- *Item 13* (#42) — stable machine-readable MCP `error_class` set on both
+  doors, derived only from HTTP status or transport state.
+- *Item 10* (#43) — resident flags bounded at 20/resident/UTC-hour. Review
+  caught that the bucket column's `CHECK (used BETWEEN 1 AND 5)` would have
+  500'd a resident's sixth report; the `flag-limits` migration widened it to
+  the sanity floor and was applied to production after verified pre-snapshot
+  `snap-still-queen-av6qzmx1`, before the code merged.
+- *Item 4* (#44) — `/api/map` shares one 30-second build with the window's
+  public CDN header. Post-deploy measurement: `X-Vercel-Cache: HIT` with
+  nonzero `Age` on repeat reads, ~0.19–0.43 s per response; every hit inside
+  the module TTL or CDN window no longer touches Neon. Deeper query work
+  stays unjustified until the Wave 4 observability items re-measure volume.
+
+Cleanup:
+
+- *Workspace:* clean tree on `main`; every wave-3 branch verified
+  byte-identical to its shipped squash commit, then deleted locally and on
+  origin (5 ship branches). No stashes, no extra worktrees. The six wave-1
+  archaeology branches remain per their recorded owner/expiry (2026-09-18).
+- *Temporary files:* no `1f3d9-*` residue in Windows Temp from this wave's
+  runs. Pre-existing audit-era `unshittify`/`unshittily-1f3d9-*` baseline
+  JSONs and `uns-sandbox-1f3d9/` (2026-08-15) were left in place — owner: the
+  founder's audit tooling; purpose: re-baseline state; review by the Wave 4
+  gate.
+- *Processes and containers:* no process or container referencing 1f3d9
+  beyond this session's own shells; nothing was stopped.
+- *Providers:* the five Neon preview branches the Vercel integration created
+  for the wave-3 PR branches were deleted after merge (the integration had
+  not cleaned them). Older preview branches belong to item 18 and were not
+  touched. Vercel preview deployments follow Vercel's retention. Production
+  snapshot `snap-still-queen-av6qzmx1` remains as the flag-limits rollback
+  point; Neon snapshot retention applies.
+- *Known flake, not a wave-3 defect:* the identity-rotation concurrency
+  tests in `test/integration/identity-recovery-postgres.test.ts` can fail
+  with a Postgres deadlock instead of a clean single-winner loss (observed
+  once, passed on rerun; flagged as a follow-up task).
+
 ## Wave 4 — restore the window and cut avoidable spend
 
 ### 7. A complete, stable activity window
