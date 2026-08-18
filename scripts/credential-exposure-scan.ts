@@ -282,6 +282,7 @@ function parseIdentityRows(rows: readonly Record<string, unknown>[]): readonly I
     'oauth_access_token',
     'oauth_refresh_token',
     'oauth_authorization_code',
+    'recovery_code',
   ])
   return Object.freeze(rows.map(row => {
     const residentId = positiveResidentId(row.resident_id)
