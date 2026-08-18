@@ -243,6 +243,7 @@ test('a real PostgreSQL scan is read-only and returns only associated resident I
     oauth_access_token: 2,
     oauth_refresh_token: 3,
     oauth_authorization_code: 2,
+    recovery_code: 0,
   })
   assert.deepEqual(after, before)
 
