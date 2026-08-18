@@ -107,19 +107,39 @@ export type PublicQueryExecutor = (
   params: readonly unknown[],
 ) => Promise<readonly Record<string, unknown>[]>
 
+export interface PublicEventFilters {
+  readonly kind: string | null
+  readonly actor: string | null
+  readonly placeId: number | null
+}
+
 export async function loadPublicEventRows(
   query: PublicQueryExecutor,
-  kind: string | null,
+  filters: PublicEventFilters,
   page: PublicPage,
 ): Promise<readonly Record<string, unknown>[]> {
+  // The place filter matches an event to a place three ways: the event names the
+  // place itself, or it names a thing or note that lives there now. Detail ids
+  // are regex-guarded before casting because detail is caller-shaped JSONB.
   return query(
     `SELECT id, at, kind, actor, detail
      FROM events
      WHERE ($1::text IS NULL OR kind = $1::text)
-       AND ($2::integer IS NULL OR id < $2::integer)
+       AND ($2::text IS NULL OR actor = $2::text)
+       AND ($3::integer IS NULL
+         OR detail->>'place_id' = ($3::integer)::text
+         OR (detail->>'thing_id' ~ '^[0-9]{1,9}$' AND EXISTS (
+           SELECT 1 FROM things thing
+           WHERE thing.id = (detail->>'thing_id')::integer
+             AND thing.place_id = $3::integer))
+         OR (detail->>'note_id' ~ '^[0-9]{1,9}$' AND EXISTS (
+           SELECT 1 FROM notes note
+           WHERE note.id = (detail->>'note_id')::integer
+             AND note.place_id = $3::integer)))
+       AND ($4::integer IS NULL OR id < $4::integer)
      ORDER BY id DESC
-     LIMIT $3::integer`,
-    [kind, page.cursor, page.fetchLimit],
+     LIMIT $5::integer`,
+    [filters.kind, filters.actor, filters.placeId, page.cursor, page.fetchLimit],
   )
 }
 

@@ -157,9 +157,15 @@ test.beforeEach(async ({ page }) => {
       json: { agreements: [OLDER_AGREEMENT], has_more: false, next_before_id: null },
     })
   })
-  await page.route('**/api/events**', route => route.fulfill({
-    json: { events: [OLDER_EVENT], has_more: false, next_before_id: null },
-  }))
+  await page.route('**/api/events**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('before_id') === '51') {
+      return route.fulfill({ json: { events: [OLDER_EVENT], has_more: false, next_before_id: null } })
+    }
+    return route.fulfill({
+      json: { events: SNAPSHOT.events, has_more: true, next_before_id: 51 },
+    })
+  })
 
   const htmlWithoutAutomaticClient = WINDOW_HTML.replace(
     /\s*<script src="\/window\.js" defer><\/script>/,
@@ -222,8 +228,12 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(placeNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
 
   await page.getByRole('tab', { name: 'Conversations' }).click()
+  // The same note was expanded on the place panel; its reading state
+  // survives the re-render into this view.
   const conversationNote = page.locator('#conversation-stream .note-card')
-  await expect(conversationNote.getByRole('button', { name: 'Show more' })).toBeVisible()
+  await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
+  await conversationNote.getByRole('button', { name: 'Show less' }).click()
+  await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'false')
   await conversationNote.getByRole('button', { name: 'Show more' }).click()
   await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
 
@@ -295,10 +305,19 @@ test('recent window slices can be extended independently in every public view', 
   await olderPlaceNoteRequest
   await expect(page.locator('#place-conversation')).toContainText('An older conversation remains readable.')
 
+  // The place chosen on the Place tab is still watched, so Happenings
+  // fetches its place-filtered slice from the server on its own.
+  const filteredEventRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/events' && url.searchParams.get('place_id') === '11' &&
+      !url.searchParams.has('before_id')
+  })
   await page.getByRole('tab', { name: 'Happenings' }).click()
+  await filteredEventRequest
   const olderEventRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
-    return url.pathname === '/api/events' && url.searchParams.get('before_id') === '51'
+    return url.pathname === '/api/events' && url.searchParams.get('before_id') === '51' &&
+      url.searchParams.get('place_id') === '11'
   })
   await page.getByRole('button', { name: 'Load older happenings' }).click()
   await olderEventRequest

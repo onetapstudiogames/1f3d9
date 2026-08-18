@@ -37,6 +37,9 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   transfer_offer: 'offered property for sale',
   sale: 'bought property',
   transfer_cancel: 'canceled a sale offer',
+  world_listed: 'listed a thing on the world market',
+  world_sale: 'bought a thing through the world market',
+  world_cancel: 'canceled a world market listing',
   flag: 'flagged a public record',
   moderation: 'used a logged maintainer power',
 })
@@ -98,6 +101,7 @@ export const WINDOW_JS = `(() => {
     histories: { notes: {}, things: {}, agreements: {}, events: {} },
     collapsedPlaceIds: [],
     sleeperPlaceIds: [],
+    expandedBodies: [],
     view: 'map',
     placeId: null,
     resident: null,
@@ -331,13 +335,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function historyKey(collection, filters) {
-    if (collection === 'events') return 'all'
     const place = collection === 'agreements' ? '' : String(filters.placeId || '')
     if (!place && !filters.resident) return 'all'
     return 'place:' + place + '|resident:' + String(filters.resident || '')
   }
 
-  function filterHistoryRows(collection, rows, filters) {
+  function filterHistoryRows(collection, rows, filters, snapshot) {
     if (collection === 'notes') return rows.filter(row =>
       (!filters.placeId || row.place_id === filters.placeId) &&
       (!filters.resident || row.author === filters.resident))
@@ -347,7 +350,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (collection === 'agreements') return rows.filter(row => !filters.resident ||
       row.created_by === filters.resident || row.parties.includes(filters.resident) ||
       row.parties_truncated)
-    return rows
+    return rows.filter(row =>
+      (!filters.resident || row.actor === filters.resident) &&
+      (!filters.placeId || eventPlaceId(row, snapshot) === filters.placeId))
   }
 
   function historyTotal(collection, filters) {
@@ -368,7 +373,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (stored) return stored
     const global = state.histories[collection]?.all
     const snapshotRows = state.snapshot?.[collection] || []
-    const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters)
+    const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters, state.snapshot)
     return Object.freeze({
       rows,
       hasMore: historyTotal(collection, filters) > rows.length,
@@ -402,7 +407,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const existing = histories[collection] || {}
       const refreshed = Object.fromEntries(Object.entries(existing).map(([key, entry]) => {
         if (key === 'all' || !entry?.filters) return [key, entry]
-        const freshRows = filterHistoryRows(collection, snapshot[collection], entry.filters)
+        const freshRows = filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
         return [key, Object.freeze({ ...entry, rows: mergeWindowRows(entry.rows, freshRows) })]
       }))
       const current = existing.all
@@ -444,10 +449,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return '#' + params.toString()
   }
 
-  function writeHash() {
+  function writeHash(push) {
     const hash = viewHash()
-    history.replaceState(null, '', hash)
     if (nodes.share) nodes.share.href = hash
+    if (window.location.hash === hash) return
+    if (push) history.pushState(null, '', hash)
+    else history.replaceState(null, '', hash)
+  }
+
+  // Deliberate navigation — tabs, choosing a place or resident, filters —
+  // creates a real back/forward entry. Background refresh never touches
+  // history because renderAll only replaces when the hash is unchanged.
+  function navigate(next) {
+    state = { ...state, ...next }
+    writeHash(true)
+    renderAll()
   }
 
   function populateFilters(snapshot) {
@@ -501,6 +517,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function occupantChip(resident) {
     const chip = element('button', resident.asleep ? 'occupant-chip asleep' : 'occupant-chip', resident.handle)
     chip.type = 'button'
+    chip.dataset.focusKey = 'occupant:' + resident.handle
     if (resident.asleep) chip.title = 'asleep · no public act in two weeks'
     chip.addEventListener('click', () => chooseResident(resident.handle))
     return chip
@@ -524,6 +541,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const toggle = element('button', 'sleeper-toggle',
         shown ? 'hide the asleep' : String(asleep.length) + ' asleep')
       toggle.type = 'button'
+      toggle.dataset.focusKey = 'sleepers:' + String(place.id)
       toggle.setAttribute('aria-expanded', String(shown))
       toggle.setAttribute('aria-label', (shown ? 'Hide' : 'Show') +
         ' residents asleep in ' + place.name)
@@ -553,6 +571,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const expanded = hasChildren && !state.collapsedPlaceIds.includes(place.id)
       const watch = element('button', 'place-watch place-name', place.name)
       watch.type = 'button'
+      watch.dataset.focusKey = 'watch:' + String(place.id)
       watch.addEventListener('click', () => choosePlace(place.id, true))
       card.append(
         watch,
@@ -566,6 +585,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const childrenId = 'place-children-' + String(place.id)
         const disclosure = element('button', 'place-disclosure', expanded ? 'Collapse inside' : 'Show inside')
         disclosure.type = 'button'
+        disclosure.dataset.focusKey = 'branch:' + String(place.id)
         disclosure.setAttribute('aria-expanded', String(expanded))
         disclosure.setAttribute('aria-controls', childrenId)
         disclosure.setAttribute('aria-label', (expanded ? 'Collapse' : 'Show') + ' places inside ' + place.name)
@@ -623,6 +643,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const row = element('div', resident.asleep ? 'resident-row asleep' : 'resident-row')
         const follow = element('button', 'resident-follow', resident.handle)
         follow.type = 'button'
+        follow.dataset.focusKey = 'roster:' + resident.handle
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
           '#' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
@@ -644,6 +665,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const item = element('li', resident.asleep ? 'person-card asleep' : 'person-card')
       const follow = element('button', 'resident-follow', resident.handle)
       follow.type = 'button'
+      follow.dataset.focusKey = 'person:' + resident.handle
       follow.addEventListener('click', () => chooseResident(resident.handle))
       item.append(follow, element('span', 'resident-number',
         'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
@@ -660,9 +682,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const block = element('div', 'body-block')
     const bodyNode = element('p', kind + '-body public-body', body + (truncated ? '…' : ''))
     const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)
+    const bodyKey = kind + ':' + String(id)
     const collapsible = isLongBody(body)
+    const startExpanded = !collapsible || state.expandedBodies.includes(bodyKey)
     bodyNode.id = bodyId
-    bodyNode.dataset.expanded = String(!collapsible)
+    bodyNode.dataset.expanded = String(startExpanded)
     block.append(bodyNode)
 
     let availability = null
@@ -677,14 +701,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
 
     if (collapsible) {
-      let expanded = false
-      const disclosure = element('button', 'body-disclosure', 'Show more')
+      // Expansion lives in state under a stable key so a background refresh
+      // re-renders the body exactly as the reader left it.
+      const disclosure = element('button', 'body-disclosure',
+        startExpanded ? 'Show less' : 'Show more')
       disclosure.type = 'button'
-      disclosure.setAttribute('aria-expanded', 'false')
+      disclosure.setAttribute('aria-expanded', String(startExpanded))
       disclosure.setAttribute('aria-controls', bodyId)
+      disclosure.dataset.focusKey = 'body:' + bodyKey
       if (availability) disclosure.setAttribute('aria-describedby', availability.id)
       disclosure.addEventListener('click', () => {
-        expanded = !expanded
+        const expanded = !state.expandedBodies.includes(bodyKey)
+        state = {
+          ...state,
+          expandedBodies: expanded
+            ? [...state.expandedBodies, bodyKey]
+            : state.expandedBodies.filter(key => key !== bodyKey),
+        }
         bodyNode.dataset.expanded = String(expanded)
         disclosure.setAttribute('aria-expanded', String(expanded))
         disclosure.textContent = expanded ? 'Show less' : 'Show more'
@@ -819,6 +852,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function eventPlaceId(event, snapshot) {
     if (event.detail.place_id) return event.detail.place_id
+    if (!snapshot) return null
     if (event.detail.thing_id) {
       return snapshot.things.find(thing => thing.id === event.detail.thing_id)?.place_id || null
     }
@@ -830,12 +864,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderActivity(snapshot) {
     if (!nodes.activity) return
-    const filters = Object.freeze({ placeId: null, resident: null })
-    const events = historyEntry('events', filters).rows.filter(event =>
-      (!state.resident || event.actor === state.resident) &&
-      (!state.placeId || eventPlaceId(event, snapshot) === state.placeId))
+    const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
+    const entry = historyEntry('events', filters)
+    autoLoadFilteredHistory('events', filters, entry)
+    const events = entry.rows
     if (!events.length) {
-      nodes.activity.replaceChildren(element('li', 'empty-row', 'No happening in the latest public snapshot matches this view.'))
+      nodes.activity.replaceChildren(element('li', 'empty-row',
+        entry.loading
+          ? 'Fetching happenings that match this view…'
+          : 'No happening in the latest public snapshot matches this view.'))
       renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
       return
     }
@@ -910,6 +947,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
   }
 
+  // A filtered view whose slice has never been fetched from the server only
+  // holds whatever happened to sit in the newest city-wide page. Fetch the
+  // real filtered slice once instead of leaving the view falsely quiet.
+  function autoLoadFilteredHistory(collection, filters, entry) {
+    if (!filters.placeId && !filters.resident) return
+    if (entry.initialized || entry.loading || entry.error) return
+    void loadHistory(collection, filters)
+  }
+
   function renderHistoryControl(target, collection, label, filters) {
     if (!target) return
     const entry = historyEntry(collection, filters)
@@ -918,12 +964,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       target.replaceChildren()
       return
     }
+    // While the first filtered slice is being fetched nothing "older" is
+    // involved yet; every click-driven state keeps the familiar wording.
+    const older = entry.loading && !entry.initialized ? '' : 'older '
     const text = entry.loading
-      ? 'Loading older ' + label + '…'
-      : entry.error ? 'Retry loading older ' + label : 'Load older ' + label
+      ? 'Loading ' + older + label + '…'
+      : entry.error ? 'Retry loading ' + older + label : 'Load ' + older + label
     const button = element('button', 'history-load', text)
     button.type = 'button'
     button.disabled = entry.loading
+    button.dataset.focusKey = 'load:' + collection + ':' + historyKey(collection, filters)
     button.addEventListener('click', () => void loadHistory(collection, filters))
     target.hidden = false
     target.replaceChildren(button)
@@ -935,7 +985,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       window.location.origin,
     )
     url.searchParams.set('limit', '50')
-    if (collection !== 'events') {
+    if (collection === 'events') {
+      if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
+      if (filters.resident) url.searchParams.set('actor', filters.resident)
+    } else {
       url.searchParams.set('collection', collection)
       if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
       if (filters.resident) url.searchParams.set('resident', filters.resident)
@@ -1043,8 +1096,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
     for (const panel of panels) panel.hidden = panel.id !== state.view + '-panel'
   }
 
+  // A refresh rebuilds the DOM, which would silently drop the reader's
+  // keyboard position. Every rebuilt interactive control carries a stable
+  // data-focus-key so focus can land back on its replacement.
+  function restoreFocus(focusKey) {
+    if (!focusKey || document.activeElement !== document.body) return
+    const replacement = document.querySelector(
+      '[data-focus-key="' + CSS.escape(focusKey) + '"]')
+    if (replacement) replacement.focus({ preventScroll: true })
+  }
+
   function renderAll() {
     const snapshot = state.snapshot
+    const active = document.activeElement
+    const focusKey = active && active.dataset ? active.dataset.focusKey || null : null
     renderView()
     writeHash()
     if (!snapshot) return
@@ -1064,20 +1129,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (nodes.placeFilter) nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
     if (nodes.residentFilter) nodes.residentFilter.value = state.resident || ''
+    restoreFocus(focusKey)
   }
 
   function choosePlace(id, openPlace) {
     const place = state.snapshot?.flatPlaces.find(candidate => candidate.id === id)
     if (!place) return
-    state = { ...state, placeId: id, view: openPlace ? 'place' : state.view }
-    renderAll()
+    navigate({ placeId: id, view: openPlace ? 'place' : state.view })
   }
 
   function chooseResident(handle) {
     const resident = state.snapshot?.residents.find(candidate => candidate.handle === handle)
     if (!resident) return
-    state = { ...state, resident: handle }
-    renderAll()
+    navigate({ resident: handle })
   }
 
   async function getSnapshot(signal) {
@@ -1153,8 +1217,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         !selectedPlace(state.snapshot || { residents: [], flatPlaces: [] })) {
         placeId = state.snapshot?.flatPlaces[0]?.id || null
       }
-      state = { ...state, view, placeId }
-      renderAll()
+      navigate({ view, placeId })
     })
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -1168,12 +1231,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   nodes.placeFilter?.addEventListener('change', () => {
-    state = { ...state, placeId: safeId(nodes.placeFilter.value) }
-    renderAll()
+    navigate({ placeId: safeId(nodes.placeFilter.value) })
   })
   nodes.residentFilter?.addEventListener('change', () => {
-    state = { ...state, resident: safeHandle(nodes.residentFilter.value) }
-    renderAll()
+    navigate({ resident: safeHandle(nodes.residentFilter.value) })
   })
   window.addEventListener('hashchange', () => {
     state = { ...state, ...readHashState() }
