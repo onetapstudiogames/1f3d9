@@ -97,6 +97,7 @@ export const WINDOW_JS = `(() => {
     snapshot: null,
     histories: { notes: {}, things: {}, agreements: {}, events: {} },
     collapsedPlaceIds: [],
+    sleeperPlaceIds: [],
     view: 'map',
     placeId: null,
     resident: null,
@@ -171,7 +172,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const joinedAt = safeDate(raw.joined_at)
       const currentPlaceId = raw.current_place_id == null ? null : safeId(raw.current_place_id)
       return id && handle && joinedAt && (raw.current_place_id == null || currentPlaceId)
-        ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt }]
+        ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt, asleep: raw.asleep === true }]
         : []
     })
   }
@@ -498,10 +499,39 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function occupantChip(resident) {
-    const chip = element('button', 'occupant-chip', resident.handle)
+    const chip = element('button', resident.asleep ? 'occupant-chip asleep' : 'occupant-chip', resident.handle)
     chip.type = 'button'
+    if (resident.asleep) chip.title = 'asleep · no public act in two weeks'
     chip.addEventListener('click', () => chooseResident(resident.handle))
     return chip
+  }
+
+  function toggleSleepers(placeId) {
+    const sleeperPlaceIds = state.sleeperPlaceIds.includes(placeId)
+      ? state.sleeperPlaceIds.filter(id => id !== placeId)
+      : [...state.sleeperPlaceIds, placeId]
+    state = { ...state, sleeperPlaceIds }
+    if (state.snapshot) renderMap(state.snapshot)
+  }
+
+  function occupantLine(place, occupants) {
+    const line = element('div', 'occupant-line')
+    const awake = occupants.filter(resident => !resident.asleep)
+    const asleep = occupants.filter(resident => resident.asleep)
+    line.append(...awake.map(occupantChip))
+    if (asleep.length) {
+      const shown = state.sleeperPlaceIds.includes(place.id)
+      const toggle = element('button', 'sleeper-toggle',
+        shown ? 'hide the asleep' : String(asleep.length) + ' asleep')
+      toggle.type = 'button'
+      toggle.setAttribute('aria-expanded', String(shown))
+      toggle.setAttribute('aria-label', (shown ? 'Hide' : 'Show') +
+        ' residents asleep in ' + place.name)
+      toggle.addEventListener('click', () => toggleSleepers(place.id))
+      line.append(toggle)
+      if (shown) line.append(...asleep.map(occupantChip))
+    }
+    return line
   }
 
   function togglePlaceBranch(placeId) {
@@ -543,11 +573,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         card.append(disclosure)
       }
       const occupants = residentsAt(snapshot, place.id)
-      if (occupants.length) {
-        const line = element('div', 'occupant-line')
-        line.append(...occupants.map(occupantChip))
-        card.append(line)
-      }
+      if (occupants.length) card.append(occupantLine(place, occupants))
       node.append(card)
       if (hasChildren) {
         const children = placeList(place.children, snapshot, depth + 1)
@@ -592,12 +618,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const group = element('section', 'roster-group')
       const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
       group.append(element('p', 'roster-place', place ? place.name : 'Between places'))
-      for (const resident of visible.filter(candidate => candidate.current_place_id === placeId)) {
-        const row = element('div', 'resident-row')
+      const standing = visible.filter(candidate => candidate.current_place_id === placeId)
+      for (const resident of [...standing.filter(r => !r.asleep), ...standing.filter(r => r.asleep)]) {
+        const row = element('div', resident.asleep ? 'resident-row asleep' : 'resident-row')
         const follow = element('button', 'resident-follow', resident.handle)
         follow.type = 'button'
         follow.addEventListener('click', () => chooseResident(resident.handle))
-        row.append(follow, element('span', 'resident-number', '#' + String(resident.id)))
+        row.append(follow, element('span', 'resident-number',
+          '#' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
         group.append(row)
       }
       fragment.append(group)
@@ -612,12 +640,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return
     }
     const list = element('ul', 'person-list')
-    list.append(...residents.map(resident => {
-      const item = element('li', 'person-card')
+    list.append(...[...residents.filter(r => !r.asleep), ...residents.filter(r => r.asleep)].map(resident => {
+      const item = element('li', resident.asleep ? 'person-card asleep' : 'person-card')
       const follow = element('button', 'resident-follow', resident.handle)
       follow.type = 'button'
       follow.addEventListener('click', () => chooseResident(resident.handle))
-      item.append(follow, element('span', 'resident-number', 'resident #' + String(resident.id)))
+      item.append(follow, element('span', 'resident-number',
+        'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
       return item
     }))
     target.replaceChildren(list)

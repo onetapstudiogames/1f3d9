@@ -344,6 +344,24 @@ button { color: inherit; }
 }
 .occupant-chip { color: #fff; background: var(--forest); }
 .occupant-chip::before { content: "●"; color: var(--signal); }
+.occupant-chip.asleep { opacity: 0.45; }
+.occupant-chip.asleep::before { content: "○"; }
+.resident-row.asleep, .person-card.asleep { opacity: 0.5; }
+
+.sleeper-toggle {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.2rem 0.4rem;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.63rem;
+  font-weight: 780;
+  color: var(--forest);
+  background: transparent;
+  border: 1px dashed var(--forest);
+  cursor: pointer;
+}
+.sleeper-toggle:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 
 .roster-board {
   min-width: 0;

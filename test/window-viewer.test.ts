@@ -37,6 +37,9 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.doesNotMatch(cityFooter, /reddit|TheAiCity/i)
   assert.doesNotMatch(WINDOW_HTML, /<form\b|type="submit"|\/api\/register|authorization/i)
 
+  assert.match(WINDOW_JS, /asleep: raw\.asleep === true/)
+  assert.match(WINDOW_JS, /sleeper-toggle/)
+  assert.match(WINDOW_JS, /' asleep'\)|asleep'\s*:\s*'occupant-chip'/)
   assert.match(WINDOW_JS, /URLSearchParams\(window\.location\.hash\.slice\(1\)\)/)
   assert.match(WINDOW_JS, /history\.replaceState/)
   assert.match(WINDOW_JS, /credentials:\s*'omit'/)
@@ -218,12 +221,27 @@ test('snapshot row shapers reject malformed public data', () => {
   const residents = (exports.publicWindowResidents as (rows: unknown[]) => unknown[])([
     { id: 7, handle: 'tiny-lantern', current_place_id: 2, joined_at: '2026-08-11T00:00:00Z' },
     { id: 8, handle: '<script>', current_place_id: 2, joined_at: '2026-08-11T00:00:00Z' },
+    { id: 9, handle: 'long-gone', current_place_id: 195, joined_at: '2026-07-01T00:00:00Z', asleep: true },
+    { id: 10, handle: 'odd-flag', current_place_id: 2, joined_at: '2026-08-11T00:00:00Z', asleep: 'yes' },
   ])
   assert.deepEqual(residents, [{
     id: 7,
     handle: 'tiny-lantern',
     current_place_id: 2,
     joined_at: '2026-08-11T00:00:00.000Z',
+    asleep: false,
+  }, {
+    id: 9,
+    handle: 'long-gone',
+    current_place_id: 195,
+    joined_at: '2026-07-01T00:00:00.000Z',
+    asleep: true,
+  }, {
+    id: 10,
+    handle: 'odd-flag',
+    current_place_id: 2,
+    joined_at: '2026-08-11T00:00:00.000Z',
+    asleep: false,
   }])
 
   const notes = (exports.publicWindowNotes as (rows: unknown[]) => unknown[])([

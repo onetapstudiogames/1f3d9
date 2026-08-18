@@ -103,7 +103,11 @@ interface PublicResident {
   handle: string
   current_place_id: number | null
   joined_at: string
+  asleep: boolean
 }
+
+/** A resident with no public act for this long renders dimmed on the window. */
+export const WINDOW_ASLEEP_AFTER_DAYS = 14
 
 interface PublicNote {
   id: number
@@ -290,7 +294,13 @@ export function publicWindowResidents(values: unknown[]): PublicResident[] {
     const joinedAt = safeDate(row.joined_at)
     const currentPlaceId = row.current_place_id == null ? null : positiveInteger(row.current_place_id)
     if (!id || !handle || !joinedAt || (row.current_place_id != null && !currentPlaceId)) return []
-    return [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt }]
+    return [{
+      id,
+      handle,
+      current_place_id: currentPlaceId,
+      joined_at: joinedAt,
+      asleep: row.asleep === true,
+    }]
   })
 }
 
@@ -724,9 +734,18 @@ async function readWindowSnapshot() {
       ORDER BY world.path
     `),
     sql`
-      SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at
+      SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at,
+        (resident.joined_at < now() - make_interval(days => ${WINDOW_ASLEEP_AFTER_DAYS})
+          AND coalesce(activity.last_public_at, resident.joined_at)
+            < now() - make_interval(days => ${WINDOW_ASLEEP_AFTER_DAYS})) AS asleep
       FROM residents resident
       LEFT JOIN resident_presence presence ON presence.resident_id = resident.id
+      LEFT JOIN (
+        SELECT actor, max(created_at) AS last_public_at
+        FROM events
+        WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
+        GROUP BY actor
+      ) activity ON activity.actor = resident.handle
       ORDER BY resident.joined_at, resident.id
     `,
     readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
