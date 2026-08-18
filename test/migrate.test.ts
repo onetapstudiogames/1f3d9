@@ -1,7 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { resolveMigrationRun, splitSqlStatements } from '../scripts/migrate.ts'
+import { readFileSync, readdirSync } from 'node:fs'
+import {
+  MIGRATION_LOCK_TIMEOUT,
+  MIGRATION_STATEMENT_TIMEOUT,
+  prepareMigrationStatements,
+  resolveMigrationRun,
+  splitSqlStatements,
+} from '../scripts/migrate.ts'
 
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
 
@@ -306,6 +312,41 @@ test('the loopback full schema upgrades a legacy tree before final root indexes'
     schemaDdl,
     /INSERT\s+INTO\s+resident_presence[\s\S]*?ON\s+CONFLICT\s*\(resident_id\)\s+DO\s+UPDATE[\s\S]*?current_place_id\s*=\s*coalesce/i,
   )
+})
+
+test('every migration path runs under enforced lock and statement time limits', () => {
+  const migrationsDirectory = new URL('../db/migrations/', import.meta.url)
+  const migrationFiles = readdirSync(migrationsDirectory).filter(name => name.endsWith('.sql'))
+  assert.ok(migrationFiles.length >= 14)
+
+  for (const file of [...migrationFiles, 'schema.sql']) {
+    const ddl = file === 'schema.sql'
+      ? schemaDdl
+      : readFileSync(new URL(file, migrationsDirectory), 'utf8')
+    const statements = prepareMigrationStatements(ddl)
+    assert.equal(
+      statements[0],
+      `SET LOCAL lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`,
+      `${file} must start with the enforced lock timeout`,
+    )
+    assert.equal(
+      statements[1],
+      `SET LOCAL statement_timeout = '${MIGRATION_STATEMENT_TIMEOUT}'`,
+      `${file} must enforce the statement timeout`,
+    )
+  }
+})
+
+test('a migration that sets its own limits overrides the enforced defaults', () => {
+  const topology = readFileSync(
+    new URL('../db/migrations/20260814_world_root_topology.sql', import.meta.url),
+    'utf8',
+  )
+
+  const statements = prepareMigrationStatements(topology)
+  const ownLockTimeout = statements.findIndex((statement, index) =>
+    index >= 2 && /SET\s+LOCAL\s+lock_timeout/i.test(statement))
+  assert.ok(ownLockTimeout > 1, 'the file keeps its own lock timeout after the enforced one')
 })
 
 test('world-root topology is one bounded transaction with database backstops', () => {

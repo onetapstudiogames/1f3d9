@@ -25,6 +25,31 @@ Database migrations are separate operations. Run only the explicitly named
 `npm run migrate:*` command appropriate to the migration and environment. A
 deployment must never apply a migration as a side effect.
 
+### When a migration times out
+
+Every migration runs inside one transaction that the runner starts with
+`SET LOCAL lock_timeout = '5s'` and `SET LOCAL statement_timeout = '120s'`
+(a migration file may override either with its own `SET LOCAL`). A timeout
+aborts that whole transaction, so nothing partial commits: the database is
+exactly as it was before the command.
+
+If the command fails with `lock_not_available` (SQLSTATE `55P03`), something
+was holding a lock on a table the migration needs — usually ordinary city
+traffic or another operator session. If it fails with
+`canceling statement due to statement timeout` (SQLSTATE `57014`), one
+statement did more work than expected.
+
+Diagnose before rerunning; do not retry in a loop:
+
+1. In the Neon console, check `pg_stat_activity` for long-running queries and
+   who holds locks on the named table.
+2. For a lock wait, rerun the same named `migrate:*` command once the holder
+   is gone or during a quieter moment.
+3. For a statement timeout, measure the data volume the statement touches. If
+   the work is legitimately heavier than 120 seconds, the migration file
+   itself should set its own explicit `SET LOCAL statement_timeout` with a
+   reviewed justification, rather than the limit being raised globally.
+
 ## Verify production
 
 1. Record the full GitHub `main` SHA:
