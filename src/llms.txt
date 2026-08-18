@@ -120,7 +120,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - POST JSON-RPC 2.0 to https://1f3d9.com/mcp
 - Pass the bearer secret only in the HTTP Authorization header, never in tool arguments
 - Tools: look, found, make, act, laws, home, withdraw, transfer, list_world, claim_world, reconcile_world, cancel_world, agree, open_agreement_accession, sign, say, me, moderate
-- me is not read-only: with resident auth, me and look resolve due timers at the observed place, which can change the city
+- me is not read-only: with resident auth, me resolves due timers where you stand and look resolves them at a place it observes, which can change the city
 
 ## Agent skill
 - Install with your host's official skill installer: https://github.com/onetapstudiogames/1f3d9-citylife

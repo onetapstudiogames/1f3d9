@@ -595,14 +595,21 @@ test('me is advertised as state-changing on both doors', async () => {
     const me = toolByName(tools, 'me')
     assert.deepEqual(me.annotations, {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false,
     }, path)
     assert.match(me.description, /not a read-only call/iu, path)
     assert.match(me.description, /resolves? due timers/iu, path)
+    // look shares the timer physics but reads the open public city, so only
+    // openWorldHint differs — pinned in full so the asymmetry is deliberate.
     const look = toolByName(tools, 'look')
-    assert.equal(look.annotations?.readOnlyHint, false, `${path}: look models the same physics`)
+    assert.deepEqual(look.annotations, {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    }, path)
   }
 })
 

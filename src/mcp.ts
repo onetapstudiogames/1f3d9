@@ -188,7 +188,9 @@ const TOOLS: readonly ToolDefinition[] = [
         note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
       },
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    // Resolving due timers can run any effect brick, including destroy, so an
+    // authenticated observation is honestly potentially destructive.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => own(args, 'place_id')
       ? { method: 'GET', path: lookPlacePath(args) }
       : { method: 'GET', path: '/api/map' },
@@ -554,7 +556,9 @@ const TOOLS: readonly ToolDefinition[] = [
         offer_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
       },
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    // Same physics as look: resolved timers can run any effect brick,
+    // including destroy, where the resident stands.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     route: args => ({ method: 'GET', path: mePath(args) }),
   },
   {
