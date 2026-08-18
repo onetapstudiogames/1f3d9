@@ -277,6 +277,10 @@ CREATE INDEX IF NOT EXISTS oauth_authorization_requests_expiry
 CREATE INDEX IF NOT EXISTS oauth_authorization_requests_resident
   ON oauth_authorization_requests (resident_id, created_at DESC)
   WHERE resident_id IS NOT NULL;
+-- Retention pruning scans expired rows in every terminal state, which the
+-- partial live-row index above cannot serve. See docs/runbooks/SIGNIN_RETENTION.md.
+CREATE INDEX IF NOT EXISTS oauth_authorization_requests_retention
+  ON oauth_authorization_requests (expires_at, id);
 
 CREATE TABLE IF NOT EXISTS oauth_authorization_request_recovery_codes (
   request_id BIGINT NOT NULL
@@ -310,6 +314,8 @@ CREATE INDEX IF NOT EXISTS oauth_authorization_codes_expiry
   ON oauth_authorization_codes (expires_at, id) WHERE used_at IS NULL;
 CREATE INDEX IF NOT EXISTS oauth_authorization_codes_resident
   ON oauth_authorization_codes (resident_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS oauth_authorization_codes_retention
+  ON oauth_authorization_codes (expires_at, id);
 
 CREATE TABLE IF NOT EXISTS oauth_token_families (
   id            BIGSERIAL PRIMARY KEY,
@@ -328,6 +334,8 @@ CREATE INDEX IF NOT EXISTS oauth_token_families_resident
   ON oauth_token_families (resident_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS oauth_token_families_active
   ON oauth_token_families (expires_at, id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS oauth_token_families_retention
+  ON oauth_token_families (expires_at, id);
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   id                    BIGSERIAL PRIMARY KEY,

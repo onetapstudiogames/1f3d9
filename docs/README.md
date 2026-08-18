@@ -24,6 +24,9 @@ Operations:
   production and how to verify or roll it back.
 - [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md) covers Neon snapshots, local
   backups, restore drills, and recovery evidence.
+- [runbooks/SIGNIN_RETENTION.md](runbooks/SIGNIN_RETENTION.md) states how long each
+  sign-in record type lives, how pruning rides ordinary OAuth traffic, and how
+  backup rotation bounds what deletion leaves behind.
 - [runbooks/ENVIRONMENT.md](runbooks/ENVIRONMENT.md) records which ignored environment
   files are active, duplicated, or temporary without exposing their values.
 
