@@ -172,6 +172,28 @@ export function combineRestoreCleanupErrors(
   )
 }
 
+export function restoreDrillRunArguments(options: Readonly<{
+  containerName: string
+  nonce: string
+  expiresAt: string
+  environmentKeys: readonly string[]
+  archivePath: string
+  toolImage: string
+}>): string[] {
+  return [
+    'run', '--detach', '--name', options.containerName,
+    // pg_restore executes SQL embedded in the archive; the drill needs no
+    // network, so a tampered archive must not get egress from the container.
+    '--network', 'none',
+    '--label', 'com.1f3d9.role=restore-drill',
+    '--label', `com.1f3d9.run=${options.nonce}`,
+    '--label', `com.1f3d9.expires=${options.expiresAt}`,
+    ...options.environmentKeys.flatMap(key => ['--env', key]),
+    '--mount', dockerBindMount(options.archivePath, '/backup/source.dump', true),
+    options.toolImage,
+  ]
+}
+
 async function dockerRestoreDrill(options: Readonly<{
   archivePath: string
   toolImage: string
@@ -200,15 +222,14 @@ async function dockerRestoreDrill(options: Readonly<{
   }
 
   try {
-    await runCommand('docker', [
-      'run', '--detach', '--name', containerName,
-      '--label', 'com.1f3d9.role=restore-drill',
-      '--label', `com.1f3d9.run=${nonce}`,
-      '--label', `com.1f3d9.expires=${new Date(Date.now() + 60 * 60_000).toISOString()}`,
-      ...environment.keys.flatMap(key => ['--env', key]),
-      '--mount', dockerBindMount(options.archivePath, '/backup/source.dump', true),
-      options.toolImage,
-    ], { environment: environment.environment, sensitiveOutput: true })
+    await runCommand('docker', restoreDrillRunArguments({
+      containerName,
+      nonce,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      environmentKeys: environment.keys,
+      archivePath: options.archivePath,
+      toolImage: options.toolImage,
+    }), { environment: environment.environment, sensitiveOutput: true })
     created = true
     options.onContainerCreated?.(containerName)
 

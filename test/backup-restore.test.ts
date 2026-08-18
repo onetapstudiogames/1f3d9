@@ -13,6 +13,7 @@ import {
 import {
   combineRestoreCleanupErrors,
   removeRestoreContainer,
+  restoreDrillRunArguments,
   runRestoreDrill,
 } from '../scripts/restore-drill.ts'
 
@@ -440,6 +441,22 @@ test('retention cleanup cannot discard a newly verified backup', async t => {
     basename(staleArchive),
   ].sort())
   assert.match(logs.join('\n'), /retention cleanup failed/i)
+})
+
+test('restore drill container is created without network access', () => {
+  const args = restoreDrillRunArguments({
+    containerName: '1f3d9-restore-drill-123-deadbeefdeadbeef',
+    nonce: 'deadbeefdeadbeef',
+    expiresAt: '2026-08-18T00:00:00.000Z',
+    environmentKeys: ['POSTGRES_PASSWORD', 'POSTGRES_DB'],
+    archivePath: 'C:\\drills\\city.dump',
+    toolImage: 'postgres@sha256:0000',
+  })
+
+  const networkFlag = args.indexOf('--network')
+  assert.notEqual(networkFlag, -1)
+  assert.equal(args[networkFlag + 1], 'none')
+  assert.equal(args.indexOf('--network', networkFlag + 1), -1)
 })
 
 test('restore cleanup fails closed instead of reporting a leaked container as success', async () => {
