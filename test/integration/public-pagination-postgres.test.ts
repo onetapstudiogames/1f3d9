@@ -566,6 +566,20 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         [city.targetPlaceId],
       )).rows[0]!.id
 
+      const withdrawnThing = (await client.query<{ id: number }>(
+        `INSERT INTO things (place_id, name, body, owner_id, withdrawn_at)
+         VALUES ($1, 'withdrawn-lantern', 'no longer here', 1, now())
+         RETURNING id`,
+        [city.targetPlaceId],
+      )).rows[0]!.id
+      const offerId = (await client.query<{ id: number }>(
+        `INSERT INTO transfer_offers (
+           channel, asset_type, asset_id, seller_id, buyer_id, price_usdc, seller_wallet
+         ) VALUES ('direct', 'thing', $1, 1, 2, 1, '0x' || repeat('a', 40))
+         RETURNING id`,
+        [watchedThing],
+      )).rows[0]!.id
+
       const seed = async (kind: string, actor: string, detail: object) => (
         await client.query<{ id: number }>(
           `INSERT INTO events (kind, actor, detail) VALUES ($1, $2, $3::jsonb) RETURNING id`,
@@ -577,8 +591,19 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       const thingEdit = await seed('thing_edited', 'resident-3', { thing_id: watchedThing })
       const noteEcho = await seed('note', 'resident-2', { note_id: watchedNote })
       const malformed = await seed('thing_edited', 'resident-3', { thing_id: 'not-a-number' })
+      const giftHere = await seed('transfer', 'resident-3', {
+        asset_type: 'thing', asset_id: watchedThing, transfer_id: 90, mode: 'gift',
+      })
+      const placeSale = await seed('sale', 'resident-3', {
+        asset_type: 'place', asset_id: city.targetPlaceId, transfer_id: 91,
+      })
+      const effectMove = await seed('transfer', 'resident-3', {
+        type: 'thing', id: watchedThing, mode: 'effect',
+      })
+      const offerCancel = await seed('transfer_cancel', 'resident-3', { offer_id: offerId })
+      const withdrawnEdit = await seed('thing_edited', 'resident-3', { thing_id: withdrawnThing })
       const marketSale = await seed('world_sale', 'resident-3', {
-        thing_id: watchedThing, offer_id: 1, transfer_id: 1,
+        thing_id: watchedThing, offer_id: offerId, transfer_id: 1,
       })
 
       const firstPage = (cursor: number | null = null): PublicPage => {
@@ -598,10 +623,12 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       )
       assert.deepEqual(rowIds(byActor), [noteEcho, lawElsewhere, lawHere])
 
-      // The place filter must see all three shapes of place evidence — the
-      // place named directly, a thing standing there, a note written there —
-      // and must skip the same actor's act at a different place. The
-      // malformed string thing_id must be ignored, never a cast error.
+      // The place filter must see every shape of place evidence — the place
+      // named directly, a thing standing there, a note written there, a
+      // traded asset there (sale/gift asset_type+asset_id, effect transfer
+      // type+id, offer events by offer_id) — and must skip the same actor's
+      // act at a different place, a permanently withdrawn thing, and a
+      // malformed string id (ignored, never a cast error).
       const byPlace = await loadPublicEventRows(
         executePublicQuery,
         { kind: null, actor: null, placeId: city.targetPlaceId },
@@ -609,11 +636,12 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       )
       const byPlaceIds = rowIds(byPlace)
       assert.deepEqual(
-        byPlaceIds.slice(0, 4),
-        [marketSale, noteEcho, thingEdit, lawHere],
+        byPlaceIds.slice(0, 8),
+        [marketSale, offerCancel, effectMove, placeSale, giftHere, noteEcho, thingEdit, lawHere],
       )
       assert.ok(!byPlaceIds.includes(lawElsewhere))
       assert.ok(!byPlaceIds.includes(malformed))
+      assert.ok(!byPlaceIds.includes(withdrawnEdit))
 
       const combined = await loadPublicEventRows(
         executePublicQuery,

@@ -68,11 +68,43 @@ test('deliberate navigation makes real history and refresh keeps reading state',
 
 test('filtered happenings fetch their real slice from the server', () => {
   assert.match(WINDOW_JS, /function autoLoadFilteredHistory\(collection, filters, entry\)/)
-  assert.match(WINDOW_JS, /autoLoadFilteredHistory\('events', filters, entry\)/)
+  assert.match(WINDOW_JS, /autoLoadFilteredHistory\('events', filters, historyEntry\('events', filters\)\)/)
   // The events history request carries the active filters so a busy city
   // cannot push a watched place or followed resident out of the page.
   assert.match(WINDOW_JS, /url\.searchParams\.set\('place_id', String\(filters\.placeId\)\)/)
   assert.match(WINDOW_JS, /url\.searchParams\.set\('actor', filters\.resident\)/)
+  // An initialized filtered view keeps learning: each snapshot refresh
+  // silently refetches the newest filtered page and merges it.
+  assert.match(WINDOW_JS, /function forwardRefreshHistory\(collection, filters\)/)
+  assert.match(WINDOW_JS, /refreshFilteredHappenings\(\)/)
+  // The interim load control stays focusable; disabled buttons cannot
+  // receive restored focus. Arrow-key tab roving must not flood history.
+  assert.match(WINDOW_JS, /aria-busy/)
+  assert.doesNotMatch(WINDOW_JS, /button\.disabled = entry\.loading/)
+  assert.match(WINDOW_JS, /rovingTabActivation = true/)
+})
+
+test('every event kind an emitter writes is advertised public window life', async () => {
+  // The world_* kinds went missing because nothing tied emitters to the
+  // label list; this scan fails the moment a new INSERT INTO events kind
+  // is not also public window vocabulary.
+  const { readdir, readFile } = await import('node:fs/promises')
+  const sourceDir = new URL('../src/', import.meta.url)
+  const written = new Set<string>()
+  for (const name of await readdir(sourceDir)) {
+    if (!name.endsWith('.ts')) continue
+    const source = await readFile(new URL(name, sourceDir), 'utf8')
+    for (const match of source.matchAll(
+      /INSERT INTO events \(kind, actor, detail\)\s*(?:SELECT\s*'([a-z_]+)'|VALUES \(\s*'([a-z_]+)')/g,
+    )) {
+      written.add(match[1] ?? match[2] ?? '')
+    }
+  }
+  written.delete('')
+  assert.ok(written.size >= 15, `the emitter scan must find real kinds, saw ${written.size}`)
+  const advertised = new Set(PUBLIC_EVENT_KINDS)
+  const hidden = [...written].filter(kind => !advertised.has(kind))
+  assert.deepEqual(hidden, [], 'every written event kind must be public window life')
 })
 
 test('the window covers the whole public life of the city', () => {

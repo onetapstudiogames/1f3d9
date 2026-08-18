@@ -1270,6 +1270,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         id: 72, at: '2026-08-11T00:02:00.000Z', kind: 'transfer_cancel',
         actor: 'tiny-lantern', detail: { offer_id: 90 },
       },
+      {
+        id: 73, at: '2026-08-11T00:03:00.000Z', kind: 'world_sale',
+        actor: 'neighbor', detail: { transfer_id: 6, offer_id: 91, thing_id: 9 },
+      },
     ]
     if (state.scenario === 'nested moderation events') return [
       {
@@ -3608,6 +3612,7 @@ test('front door and human window surface the event names the world actually emi
   assert.match(frontText, /founded a place/i)
   assert.match(frontText, /bought property/i)
   assert.match(frontText, /canceled a sale offer/i)
+  assert.match(frontText, /bought a thing through the world market/i)
 
   state = { ...state, calls: [] }
   const snapshot = await app.request('/api/window')
@@ -3616,10 +3621,13 @@ test('front door and human window surface the event names the world actually emi
     events: { kind: string }[]
     body_limits: { notes: number; things: number; agreements: number }
   }
-  assert.deepEqual(payload.events.map(event => event.kind), ['place_created', 'sale', 'transfer_cancel'])
+  assert.deepEqual(
+    payload.events.map(event => event.kind),
+    ['place_created', 'sale', 'transfer_cancel', 'world_sale'],
+  )
   assert.deepEqual(payload.body_limits, { notes: 2_000, things: 1_000, agreements: 4_000 })
   const eventKindParams = JSON.stringify(sqlCalls().flatMap(call => call.params ?? []))
-  for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel']) {
+  for (const kind of ['place_created', 'thing_created', 'kind_invented', 'kind_revised', 'trait_coined', 'sale', 'transfer_cancel', 'world_listed', 'world_sale', 'world_cancel']) {
     assert.ok(eventKindParams.includes(kind), `public event query should include ${kind}`)
   }
 
@@ -3628,6 +3636,9 @@ test('front door and human window surface the event names the world actually emi
   assert.match(source, /place_created[^\n]*founded a place/i)
   assert.match(source, /sale[^\n]*bought property/i)
   assert.match(source, /transfer_cancel[^\n]*canceled a sale offer/i)
+  assert.match(source, /world_sale[^\n]*bought a thing through the world market/i)
+  assert.match(source, /world_listed[^\n]*listed a thing on the world market/i)
+  assert.match(source, /world_cancel[^\n]*canceled a world market listing/i)
 })
 
 test('the human window is hardened, query-blind, credential-blind, and read-only', async () => {
@@ -4240,6 +4251,10 @@ test('event history narrows by actor and by observed place', async () => {
   assert.match(actorRead?.query ?? '', /detail->>'place_id'\s*=\s*\(\$3::integer\)::text/i)
   assert.match(actorRead?.query ?? '', /detail->>'thing_id'[\s\S]*from\s+things/i)
   assert.match(actorRead?.query ?? '', /detail->>'note_id'[\s\S]*from\s+notes/i)
+  assert.match(actorRead?.query ?? '', /detail->>'asset_type'\s*=\s*'thing'/i)
+  assert.match(actorRead?.query ?? '', /detail->>'asset_type'\s*=\s*'place'/i)
+  assert.match(actorRead?.query ?? '', /detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
+  assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
   assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4'])
 
   const invalid = [

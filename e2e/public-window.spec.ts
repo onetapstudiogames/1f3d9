@@ -81,6 +81,25 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   expect(browserWrites).toEqual([])
 })
 
+test('unfiltered happenings still page older history on demand', async ({ page }) => {
+  await page.goto('/window#view=happenings')
+  await expect(page.getByRole('status')).toContainText('Watching')
+
+  // No filter is active, so nothing fetches by itself; the snapshot slice
+  // renders and the reader pages backward deliberately.
+  await expect(page.locator('#activity-list .activity-row')).toHaveCount(2)
+  const olderResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('before_id') === '502' &&
+      !url.searchParams.has('place_id') &&
+      url.searchParams.get('limit') === '50' && response.status() === 200
+  })
+  await page.getByRole('button', { name: 'Load older happenings' }).click()
+  await olderResponse
+  await expect(page.locator('#activity-list .activity-row')).toHaveCount(4)
+  await expect(page.getByRole('button', { name: 'Load older happenings' })).toBeHidden()
+})
+
 test('all-place conversations stay newest-first and name each room', async ({ page }) => {
   await page.goto('/window#view=conversations')
   await expect(page.getByRole('status')).toContainText('Watching')

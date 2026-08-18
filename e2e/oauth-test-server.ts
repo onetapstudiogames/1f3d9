@@ -696,7 +696,7 @@ app.get('/api/events', c => {
       before_id: beforeId, limit, place_id: placeId,
     }],
   }
-  if (placeId !== 11 || limit !== 50) {
+  if ((placeId !== null && placeId !== 11) || limit !== 50) {
     return c.json({ error: 'unexpected deterministic pagination request' }, 400)
   }
   if (beforeId === null) {

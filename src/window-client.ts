@@ -460,9 +460,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
   // Deliberate navigation — tabs, choosing a place or resident, filters —
   // creates a real back/forward entry. Background refresh never touches
   // history because renderAll only replaces when the hash is unchanged.
+  // Arrow-key roving between tabs updates the address without pushing, so
+  // walking the tab list never floods the back button.
+  let rovingTabActivation = false
   function navigate(next) {
     state = { ...state, ...next }
-    writeHash(true)
+    writeHash(!rovingTabActivation)
     renderAll()
   }
 
@@ -528,7 +531,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? state.sleeperPlaceIds.filter(id => id !== placeId)
       : [...state.sleeperPlaceIds, placeId]
     state = { ...state, sleeperPlaceIds }
-    if (state.snapshot) renderMap(state.snapshot)
+    if (state.snapshot) renderAll()
   }
 
   function occupantLine(place, occupants) {
@@ -557,7 +560,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? state.collapsedPlaceIds.filter(id => id !== placeId)
       : [...state.collapsedPlaceIds, placeId]
     state = { ...state, collapsedPlaceIds }
-    if (state.snapshot) renderMap(state.snapshot)
+    if (state.snapshot) renderAll()
   }
 
   function placeList(values, snapshot, depth) {
@@ -865,8 +868,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderActivity(snapshot) {
     if (!nodes.activity) return
     const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
+    // Kick the auto-load before reading the entry: loadHistory stores
+    // loading:true synchronously, so this render already says "fetching"
+    // instead of falsely reporting an empty view.
+    autoLoadFilteredHistory('events', filters, historyEntry('events', filters))
     const entry = historyEntry('events', filters)
-    autoLoadFilteredHistory('events', filters, entry)
     const events = entry.rows
     if (!events.length) {
       nodes.activity.replaceChildren(element('li', 'empty-row',
@@ -972,7 +978,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : entry.error ? 'Retry loading ' + older + label : 'Load ' + older + label
     const button = element('button', 'history-load', text)
     button.type = 'button'
-    button.disabled = entry.loading
+    // Never disabled: a disabled control cannot take restored focus, and
+    // loadHistory already ignores clicks while a fetch is in flight.
+    button.setAttribute('aria-busy', String(entry.loading))
     button.dataset.focusKey = 'load:' + collection + ':' + historyKey(collection, filters)
     button.addEventListener('click', () => void loadHistory(collection, filters))
     target.hidden = false
@@ -1005,6 +1013,53 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (collection === 'things') return normalizeThings(payload.things)
     if (collection === 'agreements') return normalizeAgreements(payload.agreements)
     return normalizeEvents(payload.events)
+  }
+
+  // A filtered entry only pages backward once initialized, and the snapshot
+  // merge can only place-match events it can resolve client-side. Refetching
+  // the newest filtered page after each snapshot refresh keeps an open
+  // filtered view complete without touching its backward cursor.
+  const forwardRefreshKeys = new Set()
+  async function forwardRefreshHistory(collection, filters) {
+    const key = collection + '|' + historyKey(collection, filters)
+    if (forwardRefreshKeys.has(key)) return
+    forwardRefreshKeys.add(key)
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = historyRequestUrl(
+        collection, { initialized: false, nextBeforeId: null }, filters)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) return
+      const incoming = normalizeHistoryRows(collection, await response.json())
+      const latest = historyEntry(collection, filters)
+      setHistoryEntry(collection, filters, {
+        ...latest,
+        rows: mergeWindowRows(latest.rows, incoming),
+      })
+      renderAll()
+    } catch {
+      // A failed silent refresh loses nothing; the next snapshot tries again.
+    } finally {
+      window.clearTimeout(timeout)
+      forwardRefreshKeys.delete(key)
+    }
+  }
+
+  function refreshFilteredHappenings() {
+    if (state.view !== 'happenings') return
+    const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
+    if (!filters.placeId && !filters.resident) return
+    const entry = historyEntry('events', filters)
+    if (!entry.initialized || entry.loading) return
+    void forwardRefreshHistory('events', filters)
   }
 
   async function loadHistory(collection, filters) {
@@ -1101,9 +1156,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
   // data-focus-key so focus can land back on its replacement.
   function restoreFocus(focusKey) {
     if (!focusKey || document.activeElement !== document.body) return
-    const replacement = document.querySelector(
+    // Hidden panels keep their previous DOM, so the same key can exist in a
+    // stale copy; only a visible replacement can actually take focus.
+    const replacements = document.querySelectorAll(
       '[data-focus-key="' + CSS.escape(focusKey) + '"]')
-    if (replacement) replacement.focus({ preventScroll: true })
+    for (const replacement of replacements) {
+      if (replacement.closest('[hidden]')) continue
+      replacement.focus({ preventScroll: true })
+      return
+    }
   }
 
   function renderAll() {
@@ -1184,6 +1245,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state = { ...state, snapshot, histories, hasSnapshot: true, failures: 0 }
       populateFilters(snapshot)
       renderAll()
+      refreshFilteredHappenings()
       setStatus(snapshot.refreshedAt ? 'Watching · checked ' + snapshot.refreshedAt.toLocaleTimeString([], {
         hour: 'numeric', minute: '2-digit',
       }) : 'Watching the public streets', 'live')
@@ -1226,7 +1288,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 :
         (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
       tabs[index]?.focus()
-      tabs[index]?.click()
+      rovingTabActivation = true
+      try {
+        tabs[index]?.click()
+      } finally {
+        rovingTabActivation = false
+      }
     })
   }
 
