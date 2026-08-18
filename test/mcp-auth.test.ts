@@ -582,6 +582,7 @@ test('hosted and legacy MCP reads redact every resident credential family', asyn
     `1f3d9_at_${'b2'.repeat(32)}`,
     `1f3d9_rt_${'c3'.repeat(32)}`,
     `1f3d9_ac_${'d4'.repeat(32)}`,
+    `1f3d9_rc_${'e5'.repeat(32)}`,
   ]
 
   for (const [hosted, path, authorization] of [

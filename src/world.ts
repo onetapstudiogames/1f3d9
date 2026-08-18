@@ -103,7 +103,11 @@ export function mountWorldRoutes(app: Hono): void {
       ORDER BY tree.path
     `) as PlaceRow[]
     const publicRows = await moderatePublicRows('place', rows)
-    return publicJson(c, { places: buildPlaceTree(publicRows as PlaceRow[], null) })
+    // The map tree is unbounded, so the proactive traversal budgets in
+    // publicJson would withhold a large credential-free city. The app-wide
+    // publicResponseSafety middleware still guards this response and only
+    // parses it when the raw text actually matches the credential rule.
+    return c.json({ places: buildPlaceTree(publicRows as PlaceRow[], null) })
   })
 
   app.get('/api/place/:id', async c => {

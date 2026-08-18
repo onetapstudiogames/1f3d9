@@ -15,6 +15,7 @@ const credentials = [
   `1f3d9_at_${'b2'.repeat(32)}`,
   `1f3d9_rt_${'c3'.repeat(32)}`,
   `1f3d9_ac_${'d4'.repeat(32)}`,
+  `1f3d9_rc_${'e5'.repeat(32)}`,
 ]
 
 test('one public credential rule covers every city credential family', () => {

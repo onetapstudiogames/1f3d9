@@ -1072,7 +1072,17 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return descendingPage(paginationNotes(), params[1], params[2])
   }
 
-  if (q.includes('with recursive place_tree')) return [placeRow(1, null), placeRow(2, 1)]
+  if (q.includes('with recursive place_tree')) {
+    if (state.scenario === 'large map') {
+      const rows = [placeRow(1, null)]
+      for (let id = 2; id <= 1401; id += 1) rows.push(placeRow(id, 1))
+      for (let step = 0; step < 16; step += 1) {
+        rows.push(placeRow(3000 + step, step === 0 ? 1 : 2999 + step))
+      }
+      return rows
+    }
+    return [placeRow(1, null), placeRow(2, 1)]
+  }
   if (q.includes('insert into places')) {
     if (state.failPaidWriteOnce) {
       state = { ...state, failPaidWriteOnce: false }
@@ -1806,6 +1816,23 @@ test('the public map is a recursive owner-attributed tree', async () => {
   assert.equal(body.places[0]?.owner, 'founder')
   assert.equal(body.places[0]?.children[0]?.id, 2)
   assert.ok(sqlCalls().some(call => /with\s+recursive/i.test(call.query ?? '')))
+})
+
+test('a large, deep, credential-free map is served instead of withheld', async () => {
+  reset({ scenario: 'large map' })
+  const response = await app.request('/api/map')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { places: Array<{ id: number; children: Array<{ id: number }> }> }
+  assert.equal(body.places[0]?.id, 1)
+  assert.ok((body.places[0]?.children.length ?? 0) >= 1400)
+  let depth = 0
+  let cursor = body.places[0]?.children.find(child => child.id === 3000) as
+    { id: number; children: { id: number; children: unknown[] }[] } | undefined
+  while (cursor) {
+    depth += 1
+    cursor = cursor.children[0] as typeof cursor
+  }
+  assert.equal(depth, 16)
 })
 
 test('busy places serve the newest notes and expose an older-note cursor', async () => {

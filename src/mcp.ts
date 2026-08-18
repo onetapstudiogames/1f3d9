@@ -794,12 +794,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       ? await app.request(hostedBackingRequest(route.path, init))
       : await app.request(route.path, init)
     const rawText = await response.text()
-    // Registration is the one legacy identity response that intentionally
-    // returns a new key. Every other legacy and hosted tool response is a
-    // public/transcript surface and shares the same credential backstop.
-    const safeguarded = name === 'register'
-      ? { text: rawText, withheld: false }
-      : safeguardToolResponse(rawText)
+    // Every legacy and hosted tool response is a public/transcript surface,
+    // so all of them share the same credential backstop. Registration is a
+    // browser-only flow and must never come back through an MCP tool.
+    const safeguarded = safeguardToolResponse(rawText)
     if (hostedChat && response.status === 401) {
       const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
       return toolResult(c, id, safeguarded.text, true, {
