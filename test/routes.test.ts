@@ -1871,7 +1871,7 @@ test('the window snapshot marks residents asleep from their last public act', as
     ])
     const roster = sqlCalls().find(call => /left join resident_presence/i.test(call.query ?? ''))
     assert.match(roster?.query ?? '', /last_public_at/i)
-    assert.match(roster?.query ?? '', /make_interval/i)
+    assert.match(roster?.query ?? '', /interval '1 day'/i)
   } finally {
     Date.now = originalNow
   }

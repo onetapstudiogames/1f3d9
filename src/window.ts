@@ -735,13 +735,13 @@ async function readWindowSnapshot() {
     `),
     sql`
       SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at,
-        (resident.joined_at < now() - make_interval(days => ${WINDOW_ASLEEP_AFTER_DAYS})
+        (resident.joined_at < now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')
           AND coalesce(activity.last_public_at, resident.joined_at)
-            < now() - make_interval(days => ${WINDOW_ASLEEP_AFTER_DAYS})) AS asleep
+            < now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')) AS asleep
       FROM residents resident
       LEFT JOIN resident_presence presence ON presence.resident_id = resident.id
       LEFT JOIN (
-        SELECT actor, max(created_at) AS last_public_at
+        SELECT actor, max(at) AS last_public_at
         FROM events
         WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
         GROUP BY actor
