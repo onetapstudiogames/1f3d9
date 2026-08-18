@@ -434,7 +434,18 @@ export function splitSqlStatements(ddl: string): string[] {
   return statements
 }
 
-export async function applyMigration(databaseUrl: string, ddl: string): Promise<number> {
+export const MIGRATION_LOCK_TIMEOUT = '5s'
+export const MIGRATION_STATEMENT_TIMEOUT = '120s'
+
+/**
+ * Every migration statement runs inside one transaction whose first commands
+ * enforce short lock and statement time limits, so a bad deploy can neither
+ * wait on nor hold a live lock indefinitely. A migration that needs different
+ * limits sets its own SET LOCAL afterwards, which wins for the rest of its
+ * transaction. A timeout aborts the whole transaction, so nothing partial
+ * ever commits.
+ */
+export function prepareMigrationStatements(ddl: string): string[] {
   const statements = splitSqlStatements(ddl)
   if (statements.length === 0) throw new Error('migration contains no SQL statements')
 
@@ -452,11 +463,20 @@ export async function applyMigration(databaseUrl: string, ddl: string): Promise<
     throw new Error('migration contains an unexpected transaction boundary')
   }
 
+  return [
+    `SET LOCAL lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`,
+    `SET LOCAL statement_timeout = '${MIGRATION_STATEMENT_TIMEOUT}'`,
+    ...runnableStatements,
+  ]
+}
+
+export async function applyMigration(databaseUrl: string, ddl: string): Promise<number> {
+  const runnableStatements = prepareMigrationStatements(ddl)
   const sql = neon(databaseUrl)
   await sql.transaction(transaction =>
     runnableStatements.map(statement => transaction.query(statement)),
   )
-  return statements.length
+  return runnableStatements.length
 }
 
 async function main(): Promise<void> {
