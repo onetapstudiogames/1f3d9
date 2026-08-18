@@ -588,6 +588,56 @@ const TOOLS: readonly ToolDefinition[] = [
 const rpcError = (c: Context, id: unknown, code: number, message: string) =>
   c.json({ jsonrpc: '2.0', id: id ?? null, error: { code, message } })
 
+/**
+ * The stable machine-readable failure classes both MCP doors expose, so an
+ * agent knows whether to correct its call, authenticate, pay, wait, retry,
+ * or report a city fault. A class derives only from the downstream HTTP
+ * status or transport state — never from body content — so the set stays
+ * small and no private operational detail can leak through it.
+ */
+export type McpErrorClass =
+  | 'bad_input'
+  | 'auth_required'
+  | 'forbidden'
+  | 'payment_required'
+  | 'conflict'
+  | 'rate_limited'
+  | 'city_fault'
+  | 'unreachable'
+
+function errorClassForStatus(status: number): McpErrorClass {
+  if (status === 401) return 'auth_required'
+  if (status === 402) return 'payment_required'
+  if (status === 403) return 'forbidden'
+  if (status === 409) return 'conflict'
+  if (status === 429) return 'rate_limited'
+  if (status >= 500) return 'city_fault'
+  return 'bad_input'
+}
+
+/**
+ * Wrap a failed tool result so the class and status are machine-readable
+ * while every field of the original error body stays intact. Text that is
+ * not a JSON object is carried whole in the error field.
+ */
+function classifiedErrorText(
+  text: string,
+  errorClass: McpErrorClass,
+  httpStatus?: number,
+): string {
+  const envelope: Record<string, unknown> = { error_class: errorClass }
+  if (httpStatus !== undefined) envelope.http_status = httpStatus
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return JSON.stringify({ ...(parsed as Record<string, unknown>), ...envelope })
+    }
+  } catch {
+    // fall through to the plain-text envelope
+  }
+  return JSON.stringify({ ...envelope, error: text })
+}
+
 const SENSITIVE_ARGUMENT_KEYS = new Set([
   'secret',
   'authorization',
@@ -782,17 +832,25 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      'Do not put secrets in tool arguments. Configure the HTTP Authorization header instead.',
+      classifiedErrorText(
+        'Do not put secrets in tool arguments. Configure the HTTP Authorization header instead.',
+        'bad_input',
+      ),
       true,
     )
   }
   if (containsUnknownArgument(tool, args)) {
-    return toolResult(c, id, 'Unsupported tool argument. Use only fields advertised by tools/list.', true)
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText('Unsupported tool argument. Use only fields advertised by tools/list.', 'bad_input'),
+      true,
+    )
   }
   const enumRejection = invalidEnumArgument(tool, args)
-  if (enumRejection) return toolResult(c, id, enumRejection, true)
+  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input'), true)
   if (!hostedChat && !c.req.header('authorization') && !allowsAnonymous(name)) {
-    return toolResult(c, id, publicMcpDoorAuthMessage(), true)
+    return toolResult(c, id, classifiedErrorText(publicMcpDoorAuthMessage(), 'auth_required'), true)
   }
 
   if (hostedChat && name === 'moderate') {
@@ -800,7 +858,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      'Use your hosted chat app\'s 1F3D9 sign-in door. A resident key is never returned through chat.',
+      classifiedErrorText(
+        'Use your hosted chat app\'s 1F3D9 sign-in door. A resident key is never returned through chat.',
+        'auth_required',
+      ),
       true,
       { oauthChallenge, forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true },
     )
@@ -827,13 +888,35 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     const safeguarded = safeguardToolResponse(rawText)
     if (hostedChat && response.status === 401) {
       const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
-      return toolResult(c, id, safeguarded.text, true, {
-        oauthChallenge,
-        forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
-      })
+      return toolResult(
+        c,
+        id,
+        classifiedErrorText(safeguarded.text, 'auth_required', 401),
+        true,
+        {
+          oauthChallenge,
+          forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
+        },
+      )
     }
-    return toolResult(c, id, safeguarded.text, safeguarded.withheld || response.status >= 400)
+    if (response.status >= 400) {
+      return toolResult(
+        c,
+        id,
+        classifiedErrorText(safeguarded.text, errorClassForStatus(response.status), response.status),
+        true,
+      )
+    }
+    if (safeguarded.withheld) {
+      return toolResult(c, id, classifiedErrorText(safeguarded.text, 'city_fault'), true)
+    }
+    return toolResult(c, id, safeguarded.text, false)
   } catch {
-    return toolResult(c, id, 'The city API could not answer this tool call.', true)
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText('The city API could not answer this tool call.', 'unreachable'),
+      true,
+    )
   }
 }
