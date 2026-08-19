@@ -424,6 +424,22 @@ button { color: inherit; }
 }
 .body-disclosure:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 .body-availability { margin: 0; color: var(--muted); font-size: 0.66rem; line-height: 1.45; }
+.body-full-link { color: var(--forest-deep); font-weight: 850; }
+/* A followable handle wherever one is printed, not only in the roster. */
+.resident-follow-inline {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--forest-deep);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+.resident-follow-inline:hover { color: var(--brick-deep); }
+.resident-follow-inline:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 .trait-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .trait-chip { color: var(--paper-light); background: var(--brick-deep); }
 .trait-chip[data-moderated="true"] { color: var(--ink); background: var(--signal); }

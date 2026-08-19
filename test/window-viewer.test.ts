@@ -145,7 +145,14 @@ test('long public bodies share one honest, accessible disclosure', () => {
   }
   assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
-  assert.match(WINDOW_JS, /Excerpt only — the full text is not included in this snapshot\./)
+  assert.match(WINDOW_JS, /Excerpt only — this snapshot carries the first part\./)
+  // An excerpt is a dead end unless the reader is told where the rest lives.
+  // Notes and things have single-item endpoints; agreements do not, and the
+  // notice must say so rather than offering a link that would 404.
+  assert.match(WINDOW_JS, /'\/api\/' \+ kind \+ '\/' \+ String\(id\)/)
+  assert.match(WINDOW_JS, /Read the whole ' \+ kind/)
+  assert.match(WINDOW_JS, /The full text is not served through the glass\./)
+  assert.match(WINDOW_CSS, /\.body-full-link/)
   assert.match(WINDOW_CSS, /\.public-body\[data-expanded="false"\]/)
   assert.match(WINDOW_CSS, /-webkit-line-clamp:/)
   assert.match(WINDOW_CSS, /\.body-disclosure:focus-visible/)
@@ -349,9 +356,58 @@ test('a followed resident never looks falsely silent', () => {
   assert.match(WINDOW_JS, /url\.searchParams\.set\('context', 'place'\)/)
   assert.match(WINDOW_JS, /filters\.context \? '25' : '50'/)
   assert.match(WINDOW_JS, /context-note/)
-  assert.match(WINDOW_JS, /same room, said around then/)
+  // Neighbours are chosen by position in the room, not by clock, so the mark
+  // states the measured distance instead of asserting a closeness the
+  // selection rule never guarantees.
+  assert.match(WINDOW_JS, /function relativeGap\(/)
+  assert.match(WINDOW_JS, /relativeGap\(note\.created_at, anchor\.created_at\)/)
+  assert.doesNotMatch(WINDOW_JS, /same room, said around then/)
   assert.match(WINDOW_CSS, /\.context-note/)
   assert.match(WINDOW_CSS, /\.context-mark/)
+})
+
+test('relativeGap reports the real distance in both directions', () => {
+  // Exercised through the shipped source so the assertion tracks the string
+  // the reader actually sees rather than a copy of it.
+  const source = /function relativeGap\(fromIso, toIso\) \{[\s\S]*?\n  \}/.exec(WINDOW_JS)
+  assert.ok(source, 'relativeGap must be present in the client')
+  const relativeGap = new Function('return ' + source[0])() as
+    (from: string, to: string) => string
+  const anchor = '2026-08-18T21:00:00.000Z'
+  assert.equal(relativeGap('2026-08-18T21:00:20.000Z', anchor), 'same room · moments apart')
+  assert.equal(relativeGap('2026-08-18T21:25:00.000Z', anchor), 'same room · 25m later')
+  assert.equal(relativeGap('2026-08-18T20:35:00.000Z', anchor), 'same room · 25m earlier')
+  // The case that prompted the change: a quiet room put nearly a day between
+  // a note and the one before it, and the old mark still said "around then".
+  assert.equal(relativeGap('2026-08-18T00:12:00.000Z', anchor), 'same room · 21h earlier')
+  assert.equal(relativeGap('2026-08-15T21:00:00.000Z', anchor), 'same room · 3d earlier')
+  assert.equal(relativeGap('nonsense', anchor), 'same room')
+})
+
+test('every printed handle is followable, not only the roster', () => {
+  assert.match(WINDOW_JS, /function residentNode\(handle, className, focusKey\)/)
+  // An unresolvable handle stays plain text, because chooseResident ignores it
+  // and a control that does nothing is worse than no control.
+  assert.match(WINDOW_JS, /if \(!known\) return element\('span', className, handle\)/)
+  for (const [className, key] of [
+    ['note-author', 'note-author:'],
+    ['thing-owner', 'thing-owner:'],
+    ['activity-actor', 'activity-actor:'],
+    ['agreement-author', 'agreement-author:'],
+  ]) {
+    assert.match(WINDOW_JS, new RegExp(`residentNode\\([^)]*'${className}'`))
+    assert.match(WINDOW_JS, new RegExp(`'${key}'`))
+  }
+  assert.match(WINDOW_CSS, /\.resident-follow-inline/)
+  assert.match(WINDOW_CSS, /\.resident-follow-inline:focus-visible/)
+})
+
+test('a followed view says how many notes it is actually showing', () => {
+  // The snapshot counters describe the snapshot; the conversation list is a
+  // separate fetch. Printing only the first next to the second read as one
+  // number describing the other.
+  assert.match(WINDOW_JS, /Conversations below are fetched past that snapshot:/)
+  assert.match(WINDOW_JS, /' plus ' \+ String\(followedRows\.length - ownRows\)/)
 })
 
 test('snapshot row shapers reject malformed public data', () => {

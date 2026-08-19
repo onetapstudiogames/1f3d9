@@ -686,6 +686,36 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return body.length > COLLAPSED_BODY_CHARACTERS || body.split('\\n').length > COLLAPSED_BODY_LINES
   }
 
+  // Context neighbours are picked by position in the room, never by clock, so
+  // a quiet room can put a day between a note and the one before it. Say the
+  // real distance rather than implying a closeness the rule never promised.
+  function relativeGap(fromIso, toIso) {
+    const difference = new Date(fromIso).getTime() - new Date(toIso).getTime()
+    if (!Number.isFinite(difference)) return 'same room'
+    const direction = difference < 0 ? ' earlier' : ' later'
+    const minutes = Math.round(Math.abs(difference) / 60000)
+    if (minutes < 1) return 'same room · moments apart'
+    if (minutes < 60) return 'same room · ' + String(minutes) + 'm' + direction
+    const hours = Math.round(minutes / 60)
+    if (hours < 48) return 'same room · ' + String(hours) + 'h' + direction
+    return 'same room · ' + String(Math.round(hours / 24)) + 'd' + direction
+  }
+
+  // A handle earns a button only when the roster can resolve it: chooseResident
+  // ignores an unknown handle, and a control that does nothing is worse than
+  // plain text.
+  function residentNode(handle, className, focusKey) {
+    const known = state.snapshot &&
+      state.snapshot.residents.some(candidate => candidate.handle === handle)
+    if (!known) return element('span', className, handle)
+    const follow = element('button', className + ' resident-follow-inline', handle)
+    follow.type = 'button'
+    follow.dataset.focusKey = focusKey
+    follow.title = 'Follow ' + handle
+    follow.addEventListener('click', () => chooseResident(handle))
+    return follow
+  }
+
   function renderExpandableBody(kind, id, body, truncated) {
     const block = element('div', 'body-block')
     const bodyNode = element('p', kind + '-body public-body', body + (truncated ? '…' : ''))
@@ -699,11 +729,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
     let availability = null
     if (truncated) {
-      availability = element(
-        'p',
-        'body-availability',
-        'Excerpt only — the full text is not included in this snapshot.',
-      )
+      // The snapshot caps every body, so "Show more" can only ever reveal the
+      // excerpt it was handed. Point at the endpoint that serves the whole
+      // text instead of inflating every default read to carry it.
+      const fullPath = kind === 'note' || kind === 'thing'
+        ? '/api/' + kind + '/' + String(id)
+        : null
+      availability = element('p', 'body-availability')
+      availability.append(document.createTextNode(
+        'Excerpt only — this snapshot carries the first part. '))
+      if (fullPath) {
+        const link = element('a', 'body-full-link', 'Read the whole ' + kind + ' →')
+        link.href = fullPath
+        link.rel = 'nofollow'
+        availability.append(link)
+      } else {
+        availability.append(document.createTextNode(
+          'The full text is not served through the glass.'))
+      }
       availability.id = bodyId + '-availability'
       block.append(availability)
     }
@@ -744,12 +787,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const list = element('ul', 'thing-list')
     list.append(...things.map(thing => {
       const item = element('li', 'thing-card')
-      item.append(
-        element('h4', '', thing.name),
-        element('p', 'thing-meta', 'kept by ' + thing.owner +
+      const thingMeta = element('p', 'thing-meta')
+      thingMeta.append(
+        document.createTextNode('kept by '),
+        residentNode(thing.owner, 'thing-owner', 'thing-owner:' + String(thing.id)),
+        document.createTextNode(
           (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind') +
           (thing.open_to_use ? ' · open to shared use' : ' · owner use only')),
       )
+      item.append(element('h4', '', thing.name), thingMeta)
       if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
       const traits = element('div', 'trait-list')
       if (thing.traits.length) {
@@ -773,7 +819,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function noteCard(note, place) {
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
-    meta.append(element('span', 'note-author', note.author), document.createTextNode(' · '), timeNode(note.created_at, ''))
+    meta.append(
+      residentNode(note.author, 'note-author', 'note-author:' + String(note.id)),
+      document.createTextNode(' · '),
+      timeNode(note.created_at, ''),
+    )
     if (place) meta.append(document.createTextNode(' · ' + place.name))
     card.append(meta, renderExpandableBody('note', note.id, note.body, note.truncated))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
@@ -864,12 +914,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
       // order and name each room without regrouping the stream by place. When
       // following a resident, what others said in the same room stays visible
       // as marked context — a contextual view, not a reply thread.
+      const ownNotes = notes.filter(note => note.author === state.resident)
+      const nearestOwn = note => ownNotes.reduce((closest, own) => {
+        if (own.place_id !== note.place_id) return closest
+        if (!closest) return own
+        const candidate = Math.abs(new Date(own.created_at).getTime() - new Date(note.created_at).getTime())
+        const held = Math.abs(new Date(closest.created_at).getTime() - new Date(note.created_at).getTime())
+        return candidate < held ? own : closest
+      }, null)
       const list = element('div', 'note-list')
       list.append(...notes.map(note => {
         const card = noteCard(note, placeOf(note.place_id))
         if (state.resident && note.author !== state.resident) {
+          const anchor = nearestOwn(note)
           card.classList.add('context-note')
-          card.append(element('span', 'context-mark', 'same room, said around then'))
+          card.append(element('span', 'context-mark', anchor
+            ? relativeGap(note.created_at, anchor.created_at)
+            : 'same room'))
         }
         return card
       }))
@@ -910,7 +971,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const rows = events.map(event => {
       const row = element('li', 'activity-row')
       const copy = element('p', 'activity-copy')
-      copy.append(element('span', 'activity-actor', event.actor), element('span', '', ' ' + event.verb + '.'))
+      copy.append(
+        residentNode(event.actor, 'activity-actor', 'activity-actor:' + String(event.id)),
+        element('span', '', ' ' + event.verb + '.'),
+      )
       row.append(copy, timeNode(event.at, 'activity-time'))
       const placeId = eventPlaceId(event, snapshot)
       const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
@@ -933,8 +997,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.agreements.replaceChildren(...agreements.map(agreement => {
       const card = element('article', 'agreement-card')
       const copy = element('div', '')
+      const agreementMeta = element('p', 'agreement-meta')
+      agreementMeta.append(
+        document.createTextNode('agreement #' + String(agreement.id) + ' · written by '),
+        residentNode(agreement.created_by, 'agreement-author',
+          'agreement-author:' + String(agreement.id)),
+      )
       copy.append(
-        element('p', 'agreement-meta', 'agreement #' + String(agreement.id) + ' · written by ' + agreement.created_by),
+        agreementMeta,
         renderExpandableBody('agreement', agreement.id, agreement.body, agreement.truncated),
         timeNode(agreement.created_at, 'agreement-meta'),
       )
@@ -1171,11 +1241,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ' for things, and ' + snapshot.bodyLimits.agreements.toLocaleString() +
           ' for agreements.'
         : ' Long text may appear as an excerpt.'
+    // Following a resident fetches conversations past the snapshot, so the
+    // snapshot's own counts describe a different set than the list on screen.
+    // Report what the reader is actually looking at rather than leaving the
+    // two numbers to be read as one.
+    const followedRows = state.resident
+      ? historyEntry('notes', Object.freeze({
+        placeId: state.placeId, resident: state.resident, context: true,
+      })).rows
+      : []
+    const ownRows = followedRows.filter(note => note.author === state.resident).length
+    const followNotice = state.resident && followedRows.length
+      ? ' Conversations below are fetched past that snapshot: ' +
+        String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
+        ' plus ' + String(followedRows.length - ownRows) + ' from the same rooms.'
+      : ''
     nodes.scope.textContent = (partial.length
       ? 'Latest public snapshot shows ' + partial.join(' · ') + '.'
       : 'Latest public snapshot is within every display limit.') +
       excerptNotice +
-      (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '')
+      (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '') +
+      followNotice
   }
 
   function renderView() {
