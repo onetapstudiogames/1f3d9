@@ -403,9 +403,55 @@ world root. Do not touch the main `1f3d9` project or unrelated previews.
   preview branch is only "finished" when no environment variable still
   points at it.
 
+- *Item 17* — measured before changing anything: 3.26 million observability
+  events for $3.91 this cycle, still driven by Neon SQL calls (191,000 in a
+  trailing 12 hours). The lever was Vercel's **Observability Plus** add-on
+  ($1.20 per million events), which buys deeper dashboards and longer
+  retention, not incident signal. Runtime logs, errors, and alerts do not
+  depend on it. Tracing was proven on a real incident before the change: when
+  previews began failing, `vercel logs <deployment>` gave the exact fault
+  (`password authentication failed for user 'neondb_owner'`) with the failing
+  route and stack, which is the database-incident case the outcome names, and
+  a public event id still maps to its own `POST /api/action` line the same
+  way. Observability Plus was then turned off with the founder's explicit
+  approval on 2026-08-18. Included metrics with a shorter retention window
+  remain; data collected while it is off will not appear if it is ever
+  re-enabled. Deeper query work stays unjustified: the wave-3 map cache
+  already removed the repeat reads, and Neon's own console covers the SQL
+  breakdown Vercel's dashboard was being used for.
+
 ### Wave 4 cleanup gate
 
 Meet the shared cleanup outcome above before the implementation plan is closed.
+
+**Record — passed 2026-08-18.** All five Wave 4 items shipped or closed:
+items 7 (#46) and 8 (#47) through reviewed pull requests, each adversarially
+reviewed, gated with `deploy.sh --prepare`, verified on its Vercel preview,
+squash-merged, and verified live; items 17, 18, and 19 as recorded above.
+
+- *Workspace:* clean tree on `main`; both wave-4 ship branches verified
+  byte-identical to their squash commits, then deleted locally and on origin.
+  No stashes, no extra worktrees. The six wave-1 archaeology branches remain
+  per their recorded owner and expiry (2026-09-18).
+- *Temporary files:* no `1f3d9-*` residue in Windows Temp from this wave. The
+  review agents' scratch reproductions and the captured preview connection
+  string were removed from the session scratchpad; only the Neon consumption
+  baseline JSON was kept as measurement evidence. The audit-era
+  `unshittify`/`unshittily-1f3d9-*` baselines from 2026-08-15 were reviewed
+  at this gate and remain the founder's audit tooling.
+- *Processes and containers:* no process or container referencing 1f3d9
+  beyond this session's own shells; the integration test's PostgreSQL
+  containers stop themselves and none remained.
+- *Providers:* the Vercel project `1f3d9-world-root-preview` is gone; the
+  Neon preview branches for both wave-4 pull requests were deleted after
+  merge (the integration still does not clean them). Ten Neon branches
+  remain: `main`, the restored shared preview database, and eight whose git
+  branches still exist. Production snapshots from earlier waves remain as
+  rollback points under Neon's retention.
+- *Durable fix, not a sweep:* the wrong deletion in item 18 was repaired at
+  its root by recording the rule that a preview branch is only finished when
+  no environment variable still points at it, and by naming the shared
+  preview database's owner and purpose here.
 
 ## Important audit details folded into the chosen work
 
