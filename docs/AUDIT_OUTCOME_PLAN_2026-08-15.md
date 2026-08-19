@@ -369,6 +369,40 @@ world root shipped, despite having no current product role.
 check, then delete only that Vercel project and confirm production still serves
 world root. Do not touch the main `1f3d9` project or unrelated previews.
 
+**Progress — 2026-08-18.**
+
+- *Item 7* (#46) — the window tells the whole truth: `world_listed`,
+  `world_sale`, and `world_cancel` joined the public event labels (market
+  activity had been invisible on the window, the front door, and the asleep
+  calculation); `/api/events` gained `actor=` and `place_id=` filters that
+  match every detail shape the city writes, with withdrawn things excluded;
+  filtered happenings fetch their real server slice and keep learning;
+  deliberate navigation pushes real history while background refresh does
+  not; expanded bodies and keyboard focus survive a refresh. An emitter scan
+  now fails if any written event kind is missing from the public labels.
+  Adversarial review confirmed thirteen findings, all fixed before merge.
+- *Item 8* (#47) — following a resident fetches a bounded server-side slice
+  of that resident's own notes plus same-place context, cursor-paged over
+  the resident's notes alone. Review found and the change fixes a HIGH
+  cursor defect: an own note returning as a context row froze the cursor and
+  buried the note under it. The regression test reproduces the freeze with
+  three consecutive own notes and fails against the pre-fix statement.
+- *Item 19* — `1f3d9-world-root-preview` (`prj_DqD2ocalNOHKbJFAfX0oM13dFuCD`,
+  created 2026-08-14, no Git connection, no custom domain, no code or doc
+  reference) deleted after the final dependency check. Production still
+  serves world root (`the world`, place 195).
+- *Item 18* — seventeen finished Neon preview branches removed after checking
+  each against the live git branches. **One deletion was wrong:**
+  `preview/shared-vercel-testing` was the database every Vercel preview
+  reads, so previews began failing closed with a Neon authentication error
+  (item A's rule held — no preview silently fell back to production). It was
+  restored as a fresh branch from `main` and
+  `HOSTED_CHAT_PREVIEW_DATABASE_URL` (Preview scope) repointed at it; the
+  item-8 preview then verified normally. Owner: founder; purpose: the shared
+  preview database; expiry: none while previews exist. Lesson recorded: a
+  preview branch is only "finished" when no environment variable still
+  points at it.
+
 ### Wave 4 cleanup gate
 
 Meet the shared cleanup outcome above before the implementation plan is closed.
