@@ -466,6 +466,14 @@ const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements'])
 // resident's notes when the caller asks for conversational context.
 export const NOTE_CONTEXT_NEIGHBORS = 2
 
+// A context page carries one lookahead own note plus up to 2*NEIGHBORS
+// neighbors per kept own note. Bound its page size so the whole page always
+// fits inside the public row cap; otherwise the shaper's slice would silently
+// drop own notes the cursor has already stepped past.
+export const NOTE_CONTEXT_PAGE_MAX = Math.floor(
+  (PUBLIC_PAGE_MAX - 1) / (1 + 2 * NOTE_CONTEXT_NEIGHBORS),
+)
+
 export interface WindowHistoryQuery {
   readonly collection: 'notes' | 'things' | 'agreements'
   readonly beforeId: number | null
@@ -516,13 +524,14 @@ export function parseWindowHistoryQuery(
   if (contextValue !== undefined &&
       (contextValue !== 'place' || collection !== 'notes' || resident === null)) return null
 
+  const context = contextValue === 'place'
   return Object.freeze({
     collection: collection as WindowHistoryQuery['collection'],
     beforeId: page.cursor,
-    limit: page.limit,
+    limit: context ? Math.min(page.limit, NOTE_CONTEXT_PAGE_MAX) : page.limit,
     placeId,
     resident,
-    context: contextValue === 'place',
+    context,
   })
 }
 
@@ -539,19 +548,31 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
     // what others said back is visible. Neighbors shared between adjacent own
     // notes collapse via DISTINCT ON, and the page cursor advances over the
     // resident's notes alone.
+    //
+    // Two invariants keep that cursor honest. Context excludes the followed
+    // resident, so an own note from an earlier page can never return disguised
+    // as context and be counted again — that would freeze the cursor and hide
+    // the note underneath it. And context anchors only to page_notes, the rows
+    // this page actually keeps, so the trimmed lookahead note never leaves its
+    // neighbors behind without their anchor. Context rows may still repeat
+    // across pages when neighbors sit between two own notes; ids are stable,
+    // so readers merge them by id.
     return Object.freeze({
       text: `WITH resident_notes AS (
-          SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
+          SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
+            row_number() OVER (ORDER BY note.id DESC) AS own_position
           FROM notes note JOIN residents author ON author.id = note.author_id
           WHERE ($1::integer IS NULL OR note.id < $1::integer)
             AND ($2::integer IS NULL OR note.place_id = $2::integer)
             AND author.handle = $3::text
           ORDER BY note.id DESC
           LIMIT $4::integer
+        ), page_notes AS (
+          SELECT * FROM resident_notes WHERE own_position <= $5::integer
         ), context_notes AS (
           SELECT DISTINCT ON (ctx.id)
             ctx.id, ctx.place_id, ctx_author.handle AS author, ctx.body, ctx.created_at
-          FROM resident_notes own
+          FROM page_notes own
           CROSS JOIN LATERAL (
             (SELECT neighbor.id, neighbor.place_id, neighbor.author_id,
                neighbor.body, neighbor.created_at
@@ -568,13 +589,15 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
              LIMIT ${NOTE_CONTEXT_NEIGHBORS})
           ) ctx
           JOIN residents ctx_author ON ctx_author.id = ctx.author_id
-          WHERE ctx.id NOT IN (SELECT own_note.id FROM resident_notes own_note)
+          WHERE ctx_author.handle <> $3::text
         )
         SELECT id, place_id, author, body, created_at FROM resident_notes
         UNION ALL
         SELECT id, place_id, author, body, created_at FROM context_notes
         ORDER BY id DESC`,
-      values: Object.freeze([options.beforeId, options.placeId, options.resident, fetchLimit]),
+      values: Object.freeze([
+        options.beforeId, options.placeId, options.resident, fetchLimit, options.limit,
+      ]),
     })
   }
   if (options.collection === 'notes') {
@@ -686,7 +709,9 @@ export async function readWindowCollectionPage(
   const rows = await loadWindowCollectionRows(options, query)
   if (options.collection === 'notes' && options.context && options.resident) {
     // The cursor pages over the followed resident's own notes; context rows
-    // ride along and never affect has_more or the next cursor.
+    // ride along and never affect has_more or the next cursor. The statement
+    // guarantees no context row is authored by the followed resident, so
+    // classifying by author here cannot miscount an own note.
     const typed = rows as readonly (Record<string, unknown> & { id: number })[]
     const ownRows = typed.filter(row => row.author === options.resident)
     const ownPage = finalizePublicPage(ownRows, options.limit)

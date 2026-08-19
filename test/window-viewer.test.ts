@@ -197,6 +197,20 @@ test('window history queries accept only one safe value for each supported filte
     collection: 'notes', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
     context: true,
   })
+  // A context page carries neighbors as well as own notes, so its page size
+  // is bounded to keep the whole page inside the public row cap.
+  assert.deepEqual(parse({
+    collection: ['notes'], resident: ['tiny-lantern'], context: ['place'], limit: ['200'],
+  }), {
+    collection: 'notes', beforeId: null, limit: 39, placeId: null, resident: 'tiny-lantern',
+    context: true,
+  })
+  assert.deepEqual(parse({
+    collection: ['notes'], limit: ['200'],
+  }), {
+    collection: 'notes', beforeId: null, limit: 200, placeId: null, resident: null,
+    context: false,
+  })
 
   for (const unsafe of [
     { collection: ['events'] },
@@ -267,9 +281,16 @@ test('window collection statements enforce limit plus one without client SQL ide
   assert.match(context.text, /neighbor\.id < own\.id/i)
   assert.match(context.text, /neighbor\.id > own\.id/i)
   assert.match(context.text, /LIMIT 2\)/)
-  assert.match(context.text, /NOT IN \(SELECT own_note\.id FROM resident_notes own_note\)/i)
   assert.match(context.text, /UNION ALL/i)
-  assert.deepEqual(context.values, [91, null, 'tiny-lantern', 26])
+  // Two cursor-safety invariants: context never contains the followed
+  // resident (an own note returning as context would freeze the cursor and
+  // bury the note under it), and context anchors only to the rows this page
+  // keeps, never to the trimmed lookahead note.
+  assert.match(context.text, /ctx_author\.handle <> \$3::text/i)
+  assert.match(context.text, /row_number\(\) OVER \(ORDER BY note\.id DESC\) AS own_position/i)
+  assert.match(context.text, /page_notes AS \(\s*SELECT \* FROM resident_notes WHERE own_position <= \$5::integer/i)
+  assert.match(context.text, /FROM page_notes own/i)
+  assert.deepEqual(context.values, [91, null, 'tiny-lantern', 26, 25])
 })
 
 test('window histories merge immutably, dedupe by id, and stay newest first', () => {

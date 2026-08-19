@@ -740,6 +740,34 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.ok(olderPage.items.some(item => item.id === own2))
       assert.equal(olderPage.nextBeforeId, own2)
 
+      // Context never carries the followed resident, and no page shows a
+      // context note whose own note was trimmed to the next page.
+      const anchored = await windowModule.readWindowCollectionPage(Object.freeze({
+        collection: 'notes' as const,
+        beforeId: null,
+        limit: 1,
+        placeId: room,
+        resident: 'resident-5',
+        context: true,
+      }))
+      // own2 is the only kept own note: it brings its two neighbors below
+      // (drift, reply1) and one above (reply2). `before` belongs to own1,
+      // which was trimmed to the next page, so it must not appear.
+      assert.deepEqual(
+        anchored.items.map(item => item.id),
+        [reply2, own2, drift, reply1],
+        'only the kept own note anchors context',
+      )
+      assert.ok(!anchored.items.some(item => item.id === before))
+      assert.ok(!anchored.items.some(item => (item as { author: string }).author === 'resident-5'
+        && item.id !== own2))
+
+      // The route bounds a context page so the whole page fits the row cap.
+      const bounded = windowModule.parseWindowHistoryQuery({
+        collection: ['notes'], resident: ['resident-5'], context: ['place'], limit: ['200'],
+      })
+      assert.equal(bounded?.limit, windowModule.NOTE_CONTEXT_PAGE_MAX)
+
       // The route rejects context without a resident before touching SQL.
       const app = new Hono()
       app.get('/api/window', windowModule.windowSnapshot)
@@ -758,6 +786,38 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         payload.notes.map(note => note.id),
         [own3, unrelated, reply2, own2, drift, reply1, own1, before],
       )
+
+      // Regression: consecutive own notes straddling a page boundary. The
+      // resident's own note from the previous page must never return as a
+      // context row — counting it again froze the cursor and buried the note
+      // underneath it, the exact "falsely silent" failure this view fixes.
+      const monologue = (await client.query<{ id: number }>(
+        `INSERT INTO places (parent_id, place_kind, name, owner_id)
+         SELECT id, 'place', 'Monologue Room', 1
+         FROM places WHERE name = 'Pagination Continent'
+         RETURNING id`,
+      )).rows[0]!.id
+      const solo1 = await say(monologue, 5, 'first of three in a row')
+      const solo2 = await say(monologue, 5, 'second of three in a row')
+      const solo3 = await say(monologue, 5, 'third of three in a row')
+      const soloQuery = (beforeId: number | null) => Object.freeze({
+        collection: 'notes' as const,
+        beforeId,
+        limit: 1,
+        placeId: monologue,
+        resident: 'resident-5',
+        context: true,
+      })
+      const soloFirst = await windowModule.readWindowCollectionPage(soloQuery(null))
+      assert.deepEqual(soloFirst.items.map(item => item.id), [solo3])
+      assert.equal(soloFirst.nextBeforeId, solo3)
+      const soloSecond = await windowModule.readWindowCollectionPage(soloQuery(soloFirst.nextBeforeId))
+      assert.deepEqual(soloSecond.items.map(item => item.id), [solo2])
+      assert.equal(soloSecond.nextBeforeId, solo2, 'the cursor must advance past every own note')
+      const soloThird = await windowModule.readWindowCollectionPage(soloQuery(soloSecond.nextBeforeId))
+      assert.deepEqual(soloThird.items.map(item => item.id), [solo1])
+      assert.equal(soloThird.hasMore, false)
+      assert.equal(soloThird.nextBeforeId, null)
     })
   } finally {
     database = null
