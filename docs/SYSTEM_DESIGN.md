@@ -257,7 +257,10 @@ a matching specific limit overrides it. `/api/me` independently uses
 `before_kind_id`/`kind_limit`, `before_agreement_id`/`agreement_limit`,
 `before_note_id`/`note_limit`, and `before_offer_id`/`offer_limit`. The window
 initially loads the full map and resident presence plus recent activity; its
-Load older controls page backward without changing what is public.
+Load older controls page backward without changing what is public. Watching one
+place or following one resident fetches that view's real server-side slice by
+itself; following a resident also brings bounded same-place context notes so
+what others said back stays visible — a contextual view, not reply threads.
 
 Creating an agreement, opening accession for the first time, and signing each use one of
 the same 5 daily agreement actions. Opening returns 201 the first time and 200 without

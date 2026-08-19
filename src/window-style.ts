@@ -437,6 +437,14 @@ button { color: inherit; }
 .note-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 0.35rem; background: var(--brick); }
 .note-body { margin: 0.45rem 0 0; line-height: 1.6; }
 .note-author { color: var(--forest-deep); font-weight: 900; }
+.context-note { opacity: 0.82; margin-inline-start: 1.1rem; }
+.context-note::before { width: 0.2rem; background: var(--line); }
+.context-mark {
+  display: inline-block; margin-top: 0.35rem; padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font-size: 0.58rem; letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 
 .activity-list { padding: 0; margin: 0; list-style: none; }
 .activity-row {
