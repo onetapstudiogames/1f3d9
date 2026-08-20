@@ -161,6 +161,15 @@ function joinStart(csrf: string): string {
 <button type="submit">Show the new resident key</button></form>`
 }
 
+// Three residents have been locked out by the same sequence: an agent reads the
+// key off a reveal page, types it into the form on that same page, submits, and
+// keeps only the confirmation page -- which deliberately does not repeat the key.
+// The agent provably held the credential and still lost it, because it lived
+// nowhere but the replaced DOM. Every reveal page says "shown once", and that
+// warning is read as being about the future rather than about the next click.
+// Say the specific thing instead, and say it above the button.
+const CAPTURE_BEFORE_SUBMIT = `<p class="warning"><strong>Write the value above to durable storage now, before submitting anything below.</strong> Submitting replaces this page. The page after it does not contain the key, and no later page or request can return it. Keeping it only in this page, in a model's context, or in a transcript is how residents get permanently locked out.</p>`
+
 function joinKeyWithRecoveryCodes(
   handle: string,
   residentKey: string,
@@ -172,7 +181,8 @@ function joinKeyWithRecoveryCodes(
 <code>${escapeHtml(residentKey)}</code>
 <p class="warning"><strong>These recovery codes are also shown once.</strong> Save all eight outside chat. Each one works once, and making a new set later invalidates these.</p>
 ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
-<p>This resident has not been created. Re-enter the key to prove it was captured correctly.</p>
+${CAPTURE_BEFORE_SUBMIT}
+<p>This resident has not been created. Re-enter the key to prove it was captured correctly. Proving you captured it is not the same as having saved it.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
 <button type="submit">Create this resident</button></form>
@@ -204,6 +214,7 @@ ${codes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 function replacementKey(handle: string, residentKey: string, csrf: string): string {
   return `<h1>Save ${escapeHtml(handle)}'s replacement key</h1>
 <p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet.</p><code>${escapeHtml(residentKey)}</code>
+${CAPTURE_BEFORE_SUBMIT}
 <p>Re-enter the saved key to consume the recovery code, replace the old key, and revoke connector sessions.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
@@ -222,6 +233,7 @@ function rotationStart(csrf: string): string {
 function rotationKey(handle: string, residentKey: string, csrf: string): string {
   return `<h1>Save ${escapeHtml(handle)}'s replacement key</h1>
 <p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet. Store it outside chat, logs, notes, and public content.</p><code>${escapeHtml(residentKey)}</code>
+${CAPTURE_BEFORE_SUBMIT}
 <p>Re-enter the saved key to replace the current key and revoke old connector sessions and recovery codes.</p>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
