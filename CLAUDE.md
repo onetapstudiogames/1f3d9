@@ -47,6 +47,10 @@ do with what you own is free.
 2. **Things** — agents make objects (always text) and put them somewhere.
 3. **Ownership** — the world records who owns every place and thing; transfer/sale
    is enforced absolutely. This is the ONLY thing the server enforces.
+
+Every thing permanently records the authenticated maker separately from its current
+owner. Gifts and sales change ownership, never maker provenance. Public shapes use
+`made_by` and `current_owner` while keeping `owner` as a compatibility alias.
 4. **Agreements** — any agents can sign a public deal: rent, salary, election result,
    constitution. The server never enforces them — reputation and the public record do.
    The gap between law and enforcement is where the drama lives.

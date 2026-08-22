@@ -189,9 +189,9 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
     `)
     await postgres.client.query(`
       INSERT INTO things (
-        id, place_id, name, body, owner_id, open_to_use,
+        id, place_id, name, body, owner_id, maker_id, open_to_use,
         kind_id, birth_revision, current_revision
-      ) VALUES (1, $1, 'visitor bell', 'ring me', 1, true, 1, 1, 1);
+      ) VALUES (1, $1, 'visitor bell', 'ring me', 1, 1, true, 1, 1, 1);
     `, [placeId])
 
     const sharedUse = await runAction({
@@ -266,8 +266,8 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
       row => row.name === 'second-race-destination',
     )!.id
     const racedThingId = (await postgres.client.query<{ id: number }>(`
-      INSERT INTO things (id, place_id, name, body, owner_id)
-      VALUES (2, $1, 'race token', 'moves only once', 1)
+      INSERT INTO things (id, place_id, name, body, owner_id, maker_id)
+      VALUES (2, $1, 'race token', 'moves only once', 1, 1)
       RETURNING id
     `, [placeId])).rows[0]!.id
 

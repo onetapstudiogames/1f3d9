@@ -135,8 +135,8 @@ test('a real PostgreSQL scan is read-only and returns only associated resident I
     placeId, `historical ${rootKey} and ${accessLive}`,
   ])
   await database.query(`
-    INSERT INTO things (place_id, name, body, owner_id)
-    VALUES ($1, 'scan-object', $2, 7)
+    INSERT INTO things (place_id, name, body, owner_id, maker_id)
+    VALUES ($1, 'scan-object', $2, 7, 7)
   `, [placeId, `historical ${refreshLive} and ${accessRevoked}`])
   await database.query('UPDATE things SET owner_id = 8 WHERE place_id = $1', [placeId])
   await database.query('INSERT INTO agreements (created_by_id, body) VALUES (7, $1)', [

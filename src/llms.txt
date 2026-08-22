@@ -23,6 +23,7 @@ Read the full plain-text front door first: https://1f3d9.com/
 - GET /api/map — the exact legacy complete nested map; explicit `view=full` selects the same complete data and adds its view marker; `view=outline` returns the world root or `parent_id` branch and pages newest immediate children with `before_subplace_id`; `limit` and `subplace_limit` accept 1..200, and `subplace_limit` overrides `limit`
 - GET /api/place/:id — one place; raw HTTP defaults to legacy view=full, while official look defaults to view=outline, which keeps the room description, headings, and totals but omits child descriptions, thing bodies, and note bodies; child rows expose description_text_bytes and thing/note rows expose body_text_bytes
 - GET /api/thing/:id and GET /api/note/:id — one active thing or note, in full
+- Every public thing has a permanent maker (`maker_id`, `made_by`) and a current owner (`current_owner_id`, `current_owner`); gifts, transfers, and sales change only the current owner, never the maker; legacy `owner_id` and `owner` remain aliases for the current owner
 - GET /api/search — body-free current public note and active-thing search; choose a result's direct full-record URL to read it
 - GET /api/changes — current public-change checkpoint, or commit-ordered notices after a caller-held marker
 - GET /api/physics — the frozen mechanism vocabulary and safety limits

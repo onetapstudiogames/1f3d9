@@ -395,11 +395,18 @@ app.get('/api/me', async c => {
     `, [resident.id, placeRequest.cursor, placeRequest.fetchLimit]),
     executePublicQuery(`
       /* public:me_things */
-      SELECT id, place_id, name, open_to_use, kind_id, birth_revision, current_revision, created_at
-      FROM things
-      WHERE owner_id = $1::integer AND withdrawn_at IS NULL
-        AND ($2::integer IS NULL OR id < $2::integer)
-      ORDER BY id DESC LIMIT $3::integer
+      SELECT thing.id, thing.place_id, thing.name,
+        thing.maker_id, maker.handle AS made_by,
+        thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
+        thing.owner_id, current_owner.handle AS owner,
+        thing.open_to_use, thing.kind_id, thing.birth_revision,
+        thing.current_revision, thing.created_at
+      FROM things thing
+      JOIN residents maker ON maker.id = thing.maker_id
+      JOIN residents current_owner ON current_owner.id = thing.owner_id
+      WHERE thing.owner_id = $1::integer AND thing.withdrawn_at IS NULL
+        AND ($2::integer IS NULL OR thing.id < $2::integer)
+      ORDER BY thing.id DESC LIMIT $3::integer
     `, [resident.id, thingRequest.cursor, thingRequest.fetchLimit]),
     executePublicQuery(`
       /* public:me_kinds */

@@ -139,6 +139,10 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
       id: 31,
       place_id: 7,
       name: 'Hush Lantern',
+      maker_id: 1,
+      made_by: 'first-maker',
+      current_owner_id: 2,
+      current_owner: 'tinylantern',
       owner_id: 2,
       owner: 'tinylantern',
       open_to_use: true,
@@ -170,6 +174,10 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
       id: 28,
       place_id: 8,
       name: 'lookahead only',
+      maker_id: 4,
+      made_by: 'ember',
+      current_owner_id: 4,
+      current_owner: 'ember',
       owner_id: 4,
       owner: 'ember',
       open_to_use: false,
@@ -193,6 +201,10 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
       id: 31,
       place_id: 7,
       name: 'Hush Lantern',
+      maker_id: 1,
+      made_by: 'first-maker',
+      current_owner_id: 2,
+      current_owner: 'tinylantern',
       owner_id: 2,
       owner: 'tinylantern',
       open_to_use: true,
@@ -229,11 +241,13 @@ test('every continuation keeps the first search marker as its reconciliation bas
   const firstQuery = validSearch({ q: ['lantern'], limit: ['1'] })
   const first = await loadPublicSearchResults(async () => [{
     result_type: 'thing', id: 3, place_id: 1, name: 'new lantern',
+    maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-21T19:20:21.000000Z',
     total_items: 2, total_body_bytes: '8', change_marker: '12',
   }, {
     result_type: 'thing', id: 2, place_id: 1, name: 'old lantern',
+    maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-20T19:20:21.000000Z',
     total_items: 2, total_body_bytes: '8', change_marker: '12',
@@ -243,11 +257,13 @@ test('every continuation keeps the first search marker as its reconciliation bas
 
   const later = await loadPublicSearchResults(async () => [{
     result_type: 'thing', id: 2, place_id: 1, name: 'old lantern',
+    maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-20T19:20:21.000000Z',
     total_items: 2, total_body_bytes: '8', change_marker: '14',
   }, {
     result_type: 'thing', id: 1, place_id: 1, name: 'older lantern',
+    maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-19T19:20:21.000000Z',
     total_items: 2, total_body_bytes: '8', change_marker: '14',
@@ -307,6 +323,11 @@ test('search SQL filters private rows before matching and pages by creation time
 
   assert.match(compactPhraseSql, /FROM notes\b/i)
   assert.match(compactPhraseSql, /FROM things\b/i)
+  assert.match(compactPhraseSql, /thing\.maker_id/i)
+  assert.match(compactPhraseSql, /maker\.handle AS made_by/i)
+  assert.match(compactPhraseSql, /thing\.owner_id AS current_owner_id/i)
+  assert.match(compactPhraseSql, /owner\.handle AS current_owner/i)
+  assert.match(compactPhraseSql, /JOIN residents maker ON maker\.id = thing\.maker_id/i)
   assert.match(compactPhraseSql, /thing\.withdrawn_at IS NULL/i)
   assert.match(compactPhraseSql, /moderation_actions/i)
   assert.match(compactPhraseSql, /\bremove\b/i)

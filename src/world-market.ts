@@ -63,6 +63,10 @@ interface OfferRecord {
   asset_type: 'thing'
   asset_id: number
   asset_name: string
+  maker_id: number
+  made_by: string
+  current_owner_id: number
+  current_owner: string
   seller_id: number
   seller: string
   buyer_id: number | null
@@ -302,6 +306,14 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
   if (!row) return null
   const id = integerValue(row.id)
   const assetId = integerValue(row.asset_id)
+  const makerId = integerValue(row.maker_id)
+  const madeBy = typeof row.made_by === 'string' && HANDLE_RE.test(row.made_by)
+    ? row.made_by
+    : null
+  const currentOwnerId = integerValue(row.current_owner_id)
+  const currentOwner = typeof row.current_owner === 'string' && HANDLE_RE.test(row.current_owner)
+    ? row.current_owner
+    : null
   const sellerId = integerValue(row.seller_id)
   const buyerId = nullableInteger(row.buyer_id)
   const priceUsdc = numberValue(row.price_usdc)
@@ -331,7 +343,8 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
         row.pending_x402_at != null &&
         ['failed_transaction', 'confirmed_mismatch'].includes(String(invalidReason)) && invalidAt != null
   if (
-    !id || row.channel !== 'world' || row.asset_type !== 'thing' || !assetId || !sellerId ||
+    !id || row.channel !== 'world' || row.asset_type !== 'thing' || !assetId ||
+    !makerId || !madeBy || !currentOwnerId || !currentOwner || !sellerId ||
     priceUsdc == null || !marketDraftId || !sellerWallet ||
     (row.buyer_id != null && buyerId == null) ||
     (row.buyer_wallet != null && buyerWallet == null) ||
@@ -352,6 +365,10 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
     asset_type: 'thing',
     asset_id: assetId,
     asset_name: String(row.asset_name ?? ''),
+    maker_id: makerId,
+    made_by: madeBy,
+    current_owner_id: currentOwnerId,
+    current_owner: currentOwner,
     seller_id: sellerId,
     seller: String(row.seller ?? ''),
     buyer_id: buyerId,
@@ -396,6 +413,8 @@ async function readOffer(
   const rows = await dependencies.query(`
     /* world-market:read-offer */
     SELECT o.id, o.channel, o.asset_type, o.asset_id, thing.name AS asset_name,
+      thing.maker_id, maker.handle AS made_by,
+      thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
       o.seller_id, seller.handle AS seller, o.buyer_id, buyer.handle AS buyer,
       o.price_usdc::float8 AS price_usdc, lower(o.seller_wallet) AS seller_wallet,
       o.status, o.reserved_by, lower(o.buyer_wallet) AS buyer_wallet,
@@ -412,6 +431,8 @@ async function readOffer(
       lower(payment.payer_wallet) AS "from", lower(payment.payee_wallet) AS "to"
     FROM transfer_offers o
     JOIN things thing ON thing.id = o.asset_id
+    JOIN residents maker ON maker.id = thing.maker_id
+    JOIN residents current_owner ON current_owner.id = thing.owner_id
     JOIN residents seller ON seller.id = o.seller_id
     LEFT JOIN residents buyer ON buyer.id = o.buyer_id
     LEFT JOIN sale_payments payment ON payment.offer_id = o.id
@@ -454,6 +475,10 @@ function publicOffer(offer: OfferRecord, now: Date) {
     asset_type: 'thing' as const,
     asset_id: offer.asset_id,
     asset_name: offer.asset_name,
+    maker_id: offer.maker_id,
+    made_by: offer.made_by,
+    current_owner_id: offer.current_owner_id,
+    current_owner: offer.current_owner,
     locked: offer.locked,
     seller: offer.seller,
     buyer: offer.buyer,
@@ -678,7 +703,7 @@ async function finalizeWorldPayment(
       FROM claimed_offer offer CROSS JOIN new_payment payment
       WHERE things.id = offer.asset_id AND things.owner_id = offer.seller_id
         AND things.withdrawn_at IS NULL AND things.active_offer_id = offer.id
-      RETURNING things.id
+      RETURNING things.id, things.maker_id, things.owner_id
     ), owner_guard AS MATERIALIZED (
       SELECT CASE
         WHEN NOT EXISTS (SELECT 1 FROM claimed_offer) THEN 0
@@ -701,7 +726,14 @@ async function finalizeWorldPayment(
         'market_checkout_id', $13::integer
       ) FROM new_transfer transfer
     ), response_row AS (
-      SELECT offer.claimed_at FROM claimed_offer offer CROSS JOIN new_transfer transfer
+      SELECT offer.claimed_at,
+        changed.maker_id, maker.handle AS made_by,
+        changed.owner_id AS current_owner_id, current_owner.handle AS current_owner
+      FROM claimed_offer offer
+      JOIN new_transfer transfer ON true
+      JOIN changed_owner changed ON true
+      JOIN residents maker ON maker.id = changed.maker_id
+      JOIN residents current_owner ON current_owner.id = changed.owner_id
     ), response_payload AS (
       SELECT jsonb_build_object('offer', jsonb_build_object(
         'id', $1::integer,
@@ -710,6 +742,10 @@ async function finalizeWorldPayment(
         'asset_type', 'thing',
         'asset_id', $8::integer,
         'asset_name', $20::text,
+        'maker_id', response_row.maker_id,
+        'made_by', response_row.made_by,
+        'current_owner_id', response_row.current_owner_id,
+        'current_owner', response_row.current_owner,
         'locked', false,
         'seller', $16::text,
         'buyer', $3::text,

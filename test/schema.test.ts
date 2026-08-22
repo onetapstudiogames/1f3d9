@@ -24,6 +24,31 @@ test('things persist an owner-controlled open-to-use flag that defaults closed',
   )
 })
 
+test('things retain an immutable maker separately from their transferable owner', () => {
+  const thingsTable = /CREATE TABLE IF NOT EXISTS things \(([\s\S]*?)\);/u.exec(schema)?.[1]
+  assert.ok(thingsTable, 'fresh schema must define things')
+  assert.match(
+    thingsTable,
+    /\bmaker_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\(id\)\s+ON\s+DELETE\s+RESTRICT\b/iu,
+    'fresh things must retain their maker as a required resident',
+  )
+  assert.match(
+    schema,
+    /NEW\.maker_id\s+IS\s+NULL[\s\S]*NEW\.maker_id\s*:=\s*NEW\.owner_id[\s\S]*NEW\.maker_id\s+IS\s+DISTINCT\s+FROM\s+NEW\.owner_id[\s\S]*RAISE\s+EXCEPTION/iu,
+    'the insert-only rollout shim may fill an omitted maker but must reject an explicit mismatch',
+  )
+  assert.match(
+    schema,
+    /CREATE\s+TRIGGER\s+things_set_maker_on_insert\s+BEFORE\s+INSERT\s+ON\s+things/iu,
+    'the compatibility shim must run only on insert',
+  )
+  assert.match(
+    schema,
+    /NEW\.maker_id\s+IS\s+DISTINCT\s+FROM\s+OLD\.maker_id[\s\S]*thing birth history is immutable/iu,
+    'maker must join the immutable thing birth facts',
+  )
+})
+
 test('the flag bucket schema admits every configured hourly flag limit', () => {
   // Regression guard for the class of bug where a route-level limit exceeds a
   // column CHECK: the resident cap (20/hour) once collided with the old

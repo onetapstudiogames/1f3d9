@@ -144,6 +144,11 @@ interface PublicThing {
   place_id: number
   name: string
   body: string
+  maker_id: number
+  made_by: string
+  owner_id: number
+  current_owner_id: number
+  current_owner: string
   owner: string
   open_to_use: boolean
   kind: string | null
@@ -354,10 +359,24 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
     const placeId = positiveInteger(row.place_id)
     const name = safePublicText(row.name, 120)
     const body = safePublicText(row.body, WINDOW_BODY_LIMITS.things, true)
+    const makerId = positiveInteger(row.maker_id)
+    const madeBy = typeof row.made_by === 'string' && HANDLE_RE.test(row.made_by)
+      ? row.made_by
+      : null
+    const ownerId = positiveInteger(row.owner_id)
+    const currentOwnerId = positiveInteger(row.current_owner_id)
+    const currentOwner = typeof row.current_owner === 'string' && HANDLE_RE.test(row.current_owner)
+      ? row.current_owner
+      : null
     const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : null
     const kind = row.kind == null ? null : safeWorldName(row.kind)
     const createdAt = safeDate(row.created_at)
-    if (!id || !placeId || !name || !body || !owner || !createdAt || (row.kind != null && !kind)) return []
+    if (
+      !id || !placeId || !name || !body || !makerId || !madeBy ||
+      !ownerId || !currentOwnerId || ownerId !== currentOwnerId ||
+      !currentOwner || !owner || owner !== currentOwner ||
+      !createdAt || (row.kind != null && !kind)
+    ) return []
     const traits = Array.isArray(row.traits)
       ? [...new Set(row.traits.flatMap(trait => safeWorldName(trait) ?? []))].slice(0, 32)
       : []
@@ -366,6 +385,11 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       place_id: placeId,
       name: name.text,
       body: body.text,
+      maker_id: makerId,
+      made_by: madeBy,
+      owner_id: ownerId,
+      current_owner_id: currentOwnerId,
+      current_owner: currentOwner,
       owner,
       open_to_use: row.open_to_use === true,
       kind,
@@ -634,19 +658,24 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
   }
   if (options.collection === 'things') {
     return Object.freeze({
-      text: `SELECT thing.id, thing.place_id, thing.name, thing.body, owner.handle AS owner,
+      text: `SELECT thing.id, thing.place_id, thing.name, thing.body,
+          thing.maker_id, maker.handle AS made_by,
+          thing.owner_id AS owner_id, thing.owner_id AS current_owner_id,
+          current_owner.handle AS current_owner,
+          current_owner.handle AS owner,
           thing.open_to_use,
           thing.kind_id, thing.current_revision, kind.name AS kind,
           coalesce(revision.traits, '{}'::text[]) AS traits, thing.created_at
         FROM things thing
-        JOIN residents owner ON owner.id = thing.owner_id
+        JOIN residents maker ON maker.id = thing.maker_id
+        JOIN residents current_owner ON current_owner.id = thing.owner_id
         LEFT JOIN kinds kind ON kind.id = thing.kind_id
         LEFT JOIN kind_revisions revision
           ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
         WHERE thing.withdrawn_at IS NULL
           AND ($1::integer IS NULL OR thing.id < $1::integer)
           AND ($2::integer IS NULL OR thing.place_id = $2::integer)
-          AND ($3::text IS NULL OR owner.handle = $3::text)
+          AND ($3::text IS NULL OR current_owner.handle = $3::text)
         ORDER BY thing.id DESC
         LIMIT $4::integer`,
       values: Object.freeze([options.beforeId, options.placeId, options.resident, fetchLimit]),

@@ -285,15 +285,21 @@ const kindRow = () => ({
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
+const residentHandleForFakeId = (id: number) => id === 7
+  ? 'tiny-lantern'
+  : id === 8 ? 'neighbor' : 'founder'
+
 const thingRow = (id = 41) => ({
   id,
   place_id: 2,
   name: id === 41 ? 'porch lantern' : 'neighbor chest',
   body: id === 41 ? 'warm light' : 'locked shut',
+  maker_id: id === 41 ? 7 : 8,
+  made_by: id === 41 ? 'tiny-lantern' : 'neighbor',
+  current_owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
+  current_owner: residentHandleForFakeId(id === 41 ? state.thingOwnerId : state.targetThingOwnerId),
   owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
-  owner: id === 41
-    ? (state.thingOwnerId === state.actorId ? state.actorHandle : 'founder')
-    : (state.targetThingOwnerId === state.actorId ? state.actorHandle : 'neighbor'),
+  owner: residentHandleForFakeId(id === 41 ? state.thingOwnerId : state.targetThingOwnerId),
   open_to_use: id === 41 ? state.thingOpenToUse : false,
   kind_id: 3,
   kind: 'lantern',
@@ -402,6 +408,9 @@ const remainingPaginationRows = (collection: string) => {
     if (collection === 'me_places') return { ...common, parent_id: 1, name: `place-${id}` }
     if (collection === 'me_things') return {
       ...common, place_id: 2, name: `thing-${id}`, kind_id: null,
+      maker_id: 6, made_by: 'archive-smith',
+      current_owner_id: 7, current_owner: 'tiny-lantern',
+      owner_id: 7, owner: 'tiny-lantern',
       birth_revision: null, current_revision: null, open_to_use: false,
     }
     if (collection === 'me_kinds') return { ...common, name: `kind-${id}`, current_revision: 1 }
@@ -475,6 +484,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('/* public:search */')) {
     return [{
       result_type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+      maker_id: 5, made_by: 'archive-smith',
+      current_owner_id: 7, current_owner: 'tiny-lantern',
       owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
       author_id: null, author: null, body_text_bytes: 19,
       created_at: '2026-08-11T00:00:00.000000Z',
@@ -2874,13 +2885,26 @@ test('public thing and note detail reads expose full active records without writ
   reset({ scenario: 'public details' })
   const thing = await app.request('/api/thing/41')
   assert.equal(thing.status, 200)
-  const thingBody = await thing.json() as { thing: { id: number; body: string; owner: string } }
+  const thingBody = await thing.json() as { thing: Record<string, unknown> }
   assert.deepEqual(thingBody.thing, {
     ...thingBody.thing,
     id: 41,
     body: 'warm light',
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
     owner: 'tiny-lantern',
   })
+  const detailRead = sqlCalls().find(call => (
+    /from\s+things\s+thing/i.test(call.query ?? '') && /where\s+thing\.id/i.test(call.query ?? '')
+  ))
+  assert.match(detailRead?.query ?? '', /thing\.maker_id/i)
+  assert.match(detailRead?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(detailRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(detailRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/i)
+  assert.match(detailRead?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*thing\.maker_id/i)
 
   const note = await app.request('/api/note/51')
   assert.equal(note.status, 200)
@@ -3126,12 +3150,48 @@ test('things pin their birth revision and only their owner may voluntarily upgra
   const current = await upgraded.json() as { thing: { birth_revision: number; current_revision: number } }
   assert.equal(current.thing.birth_revision, 1)
   assert.equal(current.thing.current_revision, 2)
+  const upgradeWrite = sqlCalls().find(call => /WITH\s+upgradeable/i.test(call.query ?? ''))
+  assert.match(upgradeWrite?.query ?? '', /changed\.maker_id/i)
+  assert.match(upgradeWrite?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(upgradeWrite?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(upgradeWrite?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
+  assert.match(upgradeWrite?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*changed\.maker_id/i)
+  assert.match(upgradeWrite?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*changed\.owner_id/i)
 
   setActor(8, 'neighbor')
   const nonOwner = await app.request('/api/thing/41/upgrade', {
     method: 'POST', headers: authHeaders(OTHER_SECRET),
   })
   assert.equal(nonOwner.status, 403)
+
+  reset({
+    scenario: 'transferred thing upgrade keeps maker',
+    actorId: 8,
+    actorHandle: 'neighbor',
+    thingOwnerId: 8,
+    kindRevision: 2,
+  })
+  const transferred = await app.request('/api/thing/41/upgrade', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+  })
+  assert.equal(transferred.status, 200)
+  const transferredBody = await transferred.json() as { thing: Record<string, unknown> }
+  assert.deepEqual({
+    maker_id: transferredBody.thing.maker_id,
+    made_by: transferredBody.thing.made_by,
+    current_owner_id: transferredBody.thing.current_owner_id,
+    current_owner: transferredBody.thing.current_owner,
+    owner_id: transferredBody.thing.owner_id,
+    owner: transferredBody.thing.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 8,
+    current_owner: 'neighbor',
+    owner_id: 8,
+    owner: 'neighbor',
+  })
 })
 
 test('note and agreement quotas fail atomically without a partial public record', async () => {
@@ -3312,6 +3372,9 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
     body: JSON.stringify({ type: 'thing', id: 41, to_handle: 'neighbor' }),
   })
   assert.equal(gift.status, 200, await gift.clone().text())
+  const giftWrite = sqlCalls().find(call => /WITH\s+recipient[\s\S]*moved_asset/i.test(call.query ?? ''))
+  assert.match(giftWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*recipient\.id/i)
+  assert.doesNotMatch(giftWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   reset({ scenario: 'offer lock' })
   const offered = await app.request('/api/transfer/offer', {
@@ -3425,8 +3488,11 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
   const body = await settled.json() as { offer: { status: string }; transfer: { to: string } }
   assert.equal(body.offer.status, 'claimed')
   assert.equal(body.transfer.to, 'neighbor')
-  assert.ok(sqlCalls().some(call =>
-    /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? '')))
+  const settledWrite = sqlCalls().find(call =>
+    /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? ''))
+  assert.ok(settledWrite)
+  assert.match(settledWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*\$\d+/i)
+  assert.doesNotMatch(settledWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
   const missingWallet = await app.request('/api/transfer/90/claim', {
@@ -4398,6 +4464,8 @@ test('search and changes succeed through their real Hono routes without returnin
       query: 'archive lantern', mode: 'phrase', type: 'thing',
       results: [{
         type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+        maker_id: 5, made_by: 'archive-smith',
+        current_owner_id: 7, current_owner: 'tiny-lantern',
         owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
         body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
         href: '/api/thing/41',
@@ -4405,6 +4473,11 @@ test('search and changes succeed through their real Hono routes without returnin
       total_items: 1, total_text_bytes: 19, returned_items: 1,
       returned_text_bytes: 0, has_more: false, next_before: null, change_marker: '9',
     })
+    const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
+    assert.match(searchRead?.query ?? '', /thing\.maker_id/iu)
+    assert.match(searchRead?.query ?? '', /maker\.handle\s+AS\s+made_by/iu)
+    assert.match(searchRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/iu)
+    assert.match(searchRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/iu)
 
     const checkpoint = await app.request('/api/changes')
     assert.equal(checkpoint.status, 200)
@@ -5392,6 +5465,7 @@ test('thing withdrawal is owner-only, one-way, and refused during an open sale',
     withdrawalWrite?.query ?? '',
     /jsonb_build_object\(\s*'thing_id'\s*,\s*id\s*,\s*'reason'\s*,\s*\$\d+::text\s*\)/i,
   )
+  assert.doesNotMatch(withdrawalWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   reset({ scenario: 'thing withdrawal sale', offer: { ...initialState().offer, status: 'open' } })
   const locked = await app.request('/api/thing/41/withdraw', {
@@ -5454,24 +5528,83 @@ test('thing detail and place reads expose open_to_use, defaulting to false', asy
 
   const thingBody = await thingResponse.json() as { thing: { open_to_use: boolean } }
   const placeBody = await placeResponse.json() as {
-    things: Array<{ id: number; open_to_use: boolean }>
+    things: Array<Record<string, unknown> & { id: number; open_to_use: boolean }>
   }
   assert.equal(thingBody.thing.open_to_use, false)
   assert.equal(placeBody.things.find(thing => thing.id === 41)?.open_to_use, false)
+  assert.deepEqual({
+    maker_id: placeBody.things[0]?.maker_id,
+    made_by: placeBody.things[0]?.made_by,
+    current_owner_id: placeBody.things[0]?.current_owner_id,
+    current_owner: placeBody.things[0]?.current_owner,
+    owner_id: placeBody.things[0]?.owner_id,
+    owner: placeBody.things[0]?.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
   const detailRead = sqlCalls().find(call => (
     /from\s+things\s+thing/i.test(call.query ?? '') && /where\s+thing\.id/i.test(call.query ?? '')
   ))
   const placeRead = sqlCalls().find(call => /from\s+things\s+t\b/i.test(call.query ?? ''))
   assert.match(detailRead?.query ?? '', /thing\.open_to_use/i)
   assert.match(placeRead?.query ?? '', /t\.open_to_use/i)
+  assert.match(placeRead?.query ?? '', /t\.maker_id/i)
+  assert.match(placeRead?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(placeRead?.query ?? '', /t\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(placeRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/i)
+
+  for (const view of ['full', 'outline'] as const) {
+    const viewed = await app.request(`/api/place/2?view=${view}`)
+    assert.equal(viewed.status, 200)
+    const viewedBody = await viewed.json() as { things: Array<Record<string, unknown>> }
+    assert.deepEqual({
+      maker_id: viewedBody.things[0]?.maker_id,
+      made_by: viewedBody.things[0]?.made_by,
+      current_owner_id: viewedBody.things[0]?.current_owner_id,
+      current_owner: viewedBody.things[0]?.current_owner,
+      owner_id: viewedBody.things[0]?.owner_id,
+      owner: viewedBody.things[0]?.owner,
+    }, {
+      maker_id: 7,
+      made_by: 'tiny-lantern',
+      current_owner_id: 7,
+      current_owner: 'tiny-lantern',
+      owner_id: 7,
+      owner: 'tiny-lantern',
+    }, view)
+  }
 
   reset({ scenario: 'remaining pagination' })
   const meResponse = await app.request('/api/me', { headers: authHeaders() })
   assert.equal(meResponse.status, 200)
-  const meBody = await meResponse.json() as { things: Array<{ open_to_use: boolean }> }
+  const meBody = await meResponse.json() as { things: Array<Record<string, unknown> & { open_to_use: boolean }> }
   assert.equal(meBody.things[0]?.open_to_use, false)
+  assert.deepEqual({
+    maker_id: meBody.things[0]?.maker_id,
+    made_by: meBody.things[0]?.made_by,
+    current_owner_id: meBody.things[0]?.current_owner_id,
+    current_owner: meBody.things[0]?.current_owner,
+    owner_id: meBody.things[0]?.owner_id,
+    owner: meBody.things[0]?.owner,
+  }, {
+    maker_id: 6,
+    made_by: 'archive-smith',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
   const meRead = sqlCalls().find(call => /\/\*\s*public:me_things\s*\*\//i.test(call.query ?? ''))
   assert.match(meRead?.query ?? '', /\bopen_to_use\b/i)
+  assert.match(meRead?.query ?? '', /thing\.maker_id/i)
+  assert.match(meRead?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(meRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(meRead?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
 })
 
 test('new things default closed and may be opened explicitly by their creator', async () => {
@@ -5482,9 +5615,32 @@ test('new things default closed and may be opened explicitly by their creator', 
     body: JSON.stringify({ place_id: 2, name: 'closed lantern', body: 'owner use only' }),
   })
   assert.equal(closed.status, 201)
-  const closedBody = await closed.json() as { thing: { open_to_use: boolean; body: string }; reading_cost: { new_item_text_bytes: number } }
+  const closedBody = await closed.json() as {
+    thing: Record<string, unknown> & { open_to_use: boolean; body: string }
+    reading_cost: { new_item_text_bytes: number }
+  }
   assert.equal(closedBody.thing.open_to_use, false)
+  assert.deepEqual({
+    maker_id: closedBody.thing.maker_id,
+    made_by: closedBody.thing.made_by,
+    current_owner_id: closedBody.thing.current_owner_id,
+    current_owner: closedBody.thing.current_owner,
+    owner_id: closedBody.thing.owner_id,
+    owner: closedBody.thing.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
   assert.equal(closedBody.reading_cost.new_item_text_bytes, Buffer.byteLength(closedBody.thing.body))
+  const closedInsert = sqlCalls().find(call => /insert\s+into\s+things/i.test(call.query ?? ''))
+  assert.match(closedInsert?.query ?? '', /\bmaker_id\b/i)
+  assert.match(closedInsert?.query ?? '', /\bmade_by\b/i)
+  assert.match(closedInsert?.query ?? '', /\bcurrent_owner_id\b/i)
+  assert.match(closedInsert?.query ?? '', /\bcurrent_owner\b/i)
 
   reset({ scenario: 'thing open_to_use create explicit', openToThings: true, thingOpenToUse: true })
   const opened = await app.request('/api/thing', {
@@ -5511,6 +5667,30 @@ test('new things default closed and may be opened explicitly by their creator', 
     })
     assert.equal(response.status, 400)
   }
+
+  for (const forbidden of [{ maker_id: 8 }, { made_by: 'neighbor' }]) {
+    const response = await app.request('/api/thing', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        place_id: 2, name: 'forged provenance', body: '', ...forbidden,
+      }),
+    })
+    assert.equal(response.status, 400)
+  }
+
+  const mentionsAnotherResident = await app.request('/api/thing', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      place_id: 2,
+      name: 'A lantern for neighbor',
+      body: 'Made to answer neighbor without claiming neighbor made it.',
+    }),
+  })
+  assert.equal(mentionsAnotherResident.status, 201)
+  const attributed = await mentionsAnotherResident.json() as { thing: Record<string, unknown> }
+  assert.equal(attributed.thing.made_by, 'tiny-lantern')
 })
 
 test('the thing owner can toggle open_to_use and a visitor cannot edit it', async () => {
@@ -5527,6 +5707,42 @@ test('the thing owner can toggle open_to_use and a visitor cannot edit it', asyn
   assert.equal(changedBody.reading_cost.room_stored_text_bytes, 1234)
   const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
   assert.match(update?.query ?? '', /\bopen_to_use\b/i)
+  assert.match(update?.query ?? '', /changed\.maker_id/i)
+  assert.match(update?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(update?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(update?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*changed\.maker_id/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*changed\.owner_id/i)
+
+  reset({
+    scenario: 'transferred thing edit keeps maker',
+    actorId: 8,
+    actorHandle: 'neighbor',
+    thingOwnerId: 8,
+    thingOpenToUse: false,
+  })
+  const transferred = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ body: 'kept by a new owner' }),
+  })
+  assert.equal(transferred.status, 200)
+  const transferredBody = await transferred.json() as { thing: Record<string, unknown> }
+  assert.deepEqual({
+    maker_id: transferredBody.thing.maker_id,
+    made_by: transferredBody.thing.made_by,
+    current_owner_id: transferredBody.thing.current_owner_id,
+    current_owner: transferredBody.thing.current_owner,
+    owner_id: transferredBody.thing.owner_id,
+    owner: transferredBody.thing.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 8,
+    current_owner: 'neighbor',
+    owner_id: 8,
+    owner: 'neighbor',
+  })
 
   reset({ scenario: 'thing open_to_use patch denied', thingOwnerId: 7, thingOpenToUse: false })
   setActor(8, 'neighbor')

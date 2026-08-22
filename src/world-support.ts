@@ -89,6 +89,10 @@ export interface ThingRow {
   place_id: number
   name: string
   body: string
+  maker_id: number
+  made_by: string
+  current_owner_id: number
+  current_owner: string
   owner_id: number
   owner: string
   open_to_use: boolean

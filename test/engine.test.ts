@@ -951,6 +951,7 @@ test('give transfers only an owned, active, unoffered thing', async () => {
   const transfer = calls.find(call => /INSERT INTO transfers/.test(call.text))
   assert.match(transfer?.text ?? '', /INSERT INTO events/)
   assert.match(transfer?.text ?? '', /'mode', 'effect'/)
+  assert.doesNotMatch(transfer?.text ?? '', /SET\s+maker_id\s*=/)
 })
 
 test('give can transfer a kind target without inventing a source thing', async () => {

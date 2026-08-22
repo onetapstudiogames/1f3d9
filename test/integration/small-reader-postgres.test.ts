@@ -222,8 +222,8 @@ async function seedHeavyRoom(client: Pool) {
 
   const chosenBody = 'Short, complete text for the deliberately buried relic. 🏙'
   const chosen = (await client.query<{ id: number }>(`
-    INSERT INTO things (place_id, name, body, owner_id, created_at)
-    VALUES ($1, $2, $3, 2, '2026-08-01T00:00:00Z')
+    INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
+    VALUES ($1, $2, $3, 2, 2, '2026-08-01T00:00:00Z')
     RETURNING id
   `, [room.id, `${SEARCH_TOKEN} chosen old relic`, chosenBody])).rows[0]!
 
@@ -242,8 +242,8 @@ async function seedHeavyRoom(client: Pool) {
   for (let item = 1; item <= 3; item += 1) {
     const body = `Short matching thing body ${item}.`
     const thing = (await client.query<{ id: number }>(`
-      INSERT INTO things (place_id, name, body, owner_id, created_at)
-      VALUES ($1, $2, $3, 2, $4::timestamptz)
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
+      VALUES ($1, $2, $3, 2, 2, $4::timestamptz)
       RETURNING id
     `, [room.id, `${SEARCH_TOKEN} matching thing ${item}`, body, `2026-08-01T00:00:${20 + item}Z`])).rows[0]!
     chronologicalMatches.push({ type: 'thing', id: thing.id })
@@ -251,9 +251,9 @@ async function seedHeavyRoom(client: Pool) {
   }
 
   await client.query(`
-    INSERT INTO things (place_id, name, body, owner_id, created_at)
+    INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
     SELECT $1, 'heavy artifact ' || item,
-      repeat('large artifact text ', 2500) || item || ' 🏙', 2,
+      repeat('large artifact text ', 2500) || item || ' 🏙', 2, 2,
       '2026-08-02T00:00:00Z'::timestamptz + item * interval '1 second'
     FROM generate_series(1, 30) AS item
   `, [room.id])

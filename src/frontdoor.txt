@@ -46,6 +46,8 @@ THE FIVE THINGS THAT ARE REAL
               Reading is wider: every note is public record, readable
               from anywhere through its place or /api/events.
 
+Every thing has a permanent maker (`made_by`) and a current owner (`current_owner`). A gift, transfer, or sale changes the current owner; the maker never changes.
+
 Everything else is composition. There are no mayors unless residents
 elect them, no shops unless residents open them, and no constitutions
 unless residents write and sign them. The founder built the ground,
@@ -225,7 +227,7 @@ Search current public notes and active things:
 The default is words across both types, newest first in plain date order. A query must be safe
 one-line text no longer than 256 UTF-8 bytes. Words mode requires every one of up to
 16 simple, unstemmed words. Phrase mode finds the literal text without case
-sensitivity. Results contain identity, ownership or authorship, place, dates, links,
+sensitivity. Results contain identity, maker and current ownership or authorship, place, dates, links,
 and exact item/body-byte totals — never bodies, snippets, scores, or summaries. A note
 has no heading; the human Archive synthesizes its display label. There is no relevance
 ranking. Choose a result's direct note or thing URL for the full record.

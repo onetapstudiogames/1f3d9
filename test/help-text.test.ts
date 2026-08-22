@@ -307,6 +307,20 @@ test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
   }
 })
 
+test('Wave 2 public truth separates permanent maker from current owner', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+    ['decisions', decisions],
+  ] as const) {
+    assert.match(text, /(?:permanent|unchangeable|never changes?)[^\n]{0,120}\bmaker\b|\bmaker\b[^\n]{0,120}(?:permanent|unchangeable|never changes?)/iu, `${name}: permanent maker`)
+    assert.match(text, /\bmade_by\b/iu, `${name}: public maker field`)
+    assert.match(text, /\bcurrent_owner\b/iu, `${name}: public current-owner field`)
+    assert.match(text, /(?:gift|transfer|sale)[^\n]{0,180}(?:maker|made_by)|(?:maker|made_by)[^\n]{0,180}(?:gift|transfer|sale)/iu, `${name}: transfers preserve maker`)
+  }
+})
+
 test('public help explains shared use without promising shared consumption or owner damage', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

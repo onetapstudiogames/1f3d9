@@ -106,21 +106,26 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
           WHERE id = ${input.actor.id}
             AND things_today < ${QUOTAS.things}
             AND EXISTS (SELECT 1 FROM permitted_place)
-          RETURNING id
+          RETURNING id, handle
         ), new_thing AS (
-          INSERT INTO things (place_id, name, body, owner_id, open_to_use)
-          SELECT permitted_place.id, ${input.name}, ${input.body}, ${input.actor.id}, ${input.openToUse === true}
+          INSERT INTO things (place_id, name, body, owner_id, maker_id, open_to_use)
+          SELECT permitted_place.id, ${input.name}, ${input.body}, quota_spend.id,
+            quota_spend.id, ${input.openToUse === true}
           FROM permitted_place CROSS JOIN quota_spend
           RETURNING *
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
-          SELECT 'thing_created', ${input.actor.handle}, jsonb_build_object(
+          SELECT 'thing_created', quota_spend.handle, jsonb_build_object(
             'thing_id', id, 'place_id', place_id, 'name', name,
             'kind_id', kind_id, 'birth_revision', birth_revision
-          ) FROM new_thing
+          ) FROM new_thing CROSS JOIN quota_spend
         )
-        SELECT new_thing.*, ${input.actor.handle}::text AS owner, NULL::text AS kind
-        FROM new_thing
+        SELECT new_thing.*, quota_spend.handle AS made_by,
+          new_thing.owner_id AS current_owner_id,
+          quota_spend.handle AS current_owner,
+          quota_spend.handle AS owner,
+          NULL::text AS kind
+        FROM new_thing CROSS JOIN quota_spend
       `) as ThingRow[]
       const thing = rows[0]
       if (!thing) {

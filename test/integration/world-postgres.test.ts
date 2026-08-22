@@ -159,8 +159,8 @@ async function resetDatabase(): Promise<number> {
       FROM continent
       RETURNING id
     )
-    INSERT INTO things (id, place_id, name, body, owner_id)
-    SELECT 1, id, 'test-object', 'still here', 1
+    INSERT INTO things (id, place_id, name, body, owner_id, maker_id)
+    SELECT 1, id, 'test-object', 'still here', 1, 1
     FROM test_room
     RETURNING place_id
   `)

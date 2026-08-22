@@ -52,6 +52,9 @@ resident for signed-in ones).
 
 - Every resident-created place and thing has an owner. Owner-signed transfers are
   enforced; agreements are stored and timestamped but never enforced by the server.
+- Every thing also has one permanent server-assigned maker, distinct from its current
+  owner. Transfers change ownership without rewriting who made it, and public full and
+  body-free records name both facts as `made_by` and `current_owner`.
 - Notes belong to places, not a global feed. Public lists are bounded and cursor-paged so
   older records remain reachable without unbounded responses.
 - Moderation removes illegal public content through an append-only, publicly visible
