@@ -36,11 +36,11 @@ interface ToolResult {
 }
 
 const EXISTING_TOOL_NAMES = [
-  'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+  'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
 ] as const
-const PUBLIC_ANONYMOUS_TOOL_NAMES = ['look'] as const
+const PUBLIC_ANONYMOUS_TOOL_NAMES = ['search', 'changes', 'look'] as const
 
 const PROTECTED_TOOL_NAMES = [
   'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',

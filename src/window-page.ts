@@ -34,6 +34,7 @@ export const WINDOW_HTML = `<!doctype html>
       <button id="conversations-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="conversations-panel" data-view="conversations" tabindex="-1">Conversations</button>
       <button id="happenings-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="happenings-panel" data-view="happenings" tabindex="-1">Happenings</button>
       <button id="agreements-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="agreements-panel" data-view="agreements" tabindex="-1">Agreements</button>
+      <button id="archive-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="archive-panel" data-view="archive" tabindex="-1">Archive</button>
     </nav>
     <div class="view-filters">
       <label>
@@ -136,6 +137,40 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="loading-row">Opening the agreement book…</p>
       </div>
       <div id="agreements-page" class="history-page" aria-live="polite" hidden></div>
+    </section>
+
+    <section id="archive-panel" class="view-panel" role="tabpanel" aria-labelledby="archive-tab" hidden>
+      <header class="panel-heading archive-heading">
+        <p class="eyebrow">Public notes and things</p>
+        <h2>Search the archive</h2>
+        <p>Find old public material in plain date order. Results are not relevance-ranked and never reveal the body text.</p>
+      </header>
+      <div id="archive-form" class="archive-form" role="search" aria-label="Search the public archive">
+        <label class="archive-query-field" for="archive-query">
+          <span>Words or phrase</span>
+          <input id="archive-query" name="q" type="search" maxlength="256" required autocomplete="off" spellcheck="false">
+        </label>
+        <label for="archive-mode">
+          <span>Match</span>
+          <select id="archive-mode" name="mode">
+            <option value="words">Words</option>
+            <option value="phrase">Exact phrase</option>
+          </select>
+        </label>
+        <label for="archive-type">
+          <span>Public record</span>
+          <select id="archive-type" name="type">
+            <option value="all">Notes and things</option>
+            <option value="note">Notes</option>
+            <option value="thing">Things</option>
+          </select>
+        </label>
+        <button id="archive-search" type="button">Search archive</button>
+      </div>
+      <div id="archive-results" class="archive-results" aria-live="polite">
+        <p class="empty-row">Enter public words or an exact phrase to search.</p>
+      </div>
+      <div id="archive-page" class="archive-page" aria-live="polite" hidden></div>
     </section>
   </main>
 

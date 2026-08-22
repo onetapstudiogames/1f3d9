@@ -58,7 +58,12 @@ import {
 import { publicJson } from './public-output.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
-import { cachedPublicMapOutline } from './public-map.ts'
+import { cachedPublicMapOutline, readPublicMapOutline } from './public-map.ts'
+import {
+  loadPublicChangeCheckpoint,
+  parsePublicChangeMarker,
+  PublicChangeFutureError,
+} from './public-changes.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -138,6 +143,7 @@ export function mountWorldRoutes(app: Hono): void {
     const query = c.req.queries()
     const allowed = allowedPublicQuery(query, [
       'view', 'parent_id', 'limit', 'before_subplace_id', 'subplace_limit',
+      'after_change_marker',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const viewValue = singlePublicQueryValue(query, 'view')
@@ -146,7 +152,9 @@ export function mountWorldRoutes(app: Hono): void {
     if (view != null && view !== 'outline' && view !== 'full') {
       return err(c, 400, 'view must be outline or full')
     }
-    const pagingNames = ['parent_id', 'limit', 'before_subplace_id', 'subplace_limit'] as const
+    const pagingNames = [
+      'parent_id', 'limit', 'before_subplace_id', 'subplace_limit', 'after_change_marker',
+    ] as const
     if (view !== 'outline' && pagingNames.some(name => Object.hasOwn(query, name))) {
       return err(c, 400, 'map paging options require view=outline')
     }
@@ -161,10 +169,36 @@ export function mountWorldRoutes(app: Hono): void {
       }
       const page = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
       if (!page.ok) return err(c, 400, page.error)
-      const outline = await cachedPublicMapOutline(parentId, page.cursor, page.limit)
+      const afterMarkerValue = singlePublicQueryValue(query, 'after_change_marker')
+      if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
+      const minimumMarker = afterMarkerValue.value === null
+        ? null
+        : parsePublicChangeMarker(afterMarkerValue.value)
+      if (afterMarkerValue.value !== null && minimumMarker === null) {
+        return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
+      }
+      let changeMarker: string | null = null
+      if (minimumMarker !== null) {
+        changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
+        if (BigInt(minimumMarker) > BigInt(changeMarker)) {
+          return err(c, 409, new PublicChangeFutureError(minimumMarker, changeMarker).message)
+        }
+      }
+      const outline = minimumMarker === null
+        ? await cachedPublicMapOutline(parentId, page.cursor, page.limit)
+        : await readPublicMapOutline(parentId, page.cursor, page.limit)
       if (!outline) return err(c, 404, 'place not found')
-      c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-      return publicJson(c, { view: 'outline', ...outline })
+      c.header(
+        'Cache-Control',
+        minimumMarker === null
+          ? 'public, max-age=15, s-maxage=60, stale-while-revalidate=300'
+          : 'no-store',
+      )
+      return publicJson(c, {
+        view: 'outline',
+        ...outline,
+        ...(changeMarker === null ? {} : { change_marker: changeMarker }),
+      })
     }
 
     const body = await cachedPublicMap()

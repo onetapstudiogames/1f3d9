@@ -81,6 +81,19 @@ import {
 } from './public-exact-query.ts'
 import { readPublicResidentPage } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
+import {
+  loadPublicSearchResults,
+  parsePublicSearchQuery,
+  PublicSearchFutureMarkerError,
+} from './public-search.ts'
+import { takePublicSearchToken } from './public-search-rate-limit.ts'
+import {
+  loadPublicChangeCheckpoint,
+  loadPublicChanges,
+  parsePublicChangeMarker,
+  parsePublicChangeQuery,
+  PublicChangeFutureError,
+} from './public-changes.ts'
 
 interface DomainConfiguration {
   readonly domain: string
@@ -109,18 +122,13 @@ const RESIDENT_FLAGS_PER_HOUR = 20
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
 
-function firstAddress(value: string | undefined) {
-  return value?.split(',').map(part => part.trim()).find(Boolean)
-}
-
 function lastAddress(value: string | undefined) {
   return value?.split(',').map(part => part.trim()).filter(Boolean).at(-1)
 }
 
 function clientAddress(c: Context) {
-  return firstAddress(c.req.header('x-vercel-forwarded-for'))
-    ?? lastAddress(c.req.header('x-forwarded-for'))
-    ?? 'unknown'
+  if (process.env.VERCEL !== '1') return 'unknown'
+  return lastAddress(c.req.header('x-vercel-forwarded-for')) ?? 'unknown'
 }
 
 /**
@@ -225,6 +233,61 @@ app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
 app.get('/api/window', windowSnapshot)
+
+app.get('/api/search', async c => {
+  const parsed = parsePublicSearchQuery(c.req.queries())
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const admission = takePublicSearchToken(sha256(`search:ip:${clientAddress(c)}`))
+  if (!admission.allowed) {
+    c.header('Cache-Control', 'no-store')
+    c.header('Retry-After', String(admission.retryAfterSeconds))
+    return err(c, 429, 'public search rate limit reached; retry')
+  }
+  let result: Awaited<ReturnType<typeof loadPublicSearchResults>>
+  try {
+    result = await loadPublicSearchResults(
+      (text, params) => executeBudgetedExactQuery(text, params, 'search_desc'),
+      parsed,
+    )
+  } catch (error) {
+    if (error instanceof PublicSearchFutureMarkerError) return err(c, 409, error.message)
+    throw error
+  }
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    query: parsed.q,
+    mode: parsed.mode,
+    type: parsed.type,
+    results: result.items.map(item => ({
+      ...item,
+      href: `/api/${item.type}/${item.id}`,
+    })),
+    total_items: result.totalItems,
+    total_text_bytes: result.totalBodyBytes,
+    returned_items: result.items.length,
+    returned_text_bytes: 0,
+    has_more: result.hasMore,
+    next_before: result.nextBefore,
+    change_marker: result.changeMarker,
+  })
+})
+
+app.get('/api/changes', async c => {
+  const parsed = parsePublicChangeQuery(c.req.queries())
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  try {
+    const result = await loadPublicChanges(executePublicQuery, parsed)
+    c.header('Cache-Control', 'no-store')
+    if (!Array.isArray(result.changes)) return c.json(result)
+    return c.json({
+      ...result,
+      changes: await moderatePublicEvents(result.changes),
+    })
+  } catch (error) {
+    if (error instanceof PublicChangeFutureError) return err(c, 409, error.message)
+    throw error
+  }
+})
 
 if (requestedHostedChatSignin.ready) {
   try {
@@ -495,7 +558,9 @@ app.get('/api/physics', c => {
 
 app.get('/api/events', async c => {
   const queries = c.req.queries()
-  const allowed = allowedPublicQuery(queries, ['kind', 'actor', 'place_id', 'before_id', 'limit'])
+  const allowed = allowedPublicQuery(queries, [
+    'kind', 'actor', 'place_id', 'before_id', 'limit', 'after_change_marker',
+  ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
@@ -519,6 +584,21 @@ app.get('/api/events', async c => {
       (placeId == null || placeId < 1 || placeId > 2_147_483_647)) {
     return err(c, 400, 'place_id must be a positive integer')
   }
+  const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
+  if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
+  const minimumMarker = afterMarkerValue.value === null
+    ? null
+    : parsePublicChangeMarker(afterMarkerValue.value)
+  if (afterMarkerValue.value !== null && minimumMarker === null) {
+    return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
+  }
+  let changeMarker: string | null = null
+  if (minimumMarker !== null) {
+    changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
+    if (BigInt(minimumMarker) > BigInt(changeMarker)) {
+      return err(c, 409, new PublicChangeFutureError(minimumMarker, changeMarker).message)
+    }
+  }
   const collection = await loadPublicEventCollectionRows(
     executeBudgetedExactQuery,
     { kind: kind ?? null, actor: actorValue.value, placeId },
@@ -528,6 +608,7 @@ app.get('/api/events', async c => {
     collection.rows as Array<Record<string, unknown> & { id: number }>,
     parsed.limit,
   )
+  if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
   return c.json({
     events: await moderatePublicEvents(page.items),
     total_items: collection.total.items,
@@ -536,6 +617,7 @@ app.get('/api/events', async c => {
     returned_text_bytes: eventDetailTextBytes(page.items),
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
+    ...(changeMarker === null ? {} : { change_marker: changeMarker }),
   })
 })
 

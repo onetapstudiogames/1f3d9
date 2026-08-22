@@ -22,6 +22,14 @@ import {
   type PublicPlacePageRequests,
   type PublicQueryExecutor,
 } from '../../src/public-pagination.ts'
+import {
+  loadPublicChanges,
+  parsePublicChangeQuery,
+} from '../../src/public-changes.ts'
+import {
+  loadPublicSearchResults,
+  parsePublicSearchQuery,
+} from '../../src/public-search.ts'
 
 type WindowModule = typeof import('../../src/window.ts')
 
@@ -39,6 +47,10 @@ const affordableReadingMigration = await readFile(
 )
 const eventsPresenceIndexMigration = await readFile(
   new URL('../../db/migrations/20260821_events_presence_index.sql', import.meta.url),
+  'utf8',
+)
+const publicChangeMarkersMigration = await readFile(
+  new URL('../../db/migrations/20260821_public_change_markers.sql', import.meta.url),
   'utf8',
 )
 
@@ -447,6 +459,22 @@ function placeTreeCount(values: readonly unknown[]): number {
   }, 0)
 }
 
+function publicSearchQuery(
+  query: Readonly<Record<string, readonly string[]>>,
+) {
+  const parsed = parsePublicSearchQuery(query)
+  if (!parsed.ok) assert.fail(parsed.error)
+  return parsed
+}
+
+function publicChangeQuery(
+  query: Readonly<Record<string, readonly string[]>>,
+) {
+  const parsed = parsePublicChangeQuery(query)
+  if (!parsed.ok) assert.fail(parsed.error)
+  return parsed
+}
+
 test('public listing pages use bounded keyset reads against PostgreSQL', async t => {
   const postgres = await startPostgres()
   database = postgres.client
@@ -557,6 +585,447 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         `SELECT 'public.events_actor_at_desc'::regclass::oid AS oid`,
       )).rows[0]!.oid
       assert.notEqual(repairedOid, firstOid, 'invalid residue must be dropped before retry')
+    })
+
+    await t.test('the public change migration preserves one exact marker per committed event on reapply', async () => {
+      const before = (await postgres.client.query<{
+        current_change_id: string
+        event_count: string
+        change_count: string
+      }>(`
+        SELECT state.current_change_id::text,
+          (SELECT count(*)::text FROM events) AS event_count,
+          (SELECT count(*)::text FROM public_change_log) AS change_count
+        FROM public_change_state state
+        WHERE state.singleton = true
+      `)).rows[0]!
+      assert.equal(before.change_count, before.event_count)
+      assert.equal(before.current_change_id, before.change_count)
+
+      await postgres.client.query(publicChangeMarkersMigration)
+      await postgres.client.query(publicChangeMarkersMigration)
+
+      const after = (await postgres.client.query<{
+        current_change_id: string
+        event_count: string
+        change_count: string
+        distinct_event_count: string
+      }>(`
+        SELECT state.current_change_id::text,
+          (SELECT count(*)::text FROM events) AS event_count,
+          (SELECT count(*)::text FROM public_change_log) AS change_count,
+          (SELECT count(DISTINCT event_id)::text FROM public_change_log) AS distinct_event_count
+        FROM public_change_state state
+        WHERE state.singleton = true
+      `)).rows[0]!
+      assert.deepEqual(after, {
+        ...before,
+        distinct_event_count: before.event_count,
+      })
+      const markerTriggers = await postgres.client.query(`
+        SELECT tgname
+        FROM pg_trigger
+        WHERE tgrelid = 'events'::regclass
+          AND NOT tgisinternal
+          AND tgname = 'events_record_public_change'
+      `)
+      assert.equal(markerTriggers.rowCount, 1)
+    })
+
+    await t.test('search exposes current public note and thing outlines with exact totals', async () => {
+      const client = await postgres.client.connect()
+      await client.query('BEGIN')
+      const searchExecute: PublicQueryExecutor = async (text, values) => (
+        await client.query(text, [...values])
+      ).rows as Record<string, unknown>[]
+      try {
+      const phrase = 'wave five archive quartz'
+      const noteBody = `A note carrying the ${phrase} for later readers. 🏙`
+      const thingBody = 'A compact object history with multibyte text. 🏙'
+      const note = (await client.query<{ id: number }>(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        VALUES ($1, 2, $2, '2026-08-21T18:00:00.123456Z')
+        RETURNING id
+      `, [city.targetPlaceId, noteBody])).rows[0]!
+      const thing = (await client.query<{ id: number }>(`
+        INSERT INTO things (place_id, name, body, owner_id, created_at)
+        VALUES ($1, 'Wave Five Archive Quartz', $2, 3, '2026-08-21T18:00:01.123456Z')
+        RETURNING id
+      `, [city.targetPlaceId, thingBody])).rows[0]!
+
+      const result = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({
+          q: [phrase],
+          mode: ['phrase'],
+          type: ['all'],
+          limit: ['200'],
+        }),
+      )
+      assert.equal(result.totalItems, 2)
+      assert.equal(
+        result.totalBodyBytes,
+        Buffer.byteLength(noteBody, 'utf8') + Buffer.byteLength(thingBody, 'utf8'),
+      )
+      assert.deepEqual(
+        result.items.map(item => ({ type: item.type, id: item.id })),
+        [{ type: 'thing', id: thing.id }, { type: 'note', id: note.id }],
+      )
+      for (const item of result.items) {
+        assert.equal('body' in item, false)
+        assert.equal('snippet' in item, false)
+        assert.equal('rank' in item, false)
+      }
+      const wordResult = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({ q: ['archive quartz'], mode: ['words'], type: ['all'] }),
+      )
+      assert.deepEqual(
+        wordResult.items.map(item => ({ type: item.type, id: item.id })),
+        [{ type: 'thing', id: thing.id }, { type: 'note', id: note.id }],
+      )
+
+      const moving = (await client.query<{ id: number }>(`
+        INSERT INTO things (place_id, name, body, owner_id, created_at)
+        VALUES ($1, 'wavefiveoldcopper', 'wavefiveoldcopper', 3,
+          '2026-08-21T18:00:02.123456Z')
+        RETURNING id
+      `, [city.targetPlaceId])).rows[0]!
+      await client.query(`
+        UPDATE things
+        SET name = 'wavefivenewcopper', body = 'wavefivenewcopper', place_id = $1
+        WHERE id = $2
+      `, [city.smallPlaceId, moving.id])
+      const oldState = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({ q: ['wavefiveoldcopper'], mode: ['phrase'], type: ['thing'] }),
+      )
+      assert.equal(oldState.totalItems, 0, 'an edit must replace old searchable thing text')
+      const movedState = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({ q: ['wavefivenewcopper'], mode: ['phrase'], type: ['thing'] }),
+      )
+      assert.equal(movedState.totalItems, 1)
+      assert.equal(movedState.items[0]?.id, moving.id)
+      assert.equal(movedState.items[0]?.place_id, city.smallPlaceId)
+      await client.query(`UPDATE things SET withdrawn_at = now() WHERE id = $1`, [moving.id])
+      const withdrawnState = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({ q: ['wavefivenewcopper'], mode: ['phrase'], type: ['thing'] }),
+      )
+      assert.equal(withdrawnState.totalItems, 0, 'withdrawn things must disappear before matching')
+
+      const moderated = (await client.query<{ id: number }>(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        VALUES ($1, 5, 'restorablebirchtoken', '2026-08-21T18:00:03.123456Z')
+        RETURNING id
+      `, [city.targetPlaceId])).rows[0]!
+      const findModerated = () => loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({ q: ['restorablebirchtoken'], mode: ['phrase'], type: ['note'] }),
+      )
+      assert.equal((await findModerated()).totalItems, 1)
+      await client.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('note', $1, 'remove', 1, 'integration removal')
+      `, [moderated.id])
+      assert.equal((await findModerated()).totalItems, 0, 'removed notes must be filtered before matching')
+      await client.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('note', $1, 'restore', 1, 'integration restoration')
+      `, [moderated.id])
+      assert.equal((await findModerated()).totalItems, 1, 'the latest restore must make the note searchable')
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined)
+        client.release()
+      }
+    })
+
+    await t.test('search keyset pages exhaust equal timestamps without gaps or duplicates', async () => {
+      const client = await postgres.client.connect()
+      await client.query('BEGIN')
+      const searchExecute: PublicQueryExecutor = async (text, values) => (
+        await client.query(text, [...values])
+      ).rows as Record<string, unknown>[]
+      try {
+      const phrase = 'wavefivepagingneedle'
+      await client.query(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        SELECT $1, 2, $2 || ' note ' || item_number,
+          '2026-08-21T18:10:00.654321Z'::timestamptz
+            + item_number * interval '1 microsecond'
+        FROM generate_series(1, 4) AS item_number
+      `, [city.targetPlaceId, phrase])
+      await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, created_at)
+        SELECT $1, $2 || ' thing ' || item_number, 'paging body ' || item_number,
+          3, '2026-08-21T18:10:00.654321Z'::timestamptz
+            + item_number * interval '1 microsecond'
+        FROM generate_series(1, 3) AS item_number
+      `, [city.targetPlaceId, phrase])
+
+      const directTotals = (await client.query<{
+        total_items: string
+        total_body_bytes: string
+      }>(`
+        SELECT count(*)::text AS total_items,
+          sum(octet_length(body))::text AS total_body_bytes
+        FROM (
+          SELECT body FROM notes WHERE strpos(lower(body), lower($1)) > 0
+          UNION ALL
+          SELECT body FROM things
+          WHERE withdrawn_at IS NULL AND strpos(lower(name || ' ' || body), lower($1)) > 0
+        ) matching
+      `, [phrase])).rows[0]!
+      assert.equal(directTotals.total_items, '7')
+
+      const complete = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({
+          q: [phrase], mode: ['phrase'], type: ['all'], limit: ['200'],
+        }),
+      )
+      assert.equal(complete.totalItems, Number(directTotals.total_items))
+      assert.equal(complete.totalBodyBytes, Number(directTotals.total_body_bytes))
+
+      const pagedItems: typeof complete.items[number][] = []
+      let before: string | null = null
+      for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+        const page = await loadPublicSearchResults(
+          searchExecute,
+          publicSearchQuery({
+            q: [phrase],
+            mode: ['phrase'],
+            type: ['all'],
+            limit: ['2'],
+            ...(before === null ? {} : { before: [before] }),
+          }),
+        )
+        assert.equal(page.totalItems, complete.totalItems)
+        assert.equal(page.totalBodyBytes, complete.totalBodyBytes)
+        pagedItems.push(...page.items)
+        if (!page.hasMore) break
+        assert.ok(page.nextBefore, 'every nonterminal page needs an honest continuation')
+        before = page.nextBefore
+      }
+      const identity = (item: Readonly<Record<string, unknown>>) => `${String(item.type)}:${Number(item.id)}`
+      assert.deepEqual(pagedItems.map(identity), complete.items.map(identity))
+      assert.equal(new Set(pagedItems.map(identity)).size, complete.totalItems)
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined)
+        client.release()
+      }
+    })
+
+    await t.test('public markers page committed changes and serialize independently of event ids', async () => {
+      const markerSchema = `wave_five_markers_${randomBytes(6).toString('hex')}`
+      await postgres.client.query(`CREATE SCHEMA "${markerSchema}"`)
+      const markerPool = new Pool({
+        connectionString: postgres.databaseUrl,
+        options: `-c search_path=${markerSchema}`,
+      })
+      const markerExecute: PublicQueryExecutor = async (text, values) => (
+        await markerPool.query(text, [...values])
+      ).rows as Record<string, unknown>[]
+      try {
+        await markerPool.query(schemaDdl)
+      type ChangePayload = Readonly<{
+        change_marker: string
+        changes: readonly Readonly<{ id: number; change_id: string }>[]
+        returned_items: number
+        unchanged: boolean
+        has_more: boolean
+        next_since: string
+      }>
+      const checkpoint = await loadPublicChanges(
+        markerExecute,
+        publicChangeQuery({}),
+      ) as Readonly<{ change_marker: string }>
+      const unchanged = await loadPublicChanges(
+        markerExecute,
+        publicChangeQuery({ since: [checkpoint.change_marker] }),
+      ) as ChangePayload
+      assert.equal(unchanged.unchanged, true)
+      assert.equal(unchanged.returned_items, 0)
+      assert.equal(unchanged.next_since, checkpoint.change_marker)
+
+      const committedIds: number[] = []
+      for (let itemNumber = 1; itemNumber <= 5; itemNumber += 1) {
+        const event = (await markerPool.query<{ id: number }>(`
+          INSERT INTO events (kind, actor, detail)
+          VALUES ('note', 'wave-five-marker', jsonb_build_object('item', $1::integer))
+          RETURNING id
+        `, [itemNumber])).rows[0]!
+        committedIds.push(event.id)
+      }
+
+      const changes: Array<{ id: number; change_id: string }> = []
+      let since = checkpoint.change_marker
+      let finalCheckpoint: string | null = null
+      for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+        const page = await loadPublicChanges(
+          markerExecute,
+          publicChangeQuery({ since: [since], limit: ['2'] }),
+        ) as ChangePayload
+        finalCheckpoint ??= page.change_marker
+        assert.equal(page.change_marker, finalCheckpoint)
+        assert.equal(page.returned_items, page.changes.length)
+        changes.push(...page.changes)
+        since = page.next_since
+        if (!page.has_more) break
+      }
+      assert.deepEqual(changes.map(change => change.id), committedIds)
+      assert.deepEqual(
+        changes.map(change => BigInt(change.change_id)),
+        changes.map((_, index) => BigInt(checkpoint.change_marker) + BigInt(index + 1)),
+      )
+      assert.equal(new Set(changes.map(change => change.change_id)).size, committedIds.length)
+
+      const firstCommitClient = await markerPool.connect()
+      const secondCommitClient = await markerPool.connect()
+      let pendingSecondInsert: Promise<{ id: number }> | null = null
+      try {
+        await firstCommitClient.query('BEGIN')
+        await secondCommitClient.query('BEGIN')
+
+        const firstBackendPid = (
+          await firstCommitClient.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+        ).rows[0]!.pid
+        const secondBackendPid = (
+          await secondCommitClient.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+        ).rows[0]!.pid
+        const markerBeforeConcurrentCommits = BigInt((await firstCommitClient.query<{
+          marker: string
+        }>(`
+          SELECT current_change_id::text AS marker
+          FROM public_change_state WHERE singleton = true
+        `)).rows[0]!.marker)
+
+        const firstConcurrentEvent = (await firstCommitClient.query<{ id: number }>(`
+          INSERT INTO events (kind, actor, detail)
+          VALUES ('action', 'wave-five-first-concurrent', '{"concurrent":1}')
+          RETURNING id
+        `)).rows[0]!
+
+        let secondInsertSettled = false
+        pendingSecondInsert = secondCommitClient.query<{ id: number }>(`
+          INSERT INTO events (kind, actor, detail)
+          VALUES ('action', 'wave-five-second-concurrent', '{"concurrent":2}')
+          RETURNING id
+        `).then(result => result.rows[0]!).finally(() => {
+          secondInsertSettled = true
+        })
+
+        let secondInsertIsBlocked = false
+        for (let attempt = 0; attempt < 200 && !secondInsertIsBlocked; attempt += 1) {
+          const blockingResult = await markerPool.query<{ blocked: boolean }>(
+            'SELECT $1::integer = ANY(pg_blocking_pids($2::integer)) AS blocked',
+            [firstBackendPid, secondBackendPid],
+          )
+          secondInsertIsBlocked = blockingResult.rows[0]?.blocked === true
+          if (!secondInsertIsBlocked) {
+            await new Promise(resolve => setTimeout(resolve, 10))
+          }
+        }
+
+        assert.equal(
+          secondInsertIsBlocked,
+          true,
+          'the second insert should wait for the singleton marker row held by the first transaction',
+        )
+        assert.equal(secondInsertSettled, false)
+
+        await firstCommitClient.query('COMMIT')
+        const secondConcurrentEvent = await pendingSecondInsert
+        await secondCommitClient.query('COMMIT')
+        pendingSecondInsert = null
+
+        const concurrentMarkers = await markerPool.query<{
+          event_id: number
+          change_id: string
+        }>(`
+          SELECT event_id, change_id::text AS change_id
+          FROM public_change_log
+          WHERE event_id = ANY($1::bigint[])
+          ORDER BY change_id ASC
+        `, [[firstConcurrentEvent.id, secondConcurrentEvent.id]])
+        assert.deepEqual(concurrentMarkers.rows, [
+          {
+            event_id: firstConcurrentEvent.id,
+            change_id: (markerBeforeConcurrentCommits + 1n).toString(),
+          },
+          {
+            event_id: secondConcurrentEvent.id,
+            change_id: (markerBeforeConcurrentCommits + 2n).toString(),
+          },
+        ])
+      } finally {
+        await firstCommitClient.query('ROLLBACK').catch(() => undefined)
+        await pendingSecondInsert?.catch(() => undefined)
+        await secondCommitClient.query('ROLLBACK').catch(() => undefined)
+        firstCommitClient.release()
+        secondCommitClient.release()
+      }
+
+      const markerBeforeRollback = BigInt((await markerPool.query<{ marker: string }>(`
+        SELECT current_change_id::text AS marker
+        FROM public_change_state WHERE singleton = true
+      `)).rows[0]!.marker)
+      const rollbackClient = await markerPool.connect()
+      let rolledBackEventId = 0
+      try {
+        await rollbackClient.query('BEGIN')
+        rolledBackEventId = (await rollbackClient.query<{ id: number }>(`
+          INSERT INTO events (kind, actor, detail)
+          VALUES ('action', 'wave-five-rollback', '{"rolled_back":true}')
+          RETURNING id
+        `)).rows[0]!.id
+        const provisional = (await rollbackClient.query<{ change_id: string }>(`
+          SELECT change_id::text FROM public_change_log WHERE event_id = $1
+        `, [rolledBackEventId])).rows[0]!
+        assert.equal(BigInt(provisional.change_id), markerBeforeRollback + 1n)
+        await rollbackClient.query('ROLLBACK')
+      } finally {
+        rollbackClient.release()
+      }
+      assert.equal((await markerPool.query(
+        `SELECT 1 FROM public_change_log WHERE event_id = $1`,
+        [rolledBackEventId],
+      )).rowCount, 0)
+      const afterRollback = (await markerPool.query<{ id: number }>(`
+        INSERT INTO events (kind, actor, detail)
+        VALUES ('action', 'wave-five-after-rollback', '{"committed":true}')
+        RETURNING id
+      `)).rows[0]!
+      const reused = (await markerPool.query<{ change_id: string }>(`
+        SELECT change_id::text FROM public_change_log WHERE event_id = $1
+      `, [afterRollback.id])).rows[0]!
+      assert.equal(BigInt(reused.change_id), markerBeforeRollback + 1n)
+
+      const reservedLowerId = Number((await markerPool.query<{ id: string }>(`
+        SELECT nextval(pg_get_serial_sequence('events', 'id'))::text AS id
+      `)).rows[0]!.id)
+      const higher = (await markerPool.query<{ id: number }>(`
+        INSERT INTO events (kind, actor, detail)
+        VALUES ('action', 'wave-five-higher-id', '{}')
+        RETURNING id
+      `)).rows[0]!
+      const higherMarker = BigInt((await markerPool.query<{ change_id: string }>(`
+        SELECT change_id::text FROM public_change_log WHERE event_id = $1
+      `, [higher.id])).rows[0]!.change_id)
+      const lower = (await markerPool.query<{ id: number }>(`
+        INSERT INTO events (id, kind, actor, detail)
+        VALUES ($1, 'action', 'wave-five-lower-id-later', '{}')
+        RETURNING id
+      `, [reservedLowerId])).rows[0]!
+      const lowerMarker = BigInt((await markerPool.query<{ change_id: string }>(`
+        SELECT change_id::text FROM public_change_log WHERE event_id = $1
+      `, [lower.id])).rows[0]!.change_id)
+      assert.ok(lower.id < higher.id)
+      assert.equal(lowerMarker, higherMarker + 1n)
+      } finally {
+        await markerPool.end().catch(() => undefined)
+      }
     })
 
     await t.test('exact-total admission rejects excess work before scanning events', async () => {

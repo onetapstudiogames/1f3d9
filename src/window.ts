@@ -17,7 +17,12 @@ import {
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
-import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS, WINDOW_JS } from './window-client.ts'
+import { WINDOW_JS } from './window-client.ts'
+import {
+  PUBLIC_EVENT_DETAIL_ID_FIELDS,
+  PUBLIC_EVENT_KINDS,
+  PUBLIC_EVENT_LABELS,
+} from './public-events.ts'
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
@@ -25,12 +30,17 @@ import {
   PUBLIC_CREDENTIAL_REDACTION,
   containsPublicCredential,
 } from './credential-safety.ts'
-import { cachedPublicMapOutline } from './public-map.ts'
+import { readPublicMapOutline } from './public-map.ts'
 import {
   PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS,
   readPublicResidentPage,
 } from './public-residents.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import {
+  PublicChangeFutureError,
+  loadPublicChangeCheckpoint,
+  parsePublicChangeMarker,
+} from './public-changes.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -94,25 +104,7 @@ const AGREEMENT_PARTY_PREVIEW_LIMIT = 32
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
-const SAFE_DETAIL_IDS = [
-  'resident_id',
-  'place_id',
-  'thing_id',
-  'kind_id',
-  'trait_id',
-  'agreement_id',
-  'note_id',
-  'transfer_id',
-  'offer_id',
-  'flag_id',
-  'target_id',
-  'asset_id',
-  'parent_id',
-  'action_id',
-  'effect_id',
-  'pending_effect_id',
-  'moderation_id',
-] as const
+const SAFE_DETAIL_IDS = PUBLIC_EVENT_DETAIL_ID_FIELDS
 
 interface PublicPlace {
   id: number
@@ -931,7 +923,14 @@ async function readFullWindowSnapshot() {
   }
 }
 
-async function readOutlineWindowSnapshot() {
+async function readOutlineWindowSnapshot(minimumMarker: string | null = null) {
+  // Capture the lower-bound marker before every component read. Every commit
+  // represented by this marker is therefore visible to the statements below.
+  // Do not use nested data caches here: they could predate this checkpoint.
+  const changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
+  if (minimumMarker !== null && BigInt(minimumMarker) > BigInt(changeMarker)) {
+    throw new PublicChangeFutureError(minimumMarker, changeMarker)
+  }
   const residentRequest = Object.freeze({
     ok: true as const,
     cursor: null,
@@ -956,7 +955,7 @@ async function readOutlineWindowSnapshot() {
     agreementPage,
     eventPage,
   ] = await Promise.all([
-    cachedPublicMapOutline(null, null, OUTLINE_WINDOW_LIMITS.places),
+    readPublicMapOutline(null, null, OUTLINE_WINDOW_LIMITS.places),
     readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
     readWindowCollectionPage(defaultWindowHistoryQuery('things')),
     readWindowCollectionPage(defaultWindowHistoryQuery('agreements')),
@@ -980,6 +979,7 @@ async function readOutlineWindowSnapshot() {
   }
   return {
     view: 'outline' as const,
+    change_marker: changeMarker,
     places,
     residents,
     notes,
@@ -1034,17 +1034,50 @@ async function cachedFullWindowSnapshot() {
   }
 }
 
-async function cachedOutlineWindowSnapshot() {
+function snapshotCoversMarker(snapshot: OutlineWindowSnapshot, minimumMarker: string | null) {
+  return minimumMarker === null || BigInt(snapshot.change_marker) >= BigInt(minimumMarker)
+}
+
+async function cachedOutlineWindowSnapshot(minimumMarker: string | null = null) {
   const now = Date.now()
-  if (outlineSnapshotCache && outlineSnapshotCache.expiresAt > now) {
-    return outlineSnapshotCache.pending
+  let current = outlineSnapshotCache && outlineSnapshotCache.expiresAt > now
+    ? outlineSnapshotCache
+    : null
+  if (current) {
+    const snapshot = await current.pending
+    if (snapshotCoversMarker(snapshot, minimumMarker)) return snapshot
+    // Another request may have installed a covering refresh while this caller
+    // awaited the older entry. Reuse it instead of starting duplicate fanout.
+    const replacement = outlineSnapshotCache
+    if (replacement !== current && replacement && replacement.expiresAt > Date.now()) {
+      return cachedOutlineWindowSnapshot(minimumMarker)
+    }
   }
-  const pending = readOutlineWindowSnapshot()
-  outlineSnapshotCache = { expiresAt: now + 30_000, pending }
+
+  // A caller-selected future marker is validated outside the shared cache.
+  // Its request-scoped rejection must never become the pending result seen by
+  // ordinary readers. Recheck after the await so concurrent valid refreshes
+  // still converge on one covering build.
+  if (minimumMarker !== null) {
+    const checkpoint = await loadPublicChangeCheckpoint(executePublicQuery)
+    if (BigInt(minimumMarker) > BigInt(checkpoint)) {
+      throw new PublicChangeFutureError(minimumMarker, checkpoint)
+    }
+    const replacement = outlineSnapshotCache
+    if (replacement && replacement !== current && replacement.expiresAt > Date.now()) {
+      const snapshot = await replacement.pending
+      if (snapshotCoversMarker(snapshot, minimumMarker)) return snapshot
+      current = replacement
+    }
+  }
+
+  const previous = current
+  const pending = readOutlineWindowSnapshot(minimumMarker)
+  outlineSnapshotCache = { expiresAt: Date.now() + 30_000, pending }
   try {
     return await pending
   } catch (error) {
-    if (outlineSnapshotCache?.pending === pending) outlineSnapshotCache = null
+    if (outlineSnapshotCache?.pending === pending) outlineSnapshotCache = previous
     throw error
   }
 }
@@ -1066,12 +1099,38 @@ export async function windowSnapshot(c: Context) {
   if (!viewValue.ok) {
     return c.json({ error: 'invalid public window snapshot query' }, 400)
   }
+  const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
+  if (!afterMarkerValue.ok) {
+    return c.json({ error: 'invalid public window snapshot query' }, 400)
+  }
   if (viewValue.value != null) {
-    if (Object.keys(queries).length !== 1 || !['full', 'outline'].includes(viewValue.value)) {
+    const outlineKeys = afterMarkerValue.value === null ? 1 : 2
+    if (
+      !['full', 'outline'].includes(viewValue.value)
+      || Object.keys(queries).length !== (viewValue.value === 'outline' ? outlineKeys : 1)
+    ) {
       return c.json({ error: 'invalid public window snapshot query' }, 400)
     }
     if (viewValue.value === 'outline') {
-      const snapshot = await cachedOutlineWindowSnapshot()
+      const minimumMarker = afterMarkerValue.value === null
+        ? null
+        : parsePublicChangeMarker(afterMarkerValue.value)
+      if (afterMarkerValue.value !== null && minimumMarker === null) {
+        return c.json({ error: 'invalid public window snapshot query' }, 400)
+      }
+      let snapshot: OutlineWindowSnapshot
+      try {
+        snapshot = await cachedOutlineWindowSnapshot(minimumMarker)
+      } catch (error) {
+        if (error instanceof PublicChangeFutureError) {
+          return c.json({ error: error.message }, 409)
+        }
+        throw error
+      }
+      if (minimumMarker !== null) {
+        c.header('Cache-Control', 'no-store')
+        return c.json(snapshot)
+      }
       c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
       return c.json(snapshot)
     }
@@ -1080,16 +1139,40 @@ export async function windowSnapshot(c: Context) {
     return c.json({ view: 'full', ...snapshot })
   }
   if (Object.keys(queries).length) {
-    const request = parseWindowHistoryQuery(queries)
+    const historyQueries = Object.fromEntries(
+      Object.entries(queries).filter(([key]) => key !== 'after_change_marker'),
+    )
+    const request = parseWindowHistoryQuery(historyQueries)
     if (!request) {
       return c.json({ error: 'invalid public window history query' }, 400)
     }
+    const minimumMarker = afterMarkerValue.value === null
+      ? null
+      : parsePublicChangeMarker(afterMarkerValue.value)
+    if (afterMarkerValue.value !== null && minimumMarker === null) {
+      return c.json({ error: 'invalid public window history query' }, 400)
+    }
+    let changeMarker: string | null = null
+    if (minimumMarker !== null) {
+      changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
+      if (BigInt(minimumMarker) > BigInt(changeMarker)) {
+        return c.json({
+          error: new PublicChangeFutureError(minimumMarker, changeMarker).message,
+        }, 409)
+      }
+    }
     const page = await readWindowCollectionPage(request)
-    c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+    c.header(
+      'Cache-Control',
+      minimumMarker === null
+        ? 'public, max-age=15, s-maxage=60, stale-while-revalidate=300'
+        : 'no-store',
+    )
     return c.json({
       [request.collection]: page.items,
       has_more: page.hasMore,
       next_before_id: page.nextBeforeId,
+      ...(changeMarker === null ? {} : { change_marker: changeMarker }),
     })
   }
   const snapshot = await cachedFullWindowSnapshot()

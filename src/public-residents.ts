@@ -1,4 +1,4 @@
-import { PUBLIC_EVENT_KINDS } from './window-client.ts'
+import { PUBLIC_EVENT_KINDS } from './public-events.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import {
   extractPublicCollectionRows,

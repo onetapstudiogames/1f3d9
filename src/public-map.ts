@@ -101,7 +101,7 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
   })
 }
 
-async function readPublicMapOutline(
+export async function readPublicMapOutline(
   parentId: number | null,
   cursor: number | null,
   limit: number,

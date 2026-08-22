@@ -5,6 +5,7 @@ import {
   MIGRATION_LOCK_TIMEOUT,
   MIGRATION_STATEMENT_TIMEOUT,
   eventsPresenceIndexRecoveryStatements,
+  publicSearchIndexRecoveryStatements,
   prepareMigrationExecution,
   prepareMigrationStatements,
   resolveMigrationRun,
@@ -14,6 +15,8 @@ import {
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
 const affordableReadingMigrationFile = 'db/migrations/20260820_affordable_reading_totals.sql' as const
 const eventsPresenceIndexMigrationFile = 'db/migrations/20260821_events_presence_index.sql' as const
+const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_indexes.sql' as const
+const publicChangeMarkersMigrationFile = 'db/migrations/20260821_public_change_markers.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -328,7 +331,10 @@ test('every transactional migration path runs under enforced local time limits',
   assert.ok(migrationFiles.length >= 14)
 
   for (const file of [...migrationFiles, 'schema.sql']) {
-    if (file === '20260821_events_presence_index.sql') continue
+    if (
+      file === '20260821_events_presence_index.sql' ||
+      file === '20260821_public_search_indexes.sql'
+    ) continue
     const ddl = file === 'schema.sql'
       ? schemaDdl
       : readFileSync(new URL(file, migrationsDirectory), 'utf8')
@@ -436,6 +442,76 @@ test('presence-index retry keeps a valid exact index and repairs only invalid re
   )
 })
 
+test('search-index retry keeps exact indexes and repairs only interrupted builds', () => {
+  const statements = splitSqlStatements(migrationDdl(publicSearchIndexesMigrationFile))
+  const createStatements = statements.slice(1)
+  const exactRows = [
+    {
+      index_schema: 'public', index_name: 'notes_public_search_words',
+      table_schema: 'public', table_name: 'notes', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: true, predicate: null,
+      columns: ["to_tsvector('simple'::regconfig, body)"],
+      operator_classes: ['tsvector_ops'],
+    },
+    {
+      index_schema: 'public', index_name: 'notes_public_search_phrase',
+      table_schema: 'public', table_name: 'notes', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: true, predicate: null,
+      columns: ['lower(body)'], operator_classes: ['gin_trgm_ops'],
+    },
+    {
+      index_schema: 'public', index_name: 'things_public_search_words_active',
+      table_schema: 'public', table_name: 'things', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: false, predicate: 'withdrawn_at IS NULL',
+      columns: ["to_tsvector('simple'::regconfig, (name || ' '::text) || body)"],
+      operator_classes: ['tsvector_ops'],
+    },
+    {
+      index_schema: 'public', index_name: 'things_public_search_phrase_active',
+      table_schema: 'public', table_name: 'things', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: false, predicate: 'withdrawn_at IS NULL',
+      columns: ["lower((name || ' '::text) || body)"],
+      operator_classes: ['gin_trgm_ops'],
+    },
+  ] as const
+
+  assert.deepEqual(publicSearchIndexRecoveryStatements(exactRows, createStatements), [])
+  assert.deepEqual(
+    publicSearchIndexRecoveryStatements(
+      exactRows.map(row => row.index_name === 'notes_public_search_words'
+        ? { ...row, valid: false, ready: false }
+        : row),
+      createStatements,
+    ),
+    [
+      'DROP INDEX CONCURRENTLY IF EXISTS public.notes_public_search_words',
+      createStatements[0],
+    ],
+  )
+  assert.throws(
+    () => publicSearchIndexRecoveryStatements(
+      exactRows.map(row => row.index_name === 'notes_public_search_phrase'
+        ? { ...row, operator_classes: ['tsvector_ops'] }
+        : row),
+      createStatements,
+    ),
+    /conflicts with the reviewed definition/i,
+  )
+  assert.throws(
+    () => publicSearchIndexRecoveryStatements(
+      exactRows.map(row => row.index_name === 'things_public_search_phrase_active'
+        ? { ...row, columns: ["lower(name) || ' '::text || body"] }
+        : row),
+      createStatements,
+    ),
+    /conflicts with the reviewed definition/i,
+  )
+})
+
 test('the concurrent presence index has exact guarded preview and production selection', () => {
   const previewEnvironment = {
     CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
@@ -486,6 +562,40 @@ test('a migration that sets its own limits overrides the enforced defaults', () 
   const ownLockTimeout = statements.findIndex((statement, index) =>
     index >= 2 && /SET\s+LOCAL\s+lock_timeout/i.test(statement))
   assert.ok(ownLockTimeout > 1, 'the file keeps its own lock timeout after the enforced one')
+})
+
+test('public change markers are one explicit transactional preview or production release', () => {
+  const migration = migrationDdl(publicChangeMarkersMigrationFile)
+  assert.equal(prepareMigrationExecution(publicChangeMarkersMigrationFile, migration).mode, 'transactional')
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS public_change_state/iu)
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS public_change_log/iu)
+  assert.match(migration, /AFTER INSERT ON events[\s\S]*record_public_change/iu)
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'public-change-markers'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, publicChangeMarkersMigrationFile)
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'public-change-markers'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'public-change-markers-release',
+    },
+  )
+  assert.equal(production.migrationFile, publicChangeMarkersMigrationFile)
 })
 
 test('world-root topology is one bounded transaction with database backstops', () => {

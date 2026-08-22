@@ -23,6 +23,9 @@ const PROTOCOL_DEFAULT = '2025-11-25'
 const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
 const OAUTH_SCOPE = 'city:resident'
 const HOSTED_TOOL_NAMESPACE = 'mcp_for_1f3d9_'
+const MCP_SEARCH_CURSOR_MAX_LENGTH = 2_048
+const MCP_CHANGE_MARKER_MAX_LENGTH = 19
+const MAX_CHANGE_MARKER = 9_223_372_036_854_775_807n
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -167,7 +170,74 @@ function mePath(args: Record<string, unknown>): string {
   return encoded ? `/api/me?${encoded}` : '/api/me'
 }
 
+function publicReadPath(
+  pathname: '/api/search' | '/api/changes',
+  args: Record<string, unknown>,
+  keys: readonly string[],
+): string {
+  const query = new URLSearchParams()
+  for (const key of keys) {
+    if (own(args, key)) query.set(key, String(args[key]))
+  }
+  const encoded = query.toString()
+  return encoded ? `${pathname}?${encoded}` : pathname
+}
+
 const TOOLS: readonly ToolDefinition[] = [
+  {
+    name: 'search',
+    description:
+      'Search current public notes and active things in plain newest-first date order. Results are body-free outlines with exact total item and UTF-8 body-byte counts; they are not relevance-ranked. Retain the first-page change_marker while using before to load every older match, then open only a chosen original record.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        q: { type: 'string', minLength: 1, maxLength: 256 },
+        mode: { type: 'string', enum: ['words', 'phrase'] },
+        type: { type: 'string', enum: ['all', 'note', 'thing'] },
+        limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before: { type: 'string', maxLength: MCP_SEARCH_CURSOR_MAX_LENGTH },
+      },
+      required: ['q'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: 'GET',
+      path: publicReadPath('/api/search', args, ['q', 'mode', 'type', 'before', 'limit']),
+    }),
+  },
+  {
+    name: 'changes',
+    description:
+      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        since: {
+          type: 'string',
+          maxLength: MCP_CHANGE_MARKER_MAX_LENGTH,
+          pattern: '^(?:0|[1-9][0-9]*)$',
+        },
+        limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+      },
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: 'GET',
+      path: publicReadPath('/api/changes', args, ['since', 'limit']),
+    }),
+  },
   {
     name: 'look',
     description:
@@ -650,9 +720,11 @@ function classifiedErrorText(
   text: string,
   errorClass: McpErrorClass,
   httpStatus?: number,
+  retryAfterSeconds?: number,
 ): string {
   const envelope: Record<string, unknown> = { error_class: errorClass }
   if (httpStatus !== undefined) envelope.http_status = httpStatus
+  if (retryAfterSeconds !== undefined) envelope.retry_after_seconds = retryAfterSeconds
   try {
     const parsed: unknown = JSON.parse(text)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -662,6 +734,12 @@ function classifiedErrorText(
     // fall through to the plain-text envelope
   }
   return JSON.stringify({ ...envelope, error: text })
+}
+
+function boundedRetryAfterSeconds(value: string | null): number | undefined {
+  if (value === null || !/^[1-9][0-9]{0,4}$/u.test(value)) return undefined
+  const seconds = Number(value)
+  return Number.isSafeInteger(seconds) && seconds <= 86_400 ? seconds : undefined
 }
 
 const SENSITIVE_ARGUMENT_KEYS = new Set([
@@ -723,6 +801,46 @@ function invalidEnumArgument(
   return null
 }
 
+function invalidPublicReadArgument(
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (name === 'search') {
+    if (typeof args.q !== 'string' || args.q.length < 1 || args.q.length > 256) {
+      return 'Search q must be a string of 1 to 256 characters.'
+    }
+    if (
+      own(args, 'before') &&
+      (typeof args.before !== 'string' || args.before.length > MCP_SEARCH_CURSOR_MAX_LENGTH)
+    ) {
+      return `Search before must be a string of at most ${MCP_SEARCH_CURSOR_MAX_LENGTH} characters.`
+    }
+  }
+  if (name === 'changes' && own(args, 'since')) {
+    const since = args.since
+    if (
+      typeof since !== 'string' ||
+      since.length > MCP_CHANGE_MARKER_MAX_LENGTH ||
+      !/^(?:0|[1-9][0-9]*)$/u.test(since) ||
+      BigInt(since) > MAX_CHANGE_MARKER
+    ) {
+      return 'Changes since must be a nonnegative decimal bigint marker.'
+    }
+  }
+  if ((name === 'search' || name === 'changes') && own(args, 'limit')) {
+    const limit = args.limit
+    if (
+      typeof limit !== 'number' ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > PUBLIC_PAGE_MAX
+    ) {
+      return `Public read limit must be an integer from 1 to ${PUBLIC_PAGE_MAX}.`
+    }
+  }
+  return null
+}
+
 function safeguardToolResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
   return sanitizePublicReadText(rawText)
 }
@@ -769,7 +887,9 @@ function toolResult(
 }
 
 function securitySchemesFor(name: string) {
-  if (name === 'look') return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
+  if (['look', 'search', 'changes'].includes(name)) {
+    return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
+  }
   return [OAUTH_SECURITY_SCHEME]
 }
 
@@ -875,6 +995,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   const enumRejection = invalidEnumArgument(tool, args)
   if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input'), true)
+  const publicReadRejection = invalidPublicReadArgument(name, args)
+  if (publicReadRejection) {
+    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input'), true)
+  }
   if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
     return toolResult(
       c,
@@ -907,6 +1031,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (authorization) headers.authorization = authorization
   const payment = c.req.header('x-payment')
   if (payment) headers['x-payment'] = payment
+  for (const headerName of ['x-vercel-forwarded-for', 'x-forwarded-for'] as const) {
+    const value = c.req.header(headerName)
+    if (value) headers[headerName] = value
+  }
 
   const init: RequestInit = { method: route.method, headers }
   if (route.method !== 'GET') init.body = JSON.stringify(route.body ?? {})
@@ -934,10 +1062,16 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       )
     }
     if (response.status >= 400) {
+      const retryAfterSeconds = boundedRetryAfterSeconds(response.headers.get('retry-after'))
       return toolResult(
         c,
         id,
-        classifiedErrorText(safeguarded.text, errorClassForStatus(response.status), response.status),
+        classifiedErrorText(
+          safeguarded.text,
+          errorClassForStatus(response.status),
+          response.status,
+          retryAfterSeconds,
+        ),
         true,
       )
     }

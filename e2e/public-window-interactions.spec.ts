@@ -9,6 +9,7 @@ const LONG_AGREEMENT = `Opening agreement. ${'Every signer can inspect this shar
 
 const SNAPSHOT = Object.freeze({
   view: 'outline',
+  change_marker: '20',
   places: [{
     id: 11,
     parent_id: null,
@@ -108,6 +109,7 @@ const SNAPSHOT = Object.freeze({
 
 const FIRST_BRANCH_PAGE = Object.freeze({
   view: 'outline',
+  change_marker: '20',
   place: {
     id: 12,
     parent_id: 11,
@@ -152,6 +154,7 @@ const FIRST_BRANCH_PAGE = Object.freeze({
 // A refresh or a moving cursor must never duplicate a place already on screen.
 const SECOND_BRANCH_PAGE = Object.freeze({
   view: 'outline',
+  change_marker: '20',
   place: FIRST_BRANCH_PAGE.place,
   subplaces: [FIRST_BRANCH_PAGE.subplaces[1], {
     id: 13,
@@ -270,13 +273,24 @@ test.beforeEach(async ({ page }) => {
     if (!collection) return route.fulfill({ json: SNAPSHOT })
     if (collection === 'notes') {
       const note = url.searchParams.has('place_id') ? OLDER_NOTE : OLDER_GLOBAL_NOTE
-      return route.fulfill({ json: { notes: [note], has_more: false, next_before_id: null } })
+      return route.fulfill({
+        json: {
+          notes: [note], has_more: false, next_before_id: null, change_marker: '20',
+        },
+      })
     }
     if (collection === 'things') {
-      return route.fulfill({ json: { things: [OLDER_THING], has_more: false, next_before_id: null } })
+      return route.fulfill({
+        json: {
+          things: [OLDER_THING], has_more: false, next_before_id: null, change_marker: '20',
+        },
+      })
     }
     return route.fulfill({
-      json: { agreements: [OLDER_AGREEMENT], has_more: false, next_before_id: null },
+      json: {
+        agreements: [OLDER_AGREEMENT], has_more: false, next_before_id: null,
+        change_marker: '20',
+      },
     })
   })
   await page.route('**/api/map**', route => {
@@ -296,10 +310,16 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/events**', route => {
     const url = new URL(route.request().url())
     if (url.searchParams.get('before_id') === '51') {
-      return route.fulfill({ json: { events: [OLDER_EVENT], has_more: false, next_before_id: null } })
+      return route.fulfill({
+        json: {
+          events: [OLDER_EVENT], has_more: false, next_before_id: null, change_marker: '20',
+        },
+      })
     }
     return route.fulfill({
-      json: { events: SNAPSHOT.events, has_more: true, next_before_id: 51 },
+      json: {
+        events: SNAPSHOT.events, has_more: true, next_before_id: 51, change_marker: '20',
+      },
     })
   })
 
@@ -421,6 +441,7 @@ test('outline snapshot loads, pages, deduplicates, and preserves one map branch'
     view: 'outline',
     parent_id: '12',
     subplace_limit: '25',
+    after_change_marker: '20',
   })
   await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'shared_step', exact: true })).toBeVisible()
@@ -440,6 +461,7 @@ test('outline snapshot loads, pages, deduplicates, and preserves one map branch'
     parent_id: '12',
     before_subplace_id: '14',
     subplace_limit: '25',
+    after_change_marker: '20',
   })
 
   const loadedBranch = page.locator('#place-children-12')
@@ -671,7 +693,9 @@ test('refresh forward-reconciles multi-page bursts without gaps and refreshes br
     if (!url.searchParams.has('collection')) {
       return route.fulfill({ json: refreshed ? refreshedSnapshot : SNAPSHOT })
     }
-    return route.fulfill({ json: { notes: [], has_more: false, next_before_id: null } })
+    return route.fulfill({
+      json: { notes: [], has_more: false, next_before_id: null, change_marker: '20' },
+    })
   })
   await page.unroute('**/api/map**')
   await page.route('**/api/map**', route => {
@@ -916,4 +940,293 @@ test('recent window slices can be extended independently in every public view', 
   await page.getByRole('button', { name: 'Load older agreements' }).click()
   await olderAgreementRequest
   await expect(page.locator('#agreement-list')).toContainText('An older promise remains public.')
+})
+
+test('Archive finds an old body-free result and follows its opaque continuation', async ({ page }) => {
+  const requests: URL[] = []
+  await page.route('**/api/search**', route => {
+    const url = new URL(route.request().url())
+    requests.push(url)
+    const older = url.searchParams.get('before') === 'older-search-page'
+    return route.fulfill({
+      json: {
+        query: 'hush lantern',
+        mode: 'phrase',
+        type: 'thing',
+        results: [older ? {
+          type: 'thing', id: 30, place_id: 11, name: 'old_hush_lantern',
+          owner_id: 7, owner: 'leafwalker', open_to_use: false,
+          body_text_bytes: 47, created_at: '2026-08-13T10:00:00.000000Z',
+          href: '/api/thing/30',
+        } : {
+          type: 'thing', id: 31, place_id: 11, name: 'new_hush_lantern',
+          owner_id: 7, owner: 'leafwalker', open_to_use: true,
+          body_text_bytes: 52, created_at: '2026-08-14T10:00:00.000000Z',
+          href: '/api/thing/31',
+        }],
+        total_items: 2,
+        total_text_bytes: 99,
+        returned_items: 1,
+        returned_text_bytes: 0,
+        has_more: !older,
+        next_before: older ? null : 'older-search-page',
+        change_marker: '7',
+      },
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('hush lantern')
+  await page.locator('#archive-mode').selectOption('phrase')
+  await page.locator('#archive-type').selectOption('thing')
+  await page.locator('#archive-search').click()
+
+  await expect(page.locator('#archive-results')).toContainText('new_hush_lantern')
+  await expect(page.locator('#archive-results')).not.toContainText('secret body text')
+  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open original' }))
+    .toHaveAttribute('href', '/api/thing/31')
+  expect(requests[0]?.searchParams.get('q')).toBe('hush lantern')
+  expect(requests[0]?.searchParams.get('mode')).toBe('phrase')
+  expect(requests[0]?.searchParams.get('type')).toBe('thing')
+  expect(requests[0]?.searchParams.get('limit')).toBe('25')
+
+  await page.getByRole('button', { name: 'Load older matches' }).click()
+  await expect(page.locator('#archive-results')).toContainText('old_hush_lantern')
+  expect(requests[1]?.searchParams.get('before')).toBe('older-search-page')
+  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open original' }))
+    .toHaveCount(2)
+})
+
+test('a confirmed unchanged return refreshes presence without reloading authored text', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '20', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '20',
+        }
+        : { change_marker: '20' },
+    })
+  })
+
+  const windowReadsBeforeUnchanged = (API_REQUESTS.get(page) ?? [])
+    .filter(value => new URL(value).pathname === '/api/window').length
+  const unchangedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const presenceRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('view') === 'presence'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([unchangedRequest, presenceRequest])
+  await expect(page.locator('#window-status')).toContainText('no persisted changes')
+
+  const windowReadsAfterUnchanged = (API_REQUESTS.get(page) ?? [])
+    .filter(value => new URL(value).pathname === '/api/window').length
+  expect(windowReadsAfterUnchanged).toBe(windowReadsBeforeUnchanged)
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+})
+
+test('an unavailable unchanged-presence read falls back to a bounded authored snapshot', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '20', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '20',
+        }
+        : { change_marker: '20' },
+    })
+  })
+
+  await page.route('**/api/residents**', route => route.fulfill({
+    status: 503,
+    json: { error: 'test presence failure' },
+  }))
+  const unchangedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const failedPresence = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('view') === 'presence'
+  })
+  const fallbackSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+      url.searchParams.get('after_change_marker') === '20'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([unchangedRequest, failedPresence, fallbackSnapshot])
+
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).not.toContainText('older view')
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+})
+
+test('a failed changed snapshot keeps the old marker and retries the same change', async ({ page }) => {
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+          unchanged: false, has_more: false, next_since: '21',
+        }
+        : { change_marker: '21' },
+    })
+  })
+  let snapshotAttempts = 0
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    snapshotAttempts += 1
+    if (snapshotAttempts === 1) {
+      return route.fulfill({ status: 503, json: { error: 'test snapshot failure' } })
+    }
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+
+  const firstChange = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const firstFailure = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 503
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([firstChange, firstFailure])
+  await expect(page.locator('#window-status')).toContainText('older view')
+
+  const retriedOldMarker = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const successfulRetry = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([retriedOldMarker, successfulRetry])
+  expect(snapshotAttempts).toBe(2)
+})
+
+test('a changed snapshot drops previously loaded authored content before saving its marker', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toBeVisible()
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+          unchanged: false, has_more: false, next_since: '21',
+        }
+        : {
+          change_marker: '21', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '21',
+        },
+    })
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({
+      json: {
+        ...SNAPSHOT,
+        change_marker: '21',
+        things: [],
+        totals: { ...SNAPSHOT.totals, things: 0 },
+        shown: { ...SNAPSHOT.shown, things: 0 },
+        pages: { ...SNAPSHOT.pages, things: { has_more: false, next_before_id: null } },
+      },
+    })
+  })
+
+  const coveredSnapshot = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await coveredSnapshot
+  await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toHaveCount(0)
+
+  const committedMarker = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '21'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await committedMarker
+})
+
+test('an older history response already in flight cannot repopulate a newer marker snapshot', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  let releaseOlderHistory: (() => void) | null = null
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'things') return route.fallback()
+    await new Promise<void>(resolve => {
+      releaseOlderHistory = () => {
+        void route.fulfill({
+          json: {
+            things: [OLDER_THING], has_more: false, next_before_id: null,
+            change_marker: '20',
+          },
+        }).then(() => resolve())
+      }
+    })
+  })
+  const olderRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'things'
+  })
+  await page.getByRole('button', { name: 'Load older things' }).click()
+  await olderRequest
+
+  await page.route('**/api/changes**', route => route.fulfill({
+    json: {
+      change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+      unchanged: false, has_more: false, next_since: '21',
+    },
+  }))
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({
+      json: {
+        ...SNAPSHOT,
+        change_marker: '21',
+        things: [],
+        totals: { ...SNAPSHOT.totals, things: 0 },
+        shown: { ...SNAPSHOT.shown, things: 0 },
+        pages: { ...SNAPSHOT.pages, things: { has_more: false, next_before_id: null } },
+      },
+    })
+  })
+  const coveredSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('after_change_marker') === '21'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await coveredSnapshot
+
+  expect(releaseOlderHistory).not.toBeNull()
+  releaseOlderHistory?.()
+  await page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  }))
+  await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toHaveCount(0)
+  await expect(page.locator('.thing-card').filter({ hasText: 'old_bench' })).toHaveCount(0)
 })

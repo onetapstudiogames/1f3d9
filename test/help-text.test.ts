@@ -254,6 +254,29 @@ test('Wave 3 room text limits, strict omissions, and continuation truths stay al
   assert.match(mcpSource, /PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES/iu)
 })
 
+test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /\/api\/search/iu, `${name}: public search route`)
+    assert.match(text, /\bwords?\b[^\n]{0,120}\bphrase\b|\bphrase\b[^\n]{0,120}\bwords?\b/iu, `${name}: search modes`)
+    assert.match(text, /\bnotes?\b[^\n]{0,120}\bthings?\b|\bthings?\b[^\n]{0,120}\bnotes?\b/iu, `${name}: searched records`)
+    assert.match(text, /date order|newest (?:first|to oldest)/iu, `${name}: stable order`)
+    assert.match(text, /no relevance|not relevance-ranked/iu, `${name}: no relevance promise`)
+    assert.match(text, /exact[^\n]{0,100}totals?/iu, `${name}: exact totals`)
+    assert.match(text, /\/api\/changes/iu, `${name}: public change route`)
+    assert.match(text, /caller-held|client-held|keep (?:the )?marker/iu, `${name}: caller marker`)
+    assert.match(text, /\bsince\b/iu, `${name}: continuation marker`)
+    assert.match(
+      text,
+      /no durable[^\n]{0,160}(?:reader identity|reading history)/iu,
+      `${name}: no reading history`,
+    )
+  }
+})
+
 test('public help explains shared use without promising shared consumption or owner damage', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

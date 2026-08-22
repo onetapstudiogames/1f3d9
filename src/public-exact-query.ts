@@ -2,7 +2,7 @@ import { sql } from './db.ts'
 
 const EXACT_READ_STATEMENT_TIMEOUT = '1500ms'
 const EXACT_READ_ADVISORY_NAMESPACE = 524_128_259
-type PublicExactReadOrder = 'id_desc' | 'joined_at_desc'
+type PublicExactReadOrder = 'id_desc' | 'joined_at_desc' | 'search_desc'
 
 export const PUBLIC_EXACT_READ_BUSY_MESSAGE = 'exact public totals are temporarily busy; retry'
 
@@ -31,7 +31,11 @@ export function budgetedExactStatement(
   const orderBy = order === 'joined_at_desc'
     ? `__public_exact_result.joined_at DESC NULLS LAST,
         __public_exact_result.id DESC NULLS LAST`
-    : '__public_exact_result.id DESC NULLS LAST'
+    : order === 'search_desc'
+      ? `__public_exact_result.created_at DESC NULLS LAST,
+          __public_exact_result.result_type ASC NULLS LAST,
+          __public_exact_result.id DESC NULLS LAST`
+      : '__public_exact_result.id DESC NULLS LAST'
   return `/* public:budgeted-exact */
     WITH __public_exact_admission AS MATERIALIZED (
       SELECT CASE

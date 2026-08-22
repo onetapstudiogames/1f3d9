@@ -5,6 +5,12 @@ import { pathToFileURL } from 'node:url'
 import { neon } from '@neondatabase/serverless'
 import { Client } from 'pg'
 import {
+  PUBLIC_SEARCH_EXTENSION_STATE_QUERY,
+  PUBLIC_SEARCH_INDEX_NAMES,
+  PUBLIC_SEARCH_INDEX_STATE_QUERY,
+  publicSearchIndexRecoveryStatements,
+} from './public-search-index-migration.ts'
+import {
   isSafeIdentifier,
   requireDirectPostgresUrl,
   requireLoopbackPostgresUrl,
@@ -12,6 +18,8 @@ import {
   responseJson,
   verifyNeonDatabaseTarget,
 } from './database-target.ts'
+
+export { publicSearchIndexRecoveryStatements } from './public-search-index-migration.ts'
 
 type SqlMode = 'normal' | 'single-quote' | 'double-quote' | 'line-comment' | 'block-comment' | 'dollar-quote'
 type MigrationTarget = 'local' | 'preview' | 'production'
@@ -34,6 +42,8 @@ type RemoteMigration =
   | 'flag-limits'
   | 'affordable-reading-totals'
   | 'events-presence-index'
+  | 'public-search-indexes'
+  | 'public-change-markers'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -55,6 +65,8 @@ export type MigrationFile =
   | 'db/migrations/20260818_flag_limits.sql'
   | 'db/migrations/20260820_affordable_reading_totals.sql'
   | 'db/migrations/20260821_events_presence_index.sql'
+  | 'db/migrations/20260821_public_search_indexes.sql'
+  | 'db/migrations/20260821_public_change_markers.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -101,9 +113,17 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'flag-limits': 'db/migrations/20260818_flag_limits.sql',
   'affordable-reading-totals': 'db/migrations/20260820_affordable_reading_totals.sql',
   'events-presence-index': 'db/migrations/20260821_events_presence_index.sql',
+  'public-search-indexes': 'db/migrations/20260821_public_search_indexes.sql',
+  'public-change-markers': 'db/migrations/20260821_public_change_markers.sql',
 }
-const NONTRANSACTIONAL_MIGRATION_FILE: MigrationFile =
+const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
+const PUBLIC_SEARCH_INDEX_MIGRATION_FILE: MigrationFile =
+  'db/migrations/20260821_public_search_indexes.sql'
+const NONTRANSACTIONAL_MIGRATION_FILES = new Set<MigrationFile>([
+  EVENTS_PRESENCE_INDEX_MIGRATION_FILE,
+  PUBLIC_SEARCH_INDEX_MIGRATION_FILE,
+])
 
 function namedArgument(args: readonly string[], name: string): string | undefined {
   const prefix = `--${name}=`
@@ -125,7 +145,7 @@ function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
 }
 
 function migrationExecutionMode(migrationFile: MigrationFile): MigrationExecutionMode {
-  return migrationFile === NONTRANSACTIONAL_MIGRATION_FILE
+  return NONTRANSACTIONAL_MIGRATION_FILES.has(migrationFile)
     ? 'nontransactional'
     : 'transactional'
 }
@@ -598,7 +618,7 @@ export function prepareMigrationExecution(
   migrationFile: MigrationFile,
   ddl: string,
 ): PreparedMigrationExecution {
-  if (migrationFile !== NONTRANSACTIONAL_MIGRATION_FILE) {
+  if (!NONTRANSACTIONAL_MIGRATION_FILES.has(migrationFile)) {
     return Object.freeze({
       mode: 'transactional',
       sessionStatements: Object.freeze([]),
@@ -610,10 +630,26 @@ export function prepareMigrationExecution(
   const executableStatements = statements
     .map(normalizedExecutableStatement)
     .filter(Boolean)
-  const expected =
-    'CREATE INDEX CONCURRENTLY IF NOT EXISTS events_actor_at_desc ON public.events (actor, at DESC)'
-  if (executableStatements.length !== 1 || executableStatements[0] !== expected) {
-    throw new Error('events presence index migration does not match the reviewed concurrent-index statement')
+  if (migrationFile === EVENTS_PRESENCE_INDEX_MIGRATION_FILE) {
+    const expected =
+      'CREATE INDEX CONCURRENTLY IF NOT EXISTS events_actor_at_desc ON public.events (actor, at DESC)'
+    if (executableStatements.length !== 1 || executableStatements[0] !== expected) {
+      throw new Error('events presence index migration does not match the reviewed concurrent-index statement')
+    }
+  } else {
+    const expected = [
+      'CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public',
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS notes_public_search_words ON public.notes USING GIN (to_tsvector('simple', body))",
+      'CREATE INDEX CONCURRENTLY IF NOT EXISTS notes_public_search_phrase ON public.notes USING GIN (lower(body) public.gin_trgm_ops)',
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS things_public_search_words_active ON public.things USING GIN (to_tsvector('simple', name || ' ' || body)) WHERE withdrawn_at IS NULL",
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS things_public_search_phrase_active ON public.things USING GIN (lower(name || ' ' || body) public.gin_trgm_ops) WHERE withdrawn_at IS NULL",
+    ]
+    if (
+      executableStatements.length !== expected.length ||
+      executableStatements.some((statement, index) => statement !== expected[index])
+    ) {
+      throw new Error('public search index migration does not match the reviewed extension and concurrent-index statements')
+    }
   }
 
   return Object.freeze({
@@ -624,6 +660,59 @@ export function prepareMigrationExecution(
     ]),
     statements: Object.freeze([...statements]),
   })
+}
+
+async function applyEventsPresenceIndexMigration(
+  client: Client,
+  createStatement: string,
+): Promise<number> {
+  const before = await client.query(EVENTS_PRESENCE_INDEX_STATE_QUERY)
+  const recoveryStatements = eventsPresenceIndexRecoveryStatements(
+    before.rows as readonly Record<string, unknown>[],
+    createStatement,
+  )
+  for (const statement of recoveryStatements) await client.query(statement)
+
+  const after = await client.query(EVENTS_PRESENCE_INDEX_STATE_QUERY)
+  if (eventsPresenceIndexRecoveryStatements(
+    after.rows as readonly Record<string, unknown>[],
+    createStatement,
+  ).length !== 0) {
+    throw new Error('events_actor_at_desc did not become valid and ready')
+  }
+  return recoveryStatements.length
+}
+
+async function applyPublicSearchIndexMigration(
+  client: Client,
+  statements: readonly string[],
+): Promise<number> {
+  const extensionStatement = statements[0]!
+  const createStatements = statements.slice(1)
+  await client.query(extensionStatement)
+  const extension = await client.query(PUBLIC_SEARCH_EXTENSION_STATE_QUERY)
+  if (
+    extension.rows.length !== 1 ||
+    extension.rows[0]?.extension_schema !== 'public'
+  ) {
+    throw new Error('pg_trgm must be installed in the public schema')
+  }
+
+  const before = await client.query(PUBLIC_SEARCH_INDEX_STATE_QUERY, [PUBLIC_SEARCH_INDEX_NAMES])
+  const recoveryStatements = publicSearchIndexRecoveryStatements(
+    before.rows as readonly Record<string, unknown>[],
+    createStatements,
+  )
+  for (const statement of recoveryStatements) await client.query(statement)
+
+  const after = await client.query(PUBLIC_SEARCH_INDEX_STATE_QUERY, [PUBLIC_SEARCH_INDEX_NAMES])
+  if (publicSearchIndexRecoveryStatements(
+    after.rows as readonly Record<string, unknown>[],
+    createStatements,
+  ).length !== 0) {
+    throw new Error('public search indexes did not all become valid and ready')
+  }
+  return 1 + recoveryStatements.length
 }
 
 export async function applyMigration(
@@ -639,21 +728,9 @@ export async function applyMigration(
       for (const statement of execution.sessionStatements) {
         await client.query(statement)
       }
-      const before = await client.query(EVENTS_PRESENCE_INDEX_STATE_QUERY)
-      const recoveryStatements = eventsPresenceIndexRecoveryStatements(
-        before.rows as readonly Record<string, unknown>[],
-        execution.statements[0]!,
-      )
-      for (const statement of recoveryStatements) await client.query(statement)
-
-      const after = await client.query(EVENTS_PRESENCE_INDEX_STATE_QUERY)
-      if (eventsPresenceIndexRecoveryStatements(
-        after.rows as readonly Record<string, unknown>[],
-        execution.statements[0]!,
-      ).length !== 0) {
-        throw new Error('events_actor_at_desc did not become valid and ready')
-      }
-      return recoveryStatements.length
+      return migrationFile === EVENTS_PRESENCE_INDEX_MIGRATION_FILE
+        ? await applyEventsPresenceIndexMigration(client, execution.statements[0]!)
+        : await applyPublicSearchIndexMigration(client, execution.statements)
     } finally {
       await client.end()
     }

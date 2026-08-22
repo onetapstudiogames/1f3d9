@@ -1,5 +1,8 @@
 import { WINDOW_CLIENT_SAFETY_JS } from './window-client-safety.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
+import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS } from './public-events.ts'
+
+export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
 export function mergeWindowRows<T extends Readonly<{ id: number }>>(
   current: readonly T[],
@@ -24,41 +27,6 @@ export function mergeResidentRows<
   })
 }
 
-export const PUBLIC_EVENT_LABELS = Object.freeze({
-  register: 'moved into the city',
-  rotate: 'rotated their key',
-  home_set: 'set their home',
-  place_created: 'founded a place',
-  place_edited: 'changed a place',
-  kind_invented: 'invented a kind',
-  kind_revised: 'revised a kind',
-  trait_coined: 'coined a trait',
-  thing_created: 'made a thing',
-  thing_crafted: 'crafted a thing from ingredients',
-  thing_edited: 'changed a thing',
-  thing_upgraded: 'upgraded a thing',
-  thing_withdrawn: 'withdrew a thing',
-  laws_changed: 'changed local laws',
-  action: 'acted in the city',
-  effect_scheduled: 'set a stored effect in motion',
-  effect_resolved: 'resolved a stored effect',
-  note: 'left a note',
-  agreement: 'wrote an agreement',
-  agreement_accession: 'opened an agreement to later signers',
-  agreement_sign: 'signed an agreement',
-  transfer: 'gave away property',
-  transfer_offer: 'offered property for sale',
-  sale: 'bought property',
-  transfer_cancel: 'canceled a sale offer',
-  world_listed: 'listed a thing on the world market',
-  world_sale: 'bought a thing through the world market',
-  world_cancel: 'canceled a world market listing',
-  flag: 'flagged a public record',
-  moderation: 'used a logged maintainer power',
-})
-
-export const PUBLIC_EVENT_KINDS = Object.freeze(Object.keys(PUBLIC_EVENT_LABELS))
-
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
 const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
@@ -77,7 +45,7 @@ export const WINDOW_JS = `(() => {
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
   const MODERATED_TEXT = '[removed by maintainer]'
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
-  const VIEWS = Object.freeze(['map', 'place', 'conversations', 'happenings', 'agreements'])
+  const VIEWS = Object.freeze(['map', 'place', 'conversations', 'happenings', 'agreements', 'archive'])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
   const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
@@ -105,17 +73,26 @@ export const WINDOW_JS = `(() => {
     happeningsPage: document.getElementById('happenings-page'),
     agreements: document.getElementById('agreement-list'),
     agreementsPage: document.getElementById('agreements-page'),
+    archiveForm: document.getElementById('archive-form'),
+    archiveQuery: document.getElementById('archive-query'),
+    archiveMode: document.getElementById('archive-mode'),
+    archiveType: document.getElementById('archive-type'),
+    archiveSearch: document.getElementById('archive-search'),
+    archiveResults: document.getElementById('archive-results'),
+    archivePage: document.getElementById('archive-page'),
   }
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
   let bodyIdSequence = 0
   let branchRefreshOffset = 0
   let navigationRevision = 0
+  let authoredRevision = 0
   let state = {
     failures: 0,
     refreshing: false,
     hasSnapshot: false,
     pollTimer: 0,
+    changeMarker: null,
     snapshot: null,
     histories: { notes: {}, things: {}, agreements: {}, events: {} },
     branches: {},
@@ -126,6 +103,11 @@ export const WINDOW_JS = `(() => {
     collapsedPlaceIds: [],
     sleeperPlaceIds: [],
     expandedBodies: [],
+    archive: {
+      query: '', mode: 'words', type: 'all', results: [], totalItems: 0,
+      totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
+      initialized: false, error: null,
+    },
     view: 'map',
     placeId: null,
     resident: null,
@@ -148,6 +130,270 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderEmpty(target, className, message) {
     if (!target) return
     target.replaceChildren(element('p', className, message))
+  }
+
+  function safeArchiveChoice(value, choices, fallback) {
+    return typeof value === 'string' && choices.includes(value) ? value : fallback
+  }
+
+  function safeArchiveCursor(value) {
+    return safeText(value, null, 2048, false)
+  }
+
+  function safeChangeMarker(value) {
+    if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]{0,18})$/.test(value)) return null
+    try {
+      return BigInt(value) <= 9223372036854775807n ? value : null
+    } catch {
+      return null
+    }
+  }
+
+  function markerCovers(actual, minimum) {
+    const safeActual = safeChangeMarker(actual)
+    const safeMinimum = safeChangeMarker(minimum)
+    return Boolean(safeActual && safeMinimum && BigInt(safeActual) >= BigInt(safeMinimum))
+  }
+
+  function normalizeArchiveResult(rawResult) {
+    if (!rawResult || typeof rawResult !== 'object') return null
+    const type = safeArchiveChoice(rawResult.type, ['note', 'thing'], null)
+    const id = safeId(rawResult.id)
+    const createdAt = safeDate(rawResult.created_at)
+    if (!type || !id || !createdAt) return null
+    const placeId = rawResult.place_id === null || rawResult.place_id === undefined
+      ? null
+      : safeId(rawResult.place_id)
+    if (rawResult.place_id !== null && rawResult.place_id !== undefined && !placeId) return null
+    const actor = type === 'note'
+      ? safeHandle(rawResult.author)
+      : safeHandle(rawResult.owner)
+    const name = type === 'thing'
+      ? safeText(rawResult.name, '', 160, false)
+      : ''
+    return Object.freeze({
+      type,
+      id,
+      createdAt,
+      placeId,
+      actor,
+      name,
+      textBytes: safeCount(rawResult.body_text_bytes ?? rawResult.text_bytes),
+      href: '/api/' + type + '/' + String(id),
+    })
+  }
+
+  function normalizeArchivePayload(payload) {
+    if (!payload || typeof payload !== 'object') throw new Error('invalid archive response')
+    const rawResults = Array.isArray(payload.results)
+      ? payload.results
+      : Array.isArray(payload.items) ? payload.items : []
+    const results = rawResults.map(normalizeArchiveResult).filter(Boolean).slice(0, 25)
+    const nextBefore = safeArchiveCursor(payload.next_before ?? payload.nextBefore)
+    return Object.freeze({
+      results,
+      totalItems: safeCount(payload.total_items ?? payload.totalItems),
+      totalTextBytes: safeCount(
+        payload.total_text_bytes ?? payload.total_body_bytes ??
+          payload.totalTextBytes ?? payload.totalBodyBytes,
+      ),
+      hasMore: payload.has_more === true || payload.hasMore === true,
+      nextBefore,
+    })
+  }
+
+  function archiveResultCard(result) {
+    const card = element('li', 'archive-card')
+    const heading = element('h3', 'archive-result-title', result.type === 'thing' && result.name
+      ? result.name
+      : 'Public note #' + String(result.id))
+    const recordLabel = result.type === 'thing'
+      ? 'Thing #' + String(result.id)
+      : 'Note #' + String(result.id)
+    const details = [
+      recordLabel,
+      result.actor ? (result.type === 'note' ? 'by ' : 'owned by ') + result.actor : '',
+      result.placeId ? 'place #' + String(result.placeId) : '',
+      dateLabel(result.createdAt),
+      String(result.textBytes) + ' public text bytes',
+    ].filter(Boolean)
+    const meta = element('p', 'archive-result-meta', details.join(' · '))
+    const link = element('a', 'archive-open', 'Open original')
+    link.href = result.href
+    card.append(heading, meta, link)
+    return card
+  }
+
+  function archiveRetryButton() {
+    const retry = element('button', 'archive-retry', 'Retry search')
+    retry.type = 'button'
+    retry.addEventListener('click', () => void loadArchive(!state.archive.query))
+    return retry
+  }
+
+  function renderArchivePage(archive) {
+    if (!nodes.archivePage) return
+    nodes.archivePage.hidden = true
+    nodes.archivePage.replaceChildren()
+    if (archive.loading && archive.results.length) {
+      nodes.archivePage.hidden = false
+      nodes.archivePage.replaceChildren(element('p', 'loading-row', 'Searching the archive for older matches…'))
+      return
+    }
+    if (archive.error && archive.results.length) {
+      nodes.archivePage.hidden = false
+      nodes.archivePage.replaceChildren(
+        element('p', 'error-row', archive.error),
+        archiveRetryButton(),
+      )
+      return
+    }
+    if (!archive.hasMore || !archive.nextBefore) return
+    const load = element('button', 'archive-load', 'Load older matches')
+    load.type = 'button'
+    load.addEventListener('click', () => void loadArchive(false))
+    nodes.archivePage.hidden = false
+    nodes.archivePage.replaceChildren(load)
+  }
+
+  function renderArchive() {
+    if (!nodes.archiveResults) return
+    const archive = state.archive
+    if (nodes.archiveSearch) {
+      nodes.archiveSearch.disabled = archive.loading
+      nodes.archiveSearch.setAttribute('aria-busy', String(archive.loading))
+    }
+    nodes.archiveResults.setAttribute('aria-busy', String(archive.loading))
+    if (archive.loading && !archive.results.length) {
+      renderEmpty(nodes.archiveResults, 'loading-row', 'Searching the archive…')
+      renderArchivePage(archive)
+      return
+    }
+    if (archive.error && !archive.results.length) {
+      const message = element('p', 'error-row', archive.error)
+      nodes.archiveResults.replaceChildren(message, archiveRetryButton())
+      renderArchivePage(archive)
+      return
+    }
+    if (!archive.initialized) {
+      renderEmpty(nodes.archiveResults, 'empty-row', 'Enter public words or an exact phrase to search.')
+      renderArchivePage(archive)
+      return
+    }
+    if (!archive.results.length) {
+      renderEmpty(nodes.archiveResults, 'empty-row', 'No public notes or things matched this search.')
+      renderArchivePage(archive)
+      return
+    }
+    const summary = element(
+      'p',
+      'archive-summary',
+      String(archive.totalItems) + (archive.totalItems === 1 ? ' exact match · ' : ' exact matches · ') +
+        String(archive.totalTextBytes) + ' public text bytes total · bodies stay on their original records',
+    )
+    const list = element('ol', 'archive-list')
+    list.append(...archive.results.map(archiveResultCard))
+    nodes.archiveResults.replaceChildren(summary, list)
+    renderArchivePage(archive)
+  }
+
+  async function loadArchive(reset) {
+    if (state.archive.loading) return
+    const requestAuthoredRevision = authoredRevision
+    const formQuery = reset
+      ? safeText(nodes.archiveQuery?.value, '', 256, false)
+      : state.archive.query
+    const mode = reset
+      ? safeArchiveChoice(nodes.archiveMode?.value, ['words', 'phrase'], 'words')
+      : state.archive.mode
+    const type = reset
+      ? safeArchiveChoice(nodes.archiveType?.value, ['all', 'note', 'thing'], 'all')
+      : state.archive.type
+    if (!formQuery) {
+      state = {
+        ...state,
+        archive: { ...state.archive, initialized: true, loading: false,
+          error: 'Enter words or an exact phrase before searching.' },
+      }
+      renderArchive()
+      nodes.archiveQuery?.focus()
+      return
+    }
+    const previous = state.archive
+    state = {
+      ...state,
+      archive: {
+        ...previous,
+        query: formQuery,
+        mode,
+        type,
+        results: reset ? [] : previous.results,
+        loading: true,
+        initialized: true,
+        error: null,
+      },
+    }
+    renderArchive()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/search', window.location.origin)
+      url.searchParams.set('q', formQuery)
+      url.searchParams.set('mode', mode)
+      url.searchParams.set('type', type)
+      url.searchParams.set('limit', '25')
+      if (!reset && previous.nextBefore) url.searchParams.set('before', previous.nextBefore)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        const error = new Error('archive unavailable')
+        error.isBusy = response.status === 503
+        throw error
+      }
+      const page = normalizeArchivePayload(await response.json())
+      if (authoredRevision !== requestAuthoredRevision) return
+      const combined = new Map()
+      for (const result of reset ? [] : previous.results) {
+        combined.set(result.type + ':' + String(result.id), result)
+      }
+      for (const result of page.results) {
+        combined.set(result.type + ':' + String(result.id), result)
+      }
+      state = {
+        ...state,
+        archive: {
+          ...state.archive,
+          results: [...combined.values()],
+          totalItems: page.totalItems,
+          totalTextBytes: page.totalTextBytes,
+          nextBefore: page.nextBefore,
+          hasMore: page.hasMore && Boolean(page.nextBefore),
+          loading: false,
+          error: null,
+        },
+      }
+    } catch (error) {
+      if (authoredRevision !== requestAuthoredRevision) return
+      state = {
+        ...state,
+        archive: {
+          ...state.archive,
+          loading: false,
+          error: error && error.isBusy
+            ? 'Search could not be loaded within the public reading limit.'
+            : 'Search could not be loaded. Check the connection and try again.',
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      renderArchive()
+    }
   }
 
   function dateLabel(date) {
@@ -367,6 +613,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       pages,
       bodyLimits: hasBodyLimits ? bodyLimits : null,
       view: payload.view === 'outline' ? 'outline' : 'full',
+      changeMarker: safeChangeMarker(payload.change_marker),
       refreshedAt: safeDate(payload.refreshed_at),
     })
   }
@@ -726,6 +973,37 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  function freshSnapshotNavigation(snapshot) {
+    const branches = Object.fromEntries(snapshot.places.map((root, index) => {
+      const page = index === 0
+        ? snapshot.pages.places
+        : normalizeSubplacePage(null, root.children, root.places)
+      return [String(root.id), Object.freeze({
+        rows: root.children,
+        loaded: true,
+        initialized: true,
+        hasMore: page.hasMore,
+        nextBeforeSubplaceId: page.nextBeforeSubplaceId,
+        seenBeforeSubplaceIds: [],
+        loading: false,
+        error: false,
+      })]
+    }))
+    const residentPaging = Object.freeze({
+      initialized: true,
+      hasMore: snapshot.pages.residents.hasMore,
+      nextBeforeId: snapshot.pages.residents.nextBeforeId,
+      seenBeforeIds: [],
+      loading: false,
+      error: false,
+    })
+    return Object.freeze({
+      branches,
+      residentPaging,
+      snapshot: withNavigation(snapshot, branches, snapshot.residents),
+    })
+  }
+
   function replaceBranch(placeId, entry) {
     const branches = { ...state.branches, [String(placeId)]: Object.freeze(entry) }
     const snapshot = state.snapshot
@@ -819,7 +1097,28 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
-  function mergeSnapshotHistories(snapshot) {
+  function freshSnapshotHistories(snapshot) {
+    let histories = {}
+    for (const collection of ['notes', 'things', 'agreements', 'events']) {
+      const page = snapshot.pages[collection]
+      histories = {
+        ...histories,
+        [collection]: {
+          all: Object.freeze({
+            rows: snapshot[collection],
+            hasMore: page.hasMore,
+            nextBeforeId: page.nextBeforeId,
+            initialized: true,
+            loading: false,
+            error: false,
+          }),
+        },
+      }
+    }
+    return histories
+  }
+
+  function mergeUnchangedSnapshotHistories(snapshot) {
     let histories = state.histories
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const existing = histories[collection] || {}
@@ -1005,7 +1304,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.snapshot) renderAll()
   }
 
-  function branchRequestUrl(placeId, entry) {
+  function branchRequestUrl(placeId, entry, minimumMarker) {
     const url = new URL('/api/map', window.location.origin)
     url.searchParams.set('view', 'outline')
     url.searchParams.set('parent_id', String(placeId))
@@ -1013,6 +1312,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       url.searchParams.set('before_subplace_id', String(entry.nextBeforeSubplaceId))
     }
     url.searchParams.set('subplace_limit', '25')
+    if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     return url
   }
 
@@ -1021,6 +1321,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!place) return
     const current = branchEntry(place)
     if (current.loading || (current.initialized && !current.hasMore && !current.error)) return
+    const requestAuthoredRevision = authoredRevision
+    const requestMarker = state.changeMarker
     navigationRevision += 1
     const collapsedPlaceIds = state.collapsedPlaceIds.filter(id => id !== placeId)
     state = { ...state, collapsedPlaceIds }
@@ -1031,7 +1333,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
       const requestEntry = state.branches[String(placeId)] || current
-      const url = branchRequestUrl(placeId, requestEntry)
+      const url = branchRequestUrl(placeId, requestEntry, requestMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -1041,7 +1343,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         signal: controller.signal,
       })
       if (!response.ok) throw new Error('public map branch unavailable')
-      const result = branchPageFromPayload(await response.json(), placeId)
+      const payload = await response.json()
+      if (authoredRevision !== requestAuthoredRevision) return
+      if (requestMarker && !markerCovers(payload?.change_marker, requestMarker)) {
+        throw new Error('public map branch does not cover the current change marker')
+      }
+      const result = branchPageFromPayload(payload, placeId)
       const requestedCursor = requestEntry.initialized
         ? requestEntry.nextBeforeSubplaceId
         : null
@@ -1073,6 +1380,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }, result.parent)
       if (state.snapshot) populateFilters(state.snapshot)
     } catch {
+      if (authoredRevision !== requestAuthoredRevision) return
       const latest = state.branches[String(placeId)] || current
       replaceBranch(placeId, { ...latest, loading: false, error: true })
     } finally {
@@ -1209,6 +1517,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   async function loadResidents() {
     const current = state.residentPaging
     if (!state.snapshot || current.loading || (!current.hasMore && !current.error)) return
+    const requestAuthoredRevision = authoredRevision
     navigationRevision += 1
     state = {
       ...state,
@@ -1231,6 +1540,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       })
       if (!response.ok) throw new Error('public resident page unavailable')
       const payload = await response.json()
+      if (authoredRevision !== requestAuthoredRevision) return
       if (!payload || typeof payload !== 'object') throw new Error('invalid public resident page')
       const incoming = normalizeResidents(payload.residents)
       const hasMore = payload.has_more === true
@@ -1278,6 +1588,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       populateFilters(snapshot)
     } catch {
+      if (authoredRevision !== requestAuthoredRevision) return
       state = {
         ...state,
         residentPaging: Object.freeze({ ...state.residentPaging, loading: false, error: true }),
@@ -1814,7 +2125,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(button)
   }
 
-  function historyRequestUrl(collection, entry, filters) {
+  function historyRequestUrl(collection, entry, filters, minimumMarker) {
     const url = new URL(
       collection === 'events' ? '/api/events' : '/api/window',
       window.location.origin,
@@ -1834,6 +2145,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
     }
+    if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     return url
   }
 
@@ -1854,11 +2166,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const key = collection + '|' + historyKey(collection, filters)
     if (forwardRefreshKeys.has(key)) return
     forwardRefreshKeys.add(key)
+    const requestAuthoredRevision = authoredRevision
+    const requestMarker = state.changeMarker
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
       const url = historyRequestUrl(
-        collection, { initialized: false, nextBeforeId: null }, filters)
+        collection, { initialized: false, nextBeforeId: null }, filters, requestMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -1868,7 +2182,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         signal: controller.signal,
       })
       if (!response.ok) return
-      const incoming = normalizeHistoryRows(collection, await response.json())
+      const payload = await response.json()
+      if (authoredRevision !== requestAuthoredRevision) return
+      if (requestMarker && !markerCovers(payload?.change_marker, requestMarker)) return
+      const incoming = normalizeHistoryRows(collection, payload)
       const latest = historyEntry(collection, filters)
       setHistoryEntry(collection, filters, {
         ...latest,
@@ -1903,6 +2220,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   async function loadHistory(collection, filters) {
     const current = historyEntry(collection, filters)
     if (current.loading || (!current.hasMore && !current.error)) return
+    const requestAuthoredRevision = authoredRevision
+    const requestMarker = state.changeMarker
     setHistoryEntry(collection, filters, { ...current, loading: true, error: false })
     renderAll()
 
@@ -1910,7 +2229,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
       const requestEntry = historyEntry(collection, filters)
-      const url = historyRequestUrl(collection, requestEntry, filters)
+      const url = historyRequestUrl(collection, requestEntry, filters, requestMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -1921,6 +2240,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       })
       if (!response.ok) throw new Error('public history unavailable')
       const payload = await response.json()
+      if (authoredRevision !== requestAuthoredRevision) return
+      if (requestMarker && !markerCovers(payload?.change_marker, requestMarker)) {
+        throw new Error('public history does not cover the current change marker')
+      }
       const incoming = normalizeHistoryRows(collection, payload)
       const hasMore = payload.has_more === true
       const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
@@ -1935,6 +2258,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         error: false,
       })
     } catch {
+      if (authoredRevision !== requestAuthoredRevision) return
       const latest = historyEntry(collection, filters)
       setHistoryEntry(collection, filters, { ...latest, loading: false, error: true })
     } finally {
@@ -2046,6 +2370,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : null
     renderView()
     writeHash()
+    if (state.view === 'archive') renderArchive()
     if (!snapshot) return
     renderCounts(snapshot)
     renderScope(snapshot)
@@ -2078,9 +2403,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     navigate({ resident: handle })
   }
 
-  async function getSnapshot(signal) {
+  async function getSnapshot(signal, minimumMarker) {
     const url = new URL('/api/window', window.location.origin)
     url.searchParams.set('view', 'outline')
+    if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     const response = await fetch(url.pathname + url.search, {
       credentials: 'omit',
       headers: { Accept: 'application/json' },
@@ -2091,6 +2417,81 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
     if (!response.ok) throw new Error('public snapshot unavailable')
     return response.json()
+  }
+
+  async function checkPublicChanges() {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/changes', window.location.origin)
+      if (state.changeMarker) url.searchParams.set('since', state.changeMarker)
+      url.searchParams.set('limit', '200')
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) return Object.freeze({ status: 'unavailable', marker: null })
+      const payload = await response.json()
+      if (!payload || typeof payload !== 'object') {
+        return Object.freeze({ status: 'unavailable', marker: null })
+      }
+      const nextMarker = safeChangeMarker(payload.change_marker ?? payload.checkpoint)
+      if (!nextMarker || (state.changeMarker && !markerCovers(nextMarker, state.changeMarker))) {
+        return Object.freeze({ status: 'unavailable', marker: null })
+      }
+      if (payload.unchanged === true) {
+        return Object.freeze({ status: 'unchanged', marker: nextMarker })
+      }
+      return Object.freeze({ status: 'changed', marker: nextMarker })
+    } catch {
+      return Object.freeze({ status: 'unavailable', marker: null })
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
+  async function refreshUnchangedPresence(signal) {
+    const targetCount = state.snapshot?.residents.length || 0
+    if (!targetCount) return []
+    let residents = []
+    let beforeId = null
+    const seenCursors = new Set()
+    while (residents.length < targetCount) {
+      const url = new URL('/api/residents', window.location.origin)
+      url.searchParams.set('view', 'presence')
+      url.searchParams.set('limit', String(Math.min(200, targetCount - residents.length)))
+      if (beforeId) url.searchParams.set('before_id', String(beforeId))
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal,
+      })
+      if (!response.ok) throw new Error('public presence unavailable')
+      const payload = await response.json()
+      if (!payload || typeof payload !== 'object') throw new Error('invalid public presence')
+      const incoming = normalizeResidents(payload.residents)
+      const merged = mergeResidentRows(residents, incoming)
+      if (merged.length === residents.length && residents.length < targetCount) {
+        throw new Error('public presence did not advance')
+      }
+      residents = merged
+      if (residents.length >= targetCount) break
+      if (payload.has_more !== true) throw new Error('public presence ended early')
+      const nextBeforeId = safeId(payload.next_before_id)
+      if (!nextBeforeId || seenCursors.has(nextBeforeId)) {
+        throw new Error('invalid public presence cursor')
+      }
+      seenCursors.add(nextBeforeId)
+      beforeId = nextBeforeId
+    }
+    return residents.slice(0, targetCount)
   }
 
   function scheduleRefresh(delay) {
@@ -2114,21 +2515,76 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     let nextDelay = BASE_REFRESH_MS
     try {
-      const payload = await getSnapshot(controller.signal)
+      // A confirmed unchanged marker lets the window avoid downloading the
+      // same authored text. Presence is refreshed separately because asleep is
+      // time-derived and can change without a database event. If the marker or
+      // presence read is unavailable, the complete bounded snapshot remains the
+      // safe fallback.
+      const changeState = await checkPublicChanges()
+      if (state.hasSnapshot && changeState.status === 'unchanged') {
+        try {
+          const residents = await refreshUnchangedPresence(controller.signal)
+          if (navigationRevision !== navigationRevisionAtStart) {
+            setStatus('Watching the public streets', 'live')
+            return
+          }
+          const snapshot = Object.freeze({
+            ...state.snapshot,
+            residents,
+            shown: Object.freeze({ ...state.snapshot.shown, residents: residents.length }),
+            refreshedAt: new Date(),
+          })
+          state = {
+            ...state,
+            snapshot,
+            changeMarker: changeState.marker,
+            failures: 0,
+          }
+          populateFilters(snapshot)
+          renderAll()
+          setStatus('Watching · no persisted changes', 'live')
+          return
+        } catch {
+          // Presence is time-derived. If its small read fails, continue into a
+          // marker-covered authored snapshot instead of retaining an unproven
+          // mixed refresh.
+        }
+      }
+      const requiredMarker = changeState.marker || state.changeMarker
+      const payload = await getSnapshot(controller.signal, requiredMarker)
       const freshSnapshot = normalizeSnapshot(payload)
-      const navigation = await mergeFreshNavigation(freshSnapshot, controller.signal)
+      if (requiredMarker && !markerCovers(freshSnapshot.changeMarker, requiredMarker)) {
+        throw new Error('public snapshot does not cover the requested change marker')
+      }
+      const replaceAuthored = !state.hasSnapshot || !state.changeMarker ||
+        changeState.status === 'changed' || freshSnapshot.changeMarker !== state.changeMarker
+      const navigation = replaceAuthored
+        ? freshSnapshotNavigation(freshSnapshot)
+        : await mergeFreshNavigation(freshSnapshot, controller.signal)
       if (navigationRevision !== navigationRevisionAtStart) {
         setStatus('Watching the public streets', 'live')
         return
       }
       const snapshot = navigation.snapshot
-      const histories = mergeSnapshotHistories(snapshot)
+      const histories = replaceAuthored
+        ? freshSnapshotHistories(snapshot)
+        : mergeUnchangedSnapshotHistories(snapshot)
+      const archive = replaceAuthored
+        ? {
+            ...state.archive,
+            results: [], totalItems: 0, totalTextBytes: 0, nextBefore: null,
+            hasMore: false, loading: false, initialized: false, error: null,
+          }
+        : state.archive
+      if (replaceAuthored) authoredRevision += 1
       state = {
         ...state,
         snapshot,
         branches: navigation.branches,
         residentPaging: navigation.residentPaging,
         histories,
+        archive,
+        changeMarker: freshSnapshot.changeMarker || requiredMarker,
         hasSnapshot: true,
         failures: 0,
       }
@@ -2191,6 +2647,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
   })
   nodes.residentFilter?.addEventListener('change', () => {
     navigate({ resident: safeHandle(nodes.residentFilter.value) })
+  })
+  nodes.archiveSearch?.addEventListener('click', () => void loadArchive(true))
+  nodes.archiveQuery?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    void loadArchive(true)
   })
   window.addEventListener('hashchange', () => {
     state = { ...state, ...readHashState() }

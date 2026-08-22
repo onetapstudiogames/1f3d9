@@ -1,6 +1,8 @@
 -- 1F3D9 schema. One Neon database, deliberately boring.
 -- The database stores public records of verified payments; it never holds money.
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
 CREATE TABLE IF NOT EXISTS residents (
   id                        INTEGER PRIMARY KEY,
   handle                    TEXT NOT NULL UNIQUE
@@ -659,6 +661,12 @@ CREATE INDEX IF NOT EXISTS things_place_active_id_desc
   ON things (place_id, id DESC) WHERE withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_owner_active_id_desc
   ON things (owner_id, id DESC) WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_words_active
+  ON things USING GIN (to_tsvector('simple', name || ' ' || body))
+  WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_phrase_active
+  ON things USING GIN (lower(name || ' ' || body) public.gin_trgm_ops)
+  WHERE withdrawn_at IS NULL;
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
@@ -847,6 +855,10 @@ CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id D
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author_id_desc ON notes (author_id, id DESC);
+CREATE INDEX IF NOT EXISTS notes_public_search_words
+  ON notes USING GIN (to_tsvector('simple', body));
+CREATE INDEX IF NOT EXISTS notes_public_search_phrase
+  ON notes USING GIN (lower(body) public.gin_trgm_ops);
 
 -- Exact room-reading totals live beside each place so a read does not rescan an
 -- entire room. Triggers keep the counters in the same transaction as the write.
@@ -2486,6 +2498,80 @@ DROP TRIGGER IF EXISTS flags_append_only ON flags;
 CREATE TRIGGER flags_append_only BEFORE UPDATE OR DELETE ON flags FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS events_append_only ON events;
 CREATE TRIGGER events_append_only BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+
+-- A caller-held public marker must follow commit visibility, not SERIAL
+-- allocation. Every event transaction takes this one short row lock and writes
+-- its immutable marker mapping before it can commit.
+CREATE TABLE IF NOT EXISTS public_change_state (
+  singleton          BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+  current_change_id  BIGINT NOT NULL DEFAULT 0 CHECK (current_change_id >= 0)
+);
+INSERT INTO public_change_state (singleton, current_change_id)
+VALUES (true, 0)
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS public_change_log (
+  change_id  BIGINT PRIMARY KEY CHECK (change_id > 0),
+  event_id   INTEGER NOT NULL UNIQUE REFERENCES events(id) ON DELETE RESTRICT
+);
+
+CREATE OR REPLACE FUNCTION record_public_change() RETURNS trigger
+LANGUAGE plpgsql AS $function$
+DECLARE
+  next_change_id BIGINT;
+BEGIN
+  UPDATE public_change_state
+  SET current_change_id = current_change_id + 1
+  WHERE singleton = true
+  RETURNING current_change_id INTO next_change_id;
+  IF next_change_id IS NULL THEN
+    RAISE EXCEPTION 'public change state is unavailable' USING ERRCODE = '55000';
+  END IF;
+  INSERT INTO public_change_log (change_id, event_id) VALUES (next_change_id, NEW.id);
+  RETURN NEW;
+END
+$function$;
+
+-- Reapplying the full schema is safe. The lock prevents an event writer from
+-- landing between the historical backfill and trigger installation.
+LOCK TABLE events IN SHARE ROW EXCLUSIVE MODE;
+DROP TRIGGER IF EXISTS events_record_public_change ON events;
+DO $block$
+DECLARE
+  historical_event RECORD;
+  next_change_id BIGINT;
+BEGIN
+  FOR historical_event IN
+    SELECT event.id
+    FROM events event
+    LEFT JOIN public_change_log change ON change.event_id = event.id
+    WHERE change.event_id IS NULL
+    ORDER BY event.at ASC, event.id ASC
+  LOOP
+    UPDATE public_change_state
+    SET current_change_id = current_change_id + 1
+    WHERE singleton = true
+    RETURNING current_change_id INTO next_change_id;
+    INSERT INTO public_change_log (change_id, event_id)
+    VALUES (next_change_id, historical_event.id);
+  END LOOP;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public_change_log change
+    CROSS JOIN public_change_state state
+    WHERE state.singleton = true
+      AND change.change_id > state.current_change_id
+  ) THEN
+    RAISE EXCEPTION 'public change state trails its immutable log' USING ERRCODE = '55000';
+  END IF;
+END
+$block$;
+CREATE TRIGGER events_record_public_change
+AFTER INSERT ON events FOR EACH ROW EXECUTE FUNCTION record_public_change();
+DROP TRIGGER IF EXISTS public_change_log_append_only ON public_change_log;
+CREATE TRIGGER public_change_log_append_only BEFORE UPDATE OR DELETE ON public_change_log
+FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 
 -- Structural world-root invariants are also enforced at the database boundary.
 -- Application permission flags are local to each place; the ownerless root does

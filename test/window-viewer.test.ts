@@ -115,7 +115,7 @@ test('the window covers the whole public life of the city', () => {
   assert.deepEqual(PUBLIC_EVENT_KINDS, [
     'register', 'rotate', 'home_set', 'place_created', 'place_edited',
     'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
-    'thing_crafted', 'thing_edited', 'thing_upgraded', 'thing_withdrawn',
+    'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',
     'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note',
     'agreement', 'agreement_accession', 'agreement_sign', 'transfer',
     'transfer_offer', 'sale', 'transfer_cancel', 'world_listed', 'world_sale',

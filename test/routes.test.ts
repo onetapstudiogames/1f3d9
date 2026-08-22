@@ -12,6 +12,8 @@ import {
   parsePublicPage,
   utf8TextBytes,
 } from '../src/public-pagination.ts'
+import { PUBLIC_SEARCH_RATE_CAPACITY } from '../src/public-search-rate-limit.ts'
+import { encodePublicSearchCursor } from '../src/public-search.ts'
 
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
@@ -169,6 +171,7 @@ interface FakeState {
   exactTotalsBusy: boolean
   exactTotalsBusyAfter: number | null
   exactTotalsSuccessfulReads: number
+  publicChangeMarker: string
   actionResolved?: boolean
 }
 
@@ -232,6 +235,7 @@ const initialState = (): FakeState => ({
   exactTotalsBusy: false,
   exactTotalsBusyAfter: null,
   exactTotalsSuccessfulReads: 0,
+  publicChangeMarker: '9',
 })
 
 let state = initialState()
@@ -434,6 +438,17 @@ function reset(patch: Partial<FakeState> = {}) {
   state = { ...initialState(), ...patch }
 }
 
+async function withVercelForwarding(run: () => Promise<void>) {
+  const previous = process.env.VERCEL
+  process.env.VERCEL = '1'
+  try {
+    await run()
+  } finally {
+    if (previous === undefined) delete process.env.VERCEL
+    else process.env.VERCEL = previous
+  }
+}
+
 function setActor(id: number, handle: string) {
   state = { ...state, actorId: id, actorHandle: handle }
 }
@@ -453,6 +468,26 @@ function recordPayment(query: string, params: unknown[]) {
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  if (q.includes('/* public:search */')) {
+    return [{
+      result_type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+      owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
+      author_id: null, author: null, body_text_bytes: 19,
+      created_at: '2026-08-11T00:00:00.000000Z',
+      total_items: 1, total_body_bytes: '19', change_marker: state.publicChangeMarker,
+    }]
+  }
+  if (q.includes('/* public:changes-checkpoint */')) {
+    return [{ checkpoint: state.publicChangeMarker }]
+  }
+  if (q.includes('/* public:changes */')) {
+    return [{
+      checkpoint: state.publicChangeMarker, id: 701, change_id: state.publicChangeMarker,
+      kind: 'action', actor: 'tiny-lantern',
+      detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
+    }]
+  }
 
   // Once the action resolution committed, every later presence read breaks.
   if (state.scenario === 'post-action observation failure'
@@ -2450,12 +2485,60 @@ test('map modes reject ambiguous, unsupported, and cross-mode options before Pos
     '/api/map?view=outline&subplace_limit=0',
     '/api/map?view=outline&subplace_limit=201',
     '/api/map?view=outline&subplace_limit=2&subplace_limit=3',
+    '/api/map?view=outline&after_change_marker=-1',
+    '/api/map?view=outline&after_change_marker=01',
+    '/api/map?view=outline&after_change_marker=9&after_change_marker=10',
+    '/api/map?after_change_marker=9',
     '/api/map?view=outline&unknown=1',
   ]) {
     reset({ scenario: 'map outline' })
     const response = await app.request(path)
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
+test('lazy map and history pages prove they cover the caller-held change marker', async () => {
+  reset({ scenario: 'map outline', publicChangeMarker: '9' })
+  const map = await app.request(
+    '/api/map?view=outline&parent_id=1&subplace_limit=3&after_change_marker=9',
+  )
+  assert.equal(map.status, 200)
+  assert.equal(map.headers.get('cache-control'), 'no-store')
+  assert.equal((await map.json() as { change_marker: string }).change_marker, '9')
+  assert.ok(sqlCalls().some(call => /\/\* public:changes-checkpoint \*\//iu.test(call.query ?? '')))
+  assert.ok(sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')))
+
+  reset({ scenario: 'public pagination', publicChangeMarker: '9' })
+  const history = await app.request(
+    '/api/window?collection=things&limit=2&after_change_marker=9',
+  )
+  assert.equal(history.status, 200)
+  assert.equal(history.headers.get('cache-control'), 'no-store')
+  assert.equal((await history.json() as { change_marker: string }).change_marker, '9')
+
+  reset({ scenario: 'public pagination', publicChangeMarker: '9' })
+  const events = await app.request('/api/events?limit=2&after_change_marker=9')
+  assert.equal(events.status, 200)
+  assert.equal(events.headers.get('cache-control'), 'no-store')
+  assert.equal((await events.json() as { change_marker: string }).change_marker, '9')
+
+  for (const path of [
+    '/api/map?view=outline&parent_id=1&after_change_marker=10',
+    '/api/window?collection=things&after_change_marker=10',
+    '/api/events?after_change_marker=10',
+  ]) {
+    reset({ scenario: 'public pagination', publicChangeMarker: '9' })
+    const response = await app.request(path)
+    assert.equal(response.status, 409, path)
+    assert.deepEqual(await response.json(), {
+      error: 'since marker 10 is ahead of checkpoint 9',
+    })
+    assert.equal(
+      sqlCalls().filter(call => !/\/\* public:changes-checkpoint \*\//iu.test(call.query ?? '')).length,
+      0,
+      `${path} stops before its page read`,
+    )
   }
 })
 
@@ -2569,8 +2652,10 @@ test('the outline window bounds its map and presence pages without changing rece
       totals: Record<string, number>
       shown: Record<string, number>
       limits: Record<string, number | null>
+      change_marker: string
     }
     assert.equal(body.view, 'outline')
+    assert.equal(body.change_marker, '9')
     assert.deepEqual(body.places.map(place => place.id), [1])
     assert.deepEqual(body.places[0]?.children.map(place => place.id), recentIds(160).slice(0, 10))
     assert.equal(body.places[0]?.children.every(place => (
@@ -2634,6 +2719,12 @@ test('window modes reject mixed, duplicate, and unknown options before PostgreSQ
     '/api/window?view=full&collection=notes',
     '/api/window?view=outline&before_id=2',
     '/api/window?view=outline&unknown=1',
+    '/api/window?view=full&after_change_marker=9',
+    '/api/window?after_change_marker=9',
+    '/api/window?view=outline&after_change_marker=-1',
+    '/api/window?view=outline&after_change_marker=01',
+    '/api/window?view=outline&after_change_marker=9223372036854775808',
+    '/api/window?view=outline&after_change_marker=9&after_change_marker=10',
   ]) {
     reset({ scenario: 'window outline' })
     const response = await app.request(path)
@@ -2642,43 +2733,99 @@ test('window modes reject mixed, duplicate, and unknown options before PostgreSQ
   }
 })
 
-test('a busy outline-window census starts no secondary public reads', async () => {
-  reset({ scenario: 'window outline', exactTotalsBusy: true })
-  const response = await app.request('/api/window?view=outline')
-  assert.equal(response.status, 503)
-  assert.equal(response.headers.get('retry-after'), '1')
-  assert.deepEqual(await response.json(), {
-    error: 'exact public totals are temporarily busy; retry',
-  })
-  const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
+test('a marker-covered outline bypasses stale caches and rejects a future marker', async () => {
+  reset({ scenario: 'window outline', publicChangeMarker: '10' })
+  const covered = await app.request('/api/window?view=outline&after_change_marker=10')
+  assert.equal(covered.status, 200)
+  assert.equal(covered.headers.get('cache-control'), 'no-store')
+  const body = await covered.json() as { change_marker: string }
+  assert.equal(body.change_marker, '10')
+  assert.ok(
+    sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')),
+    'a covered snapshot reads the map directly instead of accepting a nested stale cache',
+  )
+  const callsAfterCoveredRead = sqlCalls().length
+  const repeated = await app.request('/api/window?view=outline&after_change_marker=10')
+  assert.equal(repeated.status, 200)
+  assert.equal(repeated.headers.get('cache-control'), 'no-store')
   assert.equal(
-    secondaryRead,
-    undefined,
-    'admission must reject before map, history, or global-total work starts',
+    sqlCalls().length,
+    callsAfterCoveredRead,
+    'the same covered marker shares its proven in-process snapshot',
+  )
+
+  reset({ scenario: 'window outline', publicChangeMarker: '10' })
+  const future = await app.request('/api/window?view=outline&after_change_marker=11')
+  assert.equal(future.status, 409)
+  assert.deepEqual(await future.json(), {
+    error: 'since marker 11 is ahead of checkpoint 10',
+  })
+  assert.equal(
+    sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')),
+    false,
+    'a future marker stops before the snapshot fanout',
+  )
+  const callsAfterFuture = sqlCalls().length
+  const ordinary = await app.request('/api/window?view=outline')
+  assert.equal(ordinary.status, 200)
+  assert.equal(
+    sqlCalls().length,
+    callsAfterFuture,
+    'a rejected future marker does not poison or evict the valid shared snapshot',
   )
 })
 
+test('a busy outline-window census starts no secondary public reads', async () => {
+  const originalNow = Date.now
+  try {
+    const now = originalNow()
+    Date.now = () => now + 40_000
+    reset({ scenario: 'window outline', exactTotalsBusy: true })
+    const response = await app.request('/api/window?view=outline')
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('retry-after'), '1')
+    assert.deepEqual(await response.json(), {
+      error: 'exact public totals are temporarily busy; retry',
+    })
+    const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
+    assert.equal(
+      secondaryRead,
+      undefined,
+      'admission must reject before map, history, or global-total work starts',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
 test('busy outline-window global totals stop before map or history reads', async () => {
-  reset({
-    scenario: 'window outline',
-    exactTotalsBusyAfter: 1,
-  })
-  const response = await app.request('/api/window?view=outline')
-  assert.equal(response.status, 503)
-  assert.equal(response.headers.get('retry-after'), '1')
-  assert.deepEqual(await response.json(), {
-    error: 'exact public totals are temporarily busy; retry',
-  })
-  const budgetedReads = sqlCalls().filter(call =>
-    call.query?.includes('/* public:budgeted-exact */'))
-  assert.equal(budgetedReads.length, 2, 'census passes before global totals reject')
-  const secondaryRead = sqlCalls().find(call =>
-    /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
-  assert.equal(
-    secondaryRead,
-    undefined,
-    'global-total admission must reject before map or history work starts',
-  )
+  const originalNow = Date.now
+  try {
+    const now = originalNow()
+    Date.now = () => now + 80_000
+    reset({
+      scenario: 'window outline',
+      exactTotalsBusyAfter: 1,
+    })
+    const response = await app.request('/api/window?view=outline')
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('retry-after'), '1')
+    assert.deepEqual(await response.json(), {
+      error: 'exact public totals are temporarily busy; retry',
+    })
+    const budgetedReads = sqlCalls().filter(call =>
+      call.query?.includes('/* public:budgeted-exact */'))
+    assert.equal(budgetedReads.length, 2, 'census passes before global totals reject')
+    const secondaryRead = sqlCalls().find(call =>
+      /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
+    assert.equal(
+      secondaryRead,
+      undefined,
+      'global-total admission must reject before map or history work starts',
+    )
+  } finally {
+    Date.now = originalNow
+  }
 })
 
 test('the legal pages answer as plain text naming the operator', async () => {
@@ -4210,6 +4357,21 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/world/resident/tiny-lantern?q=pretend-search',
     '/api/world/offer/90?q=pretend-search',
     '/treasury?q=pretend-search',
+    '/api/search',
+    '/api/search?q=',
+    '/api/search?q=moss&q=fern',
+    '/api/search?q=moss&mode=ranked',
+    '/api/search?q=moss&before=not-a-cursor',
+    '/api/search?q=moss&unknown=true',
+    '/api/changes?since=-1',
+    '/api/changes?since=1&limit=01',
+    '/api/changes?since=1&limit=1e2',
+    '/api/changes?since=1&limit=0x10',
+    '/api/changes?since=1&limit=1.0',
+    '/api/changes?since=1&limit=%2B1',
+    '/api/changes?since=1&limit=%201',
+    '/api/changes?since=1&since=2',
+    '/api/changes?unknown=true',
   ]
   for (const path of paths) {
     reset({ scenario: 'public pagination' })
@@ -4217,6 +4379,133 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
   }
+})
+
+test('search and changes succeed through their real Hono routes without returning authored bodies', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination' })
+    const headers = { 'X-Vercel-Forwarded-For': '203.0.113.180' }
+    const searched = await app.request(
+      '/api/search?q=archive+lantern&mode=phrase&type=thing',
+      { headers },
+    )
+    assert.equal(searched.status, 200)
+    assert.equal(searched.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await searched.json(), {
+      query: 'archive lantern', mode: 'phrase', type: 'thing',
+      results: [{
+        type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+        owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
+        body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
+        href: '/api/thing/41',
+      }],
+      total_items: 1, total_text_bytes: 19, returned_items: 1,
+      returned_text_bytes: 0, has_more: false, next_before: null, change_marker: '9',
+    })
+
+    const checkpoint = await app.request('/api/changes')
+    assert.equal(checkpoint.status, 200)
+    assert.deepEqual(await checkpoint.json(), { change_marker: '9' })
+    const changes = await app.request('/api/changes?since=8&limit=1')
+    assert.equal(changes.status, 200)
+    assert.deepEqual(await changes.json(), {
+      change_marker: '9',
+      changes: [{
+        id: 701, change_id: '9', kind: 'action', actor: 'tiny-lantern',
+        detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
+      }],
+      returned_items: 1, unchanged: false, has_more: false, next_since: '9',
+    })
+  })
+})
+
+test('anonymous search parses before applying its per-caller fairness limit and exact database work', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination' })
+    const headers = { 'X-Vercel-Forwarded-For': '203.0.113.181' }
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const invalid = await app.request('/api/search?q=', { headers })
+      assert.equal(invalid.status, 400, `invalid search ${index + 1}`)
+    }
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const response = await app.request('/api/search?q=archive', { headers })
+      assert.equal(response.status, 200, `admitted search ${index + 1}`)
+    }
+    const limited = await app.request('/api/search?q=archive', { headers })
+    assert.equal(limited.status, 429)
+    assert.ok(Number(limited.headers.get('retry-after')) >= 1)
+    assert.deepEqual(await limited.json(), { error: 'public search rate limit reached; retry' })
+    assert.equal(
+      sqlCalls().filter(call => /\/\* public:search \*\//iu.test(call.query ?? '')).length,
+      PUBLIC_SEARCH_RATE_CAPACITY,
+    )
+  })
+})
+
+test('anonymous search trusts only the final Vercel forwarding hop for caller fairness', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination' })
+    const finalHop = '203.0.113.182'
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const response = await app.request('/api/search?q=archive', {
+        headers: { 'X-Vercel-Forwarded-For': `198.51.100.${index + 1}, ${finalHop}` },
+      })
+      assert.equal(response.status, 200, `admitted search ${index + 1}`)
+    }
+    const spoofed = await app.request('/api/search?q=archive', {
+      headers: { 'X-Vercel-Forwarded-For': `192.0.2.200, ${finalHop}` },
+    })
+    assert.equal(spoofed.status, 429)
+    const otherCaller = await app.request('/api/search?q=archive', {
+      headers: { 'X-Vercel-Forwarded-For': '192.0.2.200, 203.0.113.183' },
+    })
+    assert.equal(otherCaller.status, 200)
+  })
+})
+
+test('outside Vercel, spoofed forwarding headers share the anonymous fallback bucket', async () => {
+  const previous = process.env.VERCEL
+  process.env.VERCEL = '0'
+  try {
+    reset({ scenario: 'public pagination' })
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const response = await app.request('/api/search?q=archive', {
+        headers: {
+          'X-Vercel-Forwarded-For': `203.0.113.${index + 20}`,
+          'X-Forwarded-For': `198.51.100.${index + 20}`,
+        },
+      })
+      assert.equal(response.status, 200, `fallback search ${index + 1}`)
+    }
+    const limited = await app.request('/api/search?q=archive', {
+      headers: {
+        'X-Vercel-Forwarded-For': '203.0.113.250',
+        'X-Forwarded-For': '198.51.100.250',
+      },
+    })
+    assert.equal(limited.status, 429)
+  } finally {
+    process.env.VERCEL = previous
+  }
+})
+
+test('a search continuation rejects a forged future reconciliation marker', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination', publicChangeMarker: '12' })
+    const before = encodePublicSearchCursor({
+      q: 'archive', mode: 'words', type: 'all',
+      createdAt: '2026-08-11T00:00:00.000000Z', itemType: 'thing', id: 41,
+      changeMarker: '999',
+    })
+    const response = await app.request(
+      `/api/search?q=archive&before=${encodeURIComponent(before)}`,
+      { headers: { 'X-Vercel-Forwarded-For': '203.0.113.184' } },
+    )
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), {
+      error: 'search marker 999 is ahead of checkpoint 12',
+    })
+  })
 })
 
 test('public direct resource ids reject PostgreSQL integer overflow before database work', async () => {
@@ -4730,48 +5019,58 @@ test('official facts, events, residents, and treasury are public and anti-token'
 })
 
 test('anonymous flags are rate-limited without publishing the report text', async () => {
-  reset({ scenario: 'flag quota' })
-  const body = JSON.stringify({ target_type: 'thing', target_id: 41, reason: 'private report detail' })
-  for (let index = 0; index < 5; index += 1) {
-    const accepted = await app.request('/api/flag', {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'flag quota' })
+    const body = JSON.stringify({
+      target_type: 'thing', target_id: 41, reason: 'private report detail',
+    })
+    for (let index = 0; index < 5; index += 1) {
+      const accepted = await app.request('/api/flag', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Vercel-Forwarded-For': `198.51.100.${index + 1}, 203.0.113.30`,
+        },
+        body,
+      })
+      assert.equal(accepted.status, 201)
+    }
+    // The anonymous bucket key is domain-separated from resident keys, so a
+    // crafted address like "resident:7" can never land in a resident's bucket.
+    const anonymousSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+    assert.equal(
+      String(anonymousSlot?.params?.[0]),
+      createHash('sha256').update('flag:ip:203.0.113.30', 'utf8').digest('hex'),
+    )
+    const limited = await app.request('/api/flag', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': 'spoof, 203.0.113.30' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Vercel-Forwarded-For': '192.0.2.200, 203.0.113.30',
+      },
       body,
     })
-    assert.equal(accepted.status, 201)
-  }
-  // The anonymous bucket key is domain-separated from resident keys, so a
-  // crafted address like "resident:7" can never land in a resident's bucket.
-  const anonymousSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
-  assert.equal(
-    String(anonymousSlot?.params?.[0]),
-    createHash('sha256').update('flag:ip:203.0.113.30', 'utf8').digest('hex'),
-  )
-  const limited = await app.request('/api/flag', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': 'other-spoof, 203.0.113.30' },
-    body,
-  })
-  assert.equal(limited.status, 429)
-  assert.equal(inserted('flags'), 5)
-  const flagWrite = sqlCalls().find(call => /insert\s+into\s+flags\b/i.test(call.query ?? ''))
-  assert.ok(flagWrite)
-  assert.doesNotMatch(flagWrite.query ?? '', /jsonb_build_object\([\s\S]*?'reason'/i)
+    assert.equal(limited.status, 429)
+    assert.equal(inserted('flags'), 5)
+    const flagWrite = sqlCalls().find(call => /insert\s+into\s+flags\b/i.test(call.query ?? ''))
+    assert.ok(flagWrite)
+    assert.doesNotMatch(flagWrite.query ?? '', /jsonb_build_object\([\s\S]*?'reason'/i)
 
-  state = { ...state, calls: [] }
-  const authenticated = await app.request('/api/flag', {
-    method: 'POST', headers: authHeaders(), body,
+    state = { ...state, calls: [] }
+    const authenticated = await app.request('/api/flag', {
+      method: 'POST', headers: authHeaders(), body,
+    })
+    assert.equal(authenticated.status, 201)
+    // A resident takes a slot in its own bucket, so an exhausted anonymous IP
+    // bucket never blocks a signed-in report.
+    const residentSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+    assert.ok(residentSlot, 'resident flags take their own limited slot')
+    assert.equal(Number(residentSlot.params?.[1]), 20)
+    assert.equal(
+      String(residentSlot.params?.[0]),
+      createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
+    )
   })
-  assert.equal(authenticated.status, 201)
-  // A resident takes a slot in its own bucket, so an exhausted anonymous IP
-  // bucket never blocks a signed-in report.
-  const residentSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
-  assert.ok(residentSlot, 'resident flags take their own limited slot')
-  assert.equal(Number(residentSlot.params?.[1]), 20)
-  assert.equal(
-    String(residentSlot.params?.[0]),
-    createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
-  )
 })
 
 test('resident flags are bounded in their own hourly bucket', async () => {
@@ -4814,7 +5113,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
   ])
