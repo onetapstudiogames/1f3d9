@@ -167,6 +167,8 @@ interface FakeState {
   placeDescription: string
   noteBody: string
   exactTotalsBusy: boolean
+  exactTotalsBusyAfter: number | null
+  exactTotalsSuccessfulReads: number
   actionResolved?: boolean
 }
 
@@ -228,6 +230,8 @@ const initialState = (): FakeState => ({
   placeDescription: 'a place made from words',
   noteBody: 'hello from the square',
   exactTotalsBusy: false,
+  exactTotalsBusyAfter: null,
+  exactTotalsSuccessfulReads: 0,
 })
 
 let state = initialState()
@@ -307,7 +311,7 @@ const paginationEvents = () => Array.from({ length: 70 }, (_, index) => {
   const id = 70 - index
   return {
     id,
-    at: `2026-08-11T00:${String(id).padStart(2, '0')}:00.000Z`,
+    at: new Date(Date.UTC(2026, 7, 11, 0, 0, id)).toISOString(),
     kind: id % 2 === 0 ? 'note_created' : 'thing_created',
     actor: 'tiny-lantern',
     detail: id === 70 ? { id, body: 'city 🏙' } : { id },
@@ -318,6 +322,17 @@ const paginationSubplaces = () => Array.from({ length: 60 }, (_, index) => ({
   ...placeRow(160 - index, 2),
   name: `Subplace ${160 - index}`,
 }))
+
+const mapOutlineRows = () => Array.from({ length: 60 }, (_, index) => ({
+  ...placeRow(160 - index, 1),
+  name: `Map place ${160 - index}`,
+  description: `Map description ${160 - index} 🏙`,
+  places: index === 0 ? 2 : 0,
+}))
+
+const mapOutlineParent = (id: number) => id === 1
+  ? { ...placeRow(1, null), owner_id: null, owner: null, name: 'the world', places: 60 }
+  : { ...placeRow(id, 1), name: `Map place ${id}`, places: id === 160 ? 2 : 0 }
 
 const paginationThings = () => Array.from({ length: 60 }, (_, index) => ({
   ...thingRow(260 - index),
@@ -353,7 +368,12 @@ const remainingPaginationRows = (collection: string) => {
   return recentIds(newest).map(id => {
     const common = { id, created_at: '2026-08-11T00:00:00.000Z' }
     if (collection === 'residents') return {
-      ...common, handle: `resident-${id}`, model: 'test-model', joined_at: common.created_at,
+      ...common,
+      handle: `resident-${id}`,
+      model: 'test-model',
+      joined_at: common.created_at,
+      current_place_id: id % 2 === 0 ? 2 : null,
+      asleep: id % 3 === 0,
     }
     if (collection === 'kinds') return {
       ...common, name: `kind-${id}`, owner_id: 7, owner: 'tiny-lantern',
@@ -1059,10 +1079,28 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return [{ id: state.actorId }]
   }
 
-  if (state.scenario === 'remaining pagination') {
+  if (state.scenario === 'remaining pagination' || state.scenario === 'window outline') {
     if (q.includes('/* public:residents */')) {
-      const total = remainingPaginationRows('residents').length
-      const page = descendingPage(remainingPaginationRows('residents'), params[0], params[1])
+      const residentRows = remainingPaginationRows('residents') as Array<{
+        id: number
+        handle: string
+        model: string
+        joined_at: string
+        current_place_id: number | null
+        asleep: boolean
+      }>
+      const total = residentRows.length
+      const includesPresence = q.includes('current_place_id') && q.includes('asleep')
+      const rows = residentRows.map(row => ({
+        id: row.id,
+        handle: row.handle,
+        model: row.model,
+        joined_at: row.joined_at,
+        ...(includesPresence
+          ? { current_place_id: row.current_place_id, asleep: row.asleep }
+          : {}),
+      }))
+      const page = descendingPage(rows, params[0], params[1])
       return page.length > 0
         ? page.map(row => ({ ...row, total_items: total, total_text_bytes: 0 }))
         : [{ id: null, total_items: total, total_text_bytes: 0 }]
@@ -1302,6 +1340,65 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (state.scenario === 'public pagination' && q.includes('from notes n') && q.includes('n.place_id')) {
     if (q.includes('count(*)')) return [{ items: 360, text_bytes: 3600 }]
     return descendingPage(paginationNotes(), params[1], params[2])
+  }
+
+  if (['map outline', 'window outline'].includes(state.scenario) &&
+      q.includes('/* public:map-parent */')) {
+    return [mapOutlineParent(Number(params[0] ?? 1))]
+  }
+  if (['map outline', 'window outline'].includes(state.scenario) &&
+      q.includes('/* public:map-outline */')) {
+    const parentId = Number(params[0] ?? 1)
+    const all = mapOutlineRows().filter(row => row.parent_id === parentId)
+    const totalTextBytes = all.reduce(
+      (total, row) => total + Buffer.byteLength(row.description, 'utf8'),
+      0,
+    )
+    const page = descendingPage(all, params[2], params[3])
+    return page.length > 0
+      ? page.map(row => ({
+          ...row,
+          outline_parent: mapOutlineParent(parentId),
+          total_items: all.length,
+          total_text_bytes: totalTextBytes,
+        }))
+      : [{
+          id: null,
+          outline_parent: mapOutlineParent(parentId),
+          total_items: all.length,
+          total_text_bytes: totalTextBytes,
+        }]
+  }
+  if (state.scenario === 'window outline' && (
+    q.includes('/* public:window-outline-totals */') ||
+    q.includes('(select count(*)::int from places) as places')
+  )) {
+    return [{
+      places: 61,
+      residents: 60,
+      conversations: 60,
+      things: 60,
+      agreements: 60,
+      events: 70,
+    }]
+  }
+  if (state.scenario === 'window outline' && q.includes('from notes note')) {
+    return descendingPage(paginationNotes(), params[0], params.at(-1))
+  }
+  if (state.scenario === 'window outline' && q.includes('from things thing')) {
+    return descendingPage(paginationThings(), params[0], params.at(-1))
+  }
+  if (state.scenario === 'window outline' && q.includes('from agreements agreement')) {
+    return descendingPage(remainingPaginationRows('agreements'), params[0], params.at(-1))
+  }
+  if (state.scenario === 'window outline' && (
+    q.includes('select id, at, kind, actor, detail') || q.includes('/* public:events */')
+  )) {
+    const events = paginationEvents().map((event, index) => ({
+      ...event,
+      kind: index % 2 === 0 ? 'note' : 'thing_created',
+    }))
+    return descendingPage(events, null, params.at(-1))
   }
 
   if (q.includes('left join resident_presence presence')) {
@@ -1949,8 +2046,16 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
   if (url.includes('/sql') && Array.isArray(body?.queries)) {
     const results = body.queries.map((query: { query: string; params?: unknown[] }) => {
       if (/^\s*SET\s+LOCAL\b/iu.test(query.query)) return neonEncode([])
-      if (state.exactTotalsBusy && query.query.includes('/* public:budgeted-exact */')) {
-        return neonEncode([{ __exact_read_slot: null }])
+      if (query.query.includes('/* public:budgeted-exact */')) {
+        const shouldReject = state.exactTotalsBusy || (
+          state.exactTotalsBusyAfter !== null &&
+          state.exactTotalsSuccessfulReads >= state.exactTotalsBusyAfter
+        )
+        if (shouldReject) return neonEncode([{ __exact_read_slot: null }])
+        state = {
+          ...state,
+          exactTotalsSuccessfulReads: state.exactTotalsSuccessfulReads + 1,
+        }
       }
       const rows = dbRespond(query.query, query.params ?? [])
         .map(row => ({ ...row, __exact_read_slot: 0 }))
@@ -2202,7 +2307,7 @@ test('a hung meter read has a short deadline after a committed write', async () 
   assert.ok(Date.now() - startedAt < 500, 'a meter must not hold a successful write open')
 })
 
-test('the public map is a recursive owner-attributed tree with a short shared cache', async () => {
+test('the legacy full public map stays exact and explicit full shares its short cache', async () => {
   const originalNow = Date.now
   try {
     // Backdate the clock so the map cache this test warms is already expired
@@ -2217,6 +2322,7 @@ test('the public map is a recursive owner-attributed tree with a short shared ca
       'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
     )
     const body = await response.json() as { places: { id: number; owner: string; children: { id: number }[] }[] }
+    assert.equal(Object.hasOwn(body, 'view'), false, 'the no-query compatibility response stays exact')
     assert.equal(body.places[0]?.id, 1)
     assert.equal(body.places[0]?.owner, 'founder')
     assert.equal(body.places[0]?.children[0]?.id, 2)
@@ -2226,8 +2332,130 @@ test('the public map is a recursive owner-attributed tree with a short shared ca
     const cached = await app.request('/api/map')
     assert.equal(cached.status, 200)
     assert.equal(sqlCalls().length, queriesAfterFirst, 'a map within the TTL reuses the shared build')
+
+    const explicit = await app.request('/api/map?view=full')
+    assert.equal(explicit.status, 200)
+    const explicitBody = await explicit.json() as { view: string; places: typeof body.places }
+    assert.equal(explicitBody.view, 'full')
+    assert.deepEqual(explicitBody.places, body.places)
+    assert.equal(
+      sqlCalls().length,
+      queriesAfterFirst,
+      'explicit and compatibility full reads share one full-map cache entry',
+    )
   } finally {
     Date.now = originalNow
+  }
+})
+
+test('the outline map pages one flat branch newest-first and caches its hot root page', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow - 140_000
+    reset({ scenario: 'map outline' })
+    const firstPath = '/api/map?view=outline'
+    const firstResponse = await app.request(firstPath)
+    assert.equal(firstResponse.status, 200)
+    assert.equal(
+      firstResponse.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const first = await firstResponse.json() as {
+      view: string
+      place: { id: number; children: unknown[] }
+      subplaces: Array<{ id: number; description?: string; children: unknown[]; places: number }>
+      subplaces_page: {
+        total_items: number
+        total_text_bytes: number
+        returned_items: number
+        returned_text_bytes: number
+        has_more: boolean
+        next_before_subplace_id: number | null
+      }
+      map_complete: boolean
+    }
+    assert.equal(first.view, 'outline')
+    assert.equal(first.place.id, 1)
+    assert.deepEqual(first.place.children, [])
+    assert.deepEqual(first.subplaces.map(place => place.id), recentIds(160).slice(0, 10))
+    assert.equal(first.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
+    assert.equal(first.subplaces.every(place => Array.isArray(place.children) && place.children.length === 0), true)
+    assert.equal(first.subplaces[0]?.places, 2)
+    assert.deepEqual(first.subplaces_page, {
+      total_items: 60,
+      total_text_bytes: mapOutlineRows().reduce(
+        (total, row) => total + Buffer.byteLength(row.description, 'utf8'),
+        0,
+      ),
+      returned_items: 10,
+      returned_text_bytes: 0,
+      has_more: true,
+      next_before_subplace_id: 151,
+    })
+    assert.equal(first.map_complete, false)
+    assert.equal(
+      sqlCalls().some(call => /with\s+recursive\s+place_tree/i.test(call.query ?? '')),
+      false,
+      'an outline branch must not materialize the complete recursive map',
+    )
+
+    const callsAfterFirst = sqlCalls().length
+    const cached = await app.request(firstPath)
+    assert.equal(cached.status, 200)
+    assert.deepEqual(await cached.json(), first)
+    assert.equal(sqlCalls().length, callsAfterFirst, 'the initial root outline reuses its cache entry')
+
+    const secondResponse = await app.request(
+      '/api/map?view=outline&parent_id=1&before_subplace_id=151&subplace_limit=3',
+    )
+    assert.equal(secondResponse.status, 200)
+    const second = await secondResponse.json() as typeof first
+    assert.deepEqual(second.subplaces.map(place => place.id), [150, 149, 148])
+    assert.equal(
+      second.subplaces.some(place => first.subplaces.some(previous => previous.id === place.id)),
+      false,
+    )
+    assert.equal(second.subplaces_page.next_before_subplace_id, 148)
+
+    const read = sqlCalls().find(call => /\/\* public:map-outline \*\//i.test(call.query ?? ''))
+    assert.deepEqual(
+      read?.params?.map((value, index) => index === 1
+        ? String(value)
+        : value == null ? null : Number(value)),
+      [null, 'the world', null, 11],
+      'one statement selects the root and fetches one lookahead row',
+    )
+    assert.equal(
+      sqlCalls().some(call => /\/\* public:map-parent \*\//i.test(call.query ?? '')),
+      false,
+      'the parent, totals, and page share one database snapshot',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('map modes reject ambiguous, unsupported, and cross-mode options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/map?view=outline&view=full',
+    '/api/map?view=sideways',
+    '/api/map?parent_id=1',
+    '/api/map?view=full&parent_id=1',
+    '/api/map?view=full&before_subplace_id=2',
+    '/api/map?view=full&subplace_limit=2',
+    '/api/map?view=outline&parent_id=0',
+    '/api/map?view=outline&parent_id=2147483648',
+    '/api/map?view=outline&before_subplace_id=1.5',
+    '/api/map?view=outline&subplace_limit=0',
+    '/api/map?view=outline&subplace_limit=201',
+    '/api/map?view=outline&subplace_limit=2&subplace_limit=3',
+    '/api/map?view=outline&unknown=1',
+  ]) {
+    reset({ scenario: 'map outline' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
   }
 })
 
@@ -2273,11 +2501,184 @@ test('the window snapshot marks residents asleep from their last public act', as
       ['tiny-lantern', false],
     ])
     const roster = sqlCalls().find(call => /left join resident_presence/i.test(call.query ?? ''))
-    assert.match(roster?.query ?? '', /last_public_at/i)
+    assert.match(roster?.query ?? '', /recent_public_act/i)
     assert.match(roster?.query ?? '', /interval '1 day'/i)
   } finally {
     Date.now = originalNow
   }
+})
+
+test('the legacy full window stays exact and explicit full shares its snapshot cache', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow - 80_000
+    reset({ scenario: 'window roster' })
+
+    const legacyResponse = await app.request('/api/window')
+    assert.equal(legacyResponse.status, 200)
+    const legacy = await legacyResponse.json() as Record<string, unknown>
+    assert.equal(Object.hasOwn(legacy, 'view'), false)
+    const callsAfterLegacy = sqlCalls().length
+
+    const explicitResponse = await app.request('/api/window?view=full')
+    assert.equal(explicitResponse.status, 200)
+    const explicit = await explicitResponse.json() as Record<string, unknown>
+    assert.equal(explicit.view, 'full')
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(explicit).filter(([key]) => key !== 'view')),
+      legacy,
+    )
+    assert.equal(
+      sqlCalls().length,
+      callsAfterLegacy,
+      'compatibility and explicit full reads share one full-snapshot cache entry',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('the outline window bounds its map and presence pages without changing recent histories', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow - 40_000
+    reset({ scenario: 'window outline' })
+    const response = await app.request('/api/window?view=outline')
+    assert.equal(response.status, 200)
+    assert.equal(
+      response.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const body = await response.json() as {
+      view: string
+      places: Array<{
+        id: number
+        children: Array<{ id: number; description?: string; children: unknown[] }>
+      }>
+      residents: Array<{ id: number; current_place_id: number | null; asleep: boolean }>
+      notes: Array<{ id: number }>
+      things: Array<{ id: number }>
+      agreements: Array<{ id: number }>
+      events: Array<{ id: number }>
+      pages: {
+        places: { has_more: boolean; next_before_subplace_id: number | null }
+        residents: { has_more: boolean; next_before_id: number | null }
+      }
+      totals: Record<string, number>
+      shown: Record<string, number>
+      limits: Record<string, number | null>
+    }
+    assert.equal(body.view, 'outline')
+    assert.deepEqual(body.places.map(place => place.id), [1])
+    assert.deepEqual(body.places[0]?.children.map(place => place.id), recentIds(160).slice(0, 10))
+    assert.equal(body.places[0]?.children.every(place => (
+      place.children.length === 0 && !Object.hasOwn(place, 'description')
+    )), true)
+    assert.deepEqual(body.residents.map(resident => resident.id), recentIds(1070).slice(0, 25))
+    assert.equal(body.residents.every(resident => (
+      Object.hasOwn(resident, 'current_place_id') && Object.hasOwn(resident, 'asleep')
+    )), true)
+    assert.deepEqual(
+      [body.notes.length, body.things.length, body.agreements.length, body.events.length],
+      [10, 10, 10, 10],
+      'the four already-bounded histories stay at ten rows',
+    )
+    assert.deepEqual(body.totals, {
+      places: 61,
+      residents: 60,
+      conversations: 60,
+      things: 60,
+      agreements: 60,
+      events: 70,
+    })
+    assert.deepEqual(body.shown, {
+      places: 11,
+      residents: 25,
+      conversations: 10,
+      things: 10,
+      agreements: 10,
+      events: 10,
+    })
+    assert.deepEqual(body.limits, {
+      places: 10,
+      residents: 25,
+      conversations: 10,
+      things: 10,
+      agreements: 10,
+      events: 10,
+    })
+    assert.deepEqual(body.pages.places, {
+      has_more: true,
+      next_before_subplace_id: 151,
+    })
+    assert.deepEqual(body.pages.residents, {
+      has_more: true,
+      next_before_id: 1046,
+    })
+    assert.equal(
+      sqlCalls().some(call => /with\s+recursive\s+world/i.test(call.query ?? '')),
+      false,
+      'the outline window must not materialize the complete map',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('window modes reject mixed, duplicate, and unknown options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/window?view=outline&view=full',
+    '/api/window?view=sideways',
+    '/api/window?view=full&collection=notes',
+    '/api/window?view=outline&before_id=2',
+    '/api/window?view=outline&unknown=1',
+  ]) {
+    reset({ scenario: 'window outline' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
+test('a busy outline-window census starts no secondary public reads', async () => {
+  reset({ scenario: 'window outline', exactTotalsBusy: true })
+  const response = await app.request('/api/window?view=outline')
+  assert.equal(response.status, 503)
+  assert.equal(response.headers.get('retry-after'), '1')
+  assert.deepEqual(await response.json(), {
+    error: 'exact public totals are temporarily busy; retry',
+  })
+  const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
+  assert.equal(
+    secondaryRead,
+    undefined,
+    'admission must reject before map, history, or global-total work starts',
+  )
+})
+
+test('busy outline-window global totals stop before map or history reads', async () => {
+  reset({
+    scenario: 'window outline',
+    exactTotalsBusyAfter: 1,
+  })
+  const response = await app.request('/api/window?view=outline')
+  assert.equal(response.status, 503)
+  assert.equal(response.headers.get('retry-after'), '1')
+  assert.deepEqual(await response.json(), {
+    error: 'exact public totals are temporarily busy; retry',
+  })
+  const budgetedReads = sqlCalls().filter(call =>
+    call.query?.includes('/* public:budgeted-exact */'))
+  assert.equal(budgetedReads.length, 2, 'census passes before global totals reject')
+  const secondaryRead = sqlCalls().find(call =>
+    /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
+  assert.equal(
+    secondaryRead,
+    undefined,
+    'global-total admission must reject before map or history work starts',
+  )
 })
 
 test('the legal pages answer as plain text naming the operator', async () => {
@@ -4062,6 +4463,59 @@ test('parameterless resident census returns every resident below its 200-row def
   assert.match(censusReads[0]?.query ?? '', /count\s*\(\s*\*\s*\)/i)
 })
 
+test('resident presence is opt-in and preserves the census page contract', async () => {
+  reset({ scenario: 'remaining pagination' })
+  const legacyResponse = await app.request('/api/residents?limit=3')
+  assert.equal(legacyResponse.status, 200)
+  const legacy = await legacyResponse.json() as {
+    residents: Array<Record<string, unknown> & { id: number }>
+    count: number
+    total: number
+    returned: number
+    page_size: number
+    total_items: number
+    total_text_bytes: number
+    returned_items: number
+    returned_text_bytes: number
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(Object.keys(legacy.residents[0] ?? {}).sort(), [
+    'handle', 'id', 'joined_at', 'model',
+  ])
+
+  state = { ...state, calls: [] }
+  const presenceResponse = await app.request('/api/residents?view=presence&limit=3')
+  assert.equal(presenceResponse.status, 200)
+  const presence = await presenceResponse.json() as typeof legacy
+  assert.deepEqual(presence.residents.map(row => row.id), legacy.residents.map(row => row.id))
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(presence).filter(([key]) => key !== 'residents')),
+    Object.fromEntries(Object.entries(legacy).filter(([key]) => key !== 'residents')),
+    'presence is additive; ordering, totals, and continuation stay unchanged',
+  )
+  assert.deepEqual(Object.keys(presence.residents[0] ?? {}).sort(), [
+    'asleep', 'current_place_id', 'handle', 'id', 'joined_at', 'model',
+  ])
+  assert.deepEqual(
+    presence.residents.map(row => [row.current_place_id, row.asleep]),
+    [[2, false], [null, false], [2, true]],
+  )
+})
+
+test('resident views reject invalid, duplicate, and unknown options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/residents?view=full',
+    '/api/residents?view=presence&view=presence',
+    '/api/residents?view=presence&unknown=1',
+  ]) {
+    reset({ scenario: 'remaining pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
 test('resident census pages by arrival time with stable id ties and no boundary repeats', async () => {
   reset({ scenario: 'resident arrival pagination' })
   const firstResponse = await app.request('/api/residents?limit=2')
@@ -4418,20 +4872,6 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.equal(invalidMapPageBody.result.isError, true)
   assert.match(invalidMapPageBody.result.content[0]!.text, /place_id.*paging|paging.*place_id/i)
   assert.equal(sqlCalls().some(call => /with recursive place_tree/i.test(call.query ?? '')), false)
-
-  const invalidMapView = await app.request('/mcp', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0', id: 12, method: 'tools/call',
-      params: { name: 'look', arguments: { view: 'full' } },
-    }),
-  })
-  const invalidMapViewBody = await invalidMapView.json() as {
-    result: { isError: boolean; content: { text: string }[] }
-  }
-  assert.equal(invalidMapViewBody.result.isError, true)
-  assert.match(invalidMapViewBody.result.content[0]!.text, /view.*place_id|place_id.*view/i)
-  assert.doesNotMatch(invalidMapViewBody.result.content[0]!.text, /paging/i)
 
   for (const key of ['secret', 'authorization', 'token', 'api_key', 'unexpected']) {
     const unsafeArgument = await app.request('/mcp', {

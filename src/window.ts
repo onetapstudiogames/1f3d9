@@ -14,6 +14,7 @@ import {
   PUBLIC_PAGE_MAX,
   finalizePublicPage,
   parsePublicPage,
+  singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS, WINDOW_JS } from './window-client.ts'
@@ -24,6 +25,12 @@ import {
   PUBLIC_CREDENTIAL_REDACTION,
   containsPublicCredential,
 } from './credential-safety.ts'
+import { cachedPublicMapOutline } from './public-map.ts'
+import {
+  PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS,
+  readPublicResidentPage,
+} from './public-residents.ts'
+import { executeBudgetedExactQuery } from './public-exact-query.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -42,7 +49,7 @@ const WINDOW_CSP = [
 
 const SAFE_EVENT_KINDS = new Set(PUBLIC_EVENT_KINDS)
 const UNSAFE_PUBLIC_OUTPUT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u
-const WINDOW_LIMITS = Object.freeze({
+const FULL_WINDOW_LIMITS = Object.freeze({
   places: null,
   residents: null,
   conversations: PUBLIC_PAGE_DEFAULT,
@@ -50,6 +57,27 @@ const WINDOW_LIMITS = Object.freeze({
   agreements: PUBLIC_PAGE_DEFAULT,
   events: PUBLIC_PAGE_DEFAULT,
 })
+
+const OUTLINE_WINDOW_LIMITS = Object.freeze({
+  places: PUBLIC_PAGE_DEFAULT,
+  residents: 25,
+  conversations: PUBLIC_PAGE_DEFAULT,
+  things: PUBLIC_PAGE_DEFAULT,
+  agreements: PUBLIC_PAGE_DEFAULT,
+  events: PUBLIC_PAGE_DEFAULT,
+})
+
+const OUTLINE_WINDOW_TOTALS_SQL = `
+  /* public:window-outline-totals */
+  SELECT 0::integer AS id,
+    (SELECT count(*)::integer FROM places) AS places,
+    $1::integer AS residents,
+    (SELECT count(*)::integer FROM notes) AS conversations,
+    (SELECT count(*)::integer FROM things WHERE withdrawn_at IS NULL) AS things,
+    (SELECT count(*)::integer FROM agreements) AS agreements,
+    (SELECT count(*)::integer FROM events
+      WHERE kind = ANY($2::text[])) AS events
+`
 
 // How many characters of a body survive the glass. WINDOW_LIMITS counts items;
 // these count characters, and the two used to share names without saying so.
@@ -107,7 +135,7 @@ interface PublicResident {
 }
 
 /** A resident with no public act for this long renders dimmed on the window. */
-export const WINDOW_ASLEEP_AFTER_DAYS = 14
+export const WINDOW_ASLEEP_AFTER_DAYS = PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS
 
 interface PublicNote {
   id: number
@@ -179,12 +207,12 @@ const count = (value: unknown) => {
 
 export function publicWindowTotals(
   value: Readonly<Record<string, unknown>>,
-  shown: Readonly<Record<keyof typeof WINDOW_LIMITS, number>>,
-): Record<keyof typeof WINDOW_LIMITS, number> {
-  return Object.fromEntries(Object.keys(WINDOW_LIMITS).map(key => {
-    const name = key as keyof typeof WINDOW_LIMITS
+  shown: Readonly<Record<keyof typeof FULL_WINDOW_LIMITS, number>>,
+): Record<keyof typeof FULL_WINDOW_LIMITS, number> {
+  return Object.fromEntries(Object.keys(FULL_WINDOW_LIMITS).map(key => {
+    const name = key as keyof typeof FULL_WINDOW_LIMITS
     return [name, Math.max(count(value[name]), shown[name])]
-  })) as Record<keyof typeof WINDOW_LIMITS, number>
+  })) as Record<keyof typeof FULL_WINDOW_LIMITS, number>
 }
 
 function safeDate(value: unknown): string | null {
@@ -799,7 +827,7 @@ const defaultWindowHistoryQuery = (
   context: false,
 })
 
-async function readWindowSnapshot() {
+async function readFullWindowSnapshot() {
   const [
     placeRows,
     residentRows,
@@ -835,16 +863,18 @@ async function readWindowSnapshot() {
     sql`
       SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at,
         (resident.joined_at < now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')
-          AND coalesce(activity.last_public_at, resident.joined_at)
-            < now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')) AS asleep
+          AND NOT coalesce(activity.recent_public_act, false)) AS asleep
       FROM residents resident
       LEFT JOIN resident_presence presence ON presence.resident_id = resident.id
-      LEFT JOIN (
-        SELECT actor, max(at) AS last_public_at
+      LEFT JOIN LATERAL (
+        SELECT true AS recent_public_act
         FROM events
-        WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
-        GROUP BY actor
-      ) activity ON activity.actor = resident.handle
+        WHERE actor = resident.handle
+          AND at >= now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')
+          AND kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
+        ORDER BY at DESC
+        LIMIT 1
+      ) activity ON true
       ORDER BY resident.joined_at, resident.id
     `,
     readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
@@ -895,24 +925,126 @@ async function readWindowSnapshot() {
       shown,
     ),
     shown,
-    limits: WINDOW_LIMITS,
+    limits: FULL_WINDOW_LIMITS,
     body_limits: WINDOW_BODY_LIMITS,
     refreshed_at: new Date().toISOString(),
   }
 }
 
-type WindowSnapshot = Awaited<ReturnType<typeof readWindowSnapshot>>
-let snapshotCache: { expiresAt: number; pending: Promise<WindowSnapshot> } | null = null
+async function readOutlineWindowSnapshot() {
+  const residentRequest = Object.freeze({
+    ok: true as const,
+    cursor: null,
+    limit: OUTLINE_WINDOW_LIMITS.residents,
+    fetchLimit: OUTLINE_WINDOW_LIMITS.residents + 1,
+  })
+  // The exact census read is also this snapshot's admission gate. Run it
+  // before starting the other reads so a busy gate cannot fan one rejected
+  // request out into map, history, and totals work that no caller will use.
+  const residentPage = await readPublicResidentPage(residentRequest, true)
+  // The other exact citywide counts use the same two-slot/1.5-second guard.
+  // Admit them before any map or history work so a cold busy instance rejects
+  // cheaply instead of fanning one request out into reads it cannot return.
+  const totalRows = await executeBudgetedExactQuery(
+    OUTLINE_WINDOW_TOTALS_SQL,
+    [residentPage.totalItems, [...PUBLIC_EVENT_KINDS]],
+  )
+  const [
+    map,
+    notePage,
+    thingPage,
+    agreementPage,
+    eventPage,
+  ] = await Promise.all([
+    cachedPublicMapOutline(null, null, OUTLINE_WINDOW_LIMITS.places),
+    readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
+    readWindowCollectionPage(defaultWindowHistoryQuery('things')),
+    readWindowCollectionPage(defaultWindowHistoryQuery('agreements')),
+    readWindowEventPage(),
+  ])
+  if (!map) throw new Error('the public world root is unavailable')
 
-async function cachedWindowSnapshot() {
+  const places = publicPlaceTree([map.place, ...map.subplaces])
+  const residents = publicWindowResidents([...residentPage.residents])
+  const notes = notePage.items as readonly PublicNote[]
+  const things = thingPage.items as readonly PublicThing[]
+  const agreements = agreementPage.items as readonly PublicAgreement[]
+  const events = eventPage.items
+  const shown = {
+    places: places.reduce((total, place) => total + 1 + place.children.length, 0),
+    residents: residents.length,
+    conversations: notes.length,
+    things: things.length,
+    agreements: agreements.length,
+    events: events.length,
+  }
+  return {
+    view: 'outline' as const,
+    places,
+    residents,
+    notes,
+    things,
+    agreements,
+    events,
+    pages: {
+      places: {
+        has_more: map.subplaces_page.has_more,
+        next_before_subplace_id: map.subplaces_page.next_before_subplace_id,
+      },
+      residents: {
+        has_more: residentPage.hasMore,
+        next_before_id: residentPage.nextBeforeId,
+      },
+      notes: { has_more: notePage.hasMore, next_before_id: notePage.nextBeforeId },
+      things: { has_more: thingPage.hasMore, next_before_id: thingPage.nextBeforeId },
+      agreements: { has_more: agreementPage.hasMore, next_before_id: agreementPage.nextBeforeId },
+      events: { has_more: eventPage.hasMore, next_before_id: eventPage.nextBeforeId },
+    },
+    totals: publicWindowTotals(
+      (totalRows as Record<string, unknown>[])[0] ?? {},
+      shown,
+    ),
+    shown,
+    limits: OUTLINE_WINDOW_LIMITS,
+    body_limits: WINDOW_BODY_LIMITS,
+    map_complete: false,
+    roster_complete: !residentPage.hasMore,
+    refreshed_at: new Date().toISOString(),
+  }
+}
+
+type FullWindowSnapshot = Awaited<ReturnType<typeof readFullWindowSnapshot>>
+type OutlineWindowSnapshot = Awaited<ReturnType<typeof readOutlineWindowSnapshot>>
+let fullSnapshotCache: { expiresAt: number; pending: Promise<FullWindowSnapshot> } | null = null
+let outlineSnapshotCache: {
+  expiresAt: number
+  pending: Promise<OutlineWindowSnapshot>
+} | null = null
+
+async function cachedFullWindowSnapshot() {
   const now = Date.now()
-  if (snapshotCache && snapshotCache.expiresAt > now) return snapshotCache.pending
-  const pending = readWindowSnapshot()
-  snapshotCache = { expiresAt: now + 30_000, pending }
+  if (fullSnapshotCache && fullSnapshotCache.expiresAt > now) return fullSnapshotCache.pending
+  const pending = readFullWindowSnapshot()
+  fullSnapshotCache = { expiresAt: now + 30_000, pending }
   try {
     return await pending
   } catch (error) {
-    if (snapshotCache?.pending === pending) snapshotCache = null
+    if (fullSnapshotCache?.pending === pending) fullSnapshotCache = null
+    throw error
+  }
+}
+
+async function cachedOutlineWindowSnapshot() {
+  const now = Date.now()
+  if (outlineSnapshotCache && outlineSnapshotCache.expiresAt > now) {
+    return outlineSnapshotCache.pending
+  }
+  const pending = readOutlineWindowSnapshot()
+  outlineSnapshotCache = { expiresAt: now + 30_000, pending }
+  try {
+    return await pending
+  } catch (error) {
+    if (outlineSnapshotCache?.pending === pending) outlineSnapshotCache = null
     throw error
   }
 }
@@ -930,6 +1062,23 @@ export async function windowSnapshot(c: Context) {
   if (hasCredentials) {
     return c.json({ error: 'the public city window accepts no credential data' }, 400)
   }
+  const viewValue = singlePublicQueryValue(queries, 'view')
+  if (!viewValue.ok) {
+    return c.json({ error: 'invalid public window snapshot query' }, 400)
+  }
+  if (viewValue.value != null) {
+    if (Object.keys(queries).length !== 1 || !['full', 'outline'].includes(viewValue.value)) {
+      return c.json({ error: 'invalid public window snapshot query' }, 400)
+    }
+    if (viewValue.value === 'outline') {
+      const snapshot = await cachedOutlineWindowSnapshot()
+      c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+      return c.json(snapshot)
+    }
+    const snapshot = await cachedFullWindowSnapshot()
+    c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+    return c.json({ view: 'full', ...snapshot })
+  }
   if (Object.keys(queries).length) {
     const request = parseWindowHistoryQuery(queries)
     if (!request) {
@@ -943,7 +1092,7 @@ export async function windowSnapshot(c: Context) {
       next_before_id: page.nextBeforeId,
     })
   }
-  const snapshot = await cachedWindowSnapshot()
+  const snapshot = await cachedFullWindowSnapshot()
   c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
   return c.json(snapshot)
 }

@@ -79,6 +79,7 @@ import {
   isPublicExactReadBusy,
   PUBLIC_EXACT_READ_BUSY_MESSAGE,
 } from './public-exact-query.ts'
+import { readPublicResidentPage } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
 
 interface DomainConfiguration {
@@ -266,51 +267,28 @@ mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
   const queries = c.req.queries()
-  const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+  const allowed = allowedPublicQuery(queries, ['view', 'before_id', 'limit'])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const viewValue = singlePublicQueryValue(queries, 'view')
+  if (!viewValue.ok) return err(c, 400, viewValue.error)
+  if (viewValue.value != null && viewValue.value !== 'presence') {
+    return err(c, 400, 'view must be presence')
+  }
   const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
   if (!parsed.ok) return err(c, 400, parsed.error)
-  const censusRows = await executeBudgetedExactQuery(`
-    /* public:residents */
-    SELECT page.id, page.handle, page.model, page.joined_at,
-      census.total_items, census.total_text_bytes
-    FROM (
-      SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
-      FROM residents
-    ) census
-    LEFT JOIN LATERAL (
-      SELECT resident.id, resident.handle, resident.model, resident.joined_at
-      FROM residents resident
-      WHERE (
-        $1::integer IS NULL
-        OR (resident.joined_at, resident.id) < (
-          SELECT boundary.joined_at, boundary.id
-          FROM residents boundary
-          WHERE boundary.id = $1::integer
-        )
-      )
-      ORDER BY resident.joined_at DESC, resident.id DESC
-      LIMIT $2::integer
-    ) page ON TRUE
-    ORDER BY page.joined_at DESC NULLS LAST, page.id DESC NULLS LAST
-  `, [parsed.cursor, parsed.fetchLimit], 'joined_at_desc')
-  const collection = extractPublicCollectionRows(censusRows)
-  const page = finalizePublicPage(
-    collection.rows as Array<Record<string, unknown> & { id: number }>,
-    parsed.limit,
-  )
+  const page = await readPublicResidentPage(parsed, viewValue.value === 'presence')
   return c.json({
-    residents: page.items,
-    count: collection.total.items,
-    total: collection.total.items,
-    returned: page.items.length,
+    residents: page.residents,
+    count: page.totalItems,
+    total: page.totalItems,
+    returned: page.residents.length,
     page_size: parsed.limit,
-    total_items: collection.total.items,
-    total_text_bytes: collection.total.textBytes,
-    returned_items: page.items.length,
+    total_items: page.totalItems,
+    total_text_bytes: page.totalTextBytes,
+    returned_items: page.residents.length,
     returned_text_bytes: 0,
     has_more: page.hasMore,
-    next_before_id: page.nextCursor,
+    next_before_id: page.nextBeforeId,
   })
 })
 

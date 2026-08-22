@@ -58,6 +58,7 @@ import {
 import { publicJson } from './public-output.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { cachedPublicMapOutline } from './public-map.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -134,15 +135,45 @@ async function cachedPublicMap() {
 
 export function mountWorldRoutes(app: Hono): void {
   app.get('/api/map', async c => {
-    const allowed = allowedPublicQuery(c.req.queries(), [])
+    const query = c.req.queries()
+    const allowed = allowedPublicQuery(query, [
+      'view', 'parent_id', 'limit', 'before_subplace_id', 'subplace_limit',
+    ])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const viewValue = singlePublicQueryValue(query, 'view')
+    if (!viewValue.ok) return err(c, 400, viewValue.error)
+    const view = viewValue.value
+    if (view != null && view !== 'outline' && view !== 'full') {
+      return err(c, 400, 'view must be outline or full')
+    }
+    const pagingNames = ['parent_id', 'limit', 'before_subplace_id', 'subplace_limit'] as const
+    if (view !== 'outline' && pagingNames.some(name => Object.hasOwn(query, name))) {
+      return err(c, 400, 'map paging options require view=outline')
+    }
+    if (view === 'outline') {
+      const parentValue = singlePublicQueryValue(query, 'parent_id')
+      if (!parentValue.ok) return err(c, 400, parentValue.error)
+      const parentId = parentValue.value == null || !/^[0-9]+$/u.test(parentValue.value)
+        ? null
+        : positiveId(parentValue.value)
+      if (parentValue.value != null && parentId == null) {
+        return err(c, 400, 'parent_id must be a positive integer')
+      }
+      const page = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
+      if (!page.ok) return err(c, 400, page.error)
+      const outline = await cachedPublicMapOutline(parentId, page.cursor, page.limit)
+      if (!outline) return err(c, 404, 'place not found')
+      c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+      return publicJson(c, { view: 'outline', ...outline })
+    }
+
     const body = await cachedPublicMap()
     // The map tree is unbounded, so the proactive traversal budgets in
     // publicJson would withhold a large credential-free city. The app-wide
     // publicResponseSafety middleware still guards this response and only
     // parses it when the raw text actually matches the credential rule.
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-    return c.json(body)
+    return c.json(view === 'full' ? { view: 'full', ...body } : body)
   })
 
   app.get('/api/place/:id', async c => {

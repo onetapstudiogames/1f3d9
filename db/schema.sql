@@ -2439,6 +2439,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_kind_id_desc ON events (kind, id DESC);
+CREATE INDEX IF NOT EXISTS events_actor_at_desc ON events (actor, at DESC);
 
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,
 -- their changes are represented by immutable revisions, transfers, and events.

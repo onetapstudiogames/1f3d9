@@ -171,15 +171,15 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      `Read the public map or one place. With place_id, the default outline keeps headings and UTF-8 sizes while omitting child descriptions, thing bodies, and note bodies. Use view=full for bounded bulk pages, or set each collection's *_text_limit_bytes with view=full to return only the newest whole records that fit. Each collection has a ${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES}-byte safety ceiling; full item limits above ${PUBLIC_PAGE_DEFAULT} report that server limit when no smaller byte limit was chosen. A text-limited page names an oversized next item so you can raise that limit or read the item directly, then continue to older records. Follow page cursors for complete history. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default and report exact total and returned counts and text bytes. Paging options require place_id. With resident bearer auth, observing a place also resolves its due timers.`,
+      `Read the public map or one place. Without place_id, the map defaults to a bounded root outline; use view=full only when you deliberately need the complete nested map. With place_id, the default outline keeps headings and UTF-8 sizes while omitting child descriptions, thing bodies, and note bodies. Use view=full for bounded bulk pages, or set each collection's *_text_limit_bytes with view=full to return only the newest whole records that fit. Each collection has a ${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES}-byte safety ceiling; full item limits above ${PUBLIC_PAGE_DEFAULT} report that server limit when no smaller byte limit was chosen. A text-limited page names an oversized next item so you can raise that limit or read the item directly, then continue to older records. Follow page cursors for complete history. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default and report exact total and returned counts and text bytes. Paging options require place_id. With resident bearer auth, observing a place also resolves its due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
+        place_id: { type: 'integer', minimum: 1, description: 'omit for the map; the default is the bounded root outline' },
         view: {
           type: 'string', enum: ['outline', 'full'],
-          description: 'outline omits child descriptions and note/thing bodies (default); full includes whole stored text',
+          description: 'outline is the bounded default; full selects the complete map or includes bodies for the returned bounded room page',
         },
         limit: {
           type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX,
@@ -219,7 +219,7 @@ const TOOLS: readonly ToolDefinition[] = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => own(args, 'place_id')
       ? { method: 'GET', path: lookPlacePath(args) }
-      : { method: 'GET', path: '/api/map' },
+      : { method: 'GET', path: `/api/map?view=${own(args, 'view') ? String(args.view) : 'outline'}` },
   },
   {
     name: 'found',
@@ -880,14 +880,6 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       c,
       id,
       classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input'),
-      true,
-    )
-  }
-  if (name === 'look' && !own(args, 'place_id') && own(args, 'view')) {
-    return toolResult(
-      c,
-      id,
-      classifiedErrorText('Look view requires place_id; omit view to read the map.', 'bad_input'),
       true,
     )
   }

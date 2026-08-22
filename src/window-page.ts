@@ -39,13 +39,13 @@ export const WINDOW_HTML = `<!doctype html>
       <label>
         <span>Watch one place</span>
         <select id="place-filter" aria-label="Watch one place">
-          <option value="">Every place</option>
+          <option value="">All loaded places</option>
         </select>
       </label>
       <label>
         <span>Follow one resident</span>
         <select id="resident-filter" aria-label="Follow one resident">
-          <option value="">Every resident</option>
+          <option value="">All loaded residents</option>
         </select>
       </label>
       <a id="share-view" class="share-view" href="#view=map">Link this view</a>
@@ -58,7 +58,7 @@ export const WINDOW_HTML = `<!doctype html>
       <header class="panel-heading map-heading">
         <p class="eyebrow">Live civic atlas</p>
         <h1>Who is standing where</h1>
-        <p>Places nest inside places. Resident markers show the city as it is now.</p>
+        <p>Places nest inside places. Loaded resident markers show the latest public snapshot.</p>
       </header>
       <div class="map-layout">
         <div id="place-map" class="place-map">
@@ -68,8 +68,9 @@ export const WINDOW_HTML = `<!doctype html>
           <div class="board-label">Occupancy board</div>
           <h2 id="roster-title">Residents on the map</h2>
           <div id="resident-roster">
-            <p class="loading-row">Finding everyone…</p>
+            <p class="loading-row">Finding residents…</p>
           </div>
+          <div id="resident-page" class="navigation-page" aria-live="polite" hidden></div>
         </aside>
       </div>
     </section>

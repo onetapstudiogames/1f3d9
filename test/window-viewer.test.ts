@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import * as windowModule from '../src/window.ts'
 import * as windowClientModule from '../src/window-client.ts'
 import { WINDOW_JS, PUBLIC_EVENT_KINDS } from '../src/window-client.ts'
@@ -61,7 +60,7 @@ test('deliberate navigation makes real history and refresh keeps reading state',
   // control after a background refresh re-renders the DOM.
   assert.match(WINDOW_JS, /expandedBodies: \[\]/)
   assert.match(WINDOW_JS, /state\.expandedBodies\.includes\(bodyKey\)/)
-  assert.match(WINDOW_JS, /function restoreFocus\(focusKey\)/)
+  assert.match(WINDOW_JS, /function restoreFocus\(focusKey, focusFallbackKey, focusFallbackId\)/)
   assert.match(WINDOW_JS, /focus\(\{ preventScroll: true \}\)/)
   assert.match(WINDOW_JS, /data-focus-key/)
 })
@@ -158,16 +157,40 @@ test('long public bodies share one honest, accessible disclosure', () => {
   assert.match(WINDOW_CSS, /\.body-disclosure:focus-visible/)
 })
 
-test('map branches expose accessible, presentation-only collapse controls', () => {
+test('map branches expose accessible lazy-load and collapse controls', () => {
   assert.match(WINDOW_JS, /collapsedPlaceIds:\s*\[\]/)
   assert.match(WINDOW_JS, /element\('button', 'place-disclosure'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
+  assert.match(WINDOW_JS, /place\.places\s*>\s*0/)
   assert.match(WINDOW_JS, /children\.hidden = !expanded/)
   assert.match(WINDOW_JS, /collapsedPlaceIds\.filter\(/)
   assert.match(WINDOW_JS, /\[\.\.\.state\.collapsedPlaceIds, placeId\]/)
   assert.doesNotMatch(WINDOW_JS, /collapsedPlaceIds\.(?:add|delete|push|splice)\(/)
   assert.match(WINDOW_CSS, /\.place-disclosure:focus-visible/)
+})
+
+test('the shipped window requests bounded map and resident pages', () => {
+  assert.match(WINDOW_JS, /searchParams\.set\('view', 'outline'\)/)
+  assert.match(WINDOW_JS, /new URL\('\/api\/map'/)
+  assert.match(WINDOW_JS, /searchParams\.set\('parent_id', String\(/)
+  assert.match(WINDOW_JS, /searchParams\.set\('subplace_limit', '25'\)/)
+  assert.match(WINDOW_JS, /searchParams\.set\('before_subplace_id'/)
+  assert.match(WINDOW_JS, /new URL\('\/api\/residents'/)
+  assert.match(WINDOW_JS, /searchParams\.set\('view', 'presence'\)/)
+  assert.match(WINDOW_JS, /searchParams\.set\('limit', '25'\)/)
+  assert.match(WINDOW_JS, /searchParams\.set\('before_id'/)
+})
+
+test('partial navigation is explicit, retryable, and keyboard-readable', () => {
+  assert.match(WINDOW_HTML, /id="resident-page"/)
+  assert.match(WINDOW_JS, /currently loaded/i)
+  assert.match(WINDOW_JS, /Load more residents/)
+  assert.match(WINDOW_JS, /Retry loading residents/)
+  assert.match(WINDOW_JS, /Retry loading places inside/)
+  assert.match(WINDOW_JS, /No (?:more )?(?:places|residents)[^\n]*loaded/i)
+  assert.match(WINDOW_JS, /aria-busy/)
+  assert.match(WINDOW_JS, /data-focus-key/)
 })
 
 test('window history queries accept only one safe value for each supported filter', () => {
@@ -322,6 +345,29 @@ test('window histories merge immutably, dedupe by id, and stay newest first', ()
   assert.equal(merged.find(row => row.id === 3)?.body, 'fresh copy')
   assert.deepEqual(current.map(row => row.id), [3, 2])
   assert.deepEqual(incoming.map(row => row.id), [4, 3, 1])
+})
+
+test('resident pages merge immutably by joined time and use id only as a tie-breaker', () => {
+  const exports = windowClientModule as unknown as Record<string, unknown>
+  assert.equal(typeof exports.mergeResidentRows, 'function')
+  const merge = exports.mergeResidentRows as (
+    current: readonly Readonly<{ id: number, joined_at: Date }>[],
+    incoming: readonly Readonly<{ id: number, joined_at: Date }>[],
+  ) => Array<{ id: number, joined_at: Date }>
+  const current = Object.freeze([
+    Object.freeze({ id: 90, joined_at: new Date('2026-08-12T00:00:00.000Z') }),
+    Object.freeze({ id: 7, joined_at: new Date('2026-08-14T00:00:00.000Z') }),
+  ])
+  const incoming = Object.freeze([
+    Object.freeze({ id: 2, joined_at: new Date('2026-08-16T00:00:00.000Z') }),
+    Object.freeze({ id: 100, joined_at: new Date('2026-08-15T00:00:00.000Z') }),
+    Object.freeze({ id: 8, joined_at: new Date('2026-08-14T00:00:00.000Z') }),
+  ])
+
+  const merged = merge(current, incoming)
+  assert.deepEqual(merged.map(row => row.id), [2, 100, 8, 7, 90])
+  assert.deepEqual(current.map(row => row.id), [90, 7])
+  assert.deepEqual(incoming.map(row => row.id), [2, 100, 8])
 })
 
 test('every paged window view has an accessible older-history surface', () => {
@@ -573,20 +619,22 @@ test('agreement party previews declare when later signers are not shown', () => 
   assert.match(WINDOW_JS, /Party preview is incomplete/)
 })
 
-test('the lightweight map and resident presence are complete rather than silently capped', () => {
-  const residents = windowModule.publicWindowResidents(Array.from({ length: 2_001 }, (_, index) => ({
-    id: index + 1,
-    handle: `resident-${String(index + 1).padStart(4, '0')}`,
-    current_place_id: null,
-    joined_at: '2026-08-11T00:00:00Z',
-  })))
-  assert.equal(residents.length, 2_001)
+test('the bounded window keeps loaded navigation while fresh outline pages merge immutably', () => {
+  assert.match(WINDOW_JS, /mergeWindowRows\([^\n]*residents/i)
+  assert.match(WINDOW_JS, /mergeWindowRows\([^\n]*(?:children|subplaces)/i)
+  assert.match(WINDOW_JS, /collapsedPlaceIds/)
+  assert.match(WINDOW_JS, /restoreFocus\(focusKey, focusFallbackKey, focusFallbackId\)/)
+  assert.doesNotMatch(WINDOW_JS, /(?:residents|subplaces|children)\.(?:push|splice|sort)\(/)
+})
 
-  const serverSource = readFileSync(new URL('../src/window.ts', import.meta.url), 'utf8')
-  assert.doesNotMatch(serverSource, /ORDER BY world\.path\s+LIMIT\s+1000/i)
-  assert.doesNotMatch(serverSource, /ORDER BY resident\.joined_at, resident\.id\s+LIMIT\s+2000/i)
-  assert.doesNotMatch(WINDOW_JS, /values\.slice\(0,\s*1000\)/)
-  assert.doesNotMatch(WINDOW_JS, /values\.slice\(0,\s*2000\)/)
+test('bounded navigation stays honest and keyboard-safe at page boundaries', () => {
+  assert.doesNotMatch(WINDOW_JS, /nodes\.status\?\.removeAttribute\('role'\)/)
+  assert.match(WINDOW_JS, /Place #' \+ String\(placeId\) \+ ' · not currently loaded'/)
+  assert.match(WINDOW_JS, /metadata and content are not currently loaded/i)
+  assert.match(WINDOW_JS, /seenBeforeIds/)
+  assert.match(WINDOW_JS, /seenBeforeSubplaceIds/)
+  assert.match(WINDOW_JS, /focusFallbackKey/)
+  assert.match(WINDOW_JS, /forwardReconcile/i)
 })
 
 test('the ownerless world remains visible without admitting ownerless ordinary places', () => {

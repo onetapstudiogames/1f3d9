@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { neon } from '@neondatabase/serverless'
+import { Client } from 'pg'
 import {
   isSafeIdentifier,
   requireDirectPostgresUrl,
@@ -32,8 +33,9 @@ type RemoteMigration =
   | 'signin-retention'
   | 'flag-limits'
   | 'affordable-reading-totals'
+  | 'events-presence-index'
 
-type MigrationFile =
+export type MigrationFile =
   | 'db/schema.sql'
   | 'db/migrations/20260813_hosted_chat_signin.sql'
   | 'db/migrations/20260814_world_root_expand.sql'
@@ -52,6 +54,9 @@ type MigrationFile =
   | 'db/migrations/20260818_signin_retention.sql'
   | 'db/migrations/20260818_flag_limits.sql'
   | 'db/migrations/20260820_affordable_reading_totals.sql'
+  | 'db/migrations/20260821_events_presence_index.sql'
+
+export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
 type MigrationEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -59,6 +64,7 @@ export type MigrationRun = Readonly<{
   target: MigrationTarget
   databaseUrl: string
   migrationFile: MigrationFile
+  executionMode: MigrationExecutionMode
   preview?: Readonly<{
     projectId: string
     branchId: string
@@ -94,7 +100,10 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'signin-retention': 'db/migrations/20260818_signin_retention.sql',
   'flag-limits': 'db/migrations/20260818_flag_limits.sql',
   'affordable-reading-totals': 'db/migrations/20260820_affordable_reading_totals.sql',
+  'events-presence-index': 'db/migrations/20260821_events_presence_index.sql',
 }
+const NONTRANSACTIONAL_MIGRATION_FILE: MigrationFile =
+  'db/migrations/20260821_events_presence_index.sql'
 
 function namedArgument(args: readonly string[], name: string): string | undefined {
   const prefix = `--${name}=`
@@ -107,12 +116,18 @@ function namedArgument(args: readonly string[], name: string): string | undefine
 
 function remoteMigrationArgument(args: readonly string[]): RemoteMigration {
   const requested = namedArgument(args, 'migration')
-  if (!requested || !(requested in REMOTE_MIGRATIONS)) {
+  if (!requested || !Object.hasOwn(REMOTE_MIGRATIONS, requested)) {
     throw new Error(
-      'remote migration requires --migration hosted-chat-signin|world-root-expand|world-root-topology|public-pagination|agreement-accession|open-to-use|payment-attempts|payment-response-replay|payment-response-body-replay|payment-response-body-rollout|payment-response-body-validate|identity-recovery|identity-rotation|initial-recovery-codes|signin-retention|flag-limits|affordable-reading-totals',
+      `remote migration requires --migration ${Object.keys(REMOTE_MIGRATIONS).join('|')}`,
     )
   }
   return requested as RemoteMigration
+}
+
+function migrationExecutionMode(migrationFile: MigrationFile): MigrationExecutionMode {
+  return migrationFile === NONTRANSACTIONAL_MIGRATION_FILE
+    ? 'nontransactional'
+    : 'transactional'
 }
 
 /**
@@ -147,6 +162,7 @@ export function resolveMigrationRun(
         ),
       ),
       migrationFile: 'db/schema.sql',
+      executionMode: 'transactional',
     }
   }
 
@@ -187,6 +203,7 @@ export function resolveMigrationRun(
         'PREVIEW_DATABASE_URL_UNPOOLED',
       ),
       migrationFile,
+      executionMode: migrationExecutionMode(migrationFile),
       preview: { projectId, branchId, productionBranchId },
     }
   }
@@ -209,6 +226,7 @@ export function resolveMigrationRun(
       'PRODUCTION_DATABASE_URL_UNPOOLED',
     ),
     migrationFile,
+    executionMode: migrationExecutionMode(migrationFile),
     snapshot: {
       projectId: requiredIdentifier(environment.NEON_PROJECT_ID, 'NEON_PROJECT_ID'),
       branchId: requiredIdentifier(environment.NEON_PRODUCTION_BRANCH_ID, 'NEON_PRODUCTION_BRANCH_ID'),
@@ -447,7 +465,7 @@ export const MIGRATION_LOCK_TIMEOUT = '5s'
 export const MIGRATION_STATEMENT_TIMEOUT = '120s'
 
 /**
- * Every migration statement runs inside one transaction whose first commands
+ * Every transactional migration statement runs inside one transaction whose first commands
  * enforce short lock and statement time limits, so a bad deploy can neither
  * wait on nor hold a live lock indefinitely. A migration that needs different
  * limits sets its own SET LOCAL afterwards, which wins for the rest of its
@@ -471,6 +489,11 @@ export function prepareMigrationStatements(ddl: string): string[] {
   )) {
     throw new Error('migration contains an unexpected transaction boundary')
   }
+  if (runnableStatements.some(statement =>
+    /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i.test(statement)
+  )) {
+    throw new Error('concurrent index requires an explicitly allowlisted nontransactional migration')
+  }
 
   return [
     `SET LOCAL lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`,
@@ -479,13 +502,168 @@ export function prepareMigrationStatements(ddl: string): string[] {
   ]
 }
 
-export async function applyMigration(databaseUrl: string, ddl: string): Promise<number> {
-  const runnableStatements = prepareMigrationStatements(ddl)
+export type PreparedMigrationExecution = Readonly<{
+  mode: MigrationExecutionMode
+  sessionStatements: readonly string[]
+  statements: readonly string[]
+}>
+
+export const EVENTS_PRESENCE_INDEX_STATE_QUERY = `
+  SELECT index_namespace.nspname AS index_schema,
+    index_relation.relname AS index_name,
+    table_namespace.nspname AS table_schema,
+    table_relation.relname AS table_name,
+    index_catalog.indisvalid AS valid,
+    index_catalog.indisready AS ready,
+    index_catalog.indisunique AS unique_index,
+    access_method.amname AS access_method,
+    index_catalog.indnkeyatts::integer AS key_column_count,
+    index_catalog.indnatts::integer AS total_column_count,
+    index_catalog.indoption::smallint[] AS options,
+    index_catalog.indpred IS NULL AS unfiltered,
+    ARRAY(
+      SELECT pg_get_indexdef(index_relation.oid, position, true)
+      FROM generate_series(1, index_catalog.indnatts) AS position
+      ORDER BY position
+    ) AS columns
+  FROM pg_class AS index_relation
+  JOIN pg_namespace AS index_namespace
+    ON index_namespace.oid = index_relation.relnamespace
+  LEFT JOIN pg_index AS index_catalog
+    ON index_catalog.indexrelid = index_relation.oid
+  LEFT JOIN pg_am AS access_method
+    ON access_method.oid = index_relation.relam
+  LEFT JOIN pg_class AS table_relation
+    ON table_relation.oid = index_catalog.indrelid
+  LEFT JOIN pg_namespace AS table_namespace
+    ON table_namespace.oid = table_relation.relnamespace
+  WHERE index_namespace.nspname = 'public'
+    AND index_relation.relname = 'events_actor_at_desc'
+`
+
+function exactEventsPresenceIndex(row: Readonly<Record<string, unknown>>): boolean {
+  const columns = row.columns
+  return row.index_schema === 'public' &&
+    row.index_name === 'events_actor_at_desc' &&
+    row.table_schema === 'public' &&
+    row.table_name === 'events' &&
+    row.unique_index === false &&
+    row.access_method === 'btree' &&
+    row.key_column_count === 2 &&
+    row.total_column_count === 2 &&
+    Array.isArray(row.options) &&
+    row.options.length === 2 &&
+    row.options[0] === 0 &&
+    row.options[1] === 3 &&
+    row.unfiltered === true &&
+    Array.isArray(columns) &&
+    columns.length === 2 &&
+    columns[0] === 'actor' &&
+    columns[1] === 'at' &&
+    typeof row.valid === 'boolean' &&
+    typeof row.ready === 'boolean'
+}
+
+/**
+ * Keep an exact valid index untouched. A failed concurrent build is safe to
+ * remove and retry; a same-named relation with any other definition fails closed.
+ */
+export function eventsPresenceIndexRecoveryStatements(
+  rows: readonly Readonly<Record<string, unknown>>[],
+  createStatement: string,
+): readonly string[] {
+  if (rows.length === 0) return Object.freeze([createStatement])
+  if (rows.length !== 1 || !exactEventsPresenceIndex(rows[0]!)) {
+    throw new Error('events_actor_at_desc conflicts with the reviewed definition')
+  }
+  if (rows[0]!.valid === true && rows[0]!.ready === true) return Object.freeze([])
+  return Object.freeze([
+    'DROP INDEX CONCURRENTLY IF EXISTS public.events_actor_at_desc',
+    createStatement,
+  ])
+}
+
+function normalizedExecutableStatement(statement: string): string {
+  return statement
+    .replace(/^\s*--.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Select transaction semantics by the exact reviewed migration filename.
+ * No SQL content or caller flag can opt another migration out of atomic execution.
+ */
+export function prepareMigrationExecution(
+  migrationFile: MigrationFile,
+  ddl: string,
+): PreparedMigrationExecution {
+  if (migrationFile !== NONTRANSACTIONAL_MIGRATION_FILE) {
+    return Object.freeze({
+      mode: 'transactional',
+      sessionStatements: Object.freeze([]),
+      statements: Object.freeze(prepareMigrationStatements(ddl)),
+    })
+  }
+
+  const statements = splitSqlStatements(ddl)
+  const executableStatements = statements
+    .map(normalizedExecutableStatement)
+    .filter(Boolean)
+  const expected =
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS events_actor_at_desc ON public.events (actor, at DESC)'
+  if (executableStatements.length !== 1 || executableStatements[0] !== expected) {
+    throw new Error('events presence index migration does not match the reviewed concurrent-index statement')
+  }
+
+  return Object.freeze({
+    mode: 'nontransactional',
+    sessionStatements: Object.freeze([
+      `SET lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`,
+      `SET statement_timeout = '${MIGRATION_STATEMENT_TIMEOUT}'`,
+    ]),
+    statements: Object.freeze([...statements]),
+  })
+}
+
+export async function applyMigration(
+  databaseUrl: string,
+  migrationFile: MigrationFile,
+  ddl: string,
+): Promise<number> {
+  const execution = prepareMigrationExecution(migrationFile, ddl)
+  if (execution.mode === 'nontransactional') {
+    const client = new Client({ connectionString: databaseUrl })
+    await client.connect()
+    try {
+      for (const statement of execution.sessionStatements) {
+        await client.query(statement)
+      }
+      const before = await client.query(EVENTS_PRESENCE_INDEX_STATE_QUERY)
+      const recoveryStatements = eventsPresenceIndexRecoveryStatements(
+        before.rows as readonly Record<string, unknown>[],
+        execution.statements[0]!,
+      )
+      for (const statement of recoveryStatements) await client.query(statement)
+
+      const after = await client.query(EVENTS_PRESENCE_INDEX_STATE_QUERY)
+      if (eventsPresenceIndexRecoveryStatements(
+        after.rows as readonly Record<string, unknown>[],
+        execution.statements[0]!,
+      ).length !== 0) {
+        throw new Error('events_actor_at_desc did not become valid and ready')
+      }
+      return recoveryStatements.length
+    } finally {
+      await client.end()
+    }
+  }
+
   const sql = neon(databaseUrl)
   await sql.transaction(transaction =>
-    runnableStatements.map(statement => transaction.query(statement)),
+    execution.statements.map(statement => transaction.query(statement)),
   )
-  return runnableStatements.length
+  return execution.statements.length
 }
 
 async function main(): Promise<void> {
@@ -508,7 +686,7 @@ async function main(): Promise<void> {
   }
 
   const ddl = readFileSync(new URL(`../${run.migrationFile}`, import.meta.url), 'utf8')
-  const statementCount = await applyMigration(run.databaseUrl, ddl)
+  const statementCount = await applyMigration(run.databaseUrl, run.migrationFile, ddl)
   console.log(`applied ${statementCount} statements from ${run.migrationFile} to ${run.target}`)
 }
 
