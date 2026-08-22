@@ -19,17 +19,24 @@ complete these one-time setup steps:
 1. Provision the server-only `LATER_HOLDER_CURSOR_KEY` in both Vercel Preview and
    Production. Verify each value is exactly 64 lowercase hexadecimal characters without
    printing or copying it into logs.
-2. Apply `npm run migrate:preview:later-holder-marks` to the isolated Preview database
-   and verify its postconditions. Then take the required Production snapshot and apply
-   `npm run migrate:production:later-holder-marks` before merging the application.
-3. Exercise the signed notice and index in Preview. A missing or malformed cursor key
+2. Apply `npm run migrate:preview:thing-maker` to the isolated Preview database and
+   verify the maker backfill, foreign key, `NOT NULL` column, insert trigger, and history
+   trigger. Only then apply `npm run migrate:preview:later-holder-marks` and verify its
+   table, constraints, index, and lifecycle triggers.
+3. Take a separate required Production snapshot for each migration. Apply
+   `npm run migrate:production:thing-maker`, verify its maker postconditions, and only
+   then apply `npm run migrate:production:later-holder-marks` and verify its
+   postconditions before merging the application.
+4. Exercise the signed notice and index in Preview. A missing or malformed cursor key
    must return the documented no-store 503 rather than accepting an unusable index.
 For the first rollout and every later release preparation, re-confirm that both provider
-keys remain configured and both additive migrations remain applied. Then run preparation
-with these non-secret acknowledgements in the process environment:
+keys remain configured and both additive migrations remain applied in the required
+thing-maker-then-later-holder order. Then run preparation with these non-secret
+acknowledgements in the process environment:
 
 ```sh
 CONFIRM_LATER_HOLDER_PROVIDER_KEY=VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION \
+CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 scripts/deploy.sh --prepare
 ```

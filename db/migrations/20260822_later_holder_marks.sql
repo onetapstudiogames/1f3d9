@@ -3,6 +3,74 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
+-- Later-holder eligibility is defined by immutable maker provenance. Refuse a
+-- partially prepared schema instead of creating a table whose trigger cannot
+-- enforce that rule.
+DO $later_holder_maker_prerequisite$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = 'things'::regclass
+      AND attname = 'maker_id'
+      AND atttypid = 'integer'::regtype
+      AND attnotnull
+      AND attgenerated = ''
+      AND NOT attisdropped
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint AS constraint_record
+    JOIN pg_attribute AS local_column
+      ON local_column.attrelid = constraint_record.conrelid
+      AND local_column.attnum = constraint_record.conkey[1]
+    JOIN pg_attribute AS referenced_column
+      ON referenced_column.attrelid = constraint_record.confrelid
+      AND referenced_column.attnum = constraint_record.confkey[1]
+    WHERE constraint_record.conrelid = 'things'::regclass
+      AND constraint_record.conname = 'things_maker_id_fkey'
+      AND constraint_record.contype = 'f'
+      AND constraint_record.confrelid = 'residents'::regclass
+      AND constraint_record.confdeltype = 'r'
+      AND cardinality(constraint_record.conkey) = 1
+      AND cardinality(constraint_record.confkey) = 1
+      AND local_column.attname = 'maker_id'
+      AND referenced_column.attname = 'id'
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger AS trigger_record
+    JOIN pg_proc AS function_record ON function_record.oid = trigger_record.tgfoid
+    JOIN pg_namespace AS function_schema ON function_schema.oid = function_record.pronamespace
+    WHERE trigger_record.tgrelid = 'things'::regclass
+      AND trigger_record.tgname = 'things_set_maker_on_insert'
+      AND NOT trigger_record.tgisinternal
+      AND trigger_record.tgenabled <> 'D'
+      AND function_schema.nspname = 'public'
+      AND function_record.proname = 'set_thing_maker_on_insert'
+      AND position(
+        'NEW.maker_id := NEW.owner_id' IN pg_get_functiondef(function_record.oid)
+      ) > 0
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger AS trigger_record
+    JOIN pg_proc AS function_record ON function_record.oid = trigger_record.tgfoid
+    JOIN pg_namespace AS function_schema ON function_schema.oid = function_record.pronamespace
+    WHERE trigger_record.tgrelid = 'things'::regclass
+      AND trigger_record.tgname = 'things_keep_birth_history'
+      AND NOT trigger_record.tgisinternal
+      AND trigger_record.tgenabled <> 'D'
+      AND function_schema.nspname = 'public'
+      AND function_record.proname = 'protect_thing_history'
+      AND position(
+        'NEW.maker_id IS DISTINCT FROM OLD.maker_id' IN pg_get_functiondef(function_record.oid)
+      ) > 0
+  ) THEN
+    RAISE EXCEPTION
+      'thing-maker migration must be applied before later-holder marks'
+      USING ERRCODE = '23514';
+  END IF;
+END
+$later_holder_maker_prerequisite$;
+
 -- No existing thing is inferred or backfilled. The lock only prevents a
 -- lifecycle change from crossing trigger installation.
 LOCK TABLE residents, things, moderation_actions IN SHARE ROW EXCLUSIVE MODE;

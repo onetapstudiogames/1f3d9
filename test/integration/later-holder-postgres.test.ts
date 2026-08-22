@@ -134,6 +134,24 @@ test('later-holder marks keep deliberate order and end exactly with ownership', 
   const execute: LaterHolderQueryExecutor = async (query, params) =>
     (await postgres.client.query(query, [...params])).rows as Record<string, unknown>[]
   try {
+    await t.test('the upgrade refuses to run before maker provenance exists', async () => {
+      await postgres.client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+      await postgres.client.query(preWave3SchemaDdl)
+      await postgres.client.query('ALTER TABLE things DROP COLUMN maker_id CASCADE')
+
+      await assert.rejects(
+        postgres.client.query(migrationDdl),
+        error => postgresCode(error) === '23514'
+          && /thing-maker migration must be applied before later-holder marks/iu.test(
+            error instanceof Error ? error.message : '',
+          ),
+      )
+      await postgres.client.query('ROLLBACK')
+      assert.equal((await postgres.client.query(
+        `SELECT to_regclass('public.thing_later_holder_marks')::text AS table_name`,
+      )).rows[0]!.table_name, null)
+    })
+
     await t.test('fresh schema and migration are repeatable and store no opening state', async () => {
       assert.doesNotMatch(preWave3SchemaDdl, /thing_later_holder_marks/iu)
       await postgres.client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')

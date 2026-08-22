@@ -79,12 +79,16 @@ verify_later_holder_release_readiness() {
     echo "!! LATER_HOLDER_CURSOR_KEY must be verified in Vercel Preview and Production before preparation"
     return 1
   }
+  [ "${CONFIRM_THING_MAKER_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION" ] || {
+    echo "!! the thing-maker migration must be applied to Preview and Production before the later-holder migration and application rollout"
+    return 1
+  }
   [ "${CONFIRM_LATER_HOLDER_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION" ] || {
     echo "!! the later-holder migration must be applied to Preview and Production before application rollout"
     return 1
   }
 
-  echo "   later-holder provider key and schema readiness acknowledged"
+  echo "   later-holder provider key and ordered maker/later-holder schema readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"

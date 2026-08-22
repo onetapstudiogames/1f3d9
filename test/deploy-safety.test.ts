@@ -25,6 +25,10 @@ import {
 } from '../scripts/migrate.ts'
 
 const deployScript = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'utf8')
+const deploymentRunbook = readFileSync(
+  new URL('../docs/runbooks/DEPLOYMENT.md', import.meta.url),
+  'utf8',
+)
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { scripts: Record<string, string> }
@@ -253,6 +257,7 @@ type PreparationFixture = Readonly<{
 const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
 })
 
 function createPreparationFixture(): PreparationFixture {
@@ -324,6 +329,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_LATER_HOLDER_PROVIDER_KEY',
     'CONFIRM_LATER_HOLDER_MIGRATION="${2-}"',
     'export CONFIRM_LATER_HOLDER_MIGRATION',
+    'CONFIRM_THING_MAKER_MIGRATION="${3-}"',
+    'export CONFIRM_THING_MAKER_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -340,6 +347,7 @@ function createPreparationFixture(): PreparationFixture {
         `${bashBin}/run-prepare.sh`,
         readiness.CONFIRM_LATER_HOLDER_PROVIDER_KEY ?? '',
         readiness.CONFIRM_LATER_HOLDER_MIGRATION ?? '',
+        readiness.CONFIRM_THING_MAKER_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -382,6 +390,28 @@ test('preparation requires provider-key and migration readiness before any relea
   assert.notEqual(missingMigration.status, 0)
   assert.match(`${missingMigration.stdout}\n${missingMigration.stderr}`, /later-holder.*migration.*before.*rollout/iu)
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingMakerMigration = fixture.run({ CONFIRM_THING_MAKER_MIGRATION: '' })
+  assert.notEqual(missingMakerMigration.status, 0)
+  assert.match(
+    `${missingMakerMigration.stdout}\n${missingMakerMigration.stderr}`,
+    /thing-maker.*migration.*before.*later-holder/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+})
+
+test('release instructions require maker provenance before later-holder marks in each database', () => {
+  const previewMaker = deploymentRunbook.indexOf('npm run migrate:preview:thing-maker')
+  const previewMarks = deploymentRunbook.indexOf('npm run migrate:preview:later-holder-marks')
+  const productionMaker = deploymentRunbook.indexOf('npm run migrate:production:thing-maker')
+  const productionMarks = deploymentRunbook.indexOf('npm run migrate:production:later-holder-marks')
+
+  assert.ok(previewMaker >= 0 && previewMaker < previewMarks)
+  assert.ok(productionMaker >= 0 && productionMaker < productionMarks)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
 })
 
 test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {
