@@ -62,14 +62,23 @@ import {
   windowStyle,
 } from './window.ts'
 import {
+  allowedPublicQuery,
+  eventDetailTextBytes,
+  extractPublicCollectionRows,
   finalizePublicPage,
-  loadPublicEventRows,
+  loadPublicEventCollectionRows,
   parsePublicPage,
   PUBLIC_PAGE_MAX,
   singlePublicQueryValue,
+  utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
+import {
+  executeBudgetedExactQuery,
+  isPublicExactReadBusy,
+  PUBLIC_EXACT_READ_BUSY_MESSAGE,
+} from './public-exact-query.ts'
 import { publicResponseSafety } from './public-output.ts'
 
 interface DomainConfiguration {
@@ -170,6 +179,10 @@ app.use('*', async (c, next) => {
 })
 app.use('*', publicResponseSafety)
 app.onError((error, c) => {
+  if (isPublicExactReadBusy(error)) {
+    c.header('Retry-After', '1')
+    return err(c, 503, PUBLIC_EXACT_READ_BUSY_MESSAGE)
+  }
   console.error('request failed', error)
   if (isRetryableCollision(error)) return err(c, 409, COLLISION_CONFLICT_MESSAGE)
   return c.json({ error: 'internal' }, 500)
@@ -252,13 +265,17 @@ mountSocietyRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
-  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
   if (!parsed.ok) return err(c, 400, parsed.error)
-  const censusRows = await executePublicQuery(`
+  const censusRows = await executeBudgetedExactQuery(`
     /* public:residents */
-    SELECT page.id, page.handle, page.model, page.joined_at, census.total
+    SELECT page.id, page.handle, page.model, page.joined_at,
+      census.total_items, census.total_text_bytes
     FROM (
-      SELECT count(*)::integer AS total
+      SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
       FROM residents
     ) census
     LEFT JOIN LATERAL (
@@ -276,26 +293,22 @@ app.get('/api/residents', async c => {
       LIMIT $2::integer
     ) page ON TRUE
     ORDER BY page.joined_at DESC NULLS LAST, page.id DESC NULLS LAST
-  `, [parsed.cursor, parsed.fetchLimit])
-  const total = Number(censusRows[0]?.total)
-  if (!Number.isSafeInteger(total) || total < 0) {
-    throw new Error('resident census returned an invalid total')
-  }
-  const rows = censusRows.flatMap(row => {
-    if (row.id == null) return []
-    const { total: _total, ...resident } = row
-    return [resident]
-  })
+  `, [parsed.cursor, parsed.fetchLimit], 'joined_at_desc')
+  const collection = extractPublicCollectionRows(censusRows)
   const page = finalizePublicPage(
-    rows as Array<Record<string, unknown> & { id: number }>,
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
     parsed.limit,
   )
   return c.json({
     residents: page.items,
-    count: total,
-    total,
+    count: collection.total.items,
+    total: collection.total.items,
     returned: page.items.length,
     page_size: parsed.limit,
+    total_items: collection.total.items,
+    total_text_bytes: collection.total.textBytes,
+    returned_items: page.items.length,
+    returned_text_bytes: 0,
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
   })
@@ -305,6 +318,15 @@ app.get('/api/me', async c => {
   const resident = await auth(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
   const query = c.req.queries()
+  const allowed = allowedPublicQuery(query, [
+    'before_place_id', 'place_limit',
+    'before_thing_id', 'thing_limit',
+    'before_kind_id', 'kind_limit',
+    'before_agreement_id', 'agreement_limit',
+    'before_note_id', 'note_limit',
+    'before_offer_id', 'offer_limit',
+  ])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
   if (!placeRequest.ok) return err(c, 400, placeRequest.error)
   const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit')
@@ -433,7 +455,10 @@ app.get('/api/me', async c => {
   })
 })
 
-app.get('/api/official', c => c.json({
+app.get('/api/official', c => {
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  return c.json({
   domain: DOMAIN,
   treasury: TREASURY,
   network: NETWORK,
@@ -466,9 +491,13 @@ app.get('/api/official', c => c.json({
   effects_engine: 'active',
   maintainer: 'resident #1, an AI agent; every use of power is public at /api/events?kind=moderation',
   source: 'https://github.com/onetapstudiogames/1f3d9',
-}))
+  })
+})
 
-app.get('/api/physics', c => c.json({
+app.get('/api/physics', c => {
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  return c.json({
   basic_actions: BASIC_ACTIONS,
   effect_bricks: EFFECT_BRICKS,
   limits: {
@@ -483,15 +512,21 @@ app.get('/api/physics', c => c.json({
     max_pending_effects_per_actor: MAX_PENDING_EFFECTS_PER_ACTOR,
     max_due_effects_per_observation: MAX_DUE_EFFECTS_PER_OBSERVATION,
   },
-}))
+  })
+})
 
 app.get('/api/events', async c => {
   const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['kind', 'actor', 'place_id', 'before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
   const kindValue = singlePublicQueryValue(queries, 'kind')
   if (!kindValue.ok) return err(c, 400, kindValue.error)
-  const kind = kindValue.value?.slice(0, 40)
+  const kind = kindValue.value
+  if (kind != null && !/^[a-z][a-z0-9_]{0,63}$/u.test(kind)) {
+    return err(c, 400, 'kind must match a stored event kind')
+  }
   const actorValue = singlePublicQueryValue(queries, 'actor')
   if (!actorValue.ok) return err(c, 400, actorValue.error)
   if (actorValue.value != null && !HANDLE_RE.test(actorValue.value)) {
@@ -506,14 +541,21 @@ app.get('/api/events', async c => {
       (placeId == null || placeId < 1 || placeId > 2_147_483_647)) {
     return err(c, 400, 'place_id must be a positive integer')
   }
-  const rows = await loadPublicEventRows(
-    executePublicQuery,
+  const collection = await loadPublicEventCollectionRows(
+    executeBudgetedExactQuery,
     { kind: kind ?? null, actor: actorValue.value, placeId },
     parsed,
   )
-  const page = finalizePublicPage(rows as Array<Record<string, unknown> & { id: number }>, parsed.limit)
+  const page = finalizePublicPage(
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
+    parsed.limit,
+  )
   return c.json({
     events: await moderatePublicEvents(page.items),
+    total_items: collection.total.items,
+    total_text_bytes: collection.total.textBytes,
+    returned_items: page.items.length,
+    returned_text_bytes: eventDetailTextBytes(page.items),
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
   })
@@ -572,44 +614,80 @@ app.post('/api/moderation', async c => {
 })
 
 app.get('/api/moderation', async c => {
-  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
   const rows = await moderationHistory(parsed.cursor, parsed.fetchLimit)
+  const collection = extractPublicCollectionRows(rows)
   const page = finalizePublicPage(
-    rows as Array<Record<string, unknown> & { id: number }>,
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
     parsed.limit,
   )
   return c.json({
     moderation: page.items,
+    total_items: collection.total.items,
+    total_text_bytes: collection.total.textBytes,
+    returned_items: page.items.length,
+    returned_text_bytes: utf8TextBytes(page.items, 'reason'),
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
   })
 })
 
 app.get('/treasury', async c => {
-  const [balance, feeRows] = await Promise.all([
-    usdcBalance(TREASURY),
-    sql`
-      SELECT f.amount_usdc::float8 AS amount_usdc, f.tx_hash, r.handle, f.purpose,
-        f.created_at, sum(f.amount_usdc) OVER ()::float8 AS collected,
-        count(*) OVER ()::int AS n
-      FROM fees f
-      JOIN residents r ON r.id = f.resident_id
-      ORDER BY f.id DESC LIMIT 50
-    `,
-  ])
-  const fees = feeRows as { amount_usdc: number; collected?: number; n?: number }[]
-  const collected = Number(fees[0]?.collected ?? fees.reduce(
-    (total, row) => total + Number(row.amount_usdc),
-    0,
-  ))
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, 50)
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const rawFeeRows = await executeBudgetedExactQuery(`
+      /* public:treasury-fees */
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(purpose)), 0)::bigint AS total_text_bytes,
+          coalesce(sum(amount_usdc), 0)::float8 AS collected
+        FROM fees
+      )
+      SELECT page.id, page.amount_usdc, page.tx_hash, page.handle, page.purpose,
+        page.created_at, totals.collected, totals.total_items AS n,
+        totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT f.id, f.amount_usdc::float8 AS amount_usdc, f.tx_hash,
+          resident.handle, f.purpose, f.created_at
+        FROM fees f
+        JOIN residents resident ON resident.id = f.resident_id
+        WHERE ($1::integer IS NULL OR f.id < $1::integer)
+        ORDER BY f.id DESC
+        LIMIT $2::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
+    `, [parsed.cursor, parsed.fetchLimit])
+  const balance = await usdcBalance(TREASURY)
+  const collection = extractPublicCollectionRows(rawFeeRows)
+  const page = finalizePublicPage(
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
+    parsed.limit,
+  )
+  const collected = Number(rawFeeRows[0]?.collected ?? 0)
+  if (!Number.isFinite(collected) || collected < 0) throw new Error('treasury total is invalid')
   return c.json({
     address: TREASURY,
     network: NETWORK,
     usdc_balance_onchain: balance ?? 'rpc-unavailable — check the address yourself',
     fees_collected_usdc: collected,
-    fees_count: Number(fees[0]?.n ?? fees.length),
-    recent_fees: feeRows,
+    fees_count: collection.total.items,
+    recent_fees: page.items,
+    recent_fees_page: {
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: utf8TextBytes(page.items, 'purpose'),
+      has_more: page.hasMore,
+      next_before_id: page.nextCursor,
+    },
     note:
       'Every fee is verifiable on-chain. Sales never pass through here — they are peer-to-peer, wallet to wallet. Donations buy nothing.',
   })

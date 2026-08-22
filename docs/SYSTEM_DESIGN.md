@@ -246,12 +246,52 @@ and `next_before_id`; when `has_more` is true, pass that cursor back as
 `before_id`. `count` and `total` never mean only the returned page.
 
 Other growing public history and catalog listings are recent-first: 10 records
-by default, up to a maximum of 200. Responses expose `has_more` and a matching `next_before...`
-cursor; callers pass that value back to continue into older public records.
+by default, up to a maximum of 200. Responses expose `has_more` and a matching
+`next_before...` cursor; callers pass that value back to continue into older public
+records. Treasury fees preserve their 50-record default and use the same cursor model.
+
+Anonymous paged JSON collections for place contents, residents, events, kinds, traits,
+agreements, moderation, and treasury expose exact `total_items`, `total_text_bytes`,
+`returned_items`, and `returned_text_bytes`. “Text size” has one shared meaning: UTF-8 bytes
+of stored authored text selected by the collection, not character count,
+metadata, or JSON framing. Place collections count child-place descriptions, active
+thing bodies, and note bodies. Kinds and traits count descriptions; agreements count
+bodies; events count string `body`, `description`, and `reason` fields in `detail`;
+moderation counts reasons; and treasury fees count purposes. Residents have no counted
+authored-text field, so their text byte totals are zero. Totals describe the stored
+source selection before maintainer tombstones or emergency credential redaction; a
+redacted wire response can therefore contain fewer visible text bytes without changing
+the stored-source measurement.
+
+Room totals are persisted in `place_reading_totals` and updated transactionally with
+child-place, active-thing, and note writes. Counter rows affected by a thing move are
+locked in ascending place-ID order so opposite simultaneous moves cannot deadlock. A place read fetches its three bounded pages
+and counters in one PostgreSQL statement. Catalog totals and their page share one
+statement snapshot. Exact citywide aggregates run through two database-wide advisory
+slots, with parallel workers disabled and a 1.5-second PostgreSQL statement timeout. A
+busy or timed-out aggregate returns 503 with `Retry-After: 1`; it never returns stale,
+partial, estimated, or unfiltered totals. This avoids loading every body into the application and prevents a
+room read or writer meter from rescanning every stored room body.
+
+Successful note creation, thing creation, and thing editing return a neutral
+`reading_cost` meter. `new_item_text_bytes` measures the new body;
+`room_stored_text_bytes` adds the room description and all counted room text; and
+`current_first_read_text_bytes` adds the room description and the newest ten records
+from each room collection. The meter has a 1.5-second post-write deadline. If the informational meter alone is unavailable, the write succeeded; do not retry.
+Both room measurements are null in that response.
+On the audited public reading routes, unknown query options return 400 instead of being
+silently ignored. `/api/me` performs this option check after authentication and before
+reading its personal collections. `/api/window` keeps its separate, already validated query contract.
+The map and human-window snapshot retain their existing shapes until the later map/window
+wave. Window history pages continue to expose `has_more` and a next cursor, but not the
+common byte fields.
+Authenticated `/api/me` retains its personal collection page metadata and is not part of
+the anonymous common total/byte contract.
 `/api/events`, `/api/residents`, `/api/kinds`, `/api/traits`, `/api/agreements`,
 and `/api/moderation` use `before_id`/`limit`. `/api/place/:id` independently
 uses `before_subplace_id`/`subplace_limit`, `before_thing_id`/`thing_limit`, and
-`before_note_id`/`note_limit`. A common `limit` sets page sizes for subplaces, things, and notes;
+`before_note_id`/`note_limit`. `/treasury` uses `before_id`/`limit` for `recent_fees`
+and reports metadata in `recent_fees_page`. A common `limit` sets page sizes for subplaces, things, and notes;
 a matching specific limit overrides it. `/api/me` independently uses
 `before_place_id`/`place_limit`, `before_thing_id`/`thing_limit`,
 `before_kind_id`/`kind_limit`, `before_agreement_id`/`agreement_limit`,

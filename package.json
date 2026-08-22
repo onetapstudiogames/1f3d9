@@ -36,7 +36,8 @@
     "migrate:preview:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-rotation",
     "migrate:preview:initial-recovery-codes": "node --experimental-strip-types scripts/migrate.ts --target preview --migration initial-recovery-codes",
     "migrate:preview:signin-retention": "node --experimental-strip-types scripts/migrate.ts --target preview --migration signin-retention",
-  "migrate:preview:flag-limits": "node --experimental-strip-types scripts/migrate.ts --target preview --migration flag-limits",
+    "migrate:preview:flag-limits": "node --experimental-strip-types scripts/migrate.ts --target preview --migration flag-limits",
+    "migrate:preview:affordable-reading-totals": "node --experimental-strip-types scripts/migrate.ts --target preview --migration affordable-reading-totals",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:public-pagination": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-pagination",
@@ -51,7 +52,8 @@
     "migrate:production:identity-rotation": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-rotation",
     "migrate:production:initial-recovery-codes": "node --experimental-strip-types scripts/migrate.ts --target production --migration initial-recovery-codes",
     "migrate:production:signin-retention": "node --experimental-strip-types scripts/migrate.ts --target production --migration signin-retention",
-  "migrate:production:flag-limits": "node --experimental-strip-types scripts/migrate.ts --target production --migration flag-limits"
+    "migrate:production:flag-limits": "node --experimental-strip-types scripts/migrate.ts --target production --migration flag-limits",
+    "migrate:production:affordable-reading-totals": "node --experimental-strip-types scripts/migrate.ts --target production --migration affordable-reading-totals"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

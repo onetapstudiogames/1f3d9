@@ -44,12 +44,17 @@ import {
   type ThingRow,
 } from './world-support.ts'
 import {
+  allowedPublicQuery,
+  extractPublicCollectionRows,
   finalizePublicPage,
   loadPublicPlaceCollectionRows,
   parsePublicPage,
+  utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import { safeReadingCostMeter } from './reading-cost.ts'
+import { executeBudgetedExactQuery } from './public-exact-query.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -126,6 +131,8 @@ async function cachedPublicMap() {
 
 export function mountWorldRoutes(app: Hono): void {
   app.get('/api/map', async c => {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const body = await cachedPublicMap()
     // The map tree is unbounded, so the proactive traversal budgets in
     // publicJson would withhold a large credential-free city. The app-wide
@@ -139,6 +146,13 @@ export function mountWorldRoutes(app: Hono): void {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
     const query = c.req.queries()
+    const allowed = allowedPublicQuery(query, [
+      'limit',
+      'before_subplace_id', 'subplace_limit',
+      'before_thing_id', 'thing_limit',
+      'before_note_id', 'note_limit',
+    ])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
     if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
     const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit', 'limit')
@@ -191,14 +205,26 @@ export function mountWorldRoutes(app: Hono): void {
       things: publicDetails.things,
       notes: publicNotes,
       subplaces_page: {
+        total_items: collections.totals.subplaces.items,
+        total_text_bytes: collections.totals.subplaces.textBytes,
+        returned_items: publicSubplaces.length,
+        returned_text_bytes: utf8TextBytes(subplacesPage.items, 'description'),
         has_more: subplacesPage.hasMore,
         next_before_subplace_id: subplacesPage.nextCursor,
       },
       things_page: {
+        total_items: collections.totals.things.items,
+        total_text_bytes: collections.totals.things.textBytes,
+        returned_items: publicDetails.things.length,
+        returned_text_bytes: utf8TextBytes(thingsPage.items, 'body'),
         has_more: thingsPage.hasMore,
         next_before_thing_id: thingsPage.nextCursor,
       },
       notes_page: {
+        total_items: collections.totals.notes.items,
+        total_text_bytes: collections.totals.notes.textBytes,
+        returned_items: publicNotes.length,
+        returned_text_bytes: utf8TextBytes(notesPage.items, 'body'),
         has_more: notesPage.hasMore,
         next_before_note_id: notesPage.nextCursor,
       },
@@ -206,6 +232,8 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/thing/:id', async c => {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const rows = await sql`
@@ -527,24 +555,46 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/kinds', async c => {
-    const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+    const queries = c.req.queries()
+    const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
-    const rows = await executePublicQuery(`
+    const rows = await executeBudgetedExactQuery(`
       /* public:kinds */
-      SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
-        revision.revision, revision.description, revision.traits, revision.recipe,
-        k.created_at
-      FROM kinds k
-      JOIN residents owner ON owner.id = k.owner_id
-      JOIN kind_revisions revision
-        ON revision.kind_id = k.id AND revision.revision = k.current_revision
-      WHERE ($1::integer IS NULL OR k.id < $1::integer)
-      ORDER BY k.id DESC
-      LIMIT $2::integer
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(revision.description)), 0)::bigint AS total_text_bytes
+        FROM kinds kind
+        JOIN kind_revisions revision
+          ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
+      )
+      SELECT page.id, page.name, page.owner_id, page.owner,
+        page.revision, page.description, page.traits, page.recipe, page.created_at,
+        totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
+          revision.revision, revision.description, revision.traits, revision.recipe,
+          k.created_at
+        FROM kinds k
+        JOIN residents owner ON owner.id = k.owner_id
+        JOIN kind_revisions revision
+          ON revision.kind_id = k.id AND revision.revision = k.current_revision
+        WHERE ($1::integer IS NULL OR k.id < $1::integer)
+        ORDER BY k.id DESC
+        LIMIT $2::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
     `, [parsed.cursor, parsed.fetchLimit])
-    const page = finalizePublicPage(rows as unknown as readonly KindRow[], parsed.limit)
+    const collection = extractPublicCollectionRows(rows)
+    const page = finalizePublicPage(collection.rows as unknown as readonly KindRow[], parsed.limit)
     return publicJson(c, {
       kinds: await moderatePublicKinds(page.items),
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: utf8TextBytes(page.items, 'description'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })
@@ -840,21 +890,36 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/traits', async c => {
-    const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+    const queries = c.req.queries()
+    const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
-    const rows = await executePublicQuery(`
+    const rows = await executeBudgetedExactQuery(`
       /* public:traits */
-      SELECT trait.id, trait.name, trait.description, trait.recipe,
-        (trait.recipe IS NOT NULL) AS mechanical,
-        coiner.handle AS coiner, trait.created_at
-      FROM traits trait
-      JOIN residents coiner ON coiner.id = trait.coiner_id
-      WHERE ($1::integer IS NULL OR trait.id < $1::integer)
-      ORDER BY trait.id DESC
-      LIMIT $2::integer
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(description)), 0)::bigint AS total_text_bytes
+        FROM traits
+      )
+      SELECT page.id, page.name, page.description, page.recipe, page.mechanical,
+        page.coiner, page.created_at, totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT trait.id, trait.name, trait.description, trait.recipe,
+          (trait.recipe IS NOT NULL) AS mechanical,
+          coiner.handle AS coiner, trait.created_at
+        FROM traits trait
+        JOIN residents coiner ON coiner.id = trait.coiner_id
+        WHERE ($1::integer IS NULL OR trait.id < $1::integer)
+        ORDER BY trait.id DESC
+        LIMIT $2::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
     `, [parsed.cursor, parsed.fetchLimit])
+    const collection = extractPublicCollectionRows(rows)
     const page = finalizePublicPage(
-      rows as Array<Record<string, unknown> & { id: number }>,
+      collection.rows as Array<Record<string, unknown> & { id: number }>,
       parsed.limit,
     )
     return publicJson(c, {
@@ -862,6 +927,10 @@ export function mountWorldRoutes(app: Hono): void {
         'trait',
         page.items,
       ),
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: utf8TextBytes(page.items, 'description'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })
@@ -967,9 +1036,10 @@ export function mountWorldRoutes(app: Hono): void {
       ingredientIds,
     })
     if (!made.ok) return err(c, made.status, made.error)
+    const readingCost = await safeReadingCostMeter(placeId, made.thing.body)
     return c.json(made.consumedIngredientIds === null
-      ? { thing: made.thing }
-      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds }, 201)
+      ? { thing: made.thing, reading_cost: readingCost }
+      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds, reading_cost: readingCost }, 201)
   })
 
   app.patch('/api/thing/:id', async c => {
@@ -1042,7 +1112,10 @@ export function mountWorldRoutes(app: Hono): void {
       LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
-    return c.json({ thing: rows[0] })
+    return c.json({
+      thing: rows[0],
+      reading_cost: await safeReadingCostMeter(rows[0].place_id, rows[0].body),
+    })
   })
 
   app.post('/api/thing/:id/upgrade', async c => {

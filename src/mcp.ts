@@ -161,7 +161,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      `Read the public map or one place. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
+      `Read the public map or one place. With place_id, places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; each collection reports exact total and returned item counts and UTF-8 text bytes. Paging options require place_id: use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -227,7 +227,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'make',
-    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day).',
+    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -517,7 +517,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'say',
-    description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day).',
+    description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -849,6 +849,14 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   const enumRejection = invalidEnumArgument(tool, args)
   if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input'), true)
+  if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input'),
+      true,
+    )
+  }
   if (!hostedChat && !c.req.header('authorization') && !allowsAnonymous(name)) {
     return toolResult(c, id, classifiedErrorText(publicMcpDoorAuthMessage(), 'auth_required'), true)
   }

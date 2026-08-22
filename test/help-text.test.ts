@@ -175,6 +175,32 @@ test('public help states the complete resident census contract', () => {
   }
 })
 
+test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    for (const field of [
+      'total_items', 'total_text_bytes', 'returned_items', 'returned_text_bytes',
+    ]) {
+      assert.match(text, new RegExp(`\\b${field}\\b`, 'u'), `${name}: ${field}`)
+    }
+    assert.match(text, /UTF-8 bytes/iu, `${name}: byte unit`)
+    assert.match(text, /stored authored text/iu, `${name}: counted text stage`)
+    assert.match(text, /reading_cost/iu, `${name}: writer meter`)
+    assert.match(text, /meter[^\n]{0,180}unavailable[^\n]{0,180}(?:write succeeded|do not retry)|(?:write succeeded|do not retry)[^\n]{0,180}meter[^\n]{0,180}unavailable/iu, `${name}: meter-only failure`)
+    assert.match(text, /unknown query options?[^\n]{0,80}400|400[^\n]{0,80}unknown query options?/iu, `${name}: honest unknown option`)
+    assert.match(text, /503[^\n]{0,120}Retry-After:\s*1|Retry-After:\s*1[^\n]{0,120}503/iu, `${name}: exact-read retry contract`)
+    assert.match(text, /(?:map|window)[^\n]{0,180}(?:separate|existing|current) shapes?|(?:separate|existing|current) shapes?[^\n]{0,180}(?:map|window)/iu, `${name}: map/window exception`)
+    assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
+  }
+
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'make'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
+})
+
 test('public help explains shared use without promising shared consumption or owner damage', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

@@ -46,3 +46,34 @@ test('the flag bucket schema admits every configured hourly flag limit', () => {
     'existing databases need the constraint-widening migration',
   )
 })
+
+test('room reading totals are maintained transactionally instead of rescanning every body', () => {
+  assert.match(
+    schema,
+    /create\s+table\s+if\s+not\s+exists\s+place_reading_totals\s*\([\s\S]*?place_id\s+integer\s+primary\s+key[\s\S]*?subplace_items\s+integer[\s\S]*?subplace_text_bytes\s+bigint[\s\S]*?thing_items\s+integer[\s\S]*?thing_text_bytes\s+bigint[\s\S]*?note_items\s+integer[\s\S]*?note_text_bytes\s+bigint[\s\S]*?\)/iu,
+    'fresh databases need one bounded counter row per place',
+  )
+  for (const trigger of [
+    'places_update_reading_totals',
+    'things_update_reading_totals',
+    'notes_update_reading_totals',
+  ]) {
+    assert.match(schema, new RegExp(`create\\s+trigger\\s+${trigger}`, 'iu'), trigger)
+    assert.match(migrations, new RegExp(`create\\s+trigger\\s+${trigger}`, 'iu'), `${trigger} migration`)
+  }
+  assert.match(
+    migrations,
+    /with\s+subplaces\s+as[\s\S]*?count\s*\(\s*\*\s*\)[\s\S]*?sum\s*\(\s*octet_length[\s\S]*?insert\s+into\s+place_reading_totals/iu,
+    'the additive migration must backfill exact counts and UTF-8 byte totals before enabling triggers',
+  )
+  assert.match(
+    migrations,
+    /lock\s+table\s+places\s*,\s*things\s*,\s*notes\s+in\s+share\s+row\s+exclusive\s+mode/iu,
+    'the migration must not miss a concurrent write between backfill and trigger installation',
+  )
+  assert.match(
+    migrations,
+    /perform\s+totals\.place_id[\s\S]*?order\s+by\s+totals\.place_id[\s\S]*?for\s+no\s+key\s+update/iu,
+    'thing moves must lock affected room counters in one deterministic order',
+  )
+})
