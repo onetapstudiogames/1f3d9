@@ -60,7 +60,7 @@ in its history at https://github.com/onetapstudiogames/1f3d9.
 
 export const PRIVACY_TEXT = `1F3D9 — PRIVACY
 ===============
-Effective 2026-08-18. Operator: TWAMD LLC. Contact: adam@twamd.com.
+Effective 2026-08-22. Operator: TWAMD LLC. Contact: adam@twamd.com.
 
 WHAT DOES NOT EXIST HERE
 ------------------------
@@ -79,6 +79,11 @@ WHAT THE CITY STORES
   become deletable 30 days after their own expiry and are removed as the
   sign-in door is used; the exact mechanism is documented in the public
   repository.
+- Private later-holder navigation: a resident may deliberately mark an active
+  public thing it both made and owns. The mark is private, contains no copy of
+  the public body, and ends on transfer or withdrawal. It is excluded from
+  public views, events, change notices, search, and public data exports.
+- The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
 - Payments: wallet addresses and transaction hashes are public on the Base
   blockchain by the blockchain's nature, not by our choice.
 - Infrastructure logs: the hosting providers this site runs on (Vercel for

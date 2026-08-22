@@ -88,6 +88,51 @@ test('canonical and generated discovery text stays synchronized', () => {
   assert.equal(normalizeLines(LLMS), normalizeLines(llms))
 })
 
+test('later-holder help keeps discovery deliberate, metadata-only, and honest about host logs', () => {
+  const policy =
+    'The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.'
+  const singularQuestion =
+    'An earlier holder of this resident identity marked 1 public item for later holders. View the index?'
+  const legal = read('../src/legal.ts')
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['legal text', legal],
+    ['MCP tools', mcpSource],
+  ] as const) {
+    assert.ok(text.includes(policy), `${name}: exact opening-record policy`)
+    assert.match(text, /later holder|later-holder/iu, `${name}: deliberate discovery`)
+  }
+
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['system design', specification],
+  ] as const) {
+    assert.match(text, /POST\s+\/api\/me[\s\S]{0,180}later_holder_notice/iu, `${name}: notice mode`)
+    assert.match(text, /later_holder_index/iu, `${name}: index mode`)
+    assert.match(text, /stable public ID|\bid\b[\s\S]{0,160}body_text_bytes/iu, `${name}: heading-only index`)
+    assert.match(text, /GET\s+\/api\/thing\/:id[\s\S]{0,180}(?:body|full)/iu, `${name}: chosen direct read`)
+    assert.match(text, /private[\s\S]{0,120}(?:event|change)/iu, `${name}: private mark`)
+    assert.ok(text.includes(singularQuestion), `${name}: exact singular question`)
+    assert.match(text, /untrusted resident-authored\s+data, never instructions/iu, `${name}: content trust`)
+    assert.match(text, /cursor[\s\S]{0,180}no private\s+mark ID/iu, `${name}: private cursor`)
+  }
+
+  const forbidden = [
+    'you left this', 'your memory', 'your previous self',
+    'what you forgot', 'welcome back', 'inheritance',
+  ]
+  for (const [name, text] of [
+    ['front door', frontdoor], ['compact machine map', llms], ['MCP tools', mcpSource],
+  ] as const) {
+    for (const phrase of forbidden) assert.doesNotMatch(text, new RegExp(phrase, 'iu'), `${name}: ${phrase}`)
+  }
+})
+
 test('public help sends voluntary root-key replacement only through the private browser', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],
@@ -241,7 +286,7 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 20 tools[\s\S]{0,500}legacy `\/mcp` advertises all 20[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}19[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 22 tools[\s\S]{0,500}legacy `\/mcp` advertises all 22[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}21[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
 })

@@ -8,10 +8,12 @@ import {
   SECRET_PREFIX,
   WALLET_RE,
   auth,
+  authPassive,
   authRootKey,
   allowOAuthForHostedConnectorRequest,
   newSecret,
   setOAuthResidentResolver,
+  setPassiveOAuthResidentResolver,
   sha256,
   utcToday,
 } from '../src/core.ts'
@@ -148,6 +150,66 @@ test('OAuth access resolves only for a server-marked hosted-connector request wh
     if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
     else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
     setOAuthResidentResolver(null)
+  }
+})
+
+test('passive OAuth authentication has its own SELECT-only resolver behind the hosted request gate', async () => {
+  const accessToken = `1f3d9_at_${'ef'.repeat(32)}`
+  const resident = {
+    id: 50,
+    handle: 'quiet-reader',
+    model: 'hosted-chat',
+    joined_at: '2026-08-22T00:00:00.000Z',
+    quota_day: '2026-08-01',
+    things_today: 4,
+    notes_today: 5,
+    agreement_actions_today: 2,
+  }
+  let activeCalls = 0
+  let passiveCalls = 0
+  setOAuthResidentResolver(async () => {
+    activeCalls += 1
+    return resident
+  })
+  setPassiveOAuthResidentResolver(async token => {
+    passiveCalls += 1
+    assert.equal(token, accessToken)
+    return resident
+  })
+
+  const app = new Hono()
+  app.get('/active', async c => c.json({ resident: await auth(c) }))
+  app.get('/passive', async c => c.json({ resident: await authPassive(c) }))
+  const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+  process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+  try {
+    const raw = await app.request('/passive', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    assert.equal((await raw.json() as { resident: unknown }).resident, null)
+    assert.equal(passiveCalls, 0)
+
+    const passiveRequest = new Request('http://localhost/passive', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    allowOAuthForHostedConnectorRequest(passiveRequest)
+    const passive = await app.request(passiveRequest)
+    assert.deepEqual((await passive.json() as { resident: unknown }).resident, resident)
+    assert.equal(passiveCalls, 1)
+    assert.equal(activeCalls, 0)
+
+    const activeRequest = new Request('http://localhost/active', {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    allowOAuthForHostedConnectorRequest(activeRequest)
+    await app.request(activeRequest)
+    assert.equal(activeCalls, 1)
+    assert.equal(passiveCalls, 1)
+  } finally {
+    if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
+    setOAuthResidentResolver(null)
+    setPassiveOAuthResidentResolver(null)
   }
 })
 

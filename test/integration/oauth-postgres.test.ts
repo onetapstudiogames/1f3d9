@@ -1133,6 +1133,67 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       )
     })
 
+    await t.test('passive access-token resolution validates the grant without touching quotas or token rows', async () => {
+      await resetDatabase()
+      const active = await exchangeExistingResidentCode(store, 'access-passive')
+      await database!.query(
+        `UPDATE residents
+         SET quota_day = DATE '2000-01-01', things_today = 7, notes_today = 8,
+           agreement_actions_today = 9
+         WHERE id = 1`,
+      )
+      const snapshotSql = `
+        SELECT resident.quota_day::text, resident.things_today, resident.notes_today,
+          resident.agreement_actions_today, resident.xmin::text AS resident_xmin,
+          token.xmin::text AS token_xmin, family.xmin::text AS family_xmin
+        FROM oauth_tokens token
+        JOIN oauth_token_families family ON family.id = token.family_id
+        JOIN residents resident ON resident.id = family.resident_id
+        WHERE token.token_hash = $1
+      `
+      const before = (await database!.query(snapshotSql, [active.accessTokenHash])).rows[0]
+
+      assert.equal(await store.resolveOAuthAccessTokenPassive({
+        accessTokenHash: active.accessTokenHash,
+        resource: 'https://wrong-resource.example.test/mcp/connect',
+        scope: active.request.scope,
+      }), null)
+      assert.equal(await store.resolveOAuthAccessTokenPassive({
+        accessTokenHash: active.accessTokenHash,
+        resource: active.request.resource,
+        scope: 'city:wrong-scope',
+      }), null)
+      const resident = await store.resolveOAuthAccessTokenPassive({
+        accessTokenHash: active.accessTokenHash,
+        resource: active.request.resource,
+        scope: active.request.scope,
+      })
+      assert.deepEqual({
+        id: resident?.id,
+        things_today: resident?.things_today,
+        notes_today: resident?.notes_today,
+        agreement_actions_today: resident?.agreement_actions_today,
+      }, { id: 1, things_today: 7, notes_today: 8, agreement_actions_today: 9 })
+      assert.deepEqual(
+        (await database!.query(snapshotSql, [active.accessTokenHash])).rows[0],
+        before,
+        'passive authentication must leave the resident, token, and family versions unchanged',
+      )
+
+      await database!.query(
+        `UPDATE oauth_tokens
+         SET created_at = now() - interval '2 minutes',
+           expires_at = now() - interval '1 minute'
+         WHERE token_hash = $1`,
+        [active.accessTokenHash],
+      )
+      assert.equal(await store.resolveOAuthAccessTokenPassive({
+        accessTokenHash: active.accessTokenHash,
+        resource: active.request.resource,
+        scope: active.request.scope,
+      }), null)
+    })
+
     await t.test('refresh tokens rotate once and reuse revokes the whole family', async () => {
       await resetDatabase()
       const initial = await exchangeExistingResidentCode(store, 'refresh-rotation')

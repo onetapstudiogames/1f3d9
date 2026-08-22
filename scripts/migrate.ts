@@ -45,6 +45,7 @@ type RemoteMigration =
   | 'public-search-indexes'
   | 'public-change-markers'
   | 'thing-maker'
+  | 'later-holder-marks'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -69,6 +70,7 @@ export type MigrationFile =
   | 'db/migrations/20260821_public_search_indexes.sql'
   | 'db/migrations/20260821_public_change_markers.sql'
   | 'db/migrations/20260822_thing_maker.sql'
+  | 'db/migrations/20260822_later_holder_marks.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -118,6 +120,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'public-search-indexes': 'db/migrations/20260821_public_search_indexes.sql',
   'public-change-markers': 'db/migrations/20260821_public_change_markers.sql',
   'thing-maker': 'db/migrations/20260822_thing_maker.sql',
+  'later-holder-marks': 'db/migrations/20260822_later_holder_marks.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

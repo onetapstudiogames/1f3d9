@@ -18,6 +18,7 @@ const eventsPresenceIndexMigrationFile = 'db/migrations/20260821_events_presence
 const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_indexes.sql' as const
 const publicChangeMarkersMigrationFile = 'db/migrations/20260821_public_change_markers.sql' as const
 const thingMakerMigrationFile = 'db/migrations/20260822_thing_maker.sql' as const
+const laterHolderMarksMigrationFile = 'db/migrations/20260822_later_holder_marks.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -325,6 +326,42 @@ test('thing-maker is selected as one explicit preview or production migration', 
     },
   )
   assert.equal(production.migrationFile, thingMakerMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+})
+
+test('later-holder marks are selected as one explicit transactional preview or production migration', () => {
+  const migration = migrationDdl(laterHolderMarksMigrationFile)
+  assert.match(migration, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+thing_later_holder_marks/iu)
+  assert.match(migration, /CREATE\s+TRIGGER\s+thing_later_holder_marks_check_eligibility/iu)
+  assert.match(migration, /CREATE\s+TRIGGER\s+things_end_later_holder_mark/iu)
+  assert.equal(prepareMigrationExecution(laterHolderMarksMigrationFile, migration).mode, 'transactional')
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'later-holder-marks'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, laterHolderMarksMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'later-holder-marks'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'later-holder-marks-release',
+    },
+  )
+  assert.equal(production.migrationFile, laterHolderMarksMigrationFile)
   assert.equal(production.executionMode, 'transactional')
 })
 

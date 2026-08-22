@@ -844,6 +844,82 @@ CREATE INDEX IF NOT EXISTS moderation_actions_target
 CREATE INDEX IF NOT EXISTS moderation_actions_time
   ON moderation_actions (created_at DESC, id DESC);
 
+-- A deliberate private pointer to one active public thing. It carries no
+-- delivery, opening, session, or reader state and never becomes a public event.
+CREATE TABLE IF NOT EXISTS thing_later_holder_marks (
+  id           BIGSERIAL PRIMARY KEY,
+  resident_id  INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  thing_id     INTEGER NOT NULL UNIQUE REFERENCES things(id) ON DELETE RESTRICT,
+  marked_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS thing_later_holder_marks_resident_order
+  ON thing_later_holder_marks (resident_id, id DESC);
+
+CREATE OR REPLACE FUNCTION validate_thing_later_holder_mark() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  thing things%ROWTYPE;
+  moderation_action TEXT;
+BEGIN
+  SELECT candidate.* INTO thing
+  FROM things candidate
+  WHERE candidate.id = NEW.thing_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'later-holder mark names no thing' USING ERRCODE = '23503';
+  END IF;
+  IF thing.maker_id IS DISTINCT FROM NEW.resident_id
+    OR thing.owner_id IS DISTINCT FROM NEW.resident_id
+    OR thing.withdrawn_at IS NOT NULL THEN
+    RAISE EXCEPTION 'later-holder mark requires its active maker-owner'
+      USING ERRCODE = '23514';
+  END IF;
+  SELECT action INTO moderation_action
+  FROM moderation_actions
+  WHERE target_type = 'thing' AND target_id = NEW.thing_id
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1;
+  IF moderation_action = 'remove' THEN
+    RAISE EXCEPTION 'a hidden thing cannot receive a later-holder mark'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS thing_later_holder_marks_check_eligibility
+  ON thing_later_holder_marks;
+CREATE TRIGGER thing_later_holder_marks_check_eligibility
+  BEFORE INSERT ON thing_later_holder_marks
+  FOR EACH ROW EXECUTE FUNCTION validate_thing_later_holder_mark();
+
+CREATE OR REPLACE FUNCTION protect_thing_later_holder_mark() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'later-holder marks cannot be edited; unmark and mark again'
+    USING ERRCODE = '55000';
+END
+$$;
+DROP TRIGGER IF EXISTS thing_later_holder_marks_keep_order
+  ON thing_later_holder_marks;
+CREATE TRIGGER thing_later_holder_marks_keep_order
+  BEFORE UPDATE ON thing_later_holder_marks
+  FOR EACH ROW EXECUTE FUNCTION protect_thing_later_holder_mark();
+
+CREATE OR REPLACE FUNCTION end_thing_later_holder_mark() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.owner_id IS DISTINCT FROM OLD.owner_id
+    OR (OLD.withdrawn_at IS NULL AND NEW.withdrawn_at IS NOT NULL) THEN
+    DELETE FROM thing_later_holder_marks WHERE thing_id = NEW.id;
+  END IF;
+  RETURN NULL;
+END
+$$;
+DROP TRIGGER IF EXISTS things_end_later_holder_mark ON things;
+CREATE TRIGGER things_end_later_holder_mark
+  AFTER UPDATE OF owner_id, withdrawn_at ON things
+  FOR EACH ROW EXECUTE FUNCTION end_thing_later_holder_mark();
+
 CREATE OR REPLACE FUNCTION set_thing_maker_on_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN

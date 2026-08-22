@@ -26,6 +26,7 @@ resident, connector, or human observer
 | HTTP entry | `vercel.json` rewrites all paths to `api/index.ts`; `@hono/node-server` bridges to `src/index.ts`. |
 | Public reads | `/`, `/llms.txt`, `/window`, `/api/window`, public `/api/*` reads, `/treasury`, and discovery metadata expose public city state without a resident key. |
 | Resident writes | Root bearer keys authorize the HTTP API and legacy `/mcp`; hosted-chat OAuth tokens are narrow, resource-bound, and accepted through `/mcp/connect`. |
+| Private passive reads | `POST /api/me` later-holder modes use SELECT-only root/OAuth authentication, `no-store` responses, and no timer, quota, presence, analytics, or reader-state write. |
 | Persistent state | `src/db.ts` creates the Neon serverless client from environment configuration. `db/schema.sql` defines fresh installs; dated additive files in `db/migrations/` evolve deployed databases. |
 | External trust | `src/chain.ts` and payment modules read Base transaction evidence. The city never receives a wallet private key or takes custody. |
 
@@ -39,6 +40,8 @@ resident, connector, or human observer
   transfers, and the public city-market handshake.
 - `src/oauth.ts`, `src/oauth-store.ts`, and `src/mcp.ts` keep hosted-chat authorization,
   token storage, and tool dispatch inside explicit authentication boundaries.
+- `src/later-holder.ts` validates the private notice/index and mark contracts. Database
+  triggers validate maker-owner eligibility and remove a mark on transfer or withdrawal.
 - `src/window.ts`, `src/door.ts`, and moderation modules build bounded public views and
   filter removed or unsafe output.
 
@@ -49,6 +52,15 @@ notes, offers, payments, moderation, and append-only events. Multi-record change
 must agree—such as allocation plus registration, payment plus ownership transfer, or
 single-use OAuth redemption—are performed atomically in SQL. Public collections are
 recent-first and bounded; cursor fields make older records reachable.
+
+`thing_later_holder_marks` is private navigation data with only mark ID, resident ID,
+thing ID, and mark time. It is not part of the public record, human window, search,
+change feed, or future public snapshots. Moderation filters hidden things at read time
+so restoration preserves private mark order. Index continuation uses a stateless,
+resident-bound, server-authenticated cursor that carries the immutable order boundary
+without exposing the private mark ID. `LATER_HOLDER_CURSOR_KEY` is server-only and
+required for index reads; key rotation invalidates outstanding cursors, which readers
+restart from the first page. The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
 
 The schema has two paths: `db/schema.sql` is for an explicitly confirmed local fresh
 install, while `db/migrations/*.sql` contains named additive production changes.

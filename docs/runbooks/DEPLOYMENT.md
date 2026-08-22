@@ -11,8 +11,36 @@ reviewed Git commit and make production impossible to reproduce from `main`.
 
 ## Release a change
 
+### Later-holder prerequisite
+
+Before the first application rollout containing deliberate later-holder discovery,
+complete these one-time setup steps:
+
+1. Provision the server-only `LATER_HOLDER_CURSOR_KEY` in both Vercel Preview and
+   Production. Verify each value is exactly 64 lowercase hexadecimal characters without
+   printing or copying it into logs.
+2. Apply `npm run migrate:preview:later-holder-marks` to the isolated Preview database
+   and verify its postconditions. Then take the required Production snapshot and apply
+   `npm run migrate:production:later-holder-marks` before merging the application.
+3. Exercise the signed notice and index in Preview. A missing or malformed cursor key
+   must return the documented no-store 503 rather than accepting an unusable index.
+For the first rollout and every later release preparation, re-confirm that both provider
+keys remain configured and both additive migrations remain applied. Then run preparation
+with these non-secret acknowledgements in the process environment:
+
+```sh
+CONFIRM_LATER_HOLDER_PROVIDER_KEY=VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION \
+CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+scripts/deploy.sh --prepare
+```
+
+These acknowledgements contain no key material. The preparation script never reads an
+environment file, queries or changes Vercel, or applies a migration; it only blocks the
+release gates until the operator confirms those separate prerequisites.
+
 1. Put the change on a review branch, push it, and leave the worktree clean.
-2. Run `scripts/deploy.sh --prepare`. This is a read-only release check: it
+2. Run the acknowledgement-prefixed `scripts/deploy.sh --prepare` command above. This is
+   a read-only release check: it
    proves the branch is pushed at the tested commit and runs the test,
    type-check, PostgreSQL integration, and browser suites. It does not upload or
    deploy anything.

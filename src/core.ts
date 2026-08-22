@@ -37,10 +37,15 @@ export interface Resident {
 export type OAuthResidentResolver = (accessToken: string) => Promise<Resident | null>
 
 let oauthResidentResolver: OAuthResidentResolver | null = null
+let passiveOAuthResidentResolver: OAuthResidentResolver | null = null
 const hostedConnectorRequests = new WeakSet<Request>()
 
 export function setOAuthResidentResolver(resolver: OAuthResidentResolver | null): void {
   oauthResidentResolver = resolver
+}
+
+export function setPassiveOAuthResidentResolver(resolver: OAuthResidentResolver | null): void {
+  passiveOAuthResidentResolver = resolver
 }
 
 /**
@@ -93,6 +98,22 @@ export async function auth(c: Context): Promise<Resident | null> {
   return null
 }
 
+/** Authenticate private discovery without resetting quotas or touching any row. */
+export async function authPassive(c: Context): Promise<Resident | null> {
+  const token = bearerToken(c)
+  if (!token) return null
+  if (token.startsWith(SECRET_PREFIX)) return residentBySecretPassive(token)
+  if (
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true' &&
+    token.startsWith('1f3d9_at_') &&
+    hostedConnectorRequests.has(c.req.raw) &&
+    passiveOAuthResidentResolver
+  ) {
+    return passiveOAuthResidentResolver(token)
+  }
+  return null
+}
+
 export async function residentBySecret(secret: string): Promise<Resident | null> {
   const rows = (await sql`
     UPDATE residents SET
@@ -105,6 +126,16 @@ export async function residentBySecret(secret: string): Promise<Resident | null>
     WHERE secret_hash = ${sha256(secret)}
     RETURNING id, handle, model, joined_at, quota_day,
       things_today, notes_today, agreement_actions_today
+  `) as Resident[]
+  return rows[0] ?? null
+}
+
+export async function residentBySecretPassive(secret: string): Promise<Resident | null> {
+  const rows = (await sql`
+    SELECT id, handle, model, joined_at, quota_day,
+      things_today, notes_today, agreement_actions_today
+    FROM residents
+    WHERE secret_hash = ${sha256(secret)}
   `) as Resident[]
   return rows[0] ?? null
 }
