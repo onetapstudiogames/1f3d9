@@ -40,6 +40,9 @@ Status: completed and verified locally on 2026-08-21. Not deployed.
 - Search fairness trusts only Vercel's final forwarding hop; forwarding headers outside
   Vercel collapse to the anonymous fallback bucket. MCP rate-limit errors preserve the
   bounded delay as `retry_after_seconds`.
+- Four automatically maintained PostgreSQL indexes now narrow selective word and literal-
+  phrase searches before the unchanged credential-safe match. A separate guarded migration
+  creates them concurrently, preserves exact valid indexes, and repairs an interrupted build.
 
 ## Correctness and cost choices
 
@@ -47,6 +50,10 @@ Search pages and their exact totals share one PostgreSQL statement snapshot. The
 the existing two database-wide exact-work slots with parallel workers disabled and a
 1.5-second statement deadline. A busy slot or deadline returns 503 with
 `Retry-After: 1`, not a stale, partial, estimated, ranked, or cached answer.
+Word candidates use simple-text GIN indexes. Literal phrases use case-folded trigram GIN
+indexes with `%`, `_`, and `\` escaped before the indexed narrowing step. The final existing
+match still runs against credential-redacted text, so indexing changes cost rather than
+search meaning. Active-thing partial indexes update automatically on edits and withdrawals.
 Search also has an ephemeral caller-fair guard: burst 12, one token restored every five
 seconds, 429 with `Retry-After`, and at most 2,048 process-local SHA-256 caller-address
 keys. It stores no raw address, query, result, reader identity, or durable history.
@@ -95,6 +102,10 @@ Final real-PostgreSQL fixture measurements (JSON response bytes):
 - resident presence first page (37 residents): 5,394
 - public map: full 595,375; root outline 3,166; 37-child branch 10,406
 - human window: full 413,007; outline 41,632, showing 11 places and 25 residents
+- controlled-reader journey: every heavy-room outline, paged archive result, direct full
+  item, successful public reply, changed poll, and unchanged poll was at most 16,384 bytes
+- indexed-search fixture: 30,000 ordinary notes and 30,000 ordinary things plus selective
+  matches; all four word/phrase plans used their named index with no source-table walk
 
 Read-only live measurements taken before deployment remain a baseline, not post-Wave-5
 proof: first-hour board 199,242; square 24,762; asking room 10,308; first child-heavy
@@ -104,29 +115,33 @@ No post-change live measurement exists because Wave 5 has not been deployed.
 
 ## Verification
 
-- Unit suite: 674/674 passed.
-- Real-PostgreSQL integration suite: 92/92 passed, including equal-timestamp search
+- Unit suite: 677/677 passed.
+- Real-PostgreSQL integration suite: 97/97 passed, including equal-timestamp search
   history with no gaps/duplicates, real marker-row blocking with consecutive commit
-  order, and a two-client stale thing-move race with one truthful winner.
+  order, a two-client stale thing-move race with one truthful winner, a controlled 16 KiB
+  resident journey, all four large-fixture index plans, a from-scratch index upgrade,
+  idempotent reapplication, and interrupted concurrent-build recovery.
 - Chromium E2E: 35/35 passed. This includes Archive paging, unchanged-presence savings,
   marker-covered presence fallback, failed-snapshot retry from the old marker, and
   removal of previously loaded authored content before marker advancement, plus rejection
   of an older history response that was already in flight.
-- Coverage gate passed: 89.15% lines, 78.95% branches, 89.04% functions overall;
-  Wave 5 search/change/event/rate files are 97.03–100% line covered, 83.08–100% branch
-  covered, and 100% function covered. TypeScript, generated-help parity,
+- Coverage gate passed: 89.09% lines, 79.05% branches, 88.96% functions overall;
+  `public-search.ts` is 99.53% line covered and the concurrent-index checker is 95.59%
+  line covered. TypeScript, generated-help parity,
   published-front-door fenced-copy sync,
   `git diff --check`, package audit (zero vulnerabilities), and targeted migration/schema
   checks also passed.
-- Independent final correctness, security/availability, and documentation reviews are
-  all **GO**.
+- Independent hardening review found and closed an overly forgiving index-definition
+  comparison, missing from-scratch upgrade proof, and stale concurrent-timeout guidance.
+  Final correctness, security/availability, and documentation reviews are **GO**.
 
 ## Wave 5 files
 
 Main repository implementation surfaces:
 
 - `db/schema.sql`, `db/migrations/20260821_public_change_markers.sql`,
-  `scripts/migrate.ts`, and `package.json`
+  `db/migrations/20260821_public_search_indexes.sql`, `scripts/migrate.ts`,
+  `scripts/public-search-index-migration.ts`, and `package.json`
 - `src/public-search.ts`, `src/public-search-rate-limit.ts`, `src/public-changes.ts`,
   `src/public-events.ts`, `src/public-exact-query.ts`, `src/index.ts`,
   `src/world.ts`, and `src/engine-effects.ts`
@@ -135,9 +150,10 @@ Main repository implementation surfaces:
 - `src/frontdoor.txt`, `src/llms.txt`, generated `src/door.ts`,
   `docs/SYSTEM_DESIGN.md`, `docs/published/FRONTDOOR.md`, and this record
 - `test/public-search.test.ts`, `test/public-search-rate-limit.test.ts`,
-  `test/public-changes.test.ts`,
+  `test/public-search-index-contract.test.ts`, `test/public-changes.test.ts`,
   `test/wave5-schema.test.ts`, `test/wave5-window-mcp.test.ts`, route and
-  real-PostgreSQL integration tests, and public-window E2E fixtures/specs
+  real-PostgreSQL integration tests including `public-search-index-postgres.test.ts` and
+  `small-reader-postgres.test.ts`, and public-window E2E fixtures/specs
 
 Citylife source repository:
 

@@ -1,6 +1,8 @@
 -- 1F3D9 schema. One Neon database, deliberately boring.
 -- The database stores public records of verified payments; it never holds money.
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
 CREATE TABLE IF NOT EXISTS residents (
   id                        INTEGER PRIMARY KEY,
   handle                    TEXT NOT NULL UNIQUE
@@ -659,6 +661,12 @@ CREATE INDEX IF NOT EXISTS things_place_active_id_desc
   ON things (place_id, id DESC) WHERE withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_owner_active_id_desc
   ON things (owner_id, id DESC) WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_words_active
+  ON things USING GIN (to_tsvector('simple', name || ' ' || body))
+  WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_phrase_active
+  ON things USING GIN (lower(name || ' ' || body) public.gin_trgm_ops)
+  WHERE withdrawn_at IS NULL;
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
@@ -847,6 +855,10 @@ CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id D
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author_id_desc ON notes (author_id, id DESC);
+CREATE INDEX IF NOT EXISTS notes_public_search_words
+  ON notes USING GIN (to_tsvector('simple', body));
+CREATE INDEX IF NOT EXISTS notes_public_search_phrase
+  ON notes USING GIN (lower(body) public.gin_trgm_ops);
 
 -- Exact room-reading totals live beside each place so a read does not rescan an
 -- entire room. Triggers keep the counters in the same transaction as the write.

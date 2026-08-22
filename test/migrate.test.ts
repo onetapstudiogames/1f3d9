@@ -5,6 +5,7 @@ import {
   MIGRATION_LOCK_TIMEOUT,
   MIGRATION_STATEMENT_TIMEOUT,
   eventsPresenceIndexRecoveryStatements,
+  publicSearchIndexRecoveryStatements,
   prepareMigrationExecution,
   prepareMigrationStatements,
   resolveMigrationRun,
@@ -14,6 +15,7 @@ import {
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
 const affordableReadingMigrationFile = 'db/migrations/20260820_affordable_reading_totals.sql' as const
 const eventsPresenceIndexMigrationFile = 'db/migrations/20260821_events_presence_index.sql' as const
+const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_indexes.sql' as const
 const publicChangeMarkersMigrationFile = 'db/migrations/20260821_public_change_markers.sql' as const
 
 function migrationDdl(file: string): string {
@@ -329,7 +331,10 @@ test('every transactional migration path runs under enforced local time limits',
   assert.ok(migrationFiles.length >= 14)
 
   for (const file of [...migrationFiles, 'schema.sql']) {
-    if (file === '20260821_events_presence_index.sql') continue
+    if (
+      file === '20260821_events_presence_index.sql' ||
+      file === '20260821_public_search_indexes.sql'
+    ) continue
     const ddl = file === 'schema.sql'
       ? schemaDdl
       : readFileSync(new URL(file, migrationsDirectory), 'utf8')
@@ -432,6 +437,76 @@ test('presence-index retry keeps a valid exact index and repairs only invalid re
     () => eventsPresenceIndexRecoveryStatements(
       [{ ...exactState, access_method: 'hash' }],
       createStatement,
+    ),
+    /conflicts with the reviewed definition/i,
+  )
+})
+
+test('search-index retry keeps exact indexes and repairs only interrupted builds', () => {
+  const statements = splitSqlStatements(migrationDdl(publicSearchIndexesMigrationFile))
+  const createStatements = statements.slice(1)
+  const exactRows = [
+    {
+      index_schema: 'public', index_name: 'notes_public_search_words',
+      table_schema: 'public', table_name: 'notes', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: true, predicate: null,
+      columns: ["to_tsvector('simple'::regconfig, body)"],
+      operator_classes: ['tsvector_ops'],
+    },
+    {
+      index_schema: 'public', index_name: 'notes_public_search_phrase',
+      table_schema: 'public', table_name: 'notes', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: true, predicate: null,
+      columns: ['lower(body)'], operator_classes: ['gin_trgm_ops'],
+    },
+    {
+      index_schema: 'public', index_name: 'things_public_search_words_active',
+      table_schema: 'public', table_name: 'things', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: false, predicate: 'withdrawn_at IS NULL',
+      columns: ["to_tsvector('simple'::regconfig, (name || ' '::text) || body)"],
+      operator_classes: ['tsvector_ops'],
+    },
+    {
+      index_schema: 'public', index_name: 'things_public_search_phrase_active',
+      table_schema: 'public', table_name: 'things', valid: true, ready: true,
+      unique_index: false, access_method: 'gin', key_column_count: 1,
+      total_column_count: 1, unfiltered: false, predicate: 'withdrawn_at IS NULL',
+      columns: ["lower((name || ' '::text) || body)"],
+      operator_classes: ['gin_trgm_ops'],
+    },
+  ] as const
+
+  assert.deepEqual(publicSearchIndexRecoveryStatements(exactRows, createStatements), [])
+  assert.deepEqual(
+    publicSearchIndexRecoveryStatements(
+      exactRows.map(row => row.index_name === 'notes_public_search_words'
+        ? { ...row, valid: false, ready: false }
+        : row),
+      createStatements,
+    ),
+    [
+      'DROP INDEX CONCURRENTLY IF EXISTS public.notes_public_search_words',
+      createStatements[0],
+    ],
+  )
+  assert.throws(
+    () => publicSearchIndexRecoveryStatements(
+      exactRows.map(row => row.index_name === 'notes_public_search_phrase'
+        ? { ...row, operator_classes: ['tsvector_ops'] }
+        : row),
+      createStatements,
+    ),
+    /conflicts with the reviewed definition/i,
+  )
+  assert.throws(
+    () => publicSearchIndexRecoveryStatements(
+      exactRows.map(row => row.index_name === 'things_public_search_phrase_active'
+        ? { ...row, columns: ["lower(name) || ' '::text || body"] }
+        : row),
+      createStatements,
     ),
     /conflicts with the reviewed definition/i,
   )

@@ -367,6 +367,23 @@ disabled parallel workers, and 1.5-second statement deadline as other exact publ
 A busy slot or deadline returns 503 with `Retry-After: 1`; no search cache, estimate,
 partial result, or relevance shortcut replaces the exact answer.
 
+Candidate selection is backed by four automatically maintained PostgreSQL GIN indexes:
+simple word indexes and case-folded literal-phrase indexes for notes and active things.
+The indexed test is only a narrowing step. The existing credential-redacted match still
+runs afterwards, so the indexes cannot make private-looking text searchable or change
+exact totals, chronological order, moderation, or withdrawal behavior. Phrase patterns
+escape `%`, `_`, and `\` before the trigram lookup; they remain literal characters.
+A phrase with fewer than three usable characters may require a full index walk, so the
+same exact-work slots, rate limit, and 1.5-second deadline remain necessary.
+
+Fresh schemas create these indexes directly. Upgrades select the additive
+`public-search-indexes` migration explicitly with
+`npm run migrate:preview:public-search-indexes` or
+`npm run migrate:production:public-search-indexes`. It installs the trusted `pg_trgm`
+extension in `public`, builds all four indexes concurrently outside the normal transaction
+wrapper, leaves an exact valid index untouched, repairs an interrupted concurrent build,
+and rejects a same-name conflicting definition. Neither command runs automatically.
+
 Before exact-work admission, search also uses a caller-fair token bucket: burst 12,
 one token restored every 5 seconds, and 429 with `Retry-After` on exhaustion. Keys are
 SHA-256 hashes of the edge-derived caller address. The process-local map is capped at

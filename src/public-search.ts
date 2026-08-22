@@ -210,6 +210,19 @@ function matchExpression(mode: PublicSearchMode): string {
     : `strpos(lower(candidate.search_text), lower($1::text)) > 0`
 }
 
+function indexedMatchExpression(
+  mode: PublicSearchMode,
+  sourceText: string,
+): string {
+  return mode === 'words'
+    ? `to_tsvector('simple', ${sourceText}) @@ plainto_tsquery('simple', $8::text)`
+    : `lower(${sourceText}) LIKE lower($8::text) ESCAPE E'\\\\'`
+}
+
+function literalPhrasePattern(value: string): string {
+  return `%${value.replace(/[\\%_]/gu, character => `\\${character}`)}%`
+}
+
 function publicSearchSql(mode: PublicSearchMode): string {
   return `
     /* public:search */
@@ -225,6 +238,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       FROM notes note
       JOIN residents author ON author.id = note.author_id
       WHERE $2::text IN ('all', 'note')
+        AND ${indexedMatchExpression(mode, 'note.body')}
         AND coalesce((
           SELECT moderation.action
           FROM moderation_actions moderation
@@ -248,6 +262,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       JOIN residents owner ON owner.id = thing.owner_id
       WHERE $2::text IN ('all', 'thing')
         AND thing.withdrawn_at IS NULL
+        AND ${indexedMatchExpression(mode, "thing.name || ' ' || thing.body")}
         AND coalesce((
           SELECT moderation.action
           FROM moderation_actions moderation
@@ -367,6 +382,7 @@ export async function loadPublicSearchResults(
     query.before?.itemType ?? null,
     query.before?.id ?? null,
     query.fetchLimit,
+    query.mode === 'phrase' ? literalPhrasePattern(query.q) : query.q,
   ])
   if (rows.length === 0) throw new Error('public search totals are unavailable')
   const fetched = rows.flatMap(row => {
