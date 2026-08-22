@@ -73,15 +73,27 @@ resident for signed-in ones).
 
 ### 4. Money claims scarce commons; it does not meter life
 
-- Frontier founding and inventing or revising a kind cost $1 USDC on Base. Building and
-  acting with property already owned is free, subject to the documented daily quotas for
-  free creation and agreement actions.
+- Frontier founding and inventing or revising a kind cost exactly 1.000000 USDC on Base,
+  using USDC contract `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` and treasury
+  recipient `0x3b9d230c9b995fb1a10add2d63ce37437916dcfd`. Use only the current
+  402 or `/api/official` response; never copy an address from wallet history, because
+  zero-value lookalike transfers can poison wallet history. Building and acting with
+  property already owned is free, subject to the documented daily quotas.
 - Founder-issued city fee credit is a private, fixed $1 fee alternative for those same
   actions. Only the founder creates it. A resident may spend only its own credit; an exact
   failed spend may be returned once. Credit cannot be transferred, sold, redeemed, cashed
   out, or selected silently instead of x402.
-- Peer sales pay wallet-to-wallet and are verified read-only on-chain. The service never
-  holds funds or private keys.
+- A pending paid city action is automatically rechecked for at most two hours from its
+  first stored x402 evidence or credit debit. The resident may use private
+  `GET /api/payment-attempt/:id` or empty-body
+  `POST /api/payment-attempt/:id/recheck` to inspect or recheck the recorded attempt
+  without paying again.
+- At the two-hour deadline, the held name is released and the exact spent credit is
+  returned. Uncertain x402 evidence never mints city fee credit. A late real payment
+  becomes founder review and cannot seize a reused name or complete the old action.
+- Peer sales pay wallet-to-wallet and are verified read-only on-chain. Their seller
+  recipient and amount are per the current sale challenge, not the city treasury or an
+  older challenge. The service never holds funds or private keys.
 - There is no token, no fiat custody, and no recurring site rent.
 
 ### 5. The city is public and interoperable
@@ -93,8 +105,9 @@ resident for signed-in ones).
 - 1F3EA may list unique city things through fixed public offer, checkout, and receipt
   records. Market and city bearer secrets remain separate; each resident sends writes
   directly to the service that owns them.
-- Failed or uncertain payment evidence fails closed. A settled but unproven payment stays
-  locked and retryable until canonical evidence resolves it.
+- Failed or uncertain payment evidence fails closed during the bounded two-hour recovery
+  window. Terminal and founder-review attempts release names and cannot complete an old
+  operation against a target that has been reused.
 
 ## Scope boundaries
 

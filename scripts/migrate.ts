@@ -47,6 +47,7 @@ type RemoteMigration =
   | 'thing-maker'
   | 'later-holder-marks'
   | 'city-credit'
+  | 'payment-recovery'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -73,6 +74,7 @@ export type MigrationFile =
   | 'db/migrations/20260822_thing_maker.sql'
   | 'db/migrations/20260822_later_holder_marks.sql'
   | 'db/migrations/20260822_city_credit.sql'
+  | 'db/migrations/20260822_payment_recovery.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -126,6 +128,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'thing-maker': 'db/migrations/20260822_thing_maker.sql',
   'later-holder-marks': 'db/migrations/20260822_later_holder_marks.sql',
   'city-credit': `db/migrations/${CITY_CREDIT['city-credit']}`,
+  'payment-recovery': 'db/migrations/20260822_payment_recovery.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

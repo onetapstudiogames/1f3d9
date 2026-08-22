@@ -103,9 +103,11 @@ interface FakePaymentAttempt {
   start_block: string | null
   start_time: string | null
   end_time: string | null
-  status: 'settling' | 'payment_pending' | 'completed' | 'credit_returned' | 'invalid' | 'expired' | 'needs_review'
+  status: 'settling' | 'payment_pending' | 'completed' | 'credit_returned' | 'invalid' | 'expired' | 'needs_review' | 'founder_review'
   lease_owner: string | null
   lease_expires_at: string | null
+  recovery_started_at?: string | null
+  recovery_deadline_at?: string | null
   tx_hash: string | null
   finalized_block_number: string | null
   finalized_block_hash: string | null
@@ -202,6 +204,8 @@ interface FakeState {
   facilitatorSettle: boolean
   flagSlotsUsed: Record<string, number>
   failPaidWriteOnce: boolean
+  interruptTreasuryCompletionOnce: boolean
+  treasuryCompletionHeader?: string
   placeDescription: string
   noteBody: string
   exactTotalsBusy: boolean
@@ -270,6 +274,7 @@ const initialState = (): FakeState => ({
   facilitatorSettle: false,
   flagSlotsUsed: {},
   failPaidWriteOnce: false,
+  interruptTreasuryCompletionOnce: false,
   placeDescription: 'a place made from words',
   noteBody: 'hello from the square',
   exactTotalsBusy: false,
@@ -626,6 +631,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         throw Object.assign(new Error('insufficient city fee credit'), { code: '23514' })
       }
       const now = '2026-08-11T00:00:00.000Z'
+      const recoveryStartAt = Date.now()
       const attempt: FakePaymentAttempt = {
         public_id: newAttemptId,
         actor_id: actorId,
@@ -653,6 +659,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         status: 'payment_pending',
         lease_owner: newLeaseOwner,
         lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+        recovery_started_at: new Date(recoveryStartAt).toISOString(),
+        recovery_deadline_at: new Date(
+          recoveryStartAt + 2 * 60 * 60 * 1000,
+        ).toISOString(),
         tx_hash: null,
         finalized_block_number: null,
         finalized_block_hash: null,
@@ -952,6 +962,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       asset_type: params[6] == null ? null : String(params[6]),
       asset_id: params[7] == null ? null : Number(params[7]),
       request_hash: String(params[8]),
+      request_json: JSON.parse(String(params[9])) as Record<string, unknown>,
       method: params[10] == null ? null : String(params[10]),
       network: params[11] == null ? null : String(params[11]),
       token: params[12] == null ? null : String(params[12]).toLowerCase(),
@@ -968,6 +979,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       status: 'settling' as const,
       lease_owner: null,
       lease_expires_at: null,
+      recovery_started_at: null,
+      recovery_deadline_at: null,
       tx_hash: null,
       finalized_block_number: null,
       finalized_block_hash: null,
@@ -991,7 +1004,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     if (
       !current || current.actor_id !== Number(params[1])
       || !['settling', 'payment_pending', 'needs_review'].includes(current.status)
-      || current.lease_owner != null
+      || (
+        current.lease_owner != null
+        && current.lease_expires_at != null
+        && new Date(current.lease_expires_at).getTime() > Date.now()
+      )
     ) return []
     const updated: FakePaymentAttempt = {
       ...current,
@@ -1011,6 +1028,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (!current || current.lease_owner !== String(params[1])) return []
+    const recoveryStartAt = state.scenario === 'treasury deadline passed'
+      ? Date.now() - 2 * 60 * 60 * 1000
+      : Date.now()
     const updated: FakePaymentAttempt = {
       ...current,
       status: 'payment_pending',
@@ -1019,6 +1039,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       finalized_block_hash: current.finalized_block_hash ?? (params[4] == null ? null : String(params[4]).toLowerCase()),
       finalized_block_time: current.finalized_block_time ?? (params[5] == null ? null : String(params[5])),
       finalized_at: current.finalized_at ?? (params[6] == null ? null : String(params[6])),
+      recovery_started_at: current.recovery_started_at ?? new Date(recoveryStartAt).toISOString(),
+      recovery_deadline_at: current.recovery_deadline_at ?? new Date(
+        recoveryStartAt + 2 * 60 * 60 * 1000,
+      ).toISOString(),
       response_json: current.response_json ?? (params[7] == null ? null : {
         __1f3d9_x402_response_v1: { header: String(params[7]) },
       }),
@@ -1082,9 +1106,32 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     state = { ...state, paymentAttempts: next }
     return [{ ...updated }]
   }
+  if (q.includes('/* payment-attempts:founder-review */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (
+      !current
+      || current.lease_owner !== String(params[1])
+      || !['settling', 'payment_pending', 'needs_review'].includes(current.status)
+    ) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      status: 'founder_review',
+      invalid_reason: current.invalid_reason ?? String(params[2]),
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    state = {
+      ...state,
+      paymentAttempts: new Map(state.paymentAttempts).set(key, updated),
+    }
+    return [{ ...updated }]
+  }
   if (
     q.includes('/* payment-attempts:invalidate-read */')
     || q.includes('/* payment-attempts:needs-review-read */')
+    || q.includes('/* payment-attempts:founder-review-read */')
   ) {
     const row = state.paymentAttempts.get(String(params[0]))
     return row ? [{ ...row }] : []
@@ -1122,6 +1169,331 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     })
     state = { ...state, paymentAttempts: next }
     return [{ ...next.get(key)! }]
+  }
+
+  if (q.includes('/* payment-sale-operations:read-attempt */')) {
+    const attempt = state.paymentAttempts.get(String(params[0]))
+    if (!attempt || attempt.offer_id !== state.offer.id) return []
+    const request = attempt.request_json ?? null
+    const wrapped = attempt.response_json?.__1f3d9_x402_response_v1
+    const wrapper = wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)
+      ? wrapped as Record<string, unknown>
+      : null
+    const response = wrapper?.body && typeof wrapper.body === 'object' && !Array.isArray(wrapper.body)
+      ? wrapper.body as Record<string, unknown>
+      : attempt.response_json
+    const assetId = Number(request?.asset_id ?? attempt.asset_id ?? 41)
+    const price = Number(request?.price_usdc ?? 2)
+    const buyerWallet = String(request?.buyer_wallet ?? attempt.payer_wallet ?? BUYER_WALLET).toLowerCase()
+    const sellerWallet = String(request?.seller_wallet ?? attempt.payee_wallet ?? SELLER_WALLET).toLowerCase()
+    return [{
+      attempt_id: attempt.public_id,
+      actor_id: attempt.actor_id,
+      counterparty_id: attempt.counterparty_id,
+      operation: attempt.operation,
+      target_key: attempt.target_key,
+      attempt_offer_id: attempt.offer_id,
+      attempt_asset_type: attempt.asset_type,
+      attempt_asset_id: attempt.asset_id,
+      request_hash: attempt.request_hash,
+      request_json: request,
+      method: attempt.method,
+      network: attempt.network,
+      token: attempt.token,
+      payer_wallet: attempt.payer_wallet,
+      payee_wallet: attempt.payee_wallet,
+      amount_units: attempt.amount_units,
+      start_time: attempt.start_time,
+      end_time: attempt.end_time,
+      status: attempt.status,
+      lease_owner: attempt.lease_owner,
+      tx_hash: attempt.tx_hash,
+      finalized_block_number: attempt.finalized_block_number,
+      finalized_block_hash: attempt.finalized_block_hash,
+      finalized_block_time: attempt.finalized_block_time,
+      finalized_at: attempt.finalized_at,
+      recovery_started_at: attempt.recovery_started_at,
+      recovery_deadline_at: attempt.recovery_deadline_at,
+      recovery_open: attempt.recovery_deadline_at != null
+        && Date.parse(attempt.recovery_deadline_at) > Date.now(),
+      offer_id: state.offer.id,
+      channel: state.offer.channel ?? 'direct',
+      asset_type: attempt.asset_type,
+      asset_id: assetId,
+      seller_id: 7,
+      seller: 'tiny-lantern',
+      buyer_id: 8,
+      buyer: 'neighbor',
+      price_usdc: price,
+      seller_wallet: sellerWallet,
+      buyer_wallet: state.offer.buyerWallet ?? buyerWallet,
+      offer_status: state.offer.status,
+      reserved_by: state.offer.reservedUntil == null ? null : 8,
+      reserved_at: state.offer.reservedAt,
+      reserved_until: state.offer.reservedUntil,
+      market_origin: 'https://1f3ea.com',
+      market_draft_id: null,
+      market_listing_id: null,
+      market_checkout_id: null,
+      market_buyer: null,
+      pending_payment_attempt_id: null,
+      pending_x402_tx_hash: null,
+      pending_x402_payer: null,
+      pending_x402_at: null,
+      x402_evidence_state: 'none',
+      current_owner_id: state.thingOwnerId,
+      active_offer_id: state.offer.status === 'open' ? state.offer.id : null,
+      withdrawn_at: state.thingWithdrawn ? new Date().toISOString() : null,
+      asset_name: 'porch lantern',
+      maker_id: 7,
+      made_by: 'tiny-lantern',
+      response_status: attempt.response_status,
+      response,
+      response_body: attempt.response_body_bytes == null
+        ? null
+        : Buffer.from(attempt.response_body_bytes).toString('utf8'),
+      payment_response_header: wrapper?.header == null ? null : String(wrapper.header),
+    }]
+  }
+  if (q.includes('/* payment-sale-operations:complete-direct */')) {
+    const attemptId = String(params[0])
+    const leaseOwner = String(params[1])
+    const attempt = state.paymentAttempts.get(attemptId)
+    if (
+      !attempt || attempt.lease_owner !== leaseOwner || attempt.status !== 'payment_pending'
+      || attempt.offer_id !== state.offer.id || state.offer.status !== 'open'
+    ) return []
+    const createdAt = '2026-08-11T00:00:00.000Z'
+    const response = {
+      offer: { id: state.offer.id, status: 'claimed' },
+      transfer: {
+        id: 91,
+        type: attempt.asset_type,
+        asset_id: attempt.asset_id,
+        from: 'tiny-lantern',
+        to: 'neighbor',
+        price_usdc: Number(attempt.amount_units ?? 0) / 1_000_000,
+        tx_hash: attempt.tx_hash,
+        created_at: createdAt,
+      },
+    }
+    const responseBody = JSON.stringify(response)
+    const wrapped = attempt.response_json?.__1f3d9_x402_response_v1
+    const wrapper = wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)
+      ? wrapped as Record<string, unknown>
+      : null
+    const completed: FakePaymentAttempt = {
+      ...attempt,
+      status: 'completed',
+      lease_owner: null,
+      lease_expires_at: null,
+      result_json: { kind: 'transfer_offer', id: state.offer.id },
+      response_status: 200,
+      response_json: wrapper?.header == null
+        ? response
+        : { __1f3d9_x402_response_v1: { header: wrapper.header, body: response } },
+      response_body_bytes: Buffer.from(responseBody, 'utf8'),
+      updated_at: createdAt,
+      completed_at: createdAt,
+    }
+    state = {
+      ...state,
+      offer: { ...state.offer, status: 'claimed' },
+      thingOwnerId: attempt.actor_id,
+      paymentHashes: new Set(state.paymentHashes).add(String(attempt.tx_hash)),
+      paymentAttempts: new Map(state.paymentAttempts).set(attemptId, completed),
+    }
+    return [{
+      state: 'completed',
+      attempt_id: attemptId,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      method: attempt.method,
+      response_status: 200,
+      response,
+      response_body: responseBody,
+      payment_response_header: wrapper?.header == null ? null : String(wrapper.header),
+    }]
+  }
+  if (q.includes('/* payment-sale-operations:close-target */')) {
+    const attemptId = String(params[0])
+    const leaseOwner = String(params[1])
+    const terminalState = String(params[2]) as 'expired' | 'founder_review'
+    const attempt = state.paymentAttempts.get(attemptId)
+    if (!attempt || attempt.lease_owner !== leaseOwner) return []
+    const closed: FakePaymentAttempt = {
+      ...attempt,
+      status: terminalState,
+      invalid_reason: attempt.invalid_reason ?? String(params[3]),
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    state = {
+      ...state,
+      offer: attempt.operation === 'direct_sale'
+        ? { ...state.offer, status: 'canceled' }
+        : state.offer,
+      paymentAttempts: new Map(state.paymentAttempts).set(attemptId, closed),
+    }
+    return [{
+      state: terminalState,
+      attempt_id: attemptId,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      method: attempt.method,
+      target_released: attempt.operation === 'direct_sale',
+    }]
+  }
+
+  if (q.includes('/* payment-treasury-operations:complete */')) {
+    const attemptId = String(params[0])
+    const leaseOwner = String(params[1])
+    const attempt = state.paymentAttempts.get(attemptId)
+    if (
+      !attempt
+      || attempt.lease_owner !== leaseOwner
+      || attempt.status !== 'payment_pending'
+    ) return []
+    if (state.interruptTreasuryCompletionOnce) {
+      state = {
+        ...state,
+        interruptTreasuryCompletionOnce: false,
+        paymentAttempts: new Map(state.paymentAttempts).set(attemptId, {
+          ...attempt,
+          lease_expires_at: new Date(Date.now() - 1).toISOString(),
+        }),
+      }
+      throw Object.assign(new Error('connection interrupted before treasury completion'), { code: '57P01' })
+    }
+    const deadline = attempt.recovery_deadline_at == null
+      ? null
+      : new Date(attempt.recovery_deadline_at).getTime()
+    if (deadline != null && deadline <= Date.now()) {
+      return [{ state: 'deadline_passed', attempt_id: attemptId }]
+    }
+    if (deadline == null || state.failPaidWriteOnce || !attempt.request_json) {
+      if (state.failPaidWriteOnce) state = { ...state, failPaidWriteOnce: false }
+      return [{
+        state: 'target_changed',
+        attempt_id: attemptId,
+        reason: 'stored treasury request is invalid or its target changed',
+      }]
+    }
+
+    let responseStatus: 200 | 201
+    let response: Record<string, unknown>
+    let result: Record<string, unknown>
+    if (attempt.operation === 'frontier') {
+      const request = attempt.request_json
+      const place = {
+        ...placeRow(3, 1),
+        name: String(request.name),
+        description: String(request.description),
+        open_to_building: Boolean(request.open_to_building),
+        open_to_things: Boolean(request.open_to_things),
+        open_to_notes: Boolean(request.open_to_notes),
+      }
+      responseStatus = 201
+      result = { kind: 'place', id: place.id }
+      response = { place }
+    } else if (attempt.operation === 'kind_invention') {
+      const request = attempt.request_json
+      const kind = {
+        id: 3,
+        name: String(request.name),
+        owner_id: attempt.actor_id,
+        owner: residentHandleForFakeId(attempt.actor_id),
+        revision: 1,
+        description: String(request.description),
+        traits: request.traits,
+        recipe: request.recipe,
+        created_at: '2026-08-11T00:00:00.000Z',
+      }
+      responseStatus = 201
+      result = { kind: 'kind_revision', id: kind.id, revision: kind.revision }
+      response = { kind }
+    } else if (attempt.operation === 'kind_revision') {
+      const request = attempt.request_json
+      const kind = {
+        ...kindRow(),
+        revision: state.kindRevision + 1,
+        description: String(request.description),
+        traits: request.traits,
+        recipe: request.recipe,
+      }
+      responseStatus = 200
+      result = { kind: 'kind_revision', id: kind.id, revision: kind.revision }
+      response = { kind }
+    } else {
+      return [{
+        state: 'target_changed',
+        attempt_id: attemptId,
+        reason: 'stored treasury request is invalid or its target changed',
+      }]
+    }
+
+    if (attempt.method === 'x402') {
+      if (!attempt.tx_hash || state.paymentHashes.has(attempt.tx_hash)) {
+        return [{
+          state: 'target_changed',
+          attempt_id: attemptId,
+          reason: 'stored treasury request is invalid or its target changed',
+        }]
+      }
+      response = { ...response, fee_tx: attempt.tx_hash }
+      state = {
+        ...state,
+        paymentHashes: new Set([...state.paymentHashes, attempt.tx_hash]),
+      }
+    } else {
+      const balance = state.cityCreditBalances.get(attempt.actor_id) ?? 0n
+      response = {
+        ...response,
+        city_fee_credit: {
+          spent_usdc: '1.000000',
+          balance_usdc: `${balance / 1_000_000n}.${String(balance % 1_000_000n).padStart(6, '0')}`,
+        },
+      }
+    }
+
+    const responseBody = JSON.stringify(response)
+    const durable = attempt.response_json?.__1f3d9_x402_response_v1
+    const paymentResponseHeader = state.treasuryCompletionHeader ?? (
+      durable && typeof durable === 'object' && !Array.isArray(durable)
+        ? String((durable as Record<string, unknown>).header ?? '')
+        : null
+    )
+    const completed: FakePaymentAttempt = {
+      ...attempt,
+      status: 'completed',
+      lease_owner: null,
+      lease_expires_at: null,
+      result_json: result,
+      response_status: responseStatus,
+      response_json: attempt.method === 'x402'
+        ? { __1f3d9_x402_response_v1: { header: paymentResponseHeader, body: response } }
+        : response,
+      response_body_bytes: Buffer.from(responseBody, 'utf8'),
+      updated_at: '2026-08-11T00:00:01.000Z',
+      completed_at: '2026-08-11T00:00:01.000Z',
+    }
+    state = {
+      ...state,
+      paymentAttempts: new Map(state.paymentAttempts).set(attemptId, completed),
+    }
+    return [{
+      state: 'completed',
+      attempt_id: attemptId,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      method: attempt.method,
+      response_status: responseStatus,
+      response_json: response,
+      response_body: responseBody,
+      payment_response_header: attempt.method === 'x402' ? paymentResponseHeader : null,
+      reason: null,
+    }]
   }
 
   // link_kind_revision_traits refuses a trait nobody has coined yet.
@@ -3936,7 +4308,7 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
   const settledWrite = sqlCalls().find(call =>
     /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? ''))
   assert.ok(settledWrite)
-  assert.match(settledWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*\$\d+/i)
+  assert.match(settledWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*offer\.actor_id/i)
   assert.doesNotMatch(settledWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
@@ -3977,6 +4349,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
   assert.equal(reservation.status, 402)
 
   const exactBody = '{\n  "transfer": {"id":91,"type":"thing","asset_id":42,"from":"tiny-lantern","to":"neighbor","price_usdc":2,"tx_hash":"' + TX1.toLowerCase() + '"},\n  "offer": {"status":"claimed","id":90}\n}'
+  const storedHeader = Buffer.from('{"ok":true}', 'utf8').toString('base64')
   const completedAttempt: FakePaymentAttempt = {
     public_id: 'pay_' + '88'.repeat(32),
     actor_id: 8,
@@ -3985,7 +4358,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
     target_key: 'direct-sale:90',
     offer_id: 90,
     asset_type: 'thing',
-    asset_id: 42,
+    asset_id: 41,
     request_hash: canonicalPaymentRequest({
       offer_id: 90,
       buyer_wallet: BUYER_WALLET,
@@ -3994,6 +4367,14 @@ test('a completed direct-sale replay preserves its x402 response header', async 
       asset_type: 'thing',
       asset_id: 41,
     }).hash,
+    request_json: {
+      offer_id: 90,
+      buyer_wallet: BUYER_WALLET,
+      seller_wallet: SELLER_WALLET,
+      price_usdc: 2,
+      asset_type: 'thing',
+      asset_id: 41,
+    },
     method: 'x402',
     network: 'base',
     token: USDC.toLowerCase(),
@@ -4019,15 +4400,20 @@ test('a completed direct-sale replay preserves its x402 response header', async 
     result_json: { kind: 'transfer_offer', id: 90 },
     response_status: 200,
     response_json: {
-      offer: { id: 90, status: 'claimed' },
-      transfer: {
-        id: 91,
-        type: 'thing',
-        asset_id: 42,
-        from: 'tiny-lantern',
-        to: 'neighbor',
-        price_usdc: 2,
-        tx_hash: TX1.toLowerCase(),
+      __1f3d9_x402_response_v1: {
+        header: storedHeader,
+        body: {
+          offer: { id: 90, status: 'claimed' },
+          transfer: {
+            id: 91,
+            type: 'thing',
+            asset_id: 42,
+            from: 'tiny-lantern',
+            to: 'neighbor',
+            price_usdc: 2,
+            tx_hash: TX1.toLowerCase(),
+          },
+        },
       },
     },
     response_body_bytes: Buffer.from(exactBody, 'utf8'),
@@ -4048,7 +4434,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
 
   assert.equal(replay.status, 200, await replay.clone().text())
   assert.equal(await replay.text(), exactBody)
-  assert.ok(replay.headers.get('X-PAYMENT-RESPONSE'))
+  assert.equal(replay.headers.get('X-PAYMENT-RESPONSE'), storedHeader)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 0)
 })
 
@@ -4319,14 +4705,14 @@ test('frontier x402 records custody before settlement and raw transaction proofs
   assert.match(JSON.stringify(await replay.json()), /unsupported field|x-payment/i)
 })
 
-test('frontier x402 retry uses the same signed authorization and does not settle twice', async () => {
+test('frontier x402 retry after an interrupted completion uses the same authorization and does not settle twice', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,
     facilitatorSettle: true,
     chainFrom: SELLER_WALLET,
     chainTo: TREASURY,
-    failPaidWriteOnce: true,
+    interruptTreasuryCompletionOnce: true,
   })
   const requestBody = JSON.stringify({
     parent_id: null,
@@ -4339,8 +4725,7 @@ test('frontier x402 retry uses the same signed authorization and does not settle
     headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
     body: requestBody,
   })
-  assert.equal(first.status, 202, await first.clone().text())
-  assert.match(await first.text(), /pending|payment/i)
+  assert.equal(first.status, 500, await first.clone().text())
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
 
   const retry = await app.request('/api/place', {
@@ -4354,14 +4739,14 @@ test('frontier x402 retry uses the same signed authorization and does not settle
   assert.equal(state.paymentHashes.size, 1)
 })
 
-test('frontier x402 retry can resume the same pending payment without replaying X-PAYMENT', async () => {
+test('frontier x402 retry can resume an interrupted payment without replaying X-PAYMENT', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,
     facilitatorSettle: true,
     chainFrom: SELLER_WALLET,
     chainTo: TREASURY,
-    failPaidWriteOnce: true,
+    interruptTreasuryCompletionOnce: true,
   })
   const requestBody = JSON.stringify({
     parent_id: null,
@@ -4374,7 +4759,7 @@ test('frontier x402 retry can resume the same pending payment without replaying 
     headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
     body: requestBody,
   })
-  assert.equal(first.status, 202, await first.clone().text())
+  assert.equal(first.status, 500, await first.clone().text())
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
 
   const retry = await app.request('/api/place', {
@@ -4395,7 +4780,7 @@ test('frontier x402 headerless retry fails closed when the request body changed'
     facilitatorSettle: true,
     chainFrom: SELLER_WALLET,
     chainTo: TREASURY,
-    failPaidWriteOnce: true,
+    interruptTreasuryCompletionOnce: true,
   })
   const first = await app.request('/api/place', {
     method: 'POST',
@@ -4406,7 +4791,7 @@ test('frontier x402 headerless retry fails closed when the request body changed'
       description: 'original body',
     }),
   })
-  assert.equal(first.status, 202, await first.clone().text())
+  assert.equal(first.status, 500, await first.clone().text())
 
   const retry = await app.request('/api/place', {
     method: 'POST',
@@ -4420,6 +4805,41 @@ test('frontier x402 headerless retry fails closed when the request body changed'
   assert.equal(retry.status, 409, await retry.clone().text())
   assert.match(await retry.text(), /payment attempt|immutable|different/i)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+})
+
+test('frontier x402 completion at the recovery deadline has no domain effect and enters founder review', async () => {
+  reset({
+    scenario: 'treasury deadline passed',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+  })
+
+  const response = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      parent_id: null,
+      name: 'Too Late Continent',
+      description: 'must remain uncreated',
+    }),
+  })
+
+  assert.equal(response.status, 409, await response.clone().text())
+  const attempt = [...state.paymentAttempts.values()][0]
+  assert.deepEqual(await response.json(), {
+    payment: 'founder_review',
+    payment_attempt_id: [...state.paymentAttempts.keys()][0],
+    fee_tx: attempt?.tx_hash,
+    do_not_pay_again: true,
+    reason: 'frontier recovery deadline passed before completion',
+  })
+  assert.equal(attempt?.status, 'founder_review')
+  assert.equal(attempt?.lease_owner, null)
+  assert.equal(state.paymentHashes.size, 0)
+  assert.equal(state.calls.filter(call =>
+    /payment-treasury-operations:complete/iu.test(call.query ?? '')).length, 1)
 })
 
 test('kind invention can replay its completed canonical response without replaying X-PAYMENT', async () => {
@@ -4456,6 +4876,35 @@ test('kind invention can replay its completed canonical response without replayi
   assert.equal(replay.headers.get('X-PAYMENT-RESPONSE'), firstPaymentResponse)
   assert.equal(await replay.text(), firstText)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+})
+
+test('treasury completion returns the canonical stored x402 response header', async () => {
+  const canonicalHeader = Buffer.from(JSON.stringify({
+    success: true,
+    transaction: TX_CASE_UPPER,
+    recovered: true,
+  })).toString('base64')
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    treasuryCompletionHeader: canonicalHeader,
+  })
+
+  const response = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      parent_id: null,
+      name: 'Canonical Header Continent',
+      description: 'uses the durable header reloaded by completion',
+    }),
+  })
+
+  assert.equal(response.status, 201, await response.clone().text())
+  assert.equal(response.headers.get('X-PAYMENT-RESPONSE'), canonicalHeader)
 })
 
 test('only founder resident one issues one private city fee credit and exact retries do not issue twice', async () => {
@@ -4645,7 +5094,7 @@ test('each eligible paid action deliberately spends one own city fee credit and 
     const paidWrite = sqlCalls().find(call => /complete_city_credit_attempt/iu.test(call.query ?? ''))
     assert.ok(paidWrite?.query, `${creditCase.label}: missing atomic paid write`)
     const eventStart = paidWrite.query.indexOf('INSERT INTO events')
-    const responseStart = paidWrite.query.indexOf('response_payload AS', eventStart)
+    const responseStart = paidWrite.query.indexOf('completed_x402_attempt AS', eventStart)
     assert.ok(eventStart >= 0 && responseStart > eventStart, `${creditCase.label}: missing public event boundary`)
     assert.doesNotMatch(
       paidWrite.query.slice(eventStart, responseStart),
@@ -6218,7 +6667,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
-    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
+    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
     'mark_for_later', 'me', 'moderate',
   ])

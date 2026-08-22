@@ -14,9 +14,15 @@ import {
   paymentJsonResponse,
   resumeDurableX402,
   runDurableX402,
-  type DurableX402Result,
 } from './payment-flow.ts'
 import { PaymentAttemptConflictError } from './payment-attempts.ts'
+import {
+  closeInvalidSalePaymentTarget,
+  closeSalePaymentTarget,
+  completeWorldSalePayment,
+  parkWorldSalePayment,
+  PaymentSaleConflictError,
+} from './payment-sale-operations.ts'
 import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 
@@ -85,7 +91,7 @@ interface OfferRecord {
   pending_x402_tx_hash: string | null
   pending_x402_payer: string | null
   pending_x402_at: string | null
-  x402_evidence_state: 'none' | 'pending' | 'invalid'
+  x402_evidence_state: 'none' | 'pending' | 'invalid' | 'expired' | 'founder_review'
   x402_invalid_reason: string | null
   x402_invalid_at: string | null
   reserved_at: string | null
@@ -333,15 +339,18 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
   const evidenceState = String(row.x402_evidence_state ?? 'none')
   const invalidReason = nullableString(row.x402_invalid_reason)
   const invalidAt = nullableString(row.x402_invalid_at)
+  const terminalEvidence = evidenceState === 'expired' || evidenceState === 'founder_review'
   const evidenceConsistent = evidenceState === 'none'
     ? pendingHash == null && pendingPayer == null && row.pending_x402_at == null &&
       invalidReason == null && invalidAt == null
     : evidenceState === 'pending'
       ? pendingHash != null && pendingPayer != null && row.pending_x402_at != null &&
         invalidReason == null && invalidAt == null
-      : evidenceState === 'invalid' && pendingHash != null && pendingPayer != null &&
-        row.pending_x402_at != null &&
-        ['failed_transaction', 'confirmed_mismatch'].includes(String(invalidReason)) && invalidAt != null
+      : evidenceState === 'invalid'
+        ? pendingHash != null && pendingPayer != null && row.pending_x402_at != null &&
+          ['failed_transaction', 'confirmed_mismatch'].includes(String(invalidReason)) && invalidAt != null
+        : terminalEvidence && pendingHash != null && pendingPayer != null
+          && row.pending_x402_at != null && invalidReason == null && invalidAt == null
   if (
     !id || row.channel !== 'world' || row.asset_type !== 'thing' || !assetId ||
     !makerId || !madeBy || !currentOwnerId || !currentOwner || !sellerId ||
@@ -460,12 +469,21 @@ function paymentInvalid(offer: OfferRecord): boolean {
     offer.x402_invalid_at != null
 }
 
+function paymentTerminal(offer: OfferRecord): boolean {
+  return offer.status === 'open'
+    && (offer.x402_evidence_state === 'expired' || offer.x402_evidence_state === 'founder_review')
+    && offer.pending_payment_attempt_id != null && offer.pending_x402_tx_hash != null
+    && offer.pending_x402_payer != null && offer.pending_x402_at != null
+}
+
 function publicOffer(offer: OfferRecord, now: Date) {
   const phase = offer.status === 'claimed'
     ? 'claimed'
     : offer.status === 'canceled'
       ? 'canceled'
       : offer.x402_evidence_state === 'invalid' ? 'payment_invalid'
+      : offer.x402_evidence_state === 'founder_review' ? 'founder_review'
+      : offer.x402_evidence_state === 'expired' ? 'payment_expired'
       : offer.pending_x402_tx_hash != null ? 'payment_pending'
       : reservationActive(offer, now) ? 'reserved' : 'listed'
   return {
@@ -557,264 +575,6 @@ function defaultDependencies(): WorldMarketDependencies {
     runPayment: runDurableX402,
     resumePayment: resumeDurableX402,
   }
-}
-
-type ReadyPayment = Extract<DurableX402Result, { state: 'ready' }>
-
-async function parkWorldPayment(
-  dependencies: WorldMarketDependencies,
-  offer: OfferRecord,
-  payment: Pick<DurableX402Result & {
-    attemptId: string
-    payerWallet: string | null
-    txHash: string | null
-  }, 'attemptId' | 'payerWallet' | 'txHash'>,
-): Promise<OfferRecord | null> {
-  if (
-    offer.buyer_id == null || offer.buyer_wallet == null || offer.market_buyer == null
-    || payment.txHash == null || payment.payerWallet == null
-  ) return null
-  if (payment.payerWallet !== offer.buyer_wallet) return null
-  if (paymentPending(offer)) {
-    return offer.pending_payment_attempt_id === payment.attemptId
-      && offer.pending_x402_tx_hash === payment.txHash
-      && offer.pending_x402_payer === payment.payerWallet
-      ? offer
-      : null
-  }
-  await dependencies.query(`
-    /* world-market:pending-x402 */
-    UPDATE transfer_offers SET
-      pending_payment_attempt_id = $3,
-      pending_x402_tx_hash = $4,
-      pending_x402_payer = lower($5),
-      pending_x402_at = clock_timestamp()
-    WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
-      AND buyer_id = $2 AND reserved_by = $2 AND lower(buyer_wallet) = lower($5)
-      AND seller_id = $6 AND asset_id = $7
-      AND price_usdc = $8 AND lower(seller_wallet) = lower($9)
-      AND reserved_at = $10::timestamptz AND reserved_until = $11::timestamptz
-      AND market_checkout_id = $12 AND market_listing_id = $13
-      AND market_draft_id = $14 AND market_buyer = $15
-      AND pending_x402_tx_hash IS NULL AND pending_payment_attempt_id IS NULL
-      AND EXISTS (
-        SELECT 1 FROM payment_attempts attempt
-        WHERE attempt.public_id = $3 AND attempt.actor_id = $2
-          AND attempt.counterparty_id = $6 AND attempt.operation = 'world_sale'
-          AND attempt.offer_id = $1 AND attempt.asset_type = 'thing' AND attempt.asset_id = $7
-          AND attempt.status = 'payment_pending' AND attempt.tx_hash = $4
-          AND attempt.payer_wallet = lower($5) AND attempt.payee_wallet = lower($9)
-          AND attempt.amount_units = ($8::numeric * 1000000)::bigint
-      )
-      AND EXISTS (
-        SELECT 1 FROM things
-        WHERE things.id = $7 AND things.owner_id = $6
-          AND things.withdrawn_at IS NULL AND things.active_offer_id = $1
-      )
-    RETURNING id
-  `, [
-    offer.id,
-    offer.buyer_id,
-    payment.attemptId,
-    payment.txHash,
-    payment.payerWallet,
-    offer.seller_id,
-    offer.asset_id,
-    offer.price_usdc,
-    offer.seller_wallet,
-    offer.reserved_at,
-    offer.reserved_until,
-    offer.market_checkout_id,
-    offer.market_listing_id,
-    offer.market_draft_id,
-    offer.market_buyer,
-  ])
-  const current = await readOffer(dependencies, offer.id)
-  return current?.pending_payment_attempt_id === payment.attemptId
-    && current.pending_x402_tx_hash === payment.txHash
-    && current.pending_x402_payer === payment.payerWallet
-    ? current
-    : null
-}
-
-async function finalizeWorldPayment(
-  dependencies: WorldMarketDependencies,
-  offer: OfferRecord,
-  payment: ReadyPayment,
-): Promise<{ body: Record<string, unknown>; responseBody: string } | null> {
-  if (
-    offer.buyer_id == null || offer.buyer == null || offer.buyer_wallet == null
-    || offer.market_buyer == null || offer.pending_payment_attempt_id !== payment.attemptId
-    || offer.pending_x402_tx_hash !== payment.txHash
-  ) return null
-  const rows = await dependencies.query(`
-    /* world-market:finalize-payment */
-    WITH payment_attempt AS MATERIALIZED (
-      SELECT public_id
-      FROM payment_attempts
-      WHERE public_id = $18 AND lease_owner = $19
-        AND status = 'payment_pending' AND tx_hash = $4
-        AND actor_id = $2 AND counterparty_id = $7
-        AND operation = 'world_sale' AND offer_id = $1
-        AND asset_type = 'thing' AND asset_id = $8
-      FOR UPDATE
-    ), claimed_offer AS (
-      UPDATE transfer_offers SET status = 'claimed', claimed_at = clock_timestamp()
-      FROM payment_attempt
-      WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
-        AND buyer_id = $2 AND reserved_by = $2 AND lower(buyer_wallet) = lower($5)
-        AND seller_id = $7 AND asset_id = $8
-        AND price_usdc = $9 AND lower(seller_wallet) = lower($10)
-        AND reserved_at = $11::timestamptz AND reserved_until = $12::timestamptz
-        AND $6::timestamptz >= (
-          date_trunc('second', reserved_at)
-          + CASE WHEN reserved_at > date_trunc('second', reserved_at)
-            THEN interval '1 second' ELSE interval '0 seconds' END
-        )
-        AND $6::timestamptz < date_trunc('second', reserved_until)
-        AND x402_evidence_state = 'pending'
-        AND pending_payment_attempt_id = $18
-        AND pending_x402_tx_hash = $4 AND pending_x402_payer = lower($5)
-        AND market_checkout_id = $13 AND market_listing_id = $14
-        AND market_draft_id = $15 AND market_buyer = $17
-        AND EXISTS (
-          SELECT 1 FROM things WHERE things.id = $8 AND things.owner_id = $7
-            AND things.withdrawn_at IS NULL AND things.active_offer_id = $1
-        )
-      RETURNING id, asset_id, seller_id, buyer_id, price_usdc, seller_wallet, claimed_at
-    ), used_payment AS (
-      INSERT INTO payment_uses (
-        tx_hash, payment_attempt_id, actor_id, purpose,
-        payer_wallet, payee_wallet, amount_usdc
-      )
-      SELECT $4, $18, $2, 'sale', lower($5), lower(seller_wallet), price_usdc
-      FROM claimed_offer RETURNING tx_hash
-    ), new_payment AS (
-      INSERT INTO sale_payments (
-        offer_id, buyer_id, payer_wallet, payee_wallet, amount_usdc,
-        tx_hash, verified_via, block_time
-      )
-      SELECT offer.id, offer.buyer_id, lower($5), lower(offer.seller_wallet),
-        offer.price_usdc, used.tx_hash, 'x402', $6
-      FROM claimed_offer offer CROSS JOIN used_payment used
-      RETURNING offer_id, tx_hash
-    ), changed_owner AS (
-      UPDATE things SET owner_id = $2, active_offer_id = NULL
-      FROM claimed_offer offer CROSS JOIN new_payment payment
-      WHERE things.id = offer.asset_id AND things.owner_id = offer.seller_id
-        AND things.withdrawn_at IS NULL AND things.active_offer_id = offer.id
-      RETURNING things.id, things.maker_id, things.owner_id
-    ), owner_guard AS MATERIALIZED (
-      SELECT CASE
-        WHEN NOT EXISTS (SELECT 1 FROM claimed_offer) THEN 0
-        WHEN EXISTS (SELECT 1 FROM changed_owner) THEN 1
-        ELSE 1 / (SELECT count(*)::int FROM changed_owner)
-      END AS ok
-    ), new_transfer AS (
-      INSERT INTO transfers (
-        asset_type, asset_id, from_id, to_id, offer_id, price_usdc, tx_hash
-      )
-      SELECT 'thing', thing.id, $7, $2, $1, $9, $4
-      FROM changed_owner thing CROSS JOIN owner_guard guard WHERE guard.ok = 1
-      RETURNING id
-    ), new_event AS (
-      INSERT INTO events (kind, actor, detail)
-      SELECT 'world_sale', $3, jsonb_build_object(
-        'transfer_id', transfer.id, 'offer_id', $1::integer, 'thing_id', $8::integer,
-        'from', $16::text, 'to', $3::text, 'price_usdc', $9::numeric,
-        'tx_hash', $4::text, 'market_listing_id', $14::integer,
-        'market_checkout_id', $13::integer
-      ) FROM new_transfer transfer
-    ), response_row AS (
-      SELECT offer.claimed_at,
-        changed.maker_id, maker.handle AS made_by,
-        changed.owner_id AS current_owner_id, current_owner.handle AS current_owner
-      FROM claimed_offer offer
-      JOIN new_transfer transfer ON true
-      JOIN changed_owner changed ON true
-      JOIN residents maker ON maker.id = changed.maker_id
-      JOIN residents current_owner ON current_owner.id = changed.owner_id
-    ), response_payload AS (
-      SELECT jsonb_build_object('offer', jsonb_build_object(
-        'id', $1::integer,
-        'channel', 'world',
-        'phase', 'claimed',
-        'asset_type', 'thing',
-        'asset_id', $8::integer,
-        'asset_name', $20::text,
-        'maker_id', response_row.maker_id,
-        'made_by', response_row.made_by,
-        'current_owner_id', response_row.current_owner_id,
-        'current_owner', response_row.current_owner,
-        'locked', false,
-        'seller', $16::text,
-        'buyer', $3::text,
-        'price_usdc', $9::numeric,
-        'seller_wallet', lower($10::text),
-        'market_origin', $21::text,
-        'market_draft_id', $15::integer,
-        'market_listing_id', $14::integer,
-        'market_checkout_id', $13::integer,
-        'market_buyer', $17::text,
-        'pending_x402_tx_hash', $4::text,
-        'pending_x402_at', $22::timestamptz,
-        'x402_invalid_reason', NULL,
-        'x402_invalid_at', NULL,
-        'reserved_at', $11::timestamptz,
-        'reserved_until', $12::timestamptz,
-        'created_at', $23::timestamptz,
-        'claimed_at', response_row.claimed_at,
-        'canceled_at', NULL,
-        'tx_hash', $4::text,
-        'buyer_wallet', lower($5::text),
-        'verified_via', 'x402',
-        'block_time', $6::timestamptz,
-        'from', lower($5::text),
-        'to', lower($10::text)
-      )) AS body
-      FROM response_row
-    ), completed_attempt AS (
-      SELECT complete_payment_attempt(
-        $18,
-        $19,
-        jsonb_build_object('kind', 'world_offer', 'id', $1::integer),
-        200::smallint,
-        response_payload.body,
-        convert_to(response_payload.body::text, 'UTF8')
-      ) AS completed
-      FROM response_row CROSS JOIN used_payment CROSS JOIN response_payload
-    )
-    SELECT response_payload.body AS response,
-      convert_from((completed_attempt.completed).response_body_bytes, 'UTF8') AS response_body
-    FROM completed_attempt CROSS JOIN response_payload
-  `, [
-    offer.id,
-    offer.buyer_id,
-    offer.buyer,
-    payment.txHash,
-    payment.payerWallet,
-    payment.blockTime,
-    offer.seller_id,
-    offer.asset_id,
-    offer.price_usdc,
-    offer.seller_wallet,
-    offer.reserved_at,
-    offer.reserved_until,
-    offer.market_checkout_id,
-    offer.market_listing_id,
-    offer.market_draft_id,
-    offer.seller,
-    offer.market_buyer,
-    payment.attemptId,
-    payment.leaseOwner,
-    offer.asset_name,
-    offer.market_origin,
-    offer.pending_x402_at,
-    offer.created_at,
-  ])
-  const body = object(rows[0]?.response)
-  const responseBody = rows[0]?.response_body
-  return body && typeof responseBody === 'string' ? { body, responseBody } : null
 }
 
 export function mountWorldMarketRoutes(
@@ -1184,6 +944,15 @@ export function mountWorldMarketRoutes(
     }
     if (payment.state === 'unavailable') return c.json(payment.body, 503)
     if (payment.state === 'rejected') {
+      if (existingAttempt) {
+        try {
+          await closeInvalidSalePaymentTarget(dependencies, {
+            attemptId: existingAttempt.publicId,
+          })
+        } catch (error) {
+          if (!(error instanceof PaymentSaleConflictError)) throw error
+        }
+      }
       return payment.status === 409
         ? c.json(payment.body, 409)
         : c.json(payment.body, 400)
@@ -1192,7 +961,12 @@ export function mountWorldMarketRoutes(
       let pendingOffer = offer
       if (payment.txHash && payment.payerWallet) {
         try {
-          pendingOffer = await parkWorldPayment(dependencies, offer, payment) ?? offer
+          const parked = await parkWorldSalePayment(dependencies, {
+            attemptId: payment.attemptId,
+          })
+          if (parked.state === 'parked') {
+            pendingOffer = await readOffer(dependencies, offer.id) ?? offer
+          }
         } catch (error) {
           if (postgresErrorCode(error) !== '23505') throw error
         }
@@ -1205,36 +979,35 @@ export function mountWorldMarketRoutes(
     }
 
     try {
-      const parked = await parkWorldPayment(dependencies, offer, payment)
-      if (!parked) {
-        const raced = await readOffer(dependencies, offer.id)
-        if (raced?.status === 'claimed' && raced.buyer_id === buyer.id) {
-          return c.json({ offer: publicOffer(raced, dependencies.now()) })
-        }
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: payment.attemptId,
-          transaction: payment.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same claim; the recorded payment remains reserved',
-        }, 202)
+      const completed = await completeWorldSalePayment(dependencies, {
+        attemptId: payment.attemptId,
+        leaseOwner: payment.leaseOwner,
+      })
+      if (completed.state === 'completed') {
+        return paymentJsonResponse(
+          completed.responseBody,
+          completed.status,
+          completed.paymentResponseHeader ?? payment.paymentResponseHeader,
+        )
       }
-
-      const response = await finalizeWorldPayment(dependencies, parked, payment)
-      if (response) {
-        return paymentJsonResponse(response.responseBody, 200, payment.paymentResponseHeader)
-      }
-      const raced = await readOffer(dependencies, offer.id)
-      if (raced?.status === 'claimed' && raced.buyer_id === buyer.id) {
-        return c.json({ offer: publicOffer(raced, dependencies.now()) })
-      }
-      return c.json({
-        payment: 'pending',
+      const reason = completed.state === 'deadline_passed'
+        ? 'matching payment finalized after automatic recovery closed'
+        : completed.reason
+      await closeSalePaymentTarget(dependencies, {
+        attemptId: payment.attemptId,
+        leaseOwner: payment.leaseOwner,
+        reason,
+        state: 'founder_review',
+      })
+      const reviewed = await readOffer(dependencies, offer.id)
+      return paymentJsonResponse(JSON.stringify({
+        payment: 'founder_review',
         payment_attempt_id: payment.attemptId,
         transaction: payment.txHash,
         do_not_pay_again: true,
-        retry: 'retry this same claim; the recorded payment remains reserved',
-      }, 202)
+        error: 'payment needs founder review; no ownership changed',
+        ...(reviewed ? { offer: publicOffer(reviewed, dependencies.now()) } : {}),
+      }), 409, payment.paymentResponseHeader)
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return c.json({
@@ -1293,35 +1066,10 @@ export function mountWorldMarketRoutes(
       }, 202)
     }
     if (payment.state === 'rejected') {
-      const rows = await dependencies.query(`
-        /* world-market:invalidate-x402 */
-        UPDATE transfer_offers SET
-          x402_evidence_state = 'invalid',
-          x402_invalid_reason = $3,
-          x402_invalid_at = clock_timestamp()
-        WHERE id = $1 AND channel = 'world' AND status = 'open'
-          AND (seller_id = $2 OR buyer_id = $2)
-          AND x402_evidence_state = 'pending'
-          AND pending_payment_attempt_id = $4
-          AND pending_x402_tx_hash = $5 AND pending_x402_payer = lower($6)
-          AND reserved_at = $7::timestamptz AND reserved_until = $8::timestamptz
-          AND EXISTS (
-            SELECT 1 FROM things WHERE things.id = transfer_offers.asset_id
-              AND things.owner_id = transfer_offers.seller_id
-              AND things.withdrawn_at IS NULL AND things.active_offer_id = transfer_offers.id
-          )
-        RETURNING id
-      `, [
-        offer.id,
-        actor.id,
-        payment.body.error,
-        attempt.publicId,
-        offer.pending_x402_tx_hash,
-        offer.pending_x402_payer,
-        offer.reserved_at,
-        offer.reserved_until,
-      ])
-      if (!rows[0]) return c.json(payment.body, payment.status)
+      const synchronized = await closeInvalidSalePaymentTarget(dependencies, {
+        attemptId: attempt.publicId,
+      })
+      if (!synchronized.evidenceSynchronized) return c.json(payment.body, payment.status)
       offer = await readOffer(dependencies, offer.id)
       if (!offer || !paymentInvalid(offer)) {
         return err(c, 500, 'invalid payment audit record is unavailable')
@@ -1330,21 +1078,35 @@ export function mountWorldMarketRoutes(
     }
 
     try {
-      const response = await finalizeWorldPayment(dependencies, offer, payment)
-      if (response) {
-        return paymentJsonResponse(response.responseBody, 200, payment.paymentResponseHeader)
+      const completed = await completeWorldSalePayment(dependencies, {
+        attemptId: payment.attemptId,
+        leaseOwner: payment.leaseOwner,
+      })
+      if (completed.state === 'completed') {
+        return paymentJsonResponse(
+          completed.responseBody,
+          completed.status,
+          completed.paymentResponseHeader ?? payment.paymentResponseHeader,
+        )
       }
-      const raced = await readOffer(dependencies, offer.id)
-      if (raced?.status === 'claimed') {
-        return c.json({ offer: publicOffer(raced, dependencies.now()) })
-      }
-      return c.json({
-        payment: 'pending',
+      const reason = completed.state === 'deadline_passed'
+        ? 'matching payment finalized after automatic recovery closed'
+        : completed.reason
+      await closeSalePaymentTarget(dependencies, {
+        attemptId: payment.attemptId,
+        leaseOwner: payment.leaseOwner,
+        reason,
+        state: 'founder_review',
+      })
+      const reviewed = await readOffer(dependencies, offer.id)
+      return paymentJsonResponse(JSON.stringify({
+        payment: 'founder_review',
         payment_attempt_id: payment.attemptId,
         transaction: payment.txHash,
         do_not_pay_again: true,
-        retry: 'retry this reconciliation; the recorded payment remains reserved',
-      }, 202)
+        error: 'payment needs founder review; no ownership changed',
+        ...(reviewed ? { offer: publicOffer(reviewed, dependencies.now()) } : {}),
+      }), 409, payment.paymentResponseHeader)
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return c.json({
@@ -1371,7 +1133,7 @@ export function mountWorldMarketRoutes(
     if (paymentPending(offer)) {
       return err(c, 409, 'a settled payment is pending; the thing stays locked for its buyer')
     }
-    if (!paymentInvalid(offer) && reservationActive(offer, dependencies.now())) {
+    if (!paymentInvalid(offer) && !paymentTerminal(offer) && reservationActive(offer, dependencies.now())) {
       return err(c, 409, 'the buyer has an active five-minute payment window')
     }
 
@@ -1385,7 +1147,7 @@ export function mountWorldMarketRoutes(
       return err(c, 409, 'market listing does not match this world offer')
     }
     const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled'])
-    const listingEndedStates = paymentInvalid(offer)
+    const listingEndedStates = paymentInvalid(offer) || paymentTerminal(offer)
       ? new Set([...endedStates, 'stale'])
       : endedStates
     const marketEnded = offer.market_listing_id == null
@@ -1401,10 +1163,13 @@ export function mountWorldMarketRoutes(
       WITH canceled_offer AS (
         UPDATE transfer_offers SET status = 'canceled', canceled_at = clock_timestamp()
         WHERE id = $1 AND channel = 'world' AND status = 'open' AND seller_id = $2
-          AND (pending_x402_tx_hash IS NULL OR x402_evidence_state = 'invalid')
+          AND (
+            pending_x402_tx_hash IS NULL
+            OR x402_evidence_state IN ('invalid', 'expired', 'founder_review')
+          )
           AND (
             reserved_until IS NULL OR reserved_until <= clock_timestamp()
-            OR x402_evidence_state = 'invalid'
+            OR x402_evidence_state IN ('invalid', 'expired', 'founder_review')
           )
           AND NOT EXISTS (
             SELECT 1 FROM payment_attempts

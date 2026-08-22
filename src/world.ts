@@ -8,11 +8,8 @@ import {
   publicText,
   stringList,
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
-import {
-  CLAIM_FEE_USDC,
-  TREASURY,
-} from './pay.ts'
 import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
+import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
 import { effectiveLaws, residentPresence, resolveDueEffects } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
@@ -20,7 +17,6 @@ import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
 import {
   isWorldRootRow,
-  WORLD_ROOT_NAME,
   WORLD_TRANSIT_ONLY_ERROR,
 } from './world-root.ts'
 import {
@@ -35,7 +31,7 @@ import {
   isResponse,
   jsonBody,
   openOffer,
-  releasePaymentLease,
+  reconcileTreasuryCompletionNoEffect,
   returnFailedTreasuryFee,
   requireResident,
   THING_BODY_MAX_BYTES,
@@ -533,136 +529,25 @@ export function mountWorldRoutes(app: Hono): void {
     )
     if (fee instanceof Response) return fee
     try {
-      const rows = (await sql`
-        WITH world_root AS MATERIALIZED (
-          SELECT root.id
-          FROM places root
-          WHERE root.parent_id IS NULL AND root.owner_id IS NULL
-            AND root.place_kind = 'world'
-            AND root.name = ${WORLD_ROOT_NAME}
-            AND (${parentId}::integer IS NULL OR root.id = ${parentId})
-          ORDER BY root.id LIMIT 1
-          FOR SHARE
-        ), world_root_parent AS MATERIALIZED (
-          SELECT id FROM world_root
-          UNION ALL
-          SELECT NULL::integer
-          WHERE ${body.parent_id === null}
-            AND NOT EXISTS (SELECT 1 FROM world_root)
-          LIMIT 1
-        ), payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = ${fee.attemptId}
-            AND lease_owner = ${fee.leaseOwner}
-            AND status = 'payment_pending'
-            AND method = ${fee.rail}
-            AND (
-              (${fee.rail}::text = 'x402' AND tx_hash = ${fee.txHash})
-              OR (${fee.rail}::text = 'credit' AND tx_hash IS NULL)
-            )
-            AND actor_id = ${resident.id}
-            AND operation = 'frontier'
-          FOR UPDATE
-        ), new_place AS (
-          INSERT INTO places (
-            parent_id, place_kind, name, description, owner_id,
-            open_to_building, open_to_things, open_to_notes
-          )
-          SELECT world_root_parent.id, 'continent', ${name}, ${description}, ${resident.id},
-            ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
-          FROM world_root_parent CROSS JOIN payment_attempt
-          RETURNING *
-        ), payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, purpose, actor_id,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT ${fee.txHash}, ${fee.attemptId}, 'frontier', ${resident.id},
-            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
-          FROM new_place
-          WHERE ${fee.rail}::text = 'x402'
-          RETURNING tx_hash
-        ), new_presence AS (
-          INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
-          SELECT ${resident.id}, id, id FROM new_place
-          ON CONFLICT (resident_id) DO NOTHING
-        ), new_fee AS (
-          INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-          SELECT ${resident.id}, 'frontier', ${CLAIM_FEE_USDC}, payment_use.tx_hash
-          FROM payment_use JOIN new_place ON true
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'place_created', ${resident.handle}, jsonb_build_object(
-            'place_id', id, 'parent_id', parent_id, 'name', name,
-            'frontier', true
-          ) || CASE WHEN ${fee.rail}::text = 'x402'
-            THEN jsonb_build_object('fee_tx_hash', ${fee.txHash}::text)
-            ELSE '{}'::jsonb END
-          FROM new_place
-        ), response_payload AS (
-          SELECT jsonb_build_object(
-            'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text)
-          ) || CASE WHEN ${fee.rail}::text = 'x402'
-            THEN jsonb_build_object('fee_tx', ${fee.txHash}::text)
-            ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
-              'spent_usdc', '1.000000',
-              'balance_usdc', (
-                SELECT (balance_units / 1000000)::text || '.' ||
-                  lpad((balance_units % 1000000)::text, 6, '0')
-                FROM city_credit_accounts WHERE resident_id = ${resident.id}::integer
-              )
-            )) END AS body
-          FROM new_place
-        ), completed_x402_attempt AS (
-          SELECT complete_payment_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'place', 'id', new_place.id),
-            201::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM new_place CROSS JOIN payment_use CROSS JOIN response_payload
-          WHERE ${fee.rail}::text = 'x402'
-        ), completed_credit_attempt AS (
-          SELECT complete_city_credit_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'place', 'id', new_place.id),
-            201::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM new_place CROSS JOIN response_payload
-          WHERE ${fee.rail}::text = 'credit'
-        ), completed_attempt AS (
-          SELECT attempt FROM completed_x402_attempt
-          UNION ALL
-          SELECT attempt FROM completed_credit_attempt
+      const completion = await completeTreasuryPaymentOperation(
+        { query: sql.query },
+        { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+      )
+      if (completion.state !== 'completed') {
+        return await reconcileTreasuryCompletionNoEffect(
+          c,
+          fee,
+          resident.id,
+          completion.state === 'deadline_passed'
+            ? 'frontier recovery deadline passed before completion'
+            : 'frontier target changed before completion',
         )
-        SELECT new_place.*, ${resident.handle}::text AS owner,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM new_place CROSS JOIN completed_attempt
-      `) as Array<PlaceRow & { response_body: string }>
-      const returned = rows[0]
-      if (!returned) {
-        if (fee.rail === 'credit') {
-          return await returnFailedTreasuryFee(
-            fee, resident.id, 'frontier target changed before completion', 409,
-          ) as Response
-        }
-        await releasePaymentLease(fee)
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: fee.attemptId,
-          fee_tx: fee.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same request with the same X-PAYMENT header',
-        }, 202)
       }
-      const { response_body: responseBody } = returned
-      return completedTreasuryFeeResponse(fee, responseBody, 201)
+      return completedTreasuryFeeResponse(
+        completion.responseBody,
+        completion.status,
+        completion.paymentResponseHeader,
+      )
     } catch (error) {
       const message = conflictMessage(error, 'place name or payment proof already used')
       if (fee.rail === 'credit') {
@@ -673,7 +558,9 @@ export function mountWorldRoutes(app: Hono): void {
           message ? 409 : 503,
         ) as Response
       }
-      if (message) return err(c, 409, message)
+      if (message) {
+        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+      }
       throw error
     }
   })
@@ -856,119 +743,25 @@ export function mountWorldRoutes(app: Hono): void {
     )
     if (fee instanceof Response) return fee
     try {
-      const rows = (await sql`
-        WITH payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = ${fee.attemptId}
-            AND lease_owner = ${fee.leaseOwner}
-            AND status = 'payment_pending'
-            AND method = ${fee.rail}
-            AND (
-              (${fee.rail}::text = 'x402' AND tx_hash = ${fee.txHash})
-              OR (${fee.rail}::text = 'credit' AND tx_hash IS NULL)
-            )
-            AND actor_id = ${resident.id}
-            AND operation = 'kind_invention'
-          FOR UPDATE
-        ), new_kind AS (
-          INSERT INTO kinds (name, owner_id, current_revision)
-          SELECT ${name}, ${resident.id}, 1 FROM payment_attempt
-          RETURNING id, name, owner_id, current_revision, created_at
-        ), new_revision AS (
-          INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
-          SELECT id, 1, ${description}, ${traits}, ${JSON.stringify(recipe)}::jsonb
-          FROM new_kind
-          RETURNING kind_id, revision, description, traits, recipe
-        ), payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, purpose, actor_id,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_invention', ${resident.id},
-            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
-          FROM new_revision
-          WHERE ${fee.rail}::text = 'x402'
-          RETURNING tx_hash
-        ), new_fee AS (
-          INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-          SELECT ${resident.id}, 'kind_invention', ${CLAIM_FEE_USDC}, payment_use.tx_hash
-          FROM payment_use JOIN new_kind ON true
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'kind_invented', ${resident.handle}, jsonb_build_object(
-            'kind_id', new_kind.id, 'name', new_kind.name,
-            'revision', new_revision.revision
-          ) || CASE WHEN ${fee.rail}::text = 'x402'
-            THEN jsonb_build_object('fee_tx_hash', ${fee.txHash}::text)
-            ELSE '{}'::jsonb END
-          FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
-        ), result_row AS (
-          SELECT new_kind.id, new_kind.name, new_kind.owner_id, ${resident.handle}::text AS owner,
-            new_revision.revision, new_revision.description, new_revision.traits,
-            new_revision.recipe, new_kind.created_at
-          FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
-        ), response_payload AS (
-          SELECT jsonb_build_object('kind', to_jsonb(result_row)) ||
-            CASE WHEN ${fee.rail}::text = 'x402'
-              THEN jsonb_build_object('fee_tx', ${fee.txHash}::text)
-              ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
-                'spent_usdc', '1.000000',
-                'balance_usdc', (
-                  SELECT (balance_units / 1000000)::text || '.' ||
-                    lpad((balance_units % 1000000)::text, 6, '0')
-                  FROM city_credit_accounts WHERE resident_id = ${resident.id}::integer
-                )
-              )) END AS body
-          FROM result_row
-        ), completed_x402_attempt AS (
-          SELECT complete_payment_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
-            201::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
-          WHERE ${fee.rail}::text = 'x402'
-        ), completed_credit_attempt AS (
-          SELECT complete_city_credit_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
-            201::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM result_row CROSS JOIN response_payload
-          WHERE ${fee.rail}::text = 'credit'
-        ), completed_attempt AS (
-          SELECT attempt FROM completed_x402_attempt
-          UNION ALL
-          SELECT attempt FROM completed_credit_attempt
+      const completion = await completeTreasuryPaymentOperation(
+        { query: sql.query },
+        { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+      )
+      if (completion.state !== 'completed') {
+        return await reconcileTreasuryCompletionNoEffect(
+          c,
+          fee,
+          resident.id,
+          completion.state === 'deadline_passed'
+            ? 'kind invention recovery deadline passed before completion'
+            : 'kind invention target changed before completion',
         )
-        SELECT result_row.*,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM result_row CROSS JOIN completed_attempt
-      `) as Array<KindRow & { response_body: string }>
-      const returned = rows[0]
-      if (!returned) {
-        if (fee.rail === 'credit') {
-          return await returnFailedTreasuryFee(
-            fee, resident.id, 'kind invention target changed before completion', 409,
-          ) as Response
-        }
-        await releasePaymentLease(fee)
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: fee.attemptId,
-          fee_tx: fee.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same request with the same X-PAYMENT header',
-        }, 202)
       }
-      return completedTreasuryFeeResponse(fee, returned.response_body, 201)
+      return completedTreasuryFeeResponse(
+        completion.responseBody,
+        completion.status,
+        completion.paymentResponseHeader,
+      )
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
       const message = conflictMessage(error, 'kind name or payment proof already used')
@@ -981,7 +774,9 @@ export function mountWorldRoutes(app: Hono): void {
         ) as Response
       }
       if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
-      if (message) return err(c, 409, message)
+      if (message) {
+        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+      }
       throw error
     }
   })
@@ -1052,131 +847,25 @@ export function mountWorldRoutes(app: Hono): void {
     )
     if (fee instanceof Response) return fee
     try {
-      const rows = (await sql`
-        WITH payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = ${fee.attemptId}
-            AND lease_owner = ${fee.leaseOwner}
-            AND status = 'payment_pending'
-            AND method = ${fee.rail}
-            AND (
-              (${fee.rail}::text = 'x402' AND tx_hash = ${fee.txHash})
-              OR (${fee.rail}::text = 'credit' AND tx_hash IS NULL)
-            )
-            AND actor_id = ${resident.id}
-            AND operation = 'kind_revision'
-            AND asset_type = 'kind' AND asset_id = ${id}
-          FOR UPDATE
-        ), locked_kind AS (
-          SELECT k.id, k.name, k.owner_id, k.current_revision
-          FROM kinds k
-          LEFT JOIN transfer_offers offer ON offer.asset_type = 'kind'
-            AND offer.asset_id = k.id AND offer.status = 'open'
-          WHERE k.id = ${id} AND k.owner_id = ${resident.id}
-            AND k.active_offer_id IS NULL AND offer.id IS NULL
-          FOR UPDATE OF k
-        ), new_revision AS (
-          INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
-          SELECT locked_kind.id, locked_kind.current_revision + 1,
-            ${description}, ${traits}, ${JSON.stringify(recipe)}::jsonb
-          FROM locked_kind CROSS JOIN payment_attempt
-          RETURNING kind_id, revision, description, traits, recipe
-        ), changed_kind AS (
-          UPDATE kinds SET current_revision = new_revision.revision
-          FROM new_revision
-          WHERE kinds.id = new_revision.kind_id
-          RETURNING kinds.id, kinds.name, kinds.owner_id, kinds.created_at
-        ), payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, purpose, actor_id,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_revision', ${resident.id},
-            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
-          FROM changed_kind
-          WHERE ${fee.rail}::text = 'x402'
-          RETURNING tx_hash
-        ), new_fee AS (
-          INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-          SELECT ${resident.id}, 'kind_revision', ${CLAIM_FEE_USDC}, payment_use.tx_hash
-          FROM payment_use JOIN changed_kind ON true
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'kind_revised', ${resident.handle}, jsonb_build_object(
-            'kind_id', changed_kind.id, 'name', changed_kind.name,
-            'revision', new_revision.revision
-          ) || CASE WHEN ${fee.rail}::text = 'x402'
-            THEN jsonb_build_object('fee_tx_hash', ${fee.txHash}::text)
-            ELSE '{}'::jsonb END
-          FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
-        ), result_row AS (
-          SELECT changed_kind.id, changed_kind.name, changed_kind.owner_id,
-            ${resident.handle}::text AS owner, new_revision.revision,
-            new_revision.description, new_revision.traits, new_revision.recipe,
-            changed_kind.created_at
-          FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
-        ), response_payload AS (
-          SELECT jsonb_build_object('kind', to_jsonb(result_row)) ||
-            CASE WHEN ${fee.rail}::text = 'x402'
-              THEN jsonb_build_object('fee_tx', ${fee.txHash}::text)
-              ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
-                'spent_usdc', '1.000000',
-                'balance_usdc', (
-                  SELECT (balance_units / 1000000)::text || '.' ||
-                    lpad((balance_units % 1000000)::text, 6, '0')
-                  FROM city_credit_accounts WHERE resident_id = ${resident.id}::integer
-                )
-              )) END AS body
-          FROM result_row
-        ), completed_x402_attempt AS (
-          SELECT complete_payment_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
-            200::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
-          WHERE ${fee.rail}::text = 'x402'
-        ), completed_credit_attempt AS (
-          SELECT complete_city_credit_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
-            200::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM result_row CROSS JOIN response_payload
-          WHERE ${fee.rail}::text = 'credit'
-        ), completed_attempt AS (
-          SELECT attempt FROM completed_x402_attempt
-          UNION ALL
-          SELECT attempt FROM completed_credit_attempt
+      const completion = await completeTreasuryPaymentOperation(
+        { query: sql.query },
+        { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+      )
+      if (completion.state !== 'completed') {
+        return await reconcileTreasuryCompletionNoEffect(
+          c,
+          fee,
+          resident.id,
+          completion.state === 'deadline_passed'
+            ? 'kind revision recovery deadline passed before completion'
+            : 'kind revision target changed before completion',
         )
-        SELECT result_row.*,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM result_row CROSS JOIN completed_attempt
-      `) as Array<KindRow & { response_body: string }>
-      const returned = rows[0]
-      if (!returned) {
-        if (fee.rail === 'credit') {
-          return await returnFailedTreasuryFee(
-            fee, resident.id, 'kind revision target changed before completion', 409,
-          ) as Response
-        }
-        await releasePaymentLease(fee)
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: fee.attemptId,
-          fee_tx: fee.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same request with the same X-PAYMENT header',
-        }, 202)
       }
-      return completedTreasuryFeeResponse(fee, returned.response_body, 200)
+      return completedTreasuryFeeResponse(
+        completion.responseBody,
+        completion.status,
+        completion.paymentResponseHeader,
+      )
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
       const message = conflictMessage(error, 'payment proof already used')
@@ -1191,7 +880,9 @@ export function mountWorldRoutes(app: Hono): void {
         ) as Response
       }
       if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
-      if (message) return err(c, 409, message)
+      if (message) {
+        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+      }
       throw error
     }
   })

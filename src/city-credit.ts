@@ -1,11 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
+import {
+  CITY_FEE_CREDIT_UNITS,
+  CITY_FEE_CREDIT_USDC,
+  CityCreditConflictError,
+  returnCityCreditSpend,
+  returnExpiredCityCreditSpend,
+} from './city-credit-recovery.ts'
 
-export const CITY_FEE_CREDIT_UNITS = 1_000_000n
-export const CITY_FEE_CREDIT_USDC = '1.000000'
+export {
+  CITY_FEE_CREDIT_UNITS,
+  CITY_FEE_CREDIT_USDC,
+  CityCreditConflictError,
+  returnCityCreditSpend,
+  returnExpiredCityCreditSpend,
+}
 export const CITY_CREDIT_HISTORY_DEFAULT = 20
 export const CITY_CREDIT_HISTORY_MAX = 50
+if (CITY_FEE_CREDIT_UNITS !== 1_000_000n) throw new Error('city fee credit unit invariant changed')
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u
 const SAFE_REASON_RE = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]+$/u
@@ -24,13 +37,6 @@ type QueryRow = Record<string, unknown>
 
 export interface CityCreditDatabase {
   query(text: string, params?: readonly unknown[] | any[]): Promise<readonly QueryRow[]>
-}
-
-export class CityCreditConflictError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'CityCreditConflictError'
-  }
 }
 
 export interface CityCreditHistoryEntry {
@@ -180,14 +186,6 @@ function jsonObject(value: unknown, label: string): Record<string, unknown> {
 
 function optionalJsonObject(value: unknown, label: string): Record<string, unknown> | null {
   return value == null ? null : jsonObject(value, label)
-}
-
-function sameJson(left: unknown, right: unknown): boolean {
-  try {
-    return canonicalPaymentRequest(left).json === canonicalPaymentRequest(right).json
-  } catch {
-    return false
-  }
 }
 
 function errorCode(error: unknown): string | null {
@@ -359,7 +357,9 @@ async function executeBeginSpend(
   const leaseOwner = newPublicId('credit_lease')
   return runQuery(database, `
     /* city-credit:begin-spend */
-    WITH request_candidate AS MATERIALIZED (
+    WITH recovery_clock AS MATERIALIZED (
+      SELECT clock_timestamp() AS checked_at
+    ), request_candidate AS MATERIALIZED (
       SELECT attempt.public_id, spend.id AS spend_entry_id, 1 AS priority
       FROM city_credit_entries spend
       JOIN payment_attempts attempt ON attempt.public_id = spend.payment_attempt_id
@@ -409,7 +409,11 @@ async function executeBeginSpend(
       WHERE attempt.public_id = (SELECT public_id FROM existing_candidate)
         AND attempt.actor_id = $1::integer
         AND attempt.method = 'credit' AND attempt.status = 'payment_pending'
-        AND (attempt.lease_expires_at IS NULL OR attempt.lease_expires_at <= now())
+        AND attempt.recovery_deadline_at > (SELECT checked_at FROM recovery_clock)
+        AND (
+          attempt.lease_expires_at IS NULL
+          OR attempt.lease_expires_at <= (SELECT checked_at FROM recovery_clock)
+        )
       RETURNING attempt.public_id
     )
     SELECT CASE
@@ -427,7 +431,9 @@ async function executeBeginSpend(
       CASE WHEN attempt.response_body_bytes IS NULL THEN NULL
         ELSE convert_from(attempt.response_body_bytes, 'UTF8') END AS response_body,
       (existing_leased.public_id IS NOT NULL) AS lease_acquired,
-      CASE WHEN existing_leased.public_id IS NOT NULL THEN $9::text ELSE NULL END AS lease_owner
+      CASE WHEN existing_leased.public_id IS NOT NULL THEN $9::text ELSE NULL END AS lease_owner,
+      attempt.status IN ('settling', 'payment_pending')
+        AND attempt.recovery_deadline_at <= (SELECT checked_at FROM recovery_clock) AS recovery_due
     FROM existing_candidate
     JOIN payment_attempts attempt ON attempt.public_id = existing_candidate.public_id
     LEFT JOIN city_credit_entries spend
@@ -445,7 +451,7 @@ async function executeBeginSpend(
       spend.spend_entry_id::text, NULL::text AS return_entry_id,
       NULL::smallint AS response_status, NULL::jsonb AS response_json,
       NULL::text AS response_body, true AS lease_acquired,
-      attempt.lease_owner
+      attempt.lease_owner, false AS recovery_due
     FROM new_attempt attempt
     JOIN new_spend spend ON spend.public_id = attempt.public_id
   `, [
@@ -489,8 +495,24 @@ export async function beginCityCreditSpend(
   if (rows.length === 0) {
     rows = await executeBeginSpend(database, normalized, requestId, request)
   }
-  const row = rows[0]
+  let row = rows[0]
   if (!row) throw new CityCreditConflictError('city credit request or target changed; retry the same request id')
+  if (booleanValue(row.recovery_due)) {
+    const deadlineReturn = await returnExpiredCityCreditSpend(database, {
+      actorId: integerValue(row.actor_id, 'credit actor'),
+      attemptId: String(row.attempt_id),
+      ...(row.lease_owner == null ? {} : { leaseOwner: String(row.lease_owner) }),
+    })
+    if (deadlineReturn.state === 'busy') {
+      throw new CityCreditConflictError('city credit deadline return is busy; retry the same request id')
+    }
+    if (deadlineReturn.state === 'not_due') {
+      throw new CityCreditConflictError('city credit deadline return is not yet available')
+    }
+    rows = await executeBeginSpend(database, normalized, requestId, request)
+    row = rows[0]
+    if (!row) throw new CityCreditConflictError('city credit target changed after its deadline return; retry')
+  }
   verifySpendTerms(row, normalized, requestId, request)
   const state = String(row.state)
   const attemptId = String(row.attempt_id)
@@ -571,114 +593,6 @@ export async function completeCityCreditAttempt(
     throw new CityCreditConflictError('city credit completion no longer owns this exact spend')
   }
   return row
-}
-
-export async function returnCityCreditSpend(
-  database: CityCreditDatabase,
-  input: {
-    actorId: number
-    attemptId: string
-    leaseOwner: string
-    reason: string
-    responseStatus: number
-    response: Record<string, unknown>
-  },
-) {
-  const actorId = positiveResidentId(input.actorId, 'credit actor id')
-  const reason = safeReason(input.reason)
-  if (!Number.isSafeInteger(input.responseStatus) || input.responseStatus < 400 || input.responseStatus > 599) {
-    throw new TypeError('city credit return response status must be an error status')
-  }
-  const responseBody = JSON.stringify(input.response)
-  const rows = await runQuery(database, `
-    /* city-credit:return-spend */
-    WITH prior_return AS MATERIALIZED (
-      SELECT returned.id
-      FROM payment_attempts attempt
-      JOIN city_credit_entries spend
-        ON spend.payment_attempt_id = attempt.public_id AND spend.entry_kind = 'spend'
-      JOIN city_credit_entries returned
-        ON returned.related_spend_id = spend.id AND returned.entry_kind = 'return'
-      WHERE attempt.public_id = $2::text AND attempt.actor_id = $1::integer
-    ), returned_attempt AS MATERIALIZED (
-      SELECT returned.*
-      FROM payment_attempts owned
-      CROSS JOIN LATERAL return_city_credit_spend(
-        owned.public_id, $3::text, $4::text, $5::smallint,
-        $6::jsonb, decode($7::text, 'base64')
-      ) returned
-      WHERE owned.public_id = $2::text AND owned.actor_id = $1::integer
-        AND owned.method = 'credit' AND owned.amount_units = $8::bigint
-    )
-    SELECT returned_attempt.*,
-      (SELECT id::text FROM prior_return LIMIT 1) AS prior_return_id
-    FROM returned_attempt
-  `, [
-    actorId,
-    input.attemptId,
-    input.leaseOwner,
-    reason,
-    input.responseStatus,
-    responseBody,
-    Buffer.from(responseBody, 'utf8').toString('base64'),
-    CITY_FEE_CREDIT_UNITS.toString(),
-  ])
-  const returnedAttempt = rows[0]
-  const returnedResponse = returnedAttempt
-    ? optionalJsonObject(returnedAttempt.response_json, 'credit return response')
-    : null
-  if (
-    !returnedAttempt
-    || String(returnedAttempt.status) !== 'credit_returned'
-    || integerValue(returnedAttempt.actor_id, 'credit actor') !== actorId
-    || bigintString(returnedAttempt.amount_units, 'credit return amount') !== CITY_FEE_CREDIT_UNITS.toString()
-    || !returnedResponse
-    || !sameJson(returnedResponse, input.response)
-    || integerValue(returnedAttempt.response_status, 'credit response status') !== input.responseStatus
-  ) throw new CityCreditConflictError('matching exact city credit spend could not be returned')
-
-  // The return function inserts the append-only return entry. A fresh statement
-  // is required to observe that write and identify its exact spend relationship.
-  const resultRows = await runQuery(database, `
-    /* city-credit:return-result */
-    SELECT 'returned' AS state, attempt.public_id AS attempt_id,
-      attempt.actor_id, attempt.operation, attempt.target_key,
-      spend.request_id, attempt.request_hash, attempt.request_json,
-      attempt.amount_units::text AS amount_units, spend.id::text AS spend_entry_id,
-      returned_entry.id::text AS return_entry_id,
-      attempt.response_status, attempt.response_json
-    FROM payment_attempts attempt
-    JOIN city_credit_entries spend
-      ON spend.payment_attempt_id = attempt.public_id AND spend.entry_kind = 'spend'
-    JOIN city_credit_entries returned_entry
-      ON returned_entry.related_spend_id = spend.id AND returned_entry.entry_kind = 'return'
-    WHERE attempt.public_id = $2::text AND attempt.actor_id = $1::integer
-      AND attempt.method = 'credit' AND attempt.amount_units = $3::bigint
-  `, [actorId, input.attemptId, CITY_FEE_CREDIT_UNITS.toString()])
-  const row = resultRows[0]
-  const response = row ? optionalJsonObject(row.response_json, 'credit return response') : null
-  if (
-    !row
-    || String(row.state) !== 'returned'
-    || integerValue(row.actor_id, 'credit actor') !== actorId
-    || bigintString(row.amount_units, 'credit return amount') !== CITY_FEE_CREDIT_UNITS.toString()
-    || row.return_entry_id == null
-    || !response
-    || !sameJson(response, input.response)
-    || integerValue(row.response_status, 'credit response status') !== input.responseStatus
-  ) throw new CityCreditConflictError('matching exact city credit spend could not be returned')
-
-  return {
-    disposition: returnedAttempt.prior_return_id == null ? 'created' as const : 'existing' as const,
-    state: 'returned' as const,
-    attempt_id: String(row.attempt_id),
-    spend_entry_id: idString(row.spend_entry_id, 'credit spend entry id'),
-    return_entry_id: idString(row.return_entry_id, 'credit return entry id'),
-    amount: CITY_FEE_CREDIT_USDC,
-    amount_units: CITY_FEE_CREDIT_UNITS.toString(),
-    response_status: input.responseStatus,
-    response,
-  }
 }
 
 function historyArray(value: unknown): QueryRow[] {

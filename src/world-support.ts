@@ -23,6 +23,7 @@ import {
 } from './payment-flow.ts'
 import {
   findReplayableTargetPaymentAttempt,
+  markPaymentAttemptFounderReview,
   PaymentAttemptConflictError,
   releaseSettlementLease,
   type PaymentAttemptRecord,
@@ -321,11 +322,11 @@ export function setPaymentHeader(c: Context, fee: FeePayment): void {
 }
 
 export function completedTreasuryFeeResponse(
-  fee: FeePayment,
   responseBody: string,
   status: number,
+  paymentResponseHeader: string | null,
 ): Response {
-  return paymentJsonResponse(responseBody, status, fee.rail === 'x402' ? fee.responseHeader : null)
+  return paymentJsonResponse(responseBody, status, paymentResponseHeader)
 }
 
 export async function releasePaymentLease(
@@ -382,6 +383,29 @@ export async function returnFailedTreasuryFee(
       headers: { 'content-type': 'application/json; charset=UTF-8' },
     })
   }
+}
+
+export async function reconcileTreasuryCompletionNoEffect(
+  c: Context,
+  fee: FeePayment,
+  actorId: number,
+  reason: string,
+): Promise<Response> {
+  if (fee.rail === 'credit') {
+    return await returnFailedTreasuryFee(fee, actorId, reason, 409) as Response
+  }
+  await markPaymentAttemptFounderReview({ query: sql.query }, {
+    publicId: fee.attemptId,
+    leaseOwner: fee.leaseOwner,
+    reason,
+  })
+  return c.json({
+    payment: 'founder_review',
+    payment_attempt_id: fee.attemptId,
+    fee_tx: fee.txHash,
+    do_not_pay_again: true,
+    reason,
+  }, 409)
 }
 
 export function buildPlaceTree(

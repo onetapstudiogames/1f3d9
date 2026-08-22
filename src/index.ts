@@ -76,6 +76,8 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
+import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
+import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
 import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
@@ -144,6 +146,10 @@ const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
 const executeLaterHolderQuery: LaterHolderQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
+const paymentRecoveryDatabase = {
+  query: async (text: string, params: readonly unknown[] = []) =>
+    await sql.query(text, [...params]) as Record<string, unknown>[],
+}
 
 function privateResidentHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
@@ -372,6 +378,15 @@ app.post('/api/rotate', async c => {
 })
 
 mountActionRoutes(app)
+const paymentRecoveryRuntime = createPaymentRecoveryRuntime(paymentRecoveryDatabase)
+mountPaymentRecoveryRoutes(app, {
+  authenticate: authPassive,
+  getOwnedAttempt: paymentRecoveryRuntime.getOwnedAttempt,
+  privateView: paymentRecoveryRuntime.privateView,
+  recheck: paymentRecoveryRuntime.recheck,
+  runBatch: paymentRecoveryRuntime.runBatch,
+  environment: process.env,
+})
 mountWorldRoutes(app)
 mountSocietyRoutes(app)
 mountWorldMarketRoutes(app)

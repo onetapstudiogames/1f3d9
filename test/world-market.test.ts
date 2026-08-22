@@ -73,7 +73,7 @@ interface FakeOffer {
   pending_x402_tx_hash: string | null
   pending_x402_payer: string | null
   pending_x402_at: string | null
-  x402_evidence_state: 'none' | 'pending' | 'invalid'
+  x402_evidence_state: 'none' | 'pending' | 'invalid' | 'expired' | 'founder_review'
   x402_invalid_reason: string | null
   x402_invalid_at: string | null
   created_at: string
@@ -88,6 +88,7 @@ interface FakeOffer {
 }
 
 interface FakeState {
+  scenario?: 'target changes after world finality'
   thingOwner: number
   thingWithdrawn: boolean
   thingLocked: boolean
@@ -225,7 +226,8 @@ function fakePaymentAttempt(now: string): PaymentAttemptRecord {
     offerId: 101,
     assetType: 'thing',
     assetId: 41,
-    requestHash: '11'.repeat(32),
+    request: null,
+    requestHash: null,
     method: 'x402',
     network: 'base',
     token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
@@ -242,6 +244,8 @@ function fakePaymentAttempt(now: string): PaymentAttemptRecord {
     status: 'payment_pending',
     leaseOwner: 'world-payment-lease',
     leaseExpiresAt: new Date(Date.parse(now) + 30_000).toISOString(),
+    recoveryStartedAt: now,
+    recoveryDeadlineAt: new Date(Date.parse(now) + 7_200_000).toISOString(),
     txHash: TX,
     finalizedBlockNumber: null,
     finalizedBlockHash: null,
@@ -258,11 +262,11 @@ function fakePaymentAttempt(now: string): PaymentAttemptRecord {
   }
 }
 
-function worldSaleRequestHash(offer: Pick<
+function worldRequestForOffer(offer: Pick<
   FakeOffer,
   'id' | 'market_checkout_id' | 'market_listing_id' | 'market_draft_id' | 'market_buyer' | 'buyer_wallet' | 'seller_wallet' | 'price_usdc' | 'asset_id'
->): string {
-  return canonicalPaymentRequest({
+>) {
+  return {
     offer_id: offer.id,
     market_checkout_id: offer.market_checkout_id,
     market_listing_id: offer.market_listing_id,
@@ -272,17 +276,118 @@ function worldSaleRequestHash(offer: Pick<
     seller_wallet: offer.seller_wallet,
     price_usdc: offer.price_usdc,
     asset_id: offer.asset_id,
-  }).hash
+  }
+}
+
+function worldSaleRequestHash(offer: Parameters<typeof worldRequestForOffer>[0]): string {
+  return canonicalPaymentRequest(worldRequestForOffer(offer)).hash
 }
 
 function makeHarness(patch: Partial<FakeState> = {}) {
   let state = initialState(patch)
   if (state.offer?.pending_payment_attempt_id && state.paymentAttempt == null) {
-    state = { ...state, paymentAttempt: fakePaymentAttempt(state.now) }
+    const attempt = fakePaymentAttempt(state.now)
+    const request = worldRequestForOffer(state.offer)
+    const attemptStatus = state.offer.x402_evidence_state === 'founder_review'
+      ? 'founder_review' as const
+      : state.offer.x402_evidence_state === 'expired'
+        ? 'expired' as const
+        : attempt.status
+    state = {
+      ...state,
+      paymentAttempt: {
+        ...attempt,
+        status: attemptStatus,
+        request,
+        requestHash: canonicalPaymentRequest(request).hash,
+      },
+    }
   }
 
   const query = async (text: string, params: readonly unknown[]) => {
     state = { ...state, queries: [...state.queries, { text, params }] }
+    if (text.includes('payment-sale-operations:read-attempt')) {
+      const attempt = state.paymentAttempt
+      const offer = state.offer
+      if (!attempt || !offer || attempt.publicId !== String(params[0])) return []
+      const request = {
+        offer_id: offer.id,
+        market_checkout_id: offer.market_checkout_id,
+        market_listing_id: offer.market_listing_id,
+        market_draft_id: offer.market_draft_id,
+        market_buyer: offer.market_buyer,
+        buyer_wallet: offer.buyer_wallet,
+        seller_wallet: offer.seller_wallet,
+        price_usdc: offer.price_usdc,
+        asset_id: offer.asset_id,
+      }
+      const response = attempt.response
+      return [{
+        attempt_id: attempt.publicId,
+        actor_id: attempt.actorId,
+        counterparty_id: attempt.counterpartyId,
+        operation: attempt.operation,
+        target_key: attempt.targetKey,
+        attempt_offer_id: attempt.offerId,
+        attempt_asset_type: attempt.assetType,
+        attempt_asset_id: attempt.assetId,
+        request_hash: attempt.requestHash,
+        request_json: attempt.request ?? request,
+        method: attempt.method,
+        network: attempt.network,
+        token: attempt.token,
+        payer_wallet: attempt.payerWallet,
+        payee_wallet: attempt.payeeWallet,
+        amount_units: attempt.amountUnits?.toString(),
+        start_time: attempt.startTime,
+        end_time: attempt.endTime,
+        status: attempt.status,
+        lease_owner: attempt.leaseOwner,
+        tx_hash: attempt.txHash,
+        finalized_block_number: attempt.finalizedBlockNumber?.toString() ?? null,
+        finalized_block_hash: attempt.finalizedBlockHash,
+        finalized_block_time: attempt.finalizedBlockTime,
+        finalized_at: attempt.finalizedAt,
+        recovery_started_at: attempt.updatedAt,
+        recovery_deadline_at: new Date(Date.parse(attempt.createdAt) + 7_200_000).toISOString(),
+        recovery_open: Date.parse(state.now) < Date.parse(attempt.createdAt) + 7_200_000,
+        offer_id: offer.id,
+        channel: offer.channel,
+        asset_type: offer.asset_type,
+        asset_id: offer.asset_id,
+        asset_name: offer.asset_name,
+        maker_id: offer.maker_id,
+        made_by: offer.made_by,
+        current_owner_id: offer.current_owner_id,
+        active_offer_id: state.thingLocked ? offer.id : null,
+        withdrawn_at: state.thingWithdrawn ? state.now : null,
+        seller_id: offer.seller_id,
+        seller: offer.seller,
+        buyer_id: offer.buyer_id,
+        buyer: offer.buyer,
+        price_usdc: offer.price_usdc,
+        seller_wallet: offer.seller_wallet,
+        buyer_wallet: offer.buyer_wallet,
+        offer_status: offer.status,
+        reserved_by: offer.reserved_by,
+        reserved_at: offer.reserved_at,
+        reserved_until: offer.reserved_until,
+        market_origin: offer.market_origin,
+        market_draft_id: offer.market_draft_id,
+        market_listing_id: offer.market_listing_id,
+        market_checkout_id: offer.market_checkout_id,
+        market_buyer: offer.market_buyer,
+        pending_payment_attempt_id: offer.pending_payment_attempt_id,
+        pending_x402_tx_hash: offer.pending_x402_tx_hash,
+        pending_x402_payer: offer.pending_x402_payer,
+        pending_x402_at: offer.pending_x402_at,
+        x402_evidence_state: offer.x402_evidence_state,
+        response_status: attempt.responseStatus,
+        response,
+        response_body: attempt.responseBody,
+        payment_response_header: attempt.paymentResponseHeader,
+      }]
+    }
     if (text.includes('payment-attempts:find-replayable-target')) {
       return state.paymentAttempt ? [{
         ...state.paymentAttempt,
@@ -295,6 +400,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
         asset_type: state.paymentAttempt.assetType,
         asset_id: state.paymentAttempt.assetId,
         request_hash: state.paymentAttempt.requestHash,
+        request_json: state.paymentAttempt.request,
       }] : []
     }
     if (text.includes('world-market:resident')) {
@@ -350,50 +456,102 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       state = { ...state, offer: rebound }
       return [{ ...rebound }]
     }
-    if (text.includes('world-market:pending-x402')) {
+    if (text.includes('world-market:pending-x402') || text.includes('payment-sale-operations:park-world')) {
       const offer = state.offer
+      const attempt = state.paymentAttempt
       if (
         !offer || offer.status !== 'open' || offer.pending_x402_tx_hash != null ||
-        offer.buyer_id !== Number(params[1]) || offer.buyer_wallet !== String(params[4])
+        !attempt || attempt.publicId !== String(params.at(-1))
       ) return []
       const pending = {
         ...offer,
-        pending_payment_attempt_id: String(params[2]),
-        pending_x402_tx_hash: String(params[3]),
-        pending_x402_payer: String(params[4]),
+        pending_payment_attempt_id: attempt.publicId,
+        pending_x402_tx_hash: attempt.txHash,
+        pending_x402_payer: attempt.payerWallet,
         pending_x402_at: state.now,
         x402_evidence_state: 'pending' as const,
       }
       state = { ...state, offer: pending }
-      return [{ id: offer.id }]
+      return [{ id: offer.id, state: 'parked' }]
     }
-    if (text.includes('world-market:invalidate-x402')) {
+    if (
+      text.includes('world-market:invalidate-x402')
+      || text.includes('payment-sale-operations:close-invalid-target')
+    ) {
       const offer = state.offer
       if (!offer || offer.x402_evidence_state !== 'pending') return []
       const invalid = {
         ...offer,
         x402_evidence_state: 'invalid' as const,
-        x402_invalid_reason: String(params[2]),
+        x402_invalid_reason: text.includes('close-invalid-target')
+          ? 'confirmed_mismatch'
+          : String(params[2]),
         x402_invalid_at: state.now,
       }
       state = { ...state, offer: invalid }
-      return [{ id: offer.id }]
+      return text.includes('close-invalid-target') && state.paymentAttempt
+        ? [{
+            state: 'invalid',
+            attempt_id: state.paymentAttempt.publicId,
+            actor_id: state.paymentAttempt.actorId,
+            operation: 'world_sale',
+            method: 'x402',
+            target_released: false,
+            evidence_synchronized: true,
+          }]
+        : [{ id: offer.id }]
     }
-    if (text.includes('world-market:finalize-payment')) {
+    if (text.includes('payment-sale-operations:close-target')) {
+      const attempt = state.paymentAttempt
       const offer = state.offer
-      if (!offer || offer.status !== 'open' || offer.buyer_id !== Number(params[1])) return []
+      if (!attempt || !offer || attempt.leaseOwner !== String(params[1])) return []
+      const terminalState = String(params[2]) as 'expired' | 'founder_review'
+      state = {
+        ...state,
+        paymentAttempt: {
+          ...attempt,
+          status: terminalState,
+          invalidReason: attempt.invalidReason ?? String(params[3]),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        },
+        offer: {
+          ...offer,
+          pending_payment_attempt_id: offer.pending_payment_attempt_id ?? attempt.publicId,
+          pending_x402_tx_hash: offer.pending_x402_tx_hash ?? attempt.txHash,
+          pending_x402_payer: offer.pending_x402_payer ?? attempt.payerWallet,
+          pending_x402_at: offer.pending_x402_at ?? state.now,
+          x402_evidence_state: terminalState,
+        },
+      }
+      return [{
+        state: terminalState,
+        attempt_id: attempt.publicId,
+        actor_id: attempt.actorId,
+        operation: 'world_sale',
+        method: 'x402',
+        target_released: false,
+      }]
+    }
+    if (text.includes('world-market:finalize-payment') || text.includes('payment-sale-operations:complete-world')) {
+      const offer = state.offer
+      const attempt = state.paymentAttempt
+      if (
+        !offer || !attempt || offer.status !== 'open'
+        || offer.buyer_id == null || offer.buyer == null
+      ) return []
       const claimed = {
         ...offer,
         status: 'claimed' as const,
-        current_owner_id: Number(params[1]),
-        current_owner: String(params[2]),
+        current_owner_id: offer.buyer_id,
+        current_owner: offer.buyer,
         claimed_at: state.now,
         locked: false,
-        tx_hash: String(params[3]),
-        buyer_wallet: String(params[4]),
+        tx_hash: attempt.txHash,
+        buyer_wallet: attempt.payerWallet,
         verified_via: 'x402',
-        block_time: params[5] == null ? null : String(params[5]),
-        from: String(params[4]),
+        block_time: attempt.finalizedBlockTime,
+        from: attempt.payerWallet,
         to: offer.seller_wallet,
       }
       const response = {
@@ -439,7 +597,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       state = {
         ...state,
         offer: claimed,
-        thingOwner: Number(params[1]),
+        thingOwner: offer.buyer_id,
         thingLocked: false,
         paymentAttempt: state.paymentAttempt
           ? {
@@ -455,14 +613,28 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           }
           : null,
       }
-      return [{ response, response_body: responseBody }]
+      return [{
+        state: 'completed',
+        attempt_id: attempt.publicId,
+        actor_id: attempt.actorId,
+        operation: attempt.operation,
+        method: attempt.method,
+        response_status: 200,
+        response,
+        response_body: responseBody,
+        payment_response_header: attempt.paymentResponseHeader ?? SETTLED_RESPONSE,
+      }]
     }
     if (text.includes('world-market:cancel')) {
       const offer = state.offer
       const active = offer?.reserved_until != null && Date.parse(offer.reserved_until) > Date.parse(state.now)
+      const terminalEvidence = offer?.x402_evidence_state === 'expired'
+        || offer?.x402_evidence_state === 'founder_review'
       if (
-        !offer || offer.status !== 'open' || (active && offer.x402_evidence_state !== 'invalid') ||
-        (offer.pending_x402_tx_hash != null && offer.x402_evidence_state !== 'invalid') ||
+        !offer || offer.status !== 'open'
+        || (active && offer.x402_evidence_state !== 'invalid' && !terminalEvidence)
+        || (offer.pending_x402_tx_hash != null
+          && offer.x402_evidence_state !== 'invalid' && !terminalEvidence) ||
         (state.paymentAttempt != null &&
           ['settling', 'payment_pending', 'needs_review'].includes(state.paymentAttempt.status))
       ) return []
@@ -514,6 +686,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       const boundAttempt = state.offer
         ? {
           ...attempt,
+          request: worldRequestForOffer(state.offer),
           requestHash: worldSaleRequestHash(state.offer),
           paymentResponseHeader: attempt.paymentResponseHeader ?? SETTLED_RESPONSE,
         }
@@ -551,6 +724,16 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       const finalizedAt = new Date(Date.parse(state.directBlockTime) + 60_000).toISOString()
       state = {
         ...state,
+        ...(state.scenario === 'target changes after world finality' && state.offer
+          ? {
+              thingOwner: 9,
+              offer: {
+                ...state.offer,
+                current_owner_id: 9,
+                current_owner: 'someone-else',
+              },
+            }
+          : {}),
         paymentAttempt: {
           ...boundAttempt,
           leaseOwner: 'world-payment-lease',
@@ -608,6 +791,16 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       const finalizedAt = new Date(Date.parse(state.directBlockTime) + 60_000).toISOString()
       state = {
         ...state,
+        ...(state.scenario === 'target changes after world finality' && state.offer
+          ? {
+              thingOwner: 9,
+              offer: {
+                ...state.offer,
+                current_owner_id: 9,
+                current_owner: 'someone-else',
+              },
+            }
+          : {}),
         paymentAttempt: {
           ...attempt,
           leaseOwner: 'world-payment-lease',
@@ -844,10 +1037,11 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.equal(firstBody.offer.tx_hash, TX)
   assert.equal(harness.getState().thingOwner, 8)
   assert.ok(harness.getState().queries.some(call =>
-    call.text.includes('world-market:finalize-payment') && /payment_uses/i.test(call.text) &&
+    call.text.includes('payment-sale-operations:complete-world') && /payment_uses/i.test(call.text) &&
     /sale_payments/i.test(call.text) && /update\s+things/i.test(call.text) && /insert\s+into\s+transfers/i.test(call.text)))
-  const guardedClaim = harness.getState().queries.find(call => call.text.includes('world-market:finalize-payment'))
-  assert.match(guardedClaim?.text ?? '', /date_trunc\('second', reserved_at\)/i)
+  const guardedClaim = harness.getState().queries.find(call =>
+    call.text.includes('payment-sale-operations:complete-world'))
+  assert.match(guardedClaim?.text ?? '', /date_trunc\('second', offer\.reserved_at\)/i)
   assert.match(guardedClaim?.text ?? '', /complete_payment_attempt/i)
   assert.match(guardedClaim?.text ?? '', /'maker_id'/i)
   assert.match(guardedClaim?.text ?? '', /'made_by'/i)
@@ -855,7 +1049,7 @@ test('payment closes ownership atomically and a retry returns the same public re
   assert.match(guardedClaim?.text ?? '', /'current_owner'/i)
   assert.match(
     guardedClaim?.text ?? '',
-    /UPDATE\s+things\s+SET\s+owner_id\s*=\s*\$2\s*,\s*active_offer_id\s*=\s*NULL\s+FROM/i,
+    /UPDATE\s+things\s+SET\s+owner_id\s*=\s*offer\.buyer_id\s*,\s*active_offer_id\s*=\s*NULL\s+FROM/i,
   )
 
   const changedWallet = await harness.app.request('/api/world/offer/101/claim', {
@@ -1080,7 +1274,8 @@ test('a settled x402 payment stays locked while Base indexing catches up and fin
   assert.equal(harness.getState().thingLocked, true)
   const attemptIndex = harness.getState().queries.findIndex(call =>
     /insert\s+into\s+payment_attempts/i.test(call.text))
-  const pendingIndex = harness.getState().queries.findIndex(call => call.text.includes('world-market:pending-x402'))
+  const pendingIndex = harness.getState().queries.findIndex(call =>
+    call.text.includes('payment-sale-operations:park-world'))
   assert.ok(attemptIndex >= 0 && pendingIndex > attemptIndex)
 
   harness.setState(current => ({
@@ -1150,6 +1345,46 @@ test('buyer or seller can reconcile pending payment, but ambiguous chain state s
   assert.equal(finalized.status, 200, await finalized.clone().text())
   assert.equal((await finalized.json() as { offer: { phase: string } }).offer.phase, 'claimed')
   assert.equal(sellerFinalizes.getState().thingOwner, 8)
+})
+
+test('a finalized payment whose world target changed enters founder review with no ownership effect', async () => {
+  const harness = makeHarness({
+    scenario: 'target changes after world finality',
+    offer: openOffer({
+      buyer_id: 8,
+      buyer: 'neighbor',
+      reserved_by: 8,
+      buyer_wallet: BUYER_WALLET,
+      market_buyer: 'market-buyer',
+      market_listing_id: 91,
+      market_checkout_id: 81,
+      pending_x402_tx_hash: TX,
+      pending_x402_payer: BUYER_WALLET,
+      pending_x402_at: NOW.toISOString(),
+      x402_evidence_state: 'pending',
+      reserved_at: NOW.toISOString(),
+      reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+    }),
+    thingLocked: true,
+  })
+
+  const response = await harness.app.request('/api/world/offer/101/reconcile', {
+    method: 'POST', headers: jsonHeaders(BUYER_SECRET), body: '{}',
+  })
+
+  assert.equal(response.status, 409, await response.clone().text())
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.payment, 'founder_review')
+  assert.equal(body.do_not_pay_again, true)
+  assert.equal('retry' in body, false)
+  assert.equal(harness.getState().paymentAttempt?.status, 'founder_review')
+  assert.equal(harness.getState().offer?.x402_evidence_state, 'founder_review')
+  assert.equal(harness.getState().thingOwner, 9)
+  assert.equal(harness.getState().thingLocked, true)
+  assert.equal(harness.getState().queries.some(call =>
+    call.text.includes('payment-sale-operations:complete-world')), false)
+  assert.equal(harness.getState().queries.some(call =>
+    call.text.includes('payment-sale-operations:close-target')), true)
 })
 
 test('reconcile_world MCP dispatches through HTTP bearer auth without a secret argument', async () => {
@@ -1283,4 +1518,42 @@ test('an active reservation blocks world cancellation even after market withdraw
   })
   assert.equal(response.status, 409)
   assert.equal(harness.getState().thingLocked, true)
+})
+
+test('founder-review evidence keeps the world thing locked until market-first cancellation', async () => {
+  const reviewed = openOffer({
+    buyer_id: 8,
+    buyer: 'neighbor',
+    reserved_by: 8,
+    buyer_wallet: BUYER_WALLET,
+    market_listing_id: 91,
+    market_checkout_id: 81,
+    pending_x402_tx_hash: TX,
+    pending_x402_payer: BUYER_WALLET,
+    pending_x402_at: NOW.toISOString(),
+    x402_evidence_state: 'founder_review',
+    reserved_at: NOW.toISOString(),
+    reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+  })
+  const active = makeHarness({
+    offer: reviewed,
+    thingLocked: true,
+    draft: draft({ status: 'active', listing_id: 91, listing_state: 'active' }),
+  })
+  const blocked = await active.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(blocked.status, 409)
+  assert.equal(active.getState().thingLocked, true)
+
+  const ended = makeHarness({
+    offer: reviewed,
+    thingLocked: true,
+    draft: draft({ status: 'canceled', listing_id: 91, listing_state: 'stale' }),
+  })
+  const canceled = await ended.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(canceled.status, 200, await canceled.clone().text())
+  assert.equal(ended.getState().thingLocked, false)
 })

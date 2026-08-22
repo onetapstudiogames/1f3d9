@@ -47,7 +47,7 @@ interface ToolResult {
 
 const EXISTING_TOOL_NAMES = [
   'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
-  'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
+  'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
   'mark_for_later', 'me', 'moderate',
 ] as const
@@ -67,6 +67,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   claim_world: 'Claim a world thing',
   cancel_world: 'Cancel a world listing',
   reconcile_world: 'Reconcile a world payment',
+  payment_attempt: 'Check a payment attempt',
   transfer: 'Transfer property',
   agree: 'Write an agreement',
   open_agreement_accession: 'Open agreement accession',
@@ -80,7 +81,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
 
 const PROTECTED_TOOL_NAMES = [
   'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
-  'claim_world', 'cancel_world', 'reconcile_world', 'transfer', 'agree',
+  'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer', 'agree',
   'open_agreement_accession', 'sign', 'say', 'later_holder_items',
   'mark_for_later', 'me',
 ] as const

@@ -20,6 +20,12 @@ import {
   resumeDurableX402,
   runDurableX402,
 } from './payment-flow.ts'
+import {
+  closeInvalidSalePaymentTarget,
+  closeSalePaymentTarget,
+  completeDirectSalePayment,
+  PaymentSaleConflictError,
+} from './payment-sale-operations.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { runTalkNoteAction } from './note-action.ts'
@@ -916,142 +922,48 @@ export function mountSocietyRoutes(app: Hono): void {
     if (payment.state === 'payment_pending') return c.json(payment.body, 202)
     if (payment.state === 'unavailable') return c.json(payment.body, 503)
     if (payment.state === 'rejected') {
+      if (existingAttempt) {
+        try {
+          await closeInvalidSalePaymentTarget({ query: sql.query }, {
+            attemptId: existingAttempt.publicId,
+          })
+        } catch (error) {
+          if (!(error instanceof PaymentSaleConflictError)) throw error
+        }
+      }
       return payment.status === 409
         ? c.json(payment.body, 409)
         : c.json(payment.body, 400)
     }
 
-    const txHash = payment.txHash
-    const payer = payment.payerWallet
-    const paymentBlockTime = payment.blockTime
-
     try {
-      const rows = await sql.query(`
-        WITH payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = $17 AND lease_owner = $18
-            AND status = 'payment_pending' AND tx_hash = $8
-            AND actor_id = $3 AND counterparty_id = $2
-            AND operation = 'direct_sale' AND offer_id = $1
-            AND asset_type = $4 AND asset_id = $5
-          FOR UPDATE
-        ), claimed_offer AS (
-          UPDATE transfer_offers SET status = 'claimed', claimed_at = now()
-          FROM payment_attempt
-          WHERE id = $1 AND status = 'open' AND seller_id = $2 AND buyer_id = $3
-            AND asset_type = $4 AND asset_id = $5
-            AND price_usdc = $6 AND lower(seller_wallet) = lower($7)
-            AND reserved_by = $3 AND lower(buyer_wallet) = lower($14)
-            AND reserved_at = $15::timestamptz AND reserved_until = $16::timestamptz
-            AND $13::timestamptz >= (
-              date_trunc('second', reserved_at)
-              + CASE WHEN reserved_at > date_trunc('second', reserved_at)
-                THEN interval '1 second' ELSE interval '0 seconds' END
-            )
-            AND $13::timestamptz < date_trunc('second', reserved_until)
-            AND EXISTS (
-              SELECT 1 FROM ${table}
-              WHERE id = $5 AND owner_id = $2 AND active_offer_id = $1${transferable}
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM transfer_offers conflict
-              WHERE conflict.asset_type = $4 AND conflict.asset_id = $5
-                AND conflict.status = 'open' AND conflict.id <> $1
-            )
-          RETURNING id, asset_id, seller_id, buyer_id
-        ), claimed_payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, actor_id, purpose,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT $8, $17, $3, 'sale', $9, lower($7), $6 FROM claimed_offer
-          RETURNING tx_hash
-        ), new_payment AS (
-          INSERT INTO sale_payments (
-            offer_id, buyer_id, payer_wallet, payee_wallet, amount_usdc,
-            tx_hash, verified_via, block_time
-          )
-          SELECT o.id, o.buyer_id, $9, lower($7), $6, p.tx_hash, 'x402', $13
-          FROM claimed_offer o CROSS JOIN claimed_payment_use p
-          RETURNING offer_id, tx_hash
-        ), changed_owner AS (
-          UPDATE ${table} SET owner_id = $3, active_offer_id = NULL
-          FROM claimed_offer o CROSS JOIN new_payment p
-          WHERE ${table}.id = o.asset_id AND ${table}.owner_id = o.seller_id
-            AND ${table}.active_offer_id = o.id${transferable}
-          RETURNING ${table}.id
-        ), owner_guard AS MATERIALIZED (
-          SELECT 1 / count(*)::int AS ok FROM changed_owner
-        ), new_transfer AS (
-          INSERT INTO transfers (
-            asset_type, asset_id, from_id, to_id, offer_id, price_usdc, tx_hash
-          )
-          SELECT $4, a.id, $2, $3, $1, $6, $8
-          FROM changed_owner a CROSS JOIN owner_guard g WHERE g.ok = 1
-          RETURNING id, created_at
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'sale', $10, jsonb_build_object(
-            'transfer_id', t.id, 'offer_id', $1::integer, 'asset_type', $4::text,
-            'asset_id', $5::integer, 'from', $11::text, 'to', $10::text,
-            'price_usdc', $6::numeric, 'tx_hash', $8::text
-          ) FROM new_transfer t
-        ), response_row AS (
-          SELECT o.id, 'claimed'::text AS status, t.id AS transfer_id, t.created_at
-          FROM claimed_offer o CROSS JOIN new_transfer t
-        ), response_payload AS (
-          SELECT jsonb_build_object(
-            'offer', jsonb_build_object('id', $1::integer, 'status', 'claimed'),
-            'transfer', jsonb_build_object(
-              'id', response_row.transfer_id,
-              'type', $4::text,
-              'asset_id', $5::integer,
-              'from', $11::text,
-              'to', $10::text,
-              'price_usdc', $6::numeric,
-              'tx_hash', $8::text,
-              'created_at', response_row.created_at
-            )
-          ) AS body
-          FROM response_row
-        ), completed_attempt AS (
-          SELECT complete_payment_attempt(
-            $17,
-            $18,
-            jsonb_build_object('kind', 'transfer_offer', 'id', $1::integer),
-            200::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM response_row CROSS JOIN claimed_payment_use CROSS JOIN response_payload
-        )
-        SELECT response_row.*,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM response_row CROSS JOIN completed_attempt
-      `, [
-        offerId, offer.seller_id, resident.id, type, offer.asset_id, Number(offer.price_usdc),
-        offer.seller_wallet, txHash, payer, resident.handle, offer.seller,
-        'x402', paymentBlockTime, buyerWallet, offer.reserved_at!, offer.reserved_until!,
-        payment.attemptId, payment.leaseOwner,
-      ]) as Array<{
-        id: number
-        status?: string
-        transfer_id?: number
-        created_at?: string
-        response_body: string
-      }>
-      const claimed = rows[0]
-      if (!claimed) {
-        return c.json({
-          payment: 'pending',
+      const completed = await completeDirectSalePayment({ query: sql.query }, {
+        attemptId: payment.attemptId,
+        leaseOwner: payment.leaseOwner,
+      })
+      if (completed.state !== 'completed') {
+        const reason = completed.state === 'deadline_passed'
+          ? 'matching payment finalized after automatic recovery closed'
+          : completed.reason
+        await closeSalePaymentTarget({ query: sql.query }, {
+          attemptId: payment.attemptId,
+          leaseOwner: payment.leaseOwner,
+          reason,
+          state: 'founder_review',
+        })
+        return paymentJsonResponse(JSON.stringify({
+          payment: 'founder_review',
           payment_attempt_id: payment.attemptId,
-          transaction: txHash,
+          transaction: payment.txHash,
           do_not_pay_again: true,
-          retry: 'retry this same claim; the recorded payment remains reserved',
-        }, 202)
+          error: 'payment needs founder review; no ownership changed',
+        }), 409, payment.paymentResponseHeader)
       }
-      return paymentJsonResponse(claimed.response_body, 200, payment.paymentResponseHeader)
+      return paymentJsonResponse(
+        completed.responseBody,
+        completed.status,
+        completed.paymentResponseHeader ?? payment.paymentResponseHeader,
+      )
     } catch (error) {
       if (postgresErrorCode(error) === '23505') return err(c, 409, 'that payment transaction was already used')
       throw error

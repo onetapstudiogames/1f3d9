@@ -33,9 +33,12 @@ test('every city discovery surface tells the same family and self-naming truth',
     ['specification', read('../docs/SYSTEM_DESIGN.md')],
     ['canonical front door', read('../docs/published/FRONTDOOR.md')],
   ] as const) {
-    assert.match(value, /payment.pending/iu, `${name}: settled payment state`)
-    assert.match(value, /cannot be cancel(?:ed|led)|blocks? cancel/iu, `${name}: pending payment lock`)
-    assert.match(value, /retry[^.\n]*without paying again/iu, `${name}: safe retry`)
+    assert.match(value, /payment_pending/iu, `${name}: settled payment state`)
+    assert.match(value, /automatically rechecked[^.]{0,120}(?:at most|for up to) two hours/iu, `${name}: bounded automatic recovery`)
+    assert.match(value, /deadline[^.]{0,180}(?:held )?name[^.]{0,80}released/iu, `${name}: released name`)
+    assert.match(value, /private GET \/api\/payment-attempt\/:id/iu, `${name}: private inspection`)
+    assert.match(value, /empty-body POST \/api\/payment-attempt\/:id\/recheck/iu, `${name}: explicit recheck`)
+    assert.match(value, /(?:retry|recheck)[^.]*without paying again/iu, `${name}: safe recovery`)
   }
 })
 

@@ -11,6 +11,14 @@ import {
   findPaymentAttempt,
   findReplayableTargetPaymentAttempt,
 } from '../../src/payment-attempts.ts'
+import {
+  closeSalePaymentTarget,
+  completeDirectSalePayment,
+  completeWorldSalePayment,
+  invalidateSalePaymentTarget,
+  parkWorldSalePayment,
+  type PaymentSaleDatabase,
+} from '../../src/payment-sale-operations.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'payment_integration'
@@ -167,6 +175,7 @@ interface AttemptInput {
   nonce?: string | null
   txHash?: string | null
   requestHash?: string | null
+  request?: Record<string, unknown> | null
   createdAt?: string | null
 }
 
@@ -178,14 +187,14 @@ async function insertAttempt(database: Pool, input: AttemptInput): Promise<void>
   await database.query(`
     INSERT INTO payment_attempts (
       public_id, actor_id, counterparty_id, operation, target_key,
-      request_hash, method, network, token, payer_wallet, payee_wallet, amount_units,
+      request_hash, request_json, method, network, token, payer_wallet, payee_wallet, amount_units,
       x402_nonce, status, tx_hash,
       finalized_block_number, finalized_block_hash, finalized_block_time,
       finalized_at, result_json, response_status, response_json, completed_at,
       created_at
     ) VALUES (
       $1, $2, $3, $4, $5,
-      $6, $7, $8, $9, $10, $11, $12,
+      $6, $25::jsonb, $7, $8, $9, $10, $11, $12,
       $13, $14, $15,
       $16, $17, $18, $19, $20::jsonb, $21, $22::jsonb, $23,
       COALESCE($24::timestamptz, now())
@@ -215,6 +224,7 @@ async function insertAttempt(database: Pool, input: AttemptInput): Promise<void>
     input.status === 'completed' ? JSON.stringify({ ok: true }) : null,
     completedAt,
     input.createdAt ?? null,
+    input.request == null ? null : JSON.stringify(input.request),
   ])
 }
 
@@ -264,6 +274,163 @@ async function seedPendingWorldPayment(database: Pool, txHash: string): Promise<
   return offer.rows[0]!.id
 }
 
+interface RecoverableSaleSeed {
+  attemptId: string
+  assetId: number
+  leaseOwner: string
+  offerId: number
+  txHash: string
+}
+
+function saleDatabase(database: Pool): PaymentSaleDatabase {
+  return {
+    query: async (text, params = []) => (await database.query(text, [...params])).rows,
+  }
+}
+
+async function seedRecoverableSale(
+  database: Pool,
+  operation: 'direct_sale' | 'world_sale',
+  digit: string,
+  options: Readonly<{
+    activeReservation?: boolean
+    ambiguousNoTx?: boolean
+  }> = {},
+): Promise<RecoverableSaleSeed> {
+  const activeReservation = options.activeReservation === true
+  const ambiguousNoTx = options.ambiguousNoTx === true
+  const assetId = operation === 'direct_sale' ? 401 : 402
+  const txHash = hash(digit)
+  const attemptId = `attempt_${operation}_${digit.repeat(16)}`
+  const leaseOwner = `sale-worker-${digit.repeat(12)}`
+  const place = await database.query<{ id: number }>(`
+    INSERT INTO places (parent_id, place_kind, name, owner_id)
+    SELECT id, 'continent', 'sale integration', 1
+    FROM places WHERE place_kind = 'world'
+    RETURNING id
+  `)
+  await database.query(`
+    INSERT INTO things (id, place_id, name, owner_id, maker_id)
+    VALUES ($1, $2, $3, 1, 1)
+  `, [assetId, place.rows[0]!.id, operation === 'direct_sale' ? 'direct lantern' : 'world lantern'])
+  const offer = await database.query<{
+    id: number
+    reserved_at: Date
+    reserved_until: Date
+  }>(`
+    INSERT INTO transfer_offers (
+      channel, asset_type, asset_id, seller_id, buyer_id,
+      price_usdc, seller_wallet, buyer_wallet,
+      market_draft_id, market_listing_id, market_checkout_id, market_buyer,
+      status, reserved_by, reserved_at, reserved_until
+    ) VALUES (
+      $1, 'thing', $2, 1, 2,
+      2, $3, $4,
+      CASE WHEN $1 = 'world' THEN 71 ELSE NULL END,
+      CASE WHEN $1 = 'world' THEN 91 ELSE NULL END,
+      CASE WHEN $1 = 'world' THEN 81 ELSE NULL END,
+      CASE WHEN $1 = 'world' THEN 'market-buyer' ELSE NULL END,
+      'open', 2,
+      statement_timestamp() - CASE WHEN $5::boolean
+        THEN interval '4 minutes' ELSE interval '15 minutes' END,
+      statement_timestamp() + CASE WHEN $5::boolean
+        THEN interval '1 minute' ELSE interval '-10 minutes' END
+    )
+    RETURNING id, reserved_at, reserved_until
+  `, [
+    operation === 'direct_sale' ? 'direct' : 'world',
+    assetId,
+    SELLER_WALLET,
+    BUYER_WALLET,
+    activeReservation,
+  ])
+  const createdOffer = offer.rows[0]!
+  await database.query(`UPDATE things SET active_offer_id = $1 WHERE id = $2`, [createdOffer.id, assetId])
+  const request = operation === 'direct_sale'
+    ? {
+        offer_id: createdOffer.id,
+        buyer_wallet: BUYER_WALLET,
+        seller_wallet: SELLER_WALLET,
+        price_usdc: 2,
+        asset_type: 'thing',
+        asset_id: assetId,
+      }
+    : {
+        offer_id: createdOffer.id,
+        market_checkout_id: 81,
+        market_listing_id: 91,
+        market_draft_id: 71,
+        market_buyer: 'market-buyer',
+        buyer_wallet: BUYER_WALLET,
+        seller_wallet: SELLER_WALLET,
+        price_usdc: 2,
+        asset_id: assetId,
+      }
+  const canonical = canonicalPaymentRequest(request)
+  await database.query(`
+    INSERT INTO payment_attempts (
+      public_id, actor_id, counterparty_id, operation, target_key,
+      offer_id, asset_type, asset_id, request_hash, request_json,
+      method, network, token, payer_wallet, payee_wallet, amount_units,
+      x402_nonce, x402_payload_digest, x402_valid_after, x402_valid_before,
+      start_block, start_time, end_time, status, lease_owner, lease_expires_at,
+      tx_hash, finalized_block_number, finalized_block_hash,
+      finalized_block_time, finalized_at, response_json,
+      recovery_started_at, recovery_deadline_at, created_at, updated_at
+    ) VALUES (
+      $1, 2, 1, $2, $3,
+      $4, 'thing', $5, $6, $7::jsonb,
+      'x402', 'base', $8, $9, $10, 2000000,
+      $11, $12, 1, 4102444800,
+      100,
+      date_trunc('second', $13::timestamptz)
+        + CASE WHEN $13::timestamptz > date_trunc('second', $13::timestamptz)
+          THEN interval '1 second' ELSE interval '0 seconds' END,
+      date_trunc('second', $14::timestamptz),
+      $19, $15,
+      clock_timestamp() + interval '30 seconds',
+      $16,
+      CASE WHEN $19 = 'payment_pending' THEN 123 ELSE NULL END,
+      CASE WHEN $19 = 'payment_pending' THEN $17 ELSE NULL END,
+      CASE WHEN $19 = 'payment_pending'
+        THEN date_trunc('second', $13::timestamptz) + interval '2 minutes 1 second'
+        ELSE NULL END,
+      CASE WHEN $19 = 'payment_pending' THEN clock_timestamp() ELSE NULL END,
+      CASE WHEN $18::text IS NULL THEN NULL ELSE jsonb_build_object(
+        '__1f3d9_x402_response_v1', jsonb_build_object('header', $18::text)
+      ) END,
+      statement_timestamp() - CASE WHEN $19 = 'needs_review'
+        THEN interval '121 minutes' ELSE interval '15 minutes' END,
+      statement_timestamp() + CASE WHEN $19 = 'needs_review'
+        THEN interval '-1 minute' ELSE interval '105 minutes' END,
+      statement_timestamp() - CASE WHEN $19 = 'needs_review'
+        THEN interval '121 minutes' ELSE interval '15 minutes' END,
+      statement_timestamp()
+    )
+  `, [
+    attemptId,
+    operation,
+    `${operation === 'direct_sale' ? 'direct-sale' : 'world-sale'}:${createdOffer.id}`,
+    createdOffer.id,
+    assetId,
+    canonical.hash,
+    canonical.json,
+    BASE_USDC,
+    BUYER_WALLET,
+    SELLER_WALLET,
+    hash('a'),
+    'b'.repeat(64),
+    createdOffer.reserved_at.toISOString(),
+    createdOffer.reserved_until.toISOString(),
+    leaseOwner,
+    ambiguousNoTx ? null : txHash,
+    ambiguousNoTx ? null : hash('c'),
+    ambiguousNoTx ? null : FACILITATOR_RESPONSE_HEADER,
+    ambiguousNoTx ? 'needs_review' : 'payment_pending',
+  ])
+  return { attemptId, assetId, leaseOwner, offerId: createdOffer.id, txHash }
+}
+
 test('payment custody invariants hold in PostgreSQL', async t => {
   const postgres = await startPostgres()
   try {
@@ -273,6 +440,303 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         `SELECT to_regclass('public.payment_attempts')::text AS table_name`,
       )
       assert.deepEqual(table.rows, [{ table_name: 'payment_attempts' }])
+    })
+
+    await t.test('duplicate direct-sale workers complete once after fifteen minutes and replay exact bytes', async () => {
+      await resetFresh(postgres.client)
+      const seed = await seedRecoverableSale(postgres.client, 'direct_sale', '5')
+      const database = saleDatabase(postgres.client)
+
+      const results = await Promise.all([
+        completeDirectSalePayment(database, {
+          attemptId: seed.attemptId,
+          leaseOwner: seed.leaseOwner,
+        }),
+        completeDirectSalePayment(database, {
+          attemptId: seed.attemptId,
+          leaseOwner: seed.leaseOwner,
+        }),
+      ])
+
+      assert.ok(results.every(result => result.state === 'completed'))
+      const completed = results.filter(result => result.state === 'completed')
+      assert.equal(completed[0]!.responseBody, completed[1]!.responseBody)
+      assert.equal(completed[0]!.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+      const facts = await postgres.client.query(`
+        SELECT attempt.status, offer.status AS offer_status, thing.owner_id,
+          thing.active_offer_id,
+          (SELECT count(*)::int FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
+          (SELECT count(*)::int FROM sale_payments WHERE offer_id = $2) AS payments,
+          (SELECT count(*)::int FROM transfers WHERE offer_id = $2) AS transfers,
+          (SELECT count(*)::int FROM events WHERE kind = 'sale'
+            AND detail->>'offer_id' = $2::text) AS events
+        FROM payment_attempts attempt
+        JOIN transfer_offers offer ON offer.id = attempt.offer_id
+        JOIN things thing ON thing.id = attempt.asset_id
+        WHERE attempt.public_id = $1
+      `, [seed.attemptId, seed.offerId])
+      assert.deepEqual(facts.rows, [{
+        status: 'completed',
+        offer_status: 'claimed',
+        owner_id: 2,
+        active_offer_id: null,
+        uses: 1,
+        payments: 1,
+        transfers: 1,
+        events: 1,
+      }])
+    })
+
+    await t.test('founder review atomically closes an active direct reservation and releases its asset', async () => {
+      await resetFresh(postgres.client)
+      const seed = await seedRecoverableSale(
+        postgres.client,
+        'direct_sale',
+        '4',
+        { activeReservation: true },
+      )
+
+      const closed = await closeSalePaymentTarget(saleDatabase(postgres.client), {
+        attemptId: seed.attemptId,
+        leaseOwner: seed.leaseOwner,
+        reason: 'automatic completion found changed direct sale facts',
+        state: 'founder_review',
+      })
+
+      assert.deepEqual(closed, {
+        state: 'founder_review',
+        attemptId: seed.attemptId,
+        actorId: 2,
+        operation: 'direct_sale',
+        method: 'x402',
+        targetReleased: true,
+      })
+      const facts = await postgres.client.query(`
+        SELECT attempt.status, attempt.invalid_reason, attempt.lease_owner,
+          offer.status AS offer_status, offer.canceled_at IS NOT NULL AS canceled,
+          thing.owner_id, thing.active_offer_id,
+          (SELECT count(*)::int FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
+          (SELECT count(*)::int FROM sale_payments WHERE offer_id = $2) AS payments,
+          (SELECT count(*)::int FROM transfers WHERE offer_id = $2) AS transfers
+        FROM payment_attempts attempt
+        JOIN transfer_offers offer ON offer.id = attempt.offer_id
+        JOIN things thing ON thing.id = attempt.asset_id
+        WHERE attempt.public_id = $1
+      `, [seed.attemptId, seed.offerId])
+      assert.deepEqual(facts.rows, [{
+        status: 'founder_review',
+        invalid_reason: 'automatic completion found changed direct sale facts',
+        lease_owner: null,
+        offer_status: 'canceled',
+        canceled: true,
+        owner_id: 1,
+        active_offer_id: null,
+        uses: 0,
+        payments: 0,
+        transfers: 0,
+      }])
+    })
+
+    await t.test('world-sale recovery attaches stored evidence and completes once with maker and owner output', async () => {
+      await resetFresh(postgres.client)
+      const seed = await seedRecoverableSale(postgres.client, 'world_sale', '6')
+      const database = saleDatabase(postgres.client)
+
+      const completed = await completeWorldSalePayment(database, {
+        attemptId: seed.attemptId,
+        leaseOwner: seed.leaseOwner,
+      })
+
+      assert.equal(completed.state, 'completed')
+      if (completed.state !== 'completed') return
+      const response = completed.response as {
+        offer?: { maker_id?: number; made_by?: string; current_owner_id?: number; current_owner?: string }
+      }
+      assert.deepEqual(response.offer && {
+        maker_id: response.offer.maker_id,
+        made_by: response.offer.made_by,
+        current_owner_id: response.offer.current_owner_id,
+        current_owner: response.offer.current_owner,
+      }, {
+        maker_id: 1,
+        made_by: 'seller',
+        current_owner_id: 2,
+        current_owner: 'buyer',
+      })
+      assert.equal(completed.paymentResponseHeader, FACILITATOR_RESPONSE_HEADER)
+      const facts = await postgres.client.query(`
+        SELECT attempt.status, offer.status AS offer_status,
+          offer.pending_payment_attempt_id, offer.pending_x402_tx_hash,
+          offer.x402_evidence_state, thing.owner_id, thing.active_offer_id,
+          (SELECT count(*)::int FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
+          (SELECT count(*)::int FROM transfers WHERE offer_id = $2) AS transfers
+        FROM payment_attempts attempt
+        JOIN transfer_offers offer ON offer.id = attempt.offer_id
+        JOIN things thing ON thing.id = attempt.asset_id
+        WHERE attempt.public_id = $1
+      `, [seed.attemptId, seed.offerId])
+      assert.deepEqual(facts.rows, [{
+        status: 'completed',
+        offer_status: 'claimed',
+        pending_payment_attempt_id: seed.attemptId,
+        pending_x402_tx_hash: seed.txHash,
+        x402_evidence_state: 'pending',
+        owner_id: 2,
+        active_offer_id: null,
+        uses: 1,
+        transfers: 1,
+      }])
+    })
+
+    await t.test('interruption after atomic invalidation cannot strand a pending world receipt', async () => {
+      await resetFresh(postgres.client)
+      const seed = await seedRecoverableSale(postgres.client, 'world_sale', '9')
+      const database = saleDatabase(postgres.client)
+      const parked = await parkWorldSalePayment(database, { attemptId: seed.attemptId })
+      assert.equal(parked.state, 'parked')
+      const interrupted: PaymentSaleDatabase = {
+        query: async (text, params = []) => {
+          const rows = (await postgres.client.query(text, [...params])).rows
+          if (text.includes('payment-sale-operations:invalidate-target')) {
+            throw new Error('connection lost after atomic invalidation committed')
+          }
+          return rows
+        },
+      }
+
+      await assert.rejects(
+        invalidateSalePaymentTarget(interrupted, {
+          attemptId: seed.attemptId,
+          leaseOwner: seed.leaseOwner,
+          reason: 'confirmed_mismatch',
+        }),
+        /connection lost after atomic invalidation committed/,
+      )
+
+      const facts = await postgres.client.query(`
+        SELECT attempt.status, attempt.invalid_reason, attempt.lease_owner,
+          offer.status AS offer_status, offer.x402_evidence_state,
+          offer.x402_invalid_reason, offer.pending_payment_attempt_id,
+          thing.owner_id, thing.active_offer_id,
+          (SELECT count(*)::int FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
+          (SELECT count(*)::int FROM transfers WHERE offer_id = $2) AS transfers
+        FROM payment_attempts attempt
+        JOIN transfer_offers offer ON offer.id = attempt.offer_id
+        JOIN things thing ON thing.id = attempt.asset_id
+        WHERE attempt.public_id = $1
+      `, [seed.attemptId, seed.offerId])
+      assert.deepEqual(facts.rows, [{
+        status: 'invalid',
+        invalid_reason: 'confirmed_mismatch',
+        lease_owner: null,
+        offer_status: 'open',
+        x402_evidence_state: 'invalid',
+        x402_invalid_reason: 'confirmed_mismatch',
+        pending_payment_attempt_id: seed.attemptId,
+        owner_id: 1,
+        active_offer_id: seed.offerId,
+        uses: 0,
+        transfers: 0,
+      }])
+    })
+
+    await t.test('founder review creates no sale and keeps a world target locked against late reuse', async () => {
+      await resetFresh(postgres.client)
+      const seed = await seedRecoverableSale(postgres.client, 'world_sale', '7')
+      const database = saleDatabase(postgres.client)
+
+      const closed = await closeSalePaymentTarget(database, {
+        attemptId: seed.attemptId,
+        leaseOwner: seed.leaseOwner,
+        reason: 'automatic completion found changed world sale facts',
+        state: 'founder_review',
+      })
+      const late = await completeWorldSalePayment(database, {
+        attemptId: seed.attemptId,
+        leaseOwner: seed.leaseOwner,
+      })
+
+      assert.deepEqual(closed, {
+        state: 'founder_review',
+        attemptId: seed.attemptId,
+        actorId: 2,
+        operation: 'world_sale',
+        method: 'x402',
+        targetReleased: false,
+      })
+      assert.equal(late.state, 'target_changed')
+      const facts = await postgres.client.query(`
+        SELECT attempt.status, attempt.lease_owner,
+          offer.status AS offer_status, offer.x402_evidence_state,
+          offer.pending_payment_attempt_id, thing.owner_id, thing.active_offer_id,
+          (SELECT count(*)::int FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
+          (SELECT count(*)::int FROM sale_payments WHERE offer_id = $2) AS payments,
+          (SELECT count(*)::int FROM transfers WHERE offer_id = $2) AS transfers
+        FROM payment_attempts attempt
+        JOIN transfer_offers offer ON offer.id = attempt.offer_id
+        JOIN things thing ON thing.id = attempt.asset_id
+        WHERE attempt.public_id = $1
+      `, [seed.attemptId, seed.offerId])
+      assert.deepEqual(facts.rows, [{
+        status: 'founder_review',
+        lease_owner: null,
+        offer_status: 'open',
+        x402_evidence_state: 'founder_review',
+        pending_payment_attempt_id: seed.attemptId,
+        owner_id: 1,
+        active_offer_id: seed.offerId,
+        uses: 0,
+        payments: 0,
+        transfers: 0,
+      }])
+    })
+
+    await t.test('deadline closes an ambiguous no-hash world attempt without inventing offer evidence', async () => {
+      await resetFresh(postgres.client)
+      const seed = await seedRecoverableSale(
+        postgres.client,
+        'world_sale',
+        '8',
+        { ambiguousNoTx: true },
+      )
+
+      const closed = await closeSalePaymentTarget(saleDatabase(postgres.client), {
+        attemptId: seed.attemptId,
+        leaseOwner: seed.leaseOwner,
+        reason: 'automatic recovery deadline passed without transaction evidence',
+        state: 'expired',
+      })
+
+      assert.equal(closed.state, 'expired')
+      assert.equal(closed.targetReleased, false)
+      const facts = await postgres.client.query(`
+        SELECT attempt.status, attempt.tx_hash, attempt.lease_owner,
+          offer.status AS offer_status, offer.x402_evidence_state,
+          offer.pending_payment_attempt_id, offer.pending_x402_tx_hash,
+          offer.pending_x402_payer, offer.pending_x402_at,
+          thing.owner_id, thing.active_offer_id,
+          (SELECT count(*)::int FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
+          (SELECT count(*)::int FROM transfers WHERE offer_id = $2) AS transfers
+        FROM payment_attempts attempt
+        JOIN transfer_offers offer ON offer.id = attempt.offer_id
+        JOIN things thing ON thing.id = attempt.asset_id
+        WHERE attempt.public_id = $1
+      `, [seed.attemptId, seed.offerId])
+      assert.deepEqual(facts.rows, [{
+        status: 'expired',
+        tx_hash: null,
+        lease_owner: null,
+        offer_status: 'open',
+        x402_evidence_state: 'none',
+        pending_payment_attempt_id: null,
+        pending_x402_tx_hash: null,
+        pending_x402_payer: null,
+        pending_x402_at: null,
+        owner_id: 1,
+        active_offer_id: seed.offerId,
+        uses: 0,
+        transfers: 0,
+      }])
     })
 
     await t.test('headerless replay deterministically selects the higher public id on equal timestamps', async () => {
@@ -292,6 +756,7 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         nonce: hash('a'),
         txHash: hash('b'),
         requestHash,
+        request,
         createdAt,
       })
       await insertAttempt(postgres.client, {
@@ -305,6 +770,7 @@ test('payment custody invariants hold in PostgreSQL', async t => {
         nonce: hash('c'),
         txHash: hash('d'),
         requestHash,
+        request,
         createdAt,
       })
 
@@ -624,6 +1090,7 @@ test('payment custody invariants hold in PostgreSQL', async t => {
       await postgres.client.query(responseBodyMigrationDdl)
       await postgres.client.query(responseBodyMigrationDdl)
       const txHash = hash('4')
+      const requestHash = canonicalPaymentRequest({}).hash
       await postgres.client.query(`
         INSERT INTO payment_attempts (
           public_id, actor_id, operation, target_key, offer_id, request_hash, request_json,
@@ -632,13 +1099,13 @@ test('payment custody invariants hold in PostgreSQL', async t => {
           start_block, start_time, end_time, status, lease_owner, lease_expires_at
         ) VALUES (
           'attempt_exact_response_01', 2, 'frontier', 'frontier:exact-response', 91,
-          repeat('a', 64), '{}'::jsonb,
+          $5, '{}'::jsonb,
           'x402', 'base', $1, $2, $3, 1000000,
           $4, repeat('b', 64), 1, 9999999999,
           10, '2026-08-16T12:00:00Z', '2026-08-16T12:05:00Z',
           'settling', 'response-lease', clock_timestamp() + interval '1 minute'
         )
-      `, [BASE_USDC, BUYER_WALLET, SELLER_WALLET, hash('5')])
+      `, [BASE_USDC, BUYER_WALLET, SELLER_WALLET, hash('5'), requestHash])
       const database = {
         query: async (text: string, params: readonly unknown[] = []) =>
           (await postgres.client.query(text, [...params])).rows,

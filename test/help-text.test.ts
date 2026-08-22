@@ -9,6 +9,8 @@ const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 const frontdoor = read('../src/frontdoor.txt')
 const llms = read('../src/llms.txt')
 const specification = read('../docs/SYSTEM_DESIGN.md')
+const productRequirements = read('../docs/PRD.md')
+const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
 const decisions = read('../docs/DECISIONS.md')
 const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
@@ -58,6 +60,64 @@ test('city fee credit help stays deliberate, private, fixed, and non-transferabl
   }
 
   assert.match(decisions, /\| 40 \|[^\n]*founder-issued city fee credit/iu)
+})
+
+test('paid city-action help explains bounded recovery without another payment', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['published front door', frontdoorDocument],
+    ['system design', specification],
+  ] as const) {
+    assert.match(text, /pending[^.]{0,180}automatically rechecked[^.]{0,120}(?:at most|for up to) two hours/iu, `${name}: bounded automatic recheck`)
+    assert.match(text, /private GET \/api\/payment-attempt\/:id/iu, `${name}: private attempt inspection`)
+    assert.match(text, /empty-body POST \/api\/payment-attempt\/:id\/recheck/iu, `${name}: explicit empty-body recheck`)
+    assert.match(text, /(?:inspect|recheck|resume)[^.]{0,180}without paying again/iu, `${name}: no second payment`)
+    assert.match(text, /(?:at|when) the (?:two-hour )?deadline[^.]{0,180}(?:held )?name[^.]{0,80}released/iu, `${name}: deadline releases the name`)
+    assert.match(text, /exact[^.]{0,100}(?:spent|debited) (?:city fee )?credit[^.]{0,100}returned/iu, `${name}: exact credit return`)
+    assert.match(text, /uncertain x402[^.]{0,120}(?:never|does not|cannot)[^.]{0,80}(?:mint|create)[^.]{0,60}(?:city fee )?credit/iu, `${name}: no timeout mint`)
+    assert.match(text, /late real payment[^.]{0,120}founder review[^.]{0,180}(?:cannot|never)[^.]{0,80}(?:seize|take)[^.]{0,80}(?:reused|new owner)/iu, `${name}: safe late review`)
+    assert.match(text, /late real payment[^.]{0,360}(?:cannot|never|does not)[^.]{0,120}(?:complete|trigger)[^.]{0,100}(?:old action|old effect)[^.]{0,60}automat/iu, `${name}: no automatic late effect`)
+  }
+
+  for (const [name, text] of [
+    ['product requirements', productRequirements],
+    ['architecture', architecture],
+  ] as const) {
+    assert.match(text, /two hours/iu, `${name}: recovery window`)
+    assert.match(text, /\/api\/payment-attempt\/:id/iu, `${name}: private recovery route family`)
+    assert.match(text, /founder review/iu, `${name}: late payment disposition`)
+    assert.match(text, /(?:exact|same)[^.]{0,100}(?:credit|debit)[^.]{0,100}return|return[^.]{0,100}(?:exact|same)[^.]{0,100}(?:credit|debit)/iu, `${name}: credit conservation`)
+  }
+
+  assert.match(decisions, /\| 41 \|[^\n]*bounded payment recovery/iu)
+})
+
+test('payment safety copy pins the production rail and rejects poisoned wallet history', () => {
+  const usdc = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+  const treasury = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['published front door', frontdoorDocument],
+    ['system design', specification],
+  ] as const) {
+    assert.ok(text.includes(usdc), `${name}: exact Base USDC contract`)
+    assert.ok(text.includes(treasury), `${name}: exact city treasury recipient`)
+    assert.match(text, /Base/iu, `${name}: network`)
+    assert.match(text, /1\.000000 USDC/iu, `${name}: exact city fee`)
+    assert.match(text, /current (?:402|HTTP 402)(?: response)?[^.]{0,120}\/api\/official|\/api\/official[^.]{0,120}current (?:402|HTTP 402)(?: response)?/iu, `${name}: current authoritative response`)
+    assert.match(text, /never copy[^.]{0,100}wallet history/iu, `${name}: wallet-history ban`)
+    assert.match(text, /zero-value lookalike transfers?[^.]{0,120}(?:poison|pollute)[^.]{0,80}wallet history/iu, `${name}: poisoned history warning`)
+    assert.match(text, /seller[^.]{0,120}(?:recipient|amount)[^.]{0,160}current\s+sale\s+challenge|current\s+sale\s+challenge[^.]{0,160}seller[^.]{0,120}(?:recipient|amount)/iu, `${name}: seller challenge terms`)
+  }
+
+  assert.match(frontdoor, /\bpayment_attempt\b/iu, 'front door: planned MCP recovery action')
+  assert.match(llms, /\bpayment_attempt\b/iu, 'compact machine map: planned MCP recovery action')
 })
 
 test('the truth release keeps every public surface honest', () => {
@@ -225,7 +285,7 @@ test('public help states the complete resident census contract', () => {
   ] as const) {
     const censusStart = text.indexOf('/api/residents')
     assert.ok(censusStart >= 0, `${name}: resident census route`)
-    const censusContract = text.slice(censusStart, censusStart + 1_200)
+    const censusContract = text.slice(censusStart, censusStart + 1_600)
     assert.match(
       censusContract,
       /(?:default(?:s| page(?: size)?)?[^\n]{0,100}200|200[^\n]{0,100}(?:default|page size))/iu,
@@ -303,7 +363,7 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 22 tools[\s\S]{0,500}legacy `\/mcp` advertises all 22[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}21[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 23 tools[\s\S]{0,500}legacy `\/mcp` advertises all 23[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}22[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
 })

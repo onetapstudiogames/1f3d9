@@ -117,8 +117,9 @@ test('credit settlement has success, replay, busy, insufficient, returned, and e
   // A credit spend is private accounting, not an on-chain receipt or public
   // treasury payment. The paid write must branch before these public inserts.
   assert.match(worldSource, /(?:method|rail)[^\n]{0,80}(?:credit|x402)/iu)
-  assert.match(worldSource, /INSERT INTO payment_uses[\s\S]{0,500}WHERE\s+\$\{fee\.rail\}::text\s*=\s*'x402'/iu)
-  assert.match(worldSource, /INSERT INTO fees[\s\S]{0,400}FROM payment_use/iu)
+  assert.match(worldSource, /completeTreasuryPaymentOperation/iu)
+  assert.match(read('../src/payment-treasury-operations.ts'), /INSERT INTO payment_uses/iu)
+  assert.match(read('../src/payment-treasury-operations.ts'), /INSERT INTO fees[\s\S]{0,400}FROM payment_use/iu)
 })
 
 test('free interior founding rejects a credit selector before any debit', () => {

@@ -33,6 +33,11 @@ const HOSTED_TOOL_NAMESPACE = 'mcp_for_1f3d9_'
 const MCP_SEARCH_CURSOR_MAX_LENGTH = 2_048
 const MCP_CHANGE_MARKER_MAX_LENGTH = 19
 const MAX_CHANGE_MARKER = 9_223_372_036_854_775_807n
+const PAYMENT_ATTEMPT_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$'
+const PAYMENT_ATTEMPT_ID = new RegExp(PAYMENT_ATTEMPT_ID_PATTERN, 'u')
+const CITY_FEE_USDC = '1.000000'
+const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const CITY_TREASURY = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -76,15 +81,25 @@ const rotationGuidance = () => identityRotationEnabled()
     'Rotation is never an MCP tool, and no credential belongs in chat or tool input or output. '
   : ''
 
+const paymentSafetyGuidance = () =>
+  `The exact city claim fee is ${CITY_FEE_USDC} USDC on Base, using USDC contract ` +
+  `${BASE_USDC} and treasury recipient ${CITY_TREASURY}. Use only the current 402 response or /api/official ` +
+  'for payment facts; never copy a recipient from wallet history because zero-value lookalike transfers can poison it. ' +
+  'Peer-sale recipients and amounts come only from the current sale challenge. A pending paid action is automatically ' +
+  'rechecked for no more than two hours from its first stored evidence. Do not pay again; inspect or explicitly recheck ' +
+  'it through payment_attempt. At the deadline its name is released, exact spent city fee credit is returned, and a ' +
+  'late real payment can enter founder review but cannot complete the old action automatically. '
+
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
   `and does not have to be your model's—then use the private browser flow at ${publicOrigin()}/join. ` +
   'A permanent resident key must never pass through an MCP tool result or chat. ' +
   rotationGuidance() +
   'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
-  'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
+  'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, say, and check payment_attempt. ' +
   'Put the bearer secret only in the HTTP ' +
-  'Authorization header. Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
+  'Authorization header. ' +
+  paymentSafetyGuidance() +
   'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
   'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
   'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
@@ -95,8 +110,8 @@ const serverInstructions = (hostedChat: boolean) => hostedChat
     'Never put a resident key or OAuth credential in chat or tool arguments. ' +
     rotationGuidance() +
     'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
-    'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
-    'Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
+    'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, say, and check payment_attempt. ' +
+    paymentSafetyGuidance() +
     'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
     'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
     'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
@@ -540,6 +555,37 @@ const TOOLS: readonly ToolDefinition[] = [
     }),
   },
   {
+    name: 'payment_attempt',
+    title: 'Check a payment attempt',
+    description:
+      'Privately inspect one of your stored payment attempts or explicitly recheck it from immutable stored terms. Recheck never accepts payment proof or changed operation terms. If an attempt is pending, do not pay again: automatic recovery continues only through its two-hour deadline.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: { type: 'string', enum: ['inspect', 'recheck'] },
+        attempt_id: {
+          type: 'string', minLength: 3, maxLength: 128,
+          pattern: PAYMENT_ATTEMPT_ID_PATTERN,
+        },
+      },
+      required: ['action', 'attempt_id'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: args.action === 'recheck' ? 'POST' : 'GET',
+      path: `/api/payment-attempt/${encodeURIComponent(String(args.attempt_id))}${
+        args.action === 'recheck' ? '/recheck' : ''
+      }`,
+      ...(args.action === 'recheck' ? { body: {} } : {}),
+    }),
+  },
+  {
     name: 'transfer',
     title: 'Transfer property',
     description:
@@ -955,6 +1001,14 @@ function invalidPublicReadArgument(
     }
     if (!own(args, 'action')) return 'Mark action is required.'
   }
+  if (name === 'payment_attempt') {
+    if (!own(args, 'action') || !own(args, 'attempt_id')) {
+      return 'Payment attempt action and attempt_id are required.'
+    }
+    if (typeof args.attempt_id !== 'string' || !PAYMENT_ATTEMPT_ID.test(args.attempt_id)) {
+      return 'Payment attempt attempt_id is invalid.'
+    }
+  }
   if (name === 'found' && own(args, 'city_credit_request_id')) {
     try {
       parseCityCreditRequestId(args.city_credit_request_id)
@@ -1101,7 +1155,12 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
     ? requestedName.slice(HOSTED_TOOL_NAMESPACE.length)
     : requestedName
-  if (name === 'later_holder_items' || name === 'mark_for_later' || name === 'me') {
+  if (
+    name === 'later_holder_items'
+    || name === 'mark_for_later'
+    || name === 'me'
+    || name === 'payment_attempt'
+  ) {
     c.header('Cache-Control', 'no-store')
     c.header('Pragma', 'no-cache')
     c.header('Vary', 'Authorization')

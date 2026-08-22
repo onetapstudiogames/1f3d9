@@ -31,6 +31,7 @@ import {
   type X402SettlementResult,
   type X402VerificationResult,
 } from './pay.ts'
+import { invalidateSalePaymentTarget } from './payment-sale-operations.ts'
 
 const LEASE_MILLISECONDS = 30_000
 
@@ -74,7 +75,10 @@ export interface PaymentFlowDependencies {
     startBlock: bigint,
   ): Promise<string | null>
   releaseLease: typeof releaseSettlementLease
-  invalidate: typeof invalidatePaymentAttempt
+  invalidate(
+    database: PaymentAttemptDatabase,
+    input: { publicId: string; leaseOwner: string; reason: string },
+  ): Promise<unknown>
   needsReview: typeof markPaymentAttemptNeedsReview
 }
 
@@ -122,6 +126,34 @@ const defaultDependencies: PaymentFlowDependencies = {
   releaseLease: releaseSettlementLease,
   invalidate: invalidatePaymentAttempt,
   needsReview: markPaymentAttemptNeedsReview,
+}
+
+function dependenciesForOperation(
+  operation: PaymentAttemptRecord['operation'],
+  overrides: Partial<PaymentFlowDependencies>,
+): PaymentFlowDependencies {
+  const defaultInvalidator = operation === 'direct_sale' || operation === 'world_sale'
+    ? async (
+        database: PaymentAttemptDatabase,
+        input: { publicId: string; leaseOwner: string; reason: string },
+      ) => invalidateSalePaymentTarget({
+        query: async (text, params = []) => {
+          const rows = typeof database === 'function'
+            ? await database(text, [...params])
+            : await database.query(text, [...params])
+          return rows.map(row => ({ ...row }))
+        },
+      }, {
+        attemptId: input.publicId,
+        leaseOwner: input.leaseOwner,
+        reason: input.reason,
+      })
+    : defaultDependencies.invalidate
+  return {
+    ...defaultDependencies,
+    invalidate: defaultInvalidator,
+    ...overrides,
+  }
 }
 
 function validDate(value: Date | null | undefined): value is Date {
@@ -258,8 +290,9 @@ export async function resumeDurableX402(
     attempt: PaymentAttemptRecord
     actorId: number
   },
-  deps: PaymentFlowDependencies = defaultDependencies,
+  dependencyOverrides: Partial<PaymentFlowDependencies> = {},
 ): Promise<DurableX402Result> {
+  const deps = dependenciesForOperation(input.attempt.operation, dependencyOverrides)
   if (input.attempt.actorId !== input.actorId) {
     return rejected('payment attempt belongs to another resident', 409, true)
   }
@@ -353,6 +386,8 @@ export async function resumeDurableX402(
   }
 
   const finalizedAt = check.finalizedAt.toISOString()
+  const durablePaymentResponseHeader = attempt.paymentResponseHeader
+    ?? settlementHeader(txHash, attempt.payerWallet)
   await deps.bindEvidence(input.database, {
     publicId: attempt.publicId,
     leaseOwner,
@@ -363,6 +398,7 @@ export async function resumeDurableX402(
       blockTime,
       finalizedAt,
     },
+    paymentResponseHeader: durablePaymentResponseHeader,
   })
   return {
     state: 'ready',
@@ -374,15 +410,15 @@ export async function resumeDurableX402(
     blockHash: check.blockHash,
     blockTime,
     finalizedAt,
-    paymentResponseHeader: attempt.paymentResponseHeader
-      ?? settlementHeader(txHash, attempt.payerWallet),
+    paymentResponseHeader: durablePaymentResponseHeader,
   }
 }
 
 export async function runDurableX402(
   input: DurableX402Input,
-  deps: PaymentFlowDependencies = defaultDependencies,
+  dependencyOverrides: Partial<PaymentFlowDependencies> = {},
 ): Promise<DurableX402Result> {
+  const deps = dependenciesForOperation(input.operation, dependencyOverrides)
   const parsed = parseX402Payment(input.paymentHeader, input.accepted)
   if ('error' in parsed) return rejected(parsed.error)
   if (
@@ -565,6 +601,9 @@ export async function runDurableX402(
   }
 
   const finalizedAt = check.finalizedAt.toISOString()
+  const durablePaymentResponseHeader = attempt.paymentResponseHeader
+    ?? settledResponseHeader
+    ?? settlementHeader(txHash, parsed.authorization.payer, settlementRaw)
   await deps.bindEvidence(input.database, {
     publicId: attempt.publicId,
     leaseOwner,
@@ -575,6 +614,7 @@ export async function runDurableX402(
       blockTime,
       finalizedAt,
     },
+    paymentResponseHeader: durablePaymentResponseHeader,
   })
   return {
     state: 'ready',
@@ -586,8 +626,6 @@ export async function runDurableX402(
     blockHash: check.blockHash,
     blockTime,
     finalizedAt,
-    paymentResponseHeader: attempt.paymentResponseHeader
-      ?? settledResponseHeader
-      ?? settlementHeader(txHash, parsed.authorization.payer, settlementRaw),
+    paymentResponseHeader: durablePaymentResponseHeader,
   }
 }
