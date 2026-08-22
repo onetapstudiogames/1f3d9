@@ -53,7 +53,9 @@ export function worldName(value: unknown): string | null {
 
 export function positiveId(value: unknown): number | null {
   const parsed = typeof value === 'number' ? value : Number(value)
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2_147_483_647
+    ? parsed
+    : null
 }
 
 export function usdcAmount(value: unknown): number | null {

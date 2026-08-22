@@ -136,7 +136,7 @@ test('a followed resident shows their notes with what others said back', async (
   const contextCard = page.locator('#conversation-stream .note-card.context-note')
   await expect(contextCard).toHaveCount(1)
   await expect(contextCard).toContainText('A neighbor answers in the side room.')
-  await expect(contextCard).toContainText('same room, said around then')
+  await expect(contextCard).toContainText('same room · 1m earlier')
   await expect(contextCard.locator('.note-meta')).toContainText('side_room')
   await expect(page.getByRole('button', { name: /Load .*conversations/ })).toBeHidden()
 })

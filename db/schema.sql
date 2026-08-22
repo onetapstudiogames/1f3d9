@@ -1,6 +1,8 @@
 -- 1F3D9 schema. One Neon database, deliberately boring.
 -- The database stores public records of verified payments; it never holds money.
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
 CREATE TABLE IF NOT EXISTS residents (
   id                        INTEGER PRIMARY KEY,
   handle                    TEXT NOT NULL UNIQUE
@@ -659,6 +661,12 @@ CREATE INDEX IF NOT EXISTS things_place_active_id_desc
   ON things (place_id, id DESC) WHERE withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_owner_active_id_desc
   ON things (owner_id, id DESC) WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_words_active
+  ON things USING GIN (to_tsvector('simple', name || ' ' || body))
+  WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_phrase_active
+  ON things USING GIN (lower(name || ' ' || body) public.gin_trgm_ops)
+  WHERE withdrawn_at IS NULL;
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
@@ -847,6 +855,210 @@ CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id D
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author_id_desc ON notes (author_id, id DESC);
+CREATE INDEX IF NOT EXISTS notes_public_search_words
+  ON notes USING GIN (to_tsvector('simple', body));
+CREATE INDEX IF NOT EXISTS notes_public_search_phrase
+  ON notes USING GIN (lower(body) public.gin_trgm_ops);
+
+-- Exact room-reading totals live beside each place so a read does not rescan an
+-- entire room. Triggers keep the counters in the same transaction as the write.
+CREATE TABLE IF NOT EXISTS place_reading_totals (
+  place_id             INTEGER PRIMARY KEY REFERENCES places(id) ON DELETE CASCADE,
+  subplace_items       INTEGER NOT NULL DEFAULT 0 CHECK (subplace_items >= 0),
+  subplace_text_bytes  BIGINT NOT NULL DEFAULT 0 CHECK (subplace_text_bytes >= 0),
+  thing_items          INTEGER NOT NULL DEFAULT 0 CHECK (thing_items >= 0),
+  thing_text_bytes     BIGINT NOT NULL DEFAULT 0 CHECK (thing_text_bytes >= 0),
+  note_items           INTEGER NOT NULL DEFAULT 0 CHECK (note_items >= 0),
+  note_text_bytes      BIGINT NOT NULL DEFAULT 0 CHECK (note_text_bytes >= 0)
+);
+
+WITH subplaces AS (
+  SELECT parent_id AS place_id,
+    count(*)::integer AS items,
+    coalesce(sum(octet_length(description)), 0)::bigint AS text_bytes
+  FROM places
+  WHERE parent_id IS NOT NULL
+  GROUP BY parent_id
+), active_things AS (
+  SELECT place_id,
+    count(*)::integer AS items,
+    coalesce(sum(octet_length(body)), 0)::bigint AS text_bytes
+  FROM things
+  WHERE withdrawn_at IS NULL
+  GROUP BY place_id
+), room_notes AS (
+  SELECT place_id,
+    count(*)::integer AS items,
+    coalesce(sum(octet_length(body)), 0)::bigint AS text_bytes
+  FROM notes
+  GROUP BY place_id
+)
+INSERT INTO place_reading_totals (
+  place_id,
+  subplace_items,
+  subplace_text_bytes,
+  thing_items,
+  thing_text_bytes,
+  note_items,
+  note_text_bytes
+)
+SELECT p.id,
+  coalesce(subplaces.items, 0),
+  coalesce(subplaces.text_bytes, 0),
+  coalesce(active_things.items, 0),
+  coalesce(active_things.text_bytes, 0),
+  coalesce(room_notes.items, 0),
+  coalesce(room_notes.text_bytes, 0)
+FROM places p
+LEFT JOIN subplaces ON subplaces.place_id = p.id
+LEFT JOIN active_things ON active_things.place_id = p.id
+LEFT JOIN room_notes ON room_notes.place_id = p.id
+ON CONFLICT (place_id) DO UPDATE SET
+  subplace_items = EXCLUDED.subplace_items,
+  subplace_text_bytes = EXCLUDED.subplace_text_bytes,
+  thing_items = EXCLUDED.thing_items,
+  thing_text_bytes = EXCLUDED.thing_text_bytes,
+  note_items = EXCLUDED.note_items,
+  note_text_bytes = EXCLUDED.note_text_bytes;
+
+CREATE OR REPLACE FUNCTION maintain_place_reading_totals_from_place()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO place_reading_totals (place_id) VALUES (NEW.id)
+    ON CONFLICT (place_id) DO NOTHING;
+    IF NEW.parent_id IS NOT NULL THEN
+      UPDATE place_reading_totals SET
+        subplace_items = subplace_items + 1,
+        subplace_text_bytes = subplace_text_bytes + octet_length(NEW.description)
+      WHERE place_id = NEW.parent_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'reading totals missing for parent place %', NEW.parent_id
+          USING ERRCODE = '55000';
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.parent_id IS NOT NULL THEN
+      UPDATE place_reading_totals SET
+        subplace_items = subplace_items - 1,
+        subplace_text_bytes = subplace_text_bytes - octet_length(OLD.description)
+      WHERE place_id = OLD.parent_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'reading totals missing for parent place %', OLD.parent_id
+          USING ERRCODE = '55000';
+      END IF;
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF NEW.parent_id IS DISTINCT FROM OLD.parent_id
+     OR NEW.description IS DISTINCT FROM OLD.description THEN
+    IF OLD.parent_id IS NOT NULL THEN
+      UPDATE place_reading_totals SET
+        subplace_items = subplace_items - 1,
+        subplace_text_bytes = subplace_text_bytes - octet_length(OLD.description)
+      WHERE place_id = OLD.parent_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'reading totals missing for parent place %', OLD.parent_id
+          USING ERRCODE = '55000';
+      END IF;
+    END IF;
+    IF NEW.parent_id IS NOT NULL THEN
+      UPDATE place_reading_totals SET
+        subplace_items = subplace_items + 1,
+        subplace_text_bytes = subplace_text_bytes + octet_length(NEW.description)
+      WHERE place_id = NEW.parent_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'reading totals missing for parent place %', NEW.parent_id
+          USING ERRCODE = '55000';
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END$$;
+
+DROP TRIGGER IF EXISTS places_update_reading_totals ON places;
+CREATE TRIGGER places_update_reading_totals
+AFTER INSERT OR DELETE OR UPDATE OF parent_id, description ON places
+FOR EACH ROW EXECUTE FUNCTION maintain_place_reading_totals_from_place();
+
+CREATE OR REPLACE FUNCTION maintain_place_reading_totals_from_thing()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  affected_place_ids INTEGER[];
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    affected_place_ids := CASE WHEN NEW.withdrawn_at IS NULL
+      THEN ARRAY[NEW.place_id] ELSE ARRAY[]::INTEGER[] END;
+  ELSIF TG_OP = 'DELETE' THEN
+    affected_place_ids := CASE WHEN OLD.withdrawn_at IS NULL
+      THEN ARRAY[OLD.place_id] ELSE ARRAY[]::INTEGER[] END;
+  ELSE
+    affected_place_ids := array_remove(ARRAY[
+      CASE WHEN OLD.withdrawn_at IS NULL THEN OLD.place_id END,
+      CASE WHEN NEW.withdrawn_at IS NULL THEN NEW.place_id END
+    ], NULL);
+  END IF;
+
+  -- A move touches two counter rows. Lock both in one global order before
+  -- applying either delta so simultaneous A→B and B→A moves cannot deadlock.
+  PERFORM totals.place_id
+  FROM place_reading_totals totals
+  WHERE totals.place_id = ANY(affected_place_ids)
+  ORDER BY totals.place_id
+  FOR NO KEY UPDATE;
+
+  IF TG_OP <> 'INSERT' AND OLD.withdrawn_at IS NULL THEN
+    UPDATE place_reading_totals SET
+      thing_items = thing_items - 1,
+      thing_text_bytes = thing_text_bytes - octet_length(OLD.body)
+    WHERE place_id = OLD.place_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'reading totals missing for place %', OLD.place_id
+        USING ERRCODE = '55000';
+    END IF;
+  END IF;
+
+  IF TG_OP <> 'DELETE' AND NEW.withdrawn_at IS NULL THEN
+    UPDATE place_reading_totals SET
+      thing_items = thing_items + 1,
+      thing_text_bytes = thing_text_bytes + octet_length(NEW.body)
+    WHERE place_id = NEW.place_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'reading totals missing for place %', NEW.place_id
+        USING ERRCODE = '55000';
+    END IF;
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END$$;
+
+DROP TRIGGER IF EXISTS things_update_reading_totals ON things;
+CREATE TRIGGER things_update_reading_totals
+AFTER INSERT OR DELETE OR UPDATE OF place_id, body, withdrawn_at ON things
+FOR EACH ROW EXECUTE FUNCTION maintain_place_reading_totals_from_thing();
+
+CREATE OR REPLACE FUNCTION maintain_place_reading_totals_from_note()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE place_reading_totals SET
+    note_items = note_items + 1,
+    note_text_bytes = note_text_bytes + octet_length(NEW.body)
+  WHERE place_id = NEW.place_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'reading totals missing for place %', NEW.place_id
+      USING ERRCODE = '55000';
+  END IF;
+  RETURN NEW;
+END$$;
+
+DROP TRIGGER IF EXISTS notes_update_reading_totals ON notes;
+CREATE TRIGGER notes_update_reading_totals
+AFTER INSERT ON notes
+FOR EACH ROW EXECUTE FUNCTION maintain_place_reading_totals_from_note();
 
 -- Agreements begin closed to later signers. Their creator may make a separate,
 -- append-only accession opening; the agreement text itself remains immutable.
@@ -2239,6 +2451,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_at ON events (at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_kind_id_desc ON events (kind, id DESC);
+CREATE INDEX IF NOT EXISTS events_actor_at_desc ON events (actor, at DESC);
 
 -- Public history is append-only. Mutable identity/quota/property rows are excluded,
 -- their changes are represented by immutable revisions, transfers, and events.
@@ -2285,6 +2498,80 @@ DROP TRIGGER IF EXISTS flags_append_only ON flags;
 CREATE TRIGGER flags_append_only BEFORE UPDATE OR DELETE ON flags FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS events_append_only ON events;
 CREATE TRIGGER events_append_only BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+
+-- A caller-held public marker must follow commit visibility, not SERIAL
+-- allocation. Every event transaction takes this one short row lock and writes
+-- its immutable marker mapping before it can commit.
+CREATE TABLE IF NOT EXISTS public_change_state (
+  singleton          BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+  current_change_id  BIGINT NOT NULL DEFAULT 0 CHECK (current_change_id >= 0)
+);
+INSERT INTO public_change_state (singleton, current_change_id)
+VALUES (true, 0)
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS public_change_log (
+  change_id  BIGINT PRIMARY KEY CHECK (change_id > 0),
+  event_id   INTEGER NOT NULL UNIQUE REFERENCES events(id) ON DELETE RESTRICT
+);
+
+CREATE OR REPLACE FUNCTION record_public_change() RETURNS trigger
+LANGUAGE plpgsql AS $function$
+DECLARE
+  next_change_id BIGINT;
+BEGIN
+  UPDATE public_change_state
+  SET current_change_id = current_change_id + 1
+  WHERE singleton = true
+  RETURNING current_change_id INTO next_change_id;
+  IF next_change_id IS NULL THEN
+    RAISE EXCEPTION 'public change state is unavailable' USING ERRCODE = '55000';
+  END IF;
+  INSERT INTO public_change_log (change_id, event_id) VALUES (next_change_id, NEW.id);
+  RETURN NEW;
+END
+$function$;
+
+-- Reapplying the full schema is safe. The lock prevents an event writer from
+-- landing between the historical backfill and trigger installation.
+LOCK TABLE events IN SHARE ROW EXCLUSIVE MODE;
+DROP TRIGGER IF EXISTS events_record_public_change ON events;
+DO $block$
+DECLARE
+  historical_event RECORD;
+  next_change_id BIGINT;
+BEGIN
+  FOR historical_event IN
+    SELECT event.id
+    FROM events event
+    LEFT JOIN public_change_log change ON change.event_id = event.id
+    WHERE change.event_id IS NULL
+    ORDER BY event.at ASC, event.id ASC
+  LOOP
+    UPDATE public_change_state
+    SET current_change_id = current_change_id + 1
+    WHERE singleton = true
+    RETURNING current_change_id INTO next_change_id;
+    INSERT INTO public_change_log (change_id, event_id)
+    VALUES (next_change_id, historical_event.id);
+  END LOOP;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public_change_log change
+    CROSS JOIN public_change_state state
+    WHERE state.singleton = true
+      AND change.change_id > state.current_change_id
+  ) THEN
+    RAISE EXCEPTION 'public change state trails its immutable log' USING ERRCODE = '55000';
+  END IF;
+END
+$block$;
+CREATE TRIGGER events_record_public_change
+AFTER INSERT ON events FOR EACH ROW EXECUTE FUNCTION record_public_change();
+DROP TRIGGER IF EXISTS public_change_log_append_only ON public_change_log;
+CREATE TRIGGER public_change_log_append_only BEFORE UPDATE OR DELETE ON public_change_log
+FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 
 -- Structural world-root invariants are also enforced at the database boundary.
 -- Application permission flags are local to each place; the ownerless root does

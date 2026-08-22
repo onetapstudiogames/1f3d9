@@ -1,5 +1,6 @@
 import type { Resident } from './core.ts'
 import { sql } from './db.ts'
+import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import {
   MODERATED_TEXT,
   redactModeratedTarget,
@@ -353,14 +354,26 @@ export async function moderationHistory(
   beforeId: number | null,
   fetchLimit: number,
 ): Promise<readonly Record<string, unknown>[]> {
-  return sql.query(`
+  return executeBudgetedExactQuery(`
     /* public:moderation */
-    SELECT action.id, action.target_type, action.target_id, action.action,
-      action.reason, action.created_at, actor.handle AS actor
-    FROM moderation_actions action
-    JOIN residents actor ON actor.id = action.actor_id
-    WHERE ($1::integer IS NULL OR action.id < $1::integer)
-    ORDER BY action.id DESC
-    LIMIT $2::integer
+    WITH totals AS (
+      SELECT count(*)::integer AS total_items,
+        coalesce(sum(octet_length(reason)), 0)::bigint AS total_text_bytes
+      FROM moderation_actions
+    )
+    SELECT page.id, page.target_type, page.target_id, page.action,
+      page.reason, page.created_at, page.actor,
+      totals.total_items, totals.total_text_bytes
+    FROM totals
+    LEFT JOIN LATERAL (
+      SELECT action.id, action.target_type, action.target_id, action.action,
+        action.reason, action.created_at, actor.handle AS actor
+      FROM moderation_actions action
+      JOIN residents actor ON actor.id = action.actor_id
+      WHERE ($1::integer IS NULL OR action.id < $1::integer)
+      ORDER BY action.id DESC
+      LIMIT $2::integer
+    ) page ON TRUE
+    ORDER BY page.id DESC NULLS LAST
   `, [beforeId, fetchLimit]) as Promise<Record<string, unknown>[]>
 }

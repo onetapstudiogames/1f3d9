@@ -27,11 +27,18 @@ deployment must never apply a migration as a side effect.
 
 ### When a migration times out
 
-Every migration runs inside one transaction that the runner starts with
+Normal migrations run inside one transaction that the runner starts with
 `SET LOCAL lock_timeout = '5s'` and `SET LOCAL statement_timeout = '120s'`
 (a migration file may override either with its own `SET LOCAL`). A timeout
 aborts that whole transaction, so nothing partial commits: the database is
 exactly as it was before the command.
+
+The explicitly named concurrent-index migrations are the exception. They use the same
+limits at session level because PostgreSQL cannot build a concurrent index inside one
+transaction. The guarded runner checks every reviewed definition, keeps a valid index,
+and removes and retries only an invalid index left by an interrupted build. If one of
+these commands fails, inspect the named index state before one deliberate retry; do not
+assume the whole file rolled back.
 
 If the command fails with `lock_not_available` (SQLSTATE `55P03`), something
 was holding a lock on a table the migration needs — usually ordinary city
@@ -45,10 +52,11 @@ Diagnose before rerunning; do not retry in a loop:
    who holds locks on the named table.
 2. For a lock wait, rerun the same named `migrate:*` command once the holder
    is gone or during a quieter moment.
-3. For a statement timeout, measure the data volume the statement touches. If
-   the work is legitimately heavier than 120 seconds, the migration file
-   itself should set its own explicit `SET LOCAL statement_timeout` with a
-   reviewed justification, rather than the limit being raised globally.
+3. For a statement timeout, measure the data volume the statement touches. For
+   a normal transactional migration, the file may set its own explicit
+   `SET LOCAL statement_timeout` with a reviewed justification. A concurrent-index
+   file cannot use `SET LOCAL` and cannot add unreviewed SQL; change its guarded
+   session limit in the runner with matching tests and review before retrying.
 
 ## Verify production
 

@@ -7,9 +7,13 @@ import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   PUBLIC_PAGE_DEFAULT,
   PUBLIC_PAGE_MAX,
+  allowedPublicQuery,
   finalizePublicPage,
   parsePublicPage,
+  utf8TextBytes,
 } from '../src/public-pagination.ts'
+import { PUBLIC_SEARCH_RATE_CAPACITY } from '../src/public-search-rate-limit.ts'
+import { encodePublicSearchCursor } from '../src/public-search.ts'
 
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
@@ -164,6 +168,10 @@ interface FakeState {
   failPaidWriteOnce: boolean
   placeDescription: string
   noteBody: string
+  exactTotalsBusy: boolean
+  exactTotalsBusyAfter: number | null
+  exactTotalsSuccessfulReads: number
+  publicChangeMarker: string
   actionResolved?: boolean
 }
 
@@ -224,6 +232,10 @@ const initialState = (): FakeState => ({
   failPaidWriteOnce: false,
   placeDescription: 'a place made from words',
   noteBody: 'hello from the square',
+  exactTotalsBusy: false,
+  exactTotalsBusyAfter: null,
+  exactTotalsSuccessfulReads: 0,
+  publicChangeMarker: '9',
 })
 
 let state = initialState()
@@ -303,10 +315,10 @@ const paginationEvents = () => Array.from({ length: 70 }, (_, index) => {
   const id = 70 - index
   return {
     id,
-    at: `2026-08-11T00:${String(id).padStart(2, '0')}:00.000Z`,
+    at: new Date(Date.UTC(2026, 7, 11, 0, 0, id)).toISOString(),
     kind: id % 2 === 0 ? 'note_created' : 'thing_created',
     actor: 'tiny-lantern',
-    detail: { id },
+    detail: id === 70 ? { id, body: 'city 🏙' } : { id },
   }
 })
 
@@ -314,6 +326,17 @@ const paginationSubplaces = () => Array.from({ length: 60 }, (_, index) => ({
   ...placeRow(160 - index, 2),
   name: `Subplace ${160 - index}`,
 }))
+
+const mapOutlineRows = () => Array.from({ length: 60 }, (_, index) => ({
+  ...placeRow(160 - index, 1),
+  name: `Map place ${160 - index}`,
+  description: `Map description ${160 - index} 🏙`,
+  places: index === 0 ? 2 : 0,
+}))
+
+const mapOutlineParent = (id: number) => id === 1
+  ? { ...placeRow(1, null), owner_id: null, owner: null, name: 'the world', places: 60 }
+  : { ...placeRow(id, 1), name: `Map place ${id}`, places: id === 160 ? 2 : 0 }
 
 const paginationThings = () => Array.from({ length: 60 }, (_, index) => ({
   ...thingRow(260 - index),
@@ -349,14 +372,19 @@ const remainingPaginationRows = (collection: string) => {
   return recentIds(newest).map(id => {
     const common = { id, created_at: '2026-08-11T00:00:00.000Z' }
     if (collection === 'residents') return {
-      ...common, handle: `resident-${id}`, model: 'test-model', joined_at: common.created_at,
+      ...common,
+      handle: `resident-${id}`,
+      model: 'test-model',
+      joined_at: common.created_at,
+      current_place_id: id % 2 === 0 ? 2 : null,
+      asleep: id % 3 === 0,
     }
     if (collection === 'kinds') return {
       ...common, name: `kind-${id}`, owner_id: 7, owner: 'tiny-lantern',
-      revision: 1, description: '', traits: [], recipe: [],
+      revision: 1, description: id === newest ? 'kind 🏙' : '', traits: [], recipe: [],
     }
     if (collection === 'traits') return {
-      ...common, name: `trait-${id}`, description: '', recipe: null,
+      ...common, name: `trait-${id}`, description: id === newest ? 'trait 🏙' : '', recipe: null,
       mechanical: false, coiner: 'tiny-lantern',
     }
     if (collection === 'agreements') return {
@@ -410,6 +438,17 @@ function reset(patch: Partial<FakeState> = {}) {
   state = { ...initialState(), ...patch }
 }
 
+async function withVercelForwarding(run: () => Promise<void>) {
+  const previous = process.env.VERCEL
+  process.env.VERCEL = '1'
+  try {
+    await run()
+  } finally {
+    if (previous === undefined) delete process.env.VERCEL
+    else process.env.VERCEL = previous
+  }
+}
+
 function setActor(id: number, handle: string) {
   state = { ...state, actorId: id, actorHandle: handle }
 }
@@ -429,6 +468,26 @@ function recordPayment(query: string, params: unknown[]) {
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  if (q.includes('/* public:search */')) {
+    return [{
+      result_type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+      owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
+      author_id: null, author: null, body_text_bytes: 19,
+      created_at: '2026-08-11T00:00:00.000000Z',
+      total_items: 1, total_body_bytes: '19', change_marker: state.publicChangeMarker,
+    }]
+  }
+  if (q.includes('/* public:changes-checkpoint */')) {
+    return [{ checkpoint: state.publicChangeMarker }]
+  }
+  if (q.includes('/* public:changes */')) {
+    return [{
+      checkpoint: state.publicChangeMarker, id: 701, change_id: state.publicChangeMarker,
+      kind: 'action', actor: 'tiny-lantern',
+      detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
+    }]
+  }
 
   // Once the action resolution committed, every later presence read breaks.
   if (state.scenario === 'post-action observation failure'
@@ -933,7 +992,21 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }]
   }
   if (state.scenario === 'remaining pagination' && q.includes('/* public:moderation */')) {
-    return descendingPage(remainingPaginationRows('moderation'), params[0], params[1])
+    const all = remainingPaginationRows('moderation')
+    const totalTextBytes = all.reduce(
+      (total, row) => total + Buffer.byteLength(
+        String((row as Record<string, unknown>).reason ?? ''),
+        'utf8',
+      ),
+      0,
+    )
+    const page = descendingPage(all, params[0], params[1])
+    return page.length > 0
+      ? page.map(row => ({ ...row, total_items: all.length, total_text_bytes: totalTextBytes }))
+      : [{ id: null, total_items: all.length, total_text_bytes: totalTextBytes }]
+  }
+  if (q.includes('/* public:moderation */')) {
+    return [{ id: null, total_items: 0, total_text_bytes: 0 }]
   }
   if (q.includes('from moderation_actions')) {
     const targetType = String(params.find(value => (
@@ -1041,16 +1114,45 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return [{ id: state.actorId }]
   }
 
-  if (state.scenario === 'remaining pagination') {
+  if (state.scenario === 'remaining pagination' || state.scenario === 'window outline') {
     if (q.includes('/* public:residents */')) {
-      const total = remainingPaginationRows('residents').length
-      const page = descendingPage(remainingPaginationRows('residents'), params[0], params[1])
-      return page.length > 0 ? page.map(row => ({ ...row, total })) : [{ total }]
+      const residentRows = remainingPaginationRows('residents') as Array<{
+        id: number
+        handle: string
+        model: string
+        joined_at: string
+        current_place_id: number | null
+        asleep: boolean
+      }>
+      const total = residentRows.length
+      const includesPresence = q.includes('current_place_id') && q.includes('asleep')
+      const rows = residentRows.map(row => ({
+        id: row.id,
+        handle: row.handle,
+        model: row.model,
+        joined_at: row.joined_at,
+        ...(includesPresence
+          ? { current_place_id: row.current_place_id, asleep: row.asleep }
+          : {}),
+      }))
+      const page = descendingPage(rows, params[0], params[1])
+      return page.length > 0
+        ? page.map(row => ({ ...row, total_items: total, total_text_bytes: 0 }))
+        : [{ id: null, total_items: total, total_text_bytes: 0 }]
     }
     const publicCollection = ['kinds', 'traits', 'moderation']
       .find(collection => q.includes(`/* public:${collection} */`))
     if (publicCollection) {
-      return descendingPage(remainingPaginationRows(publicCollection), params[0], params[1])
+      const all = remainingPaginationRows(publicCollection)
+      const field = publicCollection === 'moderation' ? 'reason' : 'description'
+      const totalTextBytes = all.reduce(
+        (total, row) => total + Buffer.byteLength(String((row as Record<string, unknown>)[field] ?? ''), 'utf8'),
+        0,
+      )
+      const page = descendingPage(all, params[0], params[1])
+      return page.length > 0
+        ? page.map(row => ({ ...row, total_items: all.length, total_text_bytes: totalTextBytes }))
+        : [{ id: null, total_items: all.length, total_text_bytes: totalTextBytes }]
     }
     if (q.includes('/* public:agreements */')) {
       const party = params[0] == null ? null : String(params[0])
@@ -1062,7 +1164,14 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       }>
       const filtered = agreements.filter(row =>
         (party == null || row.parties.includes(party)) && (open == null || row.open === open))
-      return descendingPage(filtered, params[2], params[3])
+      const totalTextBytes = filtered.reduce(
+        (total, row) => total + Buffer.byteLength(String((row as Record<string, unknown>).body ?? ''), 'utf8'),
+        0,
+      )
+      const page = descendingPage(filtered, params[2], params[3])
+      return page.length > 0
+        ? page.map(row => ({ ...row, total_items: filtered.length, total_text_bytes: totalTextBytes }))
+        : [{ id: null, total_items: filtered.length, total_text_bytes: totalTextBytes }]
     }
     const meCollection = [
       'me_places', 'me_things', 'me_kinds', 'me_agreements', 'me_notes', 'me_offers',
@@ -1075,17 +1184,256 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (state.scenario === 'resident arrival pagination' && q.includes('/* public:residents */')) {
     const total = residentArrivalRows().length
     const page = residentArrivalPage(query, params[0], params[1])
-    return page.length > 0 ? page.map(row => ({ ...row, total })) : [{ total }]
+    return page.length > 0
+      ? page.map(row => ({ ...row, total_items: total, total_text_bytes: 0 }))
+      : [{ id: null, total_items: total, total_text_bytes: 0 }]
   }
 
+  if (q.includes('/* public:place-collections-budgeted */')) {
+    const paged = state.scenario === 'public pagination'
+    const allSubplaces = paged ? paginationSubplaces() : [placeRow(2, 1)]
+    const allThings = paged
+      ? paginationThings()
+      : state.thingWithdrawn ? [] : [thingRow(41)]
+    const allNotes = paged
+      ? paginationNotes()
+      : state.scenario === 'busy place'
+        ? Array.from({ length: 205 }, (_, index) => ({
+            id: index + 1,
+            place_id: 2,
+            author: 'tiny-lantern',
+            body: `note ${index + 1}`,
+            created_at: new Date(Date.UTC(2026, 7, 11, 0, 0, index + 1)).toISOString(),
+          }))
+        : [{ id: 51, place_id: 2, author: 'tiny-lantern', body: state.noteBody, created_at: '2026-08-11T00:00:00.000Z' }]
+    const pack = <T extends { id: number }>(
+      rows: readonly T[],
+      cursor: unknown,
+      fetchLimit: unknown,
+      textLimit: unknown,
+      field: keyof T,
+    ) => {
+      const candidates = descendingPage(rows, cursor, fetchLimit)
+      const itemLimit = Number(fetchLimit) - 1
+      const limit = textLimit == null ? null : Number(textLimit)
+      const items: T[] = []
+      let returnedTextBytes = 0
+      let blocked: T | null = null
+      let blockedBytes: number | null = null
+      for (const row of candidates.slice(0, itemLimit)) {
+        const bytes = Buffer.byteLength(String(row[field] ?? ''), 'utf8')
+        if (limit != null && returnedTextBytes + bytes > limit) {
+          blocked = row
+          blockedBytes = bytes
+          break
+        }
+        items.push(row)
+        returnedTextBytes += bytes
+      }
+      const hasMore = candidates.length > items.length
+      return {
+        items,
+        returnedTextBytes,
+        hasMore,
+        nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
+        stoppedForTextLimit: blocked != null,
+        nextItemId: blocked?.id ?? null,
+        nextItemTextBytes: blockedBytes,
+      }
+    }
+    const subplaces = pack(allSubplaces, params[1], params[2], params[7], 'description')
+    const things = pack(allThings, params[3], params[4], params[8], 'body')
+    const notes = pack(allNotes, params[5], params[6], params[9], 'body')
+    return [{
+      subplaces: subplaces.items,
+      things: things.items,
+      notes: notes.items,
+      subplace_items: paged ? 160 : allSubplaces.length,
+      subplace_text_bytes: paged ? 1600 : allSubplaces.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.description ?? ''), 'utf8'), 0,
+      ),
+      thing_items: paged ? 260 : allThings.length,
+      thing_text_bytes: paged ? 2600 : allThings.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.body ?? ''), 'utf8'), 0,
+      ),
+      note_items: paged ? 360 : allNotes.length,
+      note_text_bytes: paged ? 3600 : allNotes.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.body ?? ''), 'utf8'), 0,
+      ),
+      subplace_returned_text_bytes: subplaces.returnedTextBytes,
+      subplace_has_more: subplaces.hasMore,
+      subplace_next_cursor: subplaces.nextCursor,
+      subplace_stopped_for_text_limit: subplaces.stoppedForTextLimit,
+      subplace_next_item_id: subplaces.nextItemId,
+      subplace_next_item_text_bytes: subplaces.nextItemTextBytes,
+      thing_returned_text_bytes: things.returnedTextBytes,
+      thing_has_more: things.hasMore,
+      thing_next_cursor: things.nextCursor,
+      thing_stopped_for_text_limit: things.stoppedForTextLimit,
+      thing_next_item_id: things.nextItemId,
+      thing_next_item_text_bytes: things.nextItemTextBytes,
+      note_returned_text_bytes: notes.returnedTextBytes,
+      note_has_more: notes.hasMore,
+      note_next_cursor: notes.nextCursor,
+      note_stopped_for_text_limit: notes.stoppedForTextLimit,
+      note_next_item_id: notes.nextItemId,
+      note_next_item_text_bytes: notes.nextItemTextBytes,
+    }]
+  }
+
+  if (q.includes('/* public:place-collections */')) {
+    const paged = state.scenario === 'public pagination'
+    const allSubplaces = paged ? paginationSubplaces() : [placeRow(2, 1)]
+    const allThings = paged
+      ? paginationThings()
+      : state.thingWithdrawn ? [] : [thingRow(41)]
+    const allNotes = paged
+      ? paginationNotes()
+      : state.scenario === 'busy place'
+        ? Array.from({ length: 205 }, (_, index) => ({
+            id: index + 1,
+            place_id: 2,
+            author: 'tiny-lantern',
+            body: `note ${index + 1}`,
+            created_at: new Date(Date.UTC(2026, 7, 11, 0, 0, index + 1)).toISOString(),
+          }))
+        : [{ id: 51, place_id: 2, author: 'tiny-lantern', body: state.noteBody, created_at: '2026-08-11T00:00:00.000Z' }]
+    const subplaces = descendingPage(
+      allSubplaces,
+      params[1],
+      params[2],
+    ).map(row => q.includes('as description_text_bytes')
+      ? Object.fromEntries(Object.entries({
+          ...row,
+          description_text_bytes: Buffer.byteLength(String(row.description ?? ''), 'utf8'),
+        }).filter(([key]) => key !== 'description'))
+      : row)
+    const things = descendingPage(
+      allThings,
+      params[3],
+      params[4],
+    ).map(row => q.includes('as body_text_bytes')
+      ? Object.fromEntries(Object.entries({
+          ...row,
+          body_text_bytes: Buffer.byteLength(String(row.body ?? ''), 'utf8'),
+        }).filter(([key]) => key !== 'body'))
+      : row)
+    const notes = descendingPage(
+      allNotes,
+      params[5],
+      params[6],
+    ).map(row => q.includes('author.handle as author, octet_length(n.body)')
+      ? Object.fromEntries(Object.entries({
+          ...row,
+          body_text_bytes: Buffer.byteLength(String(row.body ?? ''), 'utf8'),
+        }).filter(([key]) => key !== 'body'))
+      : row)
+    return [{
+      subplaces,
+      things,
+      notes,
+      subplace_items: paged ? 160 : allSubplaces.length,
+      subplace_text_bytes: paged ? 1600 : allSubplaces.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.description ?? ''), 'utf8'), 0,
+      ),
+      thing_items: paged ? 260 : allThings.length,
+      thing_text_bytes: paged ? 2600 : allThings.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.body ?? ''), 'utf8'), 0,
+      ),
+      note_items: paged ? 360 : allNotes.length,
+      note_text_bytes: paged ? 3600 : allNotes.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.body ?? ''), 'utf8'), 0,
+      ),
+    }]
+  }
+
+  if (q.includes('count(*)') && q.includes('octet_length') && !q.includes('/* public:')) {
+    if (q.includes('subplace_items') && q.includes('thing_items') && q.includes('note_items')) {
+      return state.scenario === 'public pagination'
+        ? [{ subplace_items: 160, subplace_text_bytes: 1600, thing_items: 260, thing_text_bytes: 2600, note_items: 360, note_text_bytes: 3600 }]
+        : [{ subplace_items: 1, subplace_text_bytes: 21, thing_items: 1, thing_text_bytes: 21, note_items: 1, note_text_bytes: 21 }]
+    }
+    if (state.scenario === 'public pagination') {
+      if (q.includes('from places p')) return [{ items: 160, text_bytes: 1600 }]
+      if (q.includes('from things t')) return [{ items: 260, text_bytes: 2600 }]
+      if (q.includes('from notes n')) return [{ items: 360, text_bytes: 3600 }]
+    }
+    return [{ items: 1, text_bytes: Buffer.byteLength(state.noteBody, 'utf8') }]
+  }
+  if (q.includes('/* public:reading_cost */')) {
+    if (state.scenario === 'reading cost unavailable') throw new Error('meter read failed')
+    return [{ stored_text_bytes: 1234, first_read_text_bytes: 456 }]
+  }
   if (state.scenario === 'public pagination' && q.includes('from places p') && q.includes('where p.parent_id')) {
+    if (q.includes('count(*)')) return [{ items: 160, text_bytes: 1600 }]
     return descendingPage(paginationSubplaces(), params[1], params[2])
   }
   if (state.scenario === 'public pagination' && q.includes('from things t') && q.includes('t.place_id')) {
+    if (q.includes('count(*)')) return [{ items: 260, text_bytes: 2600 }]
     return descendingPage(paginationThings(), params[1], params[2])
   }
   if (state.scenario === 'public pagination' && q.includes('from notes n') && q.includes('n.place_id')) {
+    if (q.includes('count(*)')) return [{ items: 360, text_bytes: 3600 }]
     return descendingPage(paginationNotes(), params[1], params[2])
+  }
+
+  if (['map outline', 'window outline'].includes(state.scenario) &&
+      q.includes('/* public:map-parent */')) {
+    return [mapOutlineParent(Number(params[0] ?? 1))]
+  }
+  if (['map outline', 'window outline'].includes(state.scenario) &&
+      q.includes('/* public:map-outline */')) {
+    const parentId = Number(params[0] ?? 1)
+    const all = mapOutlineRows().filter(row => row.parent_id === parentId)
+    const totalTextBytes = all.reduce(
+      (total, row) => total + Buffer.byteLength(row.description, 'utf8'),
+      0,
+    )
+    const page = descendingPage(all, params[2], params[3])
+    return page.length > 0
+      ? page.map(row => ({
+          ...row,
+          outline_parent: mapOutlineParent(parentId),
+          total_items: all.length,
+          total_text_bytes: totalTextBytes,
+        }))
+      : [{
+          id: null,
+          outline_parent: mapOutlineParent(parentId),
+          total_items: all.length,
+          total_text_bytes: totalTextBytes,
+        }]
+  }
+  if (state.scenario === 'window outline' && (
+    q.includes('/* public:window-outline-totals */') ||
+    q.includes('(select count(*)::int from places) as places')
+  )) {
+    return [{
+      places: 61,
+      residents: 60,
+      conversations: 60,
+      things: 60,
+      agreements: 60,
+      events: 70,
+    }]
+  }
+  if (state.scenario === 'window outline' && q.includes('from notes note')) {
+    return descendingPage(paginationNotes(), params[0], params.at(-1))
+  }
+  if (state.scenario === 'window outline' && q.includes('from things thing')) {
+    return descendingPage(paginationThings(), params[0], params.at(-1))
+  }
+  if (state.scenario === 'window outline' && q.includes('from agreements agreement')) {
+    return descendingPage(remainingPaginationRows('agreements'), params[0], params.at(-1))
+  }
+  if (state.scenario === 'window outline' && (
+    q.includes('select id, at, kind, actor, detail') || q.includes('/* public:events */')
+  )) {
+    const events = paginationEvents().map((event, index) => ({
+      ...event,
+      kind: index % 2 === 0 ? 'note' : 'thing_created',
+    }))
+    return descendingPage(events, null, params.at(-1))
   }
 
   if (q.includes('left join resident_presence presence')) {
@@ -1196,6 +1544,14 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       } : {}),
     }]
   }
+  if (q.includes('/* public:kinds */')) {
+    const row = kindRow()
+    return [{
+      ...row,
+      total_items: 1,
+      total_text_bytes: Buffer.byteLength(String(row.description ?? ''), 'utf8'),
+    }]
+  }
   if (q.includes('from kind_revisions') || q.includes('from kinds')) {
     if (q.includes('insert into') || q.includes('update kinds')) return [{ ...kindRow(), revision: state.kindRevision + 1 }]
     return [kindRow()]
@@ -1210,6 +1566,21 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }]
   if (q.includes('kind_revision_traits')) {
     return state.thingTraitRecipe ? [{ trait_id: 4, recipe: state.thingTraitRecipe }] : []
+  }
+  if (q.includes('/* public:traits */')) {
+    const row = {
+      id: 4,
+      name: state.placeLawNames.length ? state.lawTraitName : 'glowing',
+      description: 'gives off light',
+      recipe: state.placeLawNames.length ? state.lawTraitRecipe : null,
+      mechanical: state.placeLawNames.length ? Boolean(state.lawTraitRecipe) : false,
+      coiner: 'founder',
+    }
+    return [{
+      ...row,
+      total_items: 1,
+      total_text_bytes: Buffer.byteLength(row.description, 'utf8'),
+    }]
   }
   if (q.includes('from traits')) return [{
     id: 4,
@@ -1231,7 +1602,26 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   // they must dispatch on their distinctive SELECT list before the generic
   // notes/things branches can swallow them.
   if (q.includes('select id, at, kind, actor, detail') ||
-      q.includes('select at, kind, actor, detail')) {
+      q.includes('select at, kind, actor, detail') ||
+      q.includes('/* public:events */')) {
+    const withEventTotals = (
+      page: readonly Record<string, unknown>[],
+      all: readonly Record<string, unknown>[],
+    ): Record<string, unknown>[] => {
+      if (!q.includes('/* public:events */')) return [...page]
+      const totalTextBytes = all.reduce((total, event) => {
+        const detail = event.detail && typeof event.detail === 'object' && !Array.isArray(event.detail)
+          ? event.detail as Record<string, unknown>
+          : {}
+        return total + ['body', 'description', 'reason'].reduce((subtotal, field) => (
+          subtotal + Buffer.byteLength(typeof detail[field] === 'string' ? detail[field] as string : '', 'utf8')
+        ), 0)
+      }, 0)
+      const metadata = { total_items: all.length, total_text_bytes: totalTextBytes }
+      return page.length > 0
+        ? page.map(event => ({ ...event, ...metadata }))
+        : [{ id: null, ...metadata }]
+    }
     if (state.scenario === 'public pagination') {
       const kind = params[0] == null ? null : String(params[0])
       const actor = params[1] == null ? null : String(params[1])
@@ -1241,23 +1631,25 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         (actor == null || event.actor === actor) &&
         (placeId == null ||
           Number((event.detail as Record<string, unknown>).place_id) === placeId))
-      return descendingPage(matching, params[3], params[4])
+      return withEventTotals(descendingPage(matching, params[3], params[4]), matching)
     }
     if (state.scenario === 'event pagination') {
       const beforeId = params[3] == null ? null : Number(params[3])
       const limit = q.includes('limit $5') ? Number(params[4]) : 200
-      return [205, 204, 203, 202, 201]
-        .filter(id => beforeId == null || id < beforeId)
-        .slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
-        .map(id => ({
+      const all = [205, 204, 203, 202, 201].map(id => ({
           id,
           at: new Date(Date.UTC(2026, 7, 11, 0, 0, id - 200)).toISOString(),
           kind: 'note',
           actor: 'tiny-lantern',
           detail: { note_id: id, place_id: 2 },
         }))
+      const page = all
+        .filter(event => beforeId == null || event.id < beforeId)
+        .slice(0, Number.isSafeInteger(limit) && limit > 0 ? limit : 200)
+      return withEventTotals(page, all)
     }
-    if (state.scenario === 'activity surfaces') return [
+    if (state.scenario === 'activity surfaces') {
+      const all = [
       {
         id: 70, at: '2026-08-11T00:00:00.000Z', kind: 'place_created',
         actor: 'tiny-lantern', detail: { place_id: 2 },
@@ -1274,8 +1666,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         id: 73, at: '2026-08-11T00:03:00.000Z', kind: 'world_sale',
         actor: 'neighbor', detail: { transfer_id: 6, offer_id: 91, thing_id: 9 },
       },
-    ]
-    if (state.scenario === 'nested moderation events') return [
+      ]
+      return withEventTotals(all, all)
+    }
+    if (state.scenario === 'nested moderation events') {
+      const all = [
       {
         id: 80, at: '2026-08-11T00:06:00.000Z', kind: 'laws_changed',
         actor: 'tiny-lantern', detail: { place_id: 2, traits: ['quiet-hours', 'safe-trait'] },
@@ -1298,14 +1693,17 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
           recipe: [{ kind: 'banned-material', quantity: 1 }, { kind: 'safe-material', quantity: 2 }],
         },
       },
-    ]
-    return [{
+      ]
+      return withEventTotals(all, all)
+    }
+    const all = [{
       id: 70,
       at: '2026-08-11T00:00:00.000Z',
       kind: 'register',
       actor: 'tiny-lantern',
       detail: { resident_id: 7 },
     }]
+    return withEventTotals(all, all)
   }
   if (q.includes('from notes')) {
     if (state.scenario === 'busy place') {
@@ -1350,6 +1748,26 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     signed: false,
     created_at: '2026-08-11T00:00:00.000Z',
   }]
+  if (q.includes('/* public:agreements */')) {
+    const row = {
+      id: 61,
+      body: 'we keep the square open',
+      created_by: state.actorHandle,
+      parties: state.agreementParties,
+      acceded: state.agreementAcceded,
+      signatures: ['tiny-lantern'],
+      accession_open: state.agreementAccessionOpen,
+      open: true,
+      created_at: '2026-08-11T00:00:00.000Z',
+    }
+    return state.agreementExists
+      ? [{
+          ...row,
+          total_items: 1,
+          total_text_bytes: Buffer.byteLength(row.body, 'utf8'),
+        }]
+      : [{ id: null, total_items: 0, total_text_bytes: 0 }]
+  }
   if (q.includes('from agreements')) return state.agreementExists ? [{
     id: 61,
     created_by_id: state.agreementCreatorId,
@@ -1582,11 +2000,23 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
 
   if (q.includes('/* public:residents */')) return [residentRow(), {
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
-  }].map(row => ({ ...row, total: 2 }))
+  }].map(row => ({ ...row, total_items: 2, total_text_bytes: 0 }))
   if (q.includes('from residents')) return [residentRow(), {
     ...residentRow(), id: 8, handle: 'neighbor', joined_at: '2026-08-11T00:01:00.000Z',
   }]
   if (q.includes('from events') && q.includes('count(')) return [{ n: 0 }]
+  if (q.includes('/* public:treasury-fees */')) return [{
+    id: 1,
+    amount_usdc: 1,
+    tx_hash: TX1,
+    handle: 'tiny-lantern',
+    purpose: 'kind',
+    created_at: '2026-08-11T00:00:00.000Z',
+    collected: 1,
+    n: 1,
+    total_items: 1,
+    total_text_bytes: 4,
+  }]
   if (q.includes('sum(') && (q.includes('fees') || q.includes('payment_uses'))) return [{ collected: 1, n: 1 }]
   if (q.includes('from fees')) return [{
     amount_usdc: 1, tx_hash: TX1, handle: 'tiny-lantern', purpose: 'kind', created_at: '2026-08-11T00:00:00.000Z',
@@ -1642,7 +2072,32 @@ function neonEncode(rows: Record<string, unknown>[]) {
 globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
   const url = String(input)
   const body = init?.body ? JSON.parse(init.body) : null
-  state = { ...state, calls: [...state.calls, { url, query: body?.query, params: body?.params }] }
+  const databaseCalls = Array.isArray(body?.queries)
+    ? body.queries.map((query: { query?: string; params?: unknown[] }) => ({
+      url, query: query.query, params: query.params,
+    }))
+    : [{ url, query: body?.query, params: body?.params }]
+  state = { ...state, calls: [...state.calls, ...databaseCalls] }
+  if (url.includes('/sql') && Array.isArray(body?.queries)) {
+    const results = body.queries.map((query: { query: string; params?: unknown[] }) => {
+      if (/^\s*SET\s+LOCAL\b/iu.test(query.query)) return neonEncode([])
+      if (query.query.includes('/* public:budgeted-exact */')) {
+        const shouldReject = state.exactTotalsBusy || (
+          state.exactTotalsBusyAfter !== null &&
+          state.exactTotalsSuccessfulReads >= state.exactTotalsBusyAfter
+        )
+        if (shouldReject) return neonEncode([{ __exact_read_slot: null }])
+        state = {
+          ...state,
+          exactTotalsSuccessfulReads: state.exactTotalsSuccessfulReads + 1,
+        }
+      }
+      const rows = dbRespond(query.query, query.params ?? [])
+        .map(row => ({ ...row, __exact_read_slot: 0 }))
+      return neonEncode(rows)
+    })
+    return jsonResponse({ results })
+  }
   if (url.includes('/sql')) return jsonResponse(neonEncode(dbRespond(body.query, body.params ?? [])))
   if (url.includes('base-rpc.test')) {
     const result = body.method === 'eth_blockNumber'
@@ -1841,11 +2296,53 @@ test('note validation distinguishes place errors and preserves valid Unicode exa
     body: JSON.stringify({ place_id: 2, body }),
   })
   assert.equal(accepted.status, 201)
-  const acceptedBody = await accepted.json() as { note: { body: string } }
+  const acceptedBody = await accepted.json() as {
+    note: { body: string }
+    reading_cost: { size_unit: string; new_item_text_bytes: number; room_stored_text_bytes: number; current_first_read_text_bytes: number }
+  }
   assert.equal(acceptedBody.note.body, body)
+  assert.deepEqual(acceptedBody.reading_cost, {
+    available: true,
+    size_unit: 'utf8_bytes',
+    counted_text: 'place descriptions, active thing bodies, and note bodies',
+    new_item_text_bytes: Buffer.byteLength(body, 'utf8'),
+    room_stored_text_bytes: 1234,
+    current_first_read_text_bytes: 456,
+  })
 })
 
-test('the public map is a recursive owner-attributed tree with a short shared cache', async () => {
+test('a meter read failure never turns a committed note into a retryable write failure', async () => {
+  reset({ scenario: 'reading cost unavailable' })
+  const response = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: 'already committed' }),
+  })
+  assert.equal(response.status, 201)
+  const body = await response.json() as { reading_cost: Record<string, unknown> }
+  assert.deepEqual(body.reading_cost, {
+    available: false,
+    size_unit: 'utf8_bytes',
+    counted_text: 'place descriptions, active thing bodies, and note bodies',
+    new_item_text_bytes: Buffer.byteLength('already committed', 'utf8'),
+    room_stored_text_bytes: null,
+    current_first_read_text_bytes: null,
+    note: 'the write succeeded; only this informational meter is unavailable; do not retry',
+  })
+})
+
+test('a hung meter read has a short deadline after a committed write', async () => {
+  const { safeReadingCostMeter } = await import('../src/reading-cost.ts')
+  const startedAt = Date.now()
+  const meter = await safeReadingCostMeter(2, 'already committed', {
+    timeoutMs: 20,
+    load: () => new Promise(() => {}),
+  })
+  assert.equal(meter.available, false)
+  assert.ok(Date.now() - startedAt < 500, 'a meter must not hold a successful write open')
+})
+
+test('the legacy full public map stays exact and explicit full shares its short cache', async () => {
   const originalNow = Date.now
   try {
     // Backdate the clock so the map cache this test warms is already expired
@@ -1860,6 +2357,7 @@ test('the public map is a recursive owner-attributed tree with a short shared ca
       'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
     )
     const body = await response.json() as { places: { id: number; owner: string; children: { id: number }[] }[] }
+    assert.equal(Object.hasOwn(body, 'view'), false, 'the no-query compatibility response stays exact')
     assert.equal(body.places[0]?.id, 1)
     assert.equal(body.places[0]?.owner, 'founder')
     assert.equal(body.places[0]?.children[0]?.id, 2)
@@ -1869,8 +2367,178 @@ test('the public map is a recursive owner-attributed tree with a short shared ca
     const cached = await app.request('/api/map')
     assert.equal(cached.status, 200)
     assert.equal(sqlCalls().length, queriesAfterFirst, 'a map within the TTL reuses the shared build')
+
+    const explicit = await app.request('/api/map?view=full')
+    assert.equal(explicit.status, 200)
+    const explicitBody = await explicit.json() as { view: string; places: typeof body.places }
+    assert.equal(explicitBody.view, 'full')
+    assert.deepEqual(explicitBody.places, body.places)
+    assert.equal(
+      sqlCalls().length,
+      queriesAfterFirst,
+      'explicit and compatibility full reads share one full-map cache entry',
+    )
   } finally {
     Date.now = originalNow
+  }
+})
+
+test('the outline map pages one flat branch newest-first and caches its hot root page', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow - 140_000
+    reset({ scenario: 'map outline' })
+    const firstPath = '/api/map?view=outline'
+    const firstResponse = await app.request(firstPath)
+    assert.equal(firstResponse.status, 200)
+    assert.equal(
+      firstResponse.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const first = await firstResponse.json() as {
+      view: string
+      place: { id: number; children: unknown[] }
+      subplaces: Array<{ id: number; description?: string; children: unknown[]; places: number }>
+      subplaces_page: {
+        total_items: number
+        total_text_bytes: number
+        returned_items: number
+        returned_text_bytes: number
+        has_more: boolean
+        next_before_subplace_id: number | null
+      }
+      map_complete: boolean
+    }
+    assert.equal(first.view, 'outline')
+    assert.equal(first.place.id, 1)
+    assert.deepEqual(first.place.children, [])
+    assert.deepEqual(first.subplaces.map(place => place.id), recentIds(160).slice(0, 10))
+    assert.equal(first.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
+    assert.equal(first.subplaces.every(place => Array.isArray(place.children) && place.children.length === 0), true)
+    assert.equal(first.subplaces[0]?.places, 2)
+    assert.deepEqual(first.subplaces_page, {
+      total_items: 60,
+      total_text_bytes: mapOutlineRows().reduce(
+        (total, row) => total + Buffer.byteLength(row.description, 'utf8'),
+        0,
+      ),
+      returned_items: 10,
+      returned_text_bytes: 0,
+      has_more: true,
+      next_before_subplace_id: 151,
+    })
+    assert.equal(first.map_complete, false)
+    assert.equal(
+      sqlCalls().some(call => /with\s+recursive\s+place_tree/i.test(call.query ?? '')),
+      false,
+      'an outline branch must not materialize the complete recursive map',
+    )
+
+    const callsAfterFirst = sqlCalls().length
+    const cached = await app.request(firstPath)
+    assert.equal(cached.status, 200)
+    assert.deepEqual(await cached.json(), first)
+    assert.equal(sqlCalls().length, callsAfterFirst, 'the initial root outline reuses its cache entry')
+
+    const secondResponse = await app.request(
+      '/api/map?view=outline&parent_id=1&before_subplace_id=151&subplace_limit=3',
+    )
+    assert.equal(secondResponse.status, 200)
+    const second = await secondResponse.json() as typeof first
+    assert.deepEqual(second.subplaces.map(place => place.id), [150, 149, 148])
+    assert.equal(
+      second.subplaces.some(place => first.subplaces.some(previous => previous.id === place.id)),
+      false,
+    )
+    assert.equal(second.subplaces_page.next_before_subplace_id, 148)
+
+    const read = sqlCalls().find(call => /\/\* public:map-outline \*\//i.test(call.query ?? ''))
+    assert.deepEqual(
+      read?.params?.map((value, index) => index === 1
+        ? String(value)
+        : value == null ? null : Number(value)),
+      [null, 'the world', null, 11],
+      'one statement selects the root and fetches one lookahead row',
+    )
+    assert.equal(
+      sqlCalls().some(call => /\/\* public:map-parent \*\//i.test(call.query ?? '')),
+      false,
+      'the parent, totals, and page share one database snapshot',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('map modes reject ambiguous, unsupported, and cross-mode options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/map?view=outline&view=full',
+    '/api/map?view=sideways',
+    '/api/map?parent_id=1',
+    '/api/map?view=full&parent_id=1',
+    '/api/map?view=full&before_subplace_id=2',
+    '/api/map?view=full&subplace_limit=2',
+    '/api/map?view=outline&parent_id=0',
+    '/api/map?view=outline&parent_id=2147483648',
+    '/api/map?view=outline&before_subplace_id=1.5',
+    '/api/map?view=outline&subplace_limit=0',
+    '/api/map?view=outline&subplace_limit=201',
+    '/api/map?view=outline&subplace_limit=2&subplace_limit=3',
+    '/api/map?view=outline&after_change_marker=-1',
+    '/api/map?view=outline&after_change_marker=01',
+    '/api/map?view=outline&after_change_marker=9&after_change_marker=10',
+    '/api/map?after_change_marker=9',
+    '/api/map?view=outline&unknown=1',
+  ]) {
+    reset({ scenario: 'map outline' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
+test('lazy map and history pages prove they cover the caller-held change marker', async () => {
+  reset({ scenario: 'map outline', publicChangeMarker: '9' })
+  const map = await app.request(
+    '/api/map?view=outline&parent_id=1&subplace_limit=3&after_change_marker=9',
+  )
+  assert.equal(map.status, 200)
+  assert.equal(map.headers.get('cache-control'), 'no-store')
+  assert.equal((await map.json() as { change_marker: string }).change_marker, '9')
+  assert.ok(sqlCalls().some(call => /\/\* public:changes-checkpoint \*\//iu.test(call.query ?? '')))
+  assert.ok(sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')))
+
+  reset({ scenario: 'public pagination', publicChangeMarker: '9' })
+  const history = await app.request(
+    '/api/window?collection=things&limit=2&after_change_marker=9',
+  )
+  assert.equal(history.status, 200)
+  assert.equal(history.headers.get('cache-control'), 'no-store')
+  assert.equal((await history.json() as { change_marker: string }).change_marker, '9')
+
+  reset({ scenario: 'public pagination', publicChangeMarker: '9' })
+  const events = await app.request('/api/events?limit=2&after_change_marker=9')
+  assert.equal(events.status, 200)
+  assert.equal(events.headers.get('cache-control'), 'no-store')
+  assert.equal((await events.json() as { change_marker: string }).change_marker, '9')
+
+  for (const path of [
+    '/api/map?view=outline&parent_id=1&after_change_marker=10',
+    '/api/window?collection=things&after_change_marker=10',
+    '/api/events?after_change_marker=10',
+  ]) {
+    reset({ scenario: 'public pagination', publicChangeMarker: '9' })
+    const response = await app.request(path)
+    assert.equal(response.status, 409, path)
+    assert.deepEqual(await response.json(), {
+      error: 'since marker 10 is ahead of checkpoint 9',
+    })
+    assert.equal(
+      sqlCalls().filter(call => !/\/\* public:changes-checkpoint \*\//iu.test(call.query ?? '')).length,
+      0,
+      `${path} stops before its page read`,
+    )
   }
 })
 
@@ -1916,8 +2584,245 @@ test('the window snapshot marks residents asleep from their last public act', as
       ['tiny-lantern', false],
     ])
     const roster = sqlCalls().find(call => /left join resident_presence/i.test(call.query ?? ''))
-    assert.match(roster?.query ?? '', /last_public_at/i)
+    assert.match(roster?.query ?? '', /recent_public_act/i)
     assert.match(roster?.query ?? '', /interval '1 day'/i)
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('the legacy full window stays exact and explicit full shares its snapshot cache', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow - 80_000
+    reset({ scenario: 'window roster' })
+
+    const legacyResponse = await app.request('/api/window')
+    assert.equal(legacyResponse.status, 200)
+    const legacy = await legacyResponse.json() as Record<string, unknown>
+    assert.equal(Object.hasOwn(legacy, 'view'), false)
+    const callsAfterLegacy = sqlCalls().length
+
+    const explicitResponse = await app.request('/api/window?view=full')
+    assert.equal(explicitResponse.status, 200)
+    const explicit = await explicitResponse.json() as Record<string, unknown>
+    assert.equal(explicit.view, 'full')
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(explicit).filter(([key]) => key !== 'view')),
+      legacy,
+    )
+    assert.equal(
+      sqlCalls().length,
+      callsAfterLegacy,
+      'compatibility and explicit full reads share one full-snapshot cache entry',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('the outline window bounds its map and presence pages without changing recent histories', async () => {
+  const originalNow = Date.now
+  try {
+    const realNow = originalNow()
+    Date.now = () => realNow - 40_000
+    reset({ scenario: 'window outline' })
+    const response = await app.request('/api/window?view=outline')
+    assert.equal(response.status, 200)
+    assert.equal(
+      response.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const body = await response.json() as {
+      view: string
+      places: Array<{
+        id: number
+        children: Array<{ id: number; description?: string; children: unknown[] }>
+      }>
+      residents: Array<{ id: number; current_place_id: number | null; asleep: boolean }>
+      notes: Array<{ id: number }>
+      things: Array<{ id: number }>
+      agreements: Array<{ id: number }>
+      events: Array<{ id: number }>
+      pages: {
+        places: { has_more: boolean; next_before_subplace_id: number | null }
+        residents: { has_more: boolean; next_before_id: number | null }
+      }
+      totals: Record<string, number>
+      shown: Record<string, number>
+      limits: Record<string, number | null>
+      change_marker: string
+    }
+    assert.equal(body.view, 'outline')
+    assert.equal(body.change_marker, '9')
+    assert.deepEqual(body.places.map(place => place.id), [1])
+    assert.deepEqual(body.places[0]?.children.map(place => place.id), recentIds(160).slice(0, 10))
+    assert.equal(body.places[0]?.children.every(place => (
+      place.children.length === 0 && !Object.hasOwn(place, 'description')
+    )), true)
+    assert.deepEqual(body.residents.map(resident => resident.id), recentIds(1070).slice(0, 25))
+    assert.equal(body.residents.every(resident => (
+      Object.hasOwn(resident, 'current_place_id') && Object.hasOwn(resident, 'asleep')
+    )), true)
+    assert.deepEqual(
+      [body.notes.length, body.things.length, body.agreements.length, body.events.length],
+      [10, 10, 10, 10],
+      'the four already-bounded histories stay at ten rows',
+    )
+    assert.deepEqual(body.totals, {
+      places: 61,
+      residents: 60,
+      conversations: 60,
+      things: 60,
+      agreements: 60,
+      events: 70,
+    })
+    assert.deepEqual(body.shown, {
+      places: 11,
+      residents: 25,
+      conversations: 10,
+      things: 10,
+      agreements: 10,
+      events: 10,
+    })
+    assert.deepEqual(body.limits, {
+      places: 10,
+      residents: 25,
+      conversations: 10,
+      things: 10,
+      agreements: 10,
+      events: 10,
+    })
+    assert.deepEqual(body.pages.places, {
+      has_more: true,
+      next_before_subplace_id: 151,
+    })
+    assert.deepEqual(body.pages.residents, {
+      has_more: true,
+      next_before_id: 1046,
+    })
+    assert.equal(
+      sqlCalls().some(call => /with\s+recursive\s+world/i.test(call.query ?? '')),
+      false,
+      'the outline window must not materialize the complete map',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('window modes reject mixed, duplicate, and unknown options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/window?view=outline&view=full',
+    '/api/window?view=sideways',
+    '/api/window?view=full&collection=notes',
+    '/api/window?view=outline&before_id=2',
+    '/api/window?view=outline&unknown=1',
+    '/api/window?view=full&after_change_marker=9',
+    '/api/window?after_change_marker=9',
+    '/api/window?view=outline&after_change_marker=-1',
+    '/api/window?view=outline&after_change_marker=01',
+    '/api/window?view=outline&after_change_marker=9223372036854775808',
+    '/api/window?view=outline&after_change_marker=9&after_change_marker=10',
+  ]) {
+    reset({ scenario: 'window outline' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
+test('a marker-covered outline bypasses stale caches and rejects a future marker', async () => {
+  reset({ scenario: 'window outline', publicChangeMarker: '10' })
+  const covered = await app.request('/api/window?view=outline&after_change_marker=10')
+  assert.equal(covered.status, 200)
+  assert.equal(covered.headers.get('cache-control'), 'no-store')
+  const body = await covered.json() as { change_marker: string }
+  assert.equal(body.change_marker, '10')
+  assert.ok(
+    sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')),
+    'a covered snapshot reads the map directly instead of accepting a nested stale cache',
+  )
+  const callsAfterCoveredRead = sqlCalls().length
+  const repeated = await app.request('/api/window?view=outline&after_change_marker=10')
+  assert.equal(repeated.status, 200)
+  assert.equal(repeated.headers.get('cache-control'), 'no-store')
+  assert.equal(
+    sqlCalls().length,
+    callsAfterCoveredRead,
+    'the same covered marker shares its proven in-process snapshot',
+  )
+
+  reset({ scenario: 'window outline', publicChangeMarker: '10' })
+  const future = await app.request('/api/window?view=outline&after_change_marker=11')
+  assert.equal(future.status, 409)
+  assert.deepEqual(await future.json(), {
+    error: 'since marker 11 is ahead of checkpoint 10',
+  })
+  assert.equal(
+    sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')),
+    false,
+    'a future marker stops before the snapshot fanout',
+  )
+  const callsAfterFuture = sqlCalls().length
+  const ordinary = await app.request('/api/window?view=outline')
+  assert.equal(ordinary.status, 200)
+  assert.equal(
+    sqlCalls().length,
+    callsAfterFuture,
+    'a rejected future marker does not poison or evict the valid shared snapshot',
+  )
+})
+
+test('a busy outline-window census starts no secondary public reads', async () => {
+  const originalNow = Date.now
+  try {
+    const now = originalNow()
+    Date.now = () => now + 40_000
+    reset({ scenario: 'window outline', exactTotalsBusy: true })
+    const response = await app.request('/api/window?view=outline')
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('retry-after'), '1')
+    assert.deepEqual(await response.json(), {
+      error: 'exact public totals are temporarily busy; retry',
+    })
+    const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
+    assert.equal(
+      secondaryRead,
+      undefined,
+      'admission must reject before map, history, or global-total work starts',
+    )
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('busy outline-window global totals stop before map or history reads', async () => {
+  const originalNow = Date.now
+  try {
+    const now = originalNow()
+    Date.now = () => now + 80_000
+    reset({
+      scenario: 'window outline',
+      exactTotalsBusyAfter: 1,
+    })
+    const response = await app.request('/api/window?view=outline')
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('retry-after'), '1')
+    assert.deepEqual(await response.json(), {
+      error: 'exact public totals are temporarily busy; retry',
+    })
+    const budgetedReads = sqlCalls().filter(call =>
+      call.query?.includes('/* public:budgeted-exact */'))
+    assert.equal(budgetedReads.length, 2, 'census passes before global totals reject')
+    const secondaryRead = sqlCalls().find(call =>
+      /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
+    assert.equal(
+      secondaryRead,
+      undefined,
+      'global-total admission must reject before map or history work starts',
+    )
   } finally {
     Date.now = originalNow
   }
@@ -1946,7 +2851,7 @@ test('busy places serve the newest notes and expose an older-note cursor', async
   assert.equal(firstBody.notes.length, 200)
   assert.equal(firstBody.notes[0]?.id, 205)
   assert.equal(firstBody.notes.at(-1)?.id, 6)
-  assert.deepEqual(firstBody.notes_page, { has_more: true, next_before_note_id: 6 })
+  assert.deepEqual({ has_more: firstBody.notes_page.has_more, next_before_note_id: firstBody.notes_page.next_before_note_id }, { has_more: true, next_before_note_id: 6 })
 
   reset({ scenario: 'busy place' })
   const older = await app.request('/api/place/2?before_note_id=6&note_limit=10')
@@ -1956,7 +2861,7 @@ test('busy places serve the newest notes and expose an older-note cursor', async
     notes_page: { has_more: boolean; next_before_note_id: number | null }
   }
   assert.deepEqual(olderBody.notes.map(note => note.id), [5, 4, 3, 2, 1])
-  assert.deepEqual(olderBody.notes_page, { has_more: false, next_before_note_id: null })
+  assert.deepEqual({ has_more: olderBody.notes_page.has_more, next_before_note_id: olderBody.notes_page.next_before_note_id }, { has_more: false, next_before_note_id: null })
 
   const invalid = await app.request('/api/place/2?before_note_id=nope')
   assert.equal(invalid.status, 400)
@@ -3058,7 +3963,7 @@ test('events keep the public contract while paging stably by kind and id', async
     'the database fetches one lookahead row',
   )
   assert.match(firstRead?.query ?? '', /id\s*<\s*\$4::integer/i)
-  assert.match(firstRead?.query ?? '', /order\s+by\s+id\s+desc/i)
+  assert.match(firstRead?.query ?? '', /order\s+by\s+event\.id\s+desc/i)
 
   state = { ...state, calls: [] }
   const secondResponse = await app.request('/api/events?kind=note_created&before_id=60&limit=3')
@@ -3076,26 +3981,34 @@ test('place reads return newest bounded slices and independent continuation curs
     subplaces: Array<{ id: number }>
     things: Array<{ id: number }>
     notes: Array<{ id: number }>
-    subplaces_page: { has_more: boolean; next_before_subplace_id: number | null }
-    things_page: { has_more: boolean; next_before_thing_id: number | null }
-    notes_page: { has_more: boolean; next_before_note_id: number | null }
+    subplaces_page: { has_more: boolean; next_before_subplace_id: number | null; returned_items: number; returned_text_bytes: number }
+    things_page: { has_more: boolean; next_before_thing_id: number | null; returned_items: number; returned_text_bytes: number }
+    notes_page: { has_more: boolean; next_before_note_id: number | null; returned_items: number; returned_text_bytes: number }
   }
   assert.deepEqual(first.subplaces.map(row => row.id), Array.from({ length: 10 }, (_, index) => 160 - index))
   assert.deepEqual(first.things.map(row => row.id), Array.from({ length: 10 }, (_, index) => 260 - index))
   assert.deepEqual(first.notes.map(row => row.id), Array.from({ length: 10 }, (_, index) => 360 - index))
-  assert.deepEqual(first.subplaces_page, { has_more: true, next_before_subplace_id: 151 })
-  assert.deepEqual(first.things_page, { has_more: true, next_before_thing_id: 251 })
-  assert.deepEqual(first.notes_page, { has_more: true, next_before_note_id: 351 })
+  assert.equal(first.subplaces_page.returned_items, 10)
+  assert.equal(first.things_page.returned_items, 10)
+  assert.equal(first.notes_page.returned_items, 10)
+  assert.ok(first.subplaces_page.returned_text_bytes > 0)
+  assert.ok(first.things_page.returned_text_bytes > 0)
+  assert.ok(first.notes_page.returned_text_bytes > 0)
+  assert.equal(first.subplaces_page.has_more, true)
+  assert.equal(first.subplaces_page.next_before_subplace_id, 151)
+  assert.equal(first.things_page.has_more, true)
+  assert.equal(first.things_page.next_before_thing_id, 251)
+  assert.equal(first.notes_page.has_more, true)
+  assert.equal(first.notes_page.next_before_note_id, 351)
 
-  for (const pattern of [/from\s+places\s+p[\s\S]*p\.parent_id/i, /from\s+things\s+t/i, /from\s+notes\s+n/i]) {
-    const read = sqlCalls().find(call => pattern.test(call.query ?? ''))
-    assert.deepEqual(
-      read?.params?.map(value => value == null ? null : Number(value)),
-      [2, null, 11],
-      `lookahead query missing for ${pattern}`,
-    )
-    assert.match(read?.query ?? '', /order\s+by\s+(?:p\.|t\.|n\.)?id\s+desc/i)
-  }
+  const collectionReads = sqlCalls().filter(call => /\/\* public:place-collections \*\//i.test(call.query ?? ''))
+  assert.equal(collectionReads.length, 1, 'all room pages and totals share one database snapshot')
+  assert.deepEqual(
+    collectionReads[0]?.params?.map(value => value == null ? null : Number(value)),
+    [2, null, 11, null, 11, null, 11],
+  )
+  assert.match(collectionReads[0]?.query ?? '', /from\s+place_reading_totals/i)
+  assert.doesNotMatch(collectionReads[0]?.query ?? '', /count\s*\(\s*\*\s*\)/i)
 
   state = { ...state, calls: [] }
   const secondResponse = await app.request(
@@ -3107,12 +4020,272 @@ test('place reads return newest bounded slices and independent continuation curs
   assert.deepEqual(second.subplaces.map(row => row.id), [150, 149, 148, 147, 146])
   assert.deepEqual(second.things.map(row => row.id), [250, 249, 248, 247, 246])
   assert.deepEqual(second.notes.map(row => row.id), [350, 349, 348, 347, 346])
-  assert.deepEqual(second.subplaces_page, { has_more: true, next_before_subplace_id: 146 })
-  assert.deepEqual(second.things_page, { has_more: true, next_before_thing_id: 246 })
-  assert.deepEqual(second.notes_page, { has_more: true, next_before_note_id: 346 })
+  assert.equal(second.subplaces_page.next_before_subplace_id, 146)
+  assert.equal(second.things_page.next_before_thing_id, 246)
+  assert.equal(second.notes_page.next_before_note_id, 346)
   assert.equal(second.subplaces.some(row => first.subplaces.some(previous => previous.id === row.id)), false)
   assert.equal(second.things.some(row => first.things.some(previous => previous.id === row.id)), false)
   assert.equal(second.notes.some(row => first.notes.some(previous => previous.id === row.id)), false)
+})
+
+test('outline place reads keep truthful headings and sizes without returning authored collection text', async () => {
+  reset({ scenario: 'public pagination' })
+  const response = await app.request('/api/place/2?view=outline&limit=2')
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    view: string
+    subplaces: Array<{
+      id: number
+      name: string
+      description?: string
+      description_text_bytes: number
+    }>
+    things: Array<{ id: number; name: string; body?: string; body_text_bytes: number }>
+    notes: Array<{ id: number; author: string; body?: string; body_text_bytes: number }>
+    subplaces_page: { returned_text_bytes: number }
+    things_page: {
+      total_items: number
+      total_text_bytes: number
+      returned_items: number
+      returned_text_bytes: number
+    }
+    notes_page: { returned_text_bytes: number }
+  }
+  assert.equal(body.view, 'outline')
+  assert.deepEqual(body.subplaces.map(place => place.id), [160, 159])
+  assert.equal(body.subplaces.every(place => typeof place.name === 'string'), true)
+  assert.equal(body.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
+  assert.equal(body.subplaces.every(place => place.description_text_bytes > 0), true)
+  assert.deepEqual(body.things.map(thing => thing.id), [260, 259])
+  assert.equal(body.things.every(thing => typeof thing.name === 'string'), true)
+  assert.equal(body.things.every(thing => !Object.hasOwn(thing, 'body')), true)
+  assert.equal(body.things.every(thing => thing.body_text_bytes > 0), true)
+  assert.deepEqual(body.notes.map(note => note.id), [360, 359])
+  assert.equal(body.notes.every(note => typeof note.author === 'string'), true)
+  assert.equal(body.notes.every(note => !Object.hasOwn(note, 'body')), true)
+  assert.equal(body.notes.every(note => note.body_text_bytes > 0), true)
+  assert.equal(body.subplaces_page.returned_text_bytes, 0)
+  assert.equal(body.things_page.total_items, 260)
+  assert.equal(body.things_page.total_text_bytes, 2600)
+  assert.equal(body.things_page.returned_items, 2)
+  assert.equal(body.things_page.returned_text_bytes, 0)
+  assert.equal(body.notes_page.returned_text_bytes, 0)
+  const read = sqlCalls().find(call => /\/\* public:place-collections \*\//i.test(call.query ?? ''))
+  assert.doesNotMatch(read?.query ?? '', /\bp\.description\s*,/i, 'outline SQL must not return child descriptions')
+  assert.doesNotMatch(read?.query ?? '', /\bt\.body\s*,/i, 'outline SQL must not return large thing bodies')
+  assert.doesNotMatch(read?.query ?? '', /\bn\.body\s*,/i, 'outline SQL must not return note bodies')
+})
+
+test('full place reads remain the default compatibility shape and can be requested explicitly', async () => {
+  for (const path of ['/api/place/2?thing_limit=1', '/api/place/2?view=full&thing_limit=1']) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 200, path)
+    const body = await response.json() as {
+      view: string
+      things: Array<{ body?: string; body_text_bytes?: number }>
+      things_page: { returned_text_bytes: number }
+    }
+    if (path.includes('view=full')) assert.equal(body.view, 'full')
+    else assert.equal(body.view, undefined, 'implicit full must preserve the exact legacy shape')
+    assert.equal(typeof body.things[0]?.body, 'string')
+    assert.equal(body.things[0]?.body_text_bytes, undefined)
+    assert.ok(body.things_page.returned_text_bytes > 0)
+  }
+})
+
+test('large full-room pages receive a hard server text ceiling without changing ordinary reads', async () => {
+  const serverCollectionTextLimit = 655_360
+
+  reset({ scenario: 'public pagination' })
+  const response = await app.request('/api/place/2?view=full&limit=200')
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as Record<string, unknown>
+  for (const pageName of ['subplaces_page', 'things_page', 'notes_page']) {
+    const page = body[pageName] as Record<string, unknown>
+    assert.equal(page.text_limit_bytes, serverCollectionTextLimit, pageName)
+    assert.equal(page.server_text_limit_applied, true, pageName)
+  }
+  const bulkRead = sqlCalls().find(call =>
+    /\/\* public:place-collections-budgeted \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    bulkRead?.params?.map(value => value == null ? null : Number(value)),
+    [
+      2,
+      null, 201,
+      null, 201,
+      null, 201,
+      serverCollectionTextLimit,
+      serverCollectionTextLimit,
+      serverCollectionTextLimit,
+    ],
+    'a 200-row bulk request must not bypass the server-authored-text ceiling',
+  )
+
+  reset({ scenario: 'public pagination' })
+  const mixed = await app.request('/api/place/2?view=full&limit=10&thing_limit=200')
+  assert.equal(mixed.status, 200, await mixed.clone().text())
+  const mixedBody = await mixed.json() as Record<string, Record<string, unknown>>
+  assert.equal(mixedBody.subplaces_page?.server_text_limit_applied, undefined)
+  assert.equal(mixedBody.things_page?.server_text_limit_applied, true)
+  assert.equal(mixedBody.notes_page?.server_text_limit_applied, undefined)
+  const mixedRead = sqlCalls().find(call =>
+    /\/\* public:place-collections-budgeted \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    mixedRead?.params?.map(value => value == null ? null : Number(value)),
+    [2, null, 11, null, 201, null, 11, null, serverCollectionTextLimit, null],
+    'only the oversized specific collection needs the automatic ceiling',
+  )
+})
+
+test('full place reads stop on whole records at each reader-chosen UTF-8 byte limit', async () => {
+  reset({ scenario: 'public pagination' })
+  const response = await app.request(
+    '/api/place/2?view=full&limit=10' +
+      '&subplace_text_limit_bytes=20&thing_text_limit_bytes=20&note_text_limit_bytes=20',
+  )
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    subplaces: Array<{ id: number; description: string }>
+    things: Array<{ id: number; body: string }>
+    notes: Array<{ id: number; body: string }>
+    subplaces_page: {
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_subplace_id: number | null
+      text_limit_bytes: number
+      stopped_for_text_limit: boolean
+      next_item_id: number | null
+      next_item_text_bytes: number | null
+    }
+    things_page: {
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_thing_id: number | null
+      text_limit_bytes: number
+      stopped_for_text_limit: boolean
+      next_item_id: number | null
+      next_item_text_bytes: number | null
+    }
+    notes_page: {
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_note_id: number | null
+      text_limit_bytes: number
+      stopped_for_text_limit: boolean
+      next_item_id: number | null
+      next_item_text_bytes: number | null
+    }
+  }
+
+  assert.deepEqual(body.subplaces, [])
+  assert.deepEqual(body.things.map(thing => thing.id), [260])
+  assert.deepEqual(body.notes.map(note => note.id), [360, 359])
+  for (const [name, page] of [
+    ['subplaces', body.subplaces_page],
+    ['things', body.things_page],
+    ['notes', body.notes_page],
+  ] as const) {
+    assert.equal(page.text_limit_bytes, 20, name)
+    assert.equal(page.stopped_for_text_limit, true, name)
+    assert.equal(page.has_more, true, name)
+    assert.ok(page.returned_text_bytes <= page.text_limit_bytes, name)
+    assert.ok((page.next_item_id ?? 0) > 0, name)
+    assert.ok((page.next_item_text_bytes ?? 0) > 0, name)
+  }
+  assert.equal(body.subplaces_page.next_before_subplace_id, null)
+  assert.equal(body.subplaces_page.next_item_id, 160)
+  assert.equal(body.things_page.next_before_thing_id, 260)
+  assert.equal(body.things_page.next_item_id, 259)
+  assert.equal(body.notes_page.next_before_note_id, 359)
+  assert.equal(body.notes_page.next_item_id, 358)
+  assert.equal(
+    body.things_page.returned_text_bytes,
+    body.things.reduce((total, thing) => total + Buffer.byteLength(thing.body, 'utf8'), 0),
+  )
+  assert.equal(
+    body.notes_page.returned_text_bytes,
+    body.notes.reduce((total, note) => total + Buffer.byteLength(note.body, 'utf8'), 0),
+  )
+  const budgetedRead = sqlCalls().find(call =>
+    /\/\* public:place-collections-budgeted \*\//i.test(call.query ?? ''))
+  for (const [source, candidates, fetchParameter] of [
+    ['subplace_source', 'subplace_candidates', 3],
+    ['thing_source', 'thing_candidates', 5],
+    ['note_source', 'note_candidates', 7],
+  ] as const) {
+    assert.match(
+      budgetedRead?.query ?? '',
+      new RegExp(
+        `${source}\\s+AS\\s+MATERIALIZED[\\s\\S]*?LIMIT\\s+\\$${fetchParameter}::integer` +
+          `[\\s\\S]*?${candidates}\\s+AS\\s+MATERIALIZED[\\s\\S]*?FROM\\s+${source}`,
+        'iu',
+      ),
+      `${source} must apply the item bound before its cumulative-byte window`,
+    )
+  }
+
+  state = { ...state, calls: [] }
+  const continued = await app.request(
+    '/api/place/2?view=full&limit=10' +
+      '&subplace_text_limit_bytes=50&thing_text_limit_bytes=20&note_text_limit_bytes=20' +
+      '&before_thing_id=260&before_note_id=359',
+  )
+  assert.equal(continued.status, 200, await continued.clone().text())
+  const next = await continued.json() as typeof body
+  assert.deepEqual(next.subplaces.map(place => place.id), [160, 159])
+  assert.deepEqual(next.things.map(thing => thing.id), [259])
+  assert.deepEqual(next.notes.map(note => note.id), [358, 357])
+  assert.equal(next.subplaces_page.text_limit_bytes, 50)
+  assert.equal(next.things.some(thing => body.things.some(previous => previous.id === thing.id)), false)
+  assert.equal(next.notes.some(note => body.notes.some(previous => previous.id === note.id)), false)
+})
+
+test('place text limits accept zero and reject duplicates or unsafe integers before PostgreSQL', async () => {
+  reset({ scenario: 'public pagination' })
+  const zero = await app.request(
+    '/api/place/2?view=full' +
+      '&subplace_text_limit_bytes=0&thing_text_limit_bytes=0&note_text_limit_bytes=0',
+  )
+  assert.equal(zero.status, 200, await zero.clone().text())
+  const zeroBody = await zero.json() as {
+    subplaces: unknown[]
+    things: unknown[]
+    notes: unknown[]
+    subplaces_page: { stopped_for_text_limit: boolean }
+  }
+  assert.deepEqual([zeroBody.subplaces, zeroBody.things, zeroBody.notes], [[], [], []])
+  assert.equal(zeroBody.subplaces_page.stopped_for_text_limit, true)
+
+  for (const path of [
+    '/api/place/2?subplace_text_limit_bytes=-1',
+    '/api/place/2?thing_text_limit_bytes=1.5',
+    '/api/place/2?thing_text_limit_bytes=655361',
+    '/api/place/2?note_text_limit_bytes=9007199254740992',
+    '/api/place/2?note_text_limit_bytes=1&note_text_limit_bytes=2',
+    '/api/place/2?note_text_limit_bytes=nope',
+    '/api/place/2?view=outline&note_text_limit_bytes=10',
+  ]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, path)
+  }
+})
+
+test('place view rejects duplicates and unknown values before reading PostgreSQL', async () => {
+  for (const path of [
+    '/api/place/2?view=compact',
+    '/api/place/2?view=outline&view=full',
+  ]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, path)
+  }
 })
 
 test('place reads apply the common limit to every embedded collection', async () => {
@@ -3130,18 +4303,16 @@ test('place reads apply the common limit to every embedded collection', async ()
   assert.deepEqual(body.subplaces.map(row => row.id), [160, 159, 158, 157])
   assert.deepEqual(body.things.map(row => row.id), [260, 259, 258, 257])
   assert.deepEqual(body.notes.map(row => row.id), [360, 359, 358, 357])
-  assert.deepEqual(body.subplaces_page, { has_more: true, next_before_subplace_id: 157 })
-  assert.deepEqual(body.things_page, { has_more: true, next_before_thing_id: 257 })
-  assert.deepEqual(body.notes_page, { has_more: true, next_before_note_id: 357 })
+  assert.equal(body.subplaces_page.next_before_subplace_id, 157)
+  assert.equal(body.things_page.next_before_thing_id, 257)
+  assert.equal(body.notes_page.next_before_note_id, 357)
 
-  for (const pattern of [/from\s+places\s+p[\s\S]*p\.parent_id/i, /from\s+things\s+t/i, /from\s+notes\s+n/i]) {
-    const read = sqlCalls().find(call => pattern.test(call.query ?? ''))
-    assert.deepEqual(
-      read?.params?.map(value => value == null ? null : Number(value)),
-      [2, null, 5],
-      `common limit lookahead query missing for ${pattern}`,
-    )
-  }
+  const read = sqlCalls().find(call => /\/\* public:place-collections \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    read?.params?.map(value => value == null ? null : Number(value)),
+    [2, null, 5, null, 5, null, 5],
+    'the common limit applies one lookahead to all three bounded page CTEs',
+  )
 })
 
 test('place collection-specific limits override the common limit', async () => {
@@ -3171,6 +4342,36 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/place/2?limit=nope',
     '/api/place/2?limit=nope&subplace_limit=2&thing_limit=2&note_limit=2',
     '/api/place/2?limit=2&limit=3',
+    '/api/place/2?q=pretend-search',
+    '/api/map?q=pretend-search',
+    '/api/thing/41?q=pretend-search',
+    '/api/note/51?q=pretend-search',
+    '/api/residents?q=pretend-search',
+    '/api/events?q=pretend-search',
+    '/api/kinds?q=pretend-search',
+    '/api/traits?q=pretend-search',
+    '/api/agreements?q=pretend-search',
+    '/api/moderation?q=pretend-search',
+    '/api/official?q=pretend-search',
+    '/api/physics?q=pretend-search',
+    '/api/world/resident/tiny-lantern?q=pretend-search',
+    '/api/world/offer/90?q=pretend-search',
+    '/treasury?q=pretend-search',
+    '/api/search',
+    '/api/search?q=',
+    '/api/search?q=moss&q=fern',
+    '/api/search?q=moss&mode=ranked',
+    '/api/search?q=moss&before=not-a-cursor',
+    '/api/search?q=moss&unknown=true',
+    '/api/changes?since=-1',
+    '/api/changes?since=1&limit=01',
+    '/api/changes?since=1&limit=1e2',
+    '/api/changes?since=1&limit=0x10',
+    '/api/changes?since=1&limit=1.0',
+    '/api/changes?since=1&limit=%2B1',
+    '/api/changes?since=1&limit=%201',
+    '/api/changes?since=1&since=2',
+    '/api/changes?unknown=true',
   ]
   for (const path of paths) {
     reset({ scenario: 'public pagination' })
@@ -3178,6 +4379,226 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
   }
+})
+
+test('search and changes succeed through their real Hono routes without returning authored bodies', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination' })
+    const headers = { 'X-Vercel-Forwarded-For': '203.0.113.180' }
+    const searched = await app.request(
+      '/api/search?q=archive+lantern&mode=phrase&type=thing',
+      { headers },
+    )
+    assert.equal(searched.status, 200)
+    assert.equal(searched.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await searched.json(), {
+      query: 'archive lantern', mode: 'phrase', type: 'thing',
+      results: [{
+        type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+        owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
+        body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
+        href: '/api/thing/41',
+      }],
+      total_items: 1, total_text_bytes: 19, returned_items: 1,
+      returned_text_bytes: 0, has_more: false, next_before: null, change_marker: '9',
+    })
+
+    const checkpoint = await app.request('/api/changes')
+    assert.equal(checkpoint.status, 200)
+    assert.deepEqual(await checkpoint.json(), { change_marker: '9' })
+    const changes = await app.request('/api/changes?since=8&limit=1')
+    assert.equal(changes.status, 200)
+    assert.deepEqual(await changes.json(), {
+      change_marker: '9',
+      changes: [{
+        id: 701, change_id: '9', kind: 'action', actor: 'tiny-lantern',
+        detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
+      }],
+      returned_items: 1, unchanged: false, has_more: false, next_since: '9',
+    })
+  })
+})
+
+test('anonymous search parses before applying its per-caller fairness limit and exact database work', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination' })
+    const headers = { 'X-Vercel-Forwarded-For': '203.0.113.181' }
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const invalid = await app.request('/api/search?q=', { headers })
+      assert.equal(invalid.status, 400, `invalid search ${index + 1}`)
+    }
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const response = await app.request('/api/search?q=archive', { headers })
+      assert.equal(response.status, 200, `admitted search ${index + 1}`)
+    }
+    const limited = await app.request('/api/search?q=archive', { headers })
+    assert.equal(limited.status, 429)
+    assert.ok(Number(limited.headers.get('retry-after')) >= 1)
+    assert.deepEqual(await limited.json(), { error: 'public search rate limit reached; retry' })
+    assert.equal(
+      sqlCalls().filter(call => /\/\* public:search \*\//iu.test(call.query ?? '')).length,
+      PUBLIC_SEARCH_RATE_CAPACITY,
+    )
+  })
+})
+
+test('anonymous search trusts only the final Vercel forwarding hop for caller fairness', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination' })
+    const finalHop = '203.0.113.182'
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const response = await app.request('/api/search?q=archive', {
+        headers: { 'X-Vercel-Forwarded-For': `198.51.100.${index + 1}, ${finalHop}` },
+      })
+      assert.equal(response.status, 200, `admitted search ${index + 1}`)
+    }
+    const spoofed = await app.request('/api/search?q=archive', {
+      headers: { 'X-Vercel-Forwarded-For': `192.0.2.200, ${finalHop}` },
+    })
+    assert.equal(spoofed.status, 429)
+    const otherCaller = await app.request('/api/search?q=archive', {
+      headers: { 'X-Vercel-Forwarded-For': '192.0.2.200, 203.0.113.183' },
+    })
+    assert.equal(otherCaller.status, 200)
+  })
+})
+
+test('outside Vercel, spoofed forwarding headers share the anonymous fallback bucket', async () => {
+  const previous = process.env.VERCEL
+  process.env.VERCEL = '0'
+  try {
+    reset({ scenario: 'public pagination' })
+    for (let index = 0; index < PUBLIC_SEARCH_RATE_CAPACITY; index += 1) {
+      const response = await app.request('/api/search?q=archive', {
+        headers: {
+          'X-Vercel-Forwarded-For': `203.0.113.${index + 20}`,
+          'X-Forwarded-For': `198.51.100.${index + 20}`,
+        },
+      })
+      assert.equal(response.status, 200, `fallback search ${index + 1}`)
+    }
+    const limited = await app.request('/api/search?q=archive', {
+      headers: {
+        'X-Vercel-Forwarded-For': '203.0.113.250',
+        'X-Forwarded-For': '198.51.100.250',
+      },
+    })
+    assert.equal(limited.status, 429)
+  } finally {
+    process.env.VERCEL = previous
+  }
+})
+
+test('a search continuation rejects a forged future reconciliation marker', async () => {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'public pagination', publicChangeMarker: '12' })
+    const before = encodePublicSearchCursor({
+      q: 'archive', mode: 'words', type: 'all',
+      createdAt: '2026-08-11T00:00:00.000000Z', itemType: 'thing', id: 41,
+      changeMarker: '999',
+    })
+    const response = await app.request(
+      `/api/search?q=archive&before=${encodeURIComponent(before)}`,
+      { headers: { 'X-Vercel-Forwarded-For': '203.0.113.184' } },
+    )
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), {
+      error: 'search marker 999 is ahead of checkpoint 12',
+    })
+  })
+})
+
+test('public direct resource ids reject PostgreSQL integer overflow before database work', async () => {
+  for (const path of [
+    '/api/place/2147483648',
+    '/api/thing/2147483648',
+    '/api/note/2147483648',
+  ]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, path)
+  }
+})
+
+test('/api/me rejects unknown read options after authentication', async () => {
+  reset({ scenario: 'remaining pagination' })
+  const response = await app.request('/api/me?q=pretend-search', { headers: authHeaders() })
+  assert.equal(response.status, 400)
+  const body = await response.json() as { error: string }
+  assert.match(body.error, /unsupported query option: q/i)
+  assert.equal(
+    sqlCalls().some(call => /\/\* public:me_/i.test(call.query ?? '')),
+    false,
+    'unknown options fail before reading private collections',
+  )
+})
+
+test('public read options reject unknown names and text sizes count UTF-8 bytes', () => {
+  assert.deepEqual(allowedPublicQuery({ limit: ['2'], q: ['pretend-search'] }, ['limit']), {
+    ok: false,
+    error: 'unsupported query option: q',
+  })
+  assert.deepEqual(allowedPublicQuery({ limit: ['2'] }, ['limit']), { ok: true })
+  const oversizedName = 'x'.repeat(10_000)
+  const oversized = allowedPublicQuery({ [oversizedName]: ['ignored'] }, [])
+  assert.equal(oversized.ok, false)
+  if (!oversized.ok) {
+    assert.ok(oversized.error.length < 120, 'an attacker-controlled option name must not amplify the error')
+    assert.doesNotMatch(oversized.error, new RegExp(oversizedName, 'u'))
+  }
+  assert.equal(utf8TextBytes([{ body: 'plain' }, { body: '🏙' }], 'body'), 9)
+})
+
+test('event filters reject invalid kinds instead of silently cutting them', async () => {
+  for (const kind of ['', 'UPPER', `a${'b'.repeat(64)}`]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(`/api/events?kind=${encodeURIComponent(kind)}`)
+    assert.equal(response.status, 400, JSON.stringify(kind))
+    assert.equal(sqlCalls().length, 0, JSON.stringify(kind))
+  }
+
+  reset({ scenario: 'public pagination' })
+  const valid = await app.request('/api/events?kind=note_created&limit=2')
+  assert.equal(valid.status, 200)
+})
+
+test('exact public totals fail cheaply and honestly when database capacity is busy', async () => {
+  reset({ scenario: 'public pagination', exactTotalsBusy: true })
+  const response = await app.request('/api/events?limit=1')
+  assert.equal(response.status, 503, 'busy exact totals must fail instead of scanning')
+  assert.equal(response.headers.get('retry-after'), '1')
+  assert.deepEqual(await response.json(), {
+    error: 'exact public totals are temporarily busy; retry',
+  })
+
+  reset({ scenario: 'public pagination', exactTotalsBusy: true })
+  const treasury = await app.request('/treasury?limit=1')
+  assert.equal(treasury.status, 503)
+  assert.equal(
+    state.calls.some(call => call.url.includes('base-rpc.test')),
+    false,
+    'a rejected totals read must not fan out to the chain RPC',
+  )
+})
+
+test('the exact-read guard preserves source order at its outer SQL boundary', async () => {
+  const { budgetedExactStatement } = await import('../src/public-exact-query.ts')
+  const statement = budgetedExactStatement('SELECT id FROM events ORDER BY id DESC')
+  assert.match(
+    statement,
+    /ORDER BY __public_exact_result\.id DESC NULLS LAST\s*$/iu,
+  )
+  assert.doesNotMatch(statement, /row_number|__public_exact_order/iu)
+
+  const residents = budgetedExactStatement(
+    'SELECT id, joined_at FROM residents ORDER BY joined_at DESC, id DESC',
+    'joined_at_desc',
+  )
+  assert.match(
+    residents,
+    /ORDER BY __public_exact_result\.joined_at DESC NULLS LAST,\s*__public_exact_result\.id DESC NULLS LAST\s*$/iu,
+  )
 })
 
 test('raw public place reads redact historical resident credentials without dropping the response', async () => {
@@ -3231,6 +4652,69 @@ test('non-census growing public collections keep their newest-first 10-row defau
   }
 })
 
+test('every growing public list reports exact total and returned authored-text bytes', async () => {
+  const authoredBytes = (rows: readonly Record<string, unknown>[], field: string) => rows.reduce(
+    (total, row) => total + Buffer.byteLength(typeof row[field] === 'string' ? row[field] : '', 'utf8'),
+    0,
+  )
+  const cases = [
+    {
+      path: '/api/residents?limit=3', key: 'residents', scenario: 'remaining pagination',
+      all: remainingPaginationRows('residents'), textField: null,
+    },
+    {
+      path: '/api/events?limit=3', key: 'events', scenario: 'public pagination',
+      all: paginationEvents(), textField: 'event_detail',
+    },
+    {
+      path: '/api/kinds?limit=3', key: 'kinds', scenario: 'remaining pagination',
+      all: remainingPaginationRows('kinds'), textField: 'description',
+    },
+    {
+      path: '/api/traits?limit=3', key: 'traits', scenario: 'remaining pagination',
+      all: remainingPaginationRows('traits'), textField: 'description',
+    },
+    {
+      path: '/api/agreements?limit=3', key: 'agreements', scenario: 'remaining pagination',
+      all: remainingPaginationRows('agreements'), textField: 'body',
+    },
+    {
+      path: '/api/moderation?limit=3', key: 'moderation', scenario: 'remaining pagination',
+      all: remainingPaginationRows('moderation'), textField: 'reason',
+    },
+  ] as const
+
+  const measuredBytes = (rows: readonly Record<string, unknown>[], field: string | null) => {
+    if (field === null) return 0
+    if (field !== 'event_detail') return authoredBytes(rows, field)
+    return rows.reduce((total, row) => {
+      const detail = row.detail && typeof row.detail === 'object' && !Array.isArray(row.detail)
+        ? row.detail as Record<string, unknown>
+        : {}
+      return total + ['body', 'description', 'reason'].reduce(
+        (subtotal, name) => subtotal + Buffer.byteLength(
+          typeof detail[name] === 'string' ? detail[name] as string : '',
+          'utf8',
+        ),
+        0,
+      )
+    }, 0)
+  }
+
+  for (const entry of cases) {
+    reset({ scenario: entry.scenario })
+    const response = await app.request(entry.path)
+    assert.equal(response.status, 200, entry.path)
+    const body = await response.json() as Record<string, unknown>
+    const rows = body[entry.key] as Record<string, unknown>[]
+    assert.equal(body.total_items, entry.all.length, `${entry.path} total items`)
+    assert.equal(body.total_text_bytes, measuredBytes(entry.all, entry.textField), `${entry.path} total bytes`)
+    assert.equal(body.returned_items, rows.length, `${entry.path} returned items`)
+    assert.equal(body.returned_text_bytes, measuredBytes(rows, entry.textField), `${entry.path} returned bytes`)
+    assert.equal(body.has_more, true, `${entry.path} omission flag`)
+  }
+})
+
 test('parameterless resident census returns every resident below its 200-row default', async () => {
   reset({ scenario: 'remaining pagination' })
   const response = await app.request('/api/residents')
@@ -3266,6 +4750,59 @@ test('parameterless resident census returns every resident below its 200-row def
   ))
   assert.equal(censusReads.length, 1, 'the census page and total must share one database snapshot')
   assert.match(censusReads[0]?.query ?? '', /count\s*\(\s*\*\s*\)/i)
+})
+
+test('resident presence is opt-in and preserves the census page contract', async () => {
+  reset({ scenario: 'remaining pagination' })
+  const legacyResponse = await app.request('/api/residents?limit=3')
+  assert.equal(legacyResponse.status, 200)
+  const legacy = await legacyResponse.json() as {
+    residents: Array<Record<string, unknown> & { id: number }>
+    count: number
+    total: number
+    returned: number
+    page_size: number
+    total_items: number
+    total_text_bytes: number
+    returned_items: number
+    returned_text_bytes: number
+    has_more: boolean
+    next_before_id: number | null
+  }
+  assert.deepEqual(Object.keys(legacy.residents[0] ?? {}).sort(), [
+    'handle', 'id', 'joined_at', 'model',
+  ])
+
+  state = { ...state, calls: [] }
+  const presenceResponse = await app.request('/api/residents?view=presence&limit=3')
+  assert.equal(presenceResponse.status, 200)
+  const presence = await presenceResponse.json() as typeof legacy
+  assert.deepEqual(presence.residents.map(row => row.id), legacy.residents.map(row => row.id))
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(presence).filter(([key]) => key !== 'residents')),
+    Object.fromEntries(Object.entries(legacy).filter(([key]) => key !== 'residents')),
+    'presence is additive; ordering, totals, and continuation stay unchanged',
+  )
+  assert.deepEqual(Object.keys(presence.residents[0] ?? {}).sort(), [
+    'asleep', 'current_place_id', 'handle', 'id', 'joined_at', 'model',
+  ])
+  assert.deepEqual(
+    presence.residents.map(row => [row.current_place_id, row.asleep]),
+    [[2, false], [null, false], [2, true]],
+  )
+})
+
+test('resident views reject invalid, duplicate, and unknown options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/residents?view=full',
+    '/api/residents?view=presence&view=presence',
+    '/api/residents?view=presence&unknown=1',
+  ]) {
+    reset({ scenario: 'remaining pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
 })
 
 test('resident census pages by arrival time with stable id ties and no boundary repeats', async () => {
@@ -3454,55 +4991,86 @@ test('official facts, events, residents, and treasury are public and anti-token'
   assert.equal(residents.status, 200)
   assert.equal(treasury.status, 200)
   assert.equal(JSON.stringify(await residents.json()).includes('secret'), false)
-  const books = await treasury.json() as { address: string; fees_collected_usdc: number; note: string }
+  const books = await treasury.json() as {
+    address: string
+    fees_collected_usdc: number
+    note: string
+    recent_fees: Array<{ id?: number; purpose: string }>
+    recent_fees_page: {
+      total_items: number
+      total_text_bytes: number
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_id: number | null
+    }
+  }
   assert.equal(books.address.toLowerCase(), TREASURY)
   assert.equal(books.fees_collected_usdc, 1)
   assert.match(books.note, /sales.*never|peer.to.peer|wallet/i)
+  assert.deepEqual(books.recent_fees_page, {
+    total_items: 1,
+    total_text_bytes: 4,
+    returned_items: 1,
+    returned_text_bytes: 4,
+    has_more: false,
+    next_before_id: null,
+  })
 })
 
 test('anonymous flags are rate-limited without publishing the report text', async () => {
-  reset({ scenario: 'flag quota' })
-  const body = JSON.stringify({ target_type: 'thing', target_id: 41, reason: 'private report detail' })
-  for (let index = 0; index < 5; index += 1) {
-    const accepted = await app.request('/api/flag', {
+  await withVercelForwarding(async () => {
+    reset({ scenario: 'flag quota' })
+    const body = JSON.stringify({
+      target_type: 'thing', target_id: 41, reason: 'private report detail',
+    })
+    for (let index = 0; index < 5; index += 1) {
+      const accepted = await app.request('/api/flag', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Vercel-Forwarded-For': `198.51.100.${index + 1}, 203.0.113.30`,
+        },
+        body,
+      })
+      assert.equal(accepted.status, 201)
+    }
+    // The anonymous bucket key is domain-separated from resident keys, so a
+    // crafted address like "resident:7" can never land in a resident's bucket.
+    const anonymousSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+    assert.equal(
+      String(anonymousSlot?.params?.[0]),
+      createHash('sha256').update('flag:ip:203.0.113.30', 'utf8').digest('hex'),
+    )
+    const limited = await app.request('/api/flag', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': 'spoof, 203.0.113.30' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Vercel-Forwarded-For': '192.0.2.200, 203.0.113.30',
+      },
       body,
     })
-    assert.equal(accepted.status, 201)
-  }
-  // The anonymous bucket key is domain-separated from resident keys, so a
-  // crafted address like "resident:7" can never land in a resident's bucket.
-  const anonymousSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
-  assert.equal(
-    String(anonymousSlot?.params?.[0]),
-    createHash('sha256').update('flag:ip:203.0.113.30', 'utf8').digest('hex'),
-  )
-  const limited = await app.request('/api/flag', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': 'other-spoof, 203.0.113.30' },
-    body,
-  })
-  assert.equal(limited.status, 429)
-  assert.equal(inserted('flags'), 5)
-  const flagWrite = sqlCalls().find(call => /insert\s+into\s+flags\b/i.test(call.query ?? ''))
-  assert.ok(flagWrite)
-  assert.doesNotMatch(flagWrite.query ?? '', /jsonb_build_object\([\s\S]*?'reason'/i)
+    assert.equal(limited.status, 429)
+    assert.equal(inserted('flags'), 5)
+    const flagWrite = sqlCalls().find(call => /insert\s+into\s+flags\b/i.test(call.query ?? ''))
+    assert.ok(flagWrite)
+    assert.doesNotMatch(flagWrite.query ?? '', /jsonb_build_object\([\s\S]*?'reason'/i)
 
-  state = { ...state, calls: [] }
-  const authenticated = await app.request('/api/flag', {
-    method: 'POST', headers: authHeaders(), body,
+    state = { ...state, calls: [] }
+    const authenticated = await app.request('/api/flag', {
+      method: 'POST', headers: authHeaders(), body,
+    })
+    assert.equal(authenticated.status, 201)
+    // A resident takes a slot in its own bucket, so an exhausted anonymous IP
+    // bucket never blocks a signed-in report.
+    const residentSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
+    assert.ok(residentSlot, 'resident flags take their own limited slot')
+    assert.equal(Number(residentSlot.params?.[1]), 20)
+    assert.equal(
+      String(residentSlot.params?.[0]),
+      createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
+    )
   })
-  assert.equal(authenticated.status, 201)
-  // A resident takes a slot in its own bucket, so an exhausted anonymous IP
-  // bucket never blocks a signed-in report.
-  const residentSlot = sqlCalls().find(call => /anonymous_flag_limits/i.test(call.query ?? ''))
-  assert.ok(residentSlot, 'resident flags take their own limited slot')
-  assert.equal(Number(residentSlot.params?.[1]), 20)
-  assert.equal(
-    String(residentSlot.params?.[0]),
-    createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
-  )
 })
 
 test('resident flags are bounded in their own hourly bucket', async () => {
@@ -3545,7 +5113,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
   ])
@@ -3554,6 +5122,55 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.ok(transferTool?.inputSchema.properties && 'buyer_wallet' in transferTool.inputSchema.properties)
   const makeTool = listBody.result.tools.find(tool => tool.name === 'make')
   assert.ok(makeTool?.inputSchema.properties && 'open_to_use' in makeTool.inputSchema.properties)
+  const lookTool = listBody.result.tools.find(tool => tool.name === 'look')
+  assert.ok(lookTool?.inputSchema.properties && 'view' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'subplace_text_limit_bytes' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'thing_text_limit_bytes' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'note_text_limit_bytes' in lookTool.inputSchema.properties)
+  assert.equal(
+    (lookTool?.inputSchema.properties?.thing_text_limit_bytes as { maximum?: number } | undefined)?.maximum,
+    655_360,
+  )
+
+  state = { ...state, scenario: 'public pagination' }
+  const outlined = await app.request('/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 11, method: 'tools/call',
+      params: { name: 'look', arguments: { place_id: 2, thing_limit: 1 } },
+    }),
+  })
+  const outlinedBody = await outlined.json() as {
+    result: { isError: boolean; content: { text: string }[] }
+  }
+  assert.equal(outlinedBody.result.isError, false)
+  const outlinedPlace = JSON.parse(outlinedBody.result.content[0]!.text) as {
+    view: string
+    subplaces: Array<{ description?: string; description_text_bytes: number }>
+    things: Array<{ body?: string; body_text_bytes: number }>
+    notes: Array<{ body?: string; body_text_bytes: number }>
+  }
+  assert.equal(outlinedPlace.view, 'outline')
+  assert.equal(Object.hasOwn(outlinedPlace.subplaces[0]!, 'description'), false)
+  assert.ok(outlinedPlace.subplaces[0]!.description_text_bytes > 0)
+  assert.equal(Object.hasOwn(outlinedPlace.things[0]!, 'body'), false)
+  assert.ok(outlinedPlace.things[0]!.body_text_bytes > 0)
+  assert.equal(Object.hasOwn(outlinedPlace.notes[0]!, 'body'), false)
+  assert.ok(outlinedPlace.notes[0]!.body_text_bytes > 0)
+
+  const invalidMapPage = await app.request('/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'look', arguments: { limit: 1 } },
+    }),
+  })
+  const invalidMapPageBody = await invalidMapPage.json() as {
+    result: { isError: boolean; content: { text: string }[] }
+  }
+  assert.equal(invalidMapPageBody.result.isError, true)
+  assert.match(invalidMapPageBody.result.content[0]!.text, /place_id.*paging|paging.*place_id/i)
+  assert.equal(sqlCalls().some(call => /with recursive place_tree/i.test(call.query ?? '')), false)
 
   for (const key of ['secret', 'authorization', 'token', 'api_key', 'unexpected']) {
     const unsafeArgument = await app.request('/mcp', {
@@ -3862,8 +5479,9 @@ test('new things default closed and may be opened explicitly by their creator', 
     body: JSON.stringify({ place_id: 2, name: 'closed lantern', body: 'owner use only' }),
   })
   assert.equal(closed.status, 201)
-  const closedBody = await closed.json() as { thing: { open_to_use: boolean } }
+  const closedBody = await closed.json() as { thing: { open_to_use: boolean; body: string }; reading_cost: { new_item_text_bytes: number } }
   assert.equal(closedBody.thing.open_to_use, false)
+  assert.equal(closedBody.reading_cost.new_item_text_bytes, Buffer.byteLength(closedBody.thing.body))
 
   reset({ scenario: 'thing open_to_use create explicit', openToThings: true, thingOpenToUse: true })
   const opened = await app.request('/api/thing', {
@@ -3901,8 +5519,9 @@ test('the thing owner can toggle open_to_use and a visitor cannot edit it', asyn
     body: JSON.stringify({ open_to_use: true }),
   })
   assert.equal(changed.status, 200)
-  const changedBody = await changed.json() as { thing: { open_to_use: boolean } }
+  const changedBody = await changed.json() as { thing: { open_to_use: boolean }; reading_cost: { room_stored_text_bytes: number } }
   assert.equal(changedBody.thing.open_to_use, true)
+  assert.equal(changedBody.reading_cost.room_stored_text_bytes, 1234)
   const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
   assert.match(update?.query ?? '', /\bopen_to_use\b/i)
 
@@ -4105,7 +5724,10 @@ test('damage stays off unless the place consents, and stored timers resolve on o
     assert.deepEqual(humanBody.place.labels, [])
     assert.equal(state.pendingResolved, false)
 
-    const observed = await app.request('/api/place/2', { headers: authHeaders(OTHER_SECRET) })
+    const observed = await app.request(
+      '/api/place/2?view=outline',
+      { headers: authHeaders(OTHER_SECRET) },
+    )
     assert.equal(observed.status, 200)
     const observedBody = await observed.json() as { place: { labels?: string[] } }
     assert.deepEqual(observedBody.place.labels, ['echo'])
@@ -4134,6 +5756,23 @@ test('founder moderation is remove-or-restore tombstoning, never governance', as
   assert.equal(tombstonedBody.notes[0]?.body, '[removed by maintainer]')
   assert.equal(tombstonedBody.notes[0]?.moderated, true)
   assert.equal(tombstonedBody.notes[0]?.moderation?.reason, 'illegal content')
+
+  state = { ...state, calls: [] }
+  const outline = await app.request('/api/place/2?view=outline')
+  assert.equal(outline.status, 200)
+  const outlineBody = await outline.json() as {
+    notes: Array<{
+      id: number
+      body?: string
+      body_text_bytes: number
+      moderated?: boolean
+      moderation?: { reason: string }
+    }>
+  }
+  assert.equal(Object.hasOwn(outlineBody.notes[0]!, 'body'), false)
+  assert.ok(outlineBody.notes[0]!.body_text_bytes > 0)
+  assert.equal(outlineBody.notes[0]!.moderated, true)
+  assert.equal(outlineBody.notes[0]!.moderation?.reason, 'illegal content')
 
   const pinned = await app.request('/api/moderation', {
     method: 'POST',
@@ -4228,9 +5867,8 @@ test('event history supports bounded cursor pages without changing the events ar
   assert.deepEqual(body.events.map(event => event.id), [203, 202])
   assert.equal(body.has_more, true)
   assert.equal(body.next_before_id, 202)
-  const eventRead = sqlCalls().find(call => /select\s+id,\s*at,\s*kind,\s*actor,\s*detail[\s\S]*from\s+events/i
-    .test(call.query ?? ''))
-  assert.match(eventRead?.query ?? '', /\$4::integer\s+is\s+null\s+or\s+id\s*<\s*\$4::integer/i)
+  const eventRead = sqlCalls().find(call => /\/\* public:events \*\//i.test(call.query ?? ''))
+  assert.match(eventRead?.query ?? '', /\$4::integer\s+is\s+null\s+or\s+event\.id\s*<\s*\$4::integer/i)
   assert.match(eventRead?.query ?? '', /limit\s+\$5::integer/i)
   assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3'])
 
@@ -4247,13 +5885,13 @@ test('event history narrows by actor and by observed place', async () => {
   const actorBody = await byActor.json() as { events: Array<{ id: number }> }
   assert.deepEqual(actorBody.events.map(event => event.id), [70, 69, 68])
   const actorRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
-  assert.match(actorRead?.query ?? '', /\$2::text\s+is\s+null\s+or\s+actor\s*=\s*\$2::text/i)
-  assert.match(actorRead?.query ?? '', /detail->>'place_id'\s*=\s*\(\$3::integer\)::text/i)
-  assert.match(actorRead?.query ?? '', /detail->>'thing_id'[\s\S]*from\s+things/i)
-  assert.match(actorRead?.query ?? '', /detail->>'note_id'[\s\S]*from\s+notes/i)
-  assert.match(actorRead?.query ?? '', /detail->>'asset_type'\s*=\s*'thing'/i)
-  assert.match(actorRead?.query ?? '', /detail->>'asset_type'\s*=\s*'place'/i)
-  assert.match(actorRead?.query ?? '', /detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
+  assert.match(actorRead?.query ?? '', /\$2::text\s+is\s+null\s+or\s+event\.actor\s*=\s*\$2::text/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'place_id'\s*=\s*\(\$3::integer\)::text/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'thing_id'[\s\S]*from\s+things/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'note_id'[\s\S]*from\s+notes/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'asset_type'\s*=\s*'thing'/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'asset_type'\s*=\s*'place'/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
   assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
   assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4'])
 

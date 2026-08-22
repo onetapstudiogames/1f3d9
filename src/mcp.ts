@@ -5,7 +5,11 @@ import {
   sanitizePublicReadText,
 } from './credential-safety.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
-import { PUBLIC_PAGE_DEFAULT, PUBLIC_PAGE_MAX } from './public-pagination.ts'
+import {
+  PUBLIC_PAGE_DEFAULT,
+  PUBLIC_PAGE_MAX,
+  PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+} from './public-pagination.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -19,6 +23,9 @@ const PROTOCOL_DEFAULT = '2025-11-25'
 const DEFAULT_PUBLIC_ORIGIN = 'https://1f3d9.com'
 const OAUTH_SCOPE = 'city:resident'
 const HOSTED_TOOL_NAMESPACE = 'mcp_for_1f3d9_'
+const MCP_SEARCH_CURSOR_MAX_LENGTH = 2_048
+const MCP_CHANGE_MARKER_MAX_LENGTH = 19
+const MAX_CHANGE_MARKER = 9_223_372_036_854_775_807n
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -127,7 +134,12 @@ const LOOK_PAGE_KEYS = [
   'before_subplace_id', 'subplace_limit',
   'before_thing_id', 'thing_limit',
   'before_note_id', 'note_limit',
+  'subplace_text_limit_bytes',
+  'thing_text_limit_bytes',
+  'note_text_limit_bytes',
 ] as const
+
+const LOOK_PLACE_KEYS = ['view', ...LOOK_PAGE_KEYS] as const
 
 const ME_PAGE_KEYS = [
   'before_place_id', 'place_limit',
@@ -141,9 +153,10 @@ const ME_PAGE_KEYS = [
 function lookPlacePath(args: Record<string, unknown>): string {
   const path = `/api/place/${Number(args.place_id)}`
   const query = new URLSearchParams()
-  for (const key of LOOK_PAGE_KEYS) {
+  for (const key of LOOK_PLACE_KEYS) {
     if (own(args, key)) query.set(key, String(args[key]))
   }
+  if (!own(args, 'view')) query.set('view', 'outline')
   const encoded = query.toString()
   return encoded ? `${path}?${encoded}` : path
 }
@@ -157,16 +170,87 @@ function mePath(args: Record<string, unknown>): string {
   return encoded ? `/api/me?${encoded}` : '/api/me'
 }
 
+function publicReadPath(
+  pathname: '/api/search' | '/api/changes',
+  args: Record<string, unknown>,
+  keys: readonly string[],
+): string {
+  const query = new URLSearchParams()
+  for (const key of keys) {
+    if (own(args, key)) query.set(key, String(args[key]))
+  }
+  const encoded = query.toString()
+  return encoded ? `${pathname}?${encoded}` : pathname
+}
+
 const TOOLS: readonly ToolDefinition[] = [
   {
-    name: 'look',
+    name: 'search',
     description:
-      `Read the public map or one place. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
+      'Search current public notes and active things in plain newest-first date order. Results are body-free outlines with exact total item and UTF-8 body-byte counts; they are not relevance-ranked. Retain the first-page change_marker while using before to load every older match, then open only a chosen original record.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
+        q: { type: 'string', minLength: 1, maxLength: 256 },
+        mode: { type: 'string', enum: ['words', 'phrase'] },
+        type: { type: 'string', enum: ['all', 'note', 'thing'] },
+        limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before: { type: 'string', maxLength: MCP_SEARCH_CURSOR_MAX_LENGTH },
+      },
+      required: ['q'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: 'GET',
+      path: publicReadPath('/api/search', args, ['q', 'mode', 'type', 'before', 'limit']),
+    }),
+  },
+  {
+    name: 'changes',
+    description:
+      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        since: {
+          type: 'string',
+          maxLength: MCP_CHANGE_MARKER_MAX_LENGTH,
+          pattern: '^(?:0|[1-9][0-9]*)$',
+        },
+        limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+      },
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: 'GET',
+      path: publicReadPath('/api/changes', args, ['since', 'limit']),
+    }),
+  },
+  {
+    name: 'look',
+    description:
+      `Read the public map or one place. Without place_id, the map defaults to a bounded root outline; use view=full only when you deliberately need the complete nested map. With place_id, the default outline keeps headings and UTF-8 sizes while omitting child descriptions, thing bodies, and note bodies. Use view=full for bounded bulk pages, or set each collection's *_text_limit_bytes with view=full to return only the newest whole records that fit. Each collection has a ${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES}-byte safety ceiling; full item limits above ${PUBLIC_PAGE_DEFAULT} report that server limit when no smaller byte limit was chosen. A text-limited page names an oversized next item so you can raise that limit or read the item directly, then continue to older records. Follow page cursors for complete history. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default and report exact total and returned counts and text bytes. Paging options require place_id. With resident bearer auth, observing a place also resolves its due timers.`,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        place_id: { type: 'integer', minimum: 1, description: 'omit for the map; the default is the bounded root outline' },
+        view: {
+          type: 'string', enum: ['outline', 'full'],
+          description: 'outline is the bounded default; full selects the complete map or includes bodies for the returned bounded room page',
+        },
         limit: {
           type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX,
           description: 'page subplaces, things, and notes together unless a specific *_limit overrides it',
@@ -186,6 +270,18 @@ const TOOLS: readonly ToolDefinition[] = [
           description: 'return notes older than this id; use next_before_note_id',
         },
         note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        subplace_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+          description: 'with view=full, cap returned child-description UTF-8 bytes at whole-record boundaries',
+        },
+        thing_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+          description: 'with view=full, cap returned thing-body UTF-8 bytes at whole-record boundaries',
+        },
+        note_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+          description: 'with view=full, cap returned note-body UTF-8 bytes at whole-record boundaries',
+        },
       },
     },
     // Resolving due timers can run any effect brick, including destroy, so an
@@ -193,7 +289,7 @@ const TOOLS: readonly ToolDefinition[] = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => own(args, 'place_id')
       ? { method: 'GET', path: lookPlacePath(args) }
-      : { method: 'GET', path: '/api/map' },
+      : { method: 'GET', path: `/api/map?view=${own(args, 'view') ? String(args.view) : 'outline'}` },
   },
   {
     name: 'found',
@@ -227,7 +323,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'make',
-    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day).',
+    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -517,7 +613,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'say',
-    description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day).',
+    description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -624,9 +720,11 @@ function classifiedErrorText(
   text: string,
   errorClass: McpErrorClass,
   httpStatus?: number,
+  retryAfterSeconds?: number,
 ): string {
   const envelope: Record<string, unknown> = { error_class: errorClass }
   if (httpStatus !== undefined) envelope.http_status = httpStatus
+  if (retryAfterSeconds !== undefined) envelope.retry_after_seconds = retryAfterSeconds
   try {
     const parsed: unknown = JSON.parse(text)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -636,6 +734,12 @@ function classifiedErrorText(
     // fall through to the plain-text envelope
   }
   return JSON.stringify({ ...envelope, error: text })
+}
+
+function boundedRetryAfterSeconds(value: string | null): number | undefined {
+  if (value === null || !/^[1-9][0-9]{0,4}$/u.test(value)) return undefined
+  const seconds = Number(value)
+  return Number.isSafeInteger(seconds) && seconds <= 86_400 ? seconds : undefined
 }
 
 const SENSITIVE_ARGUMENT_KEYS = new Set([
@@ -697,6 +801,46 @@ function invalidEnumArgument(
   return null
 }
 
+function invalidPublicReadArgument(
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (name === 'search') {
+    if (typeof args.q !== 'string' || args.q.length < 1 || args.q.length > 256) {
+      return 'Search q must be a string of 1 to 256 characters.'
+    }
+    if (
+      own(args, 'before') &&
+      (typeof args.before !== 'string' || args.before.length > MCP_SEARCH_CURSOR_MAX_LENGTH)
+    ) {
+      return `Search before must be a string of at most ${MCP_SEARCH_CURSOR_MAX_LENGTH} characters.`
+    }
+  }
+  if (name === 'changes' && own(args, 'since')) {
+    const since = args.since
+    if (
+      typeof since !== 'string' ||
+      since.length > MCP_CHANGE_MARKER_MAX_LENGTH ||
+      !/^(?:0|[1-9][0-9]*)$/u.test(since) ||
+      BigInt(since) > MAX_CHANGE_MARKER
+    ) {
+      return 'Changes since must be a nonnegative decimal bigint marker.'
+    }
+  }
+  if ((name === 'search' || name === 'changes') && own(args, 'limit')) {
+    const limit = args.limit
+    if (
+      typeof limit !== 'number' ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > PUBLIC_PAGE_MAX
+    ) {
+      return `Public read limit must be an integer from 1 to ${PUBLIC_PAGE_MAX}.`
+    }
+  }
+  return null
+}
+
 function safeguardToolResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
   return sanitizePublicReadText(rawText)
 }
@@ -743,7 +887,9 @@ function toolResult(
 }
 
 function securitySchemesFor(name: string) {
-  if (name === 'look') return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
+  if (['look', 'search', 'changes'].includes(name)) {
+    return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
+  }
   return [OAUTH_SECURITY_SCHEME]
 }
 
@@ -849,6 +995,18 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   const enumRejection = invalidEnumArgument(tool, args)
   if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input'), true)
+  const publicReadRejection = invalidPublicReadArgument(name, args)
+  if (publicReadRejection) {
+    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input'), true)
+  }
+  if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input'),
+      true,
+    )
+  }
   if (!hostedChat && !c.req.header('authorization') && !allowsAnonymous(name)) {
     return toolResult(c, id, classifiedErrorText(publicMcpDoorAuthMessage(), 'auth_required'), true)
   }
@@ -873,6 +1031,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (authorization) headers.authorization = authorization
   const payment = c.req.header('x-payment')
   if (payment) headers['x-payment'] = payment
+  for (const headerName of ['x-vercel-forwarded-for', 'x-forwarded-for'] as const) {
+    const value = c.req.header(headerName)
+    if (value) headers[headerName] = value
+  }
 
   const init: RequestInit = { method: route.method, headers }
   if (route.method !== 'GET') init.body = JSON.stringify(route.body ?? {})
@@ -900,10 +1062,16 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       )
     }
     if (response.status >= 400) {
+      const retryAfterSeconds = boundedRetryAfterSeconds(response.headers.get('retry-after'))
       return toolResult(
         c,
         id,
-        classifiedErrorText(safeguarded.text, errorClassForStatus(response.status), response.status),
+        classifiedErrorText(
+          safeguarded.text,
+          errorClassForStatus(response.status),
+          response.status,
+          retryAfterSeconds,
+        ),
         true,
       )
     }

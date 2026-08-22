@@ -1075,7 +1075,50 @@ test('a move brick moves only an owned thing across one place edge', async () =>
     destinationPlaceId: 3,
   }, db)
   assert.equal(result.status, 'applied')
-  assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), true)
+  const guardedMove = calls.find(call => /UPDATE things moving SET place_id/.test(call.text))
+  assert.match(guardedMove?.text ?? '', /moving\.place_id = \$/)
+  assert.deepEqual(guardedMove?.values.slice(0, 3), [41, 7, 2])
+})
+
+test('a thing move that loses its original-place race returns the existing collision', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 116 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) {
+      return [{ id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null }]
+    }
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 11,
+      recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
+    }]
+    if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
+    if (/SELECT id, parent_id, owner_id, open_to_things/.test(text)) return [
+      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false },
+      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false },
+    ]
+    if (/UPDATE things moving SET place_id/.test(text)) return []
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 216 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+    destinationPlaceId: 3,
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 409)
+  assert.equal(result.error, 'thing or destination changed before the move')
+  const racedMove = calls.find(call => /UPDATE things moving SET place_id/.test(call.text))
+  assert.equal(racedMove?.values[2], 2)
+  assert.equal(racedMove?.values[5], racedMove?.values[2])
 })
 
 test('a move effect cannot target a resident in another place, even to send them home', async () => {

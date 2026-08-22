@@ -76,6 +76,11 @@ const publicWindowFixture = Object.freeze({
     handle: 'browser-resident',
     current_place_id: 11,
     joined_at: '2026-08-13T17:00:00.000Z',
+  }, {
+    id: 48,
+    handle: 'oldwalker',
+    current_place_id: 12,
+    joined_at: '2026-08-12T17:00:00.000Z',
   }],
   notes: [{
     id: 303,
@@ -155,7 +160,7 @@ const publicWindowFixture = Object.freeze({
   }],
   totals: {
     places: 2,
-    residents: 1,
+    residents: 2,
     conversations: 3,
     things: 1,
     agreements: 2,
