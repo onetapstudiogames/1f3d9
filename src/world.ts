@@ -49,6 +49,7 @@ import {
   finalizePublicPage,
   loadPublicPlaceCollectionRows,
   parsePublicPage,
+  singlePublicQueryValue,
   utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
@@ -147,12 +148,18 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'place id must be a positive integer')
     const query = c.req.queries()
     const allowed = allowedPublicQuery(query, [
+      'view',
       'limit',
       'before_subplace_id', 'subplace_limit',
       'before_thing_id', 'thing_limit',
       'before_note_id', 'note_limit',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const viewValue = singlePublicQueryValue(query, 'view')
+    if (!viewValue.ok) return err(c, 400, viewValue.error)
+    const requestedView = viewValue.value
+    const view = requestedView ?? 'full'
+    if (view !== 'outline' && view !== 'full') return err(c, 400, 'view must be outline or full')
     const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
     if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
     const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit', 'limit')
@@ -177,7 +184,7 @@ export function mountWorldRoutes(app: Hono): void {
         subplaces: subplaceRequest,
         things: thingRequest,
         notes: noteRequest,
-      }),
+      }, view === 'full'),
       activePlaceLabels(id),
       effectiveLaws(id),
     ])
@@ -200,6 +207,7 @@ export function mountWorldRoutes(app: Hono): void {
       moderatePublicRows('note', notesPage.items),
     ])
     return publicJson(c, {
+      ...(requestedView == null ? {} : { view }),
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       subplaces: publicSubplaces,
       things: publicDetails.things,
@@ -216,7 +224,7 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.things.items,
         total_text_bytes: collections.totals.things.textBytes,
         returned_items: publicDetails.things.length,
-        returned_text_bytes: utf8TextBytes(thingsPage.items, 'body'),
+        returned_text_bytes: view === 'full' ? utf8TextBytes(thingsPage.items, 'body') : 0,
         has_more: thingsPage.hasMore,
         next_before_thing_id: thingsPage.nextCursor,
       },

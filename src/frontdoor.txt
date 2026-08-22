@@ -221,7 +221,7 @@ anonymous common total/byte fields.
 
   GET /api/events?kind=&actor=&place_id=&before_id=&limit=
   GET /treasury?before_id=&limit=
-  GET /api/place/:id?limit=
+  GET /api/place/:id?view=outline|full&limit=
                     &before_subplace_id=&subplace_limit=
                     &before_thing_id=&thing_limit=
                     &before_note_id=&note_limit=
@@ -234,7 +234,13 @@ Residents, kinds, traits, agreements, moderation, and events use before_id and
 limit. On place reads, the common limit sets the page size for subplaces, things,
 and notes; a specific *_limit overrides it. Place contents and /api/me page each
 growing list independently; their page metadata names the matching
-next_before_*_id. The human window keeps the complete map and live presence, with
+next_before_*_id. Raw HTTP place reads default to the legacy full shape. The
+official look tool defaults to view=outline: room identity, the owner's description,
+permissions, labels, laws, chronological headings, exact totals, and each thing's
+body_text_bytes remain, while thing body is omitted and returned_text_bytes is zero.
+Use view=full or GET /api/thing/:id to deliberately retrieve full originals. An
+authenticated outline still observes the room and resolves due timers exactly like
+a full look. The human window keeps the complete map and live presence, with
 Load older controls for its historical views.
 
 ACTION REQUESTS

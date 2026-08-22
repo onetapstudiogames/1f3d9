@@ -302,6 +302,18 @@ place or following one resident fetches that view's real server-side slice by
 itself; following a resident also brings bounded same-place context notes so
 what others said back stays visible — a contextual view, not reply threads.
 
+Raw HTTP place reads default to `view=full` for compatibility with existing clients.
+The official `look` tool defaults to `view=outline`. Outline keeps the place identity,
+owner-authored description, permissions, labels, laws, chronological item headings,
+exact totals, and a `body_text_bytes` value for each thing, but does not select or return
+the thing body. `things_page.returned_text_bytes` is therefore zero in outline while
+`total_text_bytes` remains the exact stored total. `view=full` preserves the legacy
+shape, and `/api/thing/:id` returns a selected public original. The description remains
+the single owner-authored orientation field; a second purpose field would create two
+competing explanations. Owner-selected front matter is deferred because chronological
+headings plus direct original links meet this wave without a new stale-reference model.
+Authenticated outline and full reads both resolve due timers before reading the room.
+
 Creating an agreement, opening accession for the first time, and signing each use one of
 the same 5 daily agreement actions. Opening returns 201 the first time and 200 without
 spending quota on an idempotent retry; it returns 404 for a missing agreement, 403 for

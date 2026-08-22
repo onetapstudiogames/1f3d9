@@ -1142,7 +1142,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       allThings,
       params[3],
       params[4],
-    )
+    ).map(row => q.includes('as body_text_bytes')
+      ? Object.fromEntries(Object.entries({
+          ...row,
+          body_text_bytes: Buffer.byteLength(String(row.body ?? ''), 'utf8'),
+        }).filter(([key]) => key !== 'body'))
+      : row)
     const notes = descendingPage(
       allNotes,
       params[5],
@@ -3373,6 +3378,63 @@ test('place reads return newest bounded slices and independent continuation curs
   assert.equal(second.notes.some(row => first.notes.some(previous => previous.id === row.id)), false)
 })
 
+test('outline place reads keep truthful thing headings and sizes without returning bodies', async () => {
+  reset({ scenario: 'public pagination' })
+  const response = await app.request('/api/place/2?view=outline&thing_limit=2')
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    view: string
+    things: Array<{ id: number; name: string; body?: string; body_text_bytes: number }>
+    things_page: {
+      total_items: number
+      total_text_bytes: number
+      returned_items: number
+      returned_text_bytes: number
+    }
+  }
+  assert.equal(body.view, 'outline')
+  assert.deepEqual(body.things.map(thing => thing.id), [260, 259])
+  assert.equal(body.things.every(thing => typeof thing.name === 'string'), true)
+  assert.equal(body.things.every(thing => !Object.hasOwn(thing, 'body')), true)
+  assert.equal(body.things.every(thing => thing.body_text_bytes > 0), true)
+  assert.equal(body.things_page.total_items, 260)
+  assert.equal(body.things_page.total_text_bytes, 2600)
+  assert.equal(body.things_page.returned_items, 2)
+  assert.equal(body.things_page.returned_text_bytes, 0)
+  const read = sqlCalls().find(call => /\/\* public:place-collections \*\//i.test(call.query ?? ''))
+  assert.doesNotMatch(read?.query ?? '', /\bt\.body\s*,/i, 'outline SQL must not return large thing bodies')
+})
+
+test('full place reads remain the default compatibility shape and can be requested explicitly', async () => {
+  for (const path of ['/api/place/2?thing_limit=1', '/api/place/2?view=full&thing_limit=1']) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 200, path)
+    const body = await response.json() as {
+      view: string
+      things: Array<{ body?: string; body_text_bytes?: number }>
+      things_page: { returned_text_bytes: number }
+    }
+    if (path.includes('view=full')) assert.equal(body.view, 'full')
+    else assert.equal(body.view, undefined, 'implicit full must preserve the exact legacy shape')
+    assert.equal(typeof body.things[0]?.body, 'string')
+    assert.equal(body.things[0]?.body_text_bytes, undefined)
+    assert.ok(body.things_page.returned_text_bytes > 0)
+  }
+})
+
+test('place view rejects duplicates and unknown values before reading PostgreSQL', async () => {
+  for (const path of [
+    '/api/place/2?view=compact',
+    '/api/place/2?view=outline&view=full',
+  ]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, path)
+  }
+})
+
 test('place reads apply the common limit to every embedded collection', async () => {
   reset({ scenario: 'public pagination' })
   const response = await app.request('/api/place/2?limit=4')
@@ -3989,6 +4051,28 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.ok(transferTool?.inputSchema.properties && 'buyer_wallet' in transferTool.inputSchema.properties)
   const makeTool = listBody.result.tools.find(tool => tool.name === 'make')
   assert.ok(makeTool?.inputSchema.properties && 'open_to_use' in makeTool.inputSchema.properties)
+  const lookTool = listBody.result.tools.find(tool => tool.name === 'look')
+  assert.ok(lookTool?.inputSchema.properties && 'view' in lookTool.inputSchema.properties)
+
+  state = { ...state, scenario: 'public pagination' }
+  const outlined = await app.request('/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 11, method: 'tools/call',
+      params: { name: 'look', arguments: { place_id: 2, thing_limit: 1 } },
+    }),
+  })
+  const outlinedBody = await outlined.json() as {
+    result: { isError: boolean; content: { text: string }[] }
+  }
+  assert.equal(outlinedBody.result.isError, false)
+  const outlinedPlace = JSON.parse(outlinedBody.result.content[0]!.text) as {
+    view: string
+    things: Array<{ body?: string; body_text_bytes: number }>
+  }
+  assert.equal(outlinedPlace.view, 'outline')
+  assert.equal(Object.hasOwn(outlinedPlace.things[0]!, 'body'), false)
+  assert.ok(outlinedPlace.things[0]!.body_text_bytes > 0)
 
   const invalidMapPage = await app.request('/mcp', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4003,6 +4087,20 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.equal(invalidMapPageBody.result.isError, true)
   assert.match(invalidMapPageBody.result.content[0]!.text, /place_id.*paging|paging.*place_id/i)
   assert.equal(sqlCalls().some(call => /with recursive place_tree/i.test(call.query ?? '')), false)
+
+  const invalidMapView = await app.request('/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 12, method: 'tools/call',
+      params: { name: 'look', arguments: { view: 'full' } },
+    }),
+  })
+  const invalidMapViewBody = await invalidMapView.json() as {
+    result: { isError: boolean; content: { text: string }[] }
+  }
+  assert.equal(invalidMapViewBody.result.isError, true)
+  assert.match(invalidMapViewBody.result.content[0]!.text, /view.*place_id|place_id.*view/i)
+  assert.doesNotMatch(invalidMapViewBody.result.content[0]!.text, /paging/i)
 
   for (const key of ['secret', 'authorization', 'token', 'api_key', 'unexpected']) {
     const unsafeArgument = await app.request('/mcp', {

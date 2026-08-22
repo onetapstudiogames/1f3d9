@@ -542,6 +542,17 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       )
       assert.ok(firstRows.totals.things.textBytes > 2_000_000, 'fixture must stay realistically dense')
 
+      const outlineRows = await loadPublicPlaceCollectionRows(
+        executePublicQuery,
+        city.targetPlaceId,
+        initialRequests,
+        false,
+      )
+      assert.equal(outlineRows.things.length, 11)
+      assert.equal(outlineRows.things.every(thing => !Object.hasOwn(thing, 'body')), true)
+      assert.equal(outlineRows.things.every(thing => Number(thing.body_text_bytes) > 25_000), true)
+      assert.equal(outlineRows.totals.things.textBytes, firstRows.totals.things.textBytes)
+
       const noteCursor = Number(firstRows.notes[9]!.id)
       const noteOnlyAdvance = await loadPublicPlaceCollectionRows(
         executePublicQuery,

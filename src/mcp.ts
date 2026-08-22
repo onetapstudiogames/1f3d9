@@ -129,6 +129,8 @@ const LOOK_PAGE_KEYS = [
   'before_note_id', 'note_limit',
 ] as const
 
+const LOOK_PLACE_KEYS = ['view', ...LOOK_PAGE_KEYS] as const
+
 const ME_PAGE_KEYS = [
   'before_place_id', 'place_limit',
   'before_thing_id', 'thing_limit',
@@ -141,9 +143,10 @@ const ME_PAGE_KEYS = [
 function lookPlacePath(args: Record<string, unknown>): string {
   const path = `/api/place/${Number(args.place_id)}`
   const query = new URLSearchParams()
-  for (const key of LOOK_PAGE_KEYS) {
+  for (const key of LOOK_PLACE_KEYS) {
     if (own(args, key)) query.set(key, String(args[key]))
   }
+  if (!own(args, 'view')) query.set('view', 'outline')
   const encoded = query.toString()
   return encoded ? `${path}?${encoded}` : path
 }
@@ -161,12 +164,16 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      `Read the public map or one place. With place_id, places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; each collection reports exact total and returned item counts and UTF-8 text bytes. Paging options require place_id: use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
+      `Read the public map or one place. With place_id, the default outline omits full thing bodies but keeps headings and byte sizes; use view=full for the legacy full shape. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; each collection reports exact total and returned item counts and UTF-8 text bytes. Paging options require place_id: use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
+        view: {
+          type: 'string', enum: ['outline', 'full'],
+          description: 'outline omits thing bodies (default); full preserves the legacy room shape',
+        },
         limit: {
           type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX,
           description: 'page subplaces, things, and notes together unless a specific *_limit overrides it',
@@ -854,6 +861,14 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       c,
       id,
       classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input'),
+      true,
+    )
+  }
+  if (name === 'look' && !own(args, 'place_id') && own(args, 'view')) {
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText('Look view requires place_id; omit view to read the map.', 'bad_input'),
       true,
     )
   }

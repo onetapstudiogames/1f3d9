@@ -201,6 +201,21 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })
 
+test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /view=outline|`view=outline`/iu, `${name}: outline choice`)
+    assert.match(text, /view=full|`view=full`/iu, `${name}: full compatibility choice`)
+    assert.match(text, /body_text_bytes/iu, `${name}: thing body size`)
+    assert.match(text, /official[^\n]{0,80}look[^\n]{0,120}(?:defaults|uses)[^\n]{0,80}(?:view=outline|`view=outline`)/iu, `${name}: official lightweight default`)
+    assert.match(text, /(?:raw HTTP|HTTP place)[^\n]{0,100}(?:defaults|default)[^\n]{0,100}(?:view=full|`view=full`|legacy full)|(?:view=full|`view=full`)[^\n]{0,100}(?:legacy|compatib)/iu, `${name}: raw compatibility default`)
+    assert.match(text, /authenticated[^\n]{0,100}outline[^\n]{0,140}(?:observe|timer)|outline[^\n]{0,100}authenticated[^\n]{0,140}(?:observe|timer)/iu, `${name}: observation truth`)
+  }
+})
+
 test('public help explains shared use without promising shared consumption or owner damage', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

@@ -303,7 +303,11 @@ export async function loadPublicPlaceCollectionRows(
   query: PublicQueryExecutor,
   placeId: number,
   pages: PublicPlacePageRequests,
+  includeThingBodies = true,
 ): Promise<Readonly<PublicPlaceCollectionRows>> {
+  const thingTextProjection = includeThingBodies
+    ? 't.body,'
+    : 'octet_length(t.body)::integer AS body_text_bytes,'
   const rows = await query(
     `/* public:place-collections */
      WITH subplace_page AS MATERIALIZED (
@@ -316,7 +320,7 @@ export async function loadPublicPlaceCollectionRows(
        ORDER BY p.id DESC
        LIMIT $3::integer
      ), thing_page AS MATERIALIZED (
-       SELECT t.id, t.place_id, t.name, t.body, t.owner_id, owner.handle AS owner,
+       SELECT t.id, t.place_id, t.name, ${thingTextProjection} t.owner_id, owner.handle AS owner,
          t.open_to_use, t.kind_id, k.name AS kind, t.birth_revision,
          t.current_revision, t.created_at
        FROM things t

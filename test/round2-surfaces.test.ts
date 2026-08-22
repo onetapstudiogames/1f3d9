@@ -121,6 +121,7 @@ test('MCP look forwards independent place cursors without accepting credentials 
       thing_limit: '13',
       before_note_id: '71',
       note_limit: '14',
+      view: 'outline',
     },
     authorization: 'Bearer resident-secret',
   })
@@ -211,6 +212,7 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
         limit: '12',
         before_note_id: '100',
         note_limit: '25',
+        view: 'outline',
       })
     }
     if (name === 'make') {
