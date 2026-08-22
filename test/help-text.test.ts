@@ -43,6 +43,23 @@ test('public help gives exact action shapes and required combinations', () => {
   }
 })
 
+test('city fee credit help stays deliberate, private, fixed, and non-transferable', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /X-1F3D9-FEE-CREDIT/iu, `${name}: explicit credit selector`)
+    assert.match(text, /frontier[\s\S]{0,300}kind invention[\s\S]{0,120}kind revision/iu, `${name}: eligible fees`)
+    assert.match(text, /(?:unique|stable|same)[^\n]{0,100}request id/iu, `${name}: retry request id`)
+    assert.match(text, /(?:never|no)[^\n]{0,120}(?:fallback|silently)[^\n]{0,120}(?:credit|x402)|(?:credit|x402)[^\n]{0,120}(?:never|no)[^\n]{0,120}(?:fallback|silently)/iu, `${name}: no fallback`)
+    assert.match(text, /\/api\/me[^\n]{0,180}(?:private|own)[^\n]{0,120}(?:balance|history)|(?:private|own)[^\n]{0,180}(?:balance|history)[^\n]{0,120}\/api\/me/iu, `${name}: private account`)
+    assert.match(text, /(?:cannot|never|no)[^\n]{0,180}(?:transfer|sell|redeem|cash out)/iu, `${name}: no transferable value`)
+  }
+
+  assert.match(decisions, /\| 40 \|[^\n]*founder-issued city fee credit/iu)
+})
+
 test('the truth release keeps every public surface honest', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

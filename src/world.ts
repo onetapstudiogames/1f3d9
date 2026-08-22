@@ -29,12 +29,14 @@ import {
   conflictMessage,
   DESCRIPTION_MAX,
   DOMAIN,
+  feeSelectionConflict,
   hasDuplicateNames,
   hasOnly,
   isResponse,
   jsonBody,
   openOffer,
   releasePaymentLease,
+  returnFailedTreasuryFee,
   requireResident,
   THING_BODY_MAX_BYTES,
   treasuryFee,
@@ -416,6 +418,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/place', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const selectionConflict = feeSelectionConflict(c)
+    if (selectionConflict) return selectionConflict
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     if (!hasOnly(body, [
@@ -467,6 +471,8 @@ export function mountWorldRoutes(app: Hono): void {
       if (isWorldRootRow(parent)) {
         // An explicit world parent is the same paid frontier operation as the
         // long-standing parent_id:null request. It is never a free build.
+      } else if (c.req.header('x-1f3d9-fee-credit')) {
+        return err(c, 400, 'city fee credit is only supported for the paid frontier, kind invention, or kind revision fee')
       } else if (parent.owner_id !== resident.id && !parent.open_to_building) {
         return err(c, 403, 'this place does not permit visitors to build')
       } else try {
@@ -550,7 +556,11 @@ export function mountWorldRoutes(app: Hono): void {
           WHERE public_id = ${fee.attemptId}
             AND lease_owner = ${fee.leaseOwner}
             AND status = 'payment_pending'
-            AND tx_hash = ${fee.txHash}
+            AND method = ${fee.rail}
+            AND (
+              (${fee.rail}::text = 'x402' AND tx_hash = ${fee.txHash})
+              OR (${fee.rail}::text = 'credit' AND tx_hash IS NULL)
+            )
             AND actor_id = ${resident.id}
             AND operation = 'frontier'
           FOR UPDATE
@@ -571,6 +581,7 @@ export function mountWorldRoutes(app: Hono): void {
           SELECT ${fee.txHash}, ${fee.attemptId}, 'frontier', ${resident.id},
             ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
           FROM new_place
+          WHERE ${fee.rail}::text = 'x402'
           RETURNING tx_hash
         ), new_presence AS (
           INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
@@ -584,15 +595,26 @@ export function mountWorldRoutes(app: Hono): void {
           INSERT INTO events (kind, actor, detail)
           SELECT 'place_created', ${resident.handle}, jsonb_build_object(
             'place_id', id, 'parent_id', parent_id, 'name', name,
-            'frontier', true, 'fee_tx_hash', ${fee.txHash}::text
-          ) FROM new_place
+            'frontier', true
+          ) || CASE WHEN ${fee.rail}::text = 'x402'
+            THEN jsonb_build_object('fee_tx_hash', ${fee.txHash}::text)
+            ELSE '{}'::jsonb END
+          FROM new_place
         ), response_payload AS (
           SELECT jsonb_build_object(
-            'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text),
-            'fee_tx', ${fee.txHash}::text
-          ) AS body
+            'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text)
+          ) || CASE WHEN ${fee.rail}::text = 'x402'
+            THEN jsonb_build_object('fee_tx', ${fee.txHash}::text)
+            ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
+              'spent_usdc', '1.000000',
+              'balance_usdc', (
+                SELECT (balance_units / 1000000)::text || '.' ||
+                  lpad((balance_units % 1000000)::text, 6, '0')
+                FROM city_credit_accounts WHERE resident_id = ${resident.id}::integer
+              )
+            )) END AS body
           FROM new_place
-        ), completed_attempt AS (
+        ), completed_x402_attempt AS (
           SELECT complete_payment_attempt(
             ${fee.attemptId},
             ${fee.leaseOwner},
@@ -602,6 +624,22 @@ export function mountWorldRoutes(app: Hono): void {
             convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
           FROM new_place CROSS JOIN payment_use CROSS JOIN response_payload
+          WHERE ${fee.rail}::text = 'x402'
+        ), completed_credit_attempt AS (
+          SELECT complete_city_credit_attempt(
+            ${fee.attemptId},
+            ${fee.leaseOwner},
+            jsonb_build_object('kind', 'place', 'id', new_place.id),
+            201::smallint,
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
+          ) AS attempt
+          FROM new_place CROSS JOIN response_payload
+          WHERE ${fee.rail}::text = 'credit'
+        ), completed_attempt AS (
+          SELECT attempt FROM completed_x402_attempt
+          UNION ALL
+          SELECT attempt FROM completed_credit_attempt
         )
         SELECT new_place.*, ${resident.handle}::text AS owner,
           convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
@@ -609,6 +647,11 @@ export function mountWorldRoutes(app: Hono): void {
       `) as Array<PlaceRow & { response_body: string }>
       const returned = rows[0]
       if (!returned) {
+        if (fee.rail === 'credit') {
+          return await returnFailedTreasuryFee(
+            fee, resident.id, 'frontier target changed before completion', 409,
+          ) as Response
+        }
         await releasePaymentLease(fee)
         return c.json({
           payment: 'pending',
@@ -622,6 +665,14 @@ export function mountWorldRoutes(app: Hono): void {
       return completedTreasuryFeeResponse(fee, responseBody, 201)
     } catch (error) {
       const message = conflictMessage(error, 'place name or payment proof already used')
+      if (fee.rail === 'credit') {
+        return await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          message ?? 'frontier founding failed before completion',
+          message ? 409 : 503,
+        ) as Response
+      }
       if (message) return err(c, 409, message)
       throw error
     }
@@ -765,6 +816,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/kind', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const selectionConflict = feeSelectionConflict(c)
+    if (selectionConflict) return selectionConflict
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     if (!hasOnly(body, ['name', 'description', 'traits', 'recipe'])) {
@@ -810,7 +863,11 @@ export function mountWorldRoutes(app: Hono): void {
           WHERE public_id = ${fee.attemptId}
             AND lease_owner = ${fee.leaseOwner}
             AND status = 'payment_pending'
-            AND tx_hash = ${fee.txHash}
+            AND method = ${fee.rail}
+            AND (
+              (${fee.rail}::text = 'x402' AND tx_hash = ${fee.txHash})
+              OR (${fee.rail}::text = 'credit' AND tx_hash IS NULL)
+            )
             AND actor_id = ${resident.id}
             AND operation = 'kind_invention'
           FOR UPDATE
@@ -831,6 +888,7 @@ export function mountWorldRoutes(app: Hono): void {
           SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_invention', ${resident.id},
             ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
           FROM new_revision
+          WHERE ${fee.rail}::text = 'x402'
           RETURNING tx_hash
         ), new_fee AS (
           INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
@@ -840,20 +898,30 @@ export function mountWorldRoutes(app: Hono): void {
           INSERT INTO events (kind, actor, detail)
           SELECT 'kind_invented', ${resident.handle}, jsonb_build_object(
             'kind_id', new_kind.id, 'name', new_kind.name,
-            'revision', new_revision.revision, 'fee_tx_hash', ${fee.txHash}::text
-          ) FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
+            'revision', new_revision.revision
+          ) || CASE WHEN ${fee.rail}::text = 'x402'
+            THEN jsonb_build_object('fee_tx_hash', ${fee.txHash}::text)
+            ELSE '{}'::jsonb END
+          FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
         ), result_row AS (
           SELECT new_kind.id, new_kind.name, new_kind.owner_id, ${resident.handle}::text AS owner,
             new_revision.revision, new_revision.description, new_revision.traits,
             new_revision.recipe, new_kind.created_at
           FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
         ), response_payload AS (
-          SELECT jsonb_build_object(
-            'kind', to_jsonb(result_row),
-            'fee_tx', ${fee.txHash}::text
-          ) AS body
+          SELECT jsonb_build_object('kind', to_jsonb(result_row)) ||
+            CASE WHEN ${fee.rail}::text = 'x402'
+              THEN jsonb_build_object('fee_tx', ${fee.txHash}::text)
+              ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
+                'spent_usdc', '1.000000',
+                'balance_usdc', (
+                  SELECT (balance_units / 1000000)::text || '.' ||
+                    lpad((balance_units % 1000000)::text, 6, '0')
+                  FROM city_credit_accounts WHERE resident_id = ${resident.id}::integer
+                )
+              )) END AS body
           FROM result_row
-        ), completed_attempt AS (
+        ), completed_x402_attempt AS (
           SELECT complete_payment_attempt(
             ${fee.attemptId},
             ${fee.leaseOwner},
@@ -863,6 +931,22 @@ export function mountWorldRoutes(app: Hono): void {
             convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
           FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
+          WHERE ${fee.rail}::text = 'x402'
+        ), completed_credit_attempt AS (
+          SELECT complete_city_credit_attempt(
+            ${fee.attemptId},
+            ${fee.leaseOwner},
+            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
+            201::smallint,
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
+          ) AS attempt
+          FROM result_row CROSS JOIN response_payload
+          WHERE ${fee.rail}::text = 'credit'
+        ), completed_attempt AS (
+          SELECT attempt FROM completed_x402_attempt
+          UNION ALL
+          SELECT attempt FROM completed_credit_attempt
         )
         SELECT result_row.*,
           convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
@@ -870,6 +954,11 @@ export function mountWorldRoutes(app: Hono): void {
       `) as Array<KindRow & { response_body: string }>
       const returned = rows[0]
       if (!returned) {
+        if (fee.rail === 'credit') {
+          return await returnFailedTreasuryFee(
+            fee, resident.id, 'kind invention target changed before completion', 409,
+          ) as Response
+        }
         await releasePaymentLease(fee)
         return c.json({
           payment: 'pending',
@@ -882,8 +971,16 @@ export function mountWorldRoutes(app: Hono): void {
       return completedTreasuryFeeResponse(fee, returned.response_body, 201)
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
-      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
       const message = conflictMessage(error, 'kind name or payment proof already used')
+      if (fee.rail === 'credit') {
+        return await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          unknownTrait ? `kind ${unknownTrait}` : message ?? 'kind invention failed before completion',
+          unknownTrait ? 400 : message ? 409 : 503,
+        ) as Response
+      }
+      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
       if (message) return err(c, 409, message)
       throw error
     }
@@ -892,6 +989,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/kind/:id/revise', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const selectionConflict = feeSelectionConflict(c)
+    if (selectionConflict) return selectionConflict
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'kind id must be a positive integer')
     const body = await jsonBody(c)
@@ -960,7 +1059,11 @@ export function mountWorldRoutes(app: Hono): void {
           WHERE public_id = ${fee.attemptId}
             AND lease_owner = ${fee.leaseOwner}
             AND status = 'payment_pending'
-            AND tx_hash = ${fee.txHash}
+            AND method = ${fee.rail}
+            AND (
+              (${fee.rail}::text = 'x402' AND tx_hash = ${fee.txHash})
+              OR (${fee.rail}::text = 'credit' AND tx_hash IS NULL)
+            )
             AND actor_id = ${resident.id}
             AND operation = 'kind_revision'
             AND asset_type = 'kind' AND asset_id = ${id}
@@ -992,6 +1095,7 @@ export function mountWorldRoutes(app: Hono): void {
           SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_revision', ${resident.id},
             ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
           FROM changed_kind
+          WHERE ${fee.rail}::text = 'x402'
           RETURNING tx_hash
         ), new_fee AS (
           INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
@@ -1001,8 +1105,11 @@ export function mountWorldRoutes(app: Hono): void {
           INSERT INTO events (kind, actor, detail)
           SELECT 'kind_revised', ${resident.handle}, jsonb_build_object(
             'kind_id', changed_kind.id, 'name', changed_kind.name,
-            'revision', new_revision.revision, 'fee_tx_hash', ${fee.txHash}::text
-          ) FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
+            'revision', new_revision.revision
+          ) || CASE WHEN ${fee.rail}::text = 'x402'
+            THEN jsonb_build_object('fee_tx_hash', ${fee.txHash}::text)
+            ELSE '{}'::jsonb END
+          FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
         ), result_row AS (
           SELECT changed_kind.id, changed_kind.name, changed_kind.owner_id,
             ${resident.handle}::text AS owner, new_revision.revision,
@@ -1010,12 +1117,19 @@ export function mountWorldRoutes(app: Hono): void {
             changed_kind.created_at
           FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
         ), response_payload AS (
-          SELECT jsonb_build_object(
-            'kind', to_jsonb(result_row),
-            'fee_tx', ${fee.txHash}::text
-          ) AS body
+          SELECT jsonb_build_object('kind', to_jsonb(result_row)) ||
+            CASE WHEN ${fee.rail}::text = 'x402'
+              THEN jsonb_build_object('fee_tx', ${fee.txHash}::text)
+              ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
+                'spent_usdc', '1.000000',
+                'balance_usdc', (
+                  SELECT (balance_units / 1000000)::text || '.' ||
+                    lpad((balance_units % 1000000)::text, 6, '0')
+                  FROM city_credit_accounts WHERE resident_id = ${resident.id}::integer
+                )
+              )) END AS body
           FROM result_row
-        ), completed_attempt AS (
+        ), completed_x402_attempt AS (
           SELECT complete_payment_attempt(
             ${fee.attemptId},
             ${fee.leaseOwner},
@@ -1025,6 +1139,22 @@ export function mountWorldRoutes(app: Hono): void {
             convert_to(response_payload.body::text, 'UTF8')
           ) AS attempt
           FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
+          WHERE ${fee.rail}::text = 'x402'
+        ), completed_credit_attempt AS (
+          SELECT complete_city_credit_attempt(
+            ${fee.attemptId},
+            ${fee.leaseOwner},
+            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
+            200::smallint,
+            response_payload.body,
+            convert_to(response_payload.body::text, 'UTF8')
+          ) AS attempt
+          FROM result_row CROSS JOIN response_payload
+          WHERE ${fee.rail}::text = 'credit'
+        ), completed_attempt AS (
+          SELECT attempt FROM completed_x402_attempt
+          UNION ALL
+          SELECT attempt FROM completed_credit_attempt
         )
         SELECT result_row.*,
           convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
@@ -1032,6 +1162,11 @@ export function mountWorldRoutes(app: Hono): void {
       `) as Array<KindRow & { response_body: string }>
       const returned = rows[0]
       if (!returned) {
+        if (fee.rail === 'credit') {
+          return await returnFailedTreasuryFee(
+            fee, resident.id, 'kind revision target changed before completion', 409,
+          ) as Response
+        }
         await releasePaymentLease(fee)
         return c.json({
           payment: 'pending',
@@ -1044,8 +1179,18 @@ export function mountWorldRoutes(app: Hono): void {
       return completedTreasuryFeeResponse(fee, returned.response_body, 200)
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
-      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
       const message = conflictMessage(error, 'payment proof already used')
+      if (fee.rail === 'credit') {
+        return await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          unknownTrait
+            ? `kind revision ${unknownTrait}`
+            : message ?? 'kind revision failed before completion',
+          unknownTrait ? 400 : message ? 409 : 503,
+        ) as Response
+      }
+      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
       if (message) return err(c, 409, message)
       throw error
     }

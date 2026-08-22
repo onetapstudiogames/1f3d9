@@ -19,6 +19,7 @@ export type PaymentAttemptStatus =
   | 'expired'
   | 'needs_review'
   | 'legacy_completed'
+  | 'credit_returned'
 
 export interface PaymentAttemptRecord {
   publicId: string
@@ -30,7 +31,7 @@ export interface PaymentAttemptRecord {
   assetType: 'place' | 'thing' | 'kind' | null
   assetId: number | null
   requestHash: string | null
-  method: 'x402' | 'claim' | 'legacy' | null
+  method: 'x402' | 'credit' | 'claim' | 'legacy' | null
   network: 'base' | null
   token: string | null
   payerWallet: string | null
@@ -386,7 +387,7 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
   if (!['frontier', 'kind_invention', 'kind_revision', 'direct_sale', 'world_sale', 'legacy'].includes(operation)) {
     throw new TypeError('invalid operation row')
   }
-  if (!['settling', 'payment_pending', 'completed', 'invalid', 'expired', 'needs_review', 'legacy_completed'].includes(status)) {
+  if (!['settling', 'payment_pending', 'completed', 'invalid', 'expired', 'needs_review', 'legacy_completed', 'credit_returned'].includes(status)) {
     throw new TypeError('invalid status row')
   }
   const storedResponse = objectValue(rowValue(row, 'response', 'response_json'))
@@ -924,7 +925,7 @@ export function toPublicPaymentAttempt(row: Record<string, unknown> | PaymentAtt
   return {
     id: attempt.publicId,
     state: attempt.status,
-    do_not_pay_again: ['payment_pending', 'needs_review', 'completed', 'invalid', 'legacy_completed'].includes(attempt.status),
+    do_not_pay_again: ['payment_pending', 'needs_review', 'completed', 'invalid', 'legacy_completed', 'credit_returned'].includes(attempt.status),
     ...(attempt.txHash ? { transaction: attempt.txHash } : {}),
     ...(attempt.responseStatus != null ? { response_status: attempt.responseStatus } : {}),
     ...(attempt.response ? { response: attempt.response } : {}),

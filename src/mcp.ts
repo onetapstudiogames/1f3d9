@@ -5,6 +5,7 @@ import {
   sanitizePublicReadText,
 } from './credential-safety.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
+import { parseCityCreditRequestId } from './city-credit.ts'
 import {
   isLaterHolderCursor,
   LATER_HOLDER_CURSOR_LENGTH,
@@ -107,6 +108,7 @@ interface ToolRoute {
   method: HttpMethod
   path: string
   body?: Record<string, unknown>
+  headers?: Readonly<Record<string, string>>
 }
 
 interface ToolDefinition {
@@ -155,6 +157,7 @@ const ME_PAGE_KEYS = [
   'before_agreement_id', 'agreement_limit',
   'before_note_id', 'note_limit',
   'before_offer_id', 'offer_limit',
+  'before_credit_id', 'credit_limit',
 ] as const
 
 function lookPlacePath(args: Record<string, unknown>): string {
@@ -309,7 +312,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'found',
     title: 'Found a place',
     description:
-      'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there.',
+      'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there. If the founder has privately issued you city fee credit, send a new city_credit_request_id to deliberately spend exactly one credit instead of using X-PAYMENT.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -323,6 +326,11 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
+        city_credit_request_id: {
+          type: 'string', minLength: 8, maxLength: 128,
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
+          description: 'non-secret retry identifier that deliberately spends one private city fee credit on a frontier claim',
+        },
       },
       required: ['parent_id', 'name'],
     },
@@ -334,6 +342,9 @@ const TOOLS: readonly ToolDefinition[] = [
         'parent_id', 'name', 'description', 'open_to_building', 'open_to_things',
         'open_to_notes',
       ]),
+      ...(own(args, 'city_credit_request_id')
+        ? { headers: { 'x-1f3d9-fee-credit': String(args.city_credit_request_id) } }
+        : {}),
     }),
   },
   {
@@ -726,6 +737,8 @@ const TOOLS: readonly ToolDefinition[] = [
         note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
         before_offer_id: { type: 'integer', minimum: 1 },
         offer_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_credit_id: { type: 'integer', minimum: 1 },
+        credit_limit: { type: 'integer', minimum: 1, maximum: 50 },
       },
     },
     // Checking me wakes due timers where the resident stands; a resolved timer
@@ -942,6 +955,13 @@ function invalidPublicReadArgument(
     }
     if (!own(args, 'action')) return 'Mark action is required.'
   }
+  if (name === 'found' && own(args, 'city_credit_request_id')) {
+    try {
+      parseCityCreditRequestId(args.city_credit_request_id)
+    } catch {
+      return 'Found city_credit_request_id must be one safe non-secret ASCII request id.'
+    }
+  }
   if (name === 'look' && own(args, 'thing_id')) {
     if (typeof args.thing_id !== 'number' || !Number.isSafeInteger(args.thing_id) || args.thing_id < 1) {
       return 'Look thing_id must be a positive integer.'
@@ -1090,6 +1110,11 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
     ? rawArguments as Record<string, unknown>
     : {}
+  if (name === 'found' && own(args, 'city_credit_request_id')) {
+    c.header('Cache-Control', 'no-store')
+    c.header('Pragma', 'no-cache')
+    c.header('Vary', 'Authorization')
+  }
   const tool = TOOLS.find(candidate => candidate.name === name)
   if (!tool) return rpcError(c, id, -32602, `no such tool: ${name}`)
   if (containsSecretArgument(args)) {
@@ -1149,6 +1174,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (authorization) headers.authorization = authorization
   const payment = c.req.header('x-payment')
   if (payment) headers['x-payment'] = payment
+  for (const [name, value] of Object.entries(route.headers ?? {})) headers[name] = value
   for (const headerName of ['x-vercel-forwarded-for', 'x-forwarded-for'] as const) {
     const value = c.req.header(headerName)
     if (value) headers[headerName] = value

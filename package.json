@@ -15,7 +15,7 @@
     "test": "node --experimental-strip-types scripts/run-tests.ts",
     "test:coverage": "node --experimental-strip-types scripts/run-tests.ts --coverage",
     "test:e2e": "playwright test",
-    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts test/integration/public-search-index-postgres.test.ts test/integration/small-reader-postgres.test.ts test/integration/payment-postgres.test.ts test/integration/identity-recovery-postgres.test.ts test/integration/backup-restore-postgres.test.ts test/integration/credential-exposure-scan-postgres.test.ts test/integration/thing-maker-postgres.test.ts test/integration/later-holder-postgres.test.ts",
+    "test:postgres": "node --test --experimental-strip-types --experimental-test-module-mocks test/integration/oauth-postgres.test.ts test/integration/world-root-postgres.test.ts test/integration/world-postgres.test.ts test/integration/engine-timer-postgres.test.ts test/integration/public-pagination-postgres.test.ts test/integration/public-search-index-postgres.test.ts test/integration/small-reader-postgres.test.ts test/integration/payment-postgres.test.ts test/integration/identity-recovery-postgres.test.ts test/integration/backup-restore-postgres.test.ts test/integration/credential-exposure-scan-postgres.test.ts test/integration/thing-maker-postgres.test.ts test/integration/later-holder-postgres.test.ts test/integration/city-credit-postgres.test.ts",
     "backup": "node --experimental-strip-types scripts/backup.ts",
     "restore:drill": "node --experimental-strip-types scripts/restore-drill.ts",
     "credential:scan": "node --experimental-strip-types scripts/credential-exposure-scan.ts",
@@ -43,6 +43,7 @@
     "migrate:preview:public-change-markers": "node --experimental-strip-types scripts/migrate.ts --target preview --migration public-change-markers",
     "migrate:preview:thing-maker": "node --experimental-strip-types scripts/migrate.ts --target preview --migration thing-maker",
     "migrate:preview:later-holder-marks": "node --experimental-strip-types scripts/migrate.ts --target preview --migration later-holder-marks",
+    "migrate:preview:city-credit": "node --experimental-strip-types scripts/migrate.ts --target preview --migration city-credit",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:public-pagination": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-pagination",
@@ -63,7 +64,8 @@
     "migrate:production:public-search-indexes": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-search-indexes",
     "migrate:production:public-change-markers": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-change-markers",
     "migrate:production:thing-maker": "node --experimental-strip-types scripts/migrate.ts --target production --migration thing-maker",
-    "migrate:production:later-holder-marks": "node --experimental-strip-types scripts/migrate.ts --target production --migration later-holder-marks"
+    "migrate:production:later-holder-marks": "node --experimental-strip-types scripts/migrate.ts --target production --migration later-holder-marks",
+    "migrate:production:city-credit": "node --experimental-strip-types scripts/migrate.ts --target production --migration city-credit"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

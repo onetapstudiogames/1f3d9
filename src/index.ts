@@ -108,6 +108,13 @@ import {
   setLaterHolderMark,
   type LaterHolderQueryExecutor,
 } from './later-holder.ts'
+import {
+  CityCreditConflictError,
+  issueCityFeeCredit,
+  parseCityCreditHistoryCursor,
+  parseCityCreditHistoryLimit,
+  readCityCreditAccount,
+} from './city-credit.ts'
 
 interface DomainConfiguration {
   readonly domain: string
@@ -142,6 +149,24 @@ function privateResidentHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Vary', 'Authorization')
+}
+
+function cityCreditReadOptions(query: Record<string, string[]>):
+  | { ok: true; beforeId: string | null; limit: number }
+  | { ok: false; error: string } {
+  const before = singlePublicQueryValue(query, 'before_credit_id')
+  if (!before.ok) return before
+  const limit = singlePublicQueryValue(query, 'credit_limit')
+  if (!limit.ok) return limit
+  try {
+    return {
+      ok: true,
+      beforeId: parseCityCreditHistoryCursor(before.value),
+      limit: parseCityCreditHistoryLimit(limit.value),
+    }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'invalid city credit history page' }
+  }
 }
 
 function lastAddress(value: string | undefined) {
@@ -191,20 +216,21 @@ let hostedChatSignin: HostedChatSigninReadiness = { ready: false }
 
 app.use('*', cors({
   origin: '*',
-  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-1F3D9-FEE-CREDIT'],
 }))
 app.use('/mcp', cors({
   origin: '*',
-  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-1F3D9-FEE-CREDIT'],
   exposeHeaders: ['WWW-Authenticate'],
 }))
 app.use('/mcp/connect', cors({
   origin: '*',
-  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-1F3D9-FEE-CREDIT'],
   exposeHeaders: ['WWW-Authenticate'],
 }))
 app.use('*', async (c, next) => {
   await next()
+  if (c.req.header('x-1f3d9-fee-credit')) privateResidentHeaders(c)
   c.header('X-Content-Type-Options', 'nosniff')
   if (!c.res.headers.has('Referrer-Policy')) c.header('Referrer-Policy', 'no-referrer')
 })
@@ -422,6 +448,7 @@ app.get('/api/me', async c => {
     'before_agreement_id', 'agreement_limit',
     'before_note_id', 'note_limit',
     'before_offer_id', 'offer_limit',
+    'before_credit_id', 'credit_limit',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
@@ -436,12 +463,14 @@ app.get('/api/me', async c => {
   if (!noteRequest.ok) return err(c, 400, noteRequest.error)
   const offerRequest = parsePublicPage(query, 'before_offer_id', 'offer_limit')
   if (!offerRequest.ok) return err(c, 400, offerRequest.error)
+  const creditRequest = cityCreditReadOptions(query)
+  if (!creditRequest.ok) return err(c, 400, creditRequest.error)
   let presence = await residentPresence(resident.id)
   if (presence.currentPlaceId) {
     await resolveDueEffects(presence.currentPlaceId)
     presence = await residentPresence(resident.id)
   }
-  const [placeRows, thingRows, kindRows, agreementRows, noteRows, offerRows] = await Promise.all([
+  const [placeRows, thingRows, kindRows, agreementRows, noteRows, offerRows, cityFeeCredit] = await Promise.all([
     executePublicQuery(`
       /* public:me_places */
       SELECT id, parent_id, name, created_at
@@ -504,6 +533,10 @@ app.get('/api/me', async c => {
         AND ($2::integer IS NULL OR id < $2::integer)
       ORDER BY id DESC LIMIT $3::integer
     `, [resident.id, offerRequest.cursor, offerRequest.fetchLimit]),
+    readCityCreditAccount({ query: sql.query }, resident.id, {
+      beforeId: creditRequest.beforeId,
+      limit: creditRequest.limit,
+    }),
   ])
   const places = finalizePublicPage(
     placeRows as Array<Record<string, unknown> & { id: number }>, placeRequest.limit,
@@ -548,6 +581,10 @@ app.get('/api/me', async c => {
     agreements: agreements.items,
     notes: notes.items,
     offers: offers.items,
+    city_fee_credit: {
+      ...cityFeeCredit,
+      balance_usdc: cityFeeCredit.balance_usdc,
+    },
     pages: {
       places: { has_more: places.hasMore, next_before_place_id: places.nextCursor },
       things: { has_more: things.hasMore, next_before_thing_id: things.nextCursor },
@@ -555,6 +592,7 @@ app.get('/api/me', async c => {
       agreements: { has_more: agreements.hasMore, next_before_agreement_id: agreements.nextCursor },
       notes: { has_more: notes.hasMore, next_before_note_id: notes.nextCursor },
       offers: { has_more: offers.hasMore, next_before_offer_id: offers.nextCursor },
+      city_fee_credit: cityFeeCredit.page,
     },
   })
 })
@@ -587,6 +625,67 @@ app.post('/api/thing/:id/mark', async c => {
   }
 })
 
+app.post('/api/founder/city-credit', async c => {
+  privateResidentHeaders(c)
+  const founder = await authRootKey(c)
+  if (!founder) return err(c, 401, 'founder root key required')
+  if (founder.id !== 1) return err(c, 403, 'only founder resident #1 may issue city fee credit')
+  const body = await c.req.json().catch(() => null) as unknown
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return err(c, 400, 'body must be a JSON object')
+  }
+  const input = body as Record<string, unknown>
+  if (
+    !Object.keys(input).every(key => ['resident_handle', 'source_key', 'reason'].includes(key))
+    || Object.keys(input).length !== 3
+  ) return err(c, 400, 'city credit body contains an unsupported field')
+  const residentHandle = typeof input.resident_handle === 'string' ? input.resident_handle : ''
+  if (!HANDLE_RE.test(residentHandle)) return err(c, 400, 'resident_handle must be a resident handle')
+  const residents = await sql`
+    SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
+  ` as Array<{ id: number }>
+  const target = residents[0]
+  if (!target) return err(c, 404, 'resident not found')
+  try {
+    const issued = await issueCityFeeCredit({ query: sql.query }, {
+      founderId: founder.id,
+      residentId: target.id,
+      sourceKey: input.source_key as string,
+      reason: input.reason as string,
+    })
+    return c.json({ resident_handle: residentHandle, city_fee_credit: issued },
+      issued.disposition === 'created' ? 201 : 200)
+  } catch (error) {
+    if (error instanceof TypeError) return err(c, 400, error.message)
+    if (error instanceof CityCreditConflictError) return err(c, 409, error.message)
+    throw error
+  }
+})
+
+app.get('/api/founder/city-credit/:handle', async c => {
+  privateResidentHeaders(c)
+  const founder = await authRootKey(c)
+  if (!founder) return err(c, 401, 'founder root key required')
+  if (!(founder.id === 1)) return err(c, 403, 'only founder resident #1 may inspect city fee credit')
+  const query = c.req.queries()
+  const allowed = allowedPublicQuery(query, ['before_credit_id', 'credit_limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const creditRequest = cityCreditReadOptions(query)
+  if (!creditRequest.ok) return err(c, 400, creditRequest.error)
+  const residentHandle = c.req.param('handle')
+  if (!HANDLE_RE.test(residentHandle)) return err(c, 400, 'handle must be a resident handle')
+  const residents = await sql`
+    SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
+  ` as Array<{ id: number }>
+  const target = residents[0]
+  if (!target) return err(c, 404, 'resident not found')
+  const account = await readCityCreditAccount({ query: sql.query }, target.id, {
+    beforeId: creditRequest.beforeId,
+    limit: creditRequest.limit,
+  })
+  return c.json({ resident_handle: residentHandle, city_fee_credit: account })
+})
+
 app.get('/api/official', c => {
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
@@ -597,10 +696,18 @@ app.get('/api/official', c => {
   usdc_contract: USDC,
   token: null,
   statement:
-    'There is no 1F3D9 token, coin, or points program, and there never will be. ' +
-    'Anyone selling one is lying. The city never holds money; sales move wallet to wallet.',
+    'There is no 1F3D9 token, coin, or tradeable points program, and there never will be. ' +
+    'Founder-issued city fee credit is private, fixed, nontransferable, and cannot be sold or redeemed. ' +
+    'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet.',
   claim_fee_usdc: CLAIM_FEE_USDC,
   paid_actions: ['frontier_founding', 'kind_invention', 'kind_revision'],
+  city_fee_credit: {
+    unit_usdc: '1.000000',
+    eligible_actions: ['frontier_founding', 'kind_invention', 'kind_revision'],
+    selector_header: 'X-1F3D9-FEE-CREDIT',
+    issuance: 'founder-only for an accounting reason; no public balance or totals',
+    limits: 'one exact fee per credit; private, nontransferable, not redeemable, and never cash',
+  },
   market: process.env.MARKET_ORIGIN ?? 'https://1f3ea.com',
   city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
   identity: {

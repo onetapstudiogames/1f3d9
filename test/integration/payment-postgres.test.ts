@@ -138,6 +138,14 @@ async function resetLegacy(database: Pool): Promise<void> {
     DROP FUNCTION IF EXISTS complete_payment_attempt(TEXT, TEXT, JSONB, SMALLINT, JSONB);
     DROP FUNCTION IF EXISTS validate_payment_response_body();
     DROP FUNCTION IF EXISTS protect_pending_payment_attempt_link();
+    DROP FUNCTION IF EXISTS complete_city_credit_attempt(TEXT, TEXT, JSONB, SMALLINT, JSONB, BYTEA);
+    DROP FUNCTION IF EXISTS return_city_credit_spend(TEXT, TEXT, TEXT, SMALLINT, JSONB, BYTEA);
+    DROP TABLE IF EXISTS city_credit_entries;
+    DROP TABLE IF EXISTS city_credit_accounts;
+    DROP FUNCTION IF EXISTS validate_city_credit_entry();
+    DROP FUNCTION IF EXISTS apply_city_credit_entry();
+    DROP FUNCTION IF EXISTS protect_city_credit_account();
+    DROP FUNCTION IF EXISTS protect_payment_attempt_history();
     ALTER TABLE payment_uses DROP CONSTRAINT IF EXISTS payment_uses_exact_attempt;
     ALTER TABLE transfer_offers DROP CONSTRAINT IF EXISTS transfer_offers_pending_attempt_owner;
     ALTER TABLE transfer_offers DROP CONSTRAINT IF EXISTS transfer_offers_pending_attempt_state;
