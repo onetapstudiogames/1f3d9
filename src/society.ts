@@ -25,20 +25,21 @@ import { moderatePublicRows } from './moderation-store.ts'
 import { runTalkNoteAction } from './note-action.ts'
 import { WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import {
+  allowedPublicQuery,
+  extractPublicCollectionRows,
   finalizePublicPage,
   parsePublicPage,
   singlePublicQueryValue,
-  type PublicQueryExecutor,
+  utf8TextBytes,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import { safeReadingCostMeter } from './reading-cost.ts'
+import { executeBudgetedExactQuery } from './public-exact-query.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const NOTE_CHARACTERS = 4_000
 const AGREEMENT_BYTES = 65_536
 const MAX_PARTIES = 32
-
-const executePublicQuery: PublicQueryExecutor = async (text, params) =>
-  await sql.query(text, [...params]) as Record<string, unknown>[]
 
 const ASSETS = {
   place: { table: 'places', transferable: '' },
@@ -170,6 +171,8 @@ function agreementState(row: Record<string, unknown>) {
 
 export function mountSocietyRoutes(app: Hono): void {
   app.get('/api/note/:id', async c => {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'note id must be a positive integer')
     const rows = await sql`
@@ -233,6 +236,7 @@ export function mountSocietyRoutes(app: Hono): void {
         body: note.body ?? text,
         ...(note.created_at ? { created_at: note.created_at } : {}),
       },
+      reading_cost: await safeReadingCostMeter(placeId, note.body ?? text),
     }, 201)
   })
 
@@ -468,6 +472,8 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.get('/api/agreements', async c => {
     const queries = c.req.queries()
+    const allowed = allowedPublicQuery(queries, ['party', 'open', 'before_id', 'limit'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
     const partyValue = singlePublicQueryValue(queries, 'party')
@@ -480,9 +486,28 @@ export function mountSocietyRoutes(app: Hono): void {
     if (openValue != null && openValue !== 'true' && openValue !== 'false')
       return err(c, 400, 'open must be true or false')
     const open = openValue == null ? null : openValue === 'true'
-    const rows = await executePublicQuery(`
+    const rows = await executeBudgetedExactQuery(`
       /* public:agreements */
-      WITH public_agreements AS (
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(agreement.body)), 0)::bigint AS total_text_bytes
+        FROM agreements agreement
+        WHERE ($1::text IS NULL OR EXISTS (
+          SELECT 1
+          FROM agreement_parties party
+          JOIN residents resident ON resident.id = party.resident_id
+          WHERE party.agreement_id = agreement.id AND resident.handle = $1::text
+        ))
+          AND ($2::boolean IS NULL OR EXISTS (
+            SELECT 1 FROM agreement_parties party
+            WHERE party.agreement_id = agreement.id
+              AND NOT EXISTS (
+                SELECT 1 FROM agreement_signatures signature
+                WHERE signature.agreement_id = agreement.id
+                  AND signature.resident_id = party.resident_id
+              )
+          ) = $2::boolean)
+      ), public_agreements AS (
         SELECT a.id, a.body, creator.handle AS created_by,
           EXISTS(SELECT 1 FROM agreement_accession_openings opening
             WHERE opening.agreement_id = a.id) AS accession_open,
@@ -500,20 +525,32 @@ export function mountSocietyRoutes(app: Hono): void {
           a.created_at
         FROM agreements a JOIN residents creator ON creator.id = a.created_by_id
       )
-      SELECT id, body, created_by, parties, acceded, signatures, accession_open,
-        NOT complete AS open, created_at
-      FROM public_agreements
-      WHERE ($1::text IS NULL OR $1::text = ANY(parties))
-        AND ($2::boolean IS NULL OR (NOT complete) = $2::boolean)
-        AND ($3::integer IS NULL OR id < $3::integer)
-      ORDER BY id DESC LIMIT $4::integer
+      SELECT page.id, page.body, page.created_by, page.parties, page.acceded,
+        page.signatures, page.accession_open, page.open, page.created_at,
+        totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT id, body, created_by, parties, acceded, signatures, accession_open,
+          NOT complete AS open, created_at
+        FROM public_agreements
+        WHERE ($1::text IS NULL OR $1::text = ANY(parties))
+          AND ($2::boolean IS NULL OR (NOT complete) = $2::boolean)
+          AND ($3::integer IS NULL OR id < $3::integer)
+        ORDER BY id DESC LIMIT $4::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
     `, [party ?? null, open, parsed.cursor, parsed.fetchLimit])
+    const collection = extractPublicCollectionRows(rows)
     const page = finalizePublicPage(
-      rows as Array<Record<string, unknown> & { id: number }>, parsed.limit,
+      collection.rows as Array<Record<string, unknown> & { id: number }>, parsed.limit,
     )
     const agreements = page.items.map(agreementState)
     return publicJson(c, {
       agreements: await moderatePublicRows('agreement', agreements),
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: agreements.length,
+      returned_text_bytes: utf8TextBytes(agreements, 'body'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })

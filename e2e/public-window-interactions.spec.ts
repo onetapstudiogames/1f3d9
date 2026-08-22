@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
@@ -8,12 +8,14 @@ const LONG_THING = `Opening inscription. ${'The lantern carries a line that shou
 const LONG_AGREEMENT = `Opening agreement. ${'Every signer can inspect this shared promise in the window. '.repeat(22)}Closing agreement marker.`
 
 const SNAPSHOT = Object.freeze({
+  view: 'outline',
+  change_marker: '20',
   places: [{
     id: 11,
     parent_id: null,
     name: 'root_plaza',
     owner: 'mapkeeper',
-    places: 2,
+    places: 1,
     things: 2,
     notes: 2,
     children: [{
@@ -21,25 +23,17 @@ const SNAPSHOT = Object.freeze({
       parent_id: 11,
       name: 'inner_hall',
       owner: 'mapkeeper',
-      places: 1,
+      places: 3,
       things: 0,
       notes: 1,
-      children: [{
-        id: 13,
-        parent_id: 12,
-        name: 'leaf_room',
-        owner: 'mapkeeper',
-        places: 0,
-        things: 0,
-        notes: 0,
-        children: [],
-      }],
+      children: [],
     }],
   }],
   residents: [{
     id: 7,
     handle: 'leafwalker',
-    current_place_id: 13,
+    current_place_id: 12,
+    asleep: false,
     joined_at: '2026-08-14T12:00:00.000Z',
   }],
   notes: [{
@@ -79,14 +73,32 @@ const SNAPSHOT = Object.freeze({
     detail: { place_id: 11, note_id: 21 },
   }],
   totals: {
-    places: 3,
-    residents: 1,
+    places: 5,
+    residents: 3,
     conversations: 3,
     things: 2,
     agreements: 2,
     events: 2,
   },
+  shown: {
+    places: 2,
+    residents: 1,
+    conversations: 1,
+    things: 1,
+    agreements: 1,
+    events: 1,
+  },
+  limits: {
+    places: 10,
+    residents: 25,
+    conversations: 10,
+    things: 10,
+    agreements: 10,
+    events: 10,
+  },
   pages: {
+    places: { has_more: false, next_before_subplace_id: null },
+    residents: { has_more: true, next_before_id: 7 },
     notes: { has_more: true, next_before_id: 21 },
     things: { has_more: true, next_before_id: 31 },
     agreements: { has_more: true, next_before_id: 41 },
@@ -94,6 +106,114 @@ const SNAPSHOT = Object.freeze({
   },
   refreshed_at: '2026-08-14T12:04:00.000Z',
 })
+
+const FIRST_BRANCH_PAGE = Object.freeze({
+  view: 'outline',
+  change_marker: '20',
+  place: {
+    id: 12,
+    parent_id: 11,
+    name: 'inner_hall',
+    owner: 'mapkeeper',
+    places: 3,
+    things: 0,
+    notes: 1,
+    children: [],
+  },
+  subplaces: [{
+    id: 15,
+    parent_id: 12,
+    name: 'newest_gallery',
+    owner: 'mapkeeper',
+    places: 0,
+    things: 0,
+    notes: 0,
+    children: [],
+  }, {
+    id: 14,
+    parent_id: 12,
+    name: 'shared_step',
+    owner: 'mapkeeper',
+    places: 0,
+    things: 0,
+    notes: 0,
+    children: [],
+  }],
+  subplaces_page: {
+    total_items: 3,
+    total_text_bytes: 0,
+    returned_items: 2,
+    returned_text_bytes: 0,
+    has_more: true,
+    next_before_subplace_id: 14,
+  },
+  map_complete: false,
+})
+
+// The repeated id intentionally exercises the client's overlap-safe merge.
+// A refresh or a moving cursor must never duplicate a place already on screen.
+const SECOND_BRANCH_PAGE = Object.freeze({
+  view: 'outline',
+  change_marker: '20',
+  place: FIRST_BRANCH_PAGE.place,
+  subplaces: [FIRST_BRANCH_PAGE.subplaces[1], {
+    id: 13,
+    parent_id: 12,
+    name: 'older_cell',
+    owner: 'mapkeeper',
+    places: 0,
+    things: 0,
+    notes: 0,
+    children: [],
+  }],
+  subplaces_page: {
+    total_items: 3,
+    total_text_bytes: 0,
+    returned_items: 2,
+    returned_text_bytes: 0,
+    has_more: false,
+    next_before_subplace_id: null,
+  },
+  map_complete: false,
+})
+
+const RESIDENT_PAGE = Object.freeze({
+  residents: [SNAPSHOT.residents[0], {
+    id: 6,
+    handle: 'nightwatcher',
+    current_place_id: 12,
+    asleep: true,
+    joined_at: '2026-08-13T12:00:00.000Z',
+  }, {
+    id: 5,
+    handle: 'wayfarer',
+    current_place_id: null,
+    asleep: false,
+    joined_at: '2026-08-12T12:00:00.000Z',
+  }],
+  total: 3,
+  has_more: false,
+  next_before_id: null,
+})
+
+const EMPTY_RESIDENT_SNAPSHOT = Object.freeze({
+  ...SNAPSHOT,
+  places: [{
+    ...SNAPSHOT.places[0],
+    places: 0,
+    children: [],
+  }],
+  residents: [],
+  totals: { ...SNAPSHOT.totals, places: 1, residents: 0 },
+  shown: { ...SNAPSHOT.shown, places: 1, residents: 0 },
+  pages: {
+    ...SNAPSHOT.pages,
+    places: { has_more: false, next_before_subplace_id: null },
+    residents: { has_more: false, next_before_id: null },
+  },
+})
+
+const API_REQUESTS = new WeakMap<Page, string[]>()
 
 const OLDER_NOTE = Object.freeze({
   id: 20,
@@ -141,6 +261,11 @@ const OLDER_EVENT = Object.freeze({
 })
 
 test.beforeEach(async ({ page }) => {
+  API_REQUESTS.set(page, [])
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.pathname.startsWith('/api/')) API_REQUESTS.get(page)?.push(url.toString())
+  })
   await page.goto('/__e2e/health')
   await page.route('**/api/window**', route => {
     const url = new URL(route.request().url())
@@ -148,22 +273,53 @@ test.beforeEach(async ({ page }) => {
     if (!collection) return route.fulfill({ json: SNAPSHOT })
     if (collection === 'notes') {
       const note = url.searchParams.has('place_id') ? OLDER_NOTE : OLDER_GLOBAL_NOTE
-      return route.fulfill({ json: { notes: [note], has_more: false, next_before_id: null } })
+      return route.fulfill({
+        json: {
+          notes: [note], has_more: false, next_before_id: null, change_marker: '20',
+        },
+      })
     }
     if (collection === 'things') {
-      return route.fulfill({ json: { things: [OLDER_THING], has_more: false, next_before_id: null } })
+      return route.fulfill({
+        json: {
+          things: [OLDER_THING], has_more: false, next_before_id: null, change_marker: '20',
+        },
+      })
     }
     return route.fulfill({
-      json: { agreements: [OLDER_AGREEMENT], has_more: false, next_before_id: null },
+      json: {
+        agreements: [OLDER_AGREEMENT], has_more: false, next_before_id: null,
+        change_marker: '20',
+      },
     })
+  })
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '12') {
+      return route.fulfill({ status: 404, json: { error: 'unknown test branch' } })
+    }
+    return route.fulfill({
+      json: url.searchParams.get('before_subplace_id') === '14'
+        ? SECOND_BRANCH_PAGE
+        : FIRST_BRANCH_PAGE,
+    })
+  })
+  await page.route('**/api/residents**', route => {
+    return route.fulfill({ json: RESIDENT_PAGE })
   })
   await page.route('**/api/events**', route => {
     const url = new URL(route.request().url())
     if (url.searchParams.get('before_id') === '51') {
-      return route.fulfill({ json: { events: [OLDER_EVENT], has_more: false, next_before_id: null } })
+      return route.fulfill({
+        json: {
+          events: [OLDER_EVENT], has_more: false, next_before_id: null, change_marker: '20',
+        },
+      })
     }
     return route.fulfill({
-      json: { events: SNAPSHOT.events, has_more: true, next_before_id: 51 },
+      json: {
+        events: SNAPSHOT.events, has_more: true, next_before_id: 51, change_marker: '20',
+      },
     })
   })
 
@@ -248,32 +404,482 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'false')
 })
 
-test('map collapse hides only branch children and leaves the roster unchanged', async ({ page }) => {
+test('outline snapshot loads, pages, deduplicates, and preserves one map branch', async ({ page }) => {
+  const initialRequest = API_REQUESTS.get(page)?.map(value => new URL(value)).find(url => {
+    return url.pathname === '/api/window' && !url.searchParams.has('collection')
+  })
+  expect(initialRequest?.searchParams.get('view')).toBe('outline')
+  expect([...initialRequest?.searchParams.keys() ?? []]).toEqual(['view'])
+
+  const scope = page.locator('#view-scope')
+  await expect(scope).toContainText(/loaded 2 of 5 places/i)
+  await expect(scope).toContainText(/loaded 1 of 3 residents/i)
+  await expect(scope).not.toContainText(/complete map|complete resident|everyone is shown/i)
+
   const rootCard = page.locator('.place-card').filter({
     has: page.getByRole('button', { name: 'root_plaza', exact: true }),
   })
-  const rootToggle = rootCard.getByRole('button', { name: 'Collapse places inside root_plaza' })
-  const rootChildren = page.locator('#place-children-11')
+  await expect(rootCard.getByRole('button', { name: 'Collapse places inside root_plaza' }))
+    .toHaveAttribute('aria-controls', 'place-children-11')
 
-  await expect(rootToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(rootToggle).toHaveAttribute('aria-controls', 'place-children-11')
-  await expect(page.locator('#resident-roster')).toContainText('leafwalker')
-  await rootToggle.click()
-
-  await expect(rootCard).toBeVisible()
-  await expect(rootChildren).toBeHidden()
-  await expect(page.locator('#resident-roster')).toContainText('leafwalker')
-  await expect(rootCard.getByRole('button', { name: 'Show places inside root_plaza' })).toHaveAttribute(
-    'aria-expanded',
-    'false',
-  )
-
-  const leafCard = page.locator('.place-card').filter({
-    has: page.getByRole('button', { name: 'leaf_room', exact: true }),
+  const branchCard = page.locator('.place-card').filter({
+    has: page.getByRole('button', { name: 'inner_hall', exact: true }),
   })
-  await rootCard.getByRole('button', { name: 'Show places inside root_plaza' }).click()
-  await expect(leafCard).toBeVisible()
-  await expect(leafCard.locator('.place-disclosure')).toHaveCount(0)
+  const branchToggle = branchCard.getByRole('button', { name: 'Show places inside inner_hall' })
+  await expect(branchToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(branchToggle).toHaveAttribute('aria-busy', 'false')
+  await expect(branchToggle).toHaveAttribute('aria-controls', 'place-children-12')
+
+  const firstRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '12' &&
+      !url.searchParams.has('before_subplace_id')
+  })
+  await branchToggle.click()
+  const firstUrl = new URL((await firstRequest).url())
+  expect(Object.fromEntries(firstUrl.searchParams)).toEqual({
+    view: 'outline',
+    parent_id: '12',
+    subplace_limit: '25',
+    after_change_marker: '20',
+  })
+  await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'shared_step', exact: true })).toBeVisible()
+
+  const loadMore = page.getByRole('button', { name: 'Load more places inside inner_hall' })
+  await expect(loadMore).toHaveAttribute('aria-busy', 'false')
+  await expect(loadMore).toHaveAttribute('aria-controls', 'place-children-12')
+  const secondRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('before_subplace_id') === '14'
+  })
+  await loadMore.focus()
+  await loadMore.click()
+  const secondUrl = new URL((await secondRequest).url())
+  expect(Object.fromEntries(secondUrl.searchParams)).toEqual({
+    view: 'outline',
+    parent_id: '12',
+    before_subplace_id: '14',
+    subplace_limit: '25',
+    after_change_marker: '20',
+  })
+
+  const loadedBranch = page.locator('#place-children-12')
+  await expect(loadedBranch.getByRole('button', { name: 'shared_step', exact: true })).toHaveCount(1)
+  await expect(loadedBranch.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
+  expect(await loadedBranch.locator('.place-name').allTextContents()).toEqual([
+    'newest_gallery',
+    'shared_step',
+    'older_cell',
+  ])
+  await expect(branchCard.getByRole('button', {
+    name: 'Collapse places inside inner_hall',
+  })).toBeFocused()
+
+  const expandedToggle = branchCard.getByRole('button', {
+    name: 'Collapse places inside inner_hall',
+  })
+  await expandedToggle.focus()
+  const refreshRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+      !url.searchParams.has('collection')
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await refreshRequest
+
+  const restoredToggle = page.getByRole('button', { name: 'Collapse places inside inner_hall' })
+  await expect(restoredToggle).toBeFocused()
+  await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'shared_step', exact: true })).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'older_cell', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page).toHaveURL(/#view=place&place=13$/)
+  await page.goBack()
+  await expect(page.getByRole('tab', { name: 'Map' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
+})
+
+test('resident presence pages load once, deduplicate, and keep honest roster scope', async ({ page }) => {
+  const loadResidents = page.getByRole('button', { name: 'Load more residents' })
+  await expect(loadResidents).toHaveAttribute('aria-busy', 'false')
+  await expect(loadResidents).toHaveAttribute('aria-controls', 'resident-roster')
+
+  const residentRequest = page.waitForRequest(request => {
+    return new URL(request.url()).pathname === '/api/residents'
+  })
+  await loadResidents.focus()
+  await loadResidents.click()
+  const residentUrl = new URL((await residentRequest).url())
+  expect(Object.fromEntries(residentUrl.searchParams)).toEqual({
+    view: 'presence',
+    limit: '25',
+    before_id: '7',
+  })
+
+  const roster = page.locator('#resident-roster')
+  await expect(roster.getByRole('button', { name: 'leafwalker', exact: true })).toHaveCount(1)
+  await expect(roster.getByRole('button', { name: 'nightwatcher', exact: true })).toBeVisible()
+  await expect(roster.locator('.resident-row.asleep')).toContainText('nightwatcher')
+  await expect(roster.getByRole('button', { name: 'wayfarer', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Load more residents' })).toHaveCount(0)
+  await expect(page.locator('#view-scope')).not.toContainText(/loaded 1 of 3 residents/i)
+
+  const residentOptions = await page.locator('#resident-filter option').allTextContents()
+  expect(residentOptions).toEqual([
+    'All loaded residents',
+    'leafwalker · #7',
+    'nightwatcher · #6',
+    'wayfarer · #5',
+  ])
+  await expect(roster.getByRole('button', { name: 'leafwalker', exact: true })).toBeFocused()
+})
+
+test('a failed branch page exposes an accessible retry that succeeds in place', async ({ page }) => {
+  await page.unroute('**/api/map**')
+  let attempts = 0
+  await page.route('**/api/map**', route => {
+    attempts += 1
+    return attempts === 1
+      ? route.fulfill({ status: 503, json: { error: 'temporary test outage' } })
+      : route.fulfill({ json: FIRST_BRANCH_PAGE })
+  })
+
+  const initialBranchLoad = page.getByRole('button', { name: 'Show places inside inner_hall' })
+  await expect(initialBranchLoad).toBeVisible()
+  await initialBranchLoad.click()
+  const branchAlert = page.locator('#place-children-12').getByRole('alert')
+  await expect(branchAlert).toContainText(/could not load places inside inner_hall/i)
+
+  const retry = page.getByRole('button', { name: 'Retry loading places inside inner_hall' })
+  await expect(retry).toHaveAttribute('aria-busy', 'false')
+  await expect(retry).toHaveAttribute('aria-controls', 'place-children-12')
+  const retryResponse = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/map' && response.status() === 200
+  })
+  await retry.click()
+  await retryResponse
+  await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toBeVisible()
+  await expect(branchAlert).toHaveCount(0)
+})
+
+test('an empty presence page says what is empty and offers no dead load control', async ({ page }) => {
+  await page.unroute('**/api/window**')
+  await page.route('**/api/window**', route => route.fulfill({ json: EMPTY_RESIDENT_SNAPSHOT }))
+
+  await page.goto('/window')
+  await expect(page.locator('#window-status[role="status"]')).toContainText('Watching')
+  const emptyRoster = page.locator('#resident-roster').getByRole('status')
+  await expect(emptyRoster).toContainText(/no residents (?:are )?(?:loaded|shown|in the city)/i)
+  await expect(page.getByRole('button', { name: 'Load more residents' })).toHaveCount(0)
+
+  const rootCard = page.locator('.place-card').filter({
+    has: page.getByRole('button', { name: 'root_plaza', exact: true }),
+  })
+  await expect(rootCard.locator('.place-disclosure')).toHaveCount(0)
+})
+
+test('residents at an unloaded address stay visible under an honest label', async ({ page }) => {
+  await page.unroute('**/api/window**')
+  await page.route('**/api/window**', route => route.fulfill({
+    json: {
+      ...SNAPSHOT,
+      residents: [{ ...SNAPSHOT.residents[0], current_place_id: 999 }],
+    },
+  }))
+
+  await page.goto('/window#view=map&place=999')
+  const roster = page.locator('#resident-roster')
+  await expect(roster.getByRole('button', { name: 'leafwalker', exact: true })).toBeVisible()
+  await expect(roster).toContainText('Place #999 · not currently loaded')
+  await expect(page.locator('#window-status')).toHaveAttribute('role', 'status')
+})
+
+test('unloaded place and resident deep links describe the bounded gap without false absence', async ({ page }) => {
+  await page.goto('/window#view=place&place=999')
+  await expect(page.locator('#place-focus-title')).toContainText('Place #999 is not currently loaded')
+  await expect(page.locator('#place-focus-summary')).toContainText(/metadata and content are not currently loaded/i)
+  await expect(page.locator('#place-panel')).not.toContainText(/no place to watch|frontier has no matching/i)
+
+  const requestsBeforePlaceConversation = API_REQUESTS.get(page)?.length ?? 0
+  await page.goto('/window#view=conversations&place=999')
+  await expect(page.locator('#conversation-stream')).toContainText(
+    /place #999.*metadata and conversation.*not currently loaded/i,
+  )
+  const placeConversationRequests = (API_REQUESTS.get(page) ?? [])
+    .slice(requestsBeforePlaceConversation)
+    .map(value => new URL(value))
+    .filter(url => url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('place_id') === '999')
+  expect(placeConversationRequests).toHaveLength(0)
+
+  await page.goto('/window#view=conversations&resident=missing-reader')
+  await expect(page.locator('#conversation-stream')).toContainText(
+    /resident missing-reader.*metadata and conversation.*not currently loaded/i,
+  )
+})
+
+test('unchanged branch and resident cursors become retryable errors instead of loops', async ({ page }) => {
+  await page.unroute('**/api/map**')
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    return route.fulfill({
+      json: url.searchParams.has('before_subplace_id')
+        ? {
+            ...SECOND_BRANCH_PAGE,
+            subplaces_page: {
+              ...SECOND_BRANCH_PAGE.subplaces_page,
+              has_more: true,
+              next_before_subplace_id: 14,
+            },
+          }
+        : FIRST_BRANCH_PAGE,
+    })
+  })
+  await page.unroute('**/api/residents**')
+  await page.route('**/api/residents**', route => route.fulfill({
+    json: {
+      ...RESIDENT_PAGE,
+      has_more: true,
+      next_before_id: 7,
+    },
+  }))
+
+  await page.getByRole('button', { name: 'Show places inside inner_hall' }).click()
+  await page.getByRole('button', { name: 'Load more places inside inner_hall' }).click()
+  await expect(page.getByRole('button', {
+    name: 'Retry loading places inside inner_hall',
+  })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Load more residents' }).click()
+  await expect(page.getByRole('button', { name: 'Retry loading residents' })).toBeVisible()
+})
+
+test('refresh forward-reconciles multi-page bursts without gaps and refreshes branch facts', async ({ page }) => {
+  await page.getByRole('button', { name: 'Show places inside inner_hall' }).click()
+  await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Load more places inside inner_hall' }).click()
+  await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Load more residents' }).click()
+  await expect(page.getByRole('button', { name: 'nightwatcher', exact: true })).toBeVisible()
+
+  let refreshed = false
+  const refreshedSnapshot = {
+    ...SNAPSHOT,
+    residents: [{
+      id: 2,
+      handle: 'newcomer-two',
+      current_place_id: 12,
+      asleep: false,
+      joined_at: '2026-08-16T12:00:00.000Z',
+    }, {
+      id: 100,
+      handle: 'newcomer-hundred',
+      current_place_id: 12,
+      asleep: false,
+      joined_at: '2026-08-15T12:00:00.000Z',
+    }],
+    totals: { ...SNAPSHOT.totals, residents: 6 },
+    shown: { ...SNAPSHOT.shown, residents: 2 },
+    pages: {
+      ...SNAPSHOT.pages,
+      residents: { has_more: true, next_before_id: 100 },
+    },
+  }
+  await page.unroute('**/api/window**')
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (!url.searchParams.has('collection')) {
+      return route.fulfill({ json: refreshed ? refreshedSnapshot : SNAPSHOT })
+    }
+    return route.fulfill({
+      json: { notes: [], has_more: false, next_before_id: null, change_marker: '20' },
+    })
+  })
+  await page.unroute('**/api/map**')
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    const before = url.searchParams.get('before_subplace_id')
+    if (!refreshed) {
+      return route.fulfill({ json: before === '14' ? SECOND_BRANCH_PAGE : FIRST_BRANCH_PAGE })
+    }
+    const parent = {
+      ...FIRST_BRANCH_PAGE.place,
+      places: 6,
+      things: 4,
+      notes: 2,
+    }
+    if (!before) {
+      return route.fulfill({ json: {
+        ...FIRST_BRANCH_PAGE,
+        place: parent,
+        subplaces: [{
+          ...FIRST_BRANCH_PAGE.subplaces[0], id: 18, name: 'burst_eighteen',
+        }, {
+          ...FIRST_BRANCH_PAGE.subplaces[0], id: 17, name: 'burst_seventeen',
+        }],
+        subplaces_page: { ...FIRST_BRANCH_PAGE.subplaces_page, next_before_subplace_id: 17 },
+      } })
+    }
+    return route.fulfill({ json: {
+      ...FIRST_BRANCH_PAGE,
+      place: parent,
+      subplaces: [{
+        ...FIRST_BRANCH_PAGE.subplaces[0], id: 16, name: 'burst_sixteen',
+      }, FIRST_BRANCH_PAGE.subplaces[0]],
+      subplaces_page: { ...FIRST_BRANCH_PAGE.subplaces_page, next_before_subplace_id: 15 },
+    } })
+  })
+  await page.unroute('**/api/residents**')
+  await page.route('**/api/residents**', route => {
+    const before = new URL(route.request().url()).searchParams.get('before_id')
+    if (!refreshed) return route.fulfill({ json: RESIDENT_PAGE })
+    expect(before).toBe('100')
+    return route.fulfill({ json: {
+      residents: [{
+        id: 1,
+        handle: 'newcomer-one',
+        current_place_id: 12,
+        asleep: false,
+        joined_at: '2026-08-14T12:30:00.000Z',
+      }, SNAPSHOT.residents[0]],
+      total: 6,
+      has_more: true,
+      next_before_id: 7,
+    } })
+  })
+
+  refreshed = true
+  const branchContinuation = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('before_subplace_id') === '17'
+  })
+  const residentContinuation = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('before_id') === '100'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([branchContinuation, residentContinuation])
+
+  const branch = page.locator('#place-children-12')
+  await expect(branch.getByRole('button', { name: 'burst_eighteen', exact: true })).toBeVisible()
+  expect(await branch.locator('.place-name').allTextContents()).toEqual([
+    'burst_eighteen',
+    'burst_seventeen',
+    'burst_sixteen',
+    'newest_gallery',
+    'shared_step',
+    'older_cell',
+  ])
+  const branchCard = page.locator('.place-card').filter({
+    has: page.getByRole('button', { name: 'inner_hall', exact: true }),
+  })
+  await expect(branchCard.locator('.place-facts')).toContainText('6 inside · 4 things · 2 notes')
+
+  expect(await page.locator('#resident-filter option').allTextContents()).toEqual([
+    'All loaded residents',
+    'newcomer-two · #2',
+    'newcomer-hundred · #100',
+    'newcomer-one · #1',
+    'leafwalker · #7',
+    'nightwatcher · #6',
+    'wayfarer · #5',
+  ])
+})
+
+test('a reconciliation budget exposes a contiguous continuation and stays stable next refresh', async ({ page }) => {
+  await page.getByRole('button', { name: 'Show places inside inner_hall' }).click()
+  await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toBeVisible()
+  await page.unroute('**/api/map**')
+  let mapReads = 0
+  await page.route('**/api/map**', route => {
+    mapReads += 1
+    const before = Number(new URL(route.request().url()).searchParams.get('before_subplace_id')) || null
+    const newest = before ? before - 1 : 100
+    const rows = [newest, newest - 1].map(id => ({
+      ...FIRST_BRANCH_PAGE.subplaces[0],
+      id,
+      name: 'burst_' + String(id),
+    }))
+    return route.fulfill({ json: {
+      ...FIRST_BRANCH_PAGE,
+      place: { ...FIRST_BRANCH_PAGE.place, places: 100 },
+      subplaces: rows,
+      subplaces_page: {
+        ...FIRST_BRANCH_PAGE.subplaces_page,
+        total_items: 100,
+        has_more: true,
+        next_before_subplace_id: newest - 1,
+      },
+    } })
+  })
+
+  const refreshRequest = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await refreshRequest
+  await expect(page.getByRole('button', { name: 'burst_100', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Load more places inside inner_hall' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toHaveCount(0)
+  expect(mapReads).toBe(8)
+
+  const secondRefresh = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await secondRefresh
+  await page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  }))
+  expect(mapReads).toBe(8)
+  await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Load more places inside inner_hall' })).toBeVisible()
+})
+
+test('a slower refresh cannot overwrite a manual resident page that finishes first', async ({ page }) => {
+  await page.getByRole('button', { name: 'Show places inside inner_hall' }).click()
+
+  await page.unroute('**/api/residents**')
+  let releaseResidents: (() => void) | null = null
+  await page.route('**/api/residents**', async route => {
+    await new Promise<void>(resolve => {
+      releaseResidents = () => {
+        void route.fulfill({ json: RESIDENT_PAGE }).then(() => resolve())
+      }
+    })
+  })
+  await page.unroute('**/api/map**')
+  let releaseBranch: (() => void) | null = null
+  await page.route('**/api/map**', async route => {
+    await new Promise<void>(resolve => {
+      releaseBranch = () => {
+        void route.fulfill({ json: FIRST_BRANCH_PAGE }).then(() => resolve())
+      }
+    })
+  })
+
+  const residentRequest = page.waitForRequest(request =>
+    new URL(request.url()).pathname === '/api/residents')
+  await page.getByRole('button', { name: 'Load more residents' }).click()
+  await residentRequest
+
+  const branchRefresh = page.waitForRequest(request =>
+    new URL(request.url()).pathname === '/api/map')
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await branchRefresh
+
+  expect(releaseResidents).not.toBeNull()
+  releaseResidents?.()
+  await expect(page.getByRole('button', { name: 'nightwatcher', exact: true })).toBeVisible()
+  expect(releaseBranch).not.toBeNull()
+  releaseBranch?.()
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect(page.getByRole('button', { name: 'nightwatcher', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'wayfarer', exact: true })).toBeVisible()
 })
 
 test('recent window slices can be extended independently in every public view', async ({ page }) => {
@@ -334,4 +940,293 @@ test('recent window slices can be extended independently in every public view', 
   await page.getByRole('button', { name: 'Load older agreements' }).click()
   await olderAgreementRequest
   await expect(page.locator('#agreement-list')).toContainText('An older promise remains public.')
+})
+
+test('Archive finds an old body-free result and follows its opaque continuation', async ({ page }) => {
+  const requests: URL[] = []
+  await page.route('**/api/search**', route => {
+    const url = new URL(route.request().url())
+    requests.push(url)
+    const older = url.searchParams.get('before') === 'older-search-page'
+    return route.fulfill({
+      json: {
+        query: 'hush lantern',
+        mode: 'phrase',
+        type: 'thing',
+        results: [older ? {
+          type: 'thing', id: 30, place_id: 11, name: 'old_hush_lantern',
+          owner_id: 7, owner: 'leafwalker', open_to_use: false,
+          body_text_bytes: 47, created_at: '2026-08-13T10:00:00.000000Z',
+          href: '/api/thing/30',
+        } : {
+          type: 'thing', id: 31, place_id: 11, name: 'new_hush_lantern',
+          owner_id: 7, owner: 'leafwalker', open_to_use: true,
+          body_text_bytes: 52, created_at: '2026-08-14T10:00:00.000000Z',
+          href: '/api/thing/31',
+        }],
+        total_items: 2,
+        total_text_bytes: 99,
+        returned_items: 1,
+        returned_text_bytes: 0,
+        has_more: !older,
+        next_before: older ? null : 'older-search-page',
+        change_marker: '7',
+      },
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('hush lantern')
+  await page.locator('#archive-mode').selectOption('phrase')
+  await page.locator('#archive-type').selectOption('thing')
+  await page.locator('#archive-search').click()
+
+  await expect(page.locator('#archive-results')).toContainText('new_hush_lantern')
+  await expect(page.locator('#archive-results')).not.toContainText('secret body text')
+  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open original' }))
+    .toHaveAttribute('href', '/api/thing/31')
+  expect(requests[0]?.searchParams.get('q')).toBe('hush lantern')
+  expect(requests[0]?.searchParams.get('mode')).toBe('phrase')
+  expect(requests[0]?.searchParams.get('type')).toBe('thing')
+  expect(requests[0]?.searchParams.get('limit')).toBe('25')
+
+  await page.getByRole('button', { name: 'Load older matches' }).click()
+  await expect(page.locator('#archive-results')).toContainText('old_hush_lantern')
+  expect(requests[1]?.searchParams.get('before')).toBe('older-search-page')
+  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open original' }))
+    .toHaveCount(2)
+})
+
+test('a confirmed unchanged return refreshes presence without reloading authored text', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '20', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '20',
+        }
+        : { change_marker: '20' },
+    })
+  })
+
+  const windowReadsBeforeUnchanged = (API_REQUESTS.get(page) ?? [])
+    .filter(value => new URL(value).pathname === '/api/window').length
+  const unchangedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const presenceRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('view') === 'presence'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([unchangedRequest, presenceRequest])
+  await expect(page.locator('#window-status')).toContainText('no persisted changes')
+
+  const windowReadsAfterUnchanged = (API_REQUESTS.get(page) ?? [])
+    .filter(value => new URL(value).pathname === '/api/window').length
+  expect(windowReadsAfterUnchanged).toBe(windowReadsBeforeUnchanged)
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+})
+
+test('an unavailable unchanged-presence read falls back to a bounded authored snapshot', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '20', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '20',
+        }
+        : { change_marker: '20' },
+    })
+  })
+
+  await page.route('**/api/residents**', route => route.fulfill({
+    status: 503,
+    json: { error: 'test presence failure' },
+  }))
+  const unchangedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const failedPresence = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('view') === 'presence'
+  })
+  const fallbackSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+      url.searchParams.get('after_change_marker') === '20'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([unchangedRequest, failedPresence, fallbackSnapshot])
+
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).not.toContainText('older view')
+  await expect(page.locator('#place-conversation')).toContainText('Opening note.')
+})
+
+test('a failed changed snapshot keeps the old marker and retries the same change', async ({ page }) => {
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+          unchanged: false, has_more: false, next_since: '21',
+        }
+        : { change_marker: '21' },
+    })
+  })
+  let snapshotAttempts = 0
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    snapshotAttempts += 1
+    if (snapshotAttempts === 1) {
+      return route.fulfill({ status: 503, json: { error: 'test snapshot failure' } })
+    }
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+
+  const firstChange = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const firstFailure = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 503
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([firstChange, firstFailure])
+  await expect(page.locator('#window-status')).toContainText('older view')
+
+  const retriedOldMarker = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+  })
+  const successfulRetry = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([retriedOldMarker, successfulRetry])
+  expect(snapshotAttempts).toBe(2)
+})
+
+test('a changed snapshot drops previously loaded authored content before saving its marker', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toBeVisible()
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+          unchanged: false, has_more: false, next_since: '21',
+        }
+        : {
+          change_marker: '21', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '21',
+        },
+    })
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({
+      json: {
+        ...SNAPSHOT,
+        change_marker: '21',
+        things: [],
+        totals: { ...SNAPSHOT.totals, things: 0 },
+        shown: { ...SNAPSHOT.shown, things: 0 },
+        pages: { ...SNAPSHOT.pages, things: { has_more: false, next_before_id: null } },
+      },
+    })
+  })
+
+  const coveredSnapshot = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await coveredSnapshot
+  await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toHaveCount(0)
+
+  const committedMarker = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/changes' && url.searchParams.get('since') === '21'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await committedMarker
+})
+
+test('an older history response already in flight cannot repopulate a newer marker snapshot', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Place' }).click()
+  let releaseOlderHistory: (() => void) | null = null
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'things') return route.fallback()
+    await new Promise<void>(resolve => {
+      releaseOlderHistory = () => {
+        void route.fulfill({
+          json: {
+            things: [OLDER_THING], has_more: false, next_before_id: null,
+            change_marker: '20',
+          },
+        }).then(() => resolve())
+      }
+    })
+  })
+  const olderRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'things'
+  })
+  await page.getByRole('button', { name: 'Load older things' }).click()
+  await olderRequest
+
+  await page.route('**/api/changes**', route => route.fulfill({
+    json: {
+      change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+      unchanged: false, has_more: false, next_since: '21',
+    },
+  }))
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({
+      json: {
+        ...SNAPSHOT,
+        change_marker: '21',
+        things: [],
+        totals: { ...SNAPSHOT.totals, things: 0 },
+        shown: { ...SNAPSHOT.shown, things: 0 },
+        pages: { ...SNAPSHOT.pages, things: { has_more: false, next_before_id: null } },
+      },
+    })
+  })
+  const coveredSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('after_change_marker') === '21'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await coveredSnapshot
+
+  expect(releaseOlderHistory).not.toBeNull()
+  releaseOlderHistory?.()
+  await page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  }))
+  await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toHaveCount(0)
+  await expect(page.locator('.thing-card').filter({ hasText: 'old_bench' })).toHaveCount(0)
 })

@@ -121,6 +121,7 @@ test('MCP look forwards independent place cursors without accepting credentials 
       thing_limit: '13',
       before_note_id: '71',
       note_limit: '14',
+      view: 'outline',
     },
     authorization: 'Bearer resident-secret',
   })
@@ -128,6 +129,25 @@ test('MCP look forwards independent place cursors without accepting credentials 
   const rejected = await callTool(app, 'look', { place_id: 9, token: 0 })
   assert.equal(rejected.result.isError, true)
   assert.match(rejected.result.content[0]!.text, /authorization header/i)
+})
+
+test('MCP map look defaults to outline and keeps full as a deliberate opt-in', async () => {
+  const app = new Hono()
+  app.post('/mcp', c => mcp(c, app))
+  app.all('/api/*', c => c.json({ path: c.req.path, query: c.req.query() }))
+
+  const outlined = await callTool(app, 'look', {})
+  const full = await callTool(app, 'look', { view: 'full' })
+  assert.equal(outlined.result.isError, false)
+  assert.equal(full.result.isError, false)
+  assert.deepEqual(JSON.parse(outlined.result.content[0]!.text), {
+    path: '/api/map',
+    query: { view: 'outline' },
+  })
+  assert.deepEqual(JSON.parse(full.result.content[0]!.text), {
+    path: '/api/map',
+    query: { view: 'full' },
+  })
 })
 
 test('MCP me forwards every independent holdings cursor', async () => {
@@ -211,6 +231,7 @@ test('round-two MCP controls preserve HTTP bearer auth and dispatch to canonical
         limit: '12',
         before_note_id: '100',
         note_limit: '25',
+        view: 'outline',
       })
     }
     if (name === 'make') {

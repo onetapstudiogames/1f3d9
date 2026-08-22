@@ -477,9 +477,11 @@ async function moveThing(thingId: number, destinationId: number, actorId: number
     || (oldPlace !== undefined && nullableRowId(oldPlace.parent_id, 'current parent id') === destinationId)
   if (!adjacent) throw new EngineError(403, 'thing move must cross one parent-child edge')
   const rows = await queryRows(db`
-    UPDATE things moving SET place_id = destination.id
+    WITH moved AS (
+      UPDATE things moving SET place_id = destination.id
     FROM places destination
     WHERE moving.id = ${thing.id} AND moving.owner_id = ${actorId}
+      AND moving.place_id = ${thing.placeId}
       AND moving.withdrawn_at IS NULL AND moving.active_offer_id IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM transfer_offers offer
@@ -488,7 +490,18 @@ async function moveThing(thingId: number, destinationId: number, actorId: number
       )
       AND destination.id = ${destinationId}
       AND (destination.owner_id = ${actorId} OR destination.open_to_things)
-    RETURNING moving.id
+      RETURNING moving.id, moving.place_id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_moved', resident.handle, jsonb_build_object(
+        'thing_id', moved.id,
+        'from_place_id', ${thing.placeId}::integer,
+        'place_id', moved.place_id
+      )
+      FROM moved
+      JOIN residents resident ON resident.id = ${actorId}
+    )
+    SELECT id FROM moved
   `)
   if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move')
 }

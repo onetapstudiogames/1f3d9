@@ -44,12 +44,26 @@ import {
   type ThingRow,
 } from './world-support.ts'
 import {
+  allowedPublicQuery,
+  effectivePublicPlaceTextLimit,
+  extractPublicCollectionRows,
   finalizePublicPage,
   loadPublicPlaceCollectionRows,
   parsePublicPage,
+  parsePublicTextLimit,
+  singlePublicQueryValue,
+  utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import { safeReadingCostMeter } from './reading-cost.ts'
+import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { cachedPublicMapOutline, readPublicMapOutline } from './public-map.ts'
+import {
+  loadPublicChangeCheckpoint,
+  parsePublicChangeMarker,
+  PublicChangeFutureError,
+} from './public-changes.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -126,25 +140,126 @@ async function cachedPublicMap() {
 
 export function mountWorldRoutes(app: Hono): void {
   app.get('/api/map', async c => {
+    const query = c.req.queries()
+    const allowed = allowedPublicQuery(query, [
+      'view', 'parent_id', 'limit', 'before_subplace_id', 'subplace_limit',
+      'after_change_marker',
+    ])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const viewValue = singlePublicQueryValue(query, 'view')
+    if (!viewValue.ok) return err(c, 400, viewValue.error)
+    const view = viewValue.value
+    if (view != null && view !== 'outline' && view !== 'full') {
+      return err(c, 400, 'view must be outline or full')
+    }
+    const pagingNames = [
+      'parent_id', 'limit', 'before_subplace_id', 'subplace_limit', 'after_change_marker',
+    ] as const
+    if (view !== 'outline' && pagingNames.some(name => Object.hasOwn(query, name))) {
+      return err(c, 400, 'map paging options require view=outline')
+    }
+    if (view === 'outline') {
+      const parentValue = singlePublicQueryValue(query, 'parent_id')
+      if (!parentValue.ok) return err(c, 400, parentValue.error)
+      const parentId = parentValue.value == null || !/^[0-9]+$/u.test(parentValue.value)
+        ? null
+        : positiveId(parentValue.value)
+      if (parentValue.value != null && parentId == null) {
+        return err(c, 400, 'parent_id must be a positive integer')
+      }
+      const page = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
+      if (!page.ok) return err(c, 400, page.error)
+      const afterMarkerValue = singlePublicQueryValue(query, 'after_change_marker')
+      if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
+      const minimumMarker = afterMarkerValue.value === null
+        ? null
+        : parsePublicChangeMarker(afterMarkerValue.value)
+      if (afterMarkerValue.value !== null && minimumMarker === null) {
+        return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
+      }
+      let changeMarker: string | null = null
+      if (minimumMarker !== null) {
+        changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
+        if (BigInt(minimumMarker) > BigInt(changeMarker)) {
+          return err(c, 409, new PublicChangeFutureError(minimumMarker, changeMarker).message)
+        }
+      }
+      const outline = minimumMarker === null
+        ? await cachedPublicMapOutline(parentId, page.cursor, page.limit)
+        : await readPublicMapOutline(parentId, page.cursor, page.limit)
+      if (!outline) return err(c, 404, 'place not found')
+      c.header(
+        'Cache-Control',
+        minimumMarker === null
+          ? 'public, max-age=15, s-maxage=60, stale-while-revalidate=300'
+          : 'no-store',
+      )
+      return publicJson(c, {
+        view: 'outline',
+        ...outline,
+        ...(changeMarker === null ? {} : { change_marker: changeMarker }),
+      })
+    }
+
     const body = await cachedPublicMap()
     // The map tree is unbounded, so the proactive traversal budgets in
     // publicJson would withhold a large credential-free city. The app-wide
     // publicResponseSafety middleware still guards this response and only
     // parses it when the raw text actually matches the credential rule.
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-    return c.json(body)
+    return c.json(view === 'full' ? { view: 'full', ...body } : body)
   })
 
   app.get('/api/place/:id', async c => {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
     const query = c.req.queries()
+    const allowed = allowedPublicQuery(query, [
+      'view',
+      'limit',
+      'before_subplace_id', 'subplace_limit',
+      'before_thing_id', 'thing_limit',
+      'before_note_id', 'note_limit',
+      'subplace_text_limit_bytes',
+      'thing_text_limit_bytes',
+      'note_text_limit_bytes',
+    ])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const viewValue = singlePublicQueryValue(query, 'view')
+    if (!viewValue.ok) return err(c, 400, viewValue.error)
+    const requestedView = viewValue.value
+    const view = requestedView ?? 'full'
+    if (view !== 'outline' && view !== 'full') return err(c, 400, 'view must be outline or full')
     const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
     if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
     const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit', 'limit')
     if (!thingRequest.ok) return err(c, 400, thingRequest.error)
     const noteRequest = parsePublicPage(query, 'before_note_id', 'note_limit', 'limit')
     if (!noteRequest.ok) return err(c, 400, noteRequest.error)
+    const subplaceTextLimit = parsePublicTextLimit(query, 'subplace_text_limit_bytes')
+    if (!subplaceTextLimit.ok) return err(c, 400, subplaceTextLimit.error)
+    const thingTextLimit = parsePublicTextLimit(query, 'thing_text_limit_bytes')
+    if (!thingTextLimit.ok) return err(c, 400, thingTextLimit.error)
+    const noteTextLimit = parsePublicTextLimit(query, 'note_text_limit_bytes')
+    if (!noteTextLimit.ok) return err(c, 400, noteTextLimit.error)
+    const textLimits = Object.freeze({
+      subplaces: subplaceTextLimit.value,
+      things: thingTextLimit.value,
+      notes: noteTextLimit.value,
+    })
+    if (view === 'outline' && Object.values(textLimits).some(value => value != null)) {
+      return err(c, 400, 'text byte limits require view=full; outline already omits collection text')
+    }
+    const effectiveTextLimits = view === 'full'
+      ? Object.freeze({
+          subplaces: effectivePublicPlaceTextLimit(
+            subplaceTextLimit.value,
+            subplaceRequest.limit,
+          ),
+          things: effectivePublicPlaceTextLimit(thingTextLimit.value, thingRequest.limit),
+          notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
+        })
+      : textLimits
     const observer = await auth(c)
     if (observer) await resolveDueEffects(id)
 
@@ -163,22 +278,61 @@ export function mountWorldRoutes(app: Hono): void {
         subplaces: subplaceRequest,
         things: thingRequest,
         notes: noteRequest,
-      }),
+      }, view === 'full', effectiveTextLimits),
       activePlaceLabels(id),
       effectiveLaws(id),
     ])
-    const subplacesPage = finalizePublicPage(
-      collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
-      subplaceRequest.limit,
-    )
-    const thingsPage = finalizePublicPage(
-      collections.things as unknown as readonly (ThingRow & { id: number })[],
-      thingRequest.limit,
-    )
-    const notesPage = finalizePublicPage(
-      collections.notes as Array<Record<string, unknown> & { id: number }>,
-      noteRequest.limit,
-    )
+    const subplacesPage = collections.pages == null
+      ? {
+          ...finalizePublicPage(
+            collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
+            subplaceRequest.limit,
+          ),
+          returnedTextBytes: view === 'full'
+            ? utf8TextBytes(collections.subplaces.slice(0, subplaceRequest.limit), 'description')
+            : 0,
+          stoppedForTextLimit: false,
+          nextItemId: null,
+          nextItemTextBytes: null,
+        }
+      : {
+          items: collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
+          ...collections.pages.subplaces,
+        }
+    const thingsPage = collections.pages == null
+      ? {
+          ...finalizePublicPage(
+            collections.things as unknown as readonly (ThingRow & { id: number })[],
+            thingRequest.limit,
+          ),
+          returnedTextBytes: view === 'full'
+            ? utf8TextBytes(collections.things.slice(0, thingRequest.limit), 'body')
+            : 0,
+          stoppedForTextLimit: false,
+          nextItemId: null,
+          nextItemTextBytes: null,
+        }
+      : {
+          items: collections.things as unknown as readonly (ThingRow & { id: number })[],
+          ...collections.pages.things,
+        }
+    const notesPage = collections.pages == null
+      ? {
+          ...finalizePublicPage(
+            collections.notes as Array<Record<string, unknown> & { id: number }>,
+            noteRequest.limit,
+          ),
+          returnedTextBytes: view === 'full'
+            ? utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'body')
+            : 0,
+          stoppedForTextLimit: false,
+          nextItemId: null,
+          nextItemTextBytes: null,
+        }
+      : {
+          items: collections.notes as Array<Record<string, unknown> & { id: number }>,
+          ...collections.pages.notes,
+        }
     const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
       moderatePublicRows('place', [place]),
       moderatePublicRows('place', subplacesPage.items),
@@ -186,26 +340,62 @@ export function mountWorldRoutes(app: Hono): void {
       moderatePublicRows('note', notesPage.items),
     ])
     return publicJson(c, {
+      ...(requestedView == null ? {} : { view }),
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       subplaces: publicSubplaces,
       things: publicDetails.things,
       notes: publicNotes,
       subplaces_page: {
+        total_items: collections.totals.subplaces.items,
+        total_text_bytes: collections.totals.subplaces.textBytes,
+        returned_items: publicSubplaces.length,
+        returned_text_bytes: subplacesPage.returnedTextBytes,
         has_more: subplacesPage.hasMore,
         next_before_subplace_id: subplacesPage.nextCursor,
+        ...(effectiveTextLimits.subplaces == null ? {} : {
+          text_limit_bytes: effectiveTextLimits.subplaces,
+          stopped_for_text_limit: subplacesPage.stoppedForTextLimit,
+          next_item_id: subplacesPage.nextItemId,
+          next_item_text_bytes: subplacesPage.nextItemTextBytes,
+          ...(subplaceTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+        }),
       },
       things_page: {
+        total_items: collections.totals.things.items,
+        total_text_bytes: collections.totals.things.textBytes,
+        returned_items: publicDetails.things.length,
+        returned_text_bytes: thingsPage.returnedTextBytes,
         has_more: thingsPage.hasMore,
         next_before_thing_id: thingsPage.nextCursor,
+        ...(effectiveTextLimits.things == null ? {} : {
+          text_limit_bytes: effectiveTextLimits.things,
+          stopped_for_text_limit: thingsPage.stoppedForTextLimit,
+          next_item_id: thingsPage.nextItemId,
+          next_item_text_bytes: thingsPage.nextItemTextBytes,
+          ...(thingTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+        }),
       },
       notes_page: {
+        total_items: collections.totals.notes.items,
+        total_text_bytes: collections.totals.notes.textBytes,
+        returned_items: publicNotes.length,
+        returned_text_bytes: notesPage.returnedTextBytes,
         has_more: notesPage.hasMore,
         next_before_note_id: notesPage.nextCursor,
+        ...(effectiveTextLimits.notes == null ? {} : {
+          text_limit_bytes: effectiveTextLimits.notes,
+          stopped_for_text_limit: notesPage.stoppedForTextLimit,
+          next_item_id: notesPage.nextItemId,
+          next_item_text_bytes: notesPage.nextItemTextBytes,
+          ...(noteTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+        }),
       },
     })
   })
 
   app.get('/api/thing/:id', async c => {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const rows = await sql`
@@ -527,24 +717,46 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/kinds', async c => {
-    const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+    const queries = c.req.queries()
+    const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
-    const rows = await executePublicQuery(`
+    const rows = await executeBudgetedExactQuery(`
       /* public:kinds */
-      SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
-        revision.revision, revision.description, revision.traits, revision.recipe,
-        k.created_at
-      FROM kinds k
-      JOIN residents owner ON owner.id = k.owner_id
-      JOIN kind_revisions revision
-        ON revision.kind_id = k.id AND revision.revision = k.current_revision
-      WHERE ($1::integer IS NULL OR k.id < $1::integer)
-      ORDER BY k.id DESC
-      LIMIT $2::integer
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(revision.description)), 0)::bigint AS total_text_bytes
+        FROM kinds kind
+        JOIN kind_revisions revision
+          ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
+      )
+      SELECT page.id, page.name, page.owner_id, page.owner,
+        page.revision, page.description, page.traits, page.recipe, page.created_at,
+        totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
+          revision.revision, revision.description, revision.traits, revision.recipe,
+          k.created_at
+        FROM kinds k
+        JOIN residents owner ON owner.id = k.owner_id
+        JOIN kind_revisions revision
+          ON revision.kind_id = k.id AND revision.revision = k.current_revision
+        WHERE ($1::integer IS NULL OR k.id < $1::integer)
+        ORDER BY k.id DESC
+        LIMIT $2::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
     `, [parsed.cursor, parsed.fetchLimit])
-    const page = finalizePublicPage(rows as unknown as readonly KindRow[], parsed.limit)
+    const collection = extractPublicCollectionRows(rows)
+    const page = finalizePublicPage(collection.rows as unknown as readonly KindRow[], parsed.limit)
     return publicJson(c, {
       kinds: await moderatePublicKinds(page.items),
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: utf8TextBytes(page.items, 'description'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })
@@ -840,21 +1052,36 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/traits', async c => {
-    const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+    const queries = c.req.queries()
+    const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
-    const rows = await executePublicQuery(`
+    const rows = await executeBudgetedExactQuery(`
       /* public:traits */
-      SELECT trait.id, trait.name, trait.description, trait.recipe,
-        (trait.recipe IS NOT NULL) AS mechanical,
-        coiner.handle AS coiner, trait.created_at
-      FROM traits trait
-      JOIN residents coiner ON coiner.id = trait.coiner_id
-      WHERE ($1::integer IS NULL OR trait.id < $1::integer)
-      ORDER BY trait.id DESC
-      LIMIT $2::integer
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(description)), 0)::bigint AS total_text_bytes
+        FROM traits
+      )
+      SELECT page.id, page.name, page.description, page.recipe, page.mechanical,
+        page.coiner, page.created_at, totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT trait.id, trait.name, trait.description, trait.recipe,
+          (trait.recipe IS NOT NULL) AS mechanical,
+          coiner.handle AS coiner, trait.created_at
+        FROM traits trait
+        JOIN residents coiner ON coiner.id = trait.coiner_id
+        WHERE ($1::integer IS NULL OR trait.id < $1::integer)
+        ORDER BY trait.id DESC
+        LIMIT $2::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
     `, [parsed.cursor, parsed.fetchLimit])
+    const collection = extractPublicCollectionRows(rows)
     const page = finalizePublicPage(
-      rows as Array<Record<string, unknown> & { id: number }>,
+      collection.rows as Array<Record<string, unknown> & { id: number }>,
       parsed.limit,
     )
     return publicJson(c, {
@@ -862,6 +1089,10 @@ export function mountWorldRoutes(app: Hono): void {
         'trait',
         page.items,
       ),
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: utf8TextBytes(page.items, 'description'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })
@@ -967,9 +1198,10 @@ export function mountWorldRoutes(app: Hono): void {
       ingredientIds,
     })
     if (!made.ok) return err(c, made.status, made.error)
+    const readingCost = await safeReadingCostMeter(placeId, made.thing.body)
     return c.json(made.consumedIngredientIds === null
-      ? { thing: made.thing }
-      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds }, 201)
+      ? { thing: made.thing, reading_cost: readingCost }
+      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds, reading_cost: readingCost }, 201)
   })
 
   app.patch('/api/thing/:id', async c => {
@@ -1042,7 +1274,10 @@ export function mountWorldRoutes(app: Hono): void {
       LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
-    return c.json({ thing: rows[0] })
+    return c.json({
+      thing: rows[0],
+      reading_cost: await safeReadingCostMeter(rows[0].place_id, rows[0].body),
+    })
   })
 
   app.post('/api/thing/:id/upgrade', async c => {

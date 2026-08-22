@@ -175,6 +175,108 @@ test('public help states the complete resident census contract', () => {
   }
 })
 
+test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    for (const field of [
+      'total_items', 'total_text_bytes', 'returned_items', 'returned_text_bytes',
+    ]) {
+      assert.match(text, new RegExp(`\\b${field}\\b`, 'u'), `${name}: ${field}`)
+    }
+    assert.match(text, /UTF-8 bytes/iu, `${name}: byte unit`)
+    assert.match(text, /stored authored text/iu, `${name}: counted text stage`)
+    assert.match(text, /reading_cost/iu, `${name}: writer meter`)
+    assert.match(text, /meter[^\n]{0,180}unavailable[^\n]{0,180}(?:write succeeded|do not retry)|(?:write succeeded|do not retry)[^\n]{0,180}meter[^\n]{0,180}unavailable/iu, `${name}: meter-only failure`)
+    assert.match(text, /unknown query options?[^\n]{0,80}400|400[^\n]{0,80}unknown query options?/iu, `${name}: honest unknown option`)
+    assert.match(text, /503[^\n]{0,120}Retry-After:\s*1|Retry-After:\s*1[^\n]{0,120}503/iu, `${name}: exact-read retry contract`)
+    assert.match(text, /(?:map|window)[^\n]{0,180}(?:separate|existing|current) shapes?|(?:separate|existing|current) shapes?[^\n]{0,180}(?:map|window)/iu, `${name}: map/window exception`)
+    assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
+  }
+
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'make'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
+})
+
+test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /view=outline|`view=outline`/iu, `${name}: outline choice`)
+    assert.match(text, /view=full|`view=full`/iu, `${name}: full compatibility choice`)
+    assert.match(text, /body_text_bytes/iu, `${name}: thing body size`)
+    assert.match(text, /official[^\n]{0,80}look[^\n]{0,120}(?:defaults|uses)[^\n]{0,80}(?:view=outline|`view=outline`)/iu, `${name}: official lightweight default`)
+    assert.match(text, /(?:raw HTTP|HTTP place)[^\n]{0,100}(?:defaults|default)[^\n]{0,100}(?:view=full|`view=full`|legacy full)|(?:view=full|`view=full`)[^\n]{0,100}(?:legacy|compatib)/iu, `${name}: raw compatibility default`)
+    assert.match(text, /authenticated[^\n]{0,100}outline[^\n]{0,140}(?:observe|timer)|outline[^\n]{0,100}authenticated[^\n]{0,140}(?:observe|timer)/iu, `${name}: observation truth`)
+  }
+})
+
+test('Wave 3 room text limits, strict omissions, and continuation truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /description_text_bytes/iu, `${name}: child description size`)
+    assert.match(text, /outline[\s\S]{0,400}(?:child\s+descriptions|subplace\s+descriptions)[\s\S]{0,220}(?:note\s+bodies|notes)|(?:child\s+descriptions|subplace\s+descriptions)[\s\S]{0,220}(?:note\s+bodies|notes)[\s\S]{0,400}outline/iu, `${name}: complete outline omission`)
+    for (const option of [
+      'subplace_text_limit_bytes',
+      'thing_text_limit_bytes',
+      'note_text_limit_bytes',
+    ]) {
+      assert.match(text, new RegExp(`\\b${option}\\b`, 'u'), `${name}: ${option}`)
+    }
+    assert.match(text, /whole records?|never (?:cuts?|truncates?)/iu, `${name}: whole-record boundary`)
+    assert.match(text, /stopped_for_text_limit/iu, `${name}: explicit byte omission flag`)
+    assert.match(text, /next_item_id/iu, `${name}: blocked item id`)
+    assert.match(text, /next_item_text_bytes/iu, `${name}: blocked item size`)
+    assert.match(text, /increase[\s\S]{0,120}(?:limit|allowance)|(?:limit|allowance)[\s\S]{0,120}increase/iu, `${name}: increase-limit continuation`)
+    assert.match(text, /655(?:,|_)?360/iu, `${name}: hard per-collection ceiling`)
+    assert.match(text, /server_text_limit_applied/iu, `${name}: automatic-limit marker`)
+    assert.match(text, /view=full[\s\S]{0,240}(?:bounded[\s-]+bulk|bulk[\s-]+page)|(?:bounded[\s-]+bulk|bulk[\s-]+page)[\s\S]{0,240}view=full/iu, `${name}: deliberate bounded bulk path`)
+    assert.match(text, /cursor[\s\S]{0,100}complete\s+history|complete\s+history[\s\S]{0,100}cursor/iu, `${name}: complete-history continuation`)
+    assert.match(text, /\/api\/thing\/:id[\s\S]{0,180}\/api\/note\/:id|\/api\/note\/:id[\s\S]{0,180}\/api\/thing\/:id/iu, `${name}: direct full reads`)
+  }
+
+  for (const option of [
+    'subplace_text_limit_bytes',
+    'thing_text_limit_bytes',
+    'note_text_limit_bytes',
+  ]) {
+    assert.match(mcpSource, new RegExp(`\\b${option}\\b`, 'u'), `MCP: ${option}`)
+  }
+  assert.match(mcpSource, /outline[^\n]{0,180}child descriptions[^\n]{0,180}note bodies/iu)
+  assert.match(mcpSource, /PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES/iu)
+})
+
+test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /\/api\/search/iu, `${name}: public search route`)
+    assert.match(text, /\bwords?\b[^\n]{0,120}\bphrase\b|\bphrase\b[^\n]{0,120}\bwords?\b/iu, `${name}: search modes`)
+    assert.match(text, /\bnotes?\b[^\n]{0,120}\bthings?\b|\bthings?\b[^\n]{0,120}\bnotes?\b/iu, `${name}: searched records`)
+    assert.match(text, /date order|newest (?:first|to oldest)/iu, `${name}: stable order`)
+    assert.match(text, /no relevance|not relevance-ranked/iu, `${name}: no relevance promise`)
+    assert.match(text, /exact[^\n]{0,100}totals?/iu, `${name}: exact totals`)
+    assert.match(text, /\/api\/changes/iu, `${name}: public change route`)
+    assert.match(text, /caller-held|client-held|keep (?:the )?marker/iu, `${name}: caller marker`)
+    assert.match(text, /\bsince\b/iu, `${name}: continuation marker`)
+    assert.match(
+      text,
+      /no durable[^\n]{0,160}(?:reader identity|reading history)/iu,
+      `${name}: no reading history`,
+    )
+  }
+})
+
 test('public help explains shared use without promising shared consumption or owner damage', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

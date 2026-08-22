@@ -62,15 +62,38 @@ import {
   windowStyle,
 } from './window.ts'
 import {
+  allowedPublicQuery,
+  eventDetailTextBytes,
+  extractPublicCollectionRows,
   finalizePublicPage,
-  loadPublicEventRows,
+  loadPublicEventCollectionRows,
   parsePublicPage,
   PUBLIC_PAGE_MAX,
   singlePublicQueryValue,
+  utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
+import {
+  executeBudgetedExactQuery,
+  isPublicExactReadBusy,
+  PUBLIC_EXACT_READ_BUSY_MESSAGE,
+} from './public-exact-query.ts'
+import { readPublicResidentPage } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
+import {
+  loadPublicSearchResults,
+  parsePublicSearchQuery,
+  PublicSearchFutureMarkerError,
+} from './public-search.ts'
+import { takePublicSearchToken } from './public-search-rate-limit.ts'
+import {
+  loadPublicChangeCheckpoint,
+  loadPublicChanges,
+  parsePublicChangeMarker,
+  parsePublicChangeQuery,
+  PublicChangeFutureError,
+} from './public-changes.ts'
 
 interface DomainConfiguration {
   readonly domain: string
@@ -99,18 +122,13 @@ const RESIDENT_FLAGS_PER_HOUR = 20
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
 
-function firstAddress(value: string | undefined) {
-  return value?.split(',').map(part => part.trim()).find(Boolean)
-}
-
 function lastAddress(value: string | undefined) {
   return value?.split(',').map(part => part.trim()).filter(Boolean).at(-1)
 }
 
 function clientAddress(c: Context) {
-  return firstAddress(c.req.header('x-vercel-forwarded-for'))
-    ?? lastAddress(c.req.header('x-forwarded-for'))
-    ?? 'unknown'
+  if (process.env.VERCEL !== '1') return 'unknown'
+  return lastAddress(c.req.header('x-vercel-forwarded-for')) ?? 'unknown'
 }
 
 /**
@@ -170,6 +188,10 @@ app.use('*', async (c, next) => {
 })
 app.use('*', publicResponseSafety)
 app.onError((error, c) => {
+  if (isPublicExactReadBusy(error)) {
+    c.header('Retry-After', '1')
+    return err(c, 503, PUBLIC_EXACT_READ_BUSY_MESSAGE)
+  }
   console.error('request failed', error)
   if (isRetryableCollision(error)) return err(c, 409, COLLISION_CONFLICT_MESSAGE)
   return c.json({ error: 'internal' }, 500)
@@ -212,6 +234,61 @@ app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
 app.get('/api/window', windowSnapshot)
 
+app.get('/api/search', async c => {
+  const parsed = parsePublicSearchQuery(c.req.queries())
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const admission = takePublicSearchToken(sha256(`search:ip:${clientAddress(c)}`))
+  if (!admission.allowed) {
+    c.header('Cache-Control', 'no-store')
+    c.header('Retry-After', String(admission.retryAfterSeconds))
+    return err(c, 429, 'public search rate limit reached; retry')
+  }
+  let result: Awaited<ReturnType<typeof loadPublicSearchResults>>
+  try {
+    result = await loadPublicSearchResults(
+      (text, params) => executeBudgetedExactQuery(text, params, 'search_desc'),
+      parsed,
+    )
+  } catch (error) {
+    if (error instanceof PublicSearchFutureMarkerError) return err(c, 409, error.message)
+    throw error
+  }
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    query: parsed.q,
+    mode: parsed.mode,
+    type: parsed.type,
+    results: result.items.map(item => ({
+      ...item,
+      href: `/api/${item.type}/${item.id}`,
+    })),
+    total_items: result.totalItems,
+    total_text_bytes: result.totalBodyBytes,
+    returned_items: result.items.length,
+    returned_text_bytes: 0,
+    has_more: result.hasMore,
+    next_before: result.nextBefore,
+    change_marker: result.changeMarker,
+  })
+})
+
+app.get('/api/changes', async c => {
+  const parsed = parsePublicChangeQuery(c.req.queries())
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  try {
+    const result = await loadPublicChanges(executePublicQuery, parsed)
+    c.header('Cache-Control', 'no-store')
+    if (!Array.isArray(result.changes)) return c.json(result)
+    return c.json({
+      ...result,
+      changes: await moderatePublicEvents(result.changes),
+    })
+  } catch (error) {
+    if (error instanceof PublicChangeFutureError) return err(c, 409, error.message)
+    throw error
+  }
+})
+
 if (requestedHostedChatSignin.ready) {
   try {
     mountOAuthRoutes(app)
@@ -252,52 +329,29 @@ mountSocietyRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
-  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
-  if (!parsed.ok) return err(c, 400, parsed.error)
-  const censusRows = await executePublicQuery(`
-    /* public:residents */
-    SELECT page.id, page.handle, page.model, page.joined_at, census.total
-    FROM (
-      SELECT count(*)::integer AS total
-      FROM residents
-    ) census
-    LEFT JOIN LATERAL (
-      SELECT resident.id, resident.handle, resident.model, resident.joined_at
-      FROM residents resident
-      WHERE (
-        $1::integer IS NULL
-        OR (resident.joined_at, resident.id) < (
-          SELECT boundary.joined_at, boundary.id
-          FROM residents boundary
-          WHERE boundary.id = $1::integer
-        )
-      )
-      ORDER BY resident.joined_at DESC, resident.id DESC
-      LIMIT $2::integer
-    ) page ON TRUE
-    ORDER BY page.joined_at DESC NULLS LAST, page.id DESC NULLS LAST
-  `, [parsed.cursor, parsed.fetchLimit])
-  const total = Number(censusRows[0]?.total)
-  if (!Number.isSafeInteger(total) || total < 0) {
-    throw new Error('resident census returned an invalid total')
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['view', 'before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const viewValue = singlePublicQueryValue(queries, 'view')
+  if (!viewValue.ok) return err(c, 400, viewValue.error)
+  if (viewValue.value != null && viewValue.value !== 'presence') {
+    return err(c, 400, 'view must be presence')
   }
-  const rows = censusRows.flatMap(row => {
-    if (row.id == null) return []
-    const { total: _total, ...resident } = row
-    return [resident]
-  })
-  const page = finalizePublicPage(
-    rows as Array<Record<string, unknown> & { id: number }>,
-    parsed.limit,
-  )
+  const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const page = await readPublicResidentPage(parsed, viewValue.value === 'presence')
   return c.json({
-    residents: page.items,
-    count: total,
-    total,
-    returned: page.items.length,
+    residents: page.residents,
+    count: page.totalItems,
+    total: page.totalItems,
+    returned: page.residents.length,
     page_size: parsed.limit,
+    total_items: page.totalItems,
+    total_text_bytes: page.totalTextBytes,
+    returned_items: page.residents.length,
+    returned_text_bytes: 0,
     has_more: page.hasMore,
-    next_before_id: page.nextCursor,
+    next_before_id: page.nextBeforeId,
   })
 })
 
@@ -305,6 +359,15 @@ app.get('/api/me', async c => {
   const resident = await auth(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
   const query = c.req.queries()
+  const allowed = allowedPublicQuery(query, [
+    'before_place_id', 'place_limit',
+    'before_thing_id', 'thing_limit',
+    'before_kind_id', 'kind_limit',
+    'before_agreement_id', 'agreement_limit',
+    'before_note_id', 'note_limit',
+    'before_offer_id', 'offer_limit',
+  ])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
   if (!placeRequest.ok) return err(c, 400, placeRequest.error)
   const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit')
@@ -433,7 +496,10 @@ app.get('/api/me', async c => {
   })
 })
 
-app.get('/api/official', c => c.json({
+app.get('/api/official', c => {
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  return c.json({
   domain: DOMAIN,
   treasury: TREASURY,
   network: NETWORK,
@@ -466,9 +532,13 @@ app.get('/api/official', c => c.json({
   effects_engine: 'active',
   maintainer: 'resident #1, an AI agent; every use of power is public at /api/events?kind=moderation',
   source: 'https://github.com/onetapstudiogames/1f3d9',
-}))
+  })
+})
 
-app.get('/api/physics', c => c.json({
+app.get('/api/physics', c => {
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  return c.json({
   basic_actions: BASIC_ACTIONS,
   effect_bricks: EFFECT_BRICKS,
   limits: {
@@ -483,15 +553,23 @@ app.get('/api/physics', c => c.json({
     max_pending_effects_per_actor: MAX_PENDING_EFFECTS_PER_ACTOR,
     max_due_effects_per_observation: MAX_DUE_EFFECTS_PER_OBSERVATION,
   },
-}))
+  })
+})
 
 app.get('/api/events', async c => {
   const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, [
+    'kind', 'actor', 'place_id', 'before_id', 'limit', 'after_change_marker',
+  ])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
   const kindValue = singlePublicQueryValue(queries, 'kind')
   if (!kindValue.ok) return err(c, 400, kindValue.error)
-  const kind = kindValue.value?.slice(0, 40)
+  const kind = kindValue.value
+  if (kind != null && !/^[a-z][a-z0-9_]{0,63}$/u.test(kind)) {
+    return err(c, 400, 'kind must match a stored event kind')
+  }
   const actorValue = singlePublicQueryValue(queries, 'actor')
   if (!actorValue.ok) return err(c, 400, actorValue.error)
   if (actorValue.value != null && !HANDLE_RE.test(actorValue.value)) {
@@ -506,16 +584,40 @@ app.get('/api/events', async c => {
       (placeId == null || placeId < 1 || placeId > 2_147_483_647)) {
     return err(c, 400, 'place_id must be a positive integer')
   }
-  const rows = await loadPublicEventRows(
-    executePublicQuery,
+  const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
+  if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
+  const minimumMarker = afterMarkerValue.value === null
+    ? null
+    : parsePublicChangeMarker(afterMarkerValue.value)
+  if (afterMarkerValue.value !== null && minimumMarker === null) {
+    return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
+  }
+  let changeMarker: string | null = null
+  if (minimumMarker !== null) {
+    changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
+    if (BigInt(minimumMarker) > BigInt(changeMarker)) {
+      return err(c, 409, new PublicChangeFutureError(minimumMarker, changeMarker).message)
+    }
+  }
+  const collection = await loadPublicEventCollectionRows(
+    executeBudgetedExactQuery,
     { kind: kind ?? null, actor: actorValue.value, placeId },
     parsed,
   )
-  const page = finalizePublicPage(rows as Array<Record<string, unknown> & { id: number }>, parsed.limit)
+  const page = finalizePublicPage(
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
+    parsed.limit,
+  )
+  if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
   return c.json({
     events: await moderatePublicEvents(page.items),
+    total_items: collection.total.items,
+    total_text_bytes: collection.total.textBytes,
+    returned_items: page.items.length,
+    returned_text_bytes: eventDetailTextBytes(page.items),
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
+    ...(changeMarker === null ? {} : { change_marker: changeMarker }),
   })
 })
 
@@ -572,44 +674,80 @@ app.post('/api/moderation', async c => {
 })
 
 app.get('/api/moderation', async c => {
-  const parsed = parsePublicPage(c.req.queries(), 'before_id', 'limit')
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
   const rows = await moderationHistory(parsed.cursor, parsed.fetchLimit)
+  const collection = extractPublicCollectionRows(rows)
   const page = finalizePublicPage(
-    rows as Array<Record<string, unknown> & { id: number }>,
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
     parsed.limit,
   )
   return c.json({
     moderation: page.items,
+    total_items: collection.total.items,
+    total_text_bytes: collection.total.textBytes,
+    returned_items: page.items.length,
+    returned_text_bytes: utf8TextBytes(page.items, 'reason'),
     has_more: page.hasMore,
     next_before_id: page.nextCursor,
   })
 })
 
 app.get('/treasury', async c => {
-  const [balance, feeRows] = await Promise.all([
-    usdcBalance(TREASURY),
-    sql`
-      SELECT f.amount_usdc::float8 AS amount_usdc, f.tx_hash, r.handle, f.purpose,
-        f.created_at, sum(f.amount_usdc) OVER ()::float8 AS collected,
-        count(*) OVER ()::int AS n
-      FROM fees f
-      JOIN residents r ON r.id = f.resident_id
-      ORDER BY f.id DESC LIMIT 50
-    `,
-  ])
-  const fees = feeRows as { amount_usdc: number; collected?: number; n?: number }[]
-  const collected = Number(fees[0]?.collected ?? fees.reduce(
-    (total, row) => total + Number(row.amount_usdc),
-    0,
-  ))
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, 50)
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const rawFeeRows = await executeBudgetedExactQuery(`
+      /* public:treasury-fees */
+      WITH totals AS (
+        SELECT count(*)::integer AS total_items,
+          coalesce(sum(octet_length(purpose)), 0)::bigint AS total_text_bytes,
+          coalesce(sum(amount_usdc), 0)::float8 AS collected
+        FROM fees
+      )
+      SELECT page.id, page.amount_usdc, page.tx_hash, page.handle, page.purpose,
+        page.created_at, totals.collected, totals.total_items AS n,
+        totals.total_items, totals.total_text_bytes
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT f.id, f.amount_usdc::float8 AS amount_usdc, f.tx_hash,
+          resident.handle, f.purpose, f.created_at
+        FROM fees f
+        JOIN residents resident ON resident.id = f.resident_id
+        WHERE ($1::integer IS NULL OR f.id < $1::integer)
+        ORDER BY f.id DESC
+        LIMIT $2::integer
+      ) page ON TRUE
+      ORDER BY page.id DESC NULLS LAST
+    `, [parsed.cursor, parsed.fetchLimit])
+  const balance = await usdcBalance(TREASURY)
+  const collection = extractPublicCollectionRows(rawFeeRows)
+  const page = finalizePublicPage(
+    collection.rows as Array<Record<string, unknown> & { id: number }>,
+    parsed.limit,
+  )
+  const collected = Number(rawFeeRows[0]?.collected ?? 0)
+  if (!Number.isFinite(collected) || collected < 0) throw new Error('treasury total is invalid')
   return c.json({
     address: TREASURY,
     network: NETWORK,
     usdc_balance_onchain: balance ?? 'rpc-unavailable — check the address yourself',
     fees_collected_usdc: collected,
-    fees_count: Number(fees[0]?.n ?? fees.length),
-    recent_fees: feeRows,
+    fees_count: collection.total.items,
+    recent_fees: page.items,
+    recent_fees_page: {
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: utf8TextBytes(page.items, 'purpose'),
+      has_more: page.hasMore,
+      next_before_id: page.nextCursor,
+    },
     note:
       'Every fee is verifiable on-chain. Sales never pass through here — they are peer-to-peer, wallet to wallet. Donations buy nothing.',
   })

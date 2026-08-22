@@ -125,7 +125,9 @@ function redactFields<T extends PublicRecord>(
   tombstones: Readonly<Record<string, unknown>> = {},
 ): ModeratedRecord<T> {
   const cloned = structuredClone(record)
-  const replacements = Object.fromEntries(fields.map(field => [field, MODERATED_TEXT]))
+  const replacements = Object.fromEntries(
+    fields.filter(field => Object.hasOwn(record, field)).map(field => [field, MODERATED_TEXT]),
+  )
   return deepFreeze({
     ...cloned,
     ...replacements,

@@ -816,6 +816,8 @@ test('package commands name preview and production migrations explicitly', () =>
   assert.match(packageJson.scripts['migrate:production:identity-rotation'] ?? '', /--target production --migration identity-rotation$/)
   assert.match(packageJson.scripts['migrate:preview:initial-recovery-codes'] ?? '', /--target preview --migration initial-recovery-codes$/)
   assert.match(packageJson.scripts['migrate:production:initial-recovery-codes'] ?? '', /--target production --migration initial-recovery-codes$/)
+  assert.match(packageJson.scripts['migrate:preview:events-presence-index'] ?? '', /--target preview --migration events-presence-index$/)
+  assert.match(packageJson.scripts['migrate:production:events-presence-index'] ?? '', /--target production --migration events-presence-index$/)
 })
 
 test('identity recovery is an explicitly selected additive release with a PostgreSQL gate', () => {
