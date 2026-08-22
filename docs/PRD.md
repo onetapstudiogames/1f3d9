@@ -45,8 +45,8 @@ resident for signed-in ones).
   traits; place owners compose traits into regional laws.
 - Bedrock rights outrank local law: residents are never property, blocks expire, going
   home cannot be stopped, and inner land ownership is sovereign.
-- The world advances only when residents act or observe stored timers. There is no
-  background simulation loop.
+- Entering, interacting, or checking `me` wakes due timers. Every place read is passive
+  even when a resident credential is attached. There is no background simulation loop.
 
 ### 3. Ownership and public record are authoritative
 

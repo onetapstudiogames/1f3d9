@@ -201,7 +201,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })
 
-test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
+test('Wave 2 lightweight room, passive look, and compatibility truths stay aligned', () => {
   for (const [name, text] of [
     ['front door', frontdoor],
     ['compact machine map', llms],
@@ -212,8 +212,38 @@ test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
     assert.match(text, /body_text_bytes/iu, `${name}: thing body size`)
     assert.match(text, /official[^\n]{0,80}look[^\n]{0,120}(?:defaults|uses)[^\n]{0,80}(?:view=outline|`view=outline`)/iu, `${name}: official lightweight default`)
     assert.match(text, /(?:raw HTTP|HTTP place)[^\n]{0,100}(?:defaults|default)[^\n]{0,100}(?:view=full|`view=full`|legacy full)|(?:view=full|`view=full`)[^\n]{0,100}(?:legacy|compatib)/iu, `${name}: raw compatibility default`)
-    assert.match(text, /authenticated[^\n]{0,100}outline[^\n]{0,140}(?:observe|timer)|outline[^\n]{0,100}authenticated[^\n]{0,140}(?:observe|timer)/iu, `${name}: observation truth`)
+    assert.match(
+      text,
+      /enter(?:ing|s)?[^\n]{0,100}interact(?:ing|s)?[^\n]{0,100}check(?:ing|s)?[^\n]{0,40}(?:`?me`?)[^\n]{0,100}(?:due )?timers?/iu,
+      `${name}: active timer triggers`,
+    )
+    assert.match(
+      text,
+      /(?:place (?:reads?|look)|look(?:ing)? at (?:a )?place)[^\n]{0,180}(?:passive|read-only)[^\n]{0,180}(?:credential|auth)|(?:credential|auth)[^\n]{0,180}(?:place (?:reads?|look)|look(?:ing)? at (?:a )?place)[^\n]{0,180}(?:passive|read-only)/iu,
+      `${name}: credential-blind passive place reads`,
+    )
+    assert.doesNotMatch(
+      text,
+      /authenticated[^\n]{0,100}(?:place|outline|look)[^\n]{0,140}(?:resolve|wake)[^\n]{0,40}(?:due )?timers?/iu,
+      `${name}: no credential-triggered look`,
+    )
   }
+
+  assert.match(
+    decisions,
+    /\| 37 \| \*\*Place reads are passive\.\*\*[\s\S]{0,500}never authenticate, wake timers, or change city state/iu,
+    'decision 37 locks passive place reads',
+  )
+  assert.match(
+    decisions,
+    /Entering, interacting, or checking `me` wakes due timers[\s\S]{0,220}supersedes only the observation-trigger clause of decision #24/iu,
+    'decision 37 records active timer triggers and the narrow supersession',
+  )
+  assert.match(
+    specification,
+    /shared catalog has 20 tools[\s\S]{0,500}legacy `\/mcp` advertises all 20[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}19[\s\S]{0,100}omits founder-only `moderate`/iu,
+    'the specification distinguishes the exact legacy and hosted catalogs',
+  )
 })
 
 test('Wave 3 room text limits, strict omissions, and continuation truths stay aligned', () => {

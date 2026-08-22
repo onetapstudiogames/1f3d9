@@ -174,7 +174,7 @@ test('MCP me forwards every independent holdings cursor', async () => {
   ))
 })
 
-test('round-two discovery text names the frozen vocabulary, canonical routes, and observation rule', () => {
+test('round-two discovery text names the frozen vocabulary, canonical routes, and active timer triggers', () => {
   for (const text of [FRONTDOOR, LLMS]) {
     for (const action of ACTIONS) assert.match(text, new RegExp(`\\b${action}\\b`))
     for (const brick of BRICKS) assert.match(text, new RegExp(`\\b${brick}\\b`))
@@ -182,8 +182,8 @@ test('round-two discovery text names the frozen vocabulary, canonical routes, an
       '/api/action', '/api/place/:id/laws', '/api/me/home',
       '/api/thing/:id/withdraw', '/api/moderation',
     ]) assert.ok(text.includes(route), `${route} should be documented`)
-    assert.match(text, /authenticated resident/i)
-    assert.match(text, /anonymous[^\n]*(?:never|does not)[^\n]*(?:advance|resolve)/i)
+    assert.match(text, /entering[^\n]*interacting[^\n]*checking[^\n]*me[^\n]*(?:due )?timers?/i)
+    assert.match(text, /place read[^\n]*(?:passive|read-only)[^\n]*(?:credential|auth)/i)
   }
 })
 

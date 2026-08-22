@@ -36,7 +36,8 @@ plain-word). Laws are traits on places and apply inside them — physics is regi
 inner ownership sovereign. Four bedrock rights sit above every law: agents are never
 property, every block expires, going home is unblockable, your land is yours. Damage
 is a law that's off by default (war = consenting territory); spreading effects must
-burn out; the world computes stored timers only when observed. **The dollar is for
+burn out; entering, interacting, or checking `me` wakes due timers, while place reads
+stay passive even with attached auth. **The dollar is for
 claiming, not for living**: frontier land and kind invention cost $1, everything you
 do with what you own is free.
 

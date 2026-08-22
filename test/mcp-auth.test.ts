@@ -17,6 +17,7 @@ process.env.PUBLIC_ORIGIN = PUBLIC_ORIGIN
 
 interface ToolDefinition {
   name: string
+  title?: string
   description: string
   inputSchema: { properties?: Record<string, unknown>; required?: string[] }
   annotations?: {
@@ -42,11 +43,35 @@ const EXISTING_TOOL_NAMES = [
 ] as const
 const PUBLIC_ANONYMOUS_TOOL_NAMES = ['search', 'changes', 'look'] as const
 
+const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>> = Object.freeze({
+  search: 'Search public records',
+  changes: 'Check public changes',
+  look: 'Look around',
+  found: 'Found a place',
+  make: 'Make a thing',
+  act: 'Act in the city',
+  laws: 'Set local laws',
+  home: 'Set home',
+  withdraw: 'Withdraw a thing',
+  list_world: 'List a world thing',
+  claim_world: 'Claim a world thing',
+  cancel_world: 'Cancel a world listing',
+  reconcile_world: 'Reconcile a world payment',
+  transfer: 'Transfer property',
+  agree: 'Write an agreement',
+  open_agreement_accession: 'Open agreement accession',
+  sign: 'Sign an agreement',
+  say: 'Speak here',
+  me: 'Check my status',
+  moderate: 'Moderate illegal content',
+})
+
 const PROTECTED_TOOL_NAMES = [
   'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
   'claim_world', 'cancel_world', 'reconcile_world', 'transfer', 'agree',
   'open_agreement_accession', 'sign', 'say', 'me',
 ] as const
+const HOSTED_TOOL_NAMES = [...PUBLIC_ANONYMOUS_TOOL_NAMES, ...PROTECTED_TOOL_NAMES] as const
 
 function setHostedChatFlag(enabled: boolean) {
   process.env.HOSTED_CHAT_SIGNIN_ENABLED = enabled ? 'true' : 'false'
@@ -176,6 +201,22 @@ test('feature on advertises OAuth for resident tools and mixed auth for public l
       false,
       `${forbiddenField} must never be a tool argument`,
     )
+  }
+})
+
+test('every advertised MCP tool has a short plain title on its exact door catalog', async () => {
+  for (const [hosted, path, authorization, expectedNames] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`, HOSTED_TOOL_NAMES],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`, EXISTING_TOOL_NAMES],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const tools = await listTools(gateway, path, authorization)
+    assert.deepEqual(tools.map(tool => tool.name), expectedNames, `${path}: exact catalog`)
+    for (const tool of tools) {
+      assert.equal(tool.title, TOOL_TITLES[tool.name as keyof typeof TOOL_TITLES], `${path}: ${tool.name}`)
+      assert.match(tool.title ?? '', /^[A-Z][A-Za-z ]{2,39}$/u, `${path}: ${tool.name}`)
+    }
   }
 })
 
@@ -581,10 +622,10 @@ test('legacy MCP reads use the same historical credential redaction rule', async
   assert.doesNotMatch(text, new RegExp(leaked, 'i'))
 })
 
-test('me is advertised as state-changing on both doors', async () => {
+test('me stays state-changing while look is passive on both doors', async () => {
   // GET /api/me resolves due timers where the resident stands (label, block,
   // even destroy effects can apply), so the status check must never claim to
-  // be read-only. look models the same observation physics.
+  // be read-only. Public look does not authenticate or wake those timers.
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
     [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
@@ -601,15 +642,17 @@ test('me is advertised as state-changing on both doors', async () => {
     }, path)
     assert.match(me.description, /not a read-only call/iu, path)
     assert.match(me.description, /resolves? due timers/iu, path)
-    // look shares the timer physics but reads the open public city, so only
-    // openWorldHint differs — pinned in full so the asymmetry is deliberate.
     const look = toolByName(tools, 'look')
     assert.deepEqual(look.annotations, {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: true,
     }, path)
+    assert.match(look.description, /read-only/iu, path)
+    assert.match(look.description, /non-destructive/iu, path)
+    assert.match(look.description, /safe to repeat/iu, path)
+    assert.doesNotMatch(look.description, /resolves? due timers/iu, path)
   }
 })
 

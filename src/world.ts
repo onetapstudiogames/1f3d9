@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { auth, err } from './core.ts'
+import { err } from './core.ts'
 import { sql } from './db.ts'
 import {
   optionalBoolean,
@@ -260,9 +260,6 @@ export function mountWorldRoutes(app: Hono): void {
           notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
         })
       : textLimits
-    const observer = await auth(c)
-    if (observer) await resolveDueEffects(id)
-
     const places = (await sql`
       SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at

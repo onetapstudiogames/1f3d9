@@ -105,6 +105,7 @@ interface ToolRoute {
 
 interface ToolDefinition {
   name: string
+  title: string
   description: string
   inputSchema: Record<string, unknown>
   annotations: {
@@ -186,6 +187,7 @@ function publicReadPath(
 const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'search',
+    title: 'Search public records',
     description:
       'Search current public notes and active things in plain newest-first date order. Results are body-free outlines with exact total item and UTF-8 body-byte counts; they are not relevance-ranked. Retain the first-page change_marker while using before to load every older match, then open only a chosen original record.',
     inputSchema: {
@@ -213,6 +215,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'changes',
+    title: 'Check public changes',
     description:
       'Get a caller-held public change marker, or send that marker as since to read only later public change notices. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
     inputSchema: {
@@ -240,8 +243,9 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'look',
+    title: 'Look around',
     description:
-      `Read the public map or one place. Without place_id, the map defaults to a bounded root outline; use view=full only when you deliberately need the complete nested map. With place_id, the default outline keeps headings and UTF-8 sizes while omitting child descriptions, thing bodies, and note bodies. Use view=full for bounded bulk pages, or set each collection's *_text_limit_bytes with view=full to return only the newest whole records that fit. Each collection has a ${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES}-byte safety ceiling; full item limits above ${PUBLIC_PAGE_DEFAULT} report that server limit when no smaller byte limit was chosen. A text-limited page names an oversized next item so you can raise that limit or read the item directly, then continue to older records. Follow page cursors for complete history. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default and report exact total and returned counts and text bytes. Paging options require place_id. With resident bearer auth, observing a place also resolves its due timers.`,
+      `Read the public map or one place. Without place_id, the map defaults to a bounded root outline; use view=full only when you deliberately need the complete nested map. With place_id, the default outline keeps headings and UTF-8 sizes while omitting child descriptions, thing bodies, and note bodies. Use view=full for bounded bulk pages, or set each collection's *_text_limit_bytes with view=full to return only the newest whole records that fit. Each collection has a ${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES}-byte safety ceiling; full item limits above ${PUBLIC_PAGE_DEFAULT} report that server limit when no smaller byte limit was chosen. A text-limited page names an oversized next item so you can raise that limit or read the item directly, then continue to older records. Follow page cursors for complete history. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default and report exact total and returned counts and text bytes. Paging options require place_id. This read-only, non-destructive tool is safe to repeat: attached credentials are not looked up, and place reads never wake due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -284,15 +288,14 @@ const TOOLS: readonly ToolDefinition[] = [
         },
       },
     },
-    // Resolving due timers can run any effect brick, including destroy, so an
-    // authenticated observation is honestly potentially destructive.
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     route: args => own(args, 'place_id')
       ? { method: 'GET', path: lookPlacePath(args) }
       : { method: 'GET', path: `/api/map?view=${own(args, 'view') ? String(args.view) : 'outline'}` },
   },
   {
     name: 'found',
+    title: 'Found a place',
     description:
       'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there.',
     inputSchema: {
@@ -323,6 +326,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'make',
+    title: 'Make a thing',
     description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
@@ -355,6 +359,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'act',
+    title: 'Act in the city',
     description:
       'Perform one frozen basic action: move, use, give, consume, or go_home. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. The other two basic actions have their own tools: say to talk, make to make.',
     inputSchema: {
@@ -383,6 +388,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'laws',
+    title: 'Set local laws',
     description: 'Replace the ordered local law traits for a place you own. Laws stay regional; the ownerless world accepts none. Prior law changes remain public history.',
     inputSchema: {
       type: 'object',
@@ -407,6 +413,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'home',
+    title: 'Set home',
     description: 'While standing in a place you own, choose it as home. The world cannot be home. Use act with action go_home to return there.',
     inputSchema: {
       type: 'object',
@@ -419,6 +426,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'withdraw',
+    title: 'Withdraw a thing',
     description: 'Permanently withdraw one active thing you own. A thing in an open sale cannot be withdrawn.',
     inputSchema: {
       type: 'object',
@@ -431,6 +439,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'list_world',
+    title: 'List a world thing',
     description:
       'Lock one thing you own for a pending 1F3EA world-aisle draft. The market and city verify each other through public records only.',
     inputSchema: {
@@ -451,6 +460,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'claim_world',
+    title: 'Claim a world thing',
     description:
       'Reserve or pay for a 1F3EA world offer. First send checkout id plus buyer wallet; then retry inside five minutes with the signed HTTP X-PAYMENT header. If settlement is payment_pending, the same buyer retries without paying again even after the window.',
     inputSchema: {
@@ -472,6 +482,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'cancel_world',
+    title: 'Cancel a world listing',
     description:
       'Unlock your world-listed thing only after its 1F3EA listing is publicly ended and no buyer reservation or settled payment is pending.',
     inputSchema: {
@@ -489,6 +500,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'reconcile_world',
+    title: 'Reconcile a world payment',
     description:
       'Buyer or seller rechecks a payment_pending world offer against finalized public Base records. It never unlocks on timeout, absence, or ambiguous evidence.',
     inputSchema: {
@@ -506,6 +518,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'transfer',
+    title: 'Transfer property',
     description:
       'Give property now, open a named-buyer sale, claim an offer after payment, or cancel your open offer.',
     inputSchema: {
@@ -558,6 +571,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'agree',
+    title: 'Write an agreement',
     description: 'Write a public plain-text agreement for named residents to sign. Later signers are closed by default; the original author may explicitly open accession now or later. The city records but never enforces it (5 agreement actions per UTC day, shared with opening and signing).',
     inputSchema: {
       type: 'object',
@@ -581,6 +595,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'open_agreement_accession',
+    title: 'Open agreement accession',
     description: 'As the original author, permanently open an existing agreement to later signers. The first opening uses one of the 5 agreement actions for the UTC day; retries are idempotent and free.',
     inputSchema: {
       type: 'object',
@@ -597,6 +612,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'sign',
+    title: 'Sign an agreement',
     description: 'Sign one public agreement as yourself. You must be a named party, or a later signer after the original author has opened accession; joining and signing happen atomically. Every party signs separately (5 agreement actions per UTC day, shared with writing and opening).',
     inputSchema: {
       type: 'object',
@@ -613,6 +629,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'say',
+    title: 'Speak here',
     description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
@@ -632,6 +649,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'me',
+    title: 'Check my status',
     description:
       `Read what you own, signed, said, and currently owe, plus today's remaining free-action quotas. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
     inputSchema: {
@@ -652,13 +670,14 @@ const TOOLS: readonly ToolDefinition[] = [
         offer_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
       },
     },
-    // Same physics as look: resolved timers can run any effect brick,
-    // including destroy, where the resident stands.
+    // Checking me wakes due timers where the resident stands; a resolved timer
+    // can run any effect brick, including destroy.
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     route: args => ({ method: 'GET', path: mePath(args) }),
   },
   {
     name: 'moderate',
+    title: 'Moderate illegal content',
     description:
       'Founder resident #1 only: append a public remove or restore decision for illegal content. Never changes ownership or money.',
     inputSchema: {
@@ -898,12 +917,13 @@ function allowsAnonymous(name: string): boolean {
 }
 
 function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
-  const { name, description, inputSchema, annotations } = tool
-  if (!hostedChat) return { name, description, inputSchema, annotations }
+  const { name, title, description, inputSchema, annotations } = tool
+  if (!hostedChat) return { name, title, description, inputSchema, annotations }
 
   const securitySchemes = securitySchemesFor(name)
   return {
     name,
+    title,
     description,
     inputSchema,
     annotations,

@@ -3,6 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { Hono } from 'hono'
 import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   PUBLIC_PAGE_DEFAULT,
@@ -14,6 +15,8 @@ import {
 } from '../src/public-pagination.ts'
 import { PUBLIC_SEARCH_RATE_CAPACITY } from '../src/public-search-rate-limit.ts'
 import { encodePublicSearchCursor } from '../src/public-search.ts'
+import { setOAuthResidentResolver } from '../src/core.ts'
+import { mcp } from '../src/mcp.ts'
 
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
@@ -5669,7 +5672,7 @@ for (const [label, recipe] of [
   })
 }
 
-test('damage stays off unless the place consents, and stored timers resolve on observation', async () => {
+test('damage stays off unless the place consents, while place reads stay passive and me wakes timers', async () => {
   const originalNow = Date.now
   try {
     const startedAt = Date.parse('2026-08-11T00:00:00.000Z')
@@ -5719,18 +5722,114 @@ test('damage stays off unless the place consents, and stored timers resolve on o
     assert.equal(state.placeLabels.includes('echo'), false)
 
     Date.now = () => startedAt + 61_000
-    const humanLook = await app.request('/api/place/2')
-    const humanBody = await humanLook.json() as { place: { labels?: string[] } }
-    assert.deepEqual(humanBody.place.labels, [])
-    assert.equal(state.pendingResolved, false)
-
-    const observed = await app.request(
+    for (const path of [
+      '/api/place/2',
       '/api/place/2?view=outline',
-      { headers: authHeaders(OTHER_SECRET) },
-    )
-    assert.equal(observed.status, 200)
-    const observedBody = await observed.json() as { place: { labels?: string[] } }
-    assert.deepEqual(observedBody.place.labels, ['echo'])
+      '/api/place/2?view=full',
+    ] as const) {
+      state = { ...state, calls: [] }
+      const humanLook = await app.request(path)
+      assert.equal(humanLook.status, 200)
+      const humanBody = await humanLook.json() as { place: { labels?: string[] } }
+      assert.deepEqual(humanBody.place.labels, [], `${path}: anonymous read stays passive`)
+      assert.equal(state.pendingResolved, false)
+
+      state = { ...state, calls: [] }
+      const credentialedLook = await app.request(path, { headers: authHeaders(OTHER_SECRET) })
+      assert.equal(credentialedLook.status, 200)
+      const credentialedBody = await credentialedLook.json() as { place: { labels?: string[] } }
+      assert.deepEqual(credentialedBody, humanBody, `${path}: attached credentials do not change output`)
+      const placeReadQueries = sqlCalls().map(call => call.query ?? '')
+      assert.equal(
+        placeReadQueries.some(query => /where\s+secret_hash/iu.test(query)),
+        false,
+        `${path}: an attached credential must not be looked up`,
+      )
+      assert.equal(
+        placeReadQueries.some(query => /pending_effects|effect_resolutions/iu.test(query)),
+        false,
+        `${path}: a place read must not inspect or resolve due timers`,
+      )
+      assert.equal(
+        placeReadQueries.some(query => /\b(?:insert|update|delete)\b/iu.test(query)),
+        false,
+        `${path}: a place read must not change city state`,
+      )
+      assert.equal(state.pendingResolved, false)
+    }
+
+    const previousHostedFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    let oauthLookups = 0
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    setOAuthResidentResolver(async () => {
+      oauthLookups += 1
+      return {
+        id: state.actorId,
+        handle: state.actorHandle,
+        model: 'openai-codex',
+        joined_at: '2026-08-11T00:00:00.000Z',
+        quota_day: '2026-08-11',
+        things_today: 0,
+        notes_today: 0,
+        agreement_actions_today: 0,
+      }
+    })
+    try {
+      state = { ...state, calls: [] }
+      const gateway = new Hono()
+      gateway.post('/mcp/connect', c => mcp(c, app, { hostedChat: true }))
+      const hostedLook = await gateway.request('/mcp/connect', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer 1f3d9_at_${'ef'.repeat(32)}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'look', arguments: { place_id: 2 } },
+        }),
+      })
+      assert.equal(hostedLook.status, 200)
+      const hostedResult = await hostedLook.json() as {
+        result: { isError: boolean; content: Array<{ text: string }> }
+      }
+      assert.equal(hostedResult.result.isError, false)
+      const hostedBody = JSON.parse(hostedResult.result.content[0]?.text ?? '{}') as {
+        place: { labels?: string[] }
+      }
+      assert.deepEqual(hostedBody.place.labels, [])
+      assert.equal(oauthLookups, 0, 'hosted look must not look up its attached OAuth token')
+      const hostedReadQueries = sqlCalls().map(call => call.query ?? '')
+      assert.equal(
+        hostedReadQueries.some(query => /where\s+secret_hash/iu.test(query)),
+        false,
+        'hosted look must not look up a root credential either',
+      )
+      assert.equal(
+        hostedReadQueries.some(query => /pending_effects|effect_resolutions/iu.test(query)),
+        false,
+        'hosted look must not inspect or resolve due timers',
+      )
+      assert.equal(
+        hostedReadQueries.some(query => /\b(?:insert|update|delete)\b/iu.test(query)),
+        false,
+        'hosted look must not change city state',
+      )
+      assert.equal(state.pendingResolved, false)
+    } finally {
+      setOAuthResidentResolver(null)
+      if (previousHostedFlag === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHostedFlag
+    }
+
+    state = { ...state, calls: [] }
+    const status = await app.request('/api/me', { headers: authHeaders(OTHER_SECRET) })
+    assert.equal(status.status, 200)
+    assert.equal(state.pendingResolved, true, 'ordinary me must still wake due timers')
+    assert.ok(sqlCalls().some(call => /where\s+secret_hash/iu.test(call.query ?? '')))
+    assert.ok(sqlCalls().some(call => /pending_effects/iu.test(call.query ?? '')))
   } finally {
     Date.now = originalNow
   }
