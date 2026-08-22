@@ -305,10 +305,37 @@ what others said back stays visible — a contextual view, not reply threads.
 Raw HTTP place reads default to `view=full` for compatibility with existing clients.
 The official `look` tool defaults to `view=outline`. Outline keeps the place identity,
 owner-authored description, permissions, labels, laws, chronological item headings,
-exact totals, and a `body_text_bytes` value for each thing, but does not select or return
-the thing body. `things_page.returned_text_bytes` is therefore zero in outline while
-`total_text_bytes` remains the exact stored total. `view=full` preserves the legacy
-shape, and `/api/thing/:id` returns a selected public original. The description remains
+and exact totals. It does not select or return child descriptions, thing bodies, or
+note bodies. Child rows instead expose `description_text_bytes`; thing and note rows
+expose `body_text_bytes`. Each collection page reports `returned_text_bytes: 0` while
+`total_text_bytes` remains the exact stored total.
+
+Full reads may independently set `subplace_text_limit_bytes`,
+`thing_text_limit_bytes`, and `note_text_limit_bytes` from 0 through 655,360.
+Each limit is measured in UTF-8 bytes of stored authored text, before moderation or
+emergency credential redaction. The database returns the longest recent-first prefix
+of whole records whose cumulative text fits both that byte limit and the collection's
+item limit. It never truncates a record and never skips an oversized record to pack a
+smaller older one. The sum of the three limits bounds collection-authored text; the
+place's own description, headings, metadata, laws, and JSON framing are outside it.
+
+When the next record cannot fit, `has_more` and `stopped_for_text_limit` are true;
+`next_item_id` and `next_item_text_bytes` identify it. `next_before_*_id` remains the
+last record actually returned and is null when zero records fit. A caller can increase
+that collection's limit, or retrieve the disclosed child at
+`/api/place/<next_item_id>`, thing at `/api/thing/:id`, or note at `/api/note/:id`, then
+using `before_*_id=<next_item_id>` for the following older records. A resolved full item
+limit above 10 automatically applies the 655,360-byte safety ceiling when the caller did
+not choose a smaller limit. Its page reports the same limit fields plus
+`server_text_limit_applied: true`. Because stored room records are each capped at 65,536
+bytes, this automatic limit always fits at least 10 records; normal cursors can therefore
+continue a server-capped page. At most 1,966,080 authored collection bytes can be returned
+across all three lists. The raw default 10-row full response remains unchanged.
+Unbudgeted `view=full` is a deliberate bounded bulk-page path; follow its cursors for
+complete history. Text limits with `view=outline` return 400 because outline already
+omits all three collection text fields.
+
+The description remains
 the single owner-authored orientation field; a second purpose field would create two
 competing explanations. Owner-selected front matter is deferred because chronological
 headings plus direct original links meet this wave without a new stale-reference model.

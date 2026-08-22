@@ -1116,6 +1116,98 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       : [{ id: null, total_items: total, total_text_bytes: 0 }]
   }
 
+  if (q.includes('/* public:place-collections-budgeted */')) {
+    const paged = state.scenario === 'public pagination'
+    const allSubplaces = paged ? paginationSubplaces() : [placeRow(2, 1)]
+    const allThings = paged
+      ? paginationThings()
+      : state.thingWithdrawn ? [] : [thingRow(41)]
+    const allNotes = paged
+      ? paginationNotes()
+      : state.scenario === 'busy place'
+        ? Array.from({ length: 205 }, (_, index) => ({
+            id: index + 1,
+            place_id: 2,
+            author: 'tiny-lantern',
+            body: `note ${index + 1}`,
+            created_at: new Date(Date.UTC(2026, 7, 11, 0, 0, index + 1)).toISOString(),
+          }))
+        : [{ id: 51, place_id: 2, author: 'tiny-lantern', body: state.noteBody, created_at: '2026-08-11T00:00:00.000Z' }]
+    const pack = <T extends { id: number }>(
+      rows: readonly T[],
+      cursor: unknown,
+      fetchLimit: unknown,
+      textLimit: unknown,
+      field: keyof T,
+    ) => {
+      const candidates = descendingPage(rows, cursor, fetchLimit)
+      const itemLimit = Number(fetchLimit) - 1
+      const limit = textLimit == null ? null : Number(textLimit)
+      const items: T[] = []
+      let returnedTextBytes = 0
+      let blocked: T | null = null
+      let blockedBytes: number | null = null
+      for (const row of candidates.slice(0, itemLimit)) {
+        const bytes = Buffer.byteLength(String(row[field] ?? ''), 'utf8')
+        if (limit != null && returnedTextBytes + bytes > limit) {
+          blocked = row
+          blockedBytes = bytes
+          break
+        }
+        items.push(row)
+        returnedTextBytes += bytes
+      }
+      const hasMore = candidates.length > items.length
+      return {
+        items,
+        returnedTextBytes,
+        hasMore,
+        nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
+        stoppedForTextLimit: blocked != null,
+        nextItemId: blocked?.id ?? null,
+        nextItemTextBytes: blockedBytes,
+      }
+    }
+    const subplaces = pack(allSubplaces, params[1], params[2], params[7], 'description')
+    const things = pack(allThings, params[3], params[4], params[8], 'body')
+    const notes = pack(allNotes, params[5], params[6], params[9], 'body')
+    return [{
+      subplaces: subplaces.items,
+      things: things.items,
+      notes: notes.items,
+      subplace_items: paged ? 160 : allSubplaces.length,
+      subplace_text_bytes: paged ? 1600 : allSubplaces.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.description ?? ''), 'utf8'), 0,
+      ),
+      thing_items: paged ? 260 : allThings.length,
+      thing_text_bytes: paged ? 2600 : allThings.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.body ?? ''), 'utf8'), 0,
+      ),
+      note_items: paged ? 360 : allNotes.length,
+      note_text_bytes: paged ? 3600 : allNotes.reduce(
+        (total, row) => total + Buffer.byteLength(String(row.body ?? ''), 'utf8'), 0,
+      ),
+      subplace_returned_text_bytes: subplaces.returnedTextBytes,
+      subplace_has_more: subplaces.hasMore,
+      subplace_next_cursor: subplaces.nextCursor,
+      subplace_stopped_for_text_limit: subplaces.stoppedForTextLimit,
+      subplace_next_item_id: subplaces.nextItemId,
+      subplace_next_item_text_bytes: subplaces.nextItemTextBytes,
+      thing_returned_text_bytes: things.returnedTextBytes,
+      thing_has_more: things.hasMore,
+      thing_next_cursor: things.nextCursor,
+      thing_stopped_for_text_limit: things.stoppedForTextLimit,
+      thing_next_item_id: things.nextItemId,
+      thing_next_item_text_bytes: things.nextItemTextBytes,
+      note_returned_text_bytes: notes.returnedTextBytes,
+      note_has_more: notes.hasMore,
+      note_next_cursor: notes.nextCursor,
+      note_stopped_for_text_limit: notes.stoppedForTextLimit,
+      note_next_item_id: notes.nextItemId,
+      note_next_item_text_bytes: notes.nextItemTextBytes,
+    }]
+  }
+
   if (q.includes('/* public:place-collections */')) {
     const paged = state.scenario === 'public pagination'
     const allSubplaces = paged ? paginationSubplaces() : [placeRow(2, 1)]
@@ -1137,7 +1229,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       allSubplaces,
       params[1],
       params[2],
-    )
+    ).map(row => q.includes('as description_text_bytes')
+      ? Object.fromEntries(Object.entries({
+          ...row,
+          description_text_bytes: Buffer.byteLength(String(row.description ?? ''), 'utf8'),
+        }).filter(([key]) => key !== 'description'))
+      : row)
     const things = descendingPage(
       allThings,
       params[3],
@@ -1152,7 +1249,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       allNotes,
       params[5],
       params[6],
-    )
+    ).map(row => q.includes('author.handle as author, octet_length(n.body)')
+      ? Object.fromEntries(Object.entries({
+          ...row,
+          body_text_bytes: Buffer.byteLength(String(row.body ?? ''), 'utf8'),
+        }).filter(([key]) => key !== 'body'))
+      : row)
     return [{
       subplaces,
       things,
@@ -3378,31 +3480,52 @@ test('place reads return newest bounded slices and independent continuation curs
   assert.equal(second.notes.some(row => first.notes.some(previous => previous.id === row.id)), false)
 })
 
-test('outline place reads keep truthful thing headings and sizes without returning bodies', async () => {
+test('outline place reads keep truthful headings and sizes without returning authored collection text', async () => {
   reset({ scenario: 'public pagination' })
-  const response = await app.request('/api/place/2?view=outline&thing_limit=2')
+  const response = await app.request('/api/place/2?view=outline&limit=2')
   assert.equal(response.status, 200, await response.clone().text())
   const body = await response.json() as {
     view: string
+    subplaces: Array<{
+      id: number
+      name: string
+      description?: string
+      description_text_bytes: number
+    }>
     things: Array<{ id: number; name: string; body?: string; body_text_bytes: number }>
+    notes: Array<{ id: number; author: string; body?: string; body_text_bytes: number }>
+    subplaces_page: { returned_text_bytes: number }
     things_page: {
       total_items: number
       total_text_bytes: number
       returned_items: number
       returned_text_bytes: number
     }
+    notes_page: { returned_text_bytes: number }
   }
   assert.equal(body.view, 'outline')
+  assert.deepEqual(body.subplaces.map(place => place.id), [160, 159])
+  assert.equal(body.subplaces.every(place => typeof place.name === 'string'), true)
+  assert.equal(body.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
+  assert.equal(body.subplaces.every(place => place.description_text_bytes > 0), true)
   assert.deepEqual(body.things.map(thing => thing.id), [260, 259])
   assert.equal(body.things.every(thing => typeof thing.name === 'string'), true)
   assert.equal(body.things.every(thing => !Object.hasOwn(thing, 'body')), true)
   assert.equal(body.things.every(thing => thing.body_text_bytes > 0), true)
+  assert.deepEqual(body.notes.map(note => note.id), [360, 359])
+  assert.equal(body.notes.every(note => typeof note.author === 'string'), true)
+  assert.equal(body.notes.every(note => !Object.hasOwn(note, 'body')), true)
+  assert.equal(body.notes.every(note => note.body_text_bytes > 0), true)
+  assert.equal(body.subplaces_page.returned_text_bytes, 0)
   assert.equal(body.things_page.total_items, 260)
   assert.equal(body.things_page.total_text_bytes, 2600)
   assert.equal(body.things_page.returned_items, 2)
   assert.equal(body.things_page.returned_text_bytes, 0)
+  assert.equal(body.notes_page.returned_text_bytes, 0)
   const read = sqlCalls().find(call => /\/\* public:place-collections \*\//i.test(call.query ?? ''))
+  assert.doesNotMatch(read?.query ?? '', /\bp\.description\s*,/i, 'outline SQL must not return child descriptions')
   assert.doesNotMatch(read?.query ?? '', /\bt\.body\s*,/i, 'outline SQL must not return large thing bodies')
+  assert.doesNotMatch(read?.query ?? '', /\bn\.body\s*,/i, 'outline SQL must not return note bodies')
 })
 
 test('full place reads remain the default compatibility shape and can be requested explicitly', async () => {
@@ -3420,6 +3543,188 @@ test('full place reads remain the default compatibility shape and can be request
     assert.equal(typeof body.things[0]?.body, 'string')
     assert.equal(body.things[0]?.body_text_bytes, undefined)
     assert.ok(body.things_page.returned_text_bytes > 0)
+  }
+})
+
+test('large full-room pages receive a hard server text ceiling without changing ordinary reads', async () => {
+  const serverCollectionTextLimit = 655_360
+
+  reset({ scenario: 'public pagination' })
+  const response = await app.request('/api/place/2?view=full&limit=200')
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as Record<string, unknown>
+  for (const pageName of ['subplaces_page', 'things_page', 'notes_page']) {
+    const page = body[pageName] as Record<string, unknown>
+    assert.equal(page.text_limit_bytes, serverCollectionTextLimit, pageName)
+    assert.equal(page.server_text_limit_applied, true, pageName)
+  }
+  const bulkRead = sqlCalls().find(call =>
+    /\/\* public:place-collections-budgeted \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    bulkRead?.params?.map(value => value == null ? null : Number(value)),
+    [
+      2,
+      null, 201,
+      null, 201,
+      null, 201,
+      serverCollectionTextLimit,
+      serverCollectionTextLimit,
+      serverCollectionTextLimit,
+    ],
+    'a 200-row bulk request must not bypass the server-authored-text ceiling',
+  )
+
+  reset({ scenario: 'public pagination' })
+  const mixed = await app.request('/api/place/2?view=full&limit=10&thing_limit=200')
+  assert.equal(mixed.status, 200, await mixed.clone().text())
+  const mixedBody = await mixed.json() as Record<string, Record<string, unknown>>
+  assert.equal(mixedBody.subplaces_page?.server_text_limit_applied, undefined)
+  assert.equal(mixedBody.things_page?.server_text_limit_applied, true)
+  assert.equal(mixedBody.notes_page?.server_text_limit_applied, undefined)
+  const mixedRead = sqlCalls().find(call =>
+    /\/\* public:place-collections-budgeted \*\//i.test(call.query ?? ''))
+  assert.deepEqual(
+    mixedRead?.params?.map(value => value == null ? null : Number(value)),
+    [2, null, 11, null, 201, null, 11, null, serverCollectionTextLimit, null],
+    'only the oversized specific collection needs the automatic ceiling',
+  )
+})
+
+test('full place reads stop on whole records at each reader-chosen UTF-8 byte limit', async () => {
+  reset({ scenario: 'public pagination' })
+  const response = await app.request(
+    '/api/place/2?view=full&limit=10' +
+      '&subplace_text_limit_bytes=20&thing_text_limit_bytes=20&note_text_limit_bytes=20',
+  )
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    subplaces: Array<{ id: number; description: string }>
+    things: Array<{ id: number; body: string }>
+    notes: Array<{ id: number; body: string }>
+    subplaces_page: {
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_subplace_id: number | null
+      text_limit_bytes: number
+      stopped_for_text_limit: boolean
+      next_item_id: number | null
+      next_item_text_bytes: number | null
+    }
+    things_page: {
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_thing_id: number | null
+      text_limit_bytes: number
+      stopped_for_text_limit: boolean
+      next_item_id: number | null
+      next_item_text_bytes: number | null
+    }
+    notes_page: {
+      returned_items: number
+      returned_text_bytes: number
+      has_more: boolean
+      next_before_note_id: number | null
+      text_limit_bytes: number
+      stopped_for_text_limit: boolean
+      next_item_id: number | null
+      next_item_text_bytes: number | null
+    }
+  }
+
+  assert.deepEqual(body.subplaces, [])
+  assert.deepEqual(body.things.map(thing => thing.id), [260])
+  assert.deepEqual(body.notes.map(note => note.id), [360, 359])
+  for (const [name, page] of [
+    ['subplaces', body.subplaces_page],
+    ['things', body.things_page],
+    ['notes', body.notes_page],
+  ] as const) {
+    assert.equal(page.text_limit_bytes, 20, name)
+    assert.equal(page.stopped_for_text_limit, true, name)
+    assert.equal(page.has_more, true, name)
+    assert.ok(page.returned_text_bytes <= page.text_limit_bytes, name)
+    assert.ok((page.next_item_id ?? 0) > 0, name)
+    assert.ok((page.next_item_text_bytes ?? 0) > 0, name)
+  }
+  assert.equal(body.subplaces_page.next_before_subplace_id, null)
+  assert.equal(body.subplaces_page.next_item_id, 160)
+  assert.equal(body.things_page.next_before_thing_id, 260)
+  assert.equal(body.things_page.next_item_id, 259)
+  assert.equal(body.notes_page.next_before_note_id, 359)
+  assert.equal(body.notes_page.next_item_id, 358)
+  assert.equal(
+    body.things_page.returned_text_bytes,
+    body.things.reduce((total, thing) => total + Buffer.byteLength(thing.body, 'utf8'), 0),
+  )
+  assert.equal(
+    body.notes_page.returned_text_bytes,
+    body.notes.reduce((total, note) => total + Buffer.byteLength(note.body, 'utf8'), 0),
+  )
+  const budgetedRead = sqlCalls().find(call =>
+    /\/\* public:place-collections-budgeted \*\//i.test(call.query ?? ''))
+  for (const [source, candidates, fetchParameter] of [
+    ['subplace_source', 'subplace_candidates', 3],
+    ['thing_source', 'thing_candidates', 5],
+    ['note_source', 'note_candidates', 7],
+  ] as const) {
+    assert.match(
+      budgetedRead?.query ?? '',
+      new RegExp(
+        `${source}\\s+AS\\s+MATERIALIZED[\\s\\S]*?LIMIT\\s+\\$${fetchParameter}::integer` +
+          `[\\s\\S]*?${candidates}\\s+AS\\s+MATERIALIZED[\\s\\S]*?FROM\\s+${source}`,
+        'iu',
+      ),
+      `${source} must apply the item bound before its cumulative-byte window`,
+    )
+  }
+
+  state = { ...state, calls: [] }
+  const continued = await app.request(
+    '/api/place/2?view=full&limit=10' +
+      '&subplace_text_limit_bytes=50&thing_text_limit_bytes=20&note_text_limit_bytes=20' +
+      '&before_thing_id=260&before_note_id=359',
+  )
+  assert.equal(continued.status, 200, await continued.clone().text())
+  const next = await continued.json() as typeof body
+  assert.deepEqual(next.subplaces.map(place => place.id), [160, 159])
+  assert.deepEqual(next.things.map(thing => thing.id), [259])
+  assert.deepEqual(next.notes.map(note => note.id), [358, 357])
+  assert.equal(next.subplaces_page.text_limit_bytes, 50)
+  assert.equal(next.things.some(thing => body.things.some(previous => previous.id === thing.id)), false)
+  assert.equal(next.notes.some(note => body.notes.some(previous => previous.id === note.id)), false)
+})
+
+test('place text limits accept zero and reject duplicates or unsafe integers before PostgreSQL', async () => {
+  reset({ scenario: 'public pagination' })
+  const zero = await app.request(
+    '/api/place/2?view=full' +
+      '&subplace_text_limit_bytes=0&thing_text_limit_bytes=0&note_text_limit_bytes=0',
+  )
+  assert.equal(zero.status, 200, await zero.clone().text())
+  const zeroBody = await zero.json() as {
+    subplaces: unknown[]
+    things: unknown[]
+    notes: unknown[]
+    subplaces_page: { stopped_for_text_limit: boolean }
+  }
+  assert.deepEqual([zeroBody.subplaces, zeroBody.things, zeroBody.notes], [[], [], []])
+  assert.equal(zeroBody.subplaces_page.stopped_for_text_limit, true)
+
+  for (const path of [
+    '/api/place/2?subplace_text_limit_bytes=-1',
+    '/api/place/2?thing_text_limit_bytes=1.5',
+    '/api/place/2?thing_text_limit_bytes=655361',
+    '/api/place/2?note_text_limit_bytes=9007199254740992',
+    '/api/place/2?note_text_limit_bytes=1&note_text_limit_bytes=2',
+    '/api/place/2?note_text_limit_bytes=nope',
+    '/api/place/2?view=outline&note_text_limit_bytes=10',
+  ]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, path)
   }
 })
 
@@ -3510,6 +3815,19 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     const response = await app.request(path)
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} should fail before reading PostgreSQL`)
+  }
+})
+
+test('public direct resource ids reject PostgreSQL integer overflow before database work', async () => {
+  for (const path of [
+    '/api/place/2147483648',
+    '/api/thing/2147483648',
+    '/api/note/2147483648',
+  ]) {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, path)
   }
 })
 
@@ -4053,6 +4371,13 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.ok(makeTool?.inputSchema.properties && 'open_to_use' in makeTool.inputSchema.properties)
   const lookTool = listBody.result.tools.find(tool => tool.name === 'look')
   assert.ok(lookTool?.inputSchema.properties && 'view' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'subplace_text_limit_bytes' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'thing_text_limit_bytes' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'note_text_limit_bytes' in lookTool.inputSchema.properties)
+  assert.equal(
+    (lookTool?.inputSchema.properties?.thing_text_limit_bytes as { maximum?: number } | undefined)?.maximum,
+    655_360,
+  )
 
   state = { ...state, scenario: 'public pagination' }
   const outlined = await app.request('/mcp', {
@@ -4068,11 +4393,17 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.equal(outlinedBody.result.isError, false)
   const outlinedPlace = JSON.parse(outlinedBody.result.content[0]!.text) as {
     view: string
+    subplaces: Array<{ description?: string; description_text_bytes: number }>
     things: Array<{ body?: string; body_text_bytes: number }>
+    notes: Array<{ body?: string; body_text_bytes: number }>
   }
   assert.equal(outlinedPlace.view, 'outline')
+  assert.equal(Object.hasOwn(outlinedPlace.subplaces[0]!, 'description'), false)
+  assert.ok(outlinedPlace.subplaces[0]!.description_text_bytes > 0)
   assert.equal(Object.hasOwn(outlinedPlace.things[0]!, 'body'), false)
   assert.ok(outlinedPlace.things[0]!.body_text_bytes > 0)
+  assert.equal(Object.hasOwn(outlinedPlace.notes[0]!, 'body'), false)
+  assert.ok(outlinedPlace.notes[0]!.body_text_bytes > 0)
 
   const invalidMapPage = await app.request('/mcp', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4654,7 +4985,10 @@ test('damage stays off unless the place consents, and stored timers resolve on o
     assert.deepEqual(humanBody.place.labels, [])
     assert.equal(state.pendingResolved, false)
 
-    const observed = await app.request('/api/place/2', { headers: authHeaders(OTHER_SECRET) })
+    const observed = await app.request(
+      '/api/place/2?view=outline',
+      { headers: authHeaders(OTHER_SECRET) },
+    )
     assert.equal(observed.status, 200)
     const observedBody = await observed.json() as { place: { labels?: string[] } }
     assert.deepEqual(observedBody.place.labels, ['echo'])
@@ -4683,6 +5017,23 @@ test('founder moderation is remove-or-restore tombstoning, never governance', as
   assert.equal(tombstonedBody.notes[0]?.body, '[removed by maintainer]')
   assert.equal(tombstonedBody.notes[0]?.moderated, true)
   assert.equal(tombstonedBody.notes[0]?.moderation?.reason, 'illegal content')
+
+  state = { ...state, calls: [] }
+  const outline = await app.request('/api/place/2?view=outline')
+  assert.equal(outline.status, 200)
+  const outlineBody = await outline.json() as {
+    notes: Array<{
+      id: number
+      body?: string
+      body_text_bytes: number
+      moderated?: boolean
+      moderation?: { reason: string }
+    }>
+  }
+  assert.equal(Object.hasOwn(outlineBody.notes[0]!, 'body'), false)
+  assert.ok(outlineBody.notes[0]!.body_text_bytes > 0)
+  assert.equal(outlineBody.notes[0]!.moderated, true)
+  assert.equal(outlineBody.notes[0]!.moderation?.reason, 'illegal content')
 
   const pinned = await app.request('/api/moderation', {
     method: 'POST',

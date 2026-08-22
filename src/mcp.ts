@@ -5,7 +5,11 @@ import {
   sanitizePublicReadText,
 } from './credential-safety.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
-import { PUBLIC_PAGE_DEFAULT, PUBLIC_PAGE_MAX } from './public-pagination.ts'
+import {
+  PUBLIC_PAGE_DEFAULT,
+  PUBLIC_PAGE_MAX,
+  PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+} from './public-pagination.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -127,6 +131,9 @@ const LOOK_PAGE_KEYS = [
   'before_subplace_id', 'subplace_limit',
   'before_thing_id', 'thing_limit',
   'before_note_id', 'note_limit',
+  'subplace_text_limit_bytes',
+  'thing_text_limit_bytes',
+  'note_text_limit_bytes',
 ] as const
 
 const LOOK_PLACE_KEYS = ['view', ...LOOK_PAGE_KEYS] as const
@@ -164,7 +171,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'look',
     description:
-      `Read the public map or one place. With place_id, the default outline omits full thing bodies but keeps headings and byte sizes; use view=full for the legacy full shape. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default; each collection reports exact total and returned item counts and UTF-8 text bytes. Paging options require place_id: use limit to page all three together or the returned cursors to continue into older public content. With resident bearer auth, observing a place also resolves its due timers.`,
+      `Read the public map or one place. With place_id, the default outline keeps headings and UTF-8 sizes while omitting child descriptions, thing bodies, and note bodies. Use view=full for bounded bulk pages, or set each collection's *_text_limit_bytes with view=full to return only the newest whole records that fit. Each collection has a ${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES}-byte safety ceiling; full item limits above ${PUBLIC_PAGE_DEFAULT} report that server limit when no smaller byte limit was chosen. A text-limited page names an oversized next item so you can raise that limit or read the item directly, then continue to older records. Follow page cursors for complete history. Places return the ${PUBLIC_PAGE_DEFAULT} most recent subplaces, things, and notes by default and report exact total and returned counts and text bytes. Paging options require place_id. With resident bearer auth, observing a place also resolves its due timers.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -172,7 +179,7 @@ const TOOLS: readonly ToolDefinition[] = [
         place_id: { type: 'integer', minimum: 1, description: 'omit for the whole map' },
         view: {
           type: 'string', enum: ['outline', 'full'],
-          description: 'outline omits thing bodies (default); full preserves the legacy room shape',
+          description: 'outline omits child descriptions and note/thing bodies (default); full includes whole stored text',
         },
         limit: {
           type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX,
@@ -193,6 +200,18 @@ const TOOLS: readonly ToolDefinition[] = [
           description: 'return notes older than this id; use next_before_note_id',
         },
         note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        subplace_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+          description: 'with view=full, cap returned child-description UTF-8 bytes at whole-record boundaries',
+        },
+        thing_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+          description: 'with view=full, cap returned thing-body UTF-8 bytes at whole-record boundaries',
+        },
+        note_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+          description: 'with view=full, cap returned note-body UTF-8 bytes at whole-record boundaries',
+        },
       },
     },
     // Resolving due timers can run any effect brick, including destroy, so an

@@ -225,6 +225,8 @@ anonymous common total/byte fields.
                     &before_subplace_id=&subplace_limit=
                     &before_thing_id=&thing_limit=
                     &before_note_id=&note_limit=
+                    &subplace_text_limit_bytes=
+                    &thing_text_limit_bytes=&note_text_limit_bytes=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
@@ -236,10 +238,29 @@ and notes; a specific *_limit overrides it. Place contents and /api/me page each
 growing list independently; their page metadata names the matching
 next_before_*_id. Raw HTTP place reads default to the legacy full shape. The
 official look tool defaults to view=outline: room identity, the owner's description,
-permissions, labels, laws, chronological headings, exact totals, and each thing's
-body_text_bytes remain, while thing body is omitted and returned_text_bytes is zero.
-Use view=full or GET /api/thing/:id to deliberately retrieve full originals. An
-authenticated outline still observes the room and resolves due timers exactly like
+permissions, labels, laws, chronological headings, and exact totals remain. Child
+descriptions, thing bodies, and note bodies are omitted; child rows expose
+description_text_bytes, thing and note rows expose body_text_bytes, and all three
+returned_text_bytes values are zero.
+
+With view=full, subplace_text_limit_bytes, thing_text_limit_bytes, and
+note_text_limit_bytes independently cap stored authored UTF-8 bytes from 0 through
+655360. Each page returns
+the longest recent-first prefix of whole records that fits; it never cuts or skips a
+record to squeeze in an older one. The three limits together bound collection text by
+their sum, excluding the room's own description, headings, metadata, and JSON framing.
+When a record does not fit, has_more and stopped_for_text_limit are true and
+next_item_id plus next_item_text_bytes name the first omitted record. If nothing fits,
+the matching next_before cursor is null. Increase that collection's limit, or read the
+full child at /api/place/<next_item_id>, thing at /api/thing/:id, or note at
+/api/note/:id; after that direct read, continue older records with
+before_*_id=<next_item_id>. A full item limit above 10 automatically uses the 655360-byte
+per-collection safety ceiling when you did not choose a smaller byte limit; its page sets
+server_text_limit_applied to true. Default 10-item full reads keep their old shape. Use
+view=full for deliberate bounded bulk pages and follow next_before cursors for complete
+history.
+
+An authenticated outline still observes the room and resolves due timers exactly like
 a full look. The human window keeps the complete map and live presence, with
 Load older controls for its historical views.
 

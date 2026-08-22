@@ -45,10 +45,12 @@ import {
 } from './world-support.ts'
 import {
   allowedPublicQuery,
+  effectivePublicPlaceTextLimit,
   extractPublicCollectionRows,
   finalizePublicPage,
   loadPublicPlaceCollectionRows,
   parsePublicPage,
+  parsePublicTextLimit,
   singlePublicQueryValue,
   utf8TextBytes,
   type PublicQueryExecutor,
@@ -153,6 +155,9 @@ export function mountWorldRoutes(app: Hono): void {
       'before_subplace_id', 'subplace_limit',
       'before_thing_id', 'thing_limit',
       'before_note_id', 'note_limit',
+      'subplace_text_limit_bytes',
+      'thing_text_limit_bytes',
+      'note_text_limit_bytes',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const viewValue = singlePublicQueryValue(query, 'view')
@@ -166,6 +171,30 @@ export function mountWorldRoutes(app: Hono): void {
     if (!thingRequest.ok) return err(c, 400, thingRequest.error)
     const noteRequest = parsePublicPage(query, 'before_note_id', 'note_limit', 'limit')
     if (!noteRequest.ok) return err(c, 400, noteRequest.error)
+    const subplaceTextLimit = parsePublicTextLimit(query, 'subplace_text_limit_bytes')
+    if (!subplaceTextLimit.ok) return err(c, 400, subplaceTextLimit.error)
+    const thingTextLimit = parsePublicTextLimit(query, 'thing_text_limit_bytes')
+    if (!thingTextLimit.ok) return err(c, 400, thingTextLimit.error)
+    const noteTextLimit = parsePublicTextLimit(query, 'note_text_limit_bytes')
+    if (!noteTextLimit.ok) return err(c, 400, noteTextLimit.error)
+    const textLimits = Object.freeze({
+      subplaces: subplaceTextLimit.value,
+      things: thingTextLimit.value,
+      notes: noteTextLimit.value,
+    })
+    if (view === 'outline' && Object.values(textLimits).some(value => value != null)) {
+      return err(c, 400, 'text byte limits require view=full; outline already omits collection text')
+    }
+    const effectiveTextLimits = view === 'full'
+      ? Object.freeze({
+          subplaces: effectivePublicPlaceTextLimit(
+            subplaceTextLimit.value,
+            subplaceRequest.limit,
+          ),
+          things: effectivePublicPlaceTextLimit(thingTextLimit.value, thingRequest.limit),
+          notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
+        })
+      : textLimits
     const observer = await auth(c)
     if (observer) await resolveDueEffects(id)
 
@@ -184,22 +213,61 @@ export function mountWorldRoutes(app: Hono): void {
         subplaces: subplaceRequest,
         things: thingRequest,
         notes: noteRequest,
-      }, view === 'full'),
+      }, view === 'full', effectiveTextLimits),
       activePlaceLabels(id),
       effectiveLaws(id),
     ])
-    const subplacesPage = finalizePublicPage(
-      collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
-      subplaceRequest.limit,
-    )
-    const thingsPage = finalizePublicPage(
-      collections.things as unknown as readonly (ThingRow & { id: number })[],
-      thingRequest.limit,
-    )
-    const notesPage = finalizePublicPage(
-      collections.notes as Array<Record<string, unknown> & { id: number }>,
-      noteRequest.limit,
-    )
+    const subplacesPage = collections.pages == null
+      ? {
+          ...finalizePublicPage(
+            collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
+            subplaceRequest.limit,
+          ),
+          returnedTextBytes: view === 'full'
+            ? utf8TextBytes(collections.subplaces.slice(0, subplaceRequest.limit), 'description')
+            : 0,
+          stoppedForTextLimit: false,
+          nextItemId: null,
+          nextItemTextBytes: null,
+        }
+      : {
+          items: collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
+          ...collections.pages.subplaces,
+        }
+    const thingsPage = collections.pages == null
+      ? {
+          ...finalizePublicPage(
+            collections.things as unknown as readonly (ThingRow & { id: number })[],
+            thingRequest.limit,
+          ),
+          returnedTextBytes: view === 'full'
+            ? utf8TextBytes(collections.things.slice(0, thingRequest.limit), 'body')
+            : 0,
+          stoppedForTextLimit: false,
+          nextItemId: null,
+          nextItemTextBytes: null,
+        }
+      : {
+          items: collections.things as unknown as readonly (ThingRow & { id: number })[],
+          ...collections.pages.things,
+        }
+    const notesPage = collections.pages == null
+      ? {
+          ...finalizePublicPage(
+            collections.notes as Array<Record<string, unknown> & { id: number }>,
+            noteRequest.limit,
+          ),
+          returnedTextBytes: view === 'full'
+            ? utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'body')
+            : 0,
+          stoppedForTextLimit: false,
+          nextItemId: null,
+          nextItemTextBytes: null,
+        }
+      : {
+          items: collections.notes as Array<Record<string, unknown> & { id: number }>,
+          ...collections.pages.notes,
+        }
     const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
       moderatePublicRows('place', [place]),
       moderatePublicRows('place', subplacesPage.items),
@@ -216,25 +284,46 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.subplaces.items,
         total_text_bytes: collections.totals.subplaces.textBytes,
         returned_items: publicSubplaces.length,
-        returned_text_bytes: utf8TextBytes(subplacesPage.items, 'description'),
+        returned_text_bytes: subplacesPage.returnedTextBytes,
         has_more: subplacesPage.hasMore,
         next_before_subplace_id: subplacesPage.nextCursor,
+        ...(effectiveTextLimits.subplaces == null ? {} : {
+          text_limit_bytes: effectiveTextLimits.subplaces,
+          stopped_for_text_limit: subplacesPage.stoppedForTextLimit,
+          next_item_id: subplacesPage.nextItemId,
+          next_item_text_bytes: subplacesPage.nextItemTextBytes,
+          ...(subplaceTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+        }),
       },
       things_page: {
         total_items: collections.totals.things.items,
         total_text_bytes: collections.totals.things.textBytes,
         returned_items: publicDetails.things.length,
-        returned_text_bytes: view === 'full' ? utf8TextBytes(thingsPage.items, 'body') : 0,
+        returned_text_bytes: thingsPage.returnedTextBytes,
         has_more: thingsPage.hasMore,
         next_before_thing_id: thingsPage.nextCursor,
+        ...(effectiveTextLimits.things == null ? {} : {
+          text_limit_bytes: effectiveTextLimits.things,
+          stopped_for_text_limit: thingsPage.stoppedForTextLimit,
+          next_item_id: thingsPage.nextItemId,
+          next_item_text_bytes: thingsPage.nextItemTextBytes,
+          ...(thingTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+        }),
       },
       notes_page: {
         total_items: collections.totals.notes.items,
         total_text_bytes: collections.totals.notes.textBytes,
         returned_items: publicNotes.length,
-        returned_text_bytes: utf8TextBytes(notesPage.items, 'body'),
+        returned_text_bytes: notesPage.returnedTextBytes,
         has_more: notesPage.hasMore,
         next_before_note_id: notesPage.nextCursor,
+        ...(effectiveTextLimits.notes == null ? {} : {
+          text_limit_bytes: effectiveTextLimits.notes,
+          stopped_for_text_limit: notesPage.stoppedForTextLimit,
+          next_item_id: notesPage.nextItemId,
+          next_item_text_bytes: notesPage.nextItemTextBytes,
+          ...(noteTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+        }),
       },
     })
   })

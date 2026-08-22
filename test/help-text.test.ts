@@ -216,6 +216,44 @@ test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
   }
 })
 
+test('Wave 3 room text limits, strict omissions, and continuation truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /description_text_bytes/iu, `${name}: child description size`)
+    assert.match(text, /outline[\s\S]{0,400}(?:child\s+descriptions|subplace\s+descriptions)[\s\S]{0,220}(?:note\s+bodies|notes)|(?:child\s+descriptions|subplace\s+descriptions)[\s\S]{0,220}(?:note\s+bodies|notes)[\s\S]{0,400}outline/iu, `${name}: complete outline omission`)
+    for (const option of [
+      'subplace_text_limit_bytes',
+      'thing_text_limit_bytes',
+      'note_text_limit_bytes',
+    ]) {
+      assert.match(text, new RegExp(`\\b${option}\\b`, 'u'), `${name}: ${option}`)
+    }
+    assert.match(text, /whole records?|never (?:cuts?|truncates?)/iu, `${name}: whole-record boundary`)
+    assert.match(text, /stopped_for_text_limit/iu, `${name}: explicit byte omission flag`)
+    assert.match(text, /next_item_id/iu, `${name}: blocked item id`)
+    assert.match(text, /next_item_text_bytes/iu, `${name}: blocked item size`)
+    assert.match(text, /increase[\s\S]{0,120}(?:limit|allowance)|(?:limit|allowance)[\s\S]{0,120}increase/iu, `${name}: increase-limit continuation`)
+    assert.match(text, /655(?:,|_)?360/iu, `${name}: hard per-collection ceiling`)
+    assert.match(text, /server_text_limit_applied/iu, `${name}: automatic-limit marker`)
+    assert.match(text, /view=full[\s\S]{0,240}(?:bounded[\s-]+bulk|bulk[\s-]+page)|(?:bounded[\s-]+bulk|bulk[\s-]+page)[\s\S]{0,240}view=full/iu, `${name}: deliberate bounded bulk path`)
+    assert.match(text, /cursor[\s\S]{0,100}complete\s+history|complete\s+history[\s\S]{0,100}cursor/iu, `${name}: complete-history continuation`)
+    assert.match(text, /\/api\/thing\/:id[\s\S]{0,180}\/api\/note\/:id|\/api\/note\/:id[\s\S]{0,180}\/api\/thing\/:id/iu, `${name}: direct full reads`)
+  }
+
+  for (const option of [
+    'subplace_text_limit_bytes',
+    'thing_text_limit_bytes',
+    'note_text_limit_bytes',
+  ]) {
+    assert.match(mcpSource, new RegExp(`\\b${option}\\b`, 'u'), `MCP: ${option}`)
+  }
+  assert.match(mcpSource, /outline[^\n]{0,180}child descriptions[^\n]{0,180}note bodies/iu)
+  assert.match(mcpSource, /PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES/iu)
+})
+
 test('public help explains shared use without promising shared consumption or owner damage', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

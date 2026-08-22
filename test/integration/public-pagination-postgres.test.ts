@@ -23,6 +23,11 @@ type WindowModule = typeof import('../../src/window.ts')
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'public_pagination_integration'
+const SMALL_ROOM_RECORDS = Object.freeze({
+  childDescription: 'A short child room. 🏙',
+  thingBody: 'A short ordinary thing. 🏙',
+  noteBody: 'A short ordinary note. 🏙',
+})
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 const affordableReadingMigration = await readFile(
   new URL('../../db/migrations/20260820_affordable_reading_totals.sql', import.meta.url),
@@ -97,6 +102,9 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
 
 interface SeededCity {
   targetPlaceId: number
+  noteHeavyPlaceId: number
+  childHeavyPlaceId: number
+  smallPlaceId: number
   placeCount: number
   residentCount: number
   expected: Readonly<{
@@ -104,6 +112,7 @@ interface SeededCity {
     subplaces: readonly number[]
     things: readonly number[]
     notes: readonly number[]
+    allNotes: readonly number[]
   }>
 }
 
@@ -211,6 +220,23 @@ async function seedCity(client: Pool): Promise<SeededCity> {
     [continent.rows[0]!.id],
   )
   const targetPlaceId = target.rows[0]!.id
+  const representativeRooms = await client.query<{ id: number; name: string }>(
+    `INSERT INTO places (parent_id, place_kind, name, owner_id)
+     VALUES
+       ($1, 'place', 'Note-only Room', 1),
+       ($1, 'place', 'Child-only Room', 1),
+       ($1, 'place', 'Small Room', 1)
+     RETURNING id, name`,
+    [continent.rows[0]!.id],
+  )
+  const representativeId = (name: string) => {
+    const id = representativeRooms.rows.find(row => row.name === name)?.id
+    if (!id) throw new Error(`missing representative room: ${name}`)
+    return id
+  }
+  const noteHeavyPlaceId = representativeId('Note-only Room')
+  const childHeavyPlaceId = representativeId('Child-only Room')
+  const smallPlaceId = representativeId('Small Room')
 
   await client.query(
     `INSERT INTO places (parent_id, place_kind, name, description, owner_id)
@@ -218,6 +244,37 @@ async function seedCity(client: Pool): Promise<SeededCity> {
        repeat('child ', 400) || child_number || ' 🏙', 1
      FROM generate_series(1, 75) AS child_number`,
     [targetPlaceId],
+  )
+  await client.query(
+    `INSERT INTO notes (place_id, author_id, body, created_at)
+     SELECT $1, 1, repeat('only notes ', 500) || item_number || ' 🏙',
+       '2026-08-15T00:00:00Z'::timestamptz + item_number * interval '1 second'
+     FROM generate_series(1, 25) AS item_number`,
+    [noteHeavyPlaceId],
+  )
+  await client.query(
+    `INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+     SELECT $1, 'place', 'Only child ' || child_number,
+       repeat('only children ', 350) || child_number || ' 🏙', 1
+     FROM generate_series(1, 25) AS child_number`,
+    [childHeavyPlaceId],
+  )
+  await client.query(
+    `INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+     VALUES ($1, 'place', 'Small Room Child', $2, 1)`,
+    [smallPlaceId, SMALL_ROOM_RECORDS.childDescription],
+  )
+  await client.query(
+    `INSERT INTO things (place_id, name, body, owner_id, created_at)
+     VALUES ($1, 'Small Room Keepsake', $2, 1,
+       '2026-08-15T00:00:01Z'::timestamptz)`,
+    [smallPlaceId, SMALL_ROOM_RECORDS.thingBody],
+  )
+  await client.query(
+    `INSERT INTO notes (place_id, author_id, body, created_at)
+     VALUES ($1, 1, $2,
+       '2026-08-15T00:00:02Z'::timestamptz)`,
+    [smallPlaceId, SMALL_ROOM_RECORDS.noteBody],
   )
   await client.query(
     `INSERT INTO places (parent_id, place_kind, name, owner_id)
@@ -270,6 +327,9 @@ async function seedCity(client: Pool): Promise<SeededCity> {
 
   return Object.freeze({
     targetPlaceId,
+    noteHeavyPlaceId,
+    childHeavyPlaceId,
+    smallPlaceId,
     placeCount: Number((await client.query<{ count: string }>('SELECT count(*) FROM places')).rows[0]!.count),
     residentCount: Number((await client.query<{ count: string }>('SELECT count(*) FROM residents')).rows[0]!.count),
     expected: Object.freeze({
@@ -286,6 +346,7 @@ async function seedCity(client: Pool): Promise<SeededCity> {
         `SELECT id FROM notes WHERE place_id = $1 ORDER BY id DESC`,
         [targetPlaceId],
       ),
+      allNotes: await ids('SELECT id FROM notes ORDER BY id DESC'),
     }),
   })
 }
@@ -574,7 +635,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       }
     })
 
-    await t.test('dense room HTTP reads keep whole records and make smaller requests visibly cheaper', async () => {
+    await t.test('dense room HTTP reads keep whole records and make smaller requests visibly cheaper', async testContext => {
       const { default: cityApp } = await import('../../src/index.ts')
       const ordinaryResponse = await cityApp.request(`http://city.test/api/place/${city.targetPlaceId}`)
       const ordinaryText = await ordinaryResponse.text()
@@ -620,6 +681,505 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.equal(small.things_page.total_items, ordinary.things_page.total_items)
       assert.equal(small.things_page.total_text_bytes, ordinary.things_page.total_text_bytes)
       assert.ok(Buffer.byteLength(smallText, 'utf8') < Buffer.byteLength(ordinaryText, 'utf8') / 5)
+
+      const outlineResponse = await cityApp.request(
+        `http://city.test/api/place/${city.targetPlaceId}?view=outline&limit=10`,
+      )
+      const outlineText = await outlineResponse.text()
+      assert.equal(outlineResponse.status, 200, outlineText)
+      const outline = JSON.parse(outlineText) as {
+        subplaces: Array<{ description?: string; description_text_bytes: number }>
+        things: Array<{ body?: string; body_text_bytes: number }>
+        notes: Array<{ body?: string; body_text_bytes: number }>
+        subplaces_page: { returned_text_bytes: number }
+        things_page: { returned_text_bytes: number }
+        notes_page: { returned_text_bytes: number }
+      }
+      assert.equal(outline.subplaces.length, 10)
+      assert.equal(outline.things.length, 10)
+      assert.equal(outline.notes.length, 10)
+      assert.equal(outline.subplaces.every(row => !Object.hasOwn(row, 'description')), true)
+      assert.equal(outline.things.every(row => !Object.hasOwn(row, 'body')), true)
+      assert.equal(outline.notes.every(row => !Object.hasOwn(row, 'body')), true)
+      assert.equal(outline.subplaces.every(row => row.description_text_bytes > 2_000), true)
+      assert.equal(outline.things.every(row => row.body_text_bytes > 25_000), true)
+      assert.equal(outline.notes.every(row => row.body_text_bytes > 2_000), true)
+      assert.deepEqual(
+        [
+          outline.subplaces_page.returned_text_bytes,
+          outline.things_page.returned_text_bytes,
+          outline.notes_page.returned_text_bytes,
+        ],
+        [0, 0, 0],
+      )
+      assert.ok(
+        Buffer.byteLength(outlineText, 'utf8') < Buffer.byteLength(ordinaryText, 'utf8') / 20,
+        'outline entry must stay cheap when children, things, and notes are all heavy',
+      )
+      testContext.diagnostic(
+        `representative dense room bytes: full=${Buffer.byteLength(ordinaryText, 'utf8')}, ` +
+          `limit1=${Buffer.byteLength(smallText, 'utf8')}, outline=${Buffer.byteLength(outlineText, 'utf8')}`,
+      )
+
+      const serverCollectionTextLimit = 655_360
+      const bulkThingIds: number[] = []
+      let bulkThingCursor: number | null = null
+      for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+        const cursorQuery = bulkThingCursor == null
+          ? ''
+          : `&before_thing_id=${bulkThingCursor}`
+        const cappedResponse = await cityApp.request(
+          `http://city.test/api/place/${city.targetPlaceId}` +
+            '?view=full&subplace_limit=1&thing_limit=200&note_limit=1' + cursorQuery,
+        )
+        const cappedText = await cappedResponse.text()
+        assert.equal(cappedResponse.status, 200, cappedText)
+        const capped = JSON.parse(cappedText) as {
+          things: Array<{ id: number; body: string }>
+          things_page: {
+            returned_text_bytes: number
+            has_more: boolean
+            next_before_thing_id: number | null
+            text_limit_bytes?: number
+            stopped_for_text_limit?: boolean
+            next_item_id?: number | null
+            server_text_limit_applied?: boolean
+          }
+        }
+        assert.equal(
+          capped.things.some(thing => bulkThingIds.includes(thing.id)),
+          false,
+          'server-capped bulk pages must not repeat things',
+        )
+        bulkThingIds.push(...capped.things.map(thing => thing.id))
+        assert.ok(capped.things_page.returned_text_bytes <= serverCollectionTextLimit)
+        assert.equal(capped.things_page.text_limit_bytes, serverCollectionTextLimit)
+        assert.equal(capped.things_page.server_text_limit_applied, true)
+        if (!capped.things_page.has_more) break
+        assert.equal(capped.things_page.stopped_for_text_limit, true)
+        assert.ok(capped.things_page.next_item_id)
+        assert.ok(capped.things_page.next_before_thing_id)
+        bulkThingCursor = capped.things_page.next_before_thing_id
+        if (pageNumber === 9) assert.fail('server-capped bulk paging did not terminate')
+      }
+      assert.deepEqual(bulkThingIds, city.expected.things)
+
+      const budget = 6_500
+      const budgetedResponse = await cityApp.request(
+        `http://city.test/api/place/${city.targetPlaceId}` +
+          `?view=full&limit=200&subplace_text_limit_bytes=${budget}` +
+          `&thing_text_limit_bytes=65000&note_text_limit_bytes=${budget}`,
+      )
+      const budgetedText = await budgetedResponse.text()
+      assert.equal(budgetedResponse.status, 200, budgetedText)
+      const budgeted = JSON.parse(budgetedText) as {
+        subplaces: Array<{ id: number; description: string }>
+        things: Array<{ id: number; body: string }>
+        notes: Array<{ id: number; body: string }>
+        subplaces_page: {
+          returned_text_bytes: number
+          has_more: boolean
+          next_before_subplace_id: number | null
+          text_limit_bytes: number
+          stopped_for_text_limit: boolean
+          next_item_id: number | null
+        }
+        things_page: {
+          returned_text_bytes: number
+          has_more: boolean
+          next_before_thing_id: number | null
+          text_limit_bytes: number
+          stopped_for_text_limit: boolean
+          next_item_id: number | null
+        }
+        notes_page: {
+          returned_text_bytes: number
+          has_more: boolean
+          next_before_note_id: number | null
+          text_limit_bytes: number
+          stopped_for_text_limit: boolean
+          next_item_id: number | null
+        }
+      }
+      assert.equal(budgeted.subplaces.length, 2)
+      assert.equal(budgeted.things.length, 2)
+      assert.equal(budgeted.notes.length, 2)
+      assert.equal(budgeted.subplaces_page.text_limit_bytes, budget)
+      assert.equal(budgeted.things_page.text_limit_bytes, 65_000)
+      assert.equal(budgeted.notes_page.text_limit_bytes, budget)
+      assert.ok(budgeted.subplaces_page.next_before_subplace_id)
+      assert.ok(budgeted.things_page.next_before_thing_id)
+      assert.ok(budgeted.notes_page.next_before_note_id)
+      for (const [name, rows, page, field] of [
+        ['subplaces', budgeted.subplaces, budgeted.subplaces_page, 'description'],
+        ['things', budgeted.things, budgeted.things_page, 'body'],
+        ['notes', budgeted.notes, budgeted.notes_page, 'body'],
+      ] as const) {
+        assert.equal(page.stopped_for_text_limit, true, name)
+        assert.equal(page.has_more, true, name)
+        assert.ok(page.next_item_id)
+        assert.equal(
+          page.returned_text_bytes,
+          rows.reduce((sum, row) => sum + Buffer.byteLength(
+            String((row as unknown as Record<string, unknown>)[field]),
+            'utf8',
+          ), 0),
+          name,
+        )
+        assert.ok(page.returned_text_bytes <= page.text_limit_bytes, name)
+        assert.equal(rows.every(row => String(
+          (row as unknown as Record<string, unknown>)[field],
+        ).endsWith(' 🏙')), true, `${name} stay whole`)
+      }
+
+      const nextResponse = await cityApp.request(
+        `http://city.test/api/place/${city.targetPlaceId}` +
+          `?view=full&limit=200&subplace_text_limit_bytes=${budget}` +
+          `&thing_text_limit_bytes=65000&note_text_limit_bytes=${budget}` +
+          `&before_subplace_id=${budgeted.subplaces_page.next_before_subplace_id}` +
+          `&before_thing_id=${budgeted.things_page.next_before_thing_id}` +
+          `&before_note_id=${budgeted.notes_page.next_before_note_id}`,
+      )
+      assert.equal(nextResponse.status, 200, await nextResponse.clone().text())
+      const next = await nextResponse.json() as typeof budgeted
+      for (const [name, firstRows, nextRows] of [
+        ['subplaces', budgeted.subplaces, next.subplaces],
+        ['things', budgeted.things, next.things],
+        ['notes', budgeted.notes, next.notes],
+      ] as const) {
+        assert.equal(
+          nextRows.some(row => firstRows.some(previous => previous.id === row.id)),
+          false,
+          `${name} pages must not repeat records`,
+        )
+      }
+
+      const complete = { subplaces: [] as number[], things: [] as number[], notes: [] as number[] }
+      let cursors: { subplaces: number | null; things: number | null; notes: number | null } = {
+        subplaces: null,
+        things: null,
+        notes: null,
+      }
+      for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+        const cursorQuery = [
+          cursors.subplaces == null ? '' : `&before_subplace_id=${cursors.subplaces}`,
+          cursors.things == null ? '' : `&before_thing_id=${cursors.things}`,
+          cursors.notes == null ? '' : `&before_note_id=${cursors.notes}`,
+        ].join('')
+        const response = await cityApp.request(
+          `http://city.test/api/place/${city.targetPlaceId}` +
+            `?view=full&limit=200&subplace_text_limit_bytes=${budget}` +
+            `&thing_text_limit_bytes=65000&note_text_limit_bytes=${budget}${cursorQuery}`,
+        )
+        assert.equal(response.status, 200, await response.clone().text())
+        const body = await response.json() as typeof budgeted
+        complete.subplaces.push(...body.subplaces.map(row => row.id))
+        complete.things.push(...body.things.map(row => row.id))
+        complete.notes.push(...body.notes.map(row => row.id))
+        const nextCursors = {
+          subplaces: body.subplaces_page.has_more
+            ? body.subplaces_page.next_before_subplace_id
+            : null,
+          things: body.things_page.has_more ? body.things_page.next_before_thing_id : null,
+          notes: body.notes_page.has_more ? body.notes_page.next_before_note_id : null,
+        }
+        for (const [name, page, cursor] of [
+          ['subplaces', body.subplaces_page, nextCursors.subplaces],
+          ['things', body.things_page, nextCursors.things],
+          ['notes', body.notes_page, nextCursors.notes],
+        ] as const) {
+          if (page.has_more) assert.ok(cursor, `${name} continuation must advance`)
+        }
+        cursors = nextCursors
+        if (Object.values(cursors).every(cursor => cursor == null)) break
+        if (pageNumber === 99) assert.fail('budgeted room paging did not terminate')
+      }
+      assert.deepEqual(complete.subplaces, city.expected.subplaces)
+      assert.deepEqual(complete.things, city.expected.things)
+      assert.deepEqual(complete.notes, city.expected.notes)
+      assert.equal(new Set(complete.subplaces).size, complete.subplaces.length)
+      assert.equal(new Set(complete.things).size, complete.things.length)
+      assert.equal(new Set(complete.notes).size, complete.notes.length)
+    })
+
+    await t.test('zero-fit pages support direct reads and cursor continuation for every room collection', async testContext => {
+      const { default: cityApp } = await import('../../src/index.ts')
+      const stalledResponse = await cityApp.request(
+        `http://city.test/api/place/${city.targetPlaceId}` +
+          '?view=full&limit=200&subplace_text_limit_bytes=1' +
+          '&thing_text_limit_bytes=1&note_text_limit_bytes=1',
+      )
+      const stalledText = await stalledResponse.text()
+      assert.equal(stalledResponse.status, 200, stalledText)
+      const stalled = JSON.parse(stalledText) as {
+        subplaces: Array<{ id: number; description: string }>
+        things: Array<{ id: number; body: string }>
+        notes: Array<{ id: number; body: string }>
+        subplaces_page: {
+          returned_items: number
+          returned_text_bytes: number
+          has_more: boolean
+          next_before_subplace_id: number | null
+          text_limit_bytes: number
+          stopped_for_text_limit: boolean
+          next_item_id: number | null
+          next_item_text_bytes: number | null
+        }
+        things_page: {
+          returned_items: number
+          returned_text_bytes: number
+          has_more: boolean
+          next_before_thing_id: number | null
+          text_limit_bytes: number
+          stopped_for_text_limit: boolean
+          next_item_id: number | null
+          next_item_text_bytes: number | null
+        }
+        notes_page: {
+          returned_items: number
+          returned_text_bytes: number
+          has_more: boolean
+          next_before_note_id: number | null
+          text_limit_bytes: number
+          stopped_for_text_limit: boolean
+          next_item_id: number | null
+          next_item_text_bytes: number | null
+        }
+      }
+
+      const stalledCollections = [
+        {
+          name: 'subplaces',
+          rows: stalled.subplaces,
+          page: stalled.subplaces_page,
+          nextBefore: stalled.subplaces_page.next_before_subplace_id,
+          expectedIds: city.expected.subplaces,
+          directPath: `/api/place/${stalled.subplaces_page.next_item_id}?view=full&limit=1`,
+          directKey: 'place',
+          textField: 'description',
+        },
+        {
+          name: 'things',
+          rows: stalled.things,
+          page: stalled.things_page,
+          nextBefore: stalled.things_page.next_before_thing_id,
+          expectedIds: city.expected.things,
+          directPath: `/api/thing/${stalled.things_page.next_item_id}`,
+          directKey: 'thing',
+          textField: 'body',
+        },
+        {
+          name: 'notes',
+          rows: stalled.notes,
+          page: stalled.notes_page,
+          nextBefore: stalled.notes_page.next_before_note_id,
+          expectedIds: city.expected.notes,
+          directPath: `/api/note/${stalled.notes_page.next_item_id}`,
+          directKey: 'note',
+          textField: 'body',
+        },
+      ] as const
+      for (const entry of stalledCollections) {
+        assert.deepEqual(entry.rows, [], entry.name)
+        assert.equal(entry.page.returned_items, 0, entry.name)
+        assert.equal(entry.page.returned_text_bytes, 0, entry.name)
+        assert.equal(entry.page.has_more, true, entry.name)
+        assert.equal(entry.nextBefore, null, entry.name)
+        assert.equal(entry.page.text_limit_bytes, 1, entry.name)
+        assert.equal(entry.page.stopped_for_text_limit, true, entry.name)
+        assert.equal(entry.page.next_item_id, entry.expectedIds[0], entry.name)
+        assert.ok((entry.page.next_item_text_bytes ?? 0) > 1, entry.name)
+
+        const directResponse = await cityApp.request(`http://city.test${entry.directPath}`)
+        const directText = await directResponse.text()
+        assert.equal(directResponse.status, 200, `${entry.name}: ${directText}`)
+        const directBody = JSON.parse(directText) as Record<string, Record<string, unknown>>
+        const directRecord = directBody[entry.directKey]
+        assert.equal(Number(directRecord?.id), entry.page.next_item_id, entry.name)
+        const authoredText = String(directRecord?.[entry.textField])
+        assert.equal(
+          Buffer.byteLength(authoredText, 'utf8'),
+          entry.page.next_item_text_bytes,
+          entry.name,
+        )
+        assert.equal(authoredText.endsWith(' 🏙'), true, `${entry.name}: direct read stays whole`)
+      }
+
+      const stalledSubplaceId = stalled.subplaces_page.next_item_id
+      const stalledThingId = stalled.things_page.next_item_id
+      const stalledNoteId = stalled.notes_page.next_item_id
+      const subplaceBudget = stalled.subplaces_page.next_item_text_bytes
+      const thingBudget = stalled.things_page.next_item_text_bytes
+      const noteBudget = stalled.notes_page.next_item_text_bytes
+      assert.ok(stalledSubplaceId && stalledThingId && stalledNoteId)
+      assert.ok(subplaceBudget && thingBudget && noteBudget)
+      const continuationQuery = new URLSearchParams({
+        view: 'full',
+        limit: '200',
+        subplace_text_limit_bytes: String(subplaceBudget),
+        thing_text_limit_bytes: String(thingBudget),
+        note_text_limit_bytes: String(noteBudget),
+        before_subplace_id: String(stalledSubplaceId),
+        before_thing_id: String(stalledThingId),
+        before_note_id: String(stalledNoteId),
+      })
+      const continuedResponse = await cityApp.request(
+        `http://city.test/api/place/${city.targetPlaceId}?${continuationQuery}`,
+      )
+      const continuedText = await continuedResponse.text()
+      assert.equal(continuedResponse.status, 200, continuedText)
+      const continued = JSON.parse(continuedText) as typeof stalled
+      for (const entry of [
+        {
+          name: 'subplaces',
+          rows: continued.subplaces,
+          page: continued.subplaces_page,
+          nextBefore: continued.subplaces_page.next_before_subplace_id,
+          expectedIds: city.expected.subplaces,
+        },
+        {
+          name: 'things',
+          rows: continued.things,
+          page: continued.things_page,
+          nextBefore: continued.things_page.next_before_thing_id,
+          expectedIds: city.expected.things,
+        },
+        {
+          name: 'notes',
+          rows: continued.notes,
+          page: continued.notes_page,
+          nextBefore: continued.notes_page.next_before_note_id,
+          expectedIds: city.expected.notes,
+        },
+      ] as const) {
+        assert.deepEqual(entry.rows.map(row => row.id), [entry.expectedIds[1]], entry.name)
+        assert.equal(entry.nextBefore, entry.expectedIds[1], entry.name)
+        assert.equal(entry.page.returned_items, 1, entry.name)
+        assert.equal(entry.page.returned_text_bytes, entry.page.text_limit_bytes, entry.name)
+        assert.equal(entry.page.stopped_for_text_limit, true, entry.name)
+        assert.equal(entry.page.next_item_id, entry.expectedIds[2], entry.name)
+      }
+      testContext.diagnostic(
+        `zero-fit next bytes: child=${subplaceBudget}, thing=${thingBudget}, note=${noteBudget}; ` +
+          `stalled response=${Buffer.byteLength(stalledText, 'utf8')}, ` +
+          `continued response=${Buffer.byteLength(continuedText, 'utf8')}`,
+      )
+    })
+
+    await t.test('outline stays small for note-only, child-only, and ordinary small rooms', async testContext => {
+      const { default: cityApp } = await import('../../src/index.ts')
+      const readOutline = async (placeId: number) => {
+        const response = await cityApp.request(`http://city.test/api/place/${placeId}?view=outline`)
+        const text = await response.text()
+        assert.equal(response.status, 200, text)
+        return { text, body: JSON.parse(text) as {
+          subplaces: Array<{ description?: string; description_text_bytes: number }>
+          things: Array<{ body?: string; body_text_bytes: number }>
+          notes: Array<{ body?: string; body_text_bytes: number }>
+          subplaces_page: { returned_text_bytes: number; has_more: boolean }
+          things_page: { returned_text_bytes: number; has_more: boolean }
+          notes_page: { returned_text_bytes: number; has_more: boolean }
+        } }
+      }
+
+      const noteHeavy = await readOutline(city.noteHeavyPlaceId)
+      assert.deepEqual([noteHeavy.body.subplaces.length, noteHeavy.body.things.length], [0, 0])
+      assert.equal(noteHeavy.body.notes.length, 10)
+      assert.equal(noteHeavy.body.notes.every(note => !Object.hasOwn(note, 'body')), true)
+      assert.equal(noteHeavy.body.notes.every(note => note.body_text_bytes > 5_000), true)
+      assert.equal(noteHeavy.body.notes_page.returned_text_bytes, 0)
+      assert.equal(noteHeavy.body.notes_page.has_more, true)
+      assert.ok(Buffer.byteLength(noteHeavy.text, 'utf8') < 5_000)
+
+      const childHeavy = await readOutline(city.childHeavyPlaceId)
+      assert.deepEqual([childHeavy.body.things.length, childHeavy.body.notes.length], [0, 0])
+      assert.equal(childHeavy.body.subplaces.length, 10)
+      assert.equal(childHeavy.body.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
+      assert.equal(childHeavy.body.subplaces.every(place => place.description_text_bytes > 4_000), true)
+      assert.equal(childHeavy.body.subplaces_page.returned_text_bytes, 0)
+      assert.equal(childHeavy.body.subplaces_page.has_more, true)
+      assert.ok(Buffer.byteLength(childHeavy.text, 'utf8') < 8_000)
+
+      const small = await readOutline(city.smallPlaceId)
+      assert.deepEqual(
+        [small.body.subplaces.length, small.body.things.length, small.body.notes.length],
+        [1, 1, 1],
+      )
+      assert.equal(small.body.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
+      assert.equal(small.body.things.every(thing => !Object.hasOwn(thing, 'body')), true)
+      assert.equal(small.body.notes.every(note => !Object.hasOwn(note, 'body')), true)
+      const smallRecordBytes = Object.freeze([
+        Buffer.byteLength(SMALL_ROOM_RECORDS.childDescription, 'utf8'),
+        Buffer.byteLength(SMALL_ROOM_RECORDS.thingBody, 'utf8'),
+        Buffer.byteLength(SMALL_ROOM_RECORDS.noteBody, 'utf8'),
+      ])
+      assert.deepEqual(
+        [
+          small.body.subplaces[0]!.description_text_bytes,
+          small.body.things[0]!.body_text_bytes,
+          small.body.notes[0]!.body_text_bytes,
+        ],
+        smallRecordBytes,
+      )
+      assert.equal(smallRecordBytes.every(bytes => bytes < 100), true)
+      assert.deepEqual(
+        [
+          small.body.subplaces_page.has_more,
+          small.body.things_page.has_more,
+          small.body.notes_page.has_more,
+        ],
+        [false, false, false],
+      )
+      assert.deepEqual(
+        [
+          small.body.subplaces_page.returned_text_bytes,
+          small.body.things_page.returned_text_bytes,
+          small.body.notes_page.returned_text_bytes,
+        ],
+        [0, 0, 0],
+      )
+
+      const smallFullResponse = await cityApp.request(
+        `http://city.test/api/place/${city.smallPlaceId}?view=full`,
+      )
+      const smallFullText = await smallFullResponse.text()
+      assert.equal(smallFullResponse.status, 200, smallFullText)
+      const smallFull = JSON.parse(smallFullText) as {
+        subplaces: Array<{ description: string }>
+        things: Array<{ body: string }>
+        notes: Array<{ body: string }>
+        subplaces_page: { returned_text_bytes: number; has_more: boolean }
+        things_page: { returned_text_bytes: number; has_more: boolean }
+        notes_page: { returned_text_bytes: number; has_more: boolean }
+      }
+      assert.deepEqual(
+        smallFull.subplaces.map(place => place.description),
+        [SMALL_ROOM_RECORDS.childDescription],
+      )
+      assert.deepEqual(smallFull.things.map(thing => thing.body), [SMALL_ROOM_RECORDS.thingBody])
+      assert.deepEqual(smallFull.notes.map(note => note.body), [SMALL_ROOM_RECORDS.noteBody])
+      assert.deepEqual(
+        [
+          smallFull.subplaces_page.returned_text_bytes,
+          smallFull.things_page.returned_text_bytes,
+          smallFull.notes_page.returned_text_bytes,
+        ],
+        smallRecordBytes,
+      )
+      assert.deepEqual(
+        [
+          smallFull.subplaces_page.has_more,
+          smallFull.things_page.has_more,
+          smallFull.notes_page.has_more,
+        ],
+        [false, false, false],
+      )
+      testContext.diagnostic(
+        `representative outline bytes: note-only=${Buffer.byteLength(noteHeavy.text, 'utf8')}, ` +
+          `child-only=${Buffer.byteLength(childHeavy.text, 'utf8')}, ` +
+          `small=${Buffer.byteLength(small.text, 'utf8')}; ` +
+          `small full=${Buffer.byteLength(smallFullText, 'utf8')}`,
+      )
     })
 
     await t.test('the writer meter matches stored and ordinary first-read room bytes', async () => {
@@ -800,7 +1360,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         has_more: boolean
         next_before_id: number | null
       }
-      assert.equal(oldestNotes.notes.length, 15)
+      assert.equal(oldestNotes.notes.length, city.expected.allNotes.length - 60)
       assert.equal(oldestNotes.has_more, false)
       assert.deepEqual(
         [
@@ -808,7 +1368,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
           ...olderNotes.notes.map(row => row.id),
           ...oldestNotes.notes.map(row => row.id),
         ],
-        city.expected.notes,
+        city.expected.allNotes,
       )
 
       const statementsBeforeInvalidRequest = statementCount
