@@ -25,6 +25,10 @@ import {
 } from '../scripts/migrate.ts'
 
 const deployScript = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'utf8')
+const deploymentRunbook = readFileSync(
+  new URL('../docs/runbooks/DEPLOYMENT.md', import.meta.url),
+  'utf8',
+)
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { scripts: Record<string, string> }
@@ -246,9 +250,15 @@ type PreparationFixture = Readonly<{
   root: string
   commandLog: string
   git: (...args: string[]) => Buffer
-  run: () => SpawnSyncReturns<string>
+  run: (overrides?: NodeJS.ProcessEnv) => SpawnSyncReturns<string>
   cleanup: () => void
 }>
+
+const laterHolderReleaseReady = Object.freeze({
+  CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
+  CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+})
 
 function createPreparationFixture(): PreparationFixture {
   const root = createPreparationFixtureRoot('1f3d9-deploy-prepare-')
@@ -315,6 +325,12 @@ function createPreparationFixture(): PreparationFixture {
     'export PATH',
     `TEST_COMMAND_LOG=${JSON.stringify(`${bashBin}/npm.log`)}`,
     'export TEST_COMMAND_LOG',
+    'CONFIRM_LATER_HOLDER_PROVIDER_KEY="${1-}"',
+    'export CONFIRM_LATER_HOLDER_PROVIDER_KEY',
+    'CONFIRM_LATER_HOLDER_MIGRATION="${2-}"',
+    'export CONFIRM_LATER_HOLDER_MIGRATION',
+    'CONFIRM_THING_MAKER_MIGRATION="${3-}"',
+    'export CONFIRM_THING_MAKER_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -325,11 +341,19 @@ function createPreparationFixture(): PreparationFixture {
     root,
     commandLog,
     git,
-    run: () => spawnSync('bash', [`${bashBin}/run-prepare.sh`], {
-      cwd: root,
-      encoding: 'utf8',
-      env: withoutGitHookEnvironment(),
-    }),
+    run: (overrides = {}) => {
+      const readiness = { ...laterHolderReleaseReady, ...overrides }
+      return spawnSync('bash', [
+        `${bashBin}/run-prepare.sh`,
+        readiness.CONFIRM_LATER_HOLDER_PROVIDER_KEY ?? '',
+        readiness.CONFIRM_LATER_HOLDER_MIGRATION ?? '',
+        readiness.CONFIRM_THING_MAKER_MIGRATION ?? '',
+      ], {
+        cwd: root,
+        encoding: 'utf8',
+        env: withoutGitHookEnvironment(),
+      })
+    },
     cleanup: () => {
       for (const path of [bin, hooks, remoteRoot, root]) {
         cleanupPreparationFixtureRoot(path)
@@ -351,6 +375,43 @@ test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', t =
   assert.match(`${result.stdout}\n${result.stderr}`, /--prepare/)
   assert.match(`${result.stdout}\n${result.stderr}`, /merge[^\n]*main/i)
   assert.equal(existsSync(fixture.commandLog), false)
+})
+
+test('preparation requires provider-key and migration readiness before any release gate', t => {
+  const fixture = createPreparationFixture()
+  t.after(() => fixture.cleanup())
+
+  const missingProvider = fixture.run({ CONFIRM_LATER_HOLDER_PROVIDER_KEY: '' })
+  assert.notEqual(missingProvider.status, 0)
+  assert.match(`${missingProvider.stdout}\n${missingProvider.stderr}`, /LATER_HOLDER_CURSOR_KEY.*Vercel/iu)
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingMigration = fixture.run({ CONFIRM_LATER_HOLDER_MIGRATION: '' })
+  assert.notEqual(missingMigration.status, 0)
+  assert.match(`${missingMigration.stdout}\n${missingMigration.stderr}`, /later-holder.*migration.*before.*rollout/iu)
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingMakerMigration = fixture.run({ CONFIRM_THING_MAKER_MIGRATION: '' })
+  assert.notEqual(missingMakerMigration.status, 0)
+  assert.match(
+    `${missingMakerMigration.stdout}\n${missingMakerMigration.stderr}`,
+    /thing-maker.*migration.*before.*later-holder/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+})
+
+test('release instructions require maker provenance before later-holder marks in each database', () => {
+  const previewMaker = deploymentRunbook.indexOf('npm run migrate:preview:thing-maker')
+  const previewMarks = deploymentRunbook.indexOf('npm run migrate:preview:later-holder-marks')
+  const productionMaker = deploymentRunbook.indexOf('npm run migrate:production:thing-maker')
+  const productionMarks = deploymentRunbook.indexOf('npm run migrate:production:later-holder-marks')
+
+  assert.ok(previewMaker >= 0 && previewMaker < previewMarks)
+  assert.ok(productionMaker >= 0 && productionMaker < productionMarks)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
 })
 
 test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {

@@ -292,8 +292,8 @@ test('world-root schema and migration invariants hold in PostgreSQL', async t =>
       const traitId = trait.rows[0]!.id
 
       await database.query(
-        `INSERT INTO things (place_id, name, body, owner_id)
-         VALUES ($1, 'child thing', '', 1)`,
+        `INSERT INTO things (place_id, name, body, owner_id, maker_id)
+         VALUES ($1, 'child thing', '', 1, 1)`,
         [childId],
       )
       await database.query(
@@ -309,8 +309,8 @@ test('world-root schema and migration invariants hold in PostgreSQL', async t =>
 
       await assertPgError(
         database,
-        `INSERT INTO things (place_id, name, body, owner_id)
-         VALUES ($1, 'void thing', '', 1)`,
+        `INSERT INTO things (place_id, name, body, owner_id, maker_id)
+         VALUES ($1, 'void thing', '', 1, 1)`,
         [worldId],
         '23514',
       )

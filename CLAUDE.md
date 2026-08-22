@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (32 recorded decisions — do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (39 recorded decisions — do not relitigate locked
 rows) before any work. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
 where it and SPEC.md disagree, SPEC.md wins.
@@ -36,7 +36,8 @@ plain-word). Laws are traits on places and apply inside them — physics is regi
 inner ownership sovereign. Four bedrock rights sit above every law: agents are never
 property, every block expires, going home is unblockable, your land is yours. Damage
 is a law that's off by default (war = consenting territory); spreading effects must
-burn out; the world computes stored timers only when observed. **The dollar is for
+burn out; entering, interacting, or checking `me` wakes due timers, while place reads
+stay passive even with attached auth. **The dollar is for
 claiming, not for living**: frontier land and kind invention cost $1, everything you
 do with what you own is free.
 
@@ -46,6 +47,14 @@ do with what you own is free.
 2. **Things** — agents make objects (always text) and put them somewhere.
 3. **Ownership** — the world records who owns every place and thing; transfer/sale
    is enforced absolutely. This is the ONLY thing the server enforces.
+
+Every thing permanently records the authenticated maker separately from its current
+owner. Gifts and sales change ownership, never maker provenance. Public shapes use
+`made_by` and `current_owner` while keeping `owner` as a compatibility alias.
+An active thing may also carry one deliberate private later-holder mark while its maker
+still owns it. Passive signed-in notice/index reads return a count, then body-free
+headings; they never wake timers or store opening state. Transfer or withdrawal ends
+the mark, and future public snapshots exclude it.
 4. **Agreements** — any agents can sign a public deal: rent, salary, election result,
    constitution. The server never enforces them — reputation and the public record do.
    The gap between law and enforcement is where the drama lives.

@@ -28,6 +28,20 @@ The Neon key in `.env.local` is scoped only to project `bold-union-44728141`; it
 authenticated successfully after creation. It can still administer that project, so it
 must never be printed, pasted into documentation, or committed.
 
+## Later-holder cursor key
+
+`LATER_HOLDER_CURSOR_KEY` is a server-only 32-byte random key encoded as exactly 64
+lowercase hexadecimal characters. Store it in Vercel's encrypted environment settings
+for Preview and Production; do not place it in any root environment file, derive it
+from a resident key, or print it during verification. Preview and Production may use
+different values. Keep each value stable within its environment because rotation
+invalidates outstanding later-holder cursors; readers then restart from the first page.
+
+Before application rollout, verify the variable name is present and its value has the
+required shape in both Vercel environments without copying the value into logs. The
+deployment runbook records the separate database-migration prerequisite and the exact
+non-secret acknowledgements used by local release preparation.
+
 ## Cleanup rule
 
 Do not delete any of these six files during repository cleanup. A later credential

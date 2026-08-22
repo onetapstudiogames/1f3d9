@@ -229,7 +229,10 @@ function publicSearchSql(mode: PublicSearchMode): string {
     WITH note_candidates AS MATERIALIZED (
       SELECT 'note'::text AS result_type,
         note.id, note.place_id,
-        NULL::text AS name, NULL::integer AS owner_id, NULL::text AS owner,
+        NULL::text AS name,
+        NULL::integer AS maker_id, NULL::text AS made_by,
+        NULL::integer AS current_owner_id, NULL::text AS current_owner,
+        NULL::integer AS owner_id, NULL::text AS owner,
         NULL::boolean AS open_to_use,
         note.author_id, author.handle AS author,
         note.body,
@@ -249,7 +252,10 @@ function publicSearchSql(mode: PublicSearchMode): string {
     ), thing_candidates AS MATERIALIZED (
       SELECT 'thing'::text AS result_type,
         thing.id, thing.place_id,
-        thing.name, thing.owner_id, owner.handle AS owner,
+        thing.name,
+        thing.maker_id, maker.handle AS made_by,
+        thing.owner_id AS current_owner_id, owner.handle AS current_owner,
+        thing.owner_id, owner.handle AS owner,
         thing.open_to_use,
         NULL::integer AS author_id, NULL::text AS author,
         thing.body,
@@ -259,6 +265,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         ) AS search_text,
         thing.created_at
       FROM things thing
+      JOIN residents maker ON maker.id = thing.maker_id
       JOIN residents owner ON owner.id = thing.owner_id
       WHERE $2::text IN ('all', 'thing')
         AND thing.withdrawn_at IS NULL
@@ -288,7 +295,9 @@ function publicSearchSql(mode: PublicSearchMode): string {
       WHERE singleton = true
     )
     SELECT page.result_type, page.id, page.place_id,
-      page.name, page.owner_id, page.owner, page.open_to_use,
+      page.name, page.maker_id, page.made_by,
+      page.current_owner_id, page.current_owner,
+      page.owner_id, page.owner, page.open_to_use,
       page.author_id, page.author,
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
@@ -346,6 +355,10 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
   return Object.freeze({
     ...common,
     name: row.name,
+    maker_id: safeCount(row.maker_id, 'search result maker id'),
+    made_by: row.made_by,
+    current_owner_id: safeCount(row.current_owner_id, 'search result current owner id'),
+    current_owner: row.current_owner,
     owner_id: safeCount(row.owner_id, 'search result owner id'),
     owner: row.owner,
     open_to_use: row.open_to_use === true,

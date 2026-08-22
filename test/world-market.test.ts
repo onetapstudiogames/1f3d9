@@ -49,6 +49,10 @@ interface FakeOffer {
   asset_type: 'thing'
   asset_id: number
   asset_name: string
+  maker_id: number
+  made_by: string
+  current_owner_id: number
+  current_owner: string
   seller_id: number
   seller: string
   buyer_id: number | null
@@ -143,6 +147,10 @@ function openOffer(overrides: Partial<FakeOffer> = {}): FakeOffer {
     asset_type: 'thing',
     asset_id: 41,
     asset_name: 'porch lantern',
+    maker_id: 6,
+    made_by: 'old-maker',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
     seller_id: 7,
     seller: 'tiny-lantern',
     buyer_id: null,
@@ -377,6 +385,8 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       const claimed = {
         ...offer,
         status: 'claimed' as const,
+        current_owner_id: Number(params[1]),
+        current_owner: String(params[2]),
         claimed_at: state.now,
         locked: false,
         tx_hash: String(params[3]),
@@ -394,6 +404,10 @@ function makeHarness(patch: Partial<FakeState> = {}) {
           asset_type: claimed.asset_type,
           asset_id: claimed.asset_id,
           asset_name: claimed.asset_name,
+          maker_id: claimed.maker_id,
+          made_by: claimed.made_by,
+          current_owner_id: claimed.current_owner_id,
+          current_owner: claimed.current_owner,
           locked: false,
           seller: claimed.seller,
           buyer: claimed.buyer,
@@ -682,6 +696,10 @@ test('public resident and offer records expose no bearer material', async () => 
   const offer = (JSON.parse(text) as { offer: Record<string, unknown> }).offer
   assert.equal(offer.phase, 'listed')
   assert.equal(offer.asset_name, 'porch lantern')
+  assert.equal(offer.maker_id, 6)
+  assert.equal(offer.made_by, 'old-maker')
+  assert.equal(offer.current_owner_id, 7)
+  assert.equal(offer.current_owner, 'tiny-lantern')
   assert.equal(offer.buyer, null)
   assert.equal(text.includes('secret'), false)
 })
@@ -816,6 +834,10 @@ test('payment closes ownership atomically and a retry returns the same public re
   const firstPaymentResponse = first.headers.get('X-PAYMENT-RESPONSE')
   const firstBody = await first.json() as { offer: FakeOffer & { phase: string } }
   assert.equal(firstBody.offer.phase, 'claimed')
+  assert.equal(firstBody.offer.maker_id, 6)
+  assert.equal(firstBody.offer.made_by, 'old-maker')
+  assert.equal(firstBody.offer.current_owner_id, 8)
+  assert.equal(firstBody.offer.current_owner, 'neighbor')
   assert.equal(firstBody.offer.buyer, 'neighbor')
   assert.equal(firstBody.offer.from, BUYER_WALLET)
   assert.equal(firstBody.offer.to, SELLER_WALLET)
@@ -827,6 +849,14 @@ test('payment closes ownership atomically and a retry returns the same public re
   const guardedClaim = harness.getState().queries.find(call => call.text.includes('world-market:finalize-payment'))
   assert.match(guardedClaim?.text ?? '', /date_trunc\('second', reserved_at\)/i)
   assert.match(guardedClaim?.text ?? '', /complete_payment_attempt/i)
+  assert.match(guardedClaim?.text ?? '', /'maker_id'/i)
+  assert.match(guardedClaim?.text ?? '', /'made_by'/i)
+  assert.match(guardedClaim?.text ?? '', /'current_owner_id'/i)
+  assert.match(guardedClaim?.text ?? '', /'current_owner'/i)
+  assert.match(
+    guardedClaim?.text ?? '',
+    /UPDATE\s+things\s+SET\s+owner_id\s*=\s*\$2\s*,\s*active_offer_id\s*=\s*NULL\s+FROM/i,
+  )
 
   const changedWallet = await harness.app.request('/api/world/offer/101/claim', {
     method: 'POST',

@@ -17,6 +17,8 @@ const affordableReadingMigrationFile = 'db/migrations/20260820_affordable_readin
 const eventsPresenceIndexMigrationFile = 'db/migrations/20260821_events_presence_index.sql' as const
 const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_indexes.sql' as const
 const publicChangeMarkersMigrationFile = 'db/migrations/20260821_public_change_markers.sql' as const
+const thingMakerMigrationFile = 'db/migrations/20260822_thing_maker.sql' as const
+const laterHolderMarksMigrationFile = 'db/migrations/20260822_later_holder_marks.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -258,6 +260,109 @@ test('thing withdrawal keeps the row and freezes it as history', () => {
   assert.match(schemaDdl, /CREATE\s+TRIGGER\s+things_keep_birth_history\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+things/i)
   assert.match(schemaDdl, /OLD\.withdrawn_at\s+IS\s+NOT\s+NULL\s+AND\s+NEW\s+IS\s+DISTINCT\s+FROM\s+OLD/i)
   assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+things_place[\s\S]*WHERE\s+withdrawn_at\s+IS\s+NULL/i)
+})
+
+test('thing-maker migration derives one authenticated immutable birth actor and fails closed', () => {
+  const migration = migrationDdl(thingMakerMigrationFile)
+
+  assert.match(
+    migration,
+    /LOCK\s+TABLE\s+residents\s*,\s*things\s*,\s*events\s+IN\s+SHARE\s+ROW\s+EXCLUSIVE\s+MODE/iu,
+    'history and thing writes must stay frozen through validation and backfill',
+  )
+  assert.match(migration, /kind\s+IN\s*\(\s*'thing_created'\s*,\s*'thing_crafted'\s*\)/iu)
+  assert.match(migration, /JOIN\s+residents[\s\S]*handle\s*=\s*(?:creation_)?event\.actor/iu)
+  assert.match(
+    migration,
+    /authenticated_actor\.joined_at\s*<=\s*creation_event\.at/iu,
+    'a later resident must not retroactively authenticate an older actor handle',
+  )
+  assert.match(migration, /(?:creation_)?event\.at\s*=\s*thing\.created_at/iu)
+  assert.match(migration, /detail\s*->>\s*'kind_id'[\s\S]*birth_revision/iu)
+  assert.match(migration, /COUNT\s*\([^)]*(?:creation_)?event\.id[^)]*\)\s*<>\s*1/iu)
+  assert.match(migration, /malformed\s+or\s+orphan\s+creation\s+event\s+ids/iu)
+  assert.match(migration, /maker_id\s+IS\s+DISTINCT\s+FROM[\s\S]*authenticated/iu)
+  assert.doesNotMatch(migration, /LIMIT\s+25/iu, 'the failure must name every unresolved record')
+  assert.doesNotMatch(
+    migration,
+    /SET\s+maker_id\s*=\s*(?:things?\.)?owner_id/iu,
+    'current ownership is not creation evidence',
+  )
+  assert.doesNotMatch(
+    migration,
+    /SET\s+maker_id\s*=[^;]*(?:name|body)/iu,
+    'mutable prose is not creation evidence',
+  )
+  assert.match(migration, /ALTER\s+COLUMN\s+maker_id\s+SET\s+NOT\s+NULL/iu)
+  assert.match(migration, /FOREIGN\s+KEY\s*\(maker_id\)[\s\S]*REFERENCES\s+residents\s*\(id\)[\s\S]*ON\s+DELETE\s+RESTRICT/iu)
+  assert.match(migration, /NEW\.maker_id\s+IS\s+DISTINCT\s+FROM\s+OLD\.maker_id/iu)
+  assert.equal(prepareMigrationExecution(thingMakerMigrationFile, migration).mode, 'transactional')
+})
+
+test('thing-maker is selected as one explicit preview or production migration', () => {
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'thing-maker'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, thingMakerMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'thing-maker'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'thing-maker-release',
+    },
+  )
+  assert.equal(production.migrationFile, thingMakerMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+})
+
+test('later-holder marks are selected as one explicit transactional preview or production migration', () => {
+  const migration = migrationDdl(laterHolderMarksMigrationFile)
+  assert.match(migration, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+thing_later_holder_marks/iu)
+  assert.match(migration, /CREATE\s+TRIGGER\s+thing_later_holder_marks_check_eligibility/iu)
+  assert.match(migration, /CREATE\s+TRIGGER\s+things_end_later_holder_mark/iu)
+  assert.equal(prepareMigrationExecution(laterHolderMarksMigrationFile, migration).mode, 'transactional')
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'later-holder-marks'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, laterHolderMarksMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'later-holder-marks'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'later-holder-marks-release',
+    },
+  )
+  assert.equal(production.migrationFile, laterHolderMarksMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
 })
 
 test('round-two records are append-only rather than deleted after resolution', () => {

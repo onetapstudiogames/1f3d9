@@ -3,6 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { Hono } from 'hono'
 import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   PUBLIC_PAGE_DEFAULT,
@@ -14,12 +15,21 @@ import {
 } from '../src/public-pagination.ts'
 import { PUBLIC_SEARCH_RATE_CAPACITY } from '../src/public-search-rate-limit.ts'
 import { encodePublicSearchCursor } from '../src/public-search.ts'
+import { setOAuthResidentResolver } from '../src/core.ts'
+import { PUBLIC_CREDENTIAL_REDACTION } from '../src/credential-safety.ts'
+import {
+  createLaterHolderCursorCodec,
+  isLaterHolderCursor,
+} from '../src/later-holder.ts'
+import { mcp } from '../src/mcp.ts'
 
+const LATER_HOLDER_CURSOR_KEY = '11'.repeat(32)
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
 process.env.BASE_RPC_URL = 'https://base-rpc.test'
 process.env.FACILITATOR_URL = 'https://facilitator.test'
+process.env.LATER_HOLDER_CURSOR_KEY = LATER_HOLDER_CURSOR_KEY
 
 const TREASURY = process.env.TREASURY_ADDRESS
 const SELLER_WALLET = '0x1111111111111111111111111111111111111111'
@@ -110,6 +120,15 @@ interface FakePaymentAttempt {
   updated_at: string
   completed_at: string | null
 }
+interface FakeLaterHolderItem {
+  mark_id: string
+  id: number
+  title: string
+  place_id: number
+  place_title: string
+  date: string
+  body_text_bytes: number
+}
 type LawRecipe = Record<string, unknown>
 interface FakeState {
   scenario: string
@@ -172,6 +191,7 @@ interface FakeState {
   exactTotalsBusyAfter: number | null
   exactTotalsSuccessfulReads: number
   publicChangeMarker: string
+  laterHolderItems: FakeLaterHolderItem[]
   actionResolved?: boolean
 }
 
@@ -236,6 +256,11 @@ const initialState = (): FakeState => ({
   exactTotalsBusyAfter: null,
   exactTotalsSuccessfulReads: 0,
   publicChangeMarker: '9',
+  laterHolderItems: [{
+    mark_id: '2', id: 41, title: 'porch lantern', place_id: 2,
+    place_title: 'Lantern Town', date: '2026-08-11T00:00:00.000000Z',
+    body_text_bytes: Buffer.byteLength('warm light', 'utf8'),
+  }],
 })
 
 let state = initialState()
@@ -282,15 +307,21 @@ const kindRow = () => ({
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
+const residentHandleForFakeId = (id: number) => id === 7
+  ? 'tiny-lantern'
+  : id === 8 ? 'neighbor' : 'founder'
+
 const thingRow = (id = 41) => ({
   id,
   place_id: 2,
   name: id === 41 ? 'porch lantern' : 'neighbor chest',
   body: id === 41 ? 'warm light' : 'locked shut',
+  maker_id: id === 41 ? 7 : 8,
+  made_by: id === 41 ? 'tiny-lantern' : 'neighbor',
+  current_owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
+  current_owner: residentHandleForFakeId(id === 41 ? state.thingOwnerId : state.targetThingOwnerId),
   owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
-  owner: id === 41
-    ? (state.thingOwnerId === state.actorId ? state.actorHandle : 'founder')
-    : (state.targetThingOwnerId === state.actorId ? state.actorHandle : 'neighbor'),
+  owner: residentHandleForFakeId(id === 41 ? state.thingOwnerId : state.targetThingOwnerId),
   open_to_use: id === 41 ? state.thingOpenToUse : false,
   kind_id: 3,
   kind: 'lantern',
@@ -399,6 +430,9 @@ const remainingPaginationRows = (collection: string) => {
     if (collection === 'me_places') return { ...common, parent_id: 1, name: `place-${id}` }
     if (collection === 'me_things') return {
       ...common, place_id: 2, name: `thing-${id}`, kind_id: null,
+      maker_id: 6, made_by: 'archive-smith',
+      current_owner_id: 7, current_owner: 'tiny-lantern',
+      owner_id: 7, owner: 'tiny-lantern',
       birth_revision: null, current_revision: null, open_to_use: false,
     }
     if (collection === 'me_kinds') return { ...common, name: `kind-${id}`, current_revision: 1 }
@@ -469,9 +503,51 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
 
+  if (q.includes('/* private:later-holder-notice */')) {
+    return [{ count: state.laterHolderItems.length }]
+  }
+  if (q.includes('/* private:later-holder-index */')) {
+    const beforeMarkId = params[1] == null ? null : BigInt(String(params[1]))
+    const limit = Number(params[2])
+    const page = state.laterHolderItems
+      .filter(item => beforeMarkId === null || BigInt(item.mark_id) < beforeMarkId)
+      .sort((left, right) => Number(BigInt(right.mark_id) - BigInt(left.mark_id)))
+      .slice(0, limit)
+      .map(item => ({
+        ...item, total_count: state.laterHolderItems.length,
+      }))
+    return page.length > 0
+      ? page
+      : [{ total_count: state.laterHolderItems.length }]
+  }
+  if (q.includes('/* private:later-holder-mark */')) {
+    const thingId = Number(params[1])
+    const existing = state.laterHolderItems.find(item => item.id === thingId)
+    if (existing) return [{ thing_id: thingId, changed: false }]
+    if (thingId !== 41 || state.thingOwnerId !== state.actorId || state.thingWithdrawn) return []
+    const next: FakeLaterHolderItem = {
+      mark_id: String(1 + Math.max(0, ...state.laterHolderItems.map(item => Number(item.mark_id)))),
+      id: 41, title: 'porch lantern', place_id: 2, place_title: 'Lantern Town',
+      date: '2026-08-11T00:00:00.000000Z', body_text_bytes: Buffer.byteLength('warm light'),
+    }
+    state = { ...state, laterHolderItems: [next, ...state.laterHolderItems] }
+    return [{ thing_id: thingId, changed: true }]
+  }
+  if (q.includes('/* private:later-holder-unmark */')) {
+    const thingId = Number(params[1])
+    const changed = state.laterHolderItems.some(item => item.id === thingId)
+    state = {
+      ...state,
+      laterHolderItems: state.laterHolderItems.filter(item => item.id !== thingId),
+    }
+    return changed ? [{ thing_id: thingId }] : []
+  }
+
   if (q.includes('/* public:search */')) {
     return [{
       result_type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+      maker_id: 5, made_by: 'archive-smith',
+      current_owner_id: 7, current_owner: 'tiny-lantern',
       owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
       author_id: null, author: null, body_text_bytes: 19,
       created_at: '2026-08-11T00:00:00.000000Z',
@@ -2871,13 +2947,26 @@ test('public thing and note detail reads expose full active records without writ
   reset({ scenario: 'public details' })
   const thing = await app.request('/api/thing/41')
   assert.equal(thing.status, 200)
-  const thingBody = await thing.json() as { thing: { id: number; body: string; owner: string } }
+  const thingBody = await thing.json() as { thing: Record<string, unknown> }
   assert.deepEqual(thingBody.thing, {
     ...thingBody.thing,
     id: 41,
     body: 'warm light',
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
     owner: 'tiny-lantern',
   })
+  const detailRead = sqlCalls().find(call => (
+    /from\s+things\s+thing/i.test(call.query ?? '') && /where\s+thing\.id/i.test(call.query ?? '')
+  ))
+  assert.match(detailRead?.query ?? '', /thing\.maker_id/i)
+  assert.match(detailRead?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(detailRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(detailRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/i)
+  assert.match(detailRead?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*thing\.maker_id/i)
 
   const note = await app.request('/api/note/51')
   assert.equal(note.status, 200)
@@ -3123,12 +3212,48 @@ test('things pin their birth revision and only their owner may voluntarily upgra
   const current = await upgraded.json() as { thing: { birth_revision: number; current_revision: number } }
   assert.equal(current.thing.birth_revision, 1)
   assert.equal(current.thing.current_revision, 2)
+  const upgradeWrite = sqlCalls().find(call => /WITH\s+upgradeable/i.test(call.query ?? ''))
+  assert.match(upgradeWrite?.query ?? '', /changed\.maker_id/i)
+  assert.match(upgradeWrite?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(upgradeWrite?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(upgradeWrite?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
+  assert.match(upgradeWrite?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*changed\.maker_id/i)
+  assert.match(upgradeWrite?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*changed\.owner_id/i)
 
   setActor(8, 'neighbor')
   const nonOwner = await app.request('/api/thing/41/upgrade', {
     method: 'POST', headers: authHeaders(OTHER_SECRET),
   })
   assert.equal(nonOwner.status, 403)
+
+  reset({
+    scenario: 'transferred thing upgrade keeps maker',
+    actorId: 8,
+    actorHandle: 'neighbor',
+    thingOwnerId: 8,
+    kindRevision: 2,
+  })
+  const transferred = await app.request('/api/thing/41/upgrade', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+  })
+  assert.equal(transferred.status, 200)
+  const transferredBody = await transferred.json() as { thing: Record<string, unknown> }
+  assert.deepEqual({
+    maker_id: transferredBody.thing.maker_id,
+    made_by: transferredBody.thing.made_by,
+    current_owner_id: transferredBody.thing.current_owner_id,
+    current_owner: transferredBody.thing.current_owner,
+    owner_id: transferredBody.thing.owner_id,
+    owner: transferredBody.thing.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 8,
+    current_owner: 'neighbor',
+    owner_id: 8,
+    owner: 'neighbor',
+  })
 })
 
 test('note and agreement quotas fail atomically without a partial public record', async () => {
@@ -3309,6 +3434,9 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
     body: JSON.stringify({ type: 'thing', id: 41, to_handle: 'neighbor' }),
   })
   assert.equal(gift.status, 200, await gift.clone().text())
+  const giftWrite = sqlCalls().find(call => /WITH\s+recipient[\s\S]*moved_asset/i.test(call.query ?? ''))
+  assert.match(giftWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*recipient\.id/i)
+  assert.doesNotMatch(giftWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   reset({ scenario: 'offer lock' })
   const offered = await app.request('/api/transfer/offer', {
@@ -3422,8 +3550,11 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
   const body = await settled.json() as { offer: { status: string }; transfer: { to: string } }
   assert.equal(body.offer.status, 'claimed')
   assert.equal(body.transfer.to, 'neighbor')
-  assert.ok(sqlCalls().some(call =>
-    /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? '')))
+  const settledWrite = sqlCalls().find(call =>
+    /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? ''))
+  assert.ok(settledWrite)
+  assert.match(settledWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*\$\d+/i)
+  assert.doesNotMatch(settledWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
   const missingWallet = await app.request('/api/transfer/90/claim', {
@@ -4395,6 +4526,8 @@ test('search and changes succeed through their real Hono routes without returnin
       query: 'archive lantern', mode: 'phrase', type: 'thing',
       results: [{
         type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
+        maker_id: 5, made_by: 'archive-smith',
+        current_owner_id: 7, current_owner: 'tiny-lantern',
         owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
         body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
         href: '/api/thing/41',
@@ -4402,6 +4535,11 @@ test('search and changes succeed through their real Hono routes without returnin
       total_items: 1, total_text_bytes: 19, returned_items: 1,
       returned_text_bytes: 0, has_more: false, next_before: null, change_marker: '9',
     })
+    const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
+    assert.match(searchRead?.query ?? '', /thing\.maker_id/iu)
+    assert.match(searchRead?.query ?? '', /maker\.handle\s+AS\s+made_by/iu)
+    assert.match(searchRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/iu)
+    assert.match(searchRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/iu)
 
     const checkpoint = await app.request('/api/changes')
     assert.equal(checkpoint.status, 200)
@@ -4532,6 +4670,216 @@ test('/api/me rejects unknown read options after authentication', async () => {
     false,
     'unknown options fail before reading private collections',
   )
+})
+
+test('passive /api/me notice is exact, live, private, and SELECT-only', async () => {
+  const base = initialState().laterHolderItems[0]!
+  for (const [count, expected] of [
+    [0, { count: 0 }],
+    [1, {
+      count: 1,
+      question:
+        'An earlier holder of this resident identity marked 1 public item for later holders. View the index?',
+    }],
+    [2, {
+      count: 2,
+      question:
+        'An earlier holder of this resident identity marked 2 public items for later holders. View the index?',
+    }],
+  ] as const) {
+    reset({
+      laterHolderItems: Array.from({ length: count }, (_, index) => ({
+        ...base, mark_id: String(index + 1), id: 41 + index,
+      })),
+    })
+    const response = await app.request('/api/me', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ mode: 'later_holder_notice' }),
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), expected)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.equal(response.headers.get('pragma'), 'no-cache')
+    assert.match(response.headers.get('vary') ?? '', /authorization/iu)
+    const statements = sqlCalls().map(call => call.query ?? '')
+    assert.ok(statements.some(query => /private:later-holder-notice/iu.test(query)))
+    assert.equal(statements.every(query => /^\s*select\b/iu.test(query)), true)
+    assert.equal(statements.some(query => /resident_presence|pending_effects|events|public_change/iu.test(query)), false)
+  }
+})
+
+test('passive /api/me index returns only current headings and one chosen direct read returns the body', async () => {
+  const base = initialState().laterHolderItems[0]!
+  reset({
+    laterHolderItems: [
+      { ...base, mark_id: '3', id: 41, title: 'Current lantern title' },
+      { ...base, mark_id: '2', id: 31, title: 'Buried old thing', body_text_bytes: 4096 },
+    ],
+  })
+  const response = await app.request('/api/me', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ mode: 'later_holder_index', limit: 1 }),
+  })
+  assert.equal(response.status, 200)
+  const payload = await response.json() as {
+    count: number
+    items: Array<Record<string, unknown>>
+    has_more: boolean
+    next_before: string | null
+  }
+  const { next_before: nextBefore, ...bodyWithoutCursor } = payload
+  assert.deepEqual(bodyWithoutCursor, {
+    count: 2,
+    items: [{
+      id: 41,
+      type: 'thing',
+      title: 'Current lantern title',
+      place: { id: 2, title: 'Lantern Town' },
+      date: '2026-08-11T00:00:00.000000Z',
+      body_text_bytes: Buffer.byteLength('warm light'),
+    }],
+    has_more: true,
+  })
+  assert.equal(isLaterHolderCursor(nextBefore), true)
+  assert.equal(createLaterHolderCursorCodec(LATER_HOLDER_CURSOR_KEY, 7).decode(nextBefore!), '3')
+  const indexQuery = sqlCalls().find(call => /private:later-holder-index/iu.test(call.query ?? ''))
+  assert.match(indexQuery?.query ?? '', /octet_length\s*\(\s*thing\.body\s*\)/iu)
+  assert.doesNotMatch(indexQuery?.query ?? '', /thing\.body\s+(?:as\s+)?body\b/iu)
+
+  const chosen = await app.request('/api/thing/41')
+  assert.equal(chosen.status, 200)
+  const chosenBody = await chosen.json() as { thing?: { body?: string } }
+  assert.equal(chosenBody.thing?.body, 'warm light')
+})
+
+test('passive /api/me index redacts credential-shaped headings and rejects foreign cursors', async () => {
+  const base = initialState().laterHolderItems[0]!
+  reset({
+    laterHolderItems: [{
+      ...base,
+      title: `unsafe ${SECRET}`,
+      place_title: `unsafe ${SECRET}`,
+    }],
+  })
+  const response = await app.request('/api/me', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ mode: 'later_holder_index' }),
+  })
+  assert.equal(response.status, 200)
+  const payload = await response.json() as {
+    items: Array<{ title: string; place: { title: string } }>
+  }
+  assert.deepEqual(payload.items[0], {
+    id: 41,
+    type: 'thing',
+    title: PUBLIC_CREDENTIAL_REDACTION,
+    place: { id: 2, title: PUBLIC_CREDENTIAL_REDACTION },
+    date: '2026-08-11T00:00:00.000000Z',
+    body_text_bytes: Buffer.byteLength('warm light'),
+  })
+  assert.doesNotMatch(JSON.stringify(payload), new RegExp(SECRET, 'iu'))
+
+  const foreignCursor = createLaterHolderCursorCodec(LATER_HOLDER_CURSOR_KEY, 8).encode('99')
+  const invalid = await app.request('/api/me', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ mode: 'later_holder_index', before: foreignCursor }),
+  })
+  assert.equal(invalid.status, 400)
+  assert.equal(invalid.headers.get('cache-control'), 'no-store')
+})
+
+test('passive index fails closed when its cursor key is missing while notice stays available', async () => {
+  reset()
+  const previous = process.env.LATER_HOLDER_CURSOR_KEY
+  delete process.env.LATER_HOLDER_CURSOR_KEY
+  try {
+    const index = await app.request('/api/me', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ mode: 'later_holder_index' }),
+    })
+    assert.equal(index.status, 503)
+    assert.deepEqual(await index.json(), { error: 'later-holder index is unavailable' })
+    assert.equal(index.headers.get('cache-control'), 'no-store')
+    assert.equal(
+      sqlCalls().some(call => /private:later-holder-index/iu.test(call.query ?? '')),
+      false,
+    )
+
+    const notice = await app.request('/api/me', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ mode: 'later_holder_notice' }),
+    })
+    assert.equal(notice.status, 200)
+  } finally {
+    if (previous === undefined) delete process.env.LATER_HOLDER_CURSOR_KEY
+    else process.env.LATER_HOLDER_CURSOR_KEY = previous
+  }
+})
+
+test('passive /api/me rejects query options and unsupported fields before reading marks', async () => {
+  for (const [path, body] of [
+    ['/api/me?mode=later_holder_notice', { mode: 'later_holder_notice' }],
+    ['/api/me', { mode: 'later_holder_notice', opened: false }],
+    ['/api/me', { mode: 'later_holder_index', thing_id: 41 }],
+    ['/api/me', { mode: 'later_holder_index', before: 3 }],
+  ] as const) {
+    reset()
+    const response = await app.request(path, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
+    })
+    assert.equal(response.status, 400, `${path} ${JSON.stringify(body)}`)
+    assert.equal(
+      sqlCalls().some(call => /private:later-holder-(?:notice|index)/iu.test(call.query ?? '')),
+      false,
+    )
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+  }
+})
+
+test('private mark and unmark are retry-safe and emit no public event or change', async () => {
+  reset({ laterHolderItems: [] })
+  const beforeMarker = state.publicChangeMarker
+  const first = await app.request('/api/thing/41/mark', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'mark' }),
+  })
+  assert.equal(first.status, 200)
+  assert.deepEqual(await first.json(), { thing_id: 41, marked: true, changed: true })
+  const repeated = await app.request('/api/thing/41/mark', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'mark' }),
+  })
+  assert.deepEqual(await repeated.json(), { thing_id: 41, marked: true, changed: false })
+  assert.equal(state.laterHolderItems.length, 1)
+
+  const removed = await app.request('/api/thing/41/mark', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'unmark' }),
+  })
+  assert.deepEqual(await removed.json(), { thing_id: 41, marked: false, changed: true })
+  const absent = await app.request('/api/thing/41/mark', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'unmark' }),
+  })
+  assert.deepEqual(await absent.json(), { thing_id: 41, marked: false, changed: false })
+  assert.equal(state.laterHolderItems.length, 0)
+  assert.equal(state.publicChangeMarker, beforeMarker)
+  assert.equal(inserted('events'), 0)
+  assert.equal(sqlCalls().some(call => /public_change/iu.test(call.query ?? '')), false)
+  for (const response of [first, repeated, removed, absent]) {
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+  }
+})
+
+test('passive discovery leaves timers asleep while ordinary GET /api/me still wakes them', async () => {
+  reset({ pendingResolved: false })
+  const passive = await app.request('/api/me', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ mode: 'later_holder_notice' }),
+  })
+  assert.equal(passive.status, 200)
+  assert.equal(sqlCalls().some(call => /resident_presence|pending_effects/iu.test(call.query ?? '')), false)
+
+  state = { ...state, calls: [] }
+  const ordinary = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(ordinary.status, 200)
+  assert.equal(sqlCalls().some(call => /resident_presence/iu.test(call.query ?? '')), true)
 })
 
 test('public read options reject unknown names and text sizes count UTF-8 bytes', () => {
@@ -5115,7 +5463,8 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
-    'agree', 'open_agreement_accession', 'sign', 'say', 'me', 'moderate',
+    'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
+    'mark_for_later', 'me', 'moderate',
   ])
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
   const transferTool = listBody.result.tools.find(tool => tool.name === 'transfer')
@@ -5124,6 +5473,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.ok(makeTool?.inputSchema.properties && 'open_to_use' in makeTool.inputSchema.properties)
   const lookTool = listBody.result.tools.find(tool => tool.name === 'look')
   assert.ok(lookTool?.inputSchema.properties && 'view' in lookTool.inputSchema.properties)
+  assert.ok(lookTool?.inputSchema.properties && 'thing_id' in lookTool.inputSchema.properties)
   assert.ok(lookTool?.inputSchema.properties && 'subplace_text_limit_bytes' in lookTool.inputSchema.properties)
   assert.ok(lookTool?.inputSchema.properties && 'thing_text_limit_bytes' in lookTool.inputSchema.properties)
   assert.ok(lookTool?.inputSchema.properties && 'note_text_limit_bytes' in lookTool.inputSchema.properties)
@@ -5389,6 +5739,7 @@ test('thing withdrawal is owner-only, one-way, and refused during an open sale',
     withdrawalWrite?.query ?? '',
     /jsonb_build_object\(\s*'thing_id'\s*,\s*id\s*,\s*'reason'\s*,\s*\$\d+::text\s*\)/i,
   )
+  assert.doesNotMatch(withdrawalWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   reset({ scenario: 'thing withdrawal sale', offer: { ...initialState().offer, status: 'open' } })
   const locked = await app.request('/api/thing/41/withdraw', {
@@ -5451,24 +5802,83 @@ test('thing detail and place reads expose open_to_use, defaulting to false', asy
 
   const thingBody = await thingResponse.json() as { thing: { open_to_use: boolean } }
   const placeBody = await placeResponse.json() as {
-    things: Array<{ id: number; open_to_use: boolean }>
+    things: Array<Record<string, unknown> & { id: number; open_to_use: boolean }>
   }
   assert.equal(thingBody.thing.open_to_use, false)
   assert.equal(placeBody.things.find(thing => thing.id === 41)?.open_to_use, false)
+  assert.deepEqual({
+    maker_id: placeBody.things[0]?.maker_id,
+    made_by: placeBody.things[0]?.made_by,
+    current_owner_id: placeBody.things[0]?.current_owner_id,
+    current_owner: placeBody.things[0]?.current_owner,
+    owner_id: placeBody.things[0]?.owner_id,
+    owner: placeBody.things[0]?.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
   const detailRead = sqlCalls().find(call => (
     /from\s+things\s+thing/i.test(call.query ?? '') && /where\s+thing\.id/i.test(call.query ?? '')
   ))
   const placeRead = sqlCalls().find(call => /from\s+things\s+t\b/i.test(call.query ?? ''))
   assert.match(detailRead?.query ?? '', /thing\.open_to_use/i)
   assert.match(placeRead?.query ?? '', /t\.open_to_use/i)
+  assert.match(placeRead?.query ?? '', /t\.maker_id/i)
+  assert.match(placeRead?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(placeRead?.query ?? '', /t\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(placeRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/i)
+
+  for (const view of ['full', 'outline'] as const) {
+    const viewed = await app.request(`/api/place/2?view=${view}`)
+    assert.equal(viewed.status, 200)
+    const viewedBody = await viewed.json() as { things: Array<Record<string, unknown>> }
+    assert.deepEqual({
+      maker_id: viewedBody.things[0]?.maker_id,
+      made_by: viewedBody.things[0]?.made_by,
+      current_owner_id: viewedBody.things[0]?.current_owner_id,
+      current_owner: viewedBody.things[0]?.current_owner,
+      owner_id: viewedBody.things[0]?.owner_id,
+      owner: viewedBody.things[0]?.owner,
+    }, {
+      maker_id: 7,
+      made_by: 'tiny-lantern',
+      current_owner_id: 7,
+      current_owner: 'tiny-lantern',
+      owner_id: 7,
+      owner: 'tiny-lantern',
+    }, view)
+  }
 
   reset({ scenario: 'remaining pagination' })
   const meResponse = await app.request('/api/me', { headers: authHeaders() })
   assert.equal(meResponse.status, 200)
-  const meBody = await meResponse.json() as { things: Array<{ open_to_use: boolean }> }
+  const meBody = await meResponse.json() as { things: Array<Record<string, unknown> & { open_to_use: boolean }> }
   assert.equal(meBody.things[0]?.open_to_use, false)
+  assert.deepEqual({
+    maker_id: meBody.things[0]?.maker_id,
+    made_by: meBody.things[0]?.made_by,
+    current_owner_id: meBody.things[0]?.current_owner_id,
+    current_owner: meBody.things[0]?.current_owner,
+    owner_id: meBody.things[0]?.owner_id,
+    owner: meBody.things[0]?.owner,
+  }, {
+    maker_id: 6,
+    made_by: 'archive-smith',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
   const meRead = sqlCalls().find(call => /\/\*\s*public:me_things\s*\*\//i.test(call.query ?? ''))
   assert.match(meRead?.query ?? '', /\bopen_to_use\b/i)
+  assert.match(meRead?.query ?? '', /thing\.maker_id/i)
+  assert.match(meRead?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(meRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(meRead?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
 })
 
 test('new things default closed and may be opened explicitly by their creator', async () => {
@@ -5479,9 +5889,32 @@ test('new things default closed and may be opened explicitly by their creator', 
     body: JSON.stringify({ place_id: 2, name: 'closed lantern', body: 'owner use only' }),
   })
   assert.equal(closed.status, 201)
-  const closedBody = await closed.json() as { thing: { open_to_use: boolean; body: string }; reading_cost: { new_item_text_bytes: number } }
+  const closedBody = await closed.json() as {
+    thing: Record<string, unknown> & { open_to_use: boolean; body: string }
+    reading_cost: { new_item_text_bytes: number }
+  }
   assert.equal(closedBody.thing.open_to_use, false)
+  assert.deepEqual({
+    maker_id: closedBody.thing.maker_id,
+    made_by: closedBody.thing.made_by,
+    current_owner_id: closedBody.thing.current_owner_id,
+    current_owner: closedBody.thing.current_owner,
+    owner_id: closedBody.thing.owner_id,
+    owner: closedBody.thing.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
   assert.equal(closedBody.reading_cost.new_item_text_bytes, Buffer.byteLength(closedBody.thing.body))
+  const closedInsert = sqlCalls().find(call => /insert\s+into\s+things/i.test(call.query ?? ''))
+  assert.match(closedInsert?.query ?? '', /\bmaker_id\b/i)
+  assert.match(closedInsert?.query ?? '', /\bmade_by\b/i)
+  assert.match(closedInsert?.query ?? '', /\bcurrent_owner_id\b/i)
+  assert.match(closedInsert?.query ?? '', /\bcurrent_owner\b/i)
 
   reset({ scenario: 'thing open_to_use create explicit', openToThings: true, thingOpenToUse: true })
   const opened = await app.request('/api/thing', {
@@ -5508,6 +5941,30 @@ test('new things default closed and may be opened explicitly by their creator', 
     })
     assert.equal(response.status, 400)
   }
+
+  for (const forbidden of [{ maker_id: 8 }, { made_by: 'neighbor' }]) {
+    const response = await app.request('/api/thing', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        place_id: 2, name: 'forged provenance', body: '', ...forbidden,
+      }),
+    })
+    assert.equal(response.status, 400)
+  }
+
+  const mentionsAnotherResident = await app.request('/api/thing', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      place_id: 2,
+      name: 'A lantern for neighbor',
+      body: 'Made to answer neighbor without claiming neighbor made it.',
+    }),
+  })
+  assert.equal(mentionsAnotherResident.status, 201)
+  const attributed = await mentionsAnotherResident.json() as { thing: Record<string, unknown> }
+  assert.equal(attributed.thing.made_by, 'tiny-lantern')
 })
 
 test('the thing owner can toggle open_to_use and a visitor cannot edit it', async () => {
@@ -5524,6 +5981,42 @@ test('the thing owner can toggle open_to_use and a visitor cannot edit it', asyn
   assert.equal(changedBody.reading_cost.room_stored_text_bytes, 1234)
   const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
   assert.match(update?.query ?? '', /\bopen_to_use\b/i)
+  assert.match(update?.query ?? '', /changed\.maker_id/i)
+  assert.match(update?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
+  assert.match(update?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(update?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*changed\.maker_id/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*changed\.owner_id/i)
+
+  reset({
+    scenario: 'transferred thing edit keeps maker',
+    actorId: 8,
+    actorHandle: 'neighbor',
+    thingOwnerId: 8,
+    thingOpenToUse: false,
+  })
+  const transferred = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ body: 'kept by a new owner' }),
+  })
+  assert.equal(transferred.status, 200)
+  const transferredBody = await transferred.json() as { thing: Record<string, unknown> }
+  assert.deepEqual({
+    maker_id: transferredBody.thing.maker_id,
+    made_by: transferredBody.thing.made_by,
+    current_owner_id: transferredBody.thing.current_owner_id,
+    current_owner: transferredBody.thing.current_owner,
+    owner_id: transferredBody.thing.owner_id,
+    owner: transferredBody.thing.owner,
+  }, {
+    maker_id: 7,
+    made_by: 'tiny-lantern',
+    current_owner_id: 8,
+    current_owner: 'neighbor',
+    owner_id: 8,
+    owner: 'neighbor',
+  })
 
   reset({ scenario: 'thing open_to_use patch denied', thingOwnerId: 7, thingOpenToUse: false })
   setActor(8, 'neighbor')
@@ -5669,7 +6162,7 @@ for (const [label, recipe] of [
   })
 }
 
-test('damage stays off unless the place consents, and stored timers resolve on observation', async () => {
+test('damage stays off unless the place consents, while place reads stay passive and me wakes timers', async () => {
   const originalNow = Date.now
   try {
     const startedAt = Date.parse('2026-08-11T00:00:00.000Z')
@@ -5719,18 +6212,114 @@ test('damage stays off unless the place consents, and stored timers resolve on o
     assert.equal(state.placeLabels.includes('echo'), false)
 
     Date.now = () => startedAt + 61_000
-    const humanLook = await app.request('/api/place/2')
-    const humanBody = await humanLook.json() as { place: { labels?: string[] } }
-    assert.deepEqual(humanBody.place.labels, [])
-    assert.equal(state.pendingResolved, false)
-
-    const observed = await app.request(
+    for (const path of [
+      '/api/place/2',
       '/api/place/2?view=outline',
-      { headers: authHeaders(OTHER_SECRET) },
-    )
-    assert.equal(observed.status, 200)
-    const observedBody = await observed.json() as { place: { labels?: string[] } }
-    assert.deepEqual(observedBody.place.labels, ['echo'])
+      '/api/place/2?view=full',
+    ] as const) {
+      state = { ...state, calls: [] }
+      const humanLook = await app.request(path)
+      assert.equal(humanLook.status, 200)
+      const humanBody = await humanLook.json() as { place: { labels?: string[] } }
+      assert.deepEqual(humanBody.place.labels, [], `${path}: anonymous read stays passive`)
+      assert.equal(state.pendingResolved, false)
+
+      state = { ...state, calls: [] }
+      const credentialedLook = await app.request(path, { headers: authHeaders(OTHER_SECRET) })
+      assert.equal(credentialedLook.status, 200)
+      const credentialedBody = await credentialedLook.json() as { place: { labels?: string[] } }
+      assert.deepEqual(credentialedBody, humanBody, `${path}: attached credentials do not change output`)
+      const placeReadQueries = sqlCalls().map(call => call.query ?? '')
+      assert.equal(
+        placeReadQueries.some(query => /where\s+secret_hash/iu.test(query)),
+        false,
+        `${path}: an attached credential must not be looked up`,
+      )
+      assert.equal(
+        placeReadQueries.some(query => /pending_effects|effect_resolutions/iu.test(query)),
+        false,
+        `${path}: a place read must not inspect or resolve due timers`,
+      )
+      assert.equal(
+        placeReadQueries.some(query => /\b(?:insert|update|delete)\b/iu.test(query)),
+        false,
+        `${path}: a place read must not change city state`,
+      )
+      assert.equal(state.pendingResolved, false)
+    }
+
+    const previousHostedFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    let oauthLookups = 0
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    setOAuthResidentResolver(async () => {
+      oauthLookups += 1
+      return {
+        id: state.actorId,
+        handle: state.actorHandle,
+        model: 'openai-codex',
+        joined_at: '2026-08-11T00:00:00.000Z',
+        quota_day: '2026-08-11',
+        things_today: 0,
+        notes_today: 0,
+        agreement_actions_today: 0,
+      }
+    })
+    try {
+      state = { ...state, calls: [] }
+      const gateway = new Hono()
+      gateway.post('/mcp/connect', c => mcp(c, app, { hostedChat: true }))
+      const hostedLook = await gateway.request('/mcp/connect', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer 1f3d9_at_${'ef'.repeat(32)}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'look', arguments: { place_id: 2 } },
+        }),
+      })
+      assert.equal(hostedLook.status, 200)
+      const hostedResult = await hostedLook.json() as {
+        result: { isError: boolean; content: Array<{ text: string }> }
+      }
+      assert.equal(hostedResult.result.isError, false)
+      const hostedBody = JSON.parse(hostedResult.result.content[0]?.text ?? '{}') as {
+        place: { labels?: string[] }
+      }
+      assert.deepEqual(hostedBody.place.labels, [])
+      assert.equal(oauthLookups, 0, 'hosted look must not look up its attached OAuth token')
+      const hostedReadQueries = sqlCalls().map(call => call.query ?? '')
+      assert.equal(
+        hostedReadQueries.some(query => /where\s+secret_hash/iu.test(query)),
+        false,
+        'hosted look must not look up a root credential either',
+      )
+      assert.equal(
+        hostedReadQueries.some(query => /pending_effects|effect_resolutions/iu.test(query)),
+        false,
+        'hosted look must not inspect or resolve due timers',
+      )
+      assert.equal(
+        hostedReadQueries.some(query => /\b(?:insert|update|delete)\b/iu.test(query)),
+        false,
+        'hosted look must not change city state',
+      )
+      assert.equal(state.pendingResolved, false)
+    } finally {
+      setOAuthResidentResolver(null)
+      if (previousHostedFlag === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHostedFlag
+    }
+
+    state = { ...state, calls: [] }
+    const status = await app.request('/api/me', { headers: authHeaders(OTHER_SECRET) })
+    assert.equal(status.status, 200)
+    assert.equal(state.pendingResolved, true, 'ordinary me must still wake due timers')
+    assert.ok(sqlCalls().some(call => /where\s+secret_hash/iu.test(call.query ?? '')))
+    assert.ok(sqlCalls().some(call => /pending_effects/iu.test(call.query ?? '')))
   } finally {
     Date.now = originalNow
   }

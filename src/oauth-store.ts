@@ -616,6 +616,32 @@ export async function resolveOAuthAccessToken(input: {
   return rows[0] ?? null
 }
 
+/** Validate a hosted access grant without updating quotas, tokens, or families. */
+export async function resolveOAuthAccessTokenPassive(input: {
+  accessTokenHash: string
+  resource: string
+  scope: string
+}): Promise<Resident | null> {
+  const rows = (await sql`
+    SELECT resident.id, resident.handle, resident.model, resident.joined_at,
+      resident.quota_day, resident.things_today, resident.notes_today,
+      resident.agreement_actions_today
+    FROM oauth_tokens token
+    JOIN oauth_token_families family ON family.id = token.family_id
+    JOIN residents resident ON resident.id = family.resident_id
+    WHERE token.token_hash = ${input.accessTokenHash}
+      AND token.token_type = 'access'
+      AND token.used_at IS NULL
+      AND token.revoked_at IS NULL
+      AND token.expires_at > now()
+      AND family.resource = ${input.resource}
+      AND family.scope = ${input.scope}
+      AND family.revoked_at IS NULL
+      AND family.expires_at > now()
+  `) as Resident[]
+  return rows[0] ?? null
+}
+
 export async function consumeOAuthRateLimit(input: {
   bucketHash: string
   attemptKind: OAuthAttemptKind

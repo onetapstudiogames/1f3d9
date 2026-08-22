@@ -268,9 +268,9 @@ test('large public searches use maintained indexes without changing archive trut
       FROM generate_series(1, 30000) AS item_number
     `, [place])
     await postgres.client.query(`
-      INSERT INTO things (place_id, name, body, owner_id, created_at)
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
       SELECT $1, 'ordinary archive thing ' || item_number,
-        'ordinary object body ' || item_number, 2,
+        'ordinary object body ' || item_number, 2, 2,
         '2026-01-02T00:00:00Z'::timestamptz + item_number * interval '1 millisecond'
       FROM generate_series(1, 30000) AS item_number
     `, [place])
@@ -302,13 +302,13 @@ test('large public searches use maintained indexes without changing archive trut
     ])
 
     const things = await postgres.client.query<{ id: number; name: string; body: string }>(`
-      INSERT INTO things (place_id, name, body, owner_id, created_at, withdrawn_at) VALUES
-        ($1, 'Rareindexproof Lantern', 'visible thing body', 2, '2026-02-01T00:00:03Z', NULL),
-        ($1, 'Rareindexproof Withdrawn', 'withdrawn thing body', 2,
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at, withdrawn_at) VALUES
+        ($1, 'Rareindexproof Lantern', 'visible thing body', 2, 2, '2026-02-01T00:00:03Z', NULL),
+        ($1, 'Rareindexproof Withdrawn', 'withdrawn thing body', 2, 2,
           '2026-02-01T00:00:07Z', '2026-02-04T00:00:00Z'),
-        ($1, 'Rareindexproof Removed', 'removed thing body', 2, '2026-02-01T00:00:08Z', NULL),
-        ($1, 'Phrase Vessel', 'literal 100%_archive phrase', 2, '2026-02-02T00:00:04Z', NULL),
-        ($1, 'Near Phrase Vessel', 'literal 100XXarchive phrase', 2, '2026-02-02T00:00:03Z', NULL)
+        ($1, 'Rareindexproof Removed', 'removed thing body', 2, 2, '2026-02-01T00:00:08Z', NULL),
+        ($1, 'Phrase Vessel', 'literal 100%_archive phrase', 2, 2, '2026-02-02T00:00:04Z', NULL),
+        ($1, 'Near Phrase Vessel', 'literal 100XXarchive phrase', 2, 2, '2026-02-02T00:00:03Z', NULL)
       RETURNING id, name, body
     `, [place])
     const thingId = (name: string) => {
@@ -424,8 +424,8 @@ test('large public searches use maintained indexes without changing archive trut
       )
 
       const inserted = await postgres.client.query<{ id: number }>(`
-        INSERT INTO things (place_id, name, body, owner_id, created_at)
-        VALUES ($1, 'Autoupdateproof Beacon', 'new indexed body', 2, '2026-02-05T00:00:00Z')
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
+        VALUES ($1, 'Autoupdateproof Beacon', 'new indexed body', 2, 2, '2026-02-05T00:00:00Z')
         RETURNING id
       `, [place])
       const active = (await runSearch(

@@ -300,8 +300,8 @@ async function seedCity(client: Pool): Promise<SeededCity> {
     [smallPlaceId, SMALL_ROOM_RECORDS.childDescription],
   )
   await client.query(
-    `INSERT INTO things (place_id, name, body, owner_id, created_at)
-     VALUES ($1, 'Small Room Keepsake', $2, 1,
+    `INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
+     VALUES ($1, 'Small Room Keepsake', $2, 1, 1,
        '2026-08-15T00:00:01Z'::timestamptz)`,
     [smallPlaceId, SMALL_ROOM_RECORDS.thingBody],
   )
@@ -323,9 +323,9 @@ async function seedCity(client: Pool): Promise<SeededCity> {
     [targetPlaceId],
   )
   await client.query(
-    `INSERT INTO things (place_id, name, body, owner_id, created_at)
+    `INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
      SELECT $1, 'thing-' || item_number,
-       repeat('thing ', 5000) || item_number || ' 🏙', 1,
+       repeat('thing ', 5000) || item_number || ' 🏙', 1, 1,
        '2026-08-14T00:00:00Z'::timestamptz + item_number * interval '1 second'
      FROM generate_series(1, 75) AS item_number`,
     [targetPlaceId],
@@ -648,8 +648,8 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         RETURNING id
       `, [city.targetPlaceId, noteBody])).rows[0]!
       const thing = (await client.query<{ id: number }>(`
-        INSERT INTO things (place_id, name, body, owner_id, created_at)
-        VALUES ($1, 'Wave Five Archive Quartz', $2, 3, '2026-08-21T18:00:01.123456Z')
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
+        VALUES ($1, 'Wave Five Archive Quartz', $2, 3, 3, '2026-08-21T18:00:01.123456Z')
         RETURNING id
       `, [city.targetPlaceId, thingBody])).rows[0]!
 
@@ -686,8 +686,8 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       )
 
       const moving = (await client.query<{ id: number }>(`
-        INSERT INTO things (place_id, name, body, owner_id, created_at)
-        VALUES ($1, 'wavefiveoldcopper', 'wavefiveoldcopper', 3,
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
+        VALUES ($1, 'wavefiveoldcopper', 'wavefiveoldcopper', 3, 3,
           '2026-08-21T18:00:02.123456Z')
         RETURNING id
       `, [city.targetPlaceId])).rows[0]!
@@ -757,9 +757,9 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         FROM generate_series(1, 4) AS item_number
       `, [city.targetPlaceId, phrase])
       await client.query(`
-        INSERT INTO things (place_id, name, body, owner_id, created_at)
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at)
         SELECT $1, $2 || ' thing ' || item_number, 'paging body ' || item_number,
-          3, '2026-08-21T18:10:00.654321Z'::timestamptz
+          3, 3, '2026-08-21T18:10:00.654321Z'::timestamptz
             + item_number * interval '1 microsecond'
         FROM generate_series(1, 3) AS item_number
       `, [city.targetPlaceId, phrase])
@@ -2235,9 +2235,9 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         ),
       ])
       const movingThings = (await postgres.client.query<{ id: number; place_id: number }>(`
-        INSERT INTO things (place_id, name, body, owner_id)
-        VALUES ($1, 'opposite move a', 'move a 🏙', 1),
-          ($2, 'opposite move b', 'move b 🏙', 1)
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'opposite move a', 'move a 🏙', 1, 1),
+          ($2, 'opposite move b', 'move b 🏙', 1, 1)
         RETURNING id, place_id
       `, [city.targetPlaceId, childId])).rows
       await postgres.client.query(`
@@ -2365,8 +2365,8 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       )).rows[0]!.id
 
       const withdrawnThing = (await client.query<{ id: number }>(
-        `INSERT INTO things (place_id, name, body, owner_id, withdrawn_at)
-         VALUES ($1, 'withdrawn-lantern', 'no longer here', 1, now())
+        `INSERT INTO things (place_id, name, body, owner_id, maker_id, withdrawn_at)
+         VALUES ($1, 'withdrawn-lantern', 'no longer here', 1, 1, now())
          RETURNING id`,
         [city.targetPlaceId],
       )).rows[0]!.id

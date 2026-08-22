@@ -24,6 +24,59 @@ test('things persist an owner-controlled open-to-use flag that defaults closed',
   )
 })
 
+test('things retain an immutable maker separately from their transferable owner', () => {
+  const thingsTable = /CREATE TABLE IF NOT EXISTS things \(([\s\S]*?)\);/u.exec(schema)?.[1]
+  assert.ok(thingsTable, 'fresh schema must define things')
+  assert.match(
+    thingsTable,
+    /\bmaker_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\(id\)\s+ON\s+DELETE\s+RESTRICT\b/iu,
+    'fresh things must retain their maker as a required resident',
+  )
+  assert.match(
+    schema,
+    /NEW\.maker_id\s+IS\s+NULL[\s\S]*NEW\.maker_id\s*:=\s*NEW\.owner_id[\s\S]*NEW\.maker_id\s+IS\s+DISTINCT\s+FROM\s+NEW\.owner_id[\s\S]*RAISE\s+EXCEPTION/iu,
+    'the insert-only rollout shim may fill an omitted maker but must reject an explicit mismatch',
+  )
+  assert.match(
+    schema,
+    /CREATE\s+TRIGGER\s+things_set_maker_on_insert\s+BEFORE\s+INSERT\s+ON\s+things/iu,
+    'the compatibility shim must run only on insert',
+  )
+  assert.match(
+    schema,
+    /NEW\.maker_id\s+IS\s+DISTINCT\s+FROM\s+OLD\.maker_id[\s\S]*thing birth history is immutable/iu,
+    'maker must join the immutable thing birth facts',
+  )
+})
+
+test('later-holder marks are private deliberate pointers with lifecycle backstops and no reader state', () => {
+  const markTable = /CREATE TABLE IF NOT EXISTS thing_later_holder_marks \(([\s\S]*?)\);/u
+    .exec(schema)?.[1]
+  assert.ok(markTable, 'fresh schema must define the private mark table')
+  assert.match(markTable, /\bid\s+BIGSERIAL\s+PRIMARY\s+KEY\b/iu)
+  assert.match(
+    markTable,
+    /\bresident_id\s+INTEGER\s+NOT\s+NULL\s+REFERENCES\s+residents\(id\)\s+ON\s+DELETE\s+RESTRICT\b/iu,
+  )
+  assert.match(
+    markTable,
+    /\bthing_id\s+INTEGER\s+NOT\s+NULL\s+UNIQUE\s+REFERENCES\s+things\(id\)\s+ON\s+DELETE\s+RESTRICT\b/iu,
+  )
+  assert.match(markTable, /\bmarked_at\s+TIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+clock_timestamp\(\)/iu)
+  assert.doesNotMatch(
+    markTable,
+    /\b(?:opened|seen|delivered|dismissed|claimed|consumed|last_viewed|read_receipt|session|branch|holder)_/iu,
+    'the city must store no delivery or opening state',
+  )
+  for (const source of [schema, migrations]) {
+    assert.match(source, /CREATE\s+TRIGGER\s+thing_later_holder_marks_check_eligibility\s+BEFORE\s+INSERT/iu)
+    assert.match(source, /thing\.maker_id\s+IS\s+DISTINCT\s+FROM\s+NEW\.resident_id/iu)
+    assert.match(source, /thing\.owner_id\s+IS\s+DISTINCT\s+FROM\s+NEW\.resident_id/iu)
+    assert.match(source, /CREATE\s+TRIGGER\s+things_end_later_holder_mark[\s\S]*UPDATE\s+OF\s+owner_id\s*,\s*withdrawn_at/iu)
+    assert.match(source, /DELETE\s+FROM\s+thing_later_holder_marks[\s\S]*thing_id\s*=\s*NEW\.id/iu)
+  }
+})
+
 test('the flag bucket schema admits every configured hourly flag limit', () => {
   // Regression guard for the class of bug where a route-level limit exceeds a
   // column CHECK: the resident cap (20/hour) once collided with the old

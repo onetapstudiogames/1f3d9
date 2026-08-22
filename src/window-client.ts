@@ -165,9 +165,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? null
       : safeId(rawResult.place_id)
     if (rawResult.place_id !== null && rawResult.place_id !== undefined && !placeId) return null
-    const actor = type === 'note'
-      ? safeHandle(rawResult.author)
-      : safeHandle(rawResult.owner)
+    const madeBy = type === 'thing' ? safeHandle(rawResult.made_by) : null
+    const currentOwner = type === 'thing'
+      ? safeHandle(rawResult.current_owner ?? rawResult.owner)
+      : null
+    const makerId = type === 'thing' ? safeId(rawResult.maker_id) : null
+    const currentOwnerId = type === 'thing' ? safeId(rawResult.current_owner_id) : null
+    const hasThingProvenance = type === 'thing' && [
+      rawResult.maker_id, rawResult.made_by,
+      rawResult.current_owner_id, rawResult.current_owner,
+    ].some(value => value !== null && value !== undefined)
+    if (hasThingProvenance && (!makerId || !madeBy || !currentOwnerId || !currentOwner)) return null
+    const actor = type === 'note' ? safeHandle(rawResult.author) : currentOwner
     const name = type === 'thing'
       ? safeText(rawResult.name, '', 160, false)
       : ''
@@ -177,6 +186,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       createdAt,
       placeId,
       actor,
+      makerId,
+      madeBy,
+      currentOwnerId,
+      currentOwner,
       name,
       textBytes: safeCount(rawResult.body_text_bytes ?? rawResult.text_bytes),
       href: '/api/' + type + '/' + String(id),
@@ -212,7 +225,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : 'Note #' + String(result.id)
     const details = [
       recordLabel,
-      result.actor ? (result.type === 'note' ? 'by ' : 'owned by ') + result.actor : '',
+      result.type === 'note' && result.actor ? 'by ' + result.actor : '',
+      result.type === 'thing' && result.madeBy ? 'made by ' + result.madeBy : '',
+      result.type === 'thing' && result.currentOwner
+        ? 'currently owned by ' + result.currentOwner
+        : '',
       result.placeId ? 'place #' + String(result.placeId) : '',
       dateLabel(result.createdAt),
       String(result.textBytes) + ' public text bytes',
@@ -475,14 +492,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const placeId = safeId(raw.place_id)
       const name = safeText(raw.name, '', 120, false)
       const body = safeText(raw.body, null, 1000, true)
-      const owner = safeHandle(raw.owner)
+      const makerId = raw.maker_id == null ? null : safeId(raw.maker_id)
+      const madeBy = raw.made_by == null ? null : safeHandle(raw.made_by)
+      const currentOwnerId = raw.current_owner_id == null ? null : safeId(raw.current_owner_id)
+      const currentOwner = safeHandle(raw.current_owner ?? raw.owner)
+      const owner = safeHandle(raw.owner ?? raw.current_owner)
+      const hasProvenance = [raw.maker_id, raw.made_by, raw.current_owner_id, raw.current_owner]
+        .some(value => value !== null && value !== undefined)
       const kind = raw.kind == null ? null : safeWorldName(raw.kind)
       const createdAt = safeDate(raw.created_at)
-      if (!id || !placeId || !name || body === null || !owner || !createdAt || (raw.kind != null && !kind)) return []
+      if (
+        !id || !placeId || !name || body === null || !currentOwner || !owner ||
+        owner !== currentOwner || !createdAt || (raw.kind != null && !kind) ||
+        (hasProvenance && (!makerId || !madeBy || !currentOwnerId))
+      ) return []
       const traits = Array.isArray(raw.traits)
         ? [...new Set(raw.traits.map(safeWorldName).filter(Boolean))].slice(0, 32)
         : []
-      return [{ id, place_id: placeId, name, body, owner, open_to_use: raw.open_to_use === true, kind, traits,
+      return [{ id, place_id: placeId, name, body,
+        maker_id: makerId, made_by: madeBy,
+        current_owner_id: currentOwnerId, current_owner: currentOwner,
+        owner, open_to_use: raw.open_to_use === true, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
         kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true }]
     })
@@ -1800,9 +1830,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     list.append(...things.map(thing => {
       const item = element('li', 'thing-card')
       const thingMeta = element('p', 'thing-meta')
+      thingMeta.append(document.createTextNode('made by '))
+      thingMeta.append(thing.made_by
+        ? residentNode(thing.made_by, 'thing-maker', 'thing-maker:' + String(thing.id))
+        : document.createTextNode('maker unavailable'))
       thingMeta.append(
-        document.createTextNode('kept by '),
-        residentNode(thing.owner, 'thing-owner', 'thing-owner:' + String(thing.id)),
+        document.createTextNode(' · currently owned by '),
+        residentNode(thing.current_owner, 'thing-owner', 'thing-owner:' + String(thing.id)),
         document.createTextNode(
           (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind') +
           (thing.open_to_use ? ' · open to shared use' : ' · owner use only')),

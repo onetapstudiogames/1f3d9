@@ -115,7 +115,10 @@ test('target redactors remove authored payloads and retain public history', () =
     {
       targetType: 'thing' as const,
       record: {
-        id: 3, place_id: 2, owner_id: 7, owner: 'keeper', created_at: '2026-08-11T01:01:00Z',
+        id: 3, place_id: 2,
+        maker_id: 6, made_by: 'first-maker',
+        current_owner_id: 7, current_owner: 'keeper', owner_id: 7, owner: 'keeper',
+        created_at: '2026-08-11T01:01:00Z',
         name: 'unsafe thing name', body: 'unsafe thing body', kind_id: 4,
       },
       redact: redactThing,
@@ -172,7 +175,11 @@ test('target redactors remove authored payloads and retain public history', () =
     const redactedRecord: Readonly<Record<string, unknown>> = redacted
     const sourceRecord: Readonly<Record<string, unknown>> = record
     for (const field of displayFields) assert.equal(redactedRecord[field], MODERATED_TEXT)
-    for (const field of ['id', 'owner_id', 'owner', 'coiner_id', 'coiner', 'author_id', 'author', 'created_by_id', 'created_by', 'created_at']) {
+    for (const field of [
+      'id', 'maker_id', 'made_by', 'current_owner_id', 'current_owner',
+      'owner_id', 'owner', 'coiner_id', 'coiner', 'author_id', 'author',
+      'created_by_id', 'created_by', 'created_at',
+    ]) {
       if (field in sourceRecord) assert.equal(redactedRecord[field], sourceRecord[field])
     }
     if (targetType === 'kind') {

@@ -283,6 +283,12 @@ test('window collection statements enforce limit plus one without client SQL ide
   })
   assert.match(things.text, /FROM things thing/i)
   assert.match(things.text, /thing\.open_to_use/i)
+  assert.match(things.text, /thing\.maker_id/i)
+  assert.match(things.text, /maker\.handle AS made_by/i)
+  assert.match(things.text, /thing\.owner_id AS owner_id/i)
+  assert.match(things.text, /thing\.owner_id AS current_owner_id/i)
+  assert.match(things.text, /current_owner\.handle AS current_owner/i)
+  assert.match(things.text, /current_owner\.handle = \$3::text/i)
   assert.match(things.text, /ORDER BY thing\.id DESC/i)
   assert.deepEqual(things.values, [null, null, null, 51])
 
@@ -437,6 +443,7 @@ test('every printed handle is followable, not only the roster', () => {
   assert.match(WINDOW_JS, /if \(!known\) return element\('span', className, handle\)/)
   for (const [className, key] of [
     ['note-author', 'note-author:'],
+    ['thing-maker', 'thing-maker:'],
     ['thing-owner', 'thing-owner:'],
     ['activity-actor', 'activity-actor:'],
     ['agreement-author', 'agreement-author:'],
@@ -446,6 +453,13 @@ test('every printed handle is followable, not only the roster', () => {
   }
   assert.match(WINDOW_CSS, /\.resident-follow-inline/)
   assert.match(WINDOW_CSS, /\.resident-follow-inline:focus-visible/)
+})
+
+test('thing cards and Archive results name maker and current owner separately', () => {
+  assert.match(WINDOW_JS, /safeHandle\(rawResult\.made_by\)/)
+  assert.match(WINDOW_JS, /safeHandle\(rawResult\.current_owner \?\? rawResult\.owner\)/)
+  assert.match(WINDOW_JS, /made by /)
+  assert.match(WINDOW_JS, /currently owned by /)
 })
 
 test('a followed view says how many notes it is actually showing', () => {
@@ -508,10 +522,45 @@ test('snapshot row shapers reject malformed public data', () => {
     place_id: 2,
     name: 'porch lantern',
     body: 'warm light',
+    maker_id: 6,
+    made_by: 'old-maker',
+    owner_id: 7,
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
     owner: 'tiny-lantern',
     open_to_use: true,
     kind: 'lantern',
     traits: ['glowing', '<script>'],
+    created_at: '2026-08-11T00:00:00Z',
+  }, {
+    id: 42,
+    place_id: 2,
+    name: 'bad provenance',
+    body: 'must not enter the window',
+    maker_id: 6,
+    made_by: '<script>',
+    owner_id: 7,
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner: 'tiny-lantern',
+    open_to_use: false,
+    kind: null,
+    traits: [],
+    created_at: '2026-08-11T00:00:00Z',
+  }, {
+    id: 43,
+    place_id: 2,
+    name: 'mismatched owner aliases',
+    body: 'must not enter the window',
+    maker_id: 6,
+    made_by: 'old-maker',
+    owner_id: 8,
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner: 'tiny-lantern',
+    open_to_use: false,
+    kind: null,
+    traits: [],
     created_at: '2026-08-11T00:00:00Z',
   }])
   assert.deepEqual(things, [{
@@ -519,6 +568,11 @@ test('snapshot row shapers reject malformed public data', () => {
     place_id: 2,
     name: 'porch lantern',
     body: 'warm light',
+    maker_id: 6,
+    made_by: 'old-maker',
+    owner_id: 7,
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
     owner: 'tiny-lantern',
     open_to_use: true,
     kind: 'lantern',
@@ -577,6 +631,11 @@ test('historical credential text is redacted without hiding window records', () 
       place_id: 2,
       name: credential,
       body: credential,
+      maker_id: 6,
+      made_by: 'old-maker',
+      owner_id: 7,
+      current_owner_id: 7,
+      current_owner: 'tiny-lantern',
       owner: 'tiny-lantern',
       open_to_use: false,
       kind: credential,

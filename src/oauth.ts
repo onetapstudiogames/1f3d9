@@ -7,6 +7,7 @@ import {
   newSecret,
   postgresErrorCode,
   setOAuthResidentResolver,
+  setPassiveOAuthResidentResolver,
   sha256,
   type Resident,
 } from './core.ts'
@@ -29,6 +30,7 @@ import {
 } from './oauth-config.ts'
 import {
   postgresOAuthStore,
+  resolveOAuthAccessTokenPassive,
   type AuthorizationRequestRecord,
 } from './oauth-store.ts'
 
@@ -703,6 +705,20 @@ export async function residentByOAuthAccessToken(
   })
 }
 
+export async function residentByOAuthAccessTokenPassive(
+  accessToken: string,
+  environment: OAuthEnvironment = process.env,
+): Promise<Resident | null> {
+  if (!oauthEnabled(environment)) return null
+  if (!/^1f3d9_at_[0-9a-f]{64}$/.test(accessToken)) return null
+  return resolveOAuthAccessTokenPassive({
+    accessTokenHash: sha256(accessToken),
+    resource: oauthResource(environment),
+    scope: OAUTH_SCOPE,
+  })
+}
+
 export function configureOAuthResidentResolver(): void {
   setOAuthResidentResolver(token => residentByOAuthAccessToken(token))
+  setPassiveOAuthResidentResolver(token => residentByOAuthAccessTokenPassive(token))
 }

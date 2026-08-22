@@ -75,7 +75,12 @@ function makeSql(options: FakeOptions = {}): {
       place_id: 3,
       name: 'Rope',
       body: 'A hand-twisted rope.',
+      maker_id: 4,
+      made_by: 'maker-bot',
+      current_owner_id: 4,
+      current_owner: 'maker-bot',
       owner_id: 4,
+      owner: 'maker-bot',
       kind_id: 9,
       birth_revision: 3,
       current_revision: 3,
@@ -247,6 +252,21 @@ test('crafting atomically withdraws ingredients, spends quota, writes history, a
   assert.equal(result.thing.birth_revision, 3)
   assert.equal(result.thing.current_revision, 3)
   assert.equal(result.thing.open_to_use, false)
+  assert.deepEqual({
+    maker_id: result.thing.maker_id,
+    made_by: result.thing.made_by,
+    current_owner_id: result.thing.current_owner_id,
+    current_owner: result.thing.current_owner,
+    owner_id: result.thing.owner_id,
+    owner: result.thing.owner,
+  }, {
+    maker_id: 4,
+    made_by: 'maker-bot',
+    current_owner_id: 4,
+    current_owner: 'maker-bot',
+    owner_id: 4,
+    owner: 'maker-bot',
+  })
   assert.deepEqual(result.consumedIngredientIds, [11, 12, 13])
 
   const commit = fake.calls.find(call => call.marker === 'commit')
@@ -254,6 +274,8 @@ test('crafting atomically withdraws ingredients, spends quota, writes history, a
   assert.match(commit.query, /UPDATE residents AS actor SET/u)
   assert.match(commit.query, /UPDATE things AS ingredient/u)
   assert.match(commit.query, /INSERT INTO things/u)
+  assert.match(commit.query, /INSERT INTO things \([\s\S]*maker_id[\s\S]*\)/u)
+  assert.match(commit.query, /SELECT locked_place\.id,[\s\S]*quota_spend\.id,\s*quota_spend\.id[\s\S]*locked_kind\.id/u)
   assert.match(commit.query, /FOR UPDATE OF kind/u)
   assert.match(commit.query, /FOR SHARE OF revision/u)
   assert.match(commit.query, /FOR UPDATE OF place/u)
@@ -274,7 +296,12 @@ test('typed crafting persists an explicit open-to-use permission', async () => {
     place_id: 3,
     name: 'Rope',
     body: 'A hand-twisted rope.',
+    maker_id: 4,
+    made_by: 'maker-bot',
+    current_owner_id: 4,
+    current_owner: 'maker-bot',
     owner_id: 4,
+    owner: 'maker-bot',
     open_to_use: true,
     kind_id: 9,
     birth_revision: 3,
@@ -290,7 +317,7 @@ test('typed crafting persists an explicit open-to-use permission', async () => {
   assert.equal(result.thing.open_to_use, true)
   const commit = fake.calls.find(call => call.marker === 'commit')
   assert.ok(commit)
-  assert.match(commit.query, /owner_id, open_to_use, kind_id/i)
+  assert.match(commit.query, /owner_id, maker_id, open_to_use, kind_id/i)
   assert.equal(commit.values.includes(true), true)
 })
 
@@ -299,7 +326,8 @@ test('an empty recipe requires no ingredients and still creates exactly one outp
     kindRows: [{ id: 9, name: 'rock', current_revision: 7, recipe: [] }],
     commitRows: [{
       id: 22, place_id: 3, name: 'Rope', body: 'A hand-twisted rope.',
-      owner_id: 4, kind_id: 9, birth_revision: 7, current_revision: 7,
+      maker_id: 4, made_by: 'maker-bot', current_owner_id: 4, current_owner: 'maker-bot',
+      owner_id: 4, owner: 'maker-bot', kind_id: 9, birth_revision: 7, current_revision: 7,
       created_at: '2026-08-11T12:00:00.000Z', withdrawn_at: null, kind: 'rock',
     }],
   })
@@ -378,6 +406,10 @@ test('kindless thing creation and quota spend share the make action transaction'
   const kindless = making.slice(kindlessStart)
   assert.match(kindless, /primitiveHandledByCaller:\s*true/u)
   assert.match(kindless, /performPrimitive:\s*async\s+transaction\s*=>[\s\S]*await transaction`[\s\S]*WITH permitted_place AS/u)
+  assert.match(kindless, /INSERT INTO things \(place_id, name, body, owner_id, maker_id, open_to_use\)/u)
+  assert.match(kindless, /SELECT permitted_place\.id,[\s\S]*quota_spend\.id[\s\S]*quota_spend\.id/u)
+  assert.match(kindless, /'thing_created',\s*quota_spend\.handle/u)
+  assert.match(kindless, /AS made_by[\s\S]*AS current_owner_id[\s\S]*AS current_owner[\s\S]*AS owner/u)
   assert.match(kindless, /throw new EngineError\(429,[\s\S]*throw new EngineError\(409,/u)
   assert.doesNotMatch(making, /await sql`[\s\S]*WITH permitted_place AS/u)
 })

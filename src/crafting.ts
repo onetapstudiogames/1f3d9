@@ -34,7 +34,12 @@ export interface CraftedThing {
   readonly place_id: number
   readonly name: string
   readonly body: string
+  readonly maker_id: number
+  readonly made_by: string
+  readonly current_owner_id: number
+  readonly current_owner: string
   readonly owner_id: number
+  readonly owner: string
   readonly open_to_use: boolean
   readonly kind_id: number
   readonly birth_revision: number
@@ -187,7 +192,12 @@ function craftedThing(row: CraftSqlRow): CraftedThing {
     place_id: Number(row.place_id),
     name: String(row.name),
     body: String(row.body),
+    maker_id: Number(row.maker_id),
+    made_by: String(row.made_by),
+    current_owner_id: Number(row.current_owner_id),
+    current_owner: String(row.current_owner),
     owner_id: Number(row.owner_id),
+    owner: String(row.owner),
     open_to_use: row.open_to_use === true,
     kind_id: Number(row.kind_id),
     birth_revision: Number(row.birth_revision),
@@ -364,9 +374,10 @@ export async function craftKindThing(
       RETURNING actor.id, actor.handle
     ), new_thing AS (
       INSERT INTO things (
-        place_id, name, body, owner_id, open_to_use, kind_id, birth_revision, current_revision
+        place_id, name, body, owner_id, maker_id, open_to_use,
+        kind_id, birth_revision, current_revision
       )
-      SELECT locked_place.id, ${input.name}, ${input.body}, ${input.actorId},
+      SELECT locked_place.id, ${input.name}, ${input.body}, quota_spend.id, quota_spend.id,
         ${input.openToUse}, locked_kind.id, locked_kind.current_revision, locked_kind.current_revision
       FROM locked_kind CROSS JOIN locked_place CROSS JOIN quota_spend
       RETURNING *
@@ -400,8 +411,12 @@ export async function craftKindThing(
         AND (SELECT count(*) FROM withdrawal_events) = ${input.ingredientIds.length}
       RETURNING id
     )
-    SELECT new_thing.*, locked_kind.name AS kind
-    FROM new_thing CROSS JOIN locked_kind CROSS JOIN craft_event
+    SELECT new_thing.*, quota_spend.handle AS made_by,
+      new_thing.owner_id AS current_owner_id,
+      quota_spend.handle AS current_owner,
+      quota_spend.handle AS owner,
+      locked_kind.name AS kind
+    FROM new_thing CROSS JOIN locked_kind CROSS JOIN craft_event CROSS JOIN quota_spend
   `
 
   const output = outputRows[0]

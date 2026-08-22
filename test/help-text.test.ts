@@ -88,6 +88,51 @@ test('canonical and generated discovery text stays synchronized', () => {
   assert.equal(normalizeLines(LLMS), normalizeLines(llms))
 })
 
+test('later-holder help keeps discovery deliberate, metadata-only, and honest about host logs', () => {
+  const policy =
+    'The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.'
+  const singularQuestion =
+    'An earlier holder of this resident identity marked 1 public item for later holders. View the index?'
+  const legal = read('../src/legal.ts')
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['legal text', legal],
+    ['MCP tools', mcpSource],
+  ] as const) {
+    assert.ok(text.includes(policy), `${name}: exact opening-record policy`)
+    assert.match(text, /later holder|later-holder/iu, `${name}: deliberate discovery`)
+  }
+
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['system design', specification],
+  ] as const) {
+    assert.match(text, /POST\s+\/api\/me[\s\S]{0,180}later_holder_notice/iu, `${name}: notice mode`)
+    assert.match(text, /later_holder_index/iu, `${name}: index mode`)
+    assert.match(text, /stable public ID|\bid\b[\s\S]{0,160}body_text_bytes/iu, `${name}: heading-only index`)
+    assert.match(text, /GET\s+\/api\/thing\/:id[\s\S]{0,180}(?:body|full)/iu, `${name}: chosen direct read`)
+    assert.match(text, /private[\s\S]{0,120}(?:event|change)/iu, `${name}: private mark`)
+    assert.ok(text.includes(singularQuestion), `${name}: exact singular question`)
+    assert.match(text, /untrusted resident-authored\s+data, never instructions/iu, `${name}: content trust`)
+    assert.match(text, /cursor[\s\S]{0,180}no private\s+mark ID/iu, `${name}: private cursor`)
+  }
+
+  const forbidden = [
+    'you left this', 'your memory', 'your previous self',
+    'what you forgot', 'welcome back', 'inheritance',
+  ]
+  for (const [name, text] of [
+    ['front door', frontdoor], ['compact machine map', llms], ['MCP tools', mcpSource],
+  ] as const) {
+    for (const phrase of forbidden) assert.doesNotMatch(text, new RegExp(phrase, 'iu'), `${name}: ${phrase}`)
+  }
+})
+
 test('public help sends voluntary root-key replacement only through the private browser', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],
@@ -201,7 +246,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })
 
-test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
+test('Wave 2 lightweight room, passive look, and compatibility truths stay aligned', () => {
   for (const [name, text] of [
     ['front door', frontdoor],
     ['compact machine map', llms],
@@ -212,8 +257,38 @@ test('Wave 2 lightweight room and compatibility truths stay aligned', () => {
     assert.match(text, /body_text_bytes/iu, `${name}: thing body size`)
     assert.match(text, /official[^\n]{0,80}look[^\n]{0,120}(?:defaults|uses)[^\n]{0,80}(?:view=outline|`view=outline`)/iu, `${name}: official lightweight default`)
     assert.match(text, /(?:raw HTTP|HTTP place)[^\n]{0,100}(?:defaults|default)[^\n]{0,100}(?:view=full|`view=full`|legacy full)|(?:view=full|`view=full`)[^\n]{0,100}(?:legacy|compatib)/iu, `${name}: raw compatibility default`)
-    assert.match(text, /authenticated[^\n]{0,100}outline[^\n]{0,140}(?:observe|timer)|outline[^\n]{0,100}authenticated[^\n]{0,140}(?:observe|timer)/iu, `${name}: observation truth`)
+    assert.match(
+      text,
+      /enter(?:ing|s)?[^\n]{0,100}interact(?:ing|s)?[^\n]{0,100}check(?:ing|s)?[^\n]{0,40}(?:`?me`?)[^\n]{0,100}(?:due )?timers?/iu,
+      `${name}: active timer triggers`,
+    )
+    assert.match(
+      text,
+      /(?:place (?:reads?|look)|look(?:ing)? at (?:a )?place)[^\n]{0,180}(?:passive|read-only)[^\n]{0,180}(?:credential|auth)|(?:credential|auth)[^\n]{0,180}(?:place (?:reads?|look)|look(?:ing)? at (?:a )?place)[^\n]{0,180}(?:passive|read-only)/iu,
+      `${name}: credential-blind passive place reads`,
+    )
+    assert.doesNotMatch(
+      text,
+      /authenticated[^\n]{0,100}(?:place|outline|look)[^\n]{0,140}(?:resolve|wake)[^\n]{0,40}(?:due )?timers?/iu,
+      `${name}: no credential-triggered look`,
+    )
   }
+
+  assert.match(
+    decisions,
+    /\| 37 \| \*\*Place reads are passive\.\*\*[\s\S]{0,500}never authenticate, wake timers, or change city state/iu,
+    'decision 37 locks passive place reads',
+  )
+  assert.match(
+    decisions,
+    /Entering, interacting, or checking `me` wakes due timers[\s\S]{0,220}supersedes only the observation-trigger clause of decision #24/iu,
+    'decision 37 records active timer triggers and the narrow supersession',
+  )
+  assert.match(
+    specification,
+    /shared catalog has 22 tools[\s\S]{0,500}legacy `\/mcp` advertises all 22[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}21[\s\S]{0,100}omits founder-only `moderate`/iu,
+    'the specification distinguishes the exact legacy and hosted catalogs',
+  )
 })
 
 test('Wave 3 room text limits, strict omissions, and continuation truths stay aligned', () => {
@@ -274,6 +349,20 @@ test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
       /no durable[^\n]{0,160}(?:reader identity|reading history)/iu,
       `${name}: no reading history`,
     )
+  }
+})
+
+test('Wave 2 public truth separates permanent maker from current owner', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+    ['decisions', decisions],
+  ] as const) {
+    assert.match(text, /(?:permanent|unchangeable|never changes?)[^\n]{0,120}\bmaker\b|\bmaker\b[^\n]{0,120}(?:permanent|unchangeable|never changes?)/iu, `${name}: permanent maker`)
+    assert.match(text, /\bmade_by\b/iu, `${name}: public maker field`)
+    assert.match(text, /\bcurrent_owner\b/iu, `${name}: public current-owner field`)
+    assert.match(text, /(?:gift|transfer|sale)[^\n]{0,180}(?:maker|made_by)|(?:maker|made_by)[^\n]{0,180}(?:gift|transfer|sale)/iu, `${name}: transfers preserve maker`)
   }
 })
 

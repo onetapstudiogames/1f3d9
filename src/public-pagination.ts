@@ -422,11 +422,15 @@ async function loadBudgetedPublicPlaceCollectionRows(
        WHERE __ordinal < $3::integer
          AND ($8::bigint IS NULL OR __cumulative_text_bytes <= $8::bigint)
      ), thing_source AS MATERIALIZED (
-       SELECT t.id, t.place_id, t.name, t.body, t.owner_id, owner.handle AS owner,
+       SELECT t.id, t.place_id, t.name, t.body,
+         t.maker_id, maker.handle AS made_by,
+         t.owner_id AS current_owner_id, owner.handle AS current_owner,
+         t.owner_id, owner.handle AS owner,
          t.open_to_use, t.kind_id, k.name AS kind, t.birth_revision,
          t.current_revision, t.created_at,
          octet_length(t.body)::integer AS __text_bytes
        FROM things t
+       JOIN residents maker ON maker.id = t.maker_id
        JOIN residents owner ON owner.id = t.owner_id
        LEFT JOIN kinds k ON k.id = t.kind_id
        WHERE t.place_id = $1::integer AND t.withdrawn_at IS NULL
@@ -605,10 +609,14 @@ export async function loadPublicPlaceCollectionRows(
        ORDER BY p.id DESC
        LIMIT $3::integer
      ), thing_page AS MATERIALIZED (
-       SELECT t.id, t.place_id, t.name, ${thingTextProjection} t.owner_id, owner.handle AS owner,
+       SELECT t.id, t.place_id, t.name, ${thingTextProjection}
+         t.maker_id, maker.handle AS made_by,
+         t.owner_id AS current_owner_id, owner.handle AS current_owner,
+         t.owner_id, owner.handle AS owner,
          t.open_to_use, t.kind_id, k.name AS kind, t.birth_revision,
          t.current_revision, t.created_at
        FROM things t
+       JOIN residents maker ON maker.id = t.maker_id
        JOIN residents owner ON owner.id = t.owner_id
        LEFT JOIN kinds k ON k.id = t.kind_id
        WHERE t.place_id = $1::integer AND t.withdrawn_at IS NULL

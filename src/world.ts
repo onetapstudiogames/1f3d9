@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { auth, err } from './core.ts'
+import { err } from './core.ts'
 import { sql } from './db.ts'
 import {
   optionalBoolean,
@@ -260,9 +260,6 @@ export function mountWorldRoutes(app: Hono): void {
           notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
         })
       : textLimits
-    const observer = await auth(c)
-    if (observer) await resolveDueEffects(id)
-
     const places = (await sql`
       SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
@@ -400,10 +397,13 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const rows = await sql`
       SELECT thing.id, thing.place_id, thing.name, thing.body,
+        thing.maker_id, maker.handle AS made_by,
+        thing.owner_id AS current_owner_id, owner.handle AS current_owner,
         thing.owner_id, owner.handle AS owner, thing.open_to_use,
         thing.kind_id, kind.name AS kind,
         thing.birth_revision, thing.current_revision, thing.created_at
       FROM things thing
+      JOIN residents maker ON maker.id = thing.maker_id
       JOIN residents owner ON owner.id = thing.owner_id
       LEFT JOIN kinds kind ON kind.id = thing.kind_id
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
@@ -1268,9 +1268,14 @@ export function mountWorldRoutes(app: Hono): void {
         SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id)
         FROM changed
       )
-      SELECT changed.*, ${resident.handle}::text AS owner,
+      SELECT changed.*, maker.handle AS made_by,
+        changed.owner_id AS current_owner_id,
+        current_owner.handle AS current_owner,
+        current_owner.handle AS owner,
         kind_definition.name AS kind
       FROM changed
+      JOIN residents maker ON maker.id = changed.maker_id
+      JOIN residents current_owner ON current_owner.id = changed.owner_id
       LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
@@ -1332,9 +1337,14 @@ export function mountWorldRoutes(app: Hono): void {
           'current_revision', current_revision
         ) FROM changed
       )
-      SELECT changed.*, ${resident.handle}::text AS owner,
+      SELECT changed.*, maker.handle AS made_by,
+        changed.owner_id AS current_owner_id,
+        current_owner.handle AS current_owner,
+        current_owner.handle AS owner,
         kind_definition.name AS kind
       FROM changed
+      JOIN residents maker ON maker.id = changed.maker_id
+      JOIN residents current_owner ON current_owner.id = changed.owner_id
       LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
