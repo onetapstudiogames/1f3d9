@@ -25,10 +25,21 @@ export async function requireResidentAtActionPlace(
   `)
   if (!rows[0]) throw new EngineError(404, 'resident presence not found')
   const currentPlaceId = rows[0].current_place_id
-  if (actionPlaceId === null
-    || currentPlaceId == null
-    || positiveInteger(currentPlaceId, 'resident current place id') !== actionPlaceId) {
-    throw new EngineError(403, 'resident target is not in the action place')
+  if (actionPlaceId === null) {
+    throw new EngineError(403, 'target resident cannot be used because place_id is unset')
+  }
+  if (currentPlaceId == null) {
+    throw new EngineError(
+      403,
+      `target resident must be standing in place_id ${actionPlaceId}; target current place_id is unset`,
+    )
+  }
+  const targetPlaceId = positiveInteger(currentPlaceId, 'resident current place id')
+  if (targetPlaceId !== actionPlaceId) {
+    throw new EngineError(
+      403,
+      `target resident must be standing in place_id ${actionPlaceId}; target current place_id is ${targetPlaceId}`,
+    )
   }
 }
 
@@ -43,8 +54,14 @@ export async function requireCallerTargetScope(
     return requireResidentAtActionPlace(target.id, actionPlaceId, db)
   }
   if (target.type === 'place') {
+    if (actionPlaceId === null) {
+      throw new EngineError(
+        403,
+        `target place_id ${target.id} cannot be used because place_id is unset`,
+      )
+    }
     if (actionPlaceId !== target.id) {
-      throw new EngineError(403, 'place target is not the action place')
+      throw new EngineError(403, `target place_id ${target.id} must match place_id ${actionPlaceId}`)
     }
     return
   }
@@ -55,9 +72,15 @@ export async function requireCallerTargetScope(
     `)
     const thing = rows[0]
     if (!thing || thing.withdrawn_at != null) throw new EngineError(404, 'thing target not found')
-    if (actionPlaceId === null
-      || positiveInteger(thing.place_id, 'thing place id') !== actionPlaceId) {
-      throw new EngineError(403, 'thing target is not in the action place')
+    if (actionPlaceId === null) {
+      throw new EngineError(403, 'target thing cannot be used because place_id is unset')
+    }
+    const targetPlaceId = positiveInteger(thing.place_id, 'thing place id')
+    if (targetPlaceId !== actionPlaceId) {
+      throw new EngineError(
+        403,
+        `target thing must be in place_id ${actionPlaceId}; target current place_id is ${targetPlaceId}`,
+      )
     }
     return
   }
@@ -67,6 +90,6 @@ export async function requireCallerTargetScope(
   `)
   if (!rows[0]) throw new EngineError(404, 'kind target not found')
   if (positiveInteger(rows[0].owner_id, 'kind owner id') !== actorId) {
-    throw new EngineError(403, 'kind target is not owned by the actor')
+    throw new EngineError(403, 'target kind is not owned by you')
   }
 }

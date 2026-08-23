@@ -65,5 +65,6 @@ export const PUBLIC_EVENT_DETAIL_SCALAR_FIELDS = Object.freeze([
   'action',
   'mode',
   'status',
+  'error',
   'channel',
 ] as const)

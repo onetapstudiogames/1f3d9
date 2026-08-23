@@ -290,7 +290,7 @@ export async function craftKindThing(
   if (!allIngredientsEligible(ingredients, input)) {
     return failure(
       409,
-      'every ingredient must be active, owned by the actor, in the target place, and not offered for sale',
+      'every ingredient must be active, owned by you, in the requested place_id, and not offered for sale',
     )
   }
   if (ingredients.length !== input.ingredientIds.length || !exactRecipeMatch(recipe, ingredients)) {

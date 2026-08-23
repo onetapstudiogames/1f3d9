@@ -9,7 +9,7 @@ import {
   type SymbolicTarget,
 } from './physics.ts'
 import {
-  executeEffects,
+  executeEffectsWithOutcome,
   SHARED_SOURCE_MUTATION_ERROR,
   thingState,
   withdrawOwnedThing,
@@ -38,6 +38,7 @@ type TestTransactionRunner = (
   work: (transaction: TaggedSql, atomic: boolean) => Promise<unknown>,
 ) => Promise<unknown>
 let testTransactionRunner: TestTransactionRunner | null = null
+const activeTestTransactions = new WeakSet<TaggedSql>()
 
 /** Explicit harness seam; production code must never set this. */
 export function setEngineTransactionRunnerForTests(runner: TestTransactionRunner | null): void {
@@ -98,7 +99,17 @@ export async function withEngineTransaction<T>(
   db: TaggedSql,
   work: (transaction: TaggedSql, atomic: boolean) => Promise<T>,
 ): Promise<T> {
-  if (testTransactionRunner) return testTransactionRunner(db, work) as Promise<T>
+  if (activeTestTransactions.has(db)) return work(db, false)
+  if (testTransactionRunner) {
+    return testTransactionRunner(db, async (transaction, atomic) => {
+      activeTestTransactions.add(transaction)
+      try {
+        return await work(transaction, atomic)
+      } finally {
+        activeTestTransactions.delete(transaction)
+      }
+    }) as Promise<T>
+  }
   if (db !== engineSql) return work(db, false)
   const client = await pool().connect()
   try {
@@ -182,10 +193,13 @@ export type ActionInput = BaseActionInput & (
   | {
     /** Server-only: the callback runs atomically with effects and resolution. */
     readonly primitiveHandledByCaller: true
+    /** Server-only: the callback guarantees a typed event in the same transaction. */
+    readonly primitiveEmitsTypedEvent?: true
     readonly performPrimitive: (transaction: TaggedSql) => Promise<void>
   }
   | {
     readonly primitiveHandledByCaller?: false
+    readonly primitiveEmitsTypedEvent?: never
     readonly performPrimitive?: never
   }
 )
@@ -216,6 +230,7 @@ interface RequiredActionInput {
   readonly recipientId: number | null
   readonly payload: Readonly<Record<string, unknown>>
   readonly primitiveHandledByCaller: boolean
+  readonly primitiveEmitsTypedEvent: boolean
   readonly performPrimitive: ((transaction: TaggedSql) => Promise<void>) | null
 }
 
@@ -559,6 +574,8 @@ function normalizeActionInput(input: ActionInput): RequiredActionInput {
     recipientId: optionalId(input.recipientId, 'recipient id'),
     payload,
     primitiveHandledByCaller: input.primitiveHandledByCaller === true,
+    primitiveEmitsTypedEvent: input.primitiveHandledByCaller === true
+      && input.primitiveEmitsTypedEvent === true,
     performPrimitive: input.primitiveHandledByCaller === true ? input.performPrimitive : null,
   }
 }
@@ -578,23 +595,51 @@ async function recordAction(input: RequiredActionInput, db: TaggedSql): Promise<
   return rowId(rows[0].id, 'action id')
 }
 
+function publicActionEventDetail(
+  actionId: number,
+  action: BasicAction,
+  status: ResolutionStatus,
+  detail: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const effectsApplied = integer(detail.effects_applied)
+  const error = typeof detail.error === 'string' ? detail.error : null
+  const fromPlaceId = integer(detail.from_place_id)
+  const toPlaceId = integer(detail.to_place_id)
+  return Object.freeze({
+    action_id: actionId,
+    action,
+    status,
+    ...(effectsApplied === null ? {} : { effects_applied: effectsApplied }),
+    ...(fromPlaceId === null || fromPlaceId <= 0 ? {} : { from_place_id: fromPlaceId }),
+    ...(toPlaceId === null || toPlaceId <= 0 ? {} : { to_place_id: toPlaceId }),
+    ...(error === null ? {} : { error }),
+  })
+}
+
 async function recordActionResolution(
   actionId: number,
   actorHandle: string,
+  action: BasicAction,
   status: ResolutionStatus,
   detail: Readonly<Record<string, unknown>>,
   db: TaggedSql,
+  emitPublicEvent = true,
 ) {
+  const publicDetail = publicActionEventDetail(actionId, action, status, detail)
   const rows = await queryRows(db`
     WITH resolution AS (
       INSERT INTO action_resolutions (action_run_id, status, detail)
       VALUES (${actionId}, ${status}, ${json(detail)}::jsonb)
       ON CONFLICT (action_run_id) DO NOTHING RETURNING id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'action', ${actorHandle},
+        ${json(publicDetail)}::jsonb FROM resolution
+      WHERE ${emitPublicEvent}
+      RETURNING id
     )
-    INSERT INTO events (kind, actor, detail)
-    SELECT 'action', ${actorHandle},
-      ${json({ action_id: actionId, status, ...detail })}::jsonb FROM resolution
-    RETURNING id
+    SELECT resolution.id FROM resolution
+    LEFT JOIN new_event ON true
   `)
   // The unique action_run_id index makes this insert wait on any in-doubt
   // transaction for the same run, so losing the conflict proves an earlier
@@ -677,12 +722,13 @@ function failureFromError(error: unknown, actionId: number): EngineError {
 async function recordFailedExecution(
   actionId: number,
   actorHandle: string,
+  action: BasicAction,
   error: unknown,
   db: TaggedSql,
 ): Promise<ActionExecution> {
   const failure = failureFromError(error, actionId)
   const won = await recordActionResolution(
-    actionId, actorHandle, 'failed', { error: failure.message }, db,
+    actionId, actorHandle, action, 'failed', { error: failure.message }, db,
   )
   if (!won) {
     // A resolution already committed — possibly the very transaction whose
@@ -711,13 +757,14 @@ async function recordFailedExecution(
 async function resolveUncertainCommit(
   actionId: number,
   actorHandle: string,
+  action: BasicAction,
   failure: CommitOutcomeUnknownError,
   db: TaggedSql,
 ): Promise<ActionExecution> {
   try {
     const committed = await committedResolution(actionId, db)
     if (committed) return committed
-    return await recordFailedExecution(actionId, actorHandle, failure.sourceError, db)
+    return await recordFailedExecution(actionId, actorHandle, action, failure.sourceError, db)
   } catch {
     return {
       actionId,
@@ -738,11 +785,17 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'source thing has an open sale offer')
   }
-  if (
-    (sharedUse && input.placeId === null)
-    || (input.placeId !== null && thing.placeId !== input.placeId)
-  ) {
-    throw new EngineError(403, 'source thing is not in the action place')
+  if (sharedUse && input.placeId === null) {
+    throw new EngineError(
+      403,
+      `thing_id ${input.sourceThingId} cannot be used because your current place_id is unset`,
+    )
+  }
+  if (input.placeId !== null && thing.placeId !== input.placeId) {
+    throw new EngineError(
+      403,
+      `thing_id ${input.sourceThingId} must be in place_id ${input.placeId}; its current place_id is ${thing.placeId}`,
+    )
   }
   return thing
 }
@@ -790,26 +843,41 @@ async function loadPrograms(input: RequiredActionInput, db: TaggedSql): Promise<
   return [...fromThing, ...fromLaws]
 }
 
-async function intrinsicAction(input: RequiredActionInput, db: TaggedSql): Promise<boolean> {
-  if (input.primitiveHandledByCaller) return false
+interface IntrinsicActionOutcome {
+  readonly applied: boolean
+  readonly emittedTypedPublicEvent: boolean
+}
+
+function intrinsicActionOutcome(
+  applied: boolean,
+  emittedTypedPublicEvent: boolean,
+): IntrinsicActionOutcome {
+  return Object.freeze({ applied, emittedTypedPublicEvent })
+}
+
+async function intrinsicAction(
+  input: RequiredActionInput,
+  db: TaggedSql,
+): Promise<IntrinsicActionOutcome> {
+  if (input.primitiveHandledByCaller) return intrinsicActionOutcome(false, false)
   if (input.action === 'move') {
     if (input.destinationPlaceId === null) throw new EngineError(400, 'move needs a destination place')
     await moveResident(input.actorId, input.destinationPlaceId, db)
-    return true
+    return intrinsicActionOutcome(true, false)
   }
   if (input.action === 'give') {
     if ((input.sourceThingId === null && input.target === null) || input.recipientId === null) {
       throw new EngineError(400, 'give needs a source thing or target, plus a recipient')
     }
     // The transfer brick implementation owns the same guarded transfer path.
-    await executeEffects([{
+    const outcome = await executeEffectsWithOutcome([{
       effect: 'transfer',
       target: input.sourceThingId === null ? 'target' : 'source',
       to: 'recipient',
     }], actionContext(0, input), db)
-    return true
+    return intrinsicActionOutcome(true, outcome.emittedTypedPublicEvent)
   }
-  return false
+  return intrinsicActionOutcome(false, false)
 }
 
 function actionContext(
@@ -844,7 +912,10 @@ export async function runAction(
   if (input.action !== 'go_home') {
     const presence = await readPresence(input.actorId, db)
     if (input.placeId !== null && input.placeId !== presence.currentPlaceId) {
-      throw new EngineError(403, 'action place must be the actor current place')
+      throw new EngineError(
+        403,
+        `you must be standing in place_id ${input.placeId}; your current place_id is ${presence.currentPlaceId ?? 'unset'}`,
+      )
     }
     input = { ...input, placeId: presence.currentPlaceId }
   }
@@ -856,17 +927,24 @@ export async function runAction(
       if (input.action !== 'go_home') {
         const fresh = await readPresence(input.actorId, transaction)
         if (fresh.currentPlaceId !== input.placeId) {
-          throw new EngineError(409, 'actor location changed; retry the action')
+          const message = fresh.currentPlaceId === null
+            ? 'your current place_id is now unset; check where you are standing before retrying'
+            : `your current place_id changed to ${fresh.currentPlaceId}; retry with place_id ${fresh.currentPlaceId}`
+          throw new EngineError(409, message)
         }
       }
       if (await isActionBlocked(input.actorId, input.action, transaction)) {
         const error = 'action is temporarily blocked'
-        await recordActionResolution(actionId, input.actorHandle, 'blocked', { error }, transaction)
+        await recordActionResolution(
+          actionId, input.actorHandle, input.action, 'blocked', { error }, transaction,
+        )
         return { actionId, status: 'blocked', httpStatus: 403, error, effectsApplied: 0 }
       }
       if (input.action === 'go_home') {
         await goHome(input.actorId, transaction)
-        await recordActionResolution(actionId, input.actorHandle, 'applied', { effects_applied: 0 }, transaction)
+        await recordActionResolution(
+          actionId, input.actorHandle, input.action, 'applied', { effects_applied: 0 }, transaction,
+        )
         return { actionId, status: 'applied', httpStatus: 200, error: null, effectsApplied: 0 }
       }
 
@@ -888,11 +966,12 @@ export async function runAction(
       ) {
         throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
       }
-      const intrinsicApplied = await intrinsicAction(input, transaction)
+      const intrinsic = await intrinsicAction(input, transaction)
       const base = actionContext(actionId, input, sharedSourceThingId)
       let effectsApplied = 0
+      let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
       for (const program of programs) {
-        effectsApplied += await executeEffects(program.effects, {
+        const outcome = await executeEffectsWithOutcome(program.effects, {
           ...base,
           sourceTraitId: program.sourceTraitId,
           sourceThingId: program.sourceThingId ?? base.sourceThingId,
@@ -901,25 +980,47 @@ export async function runAction(
             sourcePlaceId: program.lawSourcePlaceId,
           },
         }, transaction)
+        effectsApplied += outcome.effectsApplied
+        emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
       }
       if (input.primitiveHandledByCaller) {
         if (!input.performPrimitive) throw new EngineError(500, 'caller primitive callback is missing')
         await input.performPrimitive(transaction)
+        emittedTypedPublicEvent ||= input.primitiveEmitsTypedEvent
       }
       if (!input.primitiveHandledByCaller && input.action === 'consume') {
         if (input.sourceThingId === null) throw new EngineError(400, 'consume needs a source thing')
         await withdrawOwnedThing(input.sourceThingId, input.actorId, input.actorHandle, transaction)
+        emittedTypedPublicEvent = true
       }
-      const primitiveApplied = intrinsicApplied || input.primitiveHandledByCaller
+      const primitiveApplied = intrinsic.applied || input.primitiveHandledByCaller
       const status: ResolutionStatus = effectsApplied === 0 && !primitiveApplied
         && input.action === 'use' ? 'noop' : 'applied'
-      await recordActionResolution(actionId, input.actorHandle, status, { effects_applied: effectsApplied }, transaction)
+      await recordActionResolution(
+        actionId,
+        input.actorHandle,
+        input.action,
+        status,
+        {
+          effects_applied: effectsApplied,
+          ...(input.action === 'move'
+            && input.placeId !== null
+            && input.destinationPlaceId !== null
+            ? {
+                from_place_id: input.placeId,
+                to_place_id: input.destinationPlaceId,
+              }
+            : {}),
+        },
+        transaction,
+        !emittedTypedPublicEvent,
+      )
       return { actionId, status, httpStatus: 200, error: null, effectsApplied }
     })
   } catch (error) {
     if (error instanceof CommitOutcomeUnknownError) {
-      return resolveUncertainCommit(actionId, input.actorHandle, error, db)
+      return resolveUncertainCommit(actionId, input.actorHandle, input.action, error, db)
     }
-    return recordFailedExecution(actionId, input.actorHandle, error, db)
+    return recordFailedExecution(actionId, input.actorHandle, input.action, error, db)
   }
 }

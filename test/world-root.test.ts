@@ -32,6 +32,7 @@ function fakeSql(responder: Responder): { db: TaggedSql; calls: Call[] } {
 }
 
 const fixtureTime = '2026-08-14T00:00:00.000Z'
+const worldArrivalDescription = '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.'
 const worldRow = {
   id: 1,
   parent_id: null,
@@ -170,6 +171,27 @@ test('the topology migration is atomic, reparents legacy continents, and backfil
   assert.match(migrateSource, /20260814_world_root_topology\.sql/)
   assert.match(packageSource, /migrate:preview:world-root-expand/)
   assert.match(packageSource, /migrate:production:world-root-topology/)
+})
+
+test('fresh and upgraded world roots carry the exact concise arrival orientation', async () => {
+  const [schema, topology, descriptionMigration, migrateSource, packageSource] = await Promise.all([
+    readFile(new URL('../db/schema.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../db/migrations/20260814_world_root_topology.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../db/migrations/20260823_world_root_description.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/migrate.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  ])
+
+  for (const seed of [schema, topology]) {
+    assert.equal(seed.includes(`'${worldArrivalDescription}'`), true)
+    assert.doesNotMatch(seed, /the unowned space between continents; transit only/i)
+  }
+  assert.equal(descriptionMigration.includes(`'${worldArrivalDescription}'`), true)
+  assert.match(descriptionMigration, /UPDATE\s+places\s+SET\s+description\s*=/i)
+  assert.match(descriptionMigration, /WHERE\s+place_kind\s*=\s*'world'/i)
+  assert.match(migrateSource, /20260823_world_root_description\.sql/)
+  assert.match(packageSource, /migrate:preview:world-root-description/)
+  assert.match(packageSource, /migrate:production:world-root-description/)
 })
 
 test('database backstops keep the world free of content, laws, homes, and persistent labels', async () => {

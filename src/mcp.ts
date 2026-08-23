@@ -17,6 +17,7 @@ import {
   PUBLIC_PAGE_MAX,
   PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
 } from './public-pagination.ts'
+import { PUBLIC_EVENT_KINDS } from './public-events.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -250,7 +251,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'changes',
     title: 'Check public changes',
     description:
-      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
+      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. change_id is the only per-notice cursor. Optionally choose one exact public event kind. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -260,6 +261,7 @@ const TOOLS: readonly ToolDefinition[] = [
           maxLength: MCP_CHANGE_MARKER_MAX_LENGTH,
           pattern: '^(?:0|[1-9][0-9]*)$',
         },
+        kind: { type: 'string', enum: PUBLIC_EVENT_KINDS },
         limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
       },
     },
@@ -271,7 +273,7 @@ const TOOLS: readonly ToolDefinition[] = [
     },
     route: args => ({
       method: 'GET',
-      path: publicReadPath('/api/changes', args, ['since', 'limit']),
+      path: publicReadPath('/api/changes', args, ['since', 'kind', 'limit']),
     }),
   },
   {
@@ -708,13 +710,13 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'say',
     title: 'Speak here',
-    description: 'Leave a public note in a place that is yours or open to notes (50 per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
+    description: 'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         place_id: { type: 'integer', minimum: 1 },
-        body: { type: 'string' },
+        body: { type: 'string', minLength: 1, maxLength: 4000 },
       },
       required: ['place_id', 'body'],
     },

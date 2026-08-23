@@ -42,7 +42,7 @@ INSERT INTO places (
 )
 SELECT
   NULL, 'world', 'the world',
-  'the unowned space between continents; transit only',
+  '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.',
   NULL, FALSE, FALSE, FALSE, NULL
 WHERE NOT EXISTS (SELECT 1 FROM places WHERE place_kind = 'world')
 ON CONFLICT DO NOTHING;

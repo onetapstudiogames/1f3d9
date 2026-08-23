@@ -52,6 +52,10 @@ export interface EffectExecutionContext {
   readonly generation: number
   readonly logicalAt: Date
 }
+export interface EffectExecutionOutcome {
+  readonly effectsApplied: number
+  readonly emittedTypedPublicEvent: boolean
+}
 export interface ThingState {
   readonly id: number
   readonly ownerId: number
@@ -222,21 +226,41 @@ async function matchingLaw(
   return (await effectiveLaws(target.id, db)).find(law => law.name === label) ?? null
 }
 
+function effectExecutionOutcome(
+  effectsApplied: number,
+  emittedTypedPublicEvent: boolean,
+): EffectExecutionOutcome {
+  return Object.freeze({ effectsApplied, emittedTypedPublicEvent })
+}
+
+export async function executeEffectsWithOutcome(
+  effects: readonly Effect[],
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<EffectExecutionOutcome> {
+  let effectsApplied = 0
+  let emittedTypedPublicEvent = false
+  for (const effect of effects) {
+    const outcome = await executeEffectWithOutcome(effect, context, db)
+    effectsApplied += outcome.effectsApplied
+    emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
+  }
+  return effectExecutionOutcome(effectsApplied, emittedTypedPublicEvent)
+}
+
 export async function executeEffects(
   effects: readonly Effect[],
   context: EffectExecutionContext,
   db: TaggedSql,
 ): Promise<number> {
-  let applied = 0
-  for (const effect of effects) applied += await executeEffect(effect, context, db)
-  return applied
+  return (await executeEffectsWithOutcome(effects, context, db)).effectsApplied
 }
 
-async function executeEffect(
+async function executeEffectWithOutcome(
   effect: Effect,
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<number> {
+): Promise<EffectExecutionOutcome> {
   if (effect.effect === 'label') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
     if (target.type === 'place') {
@@ -255,7 +279,7 @@ async function executeEffect(
         ${context.sourceThingId}
       ) RETURNING id
     `)
-    return 1
+    return effectExecutionOutcome(1, false)
   }
   if (effect.effect === 'block') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
@@ -270,7 +294,7 @@ async function executeEffect(
         now() + make_interval(secs => ${effect.seconds})
       ) RETURNING id
     `)
-    return 1
+    return effectExecutionOutcome(1, false)
   }
   if (effect.effect === 'destroy') {
     const target = resolveSymbolicTarget(effect.target, context)
@@ -281,7 +305,7 @@ async function executeEffect(
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
     }
     await destroyThing(target.id, context, db)
-    return 1
+    return effectExecutionOutcome(1, true)
   }
   if (effect.effect === 'move') {
     const resolved = resolveSymbolicTarget(effect.target, context)
@@ -289,8 +313,8 @@ async function executeEffect(
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
     }
     const target = await requireTarget(resolved, db)
-    await moveEffectTarget(target, effect.to, context, db)
-    return 1
+    const emittedTypedPublicEvent = await moveEffectTarget(target, effect.to, context, db)
+    return effectExecutionOutcome(1, emittedTypedPublicEvent)
   }
   if (effect.effect === 'transfer') {
     const resolved = resolveSymbolicTarget(effect.target, context)
@@ -300,10 +324,13 @@ async function executeEffect(
     const target = await requireTarget(resolved, db)
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
     if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient')
-    await transferAsset(target, context.actorId, recipientId, db)
-    return 1
+    const emittedTypedPublicEvent = await transferAsset(target, context.actorId, recipientId, db)
+    return effectExecutionOutcome(1, emittedTypedPublicEvent)
   }
-  if (effect.effect === 'wait') return await scheduleEffect(effect, context, db) ? 1 : 0
+  if (effect.effect === 'wait') {
+    const scheduled = await scheduleEffect(effect, context, db)
+    return effectExecutionOutcome(scheduled ? 1 : 0, scheduled)
+  }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
   const law = await matchingLaw(target, effect.label, db)
@@ -313,7 +340,7 @@ async function executeEffect(
     ...context,
     lawAuthority: { traitId: law.traitId, sourcePlaceId: law.sourcePlaceId },
   }
-  return executeEffects(branch, branchContext, db)
+  return executeEffectsWithOutcome(branch, branchContext, db)
 }
 
 async function destroyThing(
@@ -440,29 +467,38 @@ async function moveEffectTarget(
   destination: 'destination' | 'home',
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<void> {
+): Promise<boolean> {
   if (target.type === 'resident') {
     await requireResidentAtActionPlace(target.id, context.placeId, db)
-    if (destination === 'home') return void await goHome(target.id, db)
+    if (destination === 'home') {
+      await goHome(target.id, db)
+      return false
+    }
     if (context.destinationPlaceId === null) throw new EngineError(400, 'move effect needs a destination')
-    return void await moveResident(target.id, context.destinationPlaceId, db)
+    await moveResident(target.id, context.destinationPlaceId, db)
+    return false
   }
   if (target.type !== 'thing') throw new EngineError(400, 'move effect target must be a resident or thing')
   const destinationId = destination === 'home'
     ? (await ensurePresence(context.actorId, db)).homePlaceId
     : context.destinationPlaceId
   if (destinationId === null) throw new EngineError(409, 'move destination is unavailable')
-  await moveThing(target.id, destinationId, context.actorId, db)
+  return moveThing(target.id, destinationId, context.actorId, db)
 }
 
-async function moveThing(thingId: number, destinationId: number, actorId: number, db: TaggedSql) {
+async function moveThing(
+  thingId: number,
+  destinationId: number,
+  actorId: number,
+  db: TaggedSql,
+): Promise<boolean> {
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
   if (thing.ownerId !== actorId) throw new EngineError(403, 'only the owner can move a thing')
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer')
   }
-  if (thing.placeId === destinationId) return
+  if (thing.placeId === destinationId) return false
   const places = await queryRows<Record<string, unknown>>(db`
     SELECT id, parent_id, owner_id, open_to_things
     FROM places WHERE id = ANY (${[thing.placeId, destinationId]}::int[])
@@ -504,11 +540,17 @@ async function moveThing(thingId: number, destinationId: number, actorId: number
     SELECT id FROM moved
   `)
   if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move')
+  return true
 }
 
-async function transferAsset(target: RuntimeTarget, actorId: number, recipientId: number, db: TaggedSql) {
+async function transferAsset(
+  target: RuntimeTarget,
+  actorId: number,
+  recipientId: number,
+  db: TaggedSql,
+): Promise<boolean> {
   if (target.type === 'resident') throw new EngineError(403, 'an agent is never property')
-  if (actorId === recipientId) return
+  if (actorId === recipientId) return false
   const conditions = target.type === 'thing'
     ? db`
       WITH recipient AS (SELECT id FROM residents WHERE id = ${recipientId}), moved AS (
@@ -579,13 +621,14 @@ async function transferAsset(target: RuntimeTarget, actorId: number, recipientId
         ) SELECT id FROM transfer
       `
   if ((await queryRows(conditions)).length === 0) await throwTransferFailure(target, actorId, db)
+  return true
 }
 
 async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: TaggedSql): Promise<never> {
   if (target.type === 'thing') {
     const thing = await thingState(target.id, db)
     if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
-    if (thing.ownerId !== actorId) throw new EngineError(403, 'asset is not transferable by this actor')
+    if (thing.ownerId !== actorId) throw new EngineError(403, 'you cannot transfer this asset')
     if (thing.activeOfferId !== null || thing.hasOpenOffer) {
       throw new EngineError(409, 'asset has an open transfer offer')
     }
@@ -612,7 +655,7 @@ async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: 
     `)
   const asset = rows[0]
   if (!asset) throw new EngineError(404, `${target.type} target not found`)
-  if (integer(asset.owner_id) !== actorId) throw new EngineError(403, 'asset is not transferable by this actor')
+  if (integer(asset.owner_id) !== actorId) throw new EngineError(403, 'you cannot transfer this asset')
   if (asset.active_offer_id != null || asset.has_open_offer === true) {
     throw new EngineError(409, 'asset has an open transfer offer')
   }

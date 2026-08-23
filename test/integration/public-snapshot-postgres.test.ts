@@ -149,10 +149,12 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     VALUES ('action', 'snapshot-keeper', $1::jsonb, '2026-08-20T00:02:30Z')
   `, [JSON.stringify({
     action_id: 7,
+    action: 'move',
+    error: 'move must cross one parent-child edge',
     status: 'applied',
     effects_applied: 1,
-    from_id: 1,
-    to_id: 2,
+    from_place_id: 1,
+    to_place_id: 2,
     reason: 'safe public reason',
     unsupported_private_field: 'must not be exported',
   })])
@@ -274,7 +276,11 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   const actionDetail = eventLines.find(line => line.record.detail?.action_id === 7)?.record.detail
   assert.deepEqual(actionDetail, {
     action_id: 7,
+    action: 'move',
+    error: 'move must cross one parent-child edge',
     status: 'applied',
+    from_place_id: 1,
+    to_place_id: 2,
   })
 
   const presenceLines = (await readFile(join(outputDirectory, 'public_presence.ndjson'), 'utf8'))

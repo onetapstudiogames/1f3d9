@@ -60,6 +60,7 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
     action: 'make',
     placeId: input.placeId,
     primitiveHandledByCaller: true,
+    primitiveEmitsTypedEvent: true,
     performPrimitive: async transaction => {
       const result = await craftKindThing(transaction as unknown as CraftSql, {
         actor: input.actor,
@@ -92,6 +93,7 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
     action: 'make',
     placeId: input.placeId,
     primitiveHandledByCaller: true,
+    primitiveEmitsTypedEvent: true,
     performPrimitive: async transaction => {
       const rows = (await transaction`
         WITH permitted_place AS (

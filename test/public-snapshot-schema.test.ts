@@ -73,7 +73,7 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.doesNotMatch(
       eventProjection,
-      /event\.detail->>'(?:body|description|reason|error|from|to|buyer)'/iu,
+      /event\.detail->>'(?:body|description|reason|from|to|buyer)'/iu,
     )
 
     const worldOffersStart = view.indexOf("SELECT 'world_market_offers'")

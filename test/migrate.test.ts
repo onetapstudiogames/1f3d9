@@ -19,6 +19,8 @@ const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_i
 const publicChangeMarkersMigrationFile = 'db/migrations/20260821_public_change_markers.sql' as const
 const thingMakerMigrationFile = 'db/migrations/20260822_thing_maker.sql' as const
 const laterHolderMarksMigrationFile = 'db/migrations/20260822_later_holder_marks.sql' as const
+const worldRootDescriptionMigrationFile =
+  'db/migrations/20260823_world_root_description.sql' as const
 const paymentRecoveryTriggerRepairMigrationFile =
   'db/migrations/20260823_payment_recovery_trigger_repair.sql' as const
 
@@ -802,6 +804,60 @@ test('remote world-root topology selection requires its own destructive acknowle
     },
   )
   assert.equal(topology.migrationFile, 'db/migrations/20260814_world_root_topology.sql')
+})
+
+test('world-root description is a bounded transactional forward migration', () => {
+  const migration = migrationDdl(worldRootDescriptionMigrationFile)
+
+  assert.match(migration, /^\s*BEGIN\s*;/i)
+  assert.match(migration, /SET\s+LOCAL\s+lock_timeout\s*=/i)
+  assert.match(migration, /SET\s+LOCAL\s+statement_timeout\s*=/i)
+  assert.match(migration, /LOCK\s+TABLE\s+places\s+IN\s+ACCESS\s+EXCLUSIVE\s+MODE/i)
+  assert.match(
+    migration,
+    /ALTER\s+TABLE\s+places\s+DISABLE\s+TRIGGER\s+places_protect_topology_write/i,
+  )
+  assert.match(migration, /UPDATE\s+places\s+SET\s+description\s*=/i)
+  assert.match(
+    migration,
+    /WHERE\s+place_kind\s*=\s*'world'\s+AND\s+description\s+IS\s+DISTINCT\s+FROM/i,
+  )
+  assert.match(
+    migration,
+    /ALTER\s+TABLE\s+places\s+ENABLE\s+TRIGGER\s+places_protect_topology_write/i,
+  )
+  assert.doesNotMatch(migration, /session_replication_role/i)
+  assert.match(migration, /COMMIT\s*;\s*$/i)
+  assert.equal(
+    prepareMigrationExecution(worldRootDescriptionMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'world-root-description'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, worldRootDescriptionMigrationFile)
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'world-root-description'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'world-root-description-release',
+    },
+  )
+  assert.equal(production.migrationFile, worldRootDescriptionMigrationFile)
 })
 
 test('remote identity rotation is selected as its own additive release', () => {

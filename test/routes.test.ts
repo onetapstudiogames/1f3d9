@@ -145,6 +145,14 @@ interface FakeLaterHolderItem {
   date: string
   body_text_bytes: number
 }
+interface FakeRecentNote {
+  id: number
+  place_id: number
+  author_id: number
+  author: string
+  body: string
+  created_at: string
+}
 type LawRecipe = Record<string, unknown>
 interface FakeState {
   scenario: string
@@ -218,6 +226,8 @@ interface FakeState {
   exactTotalsSuccessfulReads: number
   publicChangeMarker: string
   laterHolderItems: FakeLaterHolderItem[]
+  recentNote: FakeRecentNote | null
+  nextNoteId: number
   actionResolved?: boolean
 }
 
@@ -296,6 +306,8 @@ const initialState = (): FakeState => ({
     place_title: 'Lantern Town', date: '2026-08-11T00:00:00.000000Z',
     body_text_bytes: Buffer.byteLength('warm light', 'utf8'),
   }],
+  recentNote: null,
+  nextNoteId: 52,
 })
 
 let state = initialState()
@@ -1040,7 +1052,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
   if (q.includes('/* public:changes */')) {
     return [{
-      checkpoint: state.publicChangeMarker, id: 701, change_id: state.publicChangeMarker,
+      checkpoint: state.publicChangeMarker, change_id: state.publicChangeMarker,
       kind: 'action', actor: 'tiny-lantern',
       detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
     }]
@@ -1666,6 +1678,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     )
   }
 
+  if (q.includes('/* note-action:quota */')) {
+    return [{ notes_today: state.quota.notes ? 0 : 50 }]
+  }
   if (q.includes('where secret_hash')) return state.authValid ? [residentRow()] : []
   if (q.includes('/* crafting:commit */')) return [thingRow()]
   if (q.includes('insert into resident_presence') && !q.includes('insert into places')) {
@@ -1998,6 +2013,19 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('things_today = things_today + 1') && q.includes('insert into things'))
     return state.quota.things ? [thingRow()] : []
   if (q.includes('things_today = things_today + 1')) return state.quota.things ? [{ id: state.actorId }] : []
+  if (q.includes('notes_today = notes_today + 1') && q.includes('insert into notes')) {
+    if (!state.quota.notes) return []
+    const note = {
+      id: state.nextNoteId,
+      place_id: Number(params[0] ?? 2),
+      author_id: Number(params[1] ?? state.actorId),
+      author: String(params[4] ?? state.actorHandle),
+      body: String(params[3] ?? 'hello from the square'),
+      created_at: '2026-08-11T00:00:00.000Z',
+    }
+    state = { ...state, recentNote: note, nextNoteId: state.nextNoteId + 1 }
+    return [note]
+  }
   if (q.includes('notes_today = notes_today + 1')) return state.quota.notes ? [{ id: state.actorId }] : []
   if (q.includes('agreement_actions_today = agreement_actions_today + 1')) {
     if (!state.quota.agreements) return []
@@ -2620,6 +2648,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     coiner: 'founder',
   }]
 
+  if (q.includes('/* note-action:recent-duplicate */')) {
+    const note = state.recentNote
+    return note
+      && note.author_id === Number(params[0])
+      && note.place_id === Number(params[1])
+      && note.body === String(params[2])
+      ? [{ ...note }]
+      : []
+  }
   if (q.includes('insert into notes')) return [{
     id: 51,
     place_id: Number(params[0] ?? 2),
@@ -3338,6 +3375,94 @@ test('note validation distinguishes place errors and preserves valid Unicode exa
     room_stored_text_bytes: 1234,
     current_first_read_text_bytes: 456,
   })
+})
+
+test('an identical note retry returns the first note without quota, writes, or events', async () => {
+  reset({ scenario: 'note retry', openToNotes: true })
+  const request = () => app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: 'One durable thought. 🏙️' }),
+  })
+
+  const first = await request()
+  assert.equal(first.status, 201)
+  const firstBody = await first.json() as { note: Record<string, unknown> }
+
+  state = {
+    ...state,
+    calls: [],
+    quota: { ...state.quota, notes: false },
+  }
+  const replay = await request()
+  assert.equal(replay.status, 200)
+  const replayBody = await replay.json() as { note: Record<string, unknown> }
+
+  assert.deepEqual(replayBody.note, firstBody.note)
+  assert.equal(inserted('notes'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(inserted('action_runs'), 0)
+  const duplicateRead = sqlCalls().find(call => (
+    /\/\* note-action:recent-duplicate \*\//iu.test(call.query ?? '')
+  ))
+  assert.ok(duplicateRead, 'the retry must check the bounded exact-note window')
+  assert.equal(Number(duplicateRead.params?.[3]), 300)
+  assert.match(
+    duplicateRead.query ?? '',
+    /note\.author_id\s*=\s*\$1[\s\S]*note\.place_id\s*=\s*\$2[\s\S]*note\.body\s+COLLATE\s+"C"\s*=\s*\$3::text\s+COLLATE\s+"C"/iu,
+  )
+})
+
+test('an identical note retry replays before later place permission changes', async () => {
+  reset({ scenario: 'note retry', openToNotes: true })
+  const request = () => app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: 'One durable thought. 🏙️' }),
+  })
+
+  const first = await request()
+  assert.equal(first.status, 201)
+  const firstBody = await first.json() as { note: Record<string, unknown> }
+
+  state = {
+    ...state,
+    calls: [],
+    placeOwnerId: 8,
+    openToNotes: false,
+    quota: { ...state.quota, notes: false },
+  }
+  const replay = await request()
+  assert.equal(replay.status, 200)
+  const replayBody = await replay.json() as { note: Record<string, unknown> }
+
+  assert.deepEqual(replayBody.note, firstBody.note)
+  assert.equal(inserted('notes'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(inserted('action_runs'), 0)
+})
+
+test('a one-byte body difference creates a separate append-only note', async () => {
+  reset({ scenario: 'note retry', openToNotes: true })
+  const post = (body: string) => app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body }),
+  })
+
+  const first = await post('One durable thought.')
+  assert.equal(first.status, 201)
+  const firstBody = await first.json() as { note: { id: number } }
+
+  state = { ...state, calls: [] }
+  const second = await post('One durable thought. ')
+  assert.equal(second.status, 201)
+  const secondBody = await second.json() as { note: { id: number; body: string } }
+
+  assert.notEqual(secondBody.note.id, firstBody.note.id)
+  assert.equal(secondBody.note.body, 'One durable thought. ')
+  assert.equal(inserted('notes'), 1)
+  assert.equal(inserted('action_runs'), 1)
 })
 
 test('a meter read failure never turns a committed note into a retryable write failure', async () => {
@@ -4569,7 +4694,9 @@ test('a timer-moved note author receives the engine proximity status instead of 
     body: JSON.stringify({ place_id: 2, body: 'already gone' }),
   })
   assert.equal(response.status, 403)
-  assert.match(JSON.stringify(await response.json()), /current place/i)
+  assert.deepEqual(await response.json(), {
+    error: 'you must be standing in place_id 2 to leave a note there; you are standing in place_id 3',
+  })
   assert.equal(inserted('notes'), 0)
 })
 
@@ -6239,6 +6366,10 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/changes?since=1&limit=%2B1',
     '/api/changes?since=1&limit=%201',
     '/api/changes?since=1&since=2',
+    '/api/changes?since=1&kind=NOTE',
+    '/api/changes?since=1&kind=note&kind=action',
+    '/api/changes?since=1&id=3',
+    '/api/changes?since=1&action_id=3',
     '/api/changes?unknown=true',
   ]
   for (const path of paths) {
@@ -6281,16 +6412,18 @@ test('search and changes succeed through their real Hono routes without returnin
     const checkpoint = await app.request('/api/changes')
     assert.equal(checkpoint.status, 200)
     assert.deepEqual(await checkpoint.json(), { change_marker: '9' })
-    const changes = await app.request('/api/changes?since=8&limit=1')
+    const changes = await app.request('/api/changes?since=8&kind=action&limit=1')
     assert.equal(changes.status, 200)
     assert.deepEqual(await changes.json(), {
       change_marker: '9',
       changes: [{
-        id: 701, change_id: '9', kind: 'action', actor: 'tiny-lantern',
+        change_id: '9', kind: 'action', actor: 'tiny-lantern',
         detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
       }],
       returned_items: 1, unchanged: false, has_more: false, next_since: '9',
     })
+    const changeRead = sqlCalls().find(call => /\/\* public:changes \*\//iu.test(call.query ?? ''))
+    assert.deepEqual(changeRead?.params, ['8', '2', 'action'])
   })
 })
 

@@ -14,6 +14,7 @@ import {
   LATER_HOLDER_CURSOR_PATTERN,
 } from '../src/later-holder.ts'
 import { mcp } from '../src/mcp.ts'
+import { PUBLIC_EVENT_KINDS } from '../src/public-events.ts'
 
 const PUBLIC_ORIGIN = 'https://1f3d9.com'
 const LEGACY_SECRET = `1f3d9_sk_${'ab'.repeat(24)}`
@@ -332,6 +333,58 @@ test('both MCP doors keep every shared tool label, input, and safety hint identi
       `${hostedTool.name}: boolean safety labels`,
     )
   }
+})
+
+test('say names where to stand and its body limit', async () => {
+  const expectedDescription =
+    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). The response includes a neutral UTF-8 reading-cost meter.'
+
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const say = toolByName(await listTools(gateway, path, authorization), 'say')
+
+    assert.equal(say.description, expectedDescription, path)
+    assert.deepEqual(say.inputSchema.properties?.body, {
+      type: 'string',
+      minLength: 1,
+      maxLength: 4000,
+    }, path)
+    assert.equal(say.annotations?.idempotentHint, false, path)
+  }
+})
+
+test('changes exposes one cursor and forwards an exact public event kind filter', async () => {
+  setHostedChatFlag(true)
+  let receivedPath = ''
+  const city = new Hono()
+  city.get('/api/changes', c => {
+    receivedPath = new URL(c.req.url).pathname + new URL(c.req.url).search
+    return c.json({
+      change_marker: '12', changes: [], returned_items: 0,
+      unchanged: false, has_more: false, next_since: '12',
+    })
+  })
+  const gateway = new Hono()
+  gateway.post('/mcp/connect', c => mcp(c, city, { hostedChat: true }))
+
+  const changes = toolByName(await listTools(gateway), 'changes')
+  assert.match(changes.description, /change_id is the only per-notice cursor/iu)
+  assert.match(changes.description, /one exact public event kind/iu)
+  assert.deepEqual(changes.inputSchema.properties?.kind, {
+    type: 'string', enum: PUBLIC_EVENT_KINDS,
+  })
+  assert.equal(Object.hasOwn(changes.inputSchema.properties ?? {}, 'id'), false)
+  assert.equal(Object.hasOwn(changes.inputSchema.properties ?? {}, 'action_id'), false)
+
+  const response = await rpc(gateway, 'tools/call', {
+    name: 'changes', arguments: { since: '5', kind: 'note', limit: 2 },
+  }) as { result: ToolResult }
+  assert.equal(response.result.isError, false)
+  assert.equal(receivedPath, '/api/changes?since=5&kind=note&limit=2')
 })
 
 test('tools that can spend, consume, replace, or transfer advertise that destructive reach', async () => {

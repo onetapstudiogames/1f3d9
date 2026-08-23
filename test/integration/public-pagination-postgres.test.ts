@@ -817,7 +817,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       }
     })
 
-    await t.test('public markers page committed changes and serialize independently of event ids', async () => {
+    await t.test('public markers page committed changes without exposing event ids', async () => {
       const markerSchema = `wave_five_markers_${randomBytes(6).toString('hex')}`
       await postgres.client.query(`CREATE SCHEMA "${markerSchema}"`)
       const markerPool = new Pool({
@@ -831,7 +831,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         await markerPool.query(schemaDdl)
       type ChangePayload = Readonly<{
         change_marker: string
-        changes: readonly Readonly<{ id: number; change_id: string }>[]
+        changes: readonly Readonly<Record<string, unknown> & { change_id: string; kind: string }>[]
         returned_items: number
         unchanged: boolean
         has_more: boolean
@@ -859,7 +859,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         committedIds.push(event.id)
       }
 
-      const changes: Array<{ id: number; change_id: string }> = []
+      const changes: Array<Readonly<Record<string, unknown> & { change_id: string; kind: string }>> = []
       let since = checkpoint.change_marker
       let finalCheckpoint: string | null = null
       for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
@@ -874,12 +874,48 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         since = page.next_since
         if (!page.has_more) break
       }
-      assert.deepEqual(changes.map(change => change.id), committedIds)
       assert.deepEqual(
         changes.map(change => BigInt(change.change_id)),
         changes.map((_, index) => BigInt(checkpoint.change_marker) + BigInt(index + 1)),
       )
       assert.equal(new Set(changes.map(change => change.change_id)).size, committedIds.length)
+      assert.equal(changes.every(change => !Object.hasOwn(change, 'id')), true)
+
+      const filterStart = BigInt(finalCheckpoint!)
+      for (const [kind, actor] of [
+        ['action', 'wave-five-filter-action-one'],
+        ['note', 'wave-five-filter-note-one'],
+        ['action', 'wave-five-filter-action-two'],
+        ['note', 'wave-five-filter-note-two'],
+        ['action', 'wave-five-filter-action-three'],
+      ] as const) {
+        await markerPool.query(`
+          INSERT INTO events (kind, actor, detail)
+          VALUES ($1, $2, '{}')
+        `, [kind, actor])
+      }
+
+      const firstNotePage = await loadPublicChanges(
+        markerExecute,
+        publicChangeQuery({
+          since: [filterStart.toString()], kind: ['note'], limit: ['1'],
+        }),
+      ) as ChangePayload
+      assert.equal(firstNotePage.has_more, true)
+      assert.equal(firstNotePage.next_since, (filterStart + 2n).toString())
+      assert.deepEqual(firstNotePage.changes.map(change => change.kind), ['note'])
+      assert.equal(firstNotePage.changes.every(change => !Object.hasOwn(change, 'id')), true)
+
+      const finalNotePage = await loadPublicChanges(
+        markerExecute,
+        publicChangeQuery({
+          since: [firstNotePage.next_since], kind: ['note'], limit: ['1'],
+        }),
+      ) as ChangePayload
+      assert.equal(finalNotePage.has_more, false)
+      assert.equal(finalNotePage.next_since, (filterStart + 5n).toString())
+      assert.equal(finalNotePage.change_marker, finalNotePage.next_since)
+      assert.deepEqual(finalNotePage.changes.map(change => change.kind), ['note'])
 
       const firstCommitClient = await markerPool.connect()
       const secondCommitClient = await markerPool.connect()

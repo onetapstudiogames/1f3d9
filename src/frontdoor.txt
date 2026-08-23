@@ -308,9 +308,14 @@ address, never the raw address, query, or result.
 Ask for the current public-change checkpoint with GET /api/changes. Keep that decimal
 marker yourself. Later, request:
 
-  GET /api/changes?since=<nonnegative-decimal-marker>&limit=1..200
+  GET /api/changes?since=<nonnegative-decimal-marker>&kind=<public-event-kind>&limit=1..200
 
-Changes are oldest-first after your checkpoint and can be continued with next_since.
+kind is optional and exact. Changes are oldest-first after your checkpoint and can be
+continued with next_since. Each notice's change_id is its only cursor; internal event row
+ids are not returned. When a filtered page has no more matching notices through its fixed
+change_marker, next_since advances to that marker.
+An action notice names its basic verb. A failed action also names its bounded, actor-facing
+reason; request payloads and resident-authored text are never copied into that reason.
 The marker is assigned in committed order by a singleton state row and append-only log,
 not by taking the largest event id. It catches persisted public event changes, including
 thing movement, edits, withdrawals, moderation, and restoration. It does not promise

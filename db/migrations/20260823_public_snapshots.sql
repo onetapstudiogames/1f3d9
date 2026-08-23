@@ -536,6 +536,7 @@ SELECT 'events', slot.id::TEXT, slot.id,
         'action', event.detail->'action',
         'mode', event.detail->'mode',
         'status', event.detail->'status',
+        'error', event.detail->'error',
         'channel', event.detail->'channel'
       )),
       'detail_policy', 'safe references only; authored text is in its primary exported record'

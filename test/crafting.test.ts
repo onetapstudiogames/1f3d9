@@ -236,7 +236,7 @@ test('every ingredient must be active, actor-owned, co-located, and off the mark
     assert.deepEqual(result, {
       ok: false,
       status: 409,
-      error: 'every ingredient must be active, owned by the actor, in the target place, and not offered for sale',
+      error: 'every ingredient must be active, owned by you, in the requested place_id, and not offered for sale',
     })
     assert.equal(fake.calls.some(call => call.marker === 'commit'), false)
   }
