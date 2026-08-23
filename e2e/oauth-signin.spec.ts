@@ -12,6 +12,11 @@ interface TokenResponse {
   readonly token_type?: unknown
 }
 
+interface BrowserTokenPair {
+  readonly accessToken: string
+  readonly refreshToken: string
+}
+
 interface McpResponse {
   readonly result?: {
     readonly content?: Array<{ readonly type?: unknown; readonly text?: unknown }>
@@ -96,7 +101,7 @@ function callbackCode(page: Page): string {
   return code
 }
 
-async function redeemCode(page: Page, code: string): Promise<string> {
+async function redeemCode(page: Page, code: string): Promise<BrowserTokenPair> {
   const origin = test.info().project.use.baseURL as string
   const callback = `${origin.replace('127.0.0.1', 'localhost')}/oauth/callback`
   const response = await page.request.post('/oauth/token', {
@@ -115,13 +120,33 @@ async function redeemCode(page: Page, code: string): Promise<string> {
   }
   const tokens = await response.json() as TokenResponse
   const accessToken = typeof tokens.access_token === 'string' ? tokens.access_token : ''
+  const refreshToken = typeof tokens.refresh_token === 'string' ? tokens.refresh_token : ''
   expect(/^1f3d9_at_[0-9a-f]{64}$/.test(accessToken)).toBe(true)
-  expect(
-    typeof tokens.refresh_token === 'string' &&
-    /^1f3d9_rt_[0-9a-f]{64}$/.test(tokens.refresh_token),
-  ).toBe(true)
+  expect(/^1f3d9_rt_[0-9a-f]{64}$/.test(refreshToken)).toBe(true)
   expect(tokens.token_type).toBe('Bearer')
-  return accessToken
+  return { accessToken, refreshToken }
+}
+
+async function refreshAccess(page: Page, presentedRefreshToken: string): Promise<BrowserTokenPair> {
+  const origin = test.info().project.use.baseURL as string
+  const response = await page.request.post('/oauth/token', {
+    form: {
+      grant_type: 'refresh_token',
+      client_id: 'browser-e2e-client',
+      resource: `${origin}/mcp/connect`,
+      scope: 'city:resident',
+      refresh_token: presentedRefreshToken,
+    },
+  })
+  expect(response.status()).toBe(200)
+  const tokens = await response.json() as TokenResponse
+  const accessToken = typeof tokens.access_token === 'string' ? tokens.access_token : ''
+  const refreshToken = typeof tokens.refresh_token === 'string' ? tokens.refresh_token : ''
+  expect(/^1f3d9_at_[0-9a-f]{64}$/.test(accessToken)).toBe(true)
+  expect(/^1f3d9_rt_[0-9a-f]{64}$/.test(refreshToken)).toBe(true)
+  expect(accessToken).not.toBe('')
+  expect(refreshToken).not.toBe(presentedRefreshToken)
+  return { accessToken, refreshToken }
 }
 
 async function callMeTool(page: Page, endpoint: '/mcp' | '/mcp/connect', accessToken: string) {
@@ -182,9 +207,10 @@ test('signs in, redeems the callback code, and enters through the protected conn
   const callback = new URL(page.url())
   expect(callback.pathname).toBe('/oauth/callback')
   expect(callback.searchParams.get('state')).toBe(state)
-  const accessToken = await redeemCode(page, callbackCode(page))
+  const initialTokens = await redeemCode(page, callbackCode(page))
+  const refreshedTokens = await refreshAccess(page, initialTokens.refreshToken)
 
-  const connectorResponse = await callMeTool(page, '/mcp/connect', accessToken)
+  const connectorResponse = await callMeTool(page, '/mcp/connect', refreshedTokens.accessToken)
   expect(connectorResponse.status()).toBe(200)
   const connectorBody = await connectorResponse.json() as McpResponse
   expect(connectorBody.result?.isError).toBe(false)
@@ -199,14 +225,16 @@ test('signs in, redeems the callback code, and enters through the protected conn
   })
 
   const rawResponse = await page.request.get('/api/me', {
-    headers: { authorization: `Bearer ${accessToken}` },
+    headers: { authorization: `Bearer ${refreshedTokens.accessToken}` },
   })
   expect(rawResponse.status()).toBe(401)
 
-  const legacyResponse = await callMeTool(page, '/mcp', accessToken)
+  const legacyResponse = await callMeTool(page, '/mcp', refreshedTokens.accessToken)
   expect(legacyResponse.status()).toBe(200)
   const legacyBody = await legacyResponse.json() as McpResponse
   expect(legacyBody.result?.isError).toBe(true)
+  expect(legacyBody.result?.content?.[0]?.text).toContain('/mcp/connect')
+  expect(legacyBody.result?.content?.[0]?.text).toMatch(/remove.*connection|wrong.*address/i)
 
   expect(requestUrls.join('\n')).not.toContain(existingResidentKey)
   expect((await page.content()).includes(existingResidentKey)).toBe(false)
@@ -432,6 +460,7 @@ for (const profile of [
       await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
 
       await page.goto(authorizationPath())
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.getByLabel('Current resident key').fill(existingResidentKey)
       await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
         await page.getByRole('button', { name: 'Approve and connect this resident' }).click()

@@ -13,6 +13,7 @@ const productRequirements = read('../docs/PRD.md')
 const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
 const decisions = read('../docs/DECISIONS.md')
+const hostedSignin = read('../docs/features/HOSTED_CHAT_SIGNIN.md')
 const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 
@@ -24,6 +25,30 @@ const ACTION_SHAPES = [
   '{"action":"give","target_type":"place","target_id":123,"to_handle":"resident-handle"}',
   '{"action":"go_home"}',
 ] as const
+
+test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-address recovery', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['hosted sign-in guide', hostedSignin],
+    ['MCP descriptions', mcpSource],
+  ] as const) {
+    assert.match(
+      text,
+      /(?:(?:key-capable|local)\b[^\n]{0,180}\/mcp\b|\/mcp\b[^\n]{0,180}(?:key-capable|local)\b)/iu,
+      `${name}: key door`,
+    )
+    assert.match(text, /ChatGPT[\s\S]{0,320}\/mcp\/connect\b/iu, `${name}: hosted door`)
+    assert.match(
+      text,
+      /(?:name already exists|remove|delete)[^\n]{0,220}(?:old|existing|connection|connector)/iu,
+      `${name}: stale connector recovery`,
+    )
+  }
+})
 
 test('public help gives exact action shapes and required combinations', () => {
   for (const [name, text] of [

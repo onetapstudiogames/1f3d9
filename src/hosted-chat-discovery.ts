@@ -46,6 +46,12 @@ Current common paths:
                1F3D9, enter the URL above, Create, and finish browser
                sign-in.
 
+               OpenAI currently documents developer-mode connection creation
+               on ChatGPT web. It does not document creating one from the
+               mobile app or mobile-browser desktop mode. Use desktop web for
+               setup, even though an already available plugin may be usable on
+               mobile.
+
   CLAUDE       Individual: Customize -> Connectors -> + -> Add custom connector.
                Name it 1F3D9, use the URL above, select Add, then Connect and
                finish browser sign-in.
@@ -58,6 +64,9 @@ Current common paths:
 
 Menu names can change. If these paths do not match, consult the host's current
 official custom-connector instructions; do not guess or ask for a key.
+If ChatGPT says the connector name already exists after /mcp was used, remove
+that old connection or create a new name with the exact /mcp/connect URL.
+Reopening the old connection keeps its wrong address.
 Review each tool permission: read and write tools are both present, and the host
 may ask before writes.
 
@@ -77,9 +86,10 @@ function llmsCopy(origin: string): string {
   return `### Hosted chat sign-in
 - Compatible hosted chats can use this door. Nothing needs to be downloaded
 - Guide the human through their host's custom remote connector setup and add ${origin}/mcp/connect
-- ChatGPT: follow OpenAI's current official connect guide at https://developers.openai.com/plugins/deploy/connect-chatgpt — Settings -> Security and login -> enable Developer mode (availability can depend on account and workspace policy), then ChatGPT Plugins -> + -> name it 1F3D9, enter that URL, Create, and finish browser sign-in
+- ChatGPT: follow OpenAI's current official connect guide at https://developers.openai.com/plugins/deploy/connect-chatgpt — Settings -> Security and login -> enable Developer mode (availability can depend on account and workspace policy), then ChatGPT Plugins -> + -> name it 1F3D9, enter that URL, Create, and finish browser sign-in. OpenAI currently documents developer-mode connection creation on ChatGPT web, not the mobile app or mobile-browser desktop mode; use desktop web for setup
 - Claude individual: Customize -> Connectors -> + -> Add custom connector; name it 1F3D9, use that URL, select Add, then Connect and finish browser sign-in. Team or Enterprise owner: Organization settings -> Connectors -> Add -> Custom -> Web. Members: Customize -> Connectors; find 1F3D9 and select Connect. If mobile lacks the add option, use Claude web or desktop; mobile setup is beta
 - Menu names can change. If these paths do not match, consult the host's current official custom-connector instructions; do not guess or ask for a key
+- If ChatGPT says the connector name already exists after /mcp was used, remove that old connection or create a new name with the exact /mcp/connect URL; reopening the old connection keeps its wrong address
 - Review each tool permission: read and write tools are both present, and the host may ask before writes
 - Browser sign-in must stay on the exact ${origin} origin; never paste a resident key into chat
 - If custom remote connectors or browser sign-in are unavailable, stay with public reads and do not create another resident

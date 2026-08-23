@@ -8,6 +8,7 @@ import {
   collectRecoveryCodeSet,
   mountOAuthRoutes,
   residentByOAuthAccessToken,
+  type OAuthDiagnosticRecord,
 } from '../src/oauth.ts'
 import type {
   AuthorizationCodeRecord,
@@ -429,7 +430,10 @@ interface TokenPair {
   scope: string
 }
 
-function appFor(memory: MemoryOAuthStore): Hono {
+function appFor(
+  memory: MemoryOAuthStore,
+  diagnostics?: (record: Readonly<OAuthDiagnosticRecord>) => void,
+): Hono {
   const app = new Hono()
   app.onError(() => new Response('Internal Server Error', { status: 500 }))
   mountOAuthRoutes(app, {
@@ -438,6 +442,7 @@ function appFor(memory: MemoryOAuthStore): Hono {
     fetcher: (async input => {
       throw new Error(`unexpected network call: ${String(input)}`)
     }) as typeof fetch,
+    ...(diagnostics ? { diagnostics } : {}),
   })
   return app
 }
@@ -585,6 +590,225 @@ test('authorization accepts a bounded language hint without relaxing unknown-fie
 
   const unknown = await app.request(authorizationUrl({ unsupported_hint: 'value' }))
   assert.equal(unknown.status, 400)
+})
+
+test('an unexpected authorization-store failure is bounded and logged without request secrets', async () => {
+  const memory = new MemoryOAuthStore()
+  const leakedCredential = `1f3d9_sk_${'ef'.repeat(24)}`
+  memory.api.createAuthorizationRequest = async () => {
+    throw new Error(`database failed near ${leakedCredential}`)
+  }
+  const diagnostics: Array<Record<string, unknown>> = []
+  const app = new Hono()
+  mountOAuthRoutes(app, {
+    environment,
+    store: memory.api,
+    fetcher: (async input => {
+      throw new Error(`unexpected network call: ${String(input)}`)
+    }) as typeof fetch,
+    diagnostics: record => diagnostics.push(record),
+  })
+
+  const response = await app.request(authorizationUrl())
+  assert.equal(response.status, 503)
+  assertPrivate(response, true)
+  assert.match(response.headers.get('x-request-id') ?? '', /^[0-9a-f-]{36}$/i)
+  const body = await response.text()
+  assert.match(body, /try again/i)
+  assert.doesNotMatch(body, new RegExp(leakedCredential, 'i'))
+
+  assert.equal(diagnostics.length, 1)
+  assert.deepEqual(
+    Object.keys(diagnostics[0] ?? {}).sort(),
+    ['client_origin', 'elapsed_ms', 'error_class', 'event', 'request_id', 'stage', 'status'],
+  )
+  assert.equal(diagnostics[0]?.event, 'oauth_failure')
+  assert.equal(diagnostics[0]?.stage, 'authorization_store')
+  assert.equal(diagnostics[0]?.client_origin, 'pre-registered')
+  assert.equal(diagnostics[0]?.error_class, 'storage_unavailable')
+  assert.equal(diagnostics[0]?.status, 503)
+  assert.doesNotMatch(JSON.stringify(diagnostics), new RegExp(leakedCredential, 'i'))
+})
+
+test('approval, exchange, refresh, and revocation failures stay bounded and emit safe stage records', async () => {
+  const leakedCredential = `1f3d9_sk_${'fe'.repeat(24)}`
+
+  const approvalMemory = new MemoryOAuthStore()
+  const approvalDiagnostics: OAuthDiagnosticRecord[] = []
+  const approvalApp = appFor(approvalMemory, record => approvalDiagnostics.push(record))
+  const approvalSession = await begin(approvalApp)
+  approvalMemory.api.approveExistingResidentAndIssueAuthorizationCode = async () => {
+    throw new Error(`approval storage failed near ${leakedCredential}`)
+  }
+  const approval = await browserPost(approvalApp, approvalSession, {
+    action: 'link',
+    csrf: approvalSession.csrf,
+    resident_key: EXISTING_KEY,
+  })
+  assert.equal(approval.status, 503)
+  assertPrivate(approval, true)
+  assert.deepEqual(approvalDiagnostics.map(record => record.stage), ['browser_approval'])
+
+  const exchangeMemory = new MemoryOAuthStore()
+  const exchangeDiagnostics: OAuthDiagnosticRecord[] = []
+  const exchangeApp = appFor(exchangeMemory, record => exchangeDiagnostics.push(record))
+  const { code } = await authorizeExisting(exchangeApp)
+  exchangeMemory.api.exchangeAuthorizationCode = async () => {
+    throw new Error(`exchange storage failed near ${leakedCredential}`)
+  }
+  const exchange = await exchangeCode(exchangeApp, code)
+  assert.equal(exchange.status, 503)
+  assertPrivate(exchange)
+  assert.deepEqual(await exchange.json(), { error: 'temporarily_unavailable' })
+  assert.deepEqual(exchangeDiagnostics.map(record => record.stage), ['token_exchange'])
+
+  const refreshMemory = new MemoryOAuthStore()
+  const refreshDiagnostics: OAuthDiagnosticRecord[] = []
+  const refreshApp = appFor(refreshMemory, record => refreshDiagnostics.push(record))
+  const pair = await initialPair(refreshApp)
+  refreshMemory.api.rotateRefreshToken = async () => {
+    throw new Error(`refresh storage failed near ${leakedCredential}`)
+  }
+  const refresh = await refreshApp.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: pair.refresh_token,
+    }),
+  })
+  assert.equal(refresh.status, 503)
+  assertPrivate(refresh)
+  assert.deepEqual(await refresh.json(), { error: 'temporarily_unavailable' })
+  assert.deepEqual(refreshDiagnostics.map(record => record.stage), ['token_refresh'])
+
+  const revokeMemory = new MemoryOAuthStore()
+  const revokeDiagnostics: OAuthDiagnosticRecord[] = []
+  const revokeApp = appFor(revokeMemory, record => revokeDiagnostics.push(record))
+  const revokePair = await initialPair(revokeApp)
+  revokeMemory.api.revokeTokenFamilyByToken = async () => {
+    throw new Error(`revocation storage failed near ${leakedCredential}`)
+  }
+  const revoke = await revokeApp.request('/oauth/revoke', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      token: revokePair.refresh_token,
+      client_id: CLIENT_ID,
+    }),
+  })
+  assert.equal(revoke.status, 200)
+  assertPrivate(revoke)
+  assert.deepEqual(revokeDiagnostics.map(record => record.stage), ['revocation'])
+
+  for (const records of [
+    approvalDiagnostics,
+    exchangeDiagnostics,
+    refreshDiagnostics,
+    revokeDiagnostics,
+  ]) {
+    assert.equal(records.length, 1)
+    assert.deepEqual(
+      Object.keys(records[0] ?? {}).sort(),
+      ['client_origin', 'elapsed_ms', 'error_class', 'event', 'request_id', 'stage', 'status'],
+    )
+    assert.equal(records[0]?.client_origin, 'pre-registered')
+    assert.equal(records[0]?.error_class, 'storage_unavailable')
+    assert.doesNotMatch(JSON.stringify(records), new RegExp(leakedCredential, 'i'))
+  }
+})
+
+test('current ChatGPT callback-specific CIMD completes PKCE exchange and refresh', async () => {
+  const memory = new MemoryOAuthStore()
+  const clientId = 'https://chatgpt.com/oauth/wave11/client.json'
+  const redirectUri = 'https://chatgpt.com/connector/oauth/wave11'
+  const cimdEnvironment = {
+    ...environment,
+    HOSTED_CHAT_OAUTH_CLIENTS: '',
+    HOSTED_CHAT_CIMD_ORIGINS: JSON.stringify(['https://chatgpt.com']),
+  }
+  const app = new Hono()
+  mountOAuthRoutes(app, {
+    environment: cimdEnvironment,
+    store: memory.api,
+    fetcher: (async (input, init) => {
+      assert.equal(String(input), clientId)
+      assert.equal(init?.redirect, 'manual')
+      assert.ok(init?.signal instanceof AbortSignal)
+      return new Response(JSON.stringify({
+        client_id: clientId,
+        client_name: 'ChatGPT',
+        redirect_uris: [redirectUri],
+        token_endpoint_auth_method: 'private_key_jwt',
+        token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'],
+      }), { headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch,
+    diagnostics: () => undefined,
+  })
+
+  const started = await app.request(authorizationUrl({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+  }))
+  assert.equal(started.status, 200)
+  assertPrivate(started, true)
+  assert.match(
+    started.headers.get('content-security-policy') ?? '',
+    /form-action 'self' https:\/\/chatgpt\.com;/u,
+  )
+  const cookie = (started.headers.get('set-cookie') ?? '').split(';', 1)[0]!
+  const html = await started.text()
+  const csrf = html.match(/name="csrf" value="([^"]+)"/)?.[1]
+  assert.ok(csrf)
+  const session = {
+    cookie,
+    rawSession: cookie.split('=', 2)[1]!,
+    csrf,
+    html,
+  }
+  const approval = await browserPost(app, session, {
+    action: 'link',
+    csrf,
+    resident_key: EXISTING_KEY,
+  })
+  assert.equal(approval.status, 303)
+  const callback = new URL(approval.headers.get('location') ?? '')
+  assert.equal(`${callback.origin}${callback.pathname}`, redirectUri)
+  assert.equal(callback.searchParams.get('state'), STATE)
+  const code = callback.searchParams.get('code') ?? ''
+  assert.match(code, /^1f3d9_ac_[0-9a-f]{64}$/)
+
+  const exchanged = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      resource: RESOURCE,
+      code,
+      code_verifier: VERIFIER,
+    }),
+  })
+  const firstPair = await readTokenPair(exchanged)
+  const refreshed = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      resource: RESOURCE,
+      refresh_token: firstPair.refresh_token,
+    }),
+  })
+  const secondPair = await readTokenPair(refreshed)
+  assert.notEqual(secondPair.refresh_token, firstPair.refresh_token)
+  assert.equal(
+    (await residentByOAuthAccessToken(secondPair.access_token, cimdEnvironment, memory.api))?.handle,
+    'chatty',
+  )
 })
 
 test('existing resident completes browser proof, PKCE exchange, resolver, replay rejection, and revocation', async () => {
@@ -837,7 +1061,7 @@ test('connector signup discloses no generated secrets when throttling or staging
       events: unknown[]
     }
 
-    assert.equal({ missing: 403, duplicate: 409, unique_error: 409, error: 500 }[stageFailure], response.status)
+    assert.equal({ missing: 403, duplicate: 409, unique_error: 409, error: 503 }[stageFailure], response.status)
     assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
     assert.deepEqual(state.residents.map(resident => resident.id), [49])
     assert.equal(state.recoveryCodes.length, 0)
@@ -902,7 +1126,7 @@ test('connector signup confirmation stays uncommitted when its rate limit or sto
       events: unknown[]
     }
 
-    assert.equal({ rate_limit: 429, missing: 403, error: 500 }[confirmFailure], response.status)
+    assert.equal({ rate_limit: 429, missing: 403, error: 503 }[confirmFailure], response.status)
     assertSecretsAbsent(surface, [rootKey, ...recoveryCodes])
     assert.deepEqual(state.residents.map(resident => resident.id), [49])
     assert.equal(state.recoveryCodes.length, 0)

@@ -242,9 +242,20 @@ interface StoredCode extends AuthorizationCodeRecord {
 }
 
 interface StoredAccessGrant {
+  readonly familyId: number
+}
+
+interface StoredRefreshGrant {
+  readonly familyId: number
+  readonly used: boolean
+}
+
+interface StoredTokenFamily {
   readonly residentId: number
+  readonly clientId: string
   readonly resource: string
   readonly scope: string
+  readonly revoked: boolean
 }
 
 type OAuthStore = NonNullable<OAuthRouteOptions['store']>
@@ -253,6 +264,8 @@ function makeMemoryStore(): OAuthStore {
   const requests = new Map<string, StoredRequest>()
   const codes = new Map<string, StoredCode>()
   const accessGrants = new Map<string, StoredAccessGrant>()
+  const refreshGrants = new Map<string, StoredRefreshGrant>()
+  const tokenFamilies = new Map<number, StoredTokenFamily>()
   const residents = new Map<number, Resident>([[49, {
     id: 49,
     handle: 'browser-resident',
@@ -265,6 +278,7 @@ function makeMemoryStore(): OAuthStore {
   }]])
   let nextRequestId = 1
   let nextResidentId = 100
+  let nextFamilyId = 1
 
   const eligible = (sessionHash: string, csrfHash: string): StoredRequest | null => {
     const request = requests.get(sessionHash)
@@ -420,20 +434,49 @@ function makeMemoryStore(): OAuthStore {
       ) return false
       if (!residents.has(code.residentId)) return false
       codes.set(input.codeHash, { ...code, used: true })
-      accessGrants.set(input.accessTokenHash, {
+      const familyId = nextFamilyId++
+      tokenFamilies.set(familyId, {
         residentId: code.residentId,
+        clientId: code.clientId,
         resource: code.resource,
         scope: code.scope,
+        revoked: false,
       })
+      accessGrants.set(input.accessTokenHash, { familyId })
+      refreshGrants.set(input.refreshTokenHash, { familyId, used: false })
       return true
     },
 
-    rotateRefreshToken: async () => 'invalid',
-    revokeTokenFamilyByToken: async () => undefined,
+    rotateRefreshToken: async input => {
+      const presented = refreshGrants.get(input.presentedRefreshTokenHash)
+      const family = presented ? tokenFamilies.get(presented.familyId) : undefined
+      if (presented?.used && family) {
+        tokenFamilies.set(presented.familyId, { ...family, revoked: true })
+        return 'reused'
+      }
+      if (
+        !presented || !family || family.revoked ||
+        family.clientId !== input.clientId || family.resource !== input.resource
+      ) return 'invalid'
+      refreshGrants.set(input.presentedRefreshTokenHash, { ...presented, used: true })
+      accessGrants.set(input.accessTokenHash, { familyId: presented.familyId })
+      refreshGrants.set(input.newRefreshTokenHash, { familyId: presented.familyId, used: false })
+      return 'rotated'
+    },
+    revokeTokenFamilyByToken: async input => {
+      const grant = accessGrants.get(input.tokenHash) ?? refreshGrants.get(input.tokenHash)
+      const family = grant ? tokenFamilies.get(grant.familyId) : undefined
+      if (grant && family?.clientId === input.clientId) {
+        tokenFamilies.set(grant.familyId, { ...family, revoked: true })
+      }
+    },
     resolveOAuthAccessToken: async input => {
       const grant = accessGrants.get(input.accessTokenHash)
-      if (!grant || grant.resource !== input.resource || grant.scope !== input.scope) return null
-      const resident = residents.get(grant.residentId)
+      const family = grant ? tokenFamilies.get(grant.familyId) : undefined
+      if (!family || family.revoked || family.resource !== input.resource || family.scope !== input.scope) {
+        return null
+      }
+      const resident = residents.get(family.residentId)
       return resident ? { ...resident } : null
     },
     consumeOAuthRateLimit: async () => true,

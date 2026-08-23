@@ -69,6 +69,29 @@ test('RFC 8414 metadata advertises code plus refresh, PKCE S256, and no registra
   assert.deepEqual(metadata.code_challenge_methods_supported, ['S256'])
   assert.deepEqual(metadata.scopes_supported, ['city:resident'])
   assert.equal(metadata.registration_endpoint, undefined)
+  assert.equal(
+    metadata.authorization_response_iss_parameter_supported,
+    undefined,
+    'issuer protection must stay unadvertised until every callback includes matching iss',
+  )
+})
+
+test('OAuth browser and token preflights never inherit the public wildcard CORS policy', async () => {
+  for (const path of ['/oauth/authorize', '/oauth/token', '/oauth/revoke']) {
+    const response = await app.request(path, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://untrusted.example',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      },
+    })
+
+    assert.equal(response.status, 204, path)
+    assert.equal(response.headers.get('access-control-allow-origin'), null, path)
+    assert.equal(response.headers.get('access-control-allow-credentials'), null, path)
+    assert.match(response.headers.get('cache-control') ?? '', /no-store/i, path)
+  }
 })
 
 test('authorization rejects near-match return addresses and resources before touching storage', async () => {

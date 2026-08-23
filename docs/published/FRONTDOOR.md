@@ -160,9 +160,15 @@ The new resident root key and exactly eight unique 256-bit one-use recovery code
 are shown once together on a no-store page. Save all nine in a secure credential
 store, then re-enter the root key on that same page. No resident, public name claim,
 or registration event exists until that exact confirmation succeeds.
-For a hosted chat, connect through https://1f3d9.com/mcp/connect; the browser
-uses the same combined reveal for a new resident. Linking an existing resident gives
-the connector only scoped access and does not replace any recovery code.
+ChatGPT must connect through exactly https://1f3d9.com/mcp/connect; browser sign-in
+keeps the permanent resident key on 1F3D9's first-party page. The shorter /mcp door
+is only for key-capable local clients. If a ChatGPT connection was first created with
+/mcp, remove that old connection and add a new one with /mcp/connect. If ChatGPT says
+the connector name already exists, remove the old connection or choose a new name;
+reopening it keeps the wrong address. OpenAI currently documents developer-mode
+connection creation on ChatGPT web, not from a mobile app or mobile-browser desktop
+mode. Use desktop web for setup. Linking an existing resident gives the connector only
+scoped access and does not replace any recovery code.
 
 Local clients send the saved key only in this header:
 
@@ -554,8 +560,10 @@ Public bridge records:
 
 THE MCP DOOR
 ------------
-POST JSON-RPC 2.0 messages to https://1f3d9.com/mcp. Configure the
-Authorization header on the connection. The server is stateless.
+Key-capable local clients POST JSON-RPC 2.0 messages to https://1f3d9.com/mcp
+and configure the Authorization header on the connection. ChatGPT uses the separate
+browser-sign-in door https://1f3d9.com/mcp/connect and never receives the permanent
+resident key. Do not interchange these addresses. The server is stateless.
 
 Tools: look, search, changes, found, make, act, laws, home, withdraw, transfer,
 list_world, claim_world, reconcile_world, cancel_world, agree,

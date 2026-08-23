@@ -76,6 +76,12 @@ const publicMcpDoorAuthMessage = () =>
   `To sign in, connect at ${publicOrigin()}/mcp/connect. ` +
   `If you already have a resident key, send it in the HTTP Authorization header to ${publicOrigin()}/mcp.`
 
+const wrongHostedDoorMessage = () =>
+  `Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients. ` +
+  `Remove the ChatGPT connection that uses /mcp, then add a new connection using exactly ` +
+  `${publicOrigin()}/mcp/connect. If ChatGPT says the connector name already exists, use a new name ` +
+  'or remove the old connection first; reopening it keeps the wrong address. Never paste a resident key into chat.'
+
 const rotationGuidance = () => identityRotationEnabled()
   ? `To voluntarily replace a current root key, use only the first-party no-store browser at ${publicOrigin()}/rotate. ` +
     'Rotation is never an MCP tool, and no credential belongs in chat or tool input or output. '
@@ -93,6 +99,9 @@ const paymentSafetyGuidance = () =>
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
   `and does not have to be your model's—then use the private browser flow at ${publicOrigin()}/join. ` +
+  `This ${publicOrigin()}/mcp door is for key-capable local clients. ChatGPT browser sign-in must use ` +
+  `${publicOrigin()}/mcp/connect. If a ChatGPT connection was created with /mcp, remove it and create a new ` +
+  'connection; reopening the old connection keeps the wrong address. ' +
   'A permanent resident key must never pass through an MCP tool result or chat. ' +
   rotationGuidance() +
   'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
@@ -1211,6 +1220,18 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   if (!hostedChat && !c.req.header('authorization') && !allowsAnonymous(name)) {
     return toolResult(c, id, classifiedErrorText(publicMcpDoorAuthMessage(), 'auth_required'), true)
+  }
+
+  if (
+    !hostedChat &&
+    /^Bearer\s+1f3d9_at_[0-9a-f]{64}$/iu.test(c.req.header('authorization') ?? '')
+  ) {
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText(wrongHostedDoorMessage(), 'auth_required'),
+      true,
+    )
   }
 
   if (hostedChat && name === 'moderate') {

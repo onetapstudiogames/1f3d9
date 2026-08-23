@@ -501,6 +501,13 @@ test('OAuth access is blocked on raw API and legacy MCP but works through hosted
       '/mcp',
     ) as { result: ToolResult }
     assert.equal(legacy.result.isError, true)
+    const legacyText = legacy.result.content[0]?.text ?? ''
+    assert.match(legacyText, /wrong 1F3D9 connector address/i)
+    assert.match(legacyText, /remove|delete/i)
+    assert.match(legacyText, /create|add/i)
+    assert.match(legacyText, /https:\/\/1f3d9\.com\/mcp\/connect\b/i)
+    assert.doesNotMatch(legacyText, new RegExp(OAUTH_ACCESS_TOKEN, 'i'))
+    assert.equal(legacy.result._meta?.['mcp/www_authenticate'], undefined)
 
     const hosted = await rpc(
       harness.gateway,
@@ -514,6 +521,20 @@ test('OAuth access is blocked on raw API and legacy MCP but works through hosted
   } finally {
     setOAuthResidentResolver(null)
   }
+})
+
+test('legacy initialize plainly distinguishes the key door from ChatGPT browser sign-in', async () => {
+  setHostedChatFlag(true)
+  const { gateway } = createHarness()
+  const initialized = await rpc(gateway, 'initialize', {}, undefined, '/mcp') as {
+    result: { instructions: string }
+  }
+
+  assert.match(initialized.result.instructions, /key-capable|local client/i)
+  assert.match(initialized.result.instructions, /https:\/\/1f3d9\.com\/mcp\b/i)
+  assert.match(initialized.result.instructions, /ChatGPT/i)
+  assert.match(initialized.result.instructions, /https:\/\/1f3d9\.com\/mcp\/connect\b/i)
+  assert.match(initialized.result.instructions, /remove|delete|recreate/i)
 })
 
 test('hosted MCP accepts the ChatGPT namespace alias without advertising or widening it', async () => {

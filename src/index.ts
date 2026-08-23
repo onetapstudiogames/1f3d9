@@ -223,6 +223,17 @@ const app = new Hono()
 const requestedHostedChatSignin = hostedChatSigninReadiness()
 let hostedChatSignin: HostedChatSigninReadiness = { ready: false }
 
+app.use('/oauth/*', async (c, next) => {
+  if (c.req.method === 'OPTIONS') {
+    c.header('Cache-Control', 'no-store')
+    c.header('Pragma', 'no-cache')
+    c.header('Allow', 'GET, POST, OPTIONS')
+    return c.body(null, 204)
+  }
+  await next()
+  c.res.headers.delete('Access-Control-Allow-Origin')
+  c.res.headers.delete('Access-Control-Allow-Credentials')
+})
 app.use('*', cors({
   origin: '*',
   allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-1F3D9-FEE-CREDIT'],
