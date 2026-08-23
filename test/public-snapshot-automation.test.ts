@@ -71,6 +71,24 @@ test('package scripts expose migration, snapshot, and PostgreSQL proof commands'
   )
 })
 
+test('the runbook verifies preview before it presents the production migration', () => {
+  const runbook = source('docs/runbooks/PUBLIC_SNAPSHOTS.md')
+  const previewStart = runbook.indexOf('5. Export and verify preview')
+  const productionStart = runbook.indexOf('6. After preview export and verification pass')
+
+  assert.ok(previewStart >= 0, 'missing the preview export and verification step')
+  assert.ok(productionStart > previewStart, 'production must be a later, separate step')
+
+  const previewStep = runbook.slice(previewStart, productionStart)
+  assert.match(previewStep, /npm run snapshot:export/u)
+  assert.match(previewStep, /npm run snapshot:verify/u)
+  assert.doesNotMatch(previewStep, /migrate:production/u)
+
+  const productionStep = runbook.slice(productionStart, runbook.indexOf('## 2.', productionStart))
+  assert.match(productionStep, /separate approval/iu)
+  assert.match(productionStep, /npm run migrate:production:public-snapshots/u)
+})
+
 test('snapshot workflow defaults manual runs to dry-run and reserves writes for publication', () => {
   const workflow = source('.github/workflows/public-snapshot.yml')
 

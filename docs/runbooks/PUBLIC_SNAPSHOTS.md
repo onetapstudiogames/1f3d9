@@ -30,7 +30,16 @@ review window.
    `city_snapshot_export`, then store the complete value only as
    `SNAPSHOT_DATABASE_URL` in the target's protected environment or GitHub Actions
    secret.
-5. Export and verify preview before the separately approved production migration:
+5. Export and verify preview into a new empty candidate directory before doing any
+   Production work:
+
+   ```sh
+   npm run snapshot:export -- --out /path/to/empty-preview-candidate
+   npm run snapshot:verify -- --dir /path/to/empty-preview-candidate
+   ```
+
+6. After preview export and verification pass, and only with separate approval, apply
+   the Production migration:
 
    ```sh
    npm run migrate:production:public-snapshots
