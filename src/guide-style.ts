@@ -126,7 +126,8 @@ code { overflow-wrap: anywhere; }
 
 .city-seal { margin: 0; }
 .city-seal img {
-  width: min(100%, 23rem);
+  width: min(100%, 18rem);
+  height: auto;
   margin-inline: auto;
   border-radius: 24%;
   box-shadow: 1rem 1rem 0 var(--stone);
@@ -140,14 +141,13 @@ code { overflow-wrap: anywhere; }
   border: 3px solid var(--ink);
   box-shadow: 0.8rem 0.8rem 0 var(--stone);
 }
-.route-sign::before { content: "TWO DOORS"; display: block; margin-bottom: 1rem; color: var(--signal); font: 900 0.7rem/1 var(--mono); letter-spacing: 0.14em; }
+.route-sign::before { content: "The short version"; display: block; margin-bottom: 1rem; color: var(--signal); font: 900 0.7rem/1 var(--mono); letter-spacing: 0.08em; }
 .route-sign p { margin: 0; }
 .route-sign p + p { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.35); }
 .route-sign code { display: block; margin-top: 0.3rem; color: var(--paper-light); font-size: clamp(0.72rem, 1.6vw, 0.9rem); }
 
 .guide-section { padding: clamp(4rem, 8vw, 7rem) 0; border-bottom: 2px solid var(--line); }
-.section-heading { display: grid; grid-template-columns: minmax(10rem, 0.35fr) minmax(0, 1fr); gap: 1rem 3rem; align-items: start; margin-bottom: 2.5rem; }
-.section-number { margin: 0; color: var(--brick); font: 900 0.72rem/1.3 var(--mono); letter-spacing: 0.14em; }
+.section-heading { margin-bottom: 2.5rem; }
 .section-heading h2 { max-width: 18ch; margin: 0; font: 800 clamp(2rem, 5vw, 4.1rem)/1 var(--serif); letter-spacing: -0.035em; }
 .section-intro { max-width: 44rem; margin: 1rem 0 0; color: var(--muted); font-size: 1.05rem; }
 
@@ -159,13 +159,12 @@ code { overflow-wrap: anywhere; }
 .trio-ledger { border-top: 4px solid var(--ink); }
 .site-entry {
   display: grid;
-  grid-template-columns: 2.2rem minmax(11rem, 0.55fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(11rem, 0.55fr) minmax(0, 1fr) auto;
   gap: 1rem 1.5rem;
   align-items: baseline;
   padding: 1.35rem 0;
   border-bottom: 1px solid var(--line);
 }
-.site-entry > span { color: var(--brick); font: 900 0.72rem/1 var(--mono); }
 .site-entry h3, .site-entry p { margin: 0; }
 .site-entry h3 { font: 800 1.35rem/1.2 var(--serif); }
 .site-entry p { color: var(--muted); }
@@ -174,8 +173,7 @@ code { overflow-wrap: anywhere; }
 .human-aside p { margin: 0; }
 
 .life-list { border-top: 3px solid var(--ink); }
-.life-row { display: grid; grid-template-columns: 2.2rem minmax(11rem, 0.5fr) minmax(0, 1fr); gap: 1rem 2rem; padding: 1.5rem 0; border-bottom: 1px solid var(--line); }
-.life-row .number { color: var(--brick); font: 900 0.72rem/1.5 var(--mono); }
+.life-row { display: grid; grid-template-columns: minmax(11rem, 0.5fr) minmax(0, 1fr); gap: 1rem 2rem; padding: 1.5rem 0; border-bottom: 1px solid var(--line); }
 .life-row h3, .life-row p { margin: 0; }
 .life-row h3 { font: 800 1.25rem/1.3 var(--serif); }
 .life-row p { color: var(--muted); }
@@ -272,11 +270,11 @@ pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var
 @media (max-width: 52rem) {
   .guide-hero, .continuity-statement, .success-card { grid-template-columns: minmax(0, 1fr); }
   .guide-hero { min-height: auto; }
-  .city-seal { width: min(70%, 20rem); }
-  .section-heading, .client-guide, .new-resident { grid-template-columns: minmax(0, 1fr); }
+  .city-seal { width: min(45%, 10rem); }
+  .client-guide, .new-resident { grid-template-columns: minmax(0, 1fr); }
   .move-steps { grid-template-columns: minmax(0, 1fr); }
-  .site-entry { grid-template-columns: 2rem minmax(0, 1fr); }
-  .site-entry p, .site-entry a { grid-column: 2; }
+  .site-entry { grid-template-columns: minmax(0, 1fr); }
+  .site-entry p, .site-entry a { grid-column: 1; }
 }
 @media (max-width: 38rem) {
   .guide-masthead { align-items: flex-start; }
@@ -285,8 +283,8 @@ pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var
   .guide-nav a { padding: 0.35rem 0.55rem; }
   .guide-main { width: min(100% - 1.25rem, 72rem); }
   .door-grid, .move-grid { grid-template-columns: minmax(0, 1fr); }
-  .life-row { grid-template-columns: 2rem minmax(0, 1fr); }
-  .life-row p { grid-column: 2; }
+  .life-row { grid-template-columns: minmax(0, 1fr); }
+  .life-row p { grid-column: 1; }
   .guide-footer { grid-template-columns: minmax(0, 1fr); }
   .guide-footer nav { justify-content: start; }
   .guide-footer .operator { grid-column: 1; }

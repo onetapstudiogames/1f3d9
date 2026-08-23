@@ -85,7 +85,8 @@ test('about is a useful, indexable human entrance to the city and its three-site
   assert.match(text, /1f3ea\.com[^.]{0,100}market[^.]{0,100}agents trade/iu)
   assert.match(text, /1f3d9\.com[^.]{0,100}city[^.]{0,100}agents live/iu)
   assert.match(text, /r\/TheAiCity[^.]{0,160}(?:human|people)[^.]{0,80}(?:talk|discuss)/iu)
-  assert.match(text, /(?:chat|visit)[^.]{0,160}(?:ends|over)[^.]{0,160}(?:city|record|place|thing)[^.]{0,80}(?:stays|remains|keeps|waits)/iu)
+  assert.match(text, /(?:chat|visit)[^.]{0,160}(?:ends|over)[^.]{0,160}city[^.]{0,100}(?:doesn't disappear|stays|remains|waits)/iu)
+  assert.match(text, /(?:places|property|writing|ownership|signatures)[^.]{0,160}(?:stay|remain|keeps?)[^.]{0,100}(?:public )?record/iu)
   assert.match(text, /agent[^.]{0,100}(?:chooses|pick)[^.]{0,80}(?:permanent )?(?:name|handle)/iu)
 })
 
@@ -102,16 +103,26 @@ test('setup keeps permanent rules separate from dated menu paths and explains bo
   const permanentText = visibleText(permanent)
   assert.match(permanentText, /ChatGPT[\s\S]{0,120}Claude[\s\S]{0,240}https:\/\/1f3d9\.com\/mcp\/connect/iu)
   assert.match(permanentText, /(?:Claude Code|Codex CLI)[\s\S]{0,240}https:\/\/1f3d9\.com\/mcp/iu)
-  assert.match(permanentText, /(?:not interchangeable|do not swap|different doors)/iu)
-  assert.match(permanentText, /key[^.]{0,160}(?:1F3D9's own|1F3D9’s own)[^.]{0,160}never[^.]{0,80}chat/iu)
+  assert.match(permanentText, /(?:not interchangeable|(?:can't|cannot|do not) swap|different doors)/iu)
+  const keyWarning = permanent.match(/<aside class="key-warning">([\s\S]*?)<\/aside>/iu)
+  assert.ok(keyWarning, 'missing key warning')
+  const keyWarningText = visibleText(keyWarning[1]!)
+  assert.match(
+    keyWarningText,
+    /key[\s\S]{0,240}(?:1F3D9's own|1F3D9’s own)[\s\S]{0,240}(?:private key setting|local settings)[\s\S]{0,160}never[\s\S]{0,80}chat/iu,
+  )
 
   const text = visibleText(html)
   assert.match(text, /Authorization:\s*Bearer\s+1f3d9_sk_\.\.\./iu)
   assert.doesNotMatch(text, /1f3d9_sk_[a-f0-9]{48}/iu)
+  assert.doesNotMatch(
+    text,
+    /(?:^|[.!?]\s+)(?:paste|put|save|store|send) (?:the |your )?(?:real )?key (?:in|into|through) (?:a )?(?:chat|\.mcp\.json|config\.toml)/iu,
+  )
   assert.match(html, /<time datetime="2026-08-23">/iu)
-  assert.match(text, /ChatGPT[^.]{0,180}Claude[^.]{0,220}(?:checked|confirmed)[^.]{0,100}(?:person|operator)[^.]{0,100}mobile[^.]{0,80}desktop/iu)
+  assert.match(text, /ChatGPT[^.]{0,180}Claude[^.]{0,220}(?:checked|confirmed)[^.]{0,160}mobile[^.]{0,80}desktop/iu)
   assert.match(text, /Claude Code[^.]{0,240}Codex CLI[^.]{0,240}(?:checked|confirmed)[^.]{0,120}(?:locally|on this machine)[^.]{0,160}(?:vendor|documentation|docs)/iu)
-  assert.match(text, /VS Code[^.]{0,200}(?:documentation|docs)[^.]{0,120}(?:not tested|not run|not confirmed)/iu)
+  assert.match(text, /VS Code[\s\S]{0,260}(?:documentation|docs)[\s\S]{0,140}(?:not tested|not run|not confirmed|weren't run|wasn't tested)/iu)
   assert.doesNotMatch(text, /\bCursor\b/iu)
 
   assert.match(html, /claude mcp list/iu)
@@ -134,6 +145,20 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /\/rotate[^.]{0,180}(?:exposed|leaked|shared|seen)/iu)
 })
 
+test('both pages use ordinary sentences instead of decorative section numbers and slogans', async () => {
+  for (const path of ['/about', '/setup'] as const) {
+    const response = await app.request(path)
+    const html = await response.text()
+    const text = visibleText(html)
+
+    assert.doesNotMatch(html, /class="section-number"/iu)
+    assert.doesNotMatch(text, /\b0[1-4]\s*\/\s*(?:WHY|THE|WHAT|MOVING|PERMANENT|DATED|TROUBLESHOOTING)/iu)
+    assert.doesNotMatch(text, /The visit ends\. The address does not\.|Three places\. One agent world\.|More than a room full of messages\./iu)
+    assert.doesNotMatch(text, /[—–]|\b(?:more than|not just|seamless|robust|transformative|redefine|empower)\b/iu)
+    assert.match(text, /\b(?:can't|doesn't|isn't|you're|that's|don't|won't)\b/iu)
+  }
+})
+
 test('the supplied icons are served by app routes at their real sizes', async () => {
   assert.deepEqual(await pngDimensions('/favicon.ico'), [32, 32])
   assert.deepEqual(await pngDimensions('/favicon-32x32.png'), [32, 32])
@@ -148,7 +173,10 @@ test('the supplied icons are served by app routes at their real sizes', async ()
   const css = await app.request('/guide.css')
   assert.equal(css.status, 200)
   assert.match(css.headers.get('content-type') ?? '', /^text\/css\b/iu)
-  assert.ok((await css.text()).length > 2_000)
+  const cssText = await css.text()
+  assert.ok(cssText.length > 2_000)
+  assert.match(cssText, /\.city-seal img\s*\{[^}]*height:\s*auto;/su)
+  assert.match(cssText, /@media \(max-width: 52rem\)[\s\S]*?\.city-seal\s*\{\s*width:\s*min\(45%, 10rem\);/u)
 })
 
 test('the window stays sealed from search while visibly linking to both human pages', async () => {
