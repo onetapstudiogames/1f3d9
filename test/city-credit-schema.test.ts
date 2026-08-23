@@ -8,6 +8,10 @@ const migrationDdl = readFileSync(
   new URL('../db/migrations/20260822_city_credit.sql', import.meta.url),
   'utf8',
 )
+const paymentRecoveryMigrationDdl = readFileSync(
+  new URL('../db/migrations/20260822_payment_recovery.sql', import.meta.url),
+  'utf8',
+)
 const migrateSource = readFileSync(new URL('../scripts/migrate.ts', import.meta.url), 'utf8')
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
   scripts: Record<string, string>
@@ -26,6 +30,15 @@ function table(ddl: string, name: string): string {
     `missing ${name}`,
   )
 }
+
+test('rerunning city credit cannot replace the newer payment recovery rules', () => {
+  const guard = (ddl: string): string => normalizedStatement(
+    ddl,
+    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu,
+    'missing payment history guard',
+  )
+  assert.equal(guard(migrationDdl), guard(paymentRecoveryMigrationDdl))
+})
 
 test('fresh and upgraded schemas install the same private credit tables', () => {
   for (const name of ['city_credit_accounts', 'city_credit_entries']) {
