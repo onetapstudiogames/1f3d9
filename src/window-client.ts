@@ -27,10 +27,19 @@ export function mergeResidentRows<
   })
 }
 
+export function windowPlaceLabel(
+  placeId: number | null,
+  place: Readonly<{ path: string }> | null,
+): string | null {
+  if (!placeId) return null
+  return place?.path ?? `Place #${placeId} · not currently loaded`
+}
+
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
 const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
 const MERGE_RESIDENT_ROWS_JS = mergeResidentRows.toString()
+const WINDOW_PLACE_LABEL_JS = windowPlaceLabel.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -49,6 +58,7 @@ export const WINDOW_JS = `(() => {
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
   const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
+  const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -1925,20 +1935,26 @@ ${WINDOW_CLIENT_SAFETY_JS}
       document.createTextNode(' · '),
       timeNode(note.created_at, ''),
     )
-    if (place) meta.append(document.createTextNode(' · ' + place.name))
+    const location = windowPlaceLabel(note.place_id, place)
+    if (location) {
+      meta.append(
+        document.createTextNode(' · '),
+        element('span', 'note-location', location),
+      )
+    }
     card.append(meta, renderExpandableBody('note', note.id, note.body, note.truncated))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return card
   }
 
-  function renderNotes(target, notes, emptyMessage) {
+  function renderNotes(target, notes, emptyMessage, place) {
     if (!target) return
     if (!notes.length) {
       renderEmpty(target, 'empty-row', emptyMessage)
       return
     }
     const list = element('div', 'note-list')
-    list.append(...notes.map(note => noteCard(note)))
+    list.append(...notes.map(note => noteCard(note, place)))
     target.replaceChildren(list)
   }
 
@@ -2034,7 +2050,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
     renderThings(nodes.placeThings, historyEntry('things', filters).rows)
     renderNotes(nodes.placeConversation, historyEntry('notes', filters).rows,
-      'No conversation in the latest public snapshot matches here.')
+      'No conversation in the latest public snapshot matches here.', place)
     renderHistoryControl(nodes.placeThingsPage, 'things', 'things', filters)
     renderHistoryControl(nodes.placeNotesPage, 'notes', 'notes', filters)
   }
@@ -2090,7 +2106,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('span', 'place-facts', place.path + ' · ' + String(notes.length) + ' shown'),
       )
       const list = element('div', 'note-list')
-      list.append(...notes.map(note => noteCard(note)))
+      list.append(...notes.map(note => noteCard(note, place)))
       group.append(heading, list)
       nodes.conversations.replaceChildren(group)
     } else {
@@ -2162,7 +2178,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       row.append(copy, timeNode(event.at, 'activity-time'))
       const placeId = eventPlaceId(event, snapshot)
       const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
-      if (place) row.append(element('span', 'activity-context', 'Observed at ' + place.path))
+      const location = windowPlaceLabel(placeId, place)
+      if (location) row.append(element('span', 'activity-context', 'Observed at ' + location))
       return row
     })
     nodes.activity.replaceChildren(...rows)
