@@ -377,6 +377,9 @@ test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.title.includes('cold deep link') || testInfo.title.includes('focused selection retry')) {
     await page.evaluate(() => { window.location.hash = '#view=place&place=77' })
   }
+  if (testInfo.title.includes('missing directory selection')) {
+    await page.evaluate(() => { window.location.hash = '#view=place&place=999' })
+  }
   let directoryAttempts = 0
   await page.route('**/api/window**', async route => {
     const url = new URL(route.request().url())
@@ -681,10 +684,15 @@ test('complete directory selection uses one focused place read without loading c
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza',
-    'root_plaza / inner_hall',
-    'root_plaza / inner_hall / quiet_annex',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
+    'quiet_annex · Place #77',
   ])
+  expect(await page.locator('#place-filter optgroup').evaluateAll(groups =>
+    groups.map(group => group.getAttribute('label')),
+  )).toEqual(['World root', 'inner_hall'])
+  const placeFilterBox = await page.locator('#place-filter').boundingBox()
+  expect(placeFilterBox?.width ?? 0).toBeGreaterThan(240)
   await expect(page.locator('#view-scope')).toContainText(/currently loaded 2 of 5 places/i)
 
   const focusedRequest = page.waitForRequest(request => {
@@ -746,6 +754,15 @@ test('cold deep link replaces its numbered fallback when the directory arrives l
   )
 })
 
+test('missing directory selection stays available under an honest fallback group', async ({ page }) => {
+  const fallbackGroup = page.locator('#place-filter optgroup[label="Current selection"]')
+  await expect(fallbackGroup).toHaveCount(1)
+  const fallbackOption = fallbackGroup.locator('option')
+  await expect(fallbackOption).toHaveText('Place #999 · not currently loaded')
+  await expect(fallbackOption).toHaveAttribute('value', '999')
+  await expect(page.locator('#place-filter')).toHaveValue('999')
+})
+
 test('focused selection retry retains a useful keyboard focus target', async ({ page }) => {
   const retry = page.getByRole('button', { name: 'Retry loading this place' })
   await expect(retry).toBeVisible()
@@ -761,8 +778,8 @@ test('directory failure is accessible and retryable without hiding the loaded fa
   await expect(alert).toContainText(/complete city directory could not be loaded/i)
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza',
-    'root_plaza / inner_hall',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
   ])
 
   await alert.getByRole('button', { name: 'Retry loading the complete directory' }).click()
@@ -842,10 +859,10 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza',
-    'root_plaza / inner_hall',
-    'root_plaza / inner_hall / renamed_annex',
-    'root_plaza / inner_hall / fresh_gallery',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
+    'renamed_annex · Place #77',
+    'fresh_gallery · Place #78',
   ])
   await expect(page.locator('#place-focus-title')).toHaveText('renamed_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
