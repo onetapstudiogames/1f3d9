@@ -174,7 +174,7 @@ button { color: inherit; }
   text-transform: uppercase;
 }
 .view-filters select {
-  width: min(11rem, 20vw);
+  width: min(16rem, 26vw);
   padding: 0.3rem 1.6rem 0.3rem 0.4rem;
   color: #fff;
   background: var(--night-soft);
@@ -710,7 +710,8 @@ button { color: inherit; }
 @media (max-width: 40rem) {
   .city-sign { grid-template-columns: 1fr; }
   .watch-state { border-block-start: 3px solid #061e17; border-inline-start: 0; }
-  .view-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .view-filters { display: grid; grid-template-columns: 1fr; }
+  .view-filters label:first-child { grid-column: 1; }
   .directory-status { grid-column: 1 / -1; max-width: none; border-block-start: 2px solid var(--line); }
   .share-view { grid-column: 1 / -1; border-block-start: 2px solid var(--line); border-inline-start: 0; }
   .place-orientation { grid-template-columns: 1fr; }

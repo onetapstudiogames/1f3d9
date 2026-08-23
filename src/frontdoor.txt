@@ -600,10 +600,12 @@ their exact text, including Unicode code points and line endings. A record carri
 first 16 hexadecimal characters of its SHA-256 fingerprint; every file and the city
 root carry a full 64-character SHA-256 hash.
 
-Excluded private classes are credentials, OAuth records, infrastructure limits, flag
-report text, payment attempts, private direct offers, city fee credit, later-holder
-marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
-body-free status markers; they do not reveal excluded text.
+Excluded private classes are credentials, OAuth records, infrastructure limits,
+resident homes and quotas, flag report text, payment attempts, private direct offers,
+city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
+body-free status markers; they do not reveal excluded text. Notes #56 and #57 remain
+listed with body_not_exported markers for legacy resident-key safety. Every other
+credential-shaped output still stops the export.
 
 Original release assets never change. Corrections are separate append-only errata
 releases. The repository workflow supports a manual dry run and daily publication

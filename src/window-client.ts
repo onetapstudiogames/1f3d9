@@ -45,6 +45,14 @@ export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{
   path: string
 }>
 
+export type WindowDirectoryPlaceOptionGroup = Readonly<{
+  label: string
+  options: readonly Readonly<{
+    id: number
+    label: string
+  }>[]
+}>
+
 export function deriveWindowDirectoryPlaces(
   values: readonly WindowDirectoryPlace[],
 ): WindowDirectoryPlaceWithPath[] {
@@ -81,12 +89,43 @@ export function deriveWindowDirectoryPlaces(
   return [...unique.values()].map(value => ({ ...value, path: pathFor(value) }))
 }
 
+export function groupWindowDirectoryPlaces(
+  values: readonly WindowDirectoryPlaceWithPath[],
+): WindowDirectoryPlaceOptionGroup[] {
+  const groups = new Map<string, Array<{ id: number, label: string }>>()
+  const placesById = new Map(values.map(place => [place.id, place]))
+  const ensureGroup = (label: string) => {
+    const existing = groups.get(label)
+    if (existing) return existing
+    const created: Array<{ id: number, label: string }> = []
+    groups.set(label, created)
+    return created
+  }
+
+  for (const place of values) {
+    const parts = place.path.split(' / ').filter(Boolean)
+    const groupLabel = place.parent_id === null
+      ? 'World root'
+      : parts[1] || 'Other places'
+    const parent = place.parent_id === null ? undefined : placesById.get(place.parent_id)
+    const parentContext = parts.length > 3 && parent ? ` — in ${parent.name}` : ''
+    const shortLabel = `${place.name}${parentContext} · Place #${place.id}`
+    ensureGroup(groupLabel).push({ id: place.id, label: shortLabel })
+  }
+
+  return [...groups.entries()].map(([label, options]) => Object.freeze({
+    label,
+    options: Object.freeze(options.map(option => Object.freeze({ ...option }))),
+  }))
+}
+
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
 const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
 const MERGE_RESIDENT_ROWS_JS = mergeResidentRows.toString()
 const WINDOW_PLACE_LABEL_JS = windowPlaceLabel.toString()
 const DERIVE_WINDOW_DIRECTORY_PLACES_JS = deriveWindowDirectoryPlaces.toString()
+const GROUP_WINDOW_DIRECTORY_PLACES_JS = groupWindowDirectoryPlaces.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -107,6 +146,7 @@ export const WINDOW_JS = `(() => {
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
   const deriveWindowDirectoryPlaces = ${DERIVE_WINDOW_DIRECTORY_PLACES_JS}
+  const groupWindowDirectoryPlaces = ${GROUP_WINDOW_DIRECTORY_PLACES_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -1370,17 +1410,28 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function populateFilters(snapshot) {
     if (nodes.placeFilter) {
       const places = state.directory.loaded ? state.directory.places : snapshot.flatPlaces
-      const missingPlace = state.placeId && !places.some(place => place.id === state.placeId)
-        ? [element('option', '', 'Place #' + String(state.placeId) + ' · not currently loaded')]
-        : []
-      if (missingPlace[0]) missingPlace[0].value = String(state.placeId)
-      const options = [element('option', '', 'All places'), ...places.map(place => {
-        const option = element('option', '', place.path)
-        option.value = String(place.id)
-        return option
-      }), ...missingPlace]
-      options[0].value = ''
-      nodes.placeFilter.replaceChildren(...options)
+      const placeholder = element('option', '', 'All places')
+      placeholder.value = ''
+      const filterNodes = [placeholder]
+      for (const group of groupWindowDirectoryPlaces(places)) {
+        const optgroup = document.createElement('optgroup')
+        optgroup.label = group.label
+        for (const choice of group.options) {
+          const option = element('option', '', choice.label)
+          option.value = String(choice.id)
+          optgroup.append(option)
+        }
+        filterNodes.push(optgroup)
+      }
+      if (state.placeId && !places.some(place => place.id === state.placeId)) {
+        const optgroup = document.createElement('optgroup')
+        optgroup.label = 'Current selection'
+        const option = element('option', '', 'Place #' + String(state.placeId) + ' · not currently loaded')
+        option.value = String(state.placeId)
+        optgroup.append(option)
+        filterNodes.push(optgroup)
+      }
+      nodes.placeFilter.replaceChildren(...filterNodes)
       nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
     }
     if (nodes.residentFilter) {

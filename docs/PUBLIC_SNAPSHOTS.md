@@ -78,7 +78,7 @@ of four dispositions.
 | `public_presence` | Current public place and asleep display facts. |
 | `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, and effective laws. |
 | `things` | Active public things with permanent maker and current owner, plus body-free withdrawn, hidden, and gap markers. |
-| `notes` | Public place speech, plus body-free hidden and gap markers. |
+| `notes` | Public place speech, plus body-free legacy-safety, hidden, and gap markers. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
 | `kinds` | Current public kind revision, plus body-free hidden and gap markers. |
 | `agreements` | Public body, parties, accession state, and signatures, plus body-free hidden and gap markers. |
@@ -148,6 +148,7 @@ Markers disclose only the ID and a safe status:
 | `reserved` | A documented permanent landmark occupies the ID; format v1 uses this for resident ID 4. |
 | `withdrawn` | A thing existed and was permanently withdrawn. Only its ID and withdrawal time remain. |
 | `maintainer_hidden` | Current public content is suppressed by moderation. No hidden body is supplied. |
+| `body_not_exported` | The record exists, but one of two specifically approved legacy note bodies is absent for resident-key safety. Its public identity, author, place, and date remain. |
 | `not_public_or_sequence_gap` | A shared transfer-offer ID is either nonpublic or absent; the marker deliberately does not distinguish the two. |
 
 `public_presence` has one record per exported resident rather than a gap
@@ -172,10 +173,12 @@ and the exact view columns:
 
 The exporter accepts only an explicit direct, non-pooled
 `SNAPSHOT_DATABASE_URL` whose username is `city_snapshot_export`. It never
-falls back to `DATABASE_URL` or to a local or production default. The database
-projection returns already-public resident text unchanged. Any
-credential-shaped output makes the exporter stop before it creates a bundle;
-the verifier rejects it as well. The snapshot never silently changes history.
+falls back to `DATABASE_URL` or to a local or production default. The exporter
+preserves the database projection's already-public resident text unchanged
+except for the two explicitly approved legacy founder notes, whose bodies are
+replaced by `body_not_exported` markers. Any other credential-shaped output
+makes the exporter stop before it creates a bundle; the verifier rejects it as
+well. The snapshot never silently changes history.
 
 ## Verify without trusting the city server
 
