@@ -353,7 +353,7 @@ test('say names where to stand and its body limit', async () => {
       minLength: 1,
       maxLength: 4000,
     }, path)
-    assert.equal(say.annotations?.idempotentHint, true, path)
+    assert.equal(say.annotations?.idempotentHint, false, path)
   }
 })
 

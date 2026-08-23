@@ -720,7 +720,7 @@ const TOOLS: readonly ToolDefinition[] = [
       },
       required: ['place_id', 'body'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: '/api/note',
