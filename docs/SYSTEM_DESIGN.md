@@ -361,8 +361,10 @@ endings represented in JSON. Each record has a 16-character lowercase hexadecima
 SHA-256 prefix for citation; each file and the city root have full 64-character SHA-256
 values. The canonical manifest contains exact counts, byte lengths, hashes, source
 commit, export time, recipe, and the complete registry. Safe body-free markers explain
-reserved IDs, sequence gaps, withdrawn things, maintainer-hidden records, and shared
-offer IDs that are nonpublic or absent.
+reserved IDs, sequence gaps, withdrawn things, maintainer-hidden records, the two
+explicitly approved legacy founder note bodies withheld for resident-key safety, and
+shared offer IDs that are nonpublic or absent. Any other credential-shaped output still
+aborts the export.
 
 The local verifier rejects changed bytes, fingerprints, order, IDs, counts, hashes,
 registry, or file set without contacting the city server. Publication verifies first,

@@ -158,6 +158,141 @@ test('credential-shaped public text aborts before any snapshot bundle is written
   }
 })
 
+test('the two approved legacy founder note bodies are represented but not exported', async () => {
+  const credential = `1f3d9_sk_${'cd'.repeat(24)}`
+  const rows = [56, 57].map(id => ({
+    class_name: 'notes',
+    record_id: String(id),
+    sort_key: String(id),
+    payload: {
+      id,
+      status: 'exported',
+      place_id: 3,
+      author_id: 1,
+      author: 'founder',
+      body: `legacy example ${credential}`,
+      created_at: id === 56
+        ? '2026-08-13T04:32:00.687149+00:00'
+        : '2026-08-13T04:36:04.669429+00:00',
+    },
+    exported_at: '2026-08-23T12:34:56.000Z',
+  }))
+  const client: SnapshotDatabaseClient = {
+    connect: async () => undefined,
+    query: async text => {
+      if (/snapshot-export:attest-role/iu.test(text)) return { rows: [{
+        current_user: 'city_snapshot_export',
+        transaction_read_only: 'on',
+        can_read_view: true,
+        can_read_residents: false,
+        can_write_residents: false,
+        can_read_public_base: false,
+        can_write_public_base: false,
+        can_read_private: false,
+        view_columns: ['class_name', 'record_id', 'sort_key', 'payload'],
+      }] }
+      if (/snapshot-export:records/iu.test(text)) return { rows }
+      return { rows: [] }
+    },
+    end: async () => undefined,
+  }
+  const root = await mkdtemp(join(tmpdir(), '1f3d9-snapshot-legacy-notes-'))
+  try {
+    const result = await exportPublicSnapshot({
+      outputDirectory: root,
+      databaseUrl: 'postgresql://city_snapshot_export:secret@db.example/city',
+      sourceCommit: 'c'.repeat(40),
+      client,
+    })
+    assert.equal(result.counts.notes, 2)
+    const notes = (await readFile(join(root, 'notes.ndjson'), 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map(line => (JSON.parse(line) as { record: Readonly<Record<string, unknown>> }).record)
+    assert.deepEqual(notes, rows.map(row => ({
+      id: row.payload.id,
+      status: 'body_not_exported',
+      reason: 'legacy resident key safety',
+      place_id: row.payload.place_id,
+      author_id: row.payload.author_id,
+      author: row.payload.author,
+      created_at: row.payload.created_at,
+    })))
+    assert.doesNotMatch(await readFile(join(root, 'notes.ndjson'), 'utf8'), /1f3d9_sk_/iu)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('an approved legacy note exclusion stops if its immutable metadata drifts', async () => {
+  const basePayload = Object.freeze({
+    id: 56,
+    status: 'exported',
+    place_id: 3,
+    author_id: 1,
+    author: 'founder',
+    body: `legacy example 1f3d9_sk_${'ef'.repeat(24)}`,
+    created_at: '2026-08-13T04:32:00.687149+00:00',
+  })
+  const changedRows = [
+    { recordId: '56', payload: { ...basePayload, status: 'maintainer_hidden' } },
+    { recordId: '56', payload: { ...basePayload, place_id: 4 } },
+    { recordId: '56', payload: { ...basePayload, author_id: 2 } },
+    { recordId: '56', payload: { ...basePayload, author: 'not-founder' } },
+    {
+      recordId: '56',
+      payload: { ...basePayload, created_at: '2026-08-13T04:32:00.687150+00:00' },
+    },
+    {
+      recordId: '57',
+      payload: {
+        ...basePayload,
+        id: 57,
+        created_at: '2026-08-13T04:36:04.669430+00:00',
+      },
+    },
+  ]
+  for (const [index, row] of changedRows.entries()) {
+    const client: SnapshotDatabaseClient = {
+      connect: async () => undefined,
+      query: async text => {
+        if (/snapshot-export:attest-role/iu.test(text)) return { rows: [{
+          current_user: 'city_snapshot_export',
+          transaction_read_only: 'on',
+          can_read_view: true,
+          can_read_residents: false,
+          can_write_residents: false,
+          can_read_public_base: false,
+          can_write_public_base: false,
+          can_read_private: false,
+          view_columns: ['class_name', 'record_id', 'sort_key', 'payload'],
+        }] }
+        if (/snapshot-export:records/iu.test(text)) return { rows: [{
+          class_name: 'notes',
+          record_id: row.recordId,
+          sort_key: row.recordId,
+          payload: row.payload,
+          exported_at: '2026-08-23T12:34:56.000Z',
+        }] }
+        return { rows: [] }
+      },
+      end: async () => undefined,
+    }
+    const root = await mkdtemp(join(tmpdir(), `1f3d9-snapshot-drift-${index}-`))
+    try {
+      await assert.rejects(() => exportPublicSnapshot({
+        outputDirectory: root,
+        databaseUrl: 'postgresql://city_snapshot_export:secret@db.example/city',
+        sourceCommit: 'b'.repeat(40),
+        client,
+      }), /no longer matches its approved exclusion/iu)
+      assert.deepEqual(await readdir(root), [])
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  }
+})
+
 test('export refuses a role with base-table read or write access', async () => {
   const client: SnapshotDatabaseClient = {
     connect: async () => undefined,

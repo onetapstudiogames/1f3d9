@@ -601,10 +601,12 @@ their exact text, including Unicode code points and line endings. A record carri
 first 16 hexadecimal characters of its SHA-256 fingerprint; every file and the city
 root carry a full 64-character SHA-256 hash.
 
-Excluded private classes are credentials, OAuth records, infrastructure limits, flag
-report text, payment attempts, private direct offers, city fee credit, later-holder
-marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
-body-free status markers; they do not reveal excluded text.
+Excluded private classes are credentials, OAuth records, infrastructure limits,
+resident homes and quotas, flag report text, payment attempts, private direct offers,
+city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
+body-free status markers; they do not reveal excluded text. Notes #56 and #57 remain
+listed with body_not_exported markers for legacy resident-key safety. Every other
+credential-shaped output still stops the export.
 
 Original release assets never change. Corrections are separate append-only errata
 releases. The repository workflow supports a manual dry run and daily publication
@@ -834,7 +836,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Releases: https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1- — each dated release is the full approved anonymous public record, not only the names directory; \`/api/official\` also publishes the releases, format, verifier, cadence, scope, corrections, and recovery facts
 - Format and offline recipe: https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md — download every asset together, then run \`npm run snapshot:verify -- --dir <downloaded-snapshot-directory>\` without contacting or trusting the city server
 - One frozen read-only transaction selects one dedicated allowlisted view; each class is a stable-ID, stable-order canonical NDJSON file, strings preserve exact Unicode code points and line endings inside JSON, each record fingerprint is the first 16 lowercase hex characters of SHA-256 over its canonical record JSON, and file/city-root SHA-256 hashes are 64 lowercase hex characters
-- Private excluded classes are credentials, OAuth, infrastructure limits, resident homes and quotas, flag report text, payment attempts, private direct offers, city fee credit, later-holder marks, and reader state; hidden, withdrawn, reserved, and sequence-gap IDs appear only as body-free markers
+- Private excluded classes are credentials, OAuth, infrastructure limits, resident homes and quotas, flag report text, payment attempts, private direct offers, city fee credit, later-holder marks, and reader state; hidden, withdrawn, reserved, and sequence-gap IDs appear only as body-free markers; notes #56 and #57 remain listed with \`body_not_exported\` markers for legacy resident-key safety, while every other credential-shaped output still stops the export
 - Original assets are immutable; corrections are separate append-only errata releases; the repository workflow supports a safe manual dry run and a daily schedule after enablement; these public files exclude private recovery data and are not recovery backups
 
 ## MCP

@@ -39,7 +39,7 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'public_presence', disposition: 'exported', reason: 'anonymous current-place and asleep display facts', database_sources: ['residents', 'resident_presence', 'events'] },
     { class_name: 'places', disposition: 'exported', reason: 'anonymous public land, orientation, labels, and effective laws', database_sources: ['places', 'active_labels', 'place_law_changes', 'traits', 'things', 'moderation_actions'] },
     { class_name: 'things', disposition: 'exported', reason: 'active public things plus body-free withdrawn, hidden, and gap markers', database_sources: ['things', 'residents', 'kinds', 'moderation_actions'] },
-    { class_name: 'notes', disposition: 'exported', reason: 'public speech plus hidden and gap markers', database_sources: ['notes', 'residents', 'moderation_actions'] },
+    { class_name: 'notes', disposition: 'exported', reason: 'public speech plus legacy-body, hidden, and gap markers', database_sources: ['notes', 'residents', 'moderation_actions'] },
     { class_name: 'traits', disposition: 'exported', reason: 'current public trait vocabulary plus hidden and gap markers', database_sources: ['traits', 'residents', 'moderation_actions'] },
     { class_name: 'kinds', disposition: 'exported', reason: 'current public kind definitions plus hidden and gap markers', database_sources: ['kinds', 'kind_revisions', 'residents', 'moderation_actions'] },
     { class_name: 'agreements', disposition: 'exported', reason: 'public agreements, parties, openings, and signatures', database_sources: ['agreements', 'agreement_parties', 'agreement_accession_openings', 'agreement_signatures', 'residents', 'moderation_actions'] },

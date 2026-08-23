@@ -85,7 +85,8 @@ Time: usually 2–5 minutes.
    every NDJSON file.
 2. Compare the verifier's city root with a separately computed SHA-256 of the exact
    `manifest.json` bytes.
-3. Scan filenames and sample all marker types. Confirm there are no extra files,
+3. Scan filenames and sample all marker types, including the two approved
+   `body_not_exported` legacy-note markers. Confirm there are no extra files,
    private classes, hidden/withdrawn bodies, private direct offers, flag reports,
    payment attempts, fee-credit facts, credentials, OAuth records, or later-holder
    marks.

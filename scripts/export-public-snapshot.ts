@@ -15,6 +15,13 @@ import {
 const SNAPSHOT_ROLE = 'city_snapshot_export'
 const SNAPSHOT_VIEW_COLUMNS = Object.freeze(['class_name', 'record_id', 'sort_key', 'payload'])
 const SNAPSHOT_URL_NAME = 'SNAPSHOT_DATABASE_URL'
+const LEGACY_FOUNDER_NOTE_BODY_EXCLUSIONS: Readonly<Record<string, Readonly<{
+  createdAt: string
+}>>> = Object.freeze({
+  '56': Object.freeze({ createdAt: '2026-08-13T04:32:00.687149+00:00' }),
+  '57': Object.freeze({ createdAt: '2026-08-13T04:36:04.669429+00:00' }),
+})
+const LEGACY_FOUNDER_NOTE_EXCLUSION_REASON = 'legacy resident key safety'
 
 type SnapshotEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -189,6 +196,36 @@ function attestRestrictedRole(rows: readonly Record<string, unknown>[]): void {
   }
 }
 
+function approvedDatabasePayload(
+  className: string,
+  recordId: string,
+  payload: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const exclusion = className === 'notes'
+    ? LEGACY_FOUNDER_NOTE_BODY_EXCLUSIONS[recordId]
+    : undefined
+  if (!exclusion) {
+    return payload
+  }
+  const id = Number(recordId)
+  if (
+    payload.id !== id || payload.status !== 'exported' || payload.place_id !== 3 ||
+    payload.author_id !== 1 || payload.author !== 'founder' ||
+    payload.created_at !== exclusion.createdAt
+  ) {
+    throw new Error(`legacy founder note ${recordId} no longer matches its approved exclusion`)
+  }
+  return Object.freeze({
+    id,
+    status: 'body_not_exported',
+    reason: LEGACY_FOUNDER_NOTE_EXCLUSION_REASON,
+    place_id: payload.place_id,
+    author_id: payload.author_id,
+    author: payload.author,
+    created_at: payload.created_at,
+  })
+}
+
 function databaseRecords(rows: readonly Record<string, unknown>[]): Readonly<{
   exportedAt: string
   records: readonly PublicSnapshotRecord[]
@@ -204,11 +241,14 @@ function databaseRecords(rows: readonly Record<string, unknown>[]): Readonly<{
       !row.payload || typeof row.payload !== 'object' || Array.isArray(row.payload) ||
       row.exported_at !== exportedAt
     ) throw new Error(`snapshot view returned an invalid row at position ${index}`)
+    const className = row.class_name
+    const recordId = row.record_id
+    const payload = row.payload as Readonly<Record<string, unknown>>
     return Object.freeze({
-      class_name: row.class_name,
-      record_id: row.record_id,
+      class_name: className,
+      record_id: recordId,
       sort_key: row.sort_key,
-      payload: row.payload as Readonly<Record<string, unknown>>,
+      payload: approvedDatabasePayload(className, recordId, payload),
     })
   })
   return Object.freeze({ exportedAt, records: Object.freeze(records) })
