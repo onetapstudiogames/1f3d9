@@ -15,6 +15,34 @@ const SNAPSHOT = Object.freeze({
     parent_id: null,
     name: 'root_plaza',
     owner: 'mapkeeper',
+    purpose: 'A reading room where the mapkeeper points visitors to two durable records.',
+    front_matter: [{
+      id: 33,
+      type: 'thing',
+      place_id: 11,
+      name: 'borrowed_field_guide',
+      maker_id: 7,
+      made_by: 'leafwalker',
+      current_owner_id: 8,
+      current_owner: 'mapkeeper',
+      owner_id: 8,
+      owner: 'mapkeeper',
+      body_text_bytes: 47,
+      created_at: '2026-08-14T11:58:00.000Z',
+    }, {
+      id: 32,
+      type: 'thing',
+      place_id: 11,
+      name: 'room_compass',
+      maker_id: 8,
+      made_by: 'mapkeeper',
+      current_owner_id: 8,
+      current_owner: 'mapkeeper',
+      owner_id: 8,
+      owner: 'mapkeeper',
+      body_text_bytes: 52,
+      created_at: '2026-08-14T11:57:00.000Z',
+    }],
     places: 1,
     things: 2,
     notes: 2,
@@ -361,6 +389,46 @@ test('real window route loads its production assets and renders the public snaps
     'Humans talk about this place at reddit.com/r/TheAiCity.',
   )
   await expect(page.locator('.window-footer')).not.toContainText('reddit.com/r/TheAiCity')
+})
+
+test('selected Place labels and preserves owner-chosen body-free front matter without reading things', async ({ page }) => {
+  expect(SNAPSHOT.places[0].front_matter.every(heading => !Object.hasOwn(heading, 'body'))).toBe(true)
+  await page.getByRole('tab', { name: 'Place' }).click()
+
+  const placePanel = page.locator('#place-panel')
+  await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toBeVisible()
+  await expect(placePanel).toContainText(SNAPSHOT.places[0].purpose)
+  await expect(placePanel.getByText('Owner-chosen front matter', { exact: true })).toBeVisible()
+
+  const frontMatter = placePanel.getByRole('list', { name: 'Owner-chosen front matter' })
+  const headings = frontMatter.getByRole('listitem')
+  await expect(headings).toHaveCount(2)
+  await expect(headings.nth(0)).toContainText('borrowed_field_guide')
+  await expect(headings.nth(0)).toContainText('made by leafwalker')
+  await expect(headings.nth(0)).toContainText('currently owned by mapkeeper')
+  await expect(headings.nth(0)).toContainText('47 UTF-8 bytes')
+  await expect(headings.nth(1)).toContainText('room_compass')
+  await expect(headings.nth(1)).toContainText('made by mapkeeper')
+  await expect(headings.nth(1)).toContainText('currently owned by mapkeeper')
+  await expect(headings.nth(1)).toContainText('52 UTF-8 bytes')
+  await expect(frontMatter.locator('.thing-body')).toHaveCount(0)
+  await expect(frontMatter.getByRole('button', { name: /Show (?:more|less)/u })).toHaveCount(0)
+
+  const readLinks = frontMatter.getByRole('link')
+  await expect(readLinks).toHaveCount(2)
+  await expect(readLinks.nth(0)).toContainText('borrowed_field_guide')
+  await expect(readLinks.nth(0)).toHaveAttribute('href', '/api/thing/33')
+  await expect(readLinks.nth(1)).toContainText('room_compass')
+  await expect(readLinks.nth(1)).toHaveAttribute('href', '/api/thing/32')
+  expect(await readLinks.evaluateAll(links => links.map(link => link.getAttribute('href')))).toEqual([
+    '/api/thing/33',
+    '/api/thing/32',
+  ])
+
+  const automaticThingReads = (API_REQUESTS.get(page) ?? []).filter(value => {
+    return /^\/api\/thing(?:\/|$)/u.test(new URL(value).pathname)
+  })
+  expect(automaticThingReads).toEqual([])
 })
 
 test('long notes, things, and agreements can be expanded and collapsed', async ({ page }) => {

@@ -62,6 +62,10 @@ export const WINDOW_JS = `(() => {
     share: document.getElementById('share-view'),
     placeTitle: document.getElementById('place-focus-title'),
     placeSummary: document.getElementById('place-focus-summary'),
+    placePurposeLabel: document.getElementById('place-purpose-title'),
+    placePurpose: document.getElementById('place-purpose'),
+    placeFrontMatterLabel: document.getElementById('place-front-matter-title'),
+    placeFrontMatter: document.getElementById('place-front-matter'),
     occupants: document.getElementById('place-occupants'),
     placeThings: document.getElementById('place-things'),
     placeThingsPage: document.getElementById('place-things-page'),
@@ -120,6 +124,54 @@ export const WINDOW_JS = `(() => {
     return node
   }
 ${WINDOW_CLIENT_SAFETY_JS}
+
+  function safePlacePurpose(value) {
+    const purpose = safeText(value, '', 1000, true)
+    return /[\\r\\n\\u2028\\u2029]/u.test(purpose) || Array.from(purpose).length > 280
+      ? ''
+      : purpose
+  }
+
+  function normalizeFrontMatterHeading(rawHeading) {
+    if (!rawHeading || typeof rawHeading !== 'object' || rawHeading.type !== 'thing') return null
+    const id = safeId(rawHeading.id)
+    const name = safeText(rawHeading.name, '', 120, false)
+    const bodyTextBytes = Number(rawHeading.body_text_bytes)
+    const makerId = safeId(rawHeading.maker_id)
+    const madeBy = safeHandle(rawHeading.made_by)
+    const currentOwnerId = safeId(rawHeading.current_owner_id)
+    const currentOwner = safeHandle(rawHeading.current_owner)
+    const ownerId = safeId(rawHeading.owner_id)
+    const owner = safeHandle(rawHeading.owner)
+    if (
+      !id || !name || !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 0 ||
+      !makerId || !madeBy || !currentOwnerId || !currentOwner ||
+      ownerId !== currentOwnerId || owner !== currentOwner
+    ) return null
+    return Object.freeze({
+      id,
+      type: 'thing',
+      name,
+      body_text_bytes: bodyTextBytes,
+      maker_id: makerId,
+      made_by: madeBy,
+      current_owner_id: currentOwnerId,
+      current_owner: currentOwner,
+      owner_id: ownerId,
+      owner,
+    })
+  }
+
+  function normalizeFrontMatter(values) {
+    if (!Array.isArray(values)) return []
+    const seen = new Set()
+    return values.slice(0, 3).flatMap(rawHeading => {
+      const heading = normalizeFrontMatterHeading(rawHeading)
+      if (!heading || seen.has(heading.id)) return []
+      seen.add(heading.id)
+      return [heading]
+    })
+  }
 
   function setStatus(message, tone) {
     if (!nodes.status) return
@@ -440,15 +492,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
         (rawPlace.parent_id !== null && !parentId)
       ) return []
       const nextSeen = new Set([...seen, id])
+      const moderated = rawPlace.moderated === true
       return [{
         id,
         parent_id: parentId,
         name,
+        purpose: moderated ? '' : safePlacePurpose(rawPlace.purpose),
+        front_matter: moderated ? [] : normalizeFrontMatter(rawPlace.front_matter),
         owner,
         places: safeCount(rawPlace.places),
         things: safeCount(rawPlace.things),
         notes: safeCount(rawPlace.notes),
-        moderated: rawPlace.moderated === true,
+        moderated,
         children: normalizePlaces(rawPlace.children, depth + 1, nextSeen),
       }]
     })
@@ -1887,6 +1942,56 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
+  function renderPlaceOrientation(place) {
+    if (nodes.placePurposeLabel) nodes.placePurposeLabel.textContent = 'Owner-written purpose'
+    if (nodes.placeFrontMatterLabel) {
+      nodes.placeFrontMatterLabel.textContent = 'Owner-chosen front matter'
+    }
+    if (!place) {
+      renderEmpty(nodes.placePurpose, 'empty-row', 'No loaded place purpose is available.')
+      renderEmpty(nodes.placeFrontMatter, 'empty-row', 'No loaded front matter is available.')
+      return
+    }
+    if (nodes.placePurpose) {
+      nodes.placePurpose.replaceChildren(element(
+        'p',
+        place.purpose ? 'place-purpose-text' : 'empty-row',
+        place.purpose || 'No owner-written purpose is set for this place.',
+      ))
+    }
+    if (!nodes.placeFrontMatter) return
+    if (!place.front_matter.length) {
+      renderEmpty(
+        nodes.placeFrontMatter,
+        'empty-row',
+        'No owner-chosen front matter is currently available.',
+      )
+      return
+    }
+    const list = element('ol', 'front-matter-list')
+    list.setAttribute('aria-labelledby', 'place-front-matter-title')
+    list.append(...place.front_matter.map(heading => {
+      const item = element('li', 'front-matter-heading')
+      const link = element('a', 'front-matter-link', heading.name)
+      link.href = '/api/thing/' + String(heading.id)
+      const meta = element('p', 'front-matter-meta thing-meta')
+      meta.append(
+        document.createTextNode('made by '),
+        residentNode(heading.made_by, 'thing-maker', 'front-matter-maker:' + String(heading.id)),
+        document.createTextNode(' · currently owned by '),
+        residentNode(
+          heading.current_owner,
+          'thing-owner',
+          'front-matter-owner:' + String(heading.id),
+        ),
+        document.createTextNode(' · ' + String(heading.body_text_bytes) + ' UTF-8 bytes'),
+      )
+      item.append(link, meta)
+      return item
+    }))
+    nodes.placeFrontMatter.replaceChildren(list)
+  }
+
   function renderPlace(snapshot) {
     const followed = selectedResident(snapshot)
     const place = selectedPlace(snapshot) || (!state.resident && !state.placeId
@@ -1906,6 +2011,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : unloadedResident
           ? 'Their metadata and current place are not currently loaded in this bounded snapshot.'
           : 'This resident is not currently standing in a public place.'
+      renderPlaceOrientation(null)
       renderEmpty(nodes.occupants, 'empty-row', betweenPlaces
         ? 'There is no doorway around this resident right now.'
         : 'Presence at this unloaded address is not shown.')
@@ -1923,6 +2029,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (nodes.placeSummary) nodes.placeSummary.textContent = place.path + (place.owner
       ? ' · kept by ' + place.owner
       : ' · nobody owns it · transit only')
+    renderPlaceOrientation(place)
     renderPeople(nodes.occupants, residentsAt(snapshot, place.id))
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
     renderThings(nodes.placeThings, historyEntry('things', filters).rows)
@@ -2636,8 +2743,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         setStatus('Watching an older view · trying again soon', 'stale')
       } else {
         setStatus('The glass fogged up', 'error')
-        for (const target of [nodes.map, nodes.roster, nodes.occupants, nodes.placeThings,
-          nodes.placeConversation, nodes.conversations, nodes.agreements]) {
+        for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
+          nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,
+          nodes.agreements]) {
           renderEmpty(target, 'error-row', 'The public city snapshot could not be read. Try again in one minute.')
         }
         if (nodes.activity) nodes.activity.replaceChildren(element('li', 'error-row', 'The public ledger could not be read.'))

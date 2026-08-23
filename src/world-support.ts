@@ -76,6 +76,9 @@ export interface PlaceRow {
   parent_id: number | null
   name: string
   description: string
+  purpose: string
+  front_matter_thing_ids?: readonly number[]
+  front_matter?: readonly object[]
   owner_id: number | null
   owner: string | null
   open_to_building: boolean

@@ -41,6 +41,10 @@ import {
   loadPublicChangeCheckpoint,
   parsePublicChangeMarker,
 } from './public-changes.ts'
+import {
+  loadPublicPlaceFrontMatter,
+  type PublicFrontMatterHeading,
+} from './room-orientation.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -110,6 +114,8 @@ interface PublicPlace {
   id: number
   parent_id: number | null
   name: string
+  purpose: string
+  front_matter: readonly PublicFrontMatterHeading[]
   owner: string | null
   places: number
   things: number
@@ -253,6 +259,60 @@ function safeHandles(value: unknown): string[] {
   return [...new Set(value.filter(item => typeof item === 'string' && HANDLE_RE.test(item)))]
 }
 
+function safePlacePurpose(value: unknown): string {
+  const purpose = safePublicText(value, 1_000, true)?.text ?? ''
+  return /[\r\n\u2028\u2029]/u.test(purpose) || [...purpose].length > 280 ? '' : purpose
+}
+
+function safeFrontMatterHeading(value: unknown): PublicFrontMatterHeading | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as Record<string, unknown>
+  const id = positiveInteger(row.id)
+  const name = safePublicText(row.name, 120)?.text ?? null
+  const bodyTextBytes = Number(row.body_text_bytes)
+  const makerId = positiveInteger(row.maker_id)
+  const madeBy = typeof row.made_by === 'string' && HANDLE_RE.test(row.made_by)
+    ? row.made_by
+    : null
+  const currentOwnerId = positiveInteger(row.current_owner_id)
+  const ownerId = positiveInteger(row.owner_id)
+  const currentOwnerValue = row.current_owner
+  const currentOwner = typeof currentOwnerValue === 'string' && HANDLE_RE.test(currentOwnerValue)
+    ? currentOwnerValue
+    : null
+  const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : null
+  if (
+    row.type !== 'thing' || !id || !name ||
+    !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 0 ||
+    !makerId || !madeBy || !currentOwnerId || !currentOwner ||
+    ownerId !== currentOwnerId || owner !== currentOwner
+  ) return null
+  return Object.freeze({
+    id,
+    type: 'thing' as const,
+    name,
+    body_text_bytes: bodyTextBytes,
+    maker_id: makerId,
+    made_by: madeBy,
+    current_owner_id: currentOwnerId,
+    current_owner: currentOwner,
+    owner_id: ownerId,
+    owner,
+  })
+}
+
+function safeFrontMatter(value: unknown): readonly PublicFrontMatterHeading[] {
+  if (!Array.isArray(value)) return Object.freeze([])
+  const seen = new Set<number>()
+  const headings = value.slice(0, 3).flatMap(item => {
+    const heading = safeFrontMatterHeading(item)
+    if (!heading || seen.has(heading.id)) return []
+    seen.add(heading.id)
+    return [heading]
+  })
+  return Object.freeze(headings)
+}
+
 function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
   if (!value || typeof value !== 'object') return null
   const row = value as Record<string, unknown>
@@ -277,6 +337,8 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     id,
     parent_id: parentId,
     name,
+    purpose: moderated ? '' : safePlacePurpose(row.purpose),
+    front_matter: moderated ? Object.freeze([]) : safeFrontMatter(row.front_matter),
     owner,
     places: count(row.places),
     things: count(row.things),
@@ -860,14 +922,15 @@ async function readFullWindowSnapshot() {
   ] = await Promise.all([
     sql.query(`
       WITH RECURSIVE world AS (
-        SELECT id, parent_id, name, owner_id, ARRAY[id] AS path
+        SELECT id, parent_id, name, purpose, owner_id, ARRAY[id] AS path
         FROM places WHERE parent_id IS NULL
         UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.owner_id, world.path || child.id
+        SELECT child.id, child.parent_id, child.name, child.purpose, child.owner_id,
+          world.path || child.id
         FROM places child JOIN world ON child.parent_id = world.id
         WHERE NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
       )
-      SELECT world.id, world.parent_id, world.name, residents.handle AS owner,
+      SELECT world.id, world.parent_id, world.name, world.purpose, residents.handle AS owner,
         (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
@@ -914,7 +977,15 @@ async function readFullWindowSnapshot() {
     `,
   ])
 
-  const places = publicPlaceTree(placeRows as unknown[])
+  const rawPlaces = placeRows as Record<string, unknown>[]
+  const frontMatter = await loadPublicPlaceFrontMatter(
+    executePublicQuery,
+    rawPlaces.flatMap(row => positiveInteger(row.id) ?? []),
+  )
+  const places = publicPlaceTree(rawPlaces.map(row => ({
+    ...row,
+    front_matter: frontMatter.get(Number(row.id)) ?? Object.freeze([]),
+  })))
   const residents = publicWindowResidents(residentRows as unknown[])
   const notes = notePage.items as readonly PublicNote[]
   const things = thingPage.items as readonly PublicThing[]

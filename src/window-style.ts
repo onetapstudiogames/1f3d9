@@ -82,7 +82,7 @@ button { color: inherit; }
   letter-spacing: 0.1em;
 }
 .city-name, .panel-heading h1, .panel-heading h2, .roster-board h2,
-.observation-block h3, .conversation-group h3 {
+.orientation-block h3, .observation-block h3, .conversation-group h3 {
   font-family: "Arial Narrow", "Aptos Narrow", "Roboto Condensed", system-ui, sans-serif;
   font-weight: 900;
   letter-spacing: -0.035em;
@@ -415,6 +415,30 @@ button { color: inherit; }
 .resident-row .resident-follow { color: #fff; font-size: 0.78rem; }
 .resident-number { color: var(--signal); font: 0.63rem ui-monospace, monospace; }
 
+.place-orientation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  background: #f4ecd5;
+  border-bottom: 4px solid var(--line);
+}
+.orientation-block { min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); }
+.orientation-block + .orientation-block { border-inline-start: 2px solid var(--line); }
+.orientation-block h3 { margin: 0.35rem 0 0.8rem; font-size: 1.25rem; }
+.place-purpose-text { max-width: 54rem; margin: 0; font-size: 0.92rem; line-height: 1.55; }
+.front-matter-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding-inline-start: 1.6rem;
+}
+.front-matter-heading {
+  padding: 0.72rem 0.8rem;
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+}
+.front-matter-link { color: var(--forest-deep); font-weight: 900; overflow-wrap: anywhere; }
+.front-matter-meta { margin-block-start: 0.4rem; }
+
 .place-observation {
   display: grid;
   grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
@@ -668,6 +692,8 @@ button { color: inherit; }
   .watch-state { border-block-start: 3px solid #061e17; border-inline-start: 0; }
   .view-filters { display: grid; grid-template-columns: 1fr 1fr; }
   .share-view { grid-column: 1 / -1; border-block-start: 2px solid var(--line); border-inline-start: 0; }
+  .place-orientation { grid-template-columns: 1fr; }
+  .orientation-block + .orientation-block { border-block-start: 2px solid var(--line); border-inline-start: 0; }
   .place-observation { grid-template-columns: 1fr; }
   .observation-block, .observation-block:nth-child(2) { border-inline-end: 0; border-bottom: 3px solid var(--line); }
   .wide-block { grid-column: auto; border-top: 0; border-bottom: 0; }

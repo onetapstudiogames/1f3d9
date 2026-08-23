@@ -207,6 +207,11 @@ interface FakeState {
   interruptTreasuryCompletionOnce: boolean
   treasuryCompletionHeader?: string
   placeDescription: string
+  roomPurpose: string
+  frontMatterThingIds: number[]
+  frontMatterMovedThingIds: number[]
+  frontMatterHiddenThingIds: number[]
+  frontMatterRaceLost: boolean
   noteBody: string
   exactTotalsBusy: boolean
   exactTotalsBusyAfter: number | null
@@ -276,6 +281,11 @@ const initialState = (): FakeState => ({
   failPaidWriteOnce: false,
   interruptTreasuryCompletionOnce: false,
   placeDescription: 'a place made from words',
+  roomPurpose: '',
+  frontMatterThingIds: [],
+  frontMatterMovedThingIds: [],
+  frontMatterHiddenThingIds: [],
+  frontMatterRaceLost: false,
   noteBody: 'hello from the square',
   exactTotalsBusy: false,
   exactTotalsBusyAfter: null,
@@ -307,7 +317,9 @@ const placeRow = (id = 2, parentId: number | null = 1) => ({
   id,
   parent_id: parentId,
   name: id === 1 ? 'First Continent' : id === 2 ? 'Lantern Town' : 'Small Plot',
+  purpose: state.roomPurpose,
   description: state.placeDescription,
+  front_matter_thing_ids: [...state.frontMatterThingIds],
   owner_id: id === 3 ? state.actorId : state.placeOwnerId,
   owner: id === 3 ? state.actorHandle : 'founder',
   open_to_building: state.openToBuilding,
@@ -357,6 +369,54 @@ const thingRow = (id = 41) => ({
     : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
   created_at: '2026-08-11T00:00:00.000Z',
 })
+
+const roomOrientationThingRow = (id: number) => {
+  const fixtures = {
+    41: {
+      name: 'porch lantern', body: 'warm light', maker_id: 7, made_by: 'tiny-lantern',
+      owner_id: 7, owner: 'tiny-lantern',
+    },
+    42: {
+      name: 'neighbor chest', body: 'locked shut', maker_id: 8, made_by: 'neighbor',
+      owner_id: 8, owner: 'neighbor',
+    },
+    43: {
+      name: 'borrowed field guide', body: 'three careful routes 🏙',
+      maker_id: 8, made_by: 'neighbor', owner_id: 7, owner: 'tiny-lantern',
+    },
+    44: {
+      name: 'unselected stool', body: 'plain pine', maker_id: 7, made_by: 'tiny-lantern',
+      owner_id: 7, owner: 'tiny-lantern',
+    },
+  } as const
+  const fixture = fixtures[id as keyof typeof fixtures]
+  if (!fixture) throw new Error(`unknown room-orientation thing fixture: ${id}`)
+  return {
+    id,
+    type: 'thing' as const,
+    place_id: state.frontMatterMovedThingIds.includes(id) ? 3 : 2,
+    name: fixture.name,
+    body: fixture.body,
+    body_text_bytes: Buffer.byteLength(fixture.body, 'utf8'),
+    maker_id: fixture.maker_id,
+    made_by: fixture.made_by,
+    current_owner_id: fixture.owner_id,
+    current_owner: fixture.owner,
+    owner_id: fixture.owner_id,
+    owner: fixture.owner,
+    withdrawn_at: id === 41
+      ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
+      : id === 42
+        ? (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null)
+        : null,
+  }
+}
+
+const visibleRoomFrontMatter = () => state.frontMatterThingIds
+  .map(roomOrientationThingRow)
+  .filter(row => row.place_id === 2 && row.withdrawn_at === null)
+  .filter(row => !state.frontMatterHiddenThingIds.includes(row.id))
+  .map(({ body: _body, place_id: _placeId, withdrawn_at: _withdrawnAt, ...heading }) => heading)
 
 const descendingPage = <T extends { id: number }>(
   rows: readonly T[],
@@ -524,9 +584,110 @@ function recordPayment(query: string, params: unknown[]) {
   state = { ...state, paymentHashes: new Set([...state.paymentHashes, canonical]) }
 }
 
+function integerArrayValue(value: unknown): number[] | null {
+  let decoded: unknown = value
+  if (typeof value === 'string') {
+    try {
+      decoded = value.startsWith('[')
+        ? JSON.parse(value)
+        : value.startsWith('{')
+          ? value.slice(1, -1).split(',').filter(Boolean)
+          : value
+    } catch {
+      return null
+    }
+  }
+  if (!Array.isArray(decoded)) return null
+  const ids = decoded.map(item => Number(
+    typeof item === 'string' ? item.replace(/^"|"$/gu, '') : item,
+  ))
+  return ids.every(id => Number.isSafeInteger(id) && id > 0) ? ids : null
+}
+
+function frontMatterIdsIn(params: readonly unknown[]): number[] | null {
+  for (const value of params) {
+    const ids = integerArrayValue(value)
+    if (ids !== null) return ids
+  }
+  const individualIds = params
+    .map(Number)
+    .filter(id => Number.isSafeInteger(id) && id >= 41 && id <= 44)
+  return individualIds.length > 0 ? individualIds : null
+}
+
+function roomPurposeIn(params: readonly unknown[]): string | null {
+  return (params.find(value => typeof value === 'string' && (
+    [
+      'safe',
+      'two\nlines',
+      'A small room for deliberate reading.',
+      'A retry-safe reading room.',
+      'Keep the old description.',
+    ].includes(value) || value.length === 281
+  )) as string | undefined) ?? null
+}
+
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  if (q.includes('front_matter_thing_ids') && q.includes('select')
+      && /\b(?:from|join)\s+things\b/iu.test(q)
+      && !/\b(?:insert|update|delete)\b/iu.test(q)) {
+    return state.scenario === 'room orientation'
+      ? visibleRoomFrontMatter().map((heading, position) => ({ ...heading, place_id: 2, position }))
+      : []
+  }
+
+  if (state.scenario === 'room orientation') {
+    const writesFrontMatter = q.includes('front_matter_thing_ids')
+      && /\b(?:insert|update|delete)\b/iu.test(q)
+    const updatesOrientation = q.includes('update places')
+      && (q.includes('purpose') || q.includes('front_matter_thing_ids'))
+    if (writesFrontMatter || updatesOrientation) {
+      if (state.frontMatterRaceLost) return []
+      const parsedIds = frontMatterIdsIn(params)
+      const ids = parsedIds
+      if (ids && ids.some(id => {
+        const row = roomOrientationThingRow(id)
+        return row.place_id !== 2 || row.withdrawn_at !== null
+          || state.frontMatterHiddenThingIds.includes(id)
+      })) {
+        throw Object.assign(
+          new Error('front matter must use active public things in the same place'),
+          { code: '23514' },
+        )
+      }
+      const purpose = roomPurposeIn(params)
+      state = {
+        ...state,
+        ...(ids === null ? {} : { frontMatterThingIds: [...ids] }),
+        ...(purpose === null ? {} : { roomPurpose: purpose }),
+      }
+      return [{
+        ...placeRow(2, 1),
+        purpose: state.roomPurpose,
+        front_matter_thing_ids: [...state.frontMatterThingIds],
+        active_offer_id: null,
+        has_open_offer: false,
+      }]
+    }
+    if (q.includes('from things') && !q.includes('/* public:place-collections')) {
+      const requested = frontMatterIdsIn(params) ?? []
+      return requested.map(roomOrientationThingRow)
+        .filter(row => row.place_id === 2 && row.withdrawn_at === null)
+        .filter(row => !state.frontMatterHiddenThingIds.includes(row.id))
+    }
+    if (q.includes('from places') && q.includes('purpose') && !q.includes('/* public:')) {
+      return [{
+        ...placeRow(2, 1),
+        purpose: state.roomPurpose,
+        front_matter_thing_ids: [...state.frontMatterThingIds],
+        active_offer_id: null,
+        has_open_offer: false,
+      }]
+    }
+  }
 
   if (q.includes('select id from residents where handle')) {
     const handle = String(params[0])
@@ -1766,7 +1927,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('/* public:moderation */')) {
     return [{ id: null, total_items: 0, total_text_bytes: 0 }]
   }
-  if (q.includes('from moderation_actions')) {
+  if (q.includes('from moderation_actions') && !q.includes('update places set')) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
         || value === 'note' || value === 'agreement'
@@ -2289,12 +2450,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       } : {}),
     }]
   }
+  if (q.includes('update places set'))
+    return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
     return [placeRow(2, 1)]
   }
   if (q.includes('from places') && (q.includes('where p.id') || q.includes('where id'))) return [placeRow(2, 1)]
-  if (q.includes('update places set'))
-    return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
 
   if (q.includes('insert into kinds') || q.includes('insert into kind_revisions') || q.includes('update kinds')) {
     if (state.failPaidWriteOnce) {
@@ -2811,7 +2972,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       traits: state.kindTraitNames,
     }]
   }
-  if (q.includes('from things')) {
+  if (q.includes('from things') && !q.includes('update places set')) {
     if (q.includes('where thing.id') || q.includes('where id =')) {
       const target = Number(params[0] ?? 41)
       if (target === 41) {
@@ -3135,7 +3296,7 @@ test('note validation distinguishes place errors and preserves valid Unicode exa
   assert.deepEqual(acceptedBody.reading_cost, {
     available: true,
     size_unit: 'utf8_bytes',
-    counted_text: 'place descriptions, active thing bodies, and note bodies',
+    counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
     new_item_text_bytes: Buffer.byteLength(body, 'utf8'),
     room_stored_text_bytes: 1234,
     current_first_read_text_bytes: 456,
@@ -3154,7 +3315,7 @@ test('a meter read failure never turns a committed note into a retryable write f
   assert.deepEqual(body.reading_cost, {
     available: false,
     size_unit: 'utf8_bytes',
-    counted_text: 'place descriptions, active thing bodies, and note bodies',
+    counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
     new_item_text_bytes: Buffer.byteLength('already committed', 'utf8'),
     room_stored_text_bytes: null,
     current_first_read_text_bytes: null,
@@ -3790,13 +3951,232 @@ test('only a place owner can edit its description and three permission switches'
       open_to_notes: false,
     }),
   })
-  assert.equal(changed.status, 200)
+  assert.equal(changed.status, 200, await changed.clone().text())
 
   setActor(8, 'neighbor')
   const rejected = await app.request('/api/place/2', {
     method: 'PATCH', headers: authHeaders(OTHER_SECRET), body: JSON.stringify({ open_to_building: false }),
   })
   assert.equal(rejected.status, 403)
+})
+
+type RoomFrontMatterHeading = {
+  id: number
+  type: string
+  name: string
+  body_text_bytes: number
+  maker_id: number
+  made_by: string
+  current_owner_id: number
+  current_owner: string
+  owner_id: number
+  owner: string
+  body?: unknown
+  body_snippet?: unknown
+  snippet?: unknown
+}
+
+function assertRoomFrontMatter(
+  headings: readonly RoomFrontMatterHeading[],
+  expectedIds: readonly number[],
+) {
+  assert.deepEqual(headings.map(heading => heading.id), expectedIds)
+  for (const heading of headings) {
+    assert.equal(heading.type, 'thing')
+    assert.equal(typeof heading.name, 'string')
+    assert.ok(heading.body_text_bytes > 0)
+    assert.ok(heading.maker_id > 0)
+    assert.match(heading.made_by, /^(?:tiny-lantern|neighbor)$/u)
+    assert.ok(heading.current_owner_id > 0)
+    assert.match(heading.current_owner, /^(?:tiny-lantern|neighbor)$/u)
+    assert.equal(heading.owner_id, heading.current_owner_id)
+    assert.equal(heading.owner, heading.current_owner)
+    assert.equal(Object.hasOwn(heading, 'body'), false)
+    assert.equal(Object.hasOwn(heading, 'body_snippet'), false)
+    assert.equal(Object.hasOwn(heading, 'snippet'), false)
+  }
+}
+
+test('a place owner sets purpose and two or three ordered front-matter headings without changing description', async () => {
+  reset({ scenario: 'room orientation', placeOwnerId: 7 })
+  const payload = {
+    purpose: 'A small room for deliberate reading.',
+    front_matter_thing_ids: [43, 41, 42],
+  }
+  const changed = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload),
+  })
+  assert.equal(changed.status, 200, await changed.clone().text())
+  const body = await changed.json() as {
+    place: { purpose: string; description: string }
+    front_matter: RoomFrontMatterHeading[]
+  }
+  assert.equal(body.place.purpose, payload.purpose)
+  assert.equal(body.place.description, 'a place made from words')
+  assert.equal(Object.hasOwn(body.place, 'front_matter_thing_ids'), false)
+  assertRoomFrontMatter(body.front_matter, payload.front_matter_thing_ids)
+  assert.deepEqual(body.front_matter[0], {
+    ...body.front_matter[0],
+    id: 43,
+    type: 'thing',
+    name: 'borrowed field guide',
+    body_text_bytes: Buffer.byteLength('three careful routes 🏙', 'utf8'),
+    maker_id: 8,
+    made_by: 'neighbor',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
+
+  const retried = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload),
+  })
+  assert.equal(retried.status, 200, await retried.clone().text())
+  const retriedBody = await retried.json() as {
+    place: { purpose: string; description: string }
+    front_matter: RoomFrontMatterHeading[]
+  }
+  assert.equal(retriedBody.place.purpose, payload.purpose)
+  assert.equal(retriedBody.place.description, 'a place made from words')
+  assertRoomFrontMatter(retriedBody.front_matter, payload.front_matter_thing_ids)
+})
+
+test('room orientation is owner-only and rejects malformed or ineligible selections', async () => {
+  reset({
+    scenario: 'room orientation', placeOwnerId: 7,
+    roomPurpose: 'A retry-safe reading room.', frontMatterThingIds: [41, 42],
+  })
+  setActor(8, 'neighbor')
+  const forbidden = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ purpose: 'Keep the old description.' }),
+  })
+  assert.equal(forbidden.status, 403, await forbidden.text())
+  assert.equal(state.roomPurpose, 'A retry-safe reading room.')
+  assert.deepEqual(state.frontMatterThingIds, [41, 42])
+
+  setActor(7, 'tiny-lantern')
+  const malformedBodies: readonly Record<string, unknown>[] = [
+    { purpose: 'safe', surprise: true },
+    { purpose: 42 },
+    { purpose: 'two\nlines' },
+    { purpose: 'x'.repeat(281) },
+    { front_matter_thing_ids: '41,42' },
+    { front_matter_thing_ids: [41] },
+    { front_matter_thing_ids: [41, 42, 43, 44] },
+    { front_matter_thing_ids: [41, 41] },
+    { front_matter_thing_ids: [0, 42] },
+  ]
+  for (const malformed of malformedBodies) {
+    const response = await app.request('/api/place/2', {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(malformed),
+    })
+    assert.equal(response.status, 400, JSON.stringify({ malformed, body: await response.text() }))
+    assert.equal(state.roomPurpose, 'A retry-safe reading room.')
+    assert.deepEqual(state.frontMatterThingIds, [41, 42])
+  }
+
+  for (const patch of [
+    { frontMatterMovedThingIds: [42] },
+    { targetThingWithdrawn: true },
+    { frontMatterHiddenThingIds: [42] },
+  ] satisfies readonly Partial<FakeState>[]) {
+    reset({ scenario: 'room orientation', placeOwnerId: 7, ...patch })
+    const response = await app.request('/api/place/2', {
+      method: 'PATCH', headers: authHeaders(),
+      body: JSON.stringify({ front_matter_thing_ids: [41, 42] }),
+    })
+    assert.equal(response.status, 400, await response.text())
+    assert.equal(state.roomPurpose, '')
+    assert.deepEqual(state.frontMatterThingIds, [])
+  }
+})
+
+test('public outline and full place reads expose ordered body-free orientation headings only while eligible', async () => {
+  reset({
+    scenario: 'room orientation',
+    roomPurpose: 'A small room for deliberate reading.',
+    frontMatterThingIds: [43, 41, 42],
+  })
+  for (const view of ['outline', 'full'] as const) {
+    const response = await app.request(`/api/place/2?view=${view}`)
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as {
+      place: { purpose: string; description?: string }
+      front_matter: RoomFrontMatterHeading[]
+    }
+    assert.equal(body.place.purpose, 'A small room for deliberate reading.')
+    assertRoomFrontMatter(body.front_matter, [43, 41, 42])
+  }
+
+  state = { ...state, calls: [], frontMatterMovedThingIds: [43] }
+  const afterMove = await app.request('/api/place/2?view=outline')
+  assert.equal(afterMove.status, 200)
+  assertRoomFrontMatter(
+    (await afterMove.json() as { front_matter: RoomFrontMatterHeading[] }).front_matter,
+    [41, 42],
+  )
+
+  state = { ...state, calls: [], thingWithdrawn: true }
+  const afterWithdrawal = await app.request('/api/place/2?view=full')
+  assert.equal(afterWithdrawal.status, 200)
+  assertRoomFrontMatter(
+    (await afterWithdrawal.json() as { front_matter: RoomFrontMatterHeading[] }).front_matter,
+    [42],
+  )
+
+  state = { ...state, calls: [], frontMatterHiddenThingIds: [42] }
+  const afterModeration = await app.request('/api/place/2?view=outline')
+  assert.equal(afterModeration.status, 200)
+  const hiddenBody = await afterModeration.json() as { front_matter: RoomFrontMatterHeading[] }
+  assertRoomFrontMatter(hiddenBody.front_matter, [])
+  assert.equal(hiddenBody.front_matter.some(heading => heading.id === 44), false)
+
+  const orientationRead = sqlCalls().find(call => {
+    const query = call.query ?? ''
+    return /front_matter_thing_ids/iu.test(query) && /\bthings\b|\bunnest\s*\(/iu.test(query)
+  })
+  assert.ok(orientationRead, 'public place reads must load only the selected front-matter rows')
+  assert.match(orientationRead.query ?? '', /with\s+ordinality|order\s+by[\s\S]*(?:position|ordinality)/iu)
+})
+
+test('an empty selection clears front matter and a stale eligibility race returns a retryable conflict', async () => {
+  reset({
+    scenario: 'room orientation', placeOwnerId: 7,
+    roomPurpose: 'A retry-safe reading room.', frontMatterThingIds: [41, 42],
+  })
+  const cleared = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(),
+    body: JSON.stringify({ front_matter_thing_ids: [] }),
+  })
+  assert.equal(cleared.status, 200, await cleared.clone().text())
+  const clearedBody = await cleared.json() as {
+    place: { purpose: string; description: string }
+    front_matter: RoomFrontMatterHeading[]
+  }
+  assert.equal(clearedBody.place.purpose, 'A retry-safe reading room.')
+  assert.equal(clearedBody.place.description, 'a place made from words')
+  assertRoomFrontMatter(clearedBody.front_matter, [])
+
+  reset({ scenario: 'room orientation', placeOwnerId: 7, frontMatterRaceLost: true })
+  const raced = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(),
+    body: JSON.stringify({ front_matter_thing_ids: [41, 42] }),
+  })
+  assert.equal(raced.status, 409, await raced.clone().text())
+  assert.match((await raced.json() as { error: string }).error, /retry/iu)
+
+  state = { ...state, frontMatterRaceLost: false, calls: [] }
+  const retry = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(),
+    body: JSON.stringify({ front_matter_thing_ids: [41, 42] }),
+  })
+  assert.equal(retry.status, 200, await retry.clone().text())
+  assertRoomFrontMatter(
+    (await retry.json() as { front_matter: RoomFrontMatterHeading[] }).front_matter,
+    [41, 42],
+  )
 })
 
 test('traits are globally named, free, and mechanical only when an inert recipe is present', async () => {

@@ -206,7 +206,8 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       jsonb_build_object('kind', 'place', 'id', place.id) AS result_json,
       201::smallint AS response_status,
       jsonb_build_object(
-        'place', to_jsonb(place) || jsonb_build_object('owner', request.actor_handle)
+        'place', (to_jsonb(place) - 'front_matter_thing_ids')
+          || jsonb_build_object('owner', request.actor_handle)
       ) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(

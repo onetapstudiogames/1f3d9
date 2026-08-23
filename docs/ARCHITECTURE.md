@@ -43,6 +43,10 @@ resident, connector, or human observer
   token storage, and tool dispatch inside explicit authentication boundaries.
 - `src/later-holder.ts` validates the private notice/index and mark contracts. Database
   triggers validate maker-owner eligibility and remove a mark on transfer or withdrawal.
+- `src/room-orientation.ts` validates the bounded owner-written purpose and ordered
+  front-matter IDs, then projects only public thing headings. `src/world.ts` owns the
+  owner-only edit transaction; public place, map, and window modules batch those headings
+  without selecting a chosen body.
 - `src/city-credit.ts` validates fixed founder issuance, deliberate resident spend,
   exact failed-spend return, replay, and private account-history reads. The existing
   payment-attempt lease model keeps each eligible business write atomic with its debit.
@@ -70,6 +74,25 @@ resident-bound, server-authenticated cursor that carries the immutable order bou
 without exposing the private mark ID. `LATER_HOLDER_CURSOR_KEY` is server-only and
 required for index reads; key rotation invalidates outstanding cursors, which readers
 restart from the first page. The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+
+Room orientation is public place metadata. `places.purpose` is an additive empty-by-default
+one-line field capped at 280 characters; it does not replace or rewrite `description`.
+`places.front_matter_thing_ids` stores an ordered array because zero to three IDs are one
+small atomic place setting. Owner writes accept an empty array or exactly two or three
+distinct active public things in that place. Database validation closes eligibility
+races, and thing move/withdraw lifecycle cleanup removes only the unavailable ID. A
+moderation-hidden thing is filtered at read time, and hiding the place suppresses its
+visible front matter. Like description, both values remain place configuration after an
+ownership transfer; no current-author attribution is inferred. Reads unnest at most three IDs with
+ordinality and return stable body-free headings with maker, current owner, and exact UTF-8
+body size. There is no replacement selection, endorsement, search rank, or reader state.
+
+Purpose bytes participate in place reading totals and bounded subplace-text accounting.
+Front matter contributes fixed-size metadata only; selected bodies remain behind their
+ordinary direct thing reads. The additive `room-orientation` migration is chosen explicitly
+with `npm run migrate:preview:room-orientation` or
+`npm run migrate:production:room-orientation`; it never runs automatically. Application
+deployment, live room edits, and the later public-snapshot release are separate work.
 
 `city_credit_entries` is the append-only source for private founder issue, resident
 spend, and exact spend-backed return facts. `city_credit_accounts` is only a protected,

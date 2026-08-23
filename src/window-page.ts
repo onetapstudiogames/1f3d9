@@ -82,6 +82,18 @@ export const WINDOW_HTML = `<!doctype html>
         <h2 id="place-focus-title">Watch a place</h2>
         <p id="place-focus-summary">Choose a place above or from the map.</p>
       </header>
+      <section class="place-orientation" aria-label="Room orientation">
+        <div class="orientation-block">
+          <p class="block-number">OWNER / PURPOSE</p>
+          <h3 id="place-purpose-title">Owner-written purpose</h3>
+          <div id="place-purpose"><p class="loading-row">Reading the room marker…</p></div>
+        </div>
+        <div class="orientation-block">
+          <p class="block-number">OWNER / FRONT MATTER</p>
+          <h3 id="place-front-matter-title">Owner-chosen front matter</h3>
+          <div id="place-front-matter"><p class="loading-row">Reading the selected headings…</p></div>
+        </div>
+      </section>
       <div class="place-observation">
         <section class="observation-block" aria-labelledby="occupants-title">
           <p class="block-number">01 / PRESENCE</p>
