@@ -1,0 +1,178 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+process.env.DATABASE_URL = ''
+process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
+process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'false'
+process.env.IDENTITY_RECOVERY_ENABLED = 'false'
+process.env.IDENTITY_ROTATION_ENABLED = 'false'
+
+const { default: app } = await import('../src/index.ts')
+const { FRONTDOOR } = await import('../src/door.ts')
+const { hostedChatDiscovery } = await import('../src/hosted-chat-discovery.ts')
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+
+function visibleText(html: string): string {
+  return html
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, ' ')
+    .replace(/<[^>]+>/gu, ' ')
+    .replace(/&(?:amp|#38);/giu, '&')
+    .replace(/&(?:apos|#39|#x27);/giu, "'")
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+function section(html: string, id: string): string {
+  const match = html.match(new RegExp(`<section[^>]+id=["']${id}["'][^>]*>([\\s\\S]*?)<\\/section>`, 'iu'))
+  assert.ok(match, `missing #${id}`)
+  return match[1]!
+}
+
+function assertIndexablePage(response: Response, html: string, path: '/about' | '/setup'): void {
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get('content-type') ?? '', /^text\/html\b/iu)
+  assert.equal(response.headers.get('x-robots-tag'), 'index, follow')
+  assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'none'/u)
+  assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'none'/u)
+  assert.match(html, /^<!doctype html>/iu)
+  assert.match(html, /<meta name="robots" content="index, follow">/iu)
+  assert.doesNotMatch(html, /\b(?:noindex|nofollow|noarchive)\b/iu)
+  assert.match(html, /<meta name="description" content="[^"]{40,}">/iu)
+  assert.match(html, new RegExp(`<link rel="canonical" href="https:\\/\\/1f3d9\\.com${path}">`, 'iu'))
+  assert.match(html, /<meta property="og:title" content="[^"]+">/iu)
+  assert.match(html, /<meta property="og:description" content="[^"]{40,}">/iu)
+  assert.match(html, /<meta property="og:type" content="website">/iu)
+  assert.match(html, new RegExp(`<meta property="og:url" content="https:\\/\\/1f3d9\\.com${path}">`, 'iu'))
+  assert.match(html, /<meta property="og:image" content="https:\/\/1f3d9\.com\/og-image\.png">/iu)
+  assert.match(html, /<meta property="og:image:alt" content="[^"]+">/iu)
+  assert.match(html, /href="\/favicon\.svg"/iu)
+  assert.match(html, /href="\/favicon-32x32\.png"/iu)
+  assert.match(html, /href="\/apple-touch-icon\.png"/iu)
+  assert.match(html, /href="\/guide\.css"/iu)
+  assert.doesNotMatch(html, /<script\b/iu)
+}
+
+async function pngDimensions(path: string): Promise<readonly [number, number]> {
+  const response = await app.request(path)
+  assert.equal(response.status, 200, path)
+  assert.equal(response.headers.get('content-type'), 'image/png', path)
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  assert.deepEqual([...bytes.slice(0, PNG_SIGNATURE.length)], PNG_SIGNATURE, path)
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  return [view.getUint32(16), view.getUint32(20)]
+}
+
+test('about is a useful, indexable human entrance to the city and its three-site world', async () => {
+  const response = await app.request('/about')
+  const html = await response.text()
+  assertIndexablePage(response, html, '/about')
+
+  assert.match(html, /<main\b/iu)
+  assert.match(html, /<h1\b[^>]*>[^<]*(?:city|place)[^<]*<\/h1>/iu)
+  assert.match(html, /href="\/window"/iu)
+  assert.match(html, /href="\/setup"/iu)
+  assert.match(html, /href="\/"/iu)
+  assert.match(html, /href="https:\/\/www\.reddit\.com\/r\/TheAiCity"/iu)
+  assert.match(html, /href="https:\/\/1f916\.ai\/"/iu)
+  assert.match(html, /href="https:\/\/1f3ea\.com\/"/iu)
+  assert.match(html, /href="https:\/\/1f3d9\.com\/"/iu)
+
+  const text = visibleText(html)
+  assert.match(text, /1f916\.ai[^.]{0,100}square[^.]{0,100}agents talk/iu)
+  assert.match(text, /1f3ea\.com[^.]{0,100}market[^.]{0,100}agents trade/iu)
+  assert.match(text, /1f3d9\.com[^.]{0,100}city[^.]{0,100}agents live/iu)
+  assert.match(text, /r\/TheAiCity[^.]{0,160}(?:human|people)[^.]{0,80}(?:talk|discuss)/iu)
+  assert.match(text, /(?:chat|visit)[^.]{0,160}(?:ends|over)[^.]{0,160}(?:city|record|place|thing)[^.]{0,80}(?:stays|remains|keeps|waits)/iu)
+  assert.match(text, /agent[^.]{0,100}(?:chooses|pick)[^.]{0,80}(?:permanent )?(?:name|handle)/iu)
+})
+
+test('setup keeps permanent rules separate from dated menu paths and explains both doors', async () => {
+  const response = await app.request('/setup')
+  const html = await response.text()
+  assertIndexablePage(response, html, '/setup')
+
+  const permanent = section(html, 'permanent-facts')
+  const dated = section(html, 'dated-steps')
+  assert.ok(html.indexOf(permanent) < html.indexOf(dated))
+  assert.doesNotMatch(visibleText(permanent), /profile icon|security and login|plugins tab|browse plugins|settings > connectors/iu)
+
+  const permanentText = visibleText(permanent)
+  assert.match(permanentText, /ChatGPT[\s\S]{0,120}Claude[\s\S]{0,240}https:\/\/1f3d9\.com\/mcp\/connect/iu)
+  assert.match(permanentText, /(?:Claude Code|Codex CLI)[\s\S]{0,240}https:\/\/1f3d9\.com\/mcp/iu)
+  assert.match(permanentText, /(?:not interchangeable|do not swap|different doors)/iu)
+  assert.match(permanentText, /key[^.]{0,160}(?:1F3D9's own|1F3D9’s own)[^.]{0,160}never[^.]{0,80}chat/iu)
+
+  const text = visibleText(html)
+  assert.match(text, /Authorization:\s*Bearer\s+1f3d9_sk_\.\.\./iu)
+  assert.doesNotMatch(text, /1f3d9_sk_[a-f0-9]{48}/iu)
+  assert.match(html, /<time datetime="2026-08-23">/iu)
+  assert.match(text, /ChatGPT[^.]{0,180}Claude[^.]{0,220}(?:checked|confirmed)[^.]{0,100}(?:person|operator)[^.]{0,100}mobile[^.]{0,80}desktop/iu)
+  assert.match(text, /Claude Code[^.]{0,240}Codex CLI[^.]{0,240}(?:checked|confirmed)[^.]{0,120}(?:locally|on this machine)[^.]{0,160}(?:vendor|documentation|docs)/iu)
+  assert.match(text, /VS Code[^.]{0,200}(?:documentation|docs)[^.]{0,120}(?:not tested|not run|not confirmed)/iu)
+  assert.doesNotMatch(text, /\bCursor\b/iu)
+
+  assert.match(html, /claude mcp list/iu)
+  assert.match(html, /codex mcp add 1f3d9 --url https:\/\/1f3d9\.com\/mcp --bearer-token-env-var ONEF3D9_AGENT_SECRET/iu)
+  assert.match(html, /bearer_token_env_var\s*=\s*"ONEF3D9_AGENT_SECRET"/iu)
+  assert.match(text, /(?:Use|run|call)[^.]{0,80}\bme\b[^.]{0,160}(?:handle|city name|resident name)/iu)
+})
+
+test('setup names the likely failures, including the public look trap', async () => {
+  const response = await app.request('/setup')
+  const text = visibleText(await response.text())
+
+  assert.match(text, /\blook\b[^.]{0,120}(?:is public|public)[^.]{0,160}(?:does not|doesn't|won't|never)[^.]{0,100}prove[^.]{0,100}key/iu)
+  assert.match(text, /\bme\b[^.]{0,140}(?:real|actual)[^.]{0,100}(?:check|proof)/iu)
+  assert.match(text, /ChatGPT[^.]{0,220}\/mcp[^.]{0,180}(?:remove|delete)[^.]{0,180}(?:new|again|recreate)[^.]{0,120}\/mcp\/connect/iu)
+  assert.match(text, /connector name already exists[^.]{0,180}(?:remove|delete)[^.]{0,100}(?:old|connection)[^.]{0,120}(?:new name|another name|choose a new)/iu)
+  assert.match(text, /bad or missing bearer secret/iu)
+  assert.match(text, /bad or missing bearer secret[^.]{0,220}(?:\/mcp|Authorization|Bearer|key)/iu)
+  assert.match(text, /\/recovery[^.]{0,180}(?:lost|recover)/iu)
+  assert.match(text, /\/rotate[^.]{0,180}(?:exposed|leaked|shared|seen)/iu)
+})
+
+test('the supplied icons are served by app routes at their real sizes', async () => {
+  assert.deepEqual(await pngDimensions('/favicon.ico'), [32, 32])
+  assert.deepEqual(await pngDimensions('/favicon-32x32.png'), [32, 32])
+  assert.deepEqual(await pngDimensions('/apple-touch-icon.png'), [180, 180])
+  assert.deepEqual(await pngDimensions('/og-image.png'), [512, 512])
+
+  const svg = await app.request('/favicon.svg')
+  assert.equal(svg.status, 200)
+  assert.equal(svg.headers.get('content-type'), 'image/svg+xml')
+  assert.match(await svg.text(), /^<svg\b/iu)
+
+  const css = await app.request('/guide.css')
+  assert.equal(css.status, 200)
+  assert.match(css.headers.get('content-type') ?? '', /^text\/css\b/iu)
+  assert.ok((await css.text()).length > 2_000)
+})
+
+test('the window stays sealed from search while visibly linking to both human pages', async () => {
+  const response = await app.request('/window')
+  const html = await response.text()
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive')
+  assert.match(html, /<meta name="robots" content="noindex, nofollow, noarchive">/iu)
+  assert.match(html, /<a[^>]+href="\/about"[^>]*>\s*What is this\?\s*<\/a>/iu)
+  assert.match(html, /<a[^>]+href="\/setup"[^>]*>\s*How do I connect\?\s*<\/a>/iu)
+})
+
+test('the plain-text front door and broad robots permission remain unchanged', async () => {
+  const response = await app.request('/')
+  const body = await response.text()
+  const expected = hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, false)
+
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get('content-type') ?? '', /^text\/plain\b/iu)
+  assert.equal(body, expected)
+  assert.doesNotMatch(body, /<!doctype|<html|<meta|\bog:/iu)
+
+  const robots = await app.request('/robots.txt')
+  const robotsText = await robots.text()
+  assert.equal(robots.status, 200)
+  assert.match(robotsText, /Allow:\s*\//iu)
+  assert.doesNotMatch(robotsText, /Disallow:\s*\/(?:about|setup)\b/iu)
+})

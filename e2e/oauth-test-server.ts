@@ -22,6 +22,7 @@ import type {
   AuthorizationRequestInput,
   AuthorizationRequestRecord,
 } from '../src/oauth-store.ts'
+import { mountHumanPages } from '../src/human-pages.ts'
 import { windowPage, windowScript, windowStyle } from '../src/window.ts'
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
@@ -727,6 +728,7 @@ app.use('/api/*', async (c, next) => {
 mountOAuthRoutes(app, { environment, store })
 setOAuthResidentResolver(token => residentByOAuthAccessToken(token, environment, store))
 
+mountHumanPages(app)
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
