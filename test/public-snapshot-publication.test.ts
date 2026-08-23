@@ -140,3 +140,52 @@ test('publication creates a draft, uploads every new asset, then publishes witho
     await rm(directory, { force: true, recursive: true })
   }
 })
+
+test('publication accepts a sparse upload reply when the later exact asset list matches', async () => {
+  const { directory, bundle } = await fixture()
+  const uploadedAssets: Array<{ name: string; size: number }> = []
+  let uploadCount = 0
+  try {
+    const result = await publishSnapshot({
+      directory,
+      repository: 'onetapstudiogames/1f3d9',
+      token: 'test-token',
+      dryRun: false,
+      request: async request => {
+        if (request.path.endsWith('/releases/77/assets?per_page=100')) {
+          return { status: 200, body: uploadedAssets }
+        }
+        if (request.path.includes('/releases?')) return { status: 200, body: [] }
+        if (request.method === 'GET') return { status: 404, body: {} }
+        if (request.path.endsWith('/releases')) {
+          return {
+            status: 201,
+            body: {
+              id: 77,
+              tag_name: bundle.tag,
+              draft: true,
+              upload_url: 'https://uploads.github.test/releases/77/assets{?name,label}',
+              assets: [],
+            },
+          }
+        }
+        if (request.path.endsWith('/releases/77')) {
+          return { status: 200, body: { tag_name: bundle.tag, draft: false } }
+        }
+        const size = request.body instanceof Uint8Array
+          ? request.body.byteLength
+          : Buffer.byteLength(request.body ?? '')
+        const asset = { name: request.uploadName!, size }
+        uploadedAssets.push(asset)
+        uploadCount += 1
+        return uploadCount === 1
+          ? { status: 201, body: { state: 'uploaded' } }
+          : { status: 201, body: asset }
+      },
+    })
+    assert.equal(result.published, true)
+    assert.equal(result.tag, bundle.tag)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
