@@ -14,6 +14,16 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
   test(`${name} installs one explicit fail-closed public snapshot view`, async () => {
     const sql = await readFile(url, 'utf8')
     assert.match(sql, /CREATE ROLE city_snapshot_export/iu)
+    assert.doesNotMatch(
+      sql,
+      /ALTER ROLE city_snapshot_export\s+NOSUPERUSER/iu,
+      'a managed Postgres role without BYPASSRLS may create the safe role but cannot repeat its attributes',
+    )
+    assert.match(
+      sql,
+      /rolname = 'city_snapshot_export'[\s\S]+rolsuper[\s\S]+rolcreatedb[\s\S]+rolcreaterole[\s\S]+rolinherit[\s\S]+rolreplication[\s\S]+rolbypassrls[\s\S]+rolcanlogin/iu,
+      'reruns must fail closed if the existing export role has unsafe attributes',
+    )
     assert.match(sql, /default_transaction_read_only/iu)
     assert.match(sql, /REVOKE[\s\S]+(?:TABLES|residents)[\s\S]+city_snapshot_export/iu)
     assert.match(sql, /CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)

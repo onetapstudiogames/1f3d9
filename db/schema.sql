@@ -4585,11 +4585,20 @@ BEGIN
     CREATE ROLE city_snapshot_export LOGIN PASSWORD NULL
       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'city_snapshot_export'
+      AND (
+        rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit
+        OR rolreplication OR rolbypassrls OR NOT rolcanlogin
+      )
+  ) THEN
+    RAISE EXCEPTION 'city_snapshot_export has unsafe role attributes';
+  END IF;
 END
 $public_snapshot_role$;
 
-ALTER ROLE city_snapshot_export
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE city_snapshot_export SET default_transaction_read_only = on;
 ALTER ROLE city_snapshot_export SET statement_timeout = '60s';
 ALTER ROLE city_snapshot_export SET lock_timeout = '5s';
