@@ -32,6 +32,8 @@ function assertGuard(
   guard: GuardedBobPaymentFacts,
   expected: typeof BOB_REPAIR_EXPECTATIONS.coffee | typeof BOB_REPAIR_EXPECTATIONS.theBlueAI,
 ): void {
+  const observedUpdateAt = Date.parse(guard.expected_updated_at)
+  const originalUpdateAt = Date.parse(expected.updatedAt)
   if (
     guard.attempt_id !== expected.attemptId
     || guard.transaction !== expected.txHash
@@ -40,7 +42,9 @@ function assertGuard(
     || guard.target_key !== expected.targetKey
     || guard.request_hash !== expected.requestHash
     || !isDeepStrictEqual(guard.request, expected.request)
-    || guard.expected_updated_at !== expected.updatedAt
+    || !Number.isFinite(observedUpdateAt)
+    || new Date(observedUpdateAt).toISOString() !== guard.expected_updated_at
+    || observedUpdateAt < originalUpdateAt
     || guard.recovery_started_at !== expected.recoveryStartedAt
     || guard.recovery_deadline_at !== expected.recoveryDeadlineAt
     || guard.network !== 'base'
@@ -95,8 +99,14 @@ const EXACT_PENDING_GUARD_SQL = `
     AND attempt.asset_type IS NULL
     AND attempt.asset_id IS NULL
     AND attempt.status = 'payment_pending'
-    AND attempt.lease_owner IS NULL
-    AND attempt.lease_expires_at IS NULL
+    AND (
+      (attempt.lease_owner IS NULL AND attempt.lease_expires_at IS NULL)
+      OR (
+        attempt.lease_owner IS NOT NULL
+        AND attempt.lease_expires_at IS NOT NULL
+        AND attempt.lease_expires_at <= clock_timestamp()
+      )
+    )
     AND attempt.finalized_block_number IS NULL
     AND attempt.finalized_block_hash IS NULL
     AND attempt.finalized_block_time IS NULL

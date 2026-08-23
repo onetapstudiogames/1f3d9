@@ -48,6 +48,7 @@ function attempt(key: 'coffee' | 'theBlueAI') {
     invalid_reason: null,
     completed_at: null,
     updated_at: expected.updatedAt,
+    database_now: '2026-08-23T12:00:00.000Z',
   }
 }
 
@@ -165,4 +166,35 @@ test('an operation that cannot affect exactly one approved row aborts', async ()
     bobPaymentRepairApplyOperations.completeTheBlueAI(database, action.complete),
     /aborted|changed|conflict/iu,
   )
+})
+
+test('apply guards accept only the exact observed update time with a null or expired lease', async () => {
+  const base = snapshot()
+  const expired: BobRepairSnapshot = {
+    ...base,
+    attempts: base.attempts.map((row, index) => ({
+      ...row,
+      lease_owner: 'expired-cron-lease',
+      lease_expires_at: `2026-08-23T11:59:3${index}.000Z`,
+      updated_at: `2026-08-23T11:59:0${index}.000Z`,
+    })),
+  }
+  const plan = buildBobPaymentRepairPlan(expired, {
+    [BOB_REPAIR_EXPECTATIONS.coffee.txHash]: evidence('coffee'),
+    [BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash]: evidence('theBlueAI'),
+  })
+  assert.equal(plan.state, 'work_required')
+  const complete = plan.actions.find(action => action.kind === 'complete_theblueai')!
+  assert.equal(complete.kind, 'complete_theblueai')
+
+  const database = new RecordingDatabase()
+  await bobPaymentRepairApplyOperations.completeTheBlueAI(database, complete)
+
+  const guarded = database.calls.find(call => call.text.includes('bob-payment-repair-apply:create-place'))
+  assert.ok(guarded)
+  assert.match(
+    guarded.text,
+    /lease_owner\s+IS\s+NULL[\s\S]*lease_expires_at\s+IS\s+NULL[\s\S]*OR[\s\S]*lease_owner\s+IS\s+NOT\s+NULL[\s\S]*lease_expires_at\s*<=\s*clock_timestamp\(\)/iu,
+  )
+  assert.ok(guarded.values.map(String).includes('2026-08-23T11:59:01.000Z'))
 })

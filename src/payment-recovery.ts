@@ -95,6 +95,7 @@ export interface PaymentRecoveryDependencies {
     attempt: PaymentRecoveryAttempt,
     evidence: Extract<LateX402Inspection, { state: 'matched' }>,
   ): Promise<PaymentRecoveryOutcome>
+  reportFailure?(attempt: PaymentRecoveryAttempt, error: unknown): void
 }
 
 export type PaymentRecoveryBatchResult = Readonly<{
@@ -231,8 +232,9 @@ export async function runPaymentRecoveryBatch(
       else if (result.state === 'payment_pending' || result.state === 'unavailable') counts.pending += 1
       else if (result.state === 'busy') counts.busy += 1
       else counts.terminalized += 1
-    } catch {
+    } catch (error) {
       counts.failed += 1
+      deps.reportFailure?.(attempt, error)
     }
   }
   return Object.freeze({ ...counts })

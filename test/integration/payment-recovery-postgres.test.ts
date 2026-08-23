@@ -32,6 +32,14 @@ const recoveryMigrationDdl = await readFile(
   new URL('../../db/migrations/20260822_payment_recovery.sql', import.meta.url),
   'utf8',
 )
+const cityCreditMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260822_city_credit.sql', import.meta.url),
+  'utf8',
+)
+const recoveryTriggerRepairMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260823_payment_recovery_trigger_repair.sql', import.meta.url),
+  'utf8',
+)
 
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
 const PAYER = `0x${'1'.repeat(40)}`
@@ -187,6 +195,26 @@ test('payment recovery migration and primitives preserve exact deadline and term
   t.after(async () => {
     await database.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', containerName], { encoding: 'utf8' })
+  })
+
+  await t.test('city credit cannot replace the newer payment transition rules', async () => {
+    await reset(database)
+    await database.query(cityCreditMigrationDdl)
+    await database.query(recoveryTriggerRepairMigrationDdl)
+    await database.query(recoveryTriggerRepairMigrationDdl)
+    await insertAttempt(database, {
+      publicId: 'pay_recovery_after_credit', targetKey: 'frontier:root:after-credit',
+      leaseOwner: 'lease-after-credit', recovery: 'due',
+    })
+
+    const expired = await expirePaymentAttempt({ query: async (text, params = []) => (
+      await database.query(text, [...params])
+    ).rows }, {
+      publicId: 'pay_recovery_after_credit',
+      leaseOwner: 'lease-after-credit',
+      reason: 'automatic payment recovery deadline passed',
+    })
+    assert.equal(expired.status, 'expired')
   })
 
   await t.test('recovery deadline is exactly two hours and equality cannot complete', async () => {
@@ -534,6 +562,72 @@ test('payment recovery migration and primitives preserve exact deadline and term
         WHERE public_id = 'pay_recovery_late'`),
       (error: unknown) => postgresCode(error) === '55000',
     )
+  })
+
+  await t.test('the trigger repair migration re-allows due x402 expiry from payment_pending', async () => {
+    await reset(database)
+    await database.query(`
+      CREATE OR REPLACE FUNCTION protect_payment_attempt_history() RETURNS trigger LANGUAGE plpgsql AS $function$
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          RAISE EXCEPTION 'payment attempt history cannot be deleted' USING ERRCODE = '55000';
+        END IF;
+        IF OLD.status IN ('completed', 'invalid', 'expired', 'legacy_completed', 'credit_returned')
+          AND NEW IS DISTINCT FROM OLD THEN
+          RAISE EXCEPTION 'terminal payment attempt is immutable' USING ERRCODE = '55000';
+        END IF;
+        IF NOT (
+          (OLD.status = 'settling' AND NEW.status IN (
+            'settling', 'payment_pending', 'invalid', 'expired', 'needs_review'
+          ))
+          OR (OLD.status = 'payment_pending' AND NEW.status IN (
+            'payment_pending', 'completed', 'invalid', 'needs_review'
+          ))
+          OR (OLD.status = 'needs_review' AND NEW.status IN (
+            'needs_review', 'payment_pending', 'completed', 'invalid'
+          ))
+          OR (
+            OLD.method = 'credit'
+            AND OLD.status IN ('settling', 'payment_pending')
+            AND NEW.status IN ('completed', 'credit_returned')
+          )
+          OR (OLD.status = NEW.status)
+        ) THEN
+          RAISE EXCEPTION 'invalid payment attempt transition' USING ERRCODE = '55000';
+        END IF;
+        IF NEW.updated_at < OLD.updated_at THEN
+          RAISE EXCEPTION 'payment attempt update time cannot move backward' USING ERRCODE = '55000';
+        END IF;
+        RETURN NEW;
+      END
+      $function$;
+    `)
+    await insertAttempt(database, {
+      publicId: 'pay_recovery_stale_trigger', targetKey: 'frontier:root:stale-trigger',
+      status: 'payment_pending', leaseOwner: 'lease-due', recovery: 'due',
+    })
+    const paymentDatabase = { query: async (text: string, params: readonly unknown[] = []) => (
+      await database.query(text, [...params])
+    ).rows }
+
+    await assert.rejects(
+      expirePaymentAttempt(paymentDatabase, {
+        publicId: 'pay_recovery_stale_trigger',
+        leaseOwner: 'lease-due',
+        reason: 'automatic payment recovery deadline passed',
+      }),
+      (error: unknown) => postgresCode(error) === '55000',
+    )
+
+    await database.query(recoveryTriggerRepairMigrationDdl)
+    const expired = await expirePaymentAttempt(paymentDatabase, {
+      publicId: 'pay_recovery_stale_trigger',
+      leaseOwner: 'lease-due',
+      reason: 'automatic payment recovery deadline passed',
+    })
+    assert.equal(expired.status, 'expired')
+    assert.equal(expired.leaseOwner, null)
+    assert.equal(expired.invalidReason, 'automatic payment recovery deadline passed')
   })
 
   await t.test('additive migration backfills old live rows from their last known update', async () => {

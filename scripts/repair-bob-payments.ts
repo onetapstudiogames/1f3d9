@@ -102,26 +102,53 @@ function validateAttemptImmutable(row: QueryRow, expected: AttemptExpectation): 
     && normalizedWallet(row.payee_wallet) === EXPECTED_RECIPIENT
     && text(row, 'amount_units') === ONE_USDC_UNITS.toString()
     && text(row, 'tx_hash')?.toLowerCase() === expected.txHash
-    && row.lease_owner == null
-    && row.lease_expires_at == null
     && sameTime(row.recovery_started_at, expected.recoveryStartedAt)
     && sameTime(row.recovery_deadline_at, expected.recoveryDeadlineAt)
   if (!matches) abort(`${expected.attemptId} immutable attempt facts changed`)
 }
 
-function validatePendingAttempt(row: QueryRow, expected: AttemptExpectation): void {
+function observedRepairTimestamp(row: QueryRow, expected: AttemptExpectation): string {
+  const updatedAt = iso(row.updated_at)
+  const databaseNow = iso(row.database_now)
+  const earliest = Date.parse(expected.updatedAt)
+  if (
+    updatedAt == null
+    || databaseNow == null
+    || Date.parse(updatedAt) < earliest
+    || Date.parse(updatedAt) > Date.parse(databaseNow)
+  ) abort(`${expected.attemptId} update time is outside the approved repair window`)
+  return updatedAt
+}
+
+function validateRepairableLease(row: QueryRow, expected: AttemptExpectation): void {
+  const hasOwner = row.lease_owner != null
+  const hasExpiry = row.lease_expires_at != null
+  if (!hasOwner && !hasExpiry) return
+  const expiry = iso(row.lease_expires_at)
+  const databaseNow = iso(row.database_now)
+  if (
+    hasOwner !== hasExpiry
+    || expiry == null
+    || databaseNow == null
+    || Date.parse(expiry) > Date.parse(databaseNow)
+  ) abort(`${expected.attemptId} has an active or malformed recovery lease`)
+}
+
+function validatePendingAttempt(row: QueryRow, expected: AttemptExpectation): string {
   validateAttemptImmutable(row, expected)
+  validateRepairableLease(row, expected)
+  const updatedAt = observedRepairTimestamp(row, expected)
   const finalityIsEmpty = row.finalized_block_number == null
     && row.finalized_block_hash == null
     && row.finalized_block_time == null
     && row.finalized_at == null
   if (
     text(row, 'status') !== 'payment_pending'
-    || !sameTime(row.updated_at, expected.updatedAt)
     || !finalityIsEmpty
     || row.invalid_reason != null
     || row.completed_at != null
   ) abort(`${expected.attemptId} pending state or stored finality changed`)
+  return updatedAt
 }
 
 function validateStoredFinality(row: QueryRow, expected: AttemptExpectation): void {
@@ -174,7 +201,11 @@ function matchingNamePlaces(snapshot: BobRepairSnapshot, name: string): readonly
   return snapshot.places.filter(row => text(row, 'name')?.toLowerCase() === name.toLowerCase())
 }
 
-function validateInitialState(snapshot: BobRepairSnapshot): number {
+function validateInitialState(snapshot: BobRepairSnapshot): Readonly<{
+  worldRootId: number
+  coffee: QueryRow
+  theBlueAI: QueryRow
+}> {
   const resident = exactRow(snapshot.residents, 'Bob resident 68')
   if (integer(resident, 'id') !== BOB_RESIDENT_ID || text(resident, 'handle') !== BOB_HANDLE) {
     abort('resident 68 is no longer Bob')
@@ -202,7 +233,11 @@ function validateInitialState(snapshot: BobRepairSnapshot): number {
   if (snapshot.fees.length !== 0) abort('one of Bob\'s transaction hashes already has a fee row')
   if (snapshot.places.length !== 0) abort('TheBlueAI or coffee-shop is no longer available')
   if (snapshot.credits.length !== 0) abort('the deterministic founder credit source is already occupied')
-  return integer(root, 'id')!
+  return Object.freeze({
+    worldRootId: integer(root, 'id')!,
+    coffee,
+    theBlueAI,
+  })
 }
 
 function exactPaymentUse(row: QueryRow, expected: AttemptExpectation): boolean {
@@ -267,6 +302,12 @@ function validateFinalState(snapshot: BobRepairSnapshot): void {
   )
   validateAttemptImmutable(coffee, BOB_REPAIR_EXPECTATIONS.coffee)
   validateAttemptImmutable(theBlueAI, BOB_REPAIR_EXPECTATIONS.theBlueAI)
+  if (
+    coffee.lease_owner != null
+    || coffee.lease_expires_at != null
+    || theBlueAI.lease_owner != null
+    || theBlueAI.lease_expires_at != null
+  ) abort('completed Bob repair retained a payment recovery lease')
   validateStoredFinality(coffee, BOB_REPAIR_EXPECTATIONS.coffee)
   validateStoredFinality(theBlueAI, BOB_REPAIR_EXPECTATIONS.theBlueAI)
   if (
@@ -308,7 +349,7 @@ function hasFinalStateSignal(snapshot: BobRepairSnapshot): boolean {
     || snapshot.credits.length > 0
 }
 
-function guardedPayment(expected: AttemptExpectation): GuardedBobPaymentFacts {
+function guardedPayment(expected: AttemptExpectation, row: QueryRow): GuardedBobPaymentFacts {
   return Object.freeze({
     attempt_id: expected.attemptId,
     transaction: expected.txHash,
@@ -317,7 +358,7 @@ function guardedPayment(expected: AttemptExpectation): GuardedBobPaymentFacts {
     target_key: expected.targetKey,
     request_hash: expected.requestHash,
     request: expected.request,
-    expected_updated_at: expected.updatedAt,
+    expected_updated_at: observedRepairTimestamp(row, expected),
     recovery_started_at: expected.recoveryStartedAt,
     recovery_deadline_at: expected.recoveryDeadlineAt,
     network: NETWORK,
@@ -354,7 +395,7 @@ export function buildBobPaymentRepairPlan(
     })
   }
 
-  const worldRootId = validateInitialState(snapshot)
+  const initial = validateInitialState(snapshot)
   const theBlueAIRequest = BOB_REPAIR_EXPECTATIONS.theBlueAI.request
   return Object.freeze({
     schema_version: 1,
@@ -367,7 +408,7 @@ export function buildBobPaymentRepairPlan(
         transaction: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
         resident_id: BOB_RESIDENT_ID,
         name: 'TheBlueAI',
-        world_root_id: worldRootId,
+        world_root_id: initial.worldRootId,
         place: Object.freeze({
           name: 'TheBlueAI',
           description: theBlueAIRequest.description,
@@ -375,7 +416,7 @@ export function buildBobPaymentRepairPlan(
           open_to_things: theBlueAIRequest.open_to_things,
           open_to_notes: theBlueAIRequest.open_to_notes,
         }),
-        guard: guardedPayment(BOB_REPAIR_EXPECTATIONS.theBlueAI),
+        guard: guardedPayment(BOB_REPAIR_EXPECTATIONS.theBlueAI, initial.theBlueAI),
       }),
       Object.freeze({
         kind: 'close_coffee_probe',
@@ -384,7 +425,7 @@ export function buildBobPaymentRepairPlan(
         resident_id: BOB_RESIDENT_ID,
         terminal_state: 'founder_review',
         reason: BOB_COFFEE_REVIEW_REASON,
-        guard: guardedPayment(BOB_REPAIR_EXPECTATIONS.coffee),
+        guard: guardedPayment(BOB_REPAIR_EXPECTATIONS.coffee, initial.coffee),
       }),
       Object.freeze({
         kind: 'issue_founder_credit',
@@ -541,6 +582,7 @@ export async function readBobRepairSnapshot(
       attempt.finalized_block_number::text AS finalized_block_number,
       attempt.finalized_block_hash, attempt.finalized_block_time, attempt.finalized_at,
       attempt.invalid_reason, attempt.updated_at, attempt.completed_at
+      , clock_timestamp() AS database_now
     FROM payment_attempts attempt
     LEFT JOIN residents resident ON resident.id = attempt.actor_id
     WHERE attempt.public_id = ANY($1::text[])

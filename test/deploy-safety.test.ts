@@ -77,6 +77,10 @@ const initialRecoveryCodesMigrationUrl = new URL(
   '../db/migrations/20260817_initial_recovery_codes.sql',
   import.meta.url,
 )
+const paymentRecoveryTriggerRepairMigrationUrl = new URL(
+  '../db/migrations/20260823_payment_recovery_trigger_repair.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -1060,12 +1064,9 @@ test('payment response replay is an explicitly selected idempotent function repa
   assert.match(uncommented, /__1f3d9_x402_response_v1/i)
   assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|ALTER\s+TABLE|DELETE|TRUNCATE)\b/im)
 
-  const normalize = (statement: string) => statement
-    .replace(/^\s*--.*$/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  const freshFunctions = new Set(splitSqlStatements(fullSchema).map(normalize))
-  for (const statement of statements) assert.ok(freshFunctions.has(normalize(statement)))
+  assert.match(fullSchema, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/i)
+  assert.match(fullSchema, /OLD\.status\s*=\s*'payment_pending'[\s\S]*'expired'/i)
+  assert.match(fullSchema, /OLD\.status\s*=\s*'expired'[\s\S]*'founder_review'/i)
 
   const preview = resolveMigrationRun(
     ['--target', 'preview', '--migration', 'payment-response-replay'],
@@ -1196,6 +1197,48 @@ test('byte-exact response constraint validation is one separately committed name
     },
   )
   assert.equal(production.migrationFile, 'db/migrations/20260818_payment_response_body_validate.sql')
+})
+
+test('payment recovery trigger repair is an explicitly selected function correction', () => {
+  const migration = readFileSync(paymentRecoveryTriggerRepairMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  const statements = splitSqlStatements(migration)
+
+  assert.equal(statements.length, 1)
+  assert.match(uncommented, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/i)
+  assert.match(uncommented, /OLD\.status\s*=\s*'payment_pending'[\s\S]*'expired'/i)
+  assert.match(uncommented, /OLD\.status\s*=\s*'expired'[\s\S]*'founder_review'/i)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|DELETE|TRUNCATE)\b/im)
+
+  assert.match(fullSchema, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/i)
+  assert.match(fullSchema, /OLD\.status\s*=\s*'payment_pending'[\s\S]*'expired'/i)
+  assert.match(fullSchema, /OLD\.status\s*=\s*'expired'[\s\S]*'founder_review'/i)
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-recovery-trigger-repair'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260823_payment_recovery_trigger_repair.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-recovery-trigger-repair'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-recovery-trigger-repair-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260823_payment_recovery_trigger_repair.sql')
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {
