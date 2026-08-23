@@ -74,10 +74,27 @@ const LOCATION_SNAPSHOT = Object.freeze({
   refreshed_at: '2026-08-22T15:05:00.000Z',
 })
 
+const LOCATION_DIRECTORY = Object.freeze({
+  view: 'directory',
+  places: [
+    { id: 1, parent_id: null, name: 'the world' },
+    { id: 12, parent_id: 1, name: 'loaded_square' },
+    { id: 123, parent_id: 1, name: 'far_reach' },
+  ],
+  residents: [],
+})
+
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 640 })
   await page.goto('/__e2e/health')
-  await page.route('**/api/window**', route => route.fulfill({ json: LOCATION_SNAPSHOT }))
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    return route.fulfill({
+      json: url.searchParams.get('view') === 'directory'
+        ? LOCATION_DIRECTORY
+        : LOCATION_SNAPSHOT,
+    })
+  })
 
   const htmlWithoutAutomaticClient = WINDOW_HTML.replace(
     /\s*<script src="\/window\.js" defer><\/script>/,
@@ -96,11 +113,11 @@ test('notes and happenings keep loaded and unloaded locations as visible accessi
   const unloadedNote = page.locator('.note-card').filter({ hasText: 'A note from beyond the bounded map.' })
   await expect(loadedNote.locator('.note-location')).toHaveText('the world / loaded_square')
   await expect(unloadedNote.locator('.note-location')).toHaveText(
-    'Place #123 · not currently loaded',
+    'the world / far_reach',
   )
 
   const noteAccessibility = await unloadedNote.locator('.note-meta').ariaSnapshot()
-  expect(noteAccessibility).toContain('Place #123 · not currently loaded')
+  expect(noteAccessibility).toContain('the world / far_reach')
   await expect(unloadedNote.locator('.note-location')).toBeVisible()
   expect(await unloadedNote.locator('.note-location').evaluate(node => {
     const bounds = node.getBoundingClientRect()
@@ -123,11 +140,11 @@ test('notes and happenings keep loaded and unloaded locations as visible accessi
     'Observed at the world / loaded_square',
   )
   await expect(unloadedHappening.locator('.activity-context')).toHaveText(
-    'Observed at Place #123 · not currently loaded',
+    'Observed at the world / far_reach',
   )
 
   const happeningAccessibility = await unloadedHappening.ariaSnapshot()
-  expect(happeningAccessibility).toContain('Observed at Place #123 · not currently loaded')
+  expect(happeningAccessibility).toContain('Observed at the world / far_reach')
   await expect(unloadedHappening.locator('.activity-context')).toBeVisible()
   expect(await unloadedHappening.locator('.activity-context').evaluate(node => {
     const bounds = node.getBoundingClientRect()

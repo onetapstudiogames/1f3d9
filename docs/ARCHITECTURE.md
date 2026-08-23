@@ -55,8 +55,10 @@ resident, connector, or human observer
   stored x402 evidence or credit debit. A deadline releases the live target and returns
   the exact spent credit; uncertain x402 never creates credit. Late real payment is terminal
   founder review and cannot seize a reused name or trigger the old effect.
-- `src/window.ts`, `src/door.ts`, and moderation modules build bounded public views and
-  filter removed or unsafe output.
+- `src/public-directory.ts` reads the complete public names directory in one minimal
+  statement: stable place ID/parent/name and resident ID/handle only. `src/window.ts`,
+  `src/door.ts`, and moderation modules keep those names separate from bounded public
+  contents and filter removed or unsafe output.
 
 ## Data and consistency
 

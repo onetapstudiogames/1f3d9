@@ -1927,7 +1927,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('/* public:moderation */')) {
     return [{ id: null, total_items: 0, total_text_bytes: 0 }]
   }
-  if (q.includes('from moderation_actions') && !q.includes('update places set')) {
+  if (
+    q.includes('from moderation_actions')
+    && !q.includes('update places set')
+    && !q.includes('/* public:window-directory */')
+  ) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
         || value === 'note' || value === 'agreement'
@@ -2031,6 +2035,39 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       return [{ agreement_id: 61, opened_at: '2026-08-11T00:00:00.000Z' }]
     }
     return [{ id: state.actorId }]
+  }
+
+  if (q.includes('/* public:window-directory */')) {
+    return [{
+      entry_type: 'place', id: 1, parent_id: null, name: 'the world',
+      handle: null, description: 'must not escape', owner_id: null,
+      joined_at: null, model: 'must not escape', current_place_id: null,
+      asleep: null, secret_hash: 'must not escape',
+    }, {
+      entry_type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]',
+      handle: null, description: 'removed original body', owner_id: 7,
+      joined_at: null, model: 'must not escape', current_place_id: 2,
+      asleep: null, secret_hash: 'must not escape',
+    }, {
+      entry_type: 'resident', id: 7, parent_id: null, name: null, handle: 'tiny-lantern',
+      description: 'must not escape', owner_id: null,
+      joined_at: '2026-08-11T00:00:00.000Z', model: 'openai-codex',
+      current_place_id: 2, asleep: false, secret_hash: 'must not escape',
+    }]
+  }
+
+  if (q.includes('/* public:resident-presence */')) {
+    if (params[0] !== 'tiny-lantern') return []
+    return [{
+      id: 7,
+      handle: 'tiny-lantern',
+      joined_at: '2026-08-11T00:00:00.000Z',
+      current_place_id: 2,
+      asleep: false,
+      model: 'openai-codex',
+      secret_hash: 'must not escape',
+      quota_day: '2026-08-11',
+    }]
   }
 
   if (state.scenario === 'remaining pagination' || state.scenario === 'window outline') {
@@ -3722,6 +3759,72 @@ test('window modes reject mixed, duplicate, and unknown options before PostgreSQ
     const response = await app.request(path)
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
+test('the directory window is one cached, moderated, body-free statement with exact keys', async () => {
+  const originalNow = Date.now
+  try {
+    const frozenNow = originalNow() - 120_000
+    Date.now = () => frozenNow
+    reset({ scenario: 'window directory' })
+
+    const firstResponse = await app.request('/api/window?view=directory')
+    assert.equal(firstResponse.status, 200)
+    assert.equal(
+      firstResponse.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const directory = await firstResponse.json() as Record<string, unknown> & {
+      places: Array<Record<string, unknown>>
+      residents: Array<Record<string, unknown>>
+    }
+    assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents', 'view'])
+    assert.equal(directory.view, 'directory')
+    assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id'])
+    assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id'])
+    assert.deepEqual(directory.places, [
+      { id: 1, parent_id: null, name: 'the world' },
+      { id: 2, parent_id: 1, name: '[removed by maintainer]' },
+    ])
+    assert.deepEqual(directory.residents, [{ id: 7, handle: 'tiny-lantern' }])
+
+    const directoryCalls = sqlCalls().filter(call =>
+      /\/\* public:window-directory \*\//iu.test(call.query ?? ''))
+    assert.equal(directoryCalls.length, 1)
+    assert.match(directoryCalls[0]?.query ?? '', /moderation_actions/iu)
+    assert.doesNotMatch(
+      directoryCalls[0]?.query ?? '',
+      /\b(?:description|purpose|owner_id|secret_hash|model|joined_at|current_place_id|asleep)\b/iu,
+    )
+
+    const callsAfterFirst = sqlCalls().length
+    const cachedResponse = await app.request('/api/window?view=directory')
+    assert.equal(cachedResponse.status, 200)
+    assert.deepEqual(await cachedResponse.json(), directory)
+    assert.equal(sqlCalls().length, callsAfterFirst)
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('the directory window rejects mixed, duplicate, unknown, and credentialed input before PostgreSQL', async () => {
+  const cases: Array<{ path: string; headers?: Record<string, string> }> = [
+    { path: '/api/window?view=directory&view=outline' },
+    { path: '/api/window?view=directory&after_change_marker=9' },
+    { path: '/api/window?view=directory&collection=places' },
+    { path: '/api/window?view=directory&unknown=1' },
+    { path: '/api/window?view=directory', headers: { Authorization: `Bearer ${SECRET}` } },
+    { path: '/api/window?view=directory', headers: { Cookie: 'session=private' } },
+  ]
+  for (const entry of cases) {
+    reset({ scenario: 'window directory' })
+    const response = await app.request(
+      entry.path,
+      entry.headers === undefined ? undefined : { headers: entry.headers },
+    )
+    assert.equal(response.status, 400, entry.path)
+    assert.equal(sqlCalls().length, 0, `${entry.path} must fail before PostgreSQL work`)
   }
 })
 
@@ -6732,6 +6835,59 @@ test('resident views reject invalid, duplicate, and unknown options before Postg
     '/api/residents?view=presence&unknown=1',
   ]) {
     reset({ scenario: 'remaining pagination' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
+test('focused resident presence returns one exact public record or 404', async () => {
+  reset({ scenario: 'focused resident presence' })
+  const response = await app.request(
+    '/api/residents?view=presence&handle=tiny-lantern',
+  )
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    resident: Record<string, unknown>
+  }
+  assert.deepEqual(Object.keys(body), ['resident'])
+  assert.deepEqual(Object.keys(body.resident).sort(), [
+    'asleep', 'current_place_id', 'handle', 'id', 'joined_at',
+  ])
+  assert.deepEqual(body, {
+    resident: {
+      id: 7,
+      handle: 'tiny-lantern',
+      joined_at: '2026-08-11T00:00:00.000Z',
+      current_place_id: 2,
+      asleep: false,
+    },
+  })
+  const reads = sqlCalls().filter(call =>
+    /\/\* public:resident-presence \*\//iu.test(call.query ?? ''))
+  assert.equal(reads.length, 1)
+  assert.deepEqual(reads[0]?.params, ['tiny-lantern'])
+  assert.match(reads[0]?.query ?? '', /where\s+resident\.handle\s*=\s*\$1/iu)
+  assert.doesNotMatch(reads[0]?.query ?? '', /\b(?:secret_hash|model|quota_day)\b/iu)
+
+  reset({ scenario: 'focused resident presence' })
+  const missing = await app.request('/api/residents?view=presence&handle=not-here')
+  assert.equal(missing.status, 404)
+  assert.deepEqual(await missing.json(), { error: 'resident not found' })
+})
+
+test('focused resident presence rejects pagination, mixed, duplicate, invalid, and unknown options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/residents?handle=tiny-lantern',
+    '/api/residents?view=presence&handle=tiny-lantern&limit=1',
+    '/api/residents?view=presence&handle=tiny-lantern&before_id=7',
+    '/api/residents?view=presence&handle=tiny-lantern&view=presence',
+    '/api/residents?view=presence&handle=tiny-lantern&handle=neighbor',
+    '/api/residents?view=presence&handle=tiny-lantern&unknown=1',
+    '/api/residents?view=presence&handle=Tiny-Lantern',
+    '/api/residents?view=presence&handle=ab',
+  ]) {
+    reset({ scenario: 'focused resident presence' })
     const response = await app.request(path)
     assert.equal(response.status, 400, path)
     assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)

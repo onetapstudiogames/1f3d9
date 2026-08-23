@@ -35,11 +35,58 @@ export function windowPlaceLabel(
   return place?.path ?? `Place #${placeId} · not currently loaded`
 }
 
+export type WindowDirectoryPlace = Readonly<{
+  id: number
+  parent_id: number | null
+  name: string
+}>
+
+export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{
+  path: string
+}>
+
+export function deriveWindowDirectoryPlaces(
+  values: readonly WindowDirectoryPlace[],
+): WindowDirectoryPlaceWithPath[] {
+  const maximumPathDepth = 32
+  const counts = new Map<number, number>()
+  for (const value of values) counts.set(value.id, (counts.get(value.id) ?? 0) + 1)
+
+  const unique = new Map<number, WindowDirectoryPlace>()
+  for (const value of values) {
+    if (!unique.has(value.id)) unique.set(value.id, value)
+  }
+
+  const fallback = (value: WindowDirectoryPlace): string =>
+    `${value.name} · Place #${value.id}`
+  const pathFor = (value: WindowDirectoryPlace): string => {
+    if ((counts.get(value.id) ?? 0) !== 1) return fallback(value)
+    const names: string[] = []
+    const seen = new Set<number>()
+    let current: WindowDirectoryPlace | undefined = value
+    while (current) {
+      if (
+        names.length >= maximumPathDepth || seen.has(current.id) ||
+        (counts.get(current.id) ?? 0) !== 1
+      ) return fallback(value)
+      names.push(current.name)
+      seen.add(current.id)
+      if (current.parent_id === null) return names.reverse().join(' / ')
+      current = unique.get(current.parent_id)
+      if (!current) return fallback(value)
+    }
+    return fallback(value)
+  }
+
+  return [...unique.values()].map(value => ({ ...value, path: pathFor(value) }))
+}
+
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
 const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
 const MERGE_RESIDENT_ROWS_JS = mergeResidentRows.toString()
 const WINDOW_PLACE_LABEL_JS = windowPlaceLabel.toString()
+const DERIVE_WINDOW_DIRECTORY_PLACES_JS = deriveWindowDirectoryPlaces.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -59,6 +106,7 @@ export const WINDOW_JS = `(() => {
   const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
+  const deriveWindowDirectoryPlaces = ${DERIVE_WINDOW_DIRECTORY_PLACES_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -69,6 +117,7 @@ export const WINDOW_JS = `(() => {
     residentPage: document.getElementById('resident-page'),
     placeFilter: document.getElementById('place-filter'),
     residentFilter: document.getElementById('resident-filter'),
+    directoryStatus: document.getElementById('directory-status'),
     share: document.getElementById('share-view'),
     placeTitle: document.getElementById('place-focus-title'),
     placeSummary: document.getElementById('place-focus-summary'),
@@ -108,6 +157,11 @@ export const WINDOW_JS = `(() => {
     pollTimer: 0,
     changeMarker: null,
     snapshot: null,
+    directory: {
+      places: [], residents: [], loaded: false, loading: false, error: false, marker: null,
+    },
+    focusedPlaces: {},
+    focusedResidents: {},
     histories: { notes: {}, things: {}, agreements: {}, events: {} },
     branches: {},
     residentPaging: {
@@ -530,6 +584,37 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return id && handle && joinedAt && (raw.current_place_id == null || currentPlaceId)
         ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt, asleep: raw.asleep === true }]
         : []
+    })
+  }
+
+  function normalizeDirectory(payload) {
+    if (!payload || typeof payload !== 'object' || payload.view !== 'directory') {
+      throw new Error('invalid public directory')
+    }
+    const rawPlaces = Array.isArray(payload.places) ? payload.places : []
+    const places = deriveWindowDirectoryPlaces(rawPlaces.flatMap(raw => {
+      if (!raw || typeof raw !== 'object') return []
+      const id = safeId(raw.id)
+      const parentId = raw.parent_id === null ? null : safeId(raw.parent_id)
+      const name = safeText(raw.name, '', 120, false)
+      return id && name && (raw.parent_id === null || parentId)
+        ? [{ id, parent_id: parentId, name }]
+        : []
+    }))
+    const residentsByHandle = new Map()
+    if (Array.isArray(payload.residents)) {
+      for (const raw of payload.residents) {
+        if (!raw || typeof raw !== 'object') continue
+        const id = safeId(raw.id)
+        const handle = safeHandle(raw.handle)
+        if (id && handle && !residentsByHandle.has(handle)) {
+          residentsByHandle.set(handle, Object.freeze({ id, handle }))
+        }
+      }
+    }
+    return Object.freeze({
+      places: Object.freeze(places.map(place => Object.freeze(place))),
+      residents: Object.freeze([...residentsByHandle.values()]),
     })
   }
 
@@ -1279,15 +1364,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     state = { ...state, ...next }
     writeHash(!rovingTabActivation)
     renderAll()
+    void ensureFocusedSelection()
   }
 
   function populateFilters(snapshot) {
     if (nodes.placeFilter) {
-      const missingPlace = state.placeId && !snapshot.flatPlaces.some(place => place.id === state.placeId)
+      const places = state.directory.loaded ? state.directory.places : snapshot.flatPlaces
+      const missingPlace = state.placeId && !places.some(place => place.id === state.placeId)
         ? [element('option', '', 'Place #' + String(state.placeId) + ' · not currently loaded')]
         : []
       if (missingPlace[0]) missingPlace[0].value = String(state.placeId)
-      const options = [element('option', '', 'All loaded places'), ...snapshot.flatPlaces.map(place => {
+      const options = [element('option', '', 'All places'), ...places.map(place => {
         const option = element('option', '', place.path)
         option.value = String(place.id)
         return option
@@ -1297,11 +1384,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
     }
     if (nodes.residentFilter) {
-      const missingResident = state.resident && !snapshot.residents.some(resident => resident.handle === state.resident)
+      const residents = state.directory.loaded ? state.directory.residents : snapshot.residents
+      const missingResident = state.resident && !residents.some(resident => resident.handle === state.resident)
         ? [element('option', '', state.resident + ' · not currently loaded')]
         : []
       if (missingResident[0]) missingResident[0].value = state.resident
-      const options = [element('option', '', 'All loaded residents'), ...snapshot.residents.map(resident => {
+      const options = [element('option', '', 'All residents'), ...residents.map(resident => {
         const option = element('option', '', resident.handle + ' · #' + String(resident.id))
         option.value = resident.handle
         return option
@@ -1316,6 +1404,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return state.resident
       ? snapshot.residents.find(resident => resident.handle === state.resident) || null
       : null
+  }
+
+  function directoryPlace(placeId) {
+    return placeId
+      ? state.directory.places.find(place => place.id === placeId) || null
+      : null
+  }
+
+  function placeReference(snapshot, placeId) {
+    if (!placeId) return null
+    return directoryPlace(placeId) ||
+      snapshot.flatPlaces.find(place => place.id === placeId) || null
+  }
+
+  function focusedPlace(placeId) {
+    if (!placeId) return null
+    const place = state.focusedPlaces[String(placeId)]?.place || null
+    const reference = directoryPlace(placeId)
+    return place && reference
+      ? Object.freeze({ ...place, path: reference.path })
+      : place
+  }
+
+  function focusedResident(handle) {
+    return handle ? state.focusedResidents[handle]?.resident || null : null
   }
 
   function selectedPlace(snapshot) {
@@ -1581,6 +1694,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function mapRoots(snapshot) {
     const focus = selectedPlace(snapshot)
     if (focus) return [focus]
+    const focused = focusedPlace(state.placeId)
+    if (focused) return [focused]
     return state.placeId || state.resident ? [] : snapshot.places
   }
 
@@ -1731,7 +1846,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!nodes.roster) return
     renderResidentPage()
     const placeIds = new Set(mapRoots(snapshot).flatMap(root => flattenPlaces([root], []).map(place => place.id)))
-    const visible = snapshot.residents.filter(resident =>
+    const selectedFocusedResident = state.resident && !selectedResident(snapshot)
+      ? focusedResident(state.resident)
+      : null
+    const availableResidents = selectedFocusedResident
+      ? [...snapshot.residents, selectedFocusedResident]
+      : snapshot.residents
+    const visible = availableResidents.filter(resident =>
       (!state.resident || resident.handle === state.resident) &&
       (!state.placeId || resident.current_place_id === state.placeId ||
         placeIds.has(resident.current_place_id)))
@@ -1747,9 +1868,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const fragment = document.createDocumentFragment()
     for (const placeId of groups) {
       const group = element('section', 'roster-group')
-      const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
+      const place = placeReference(snapshot, placeId)
       group.append(element('p', 'roster-place', place
-        ? place.name
+        ? place.path
         : placeId
           ? 'Place #' + String(placeId) + ' · not currently loaded'
           : 'Between places'))
@@ -2014,20 +2135,56 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? snapshot.flatPlaces[0] || null
       : null)
     if (!place) {
-      const betweenPlaces = followed && followed.current_place_id === null
-      const unloadedPlaceId = state.placeId || followed?.current_place_id || null
-      const unloadedResident = state.resident && !followed ? state.resident : null
+      const residentMetadata = followed || focusedResident(state.resident)
+      const focused = focusedPlace(state.placeId)
+      const betweenPlaces = residentMetadata && residentMetadata.current_place_id === null
+      const unloadedPlaceId = state.placeId || residentMetadata?.current_place_id || null
+      const unloadedResident = state.resident && !residentMetadata ? state.resident : null
+      const reference = directoryPlace(unloadedPlaceId)
+      const placeRead = unloadedPlaceId ? state.focusedPlaces[String(unloadedPlaceId)] : null
+      const residentRead = unloadedResident ? state.focusedResidents[unloadedResident] : null
       if (nodes.placeTitle) nodes.placeTitle.textContent = unloadedPlaceId
-        ? 'Place #' + String(unloadedPlaceId) + ' is not currently loaded'
+        ? focused?.name || reference?.name || 'Place #' + String(unloadedPlaceId) + ' is not currently loaded'
         : unloadedResident
           ? 'Resident ' + unloadedResident + ' is not currently loaded'
-          : followed?.handle + ' is between places'
+          : residentMetadata?.handle + ' is between places'
       if (nodes.placeSummary) nodes.placeSummary.textContent = unloadedPlaceId
-        ? 'Its metadata and content are not currently loaded in this bounded snapshot.'
+        ? (focused?.path || reference?.path || 'Place #' + String(unloadedPlaceId)) +
+          (focused
+            ? ' · focused metadata loaded; contents are not currently loaded.'
+            : placeRead?.loading
+              ? ' · loading focused metadata…'
+              : ' · metadata and content are not currently loaded in this bounded snapshot.')
         : unloadedResident
-          ? 'Their metadata and current place are not currently loaded in this bounded snapshot.'
+          ? residentRead?.loading
+            ? 'Loading their current public presence…'
+            : 'Their metadata and current place are not currently loaded in this bounded snapshot.'
           : 'This resident is not currently standing in a public place.'
-      renderPlaceOrientation(null)
+      renderPlaceOrientation(focused)
+      if (placeRead?.error && nodes.placePurpose) {
+        const alert = element('div', 'selection-error')
+        alert.setAttribute('role', 'alert')
+        alert.append(element('p', '', 'Could not load focused metadata for this place.'))
+        const retry = element('button', 'selection-retry', 'Retry loading this place')
+        retry.type = 'button'
+        retry.dataset.focusKey = 'focused-place-retry:' + String(unloadedPlaceId)
+        retry.dataset.focusFallbackId = 'place-focus-title'
+        retry.addEventListener('click', () => void loadFocusedPlace(unloadedPlaceId))
+        alert.append(retry)
+        nodes.placePurpose.replaceChildren(alert)
+      }
+      if (residentRead?.error && nodes.placePurpose) {
+        const alert = element('div', 'selection-error')
+        alert.setAttribute('role', 'alert')
+        alert.append(element('p', '', 'Could not load focused presence for this resident.'))
+        const retry = element('button', 'selection-retry', 'Retry loading this resident')
+        retry.type = 'button'
+        retry.dataset.focusKey = 'focused-resident-retry:' + unloadedResident
+        retry.dataset.focusFallbackId = 'place-focus-title'
+        retry.addEventListener('click', () => void loadFocusedResident(unloadedResident))
+        alert.append(retry)
+        nodes.placePurpose.replaceChildren(alert)
+      }
       renderEmpty(nodes.occupants, 'empty-row', betweenPlaces
         ? 'There is no doorway around this resident right now.'
         : 'Presence at this unloaded address is not shown.')
@@ -2070,8 +2227,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? snapshot.flatPlaces.find(candidate => candidate.id === state.placeId) || null
       : null
     if (state.placeId && !place) {
-      renderEmpty(nodes.conversations, 'empty-row', 'Place #' + String(state.placeId) +
-        ' metadata and conversation are not currently loaded in this bounded snapshot.')
+      const reference = placeReference(snapshot, state.placeId)
+      renderEmpty(nodes.conversations, 'empty-row', (reference?.path || 'Place #' + String(state.placeId)) +
+        ' · metadata and conversation are not currently loaded in this bounded snapshot.')
       if (nodes.conversationPage) {
         nodes.conversationPage.hidden = true
         nodes.conversationPage.replaceChildren()
@@ -2090,7 +2248,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
     const entry = historyEntry('notes', filters)
     const notes = entry.rows
-    const placeOf = placeId => snapshot.flatPlaces.find(candidate => candidate.id === placeId) || null
+    const placeOf = placeId => placeReference(snapshot, placeId)
     if (!notes.length || (state.placeId && !place)) {
       renderEmpty(nodes.conversations, 'empty-row', entry.loading
         ? 'Fetching this conversation…'
@@ -2177,7 +2335,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       )
       row.append(copy, timeNode(event.at, 'activity-time'))
       const placeId = eventPlaceId(event, snapshot)
-      const place = placeId ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) : null
+      const place = placeReference(snapshot, placeId)
       const location = windowPlaceLabel(placeId, place)
       if (location) row.append(element('span', 'activity-context', 'Observed at ' + location))
       return row
@@ -2471,12 +2629,41 @@ ${WINDOW_CLIENT_SAFETY_JS}
         String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
         ' plus ' + String(followedRows.length - ownRows) + ' from the same rooms.'
       : ''
+    const directoryNotice = state.directory.loaded
+      ? ' Selectors use the complete city directory; map, presence, and authored content remain currently loaded views.'
+      : ' Selectors currently use the loaded fallback while the complete city directory is unavailable.'
     nodes.scope.textContent = (partial.length
       ? 'Latest public snapshot shows ' + partial.join(' · ') + '.'
       : 'The currently loaded public view is within every display limit.') +
+      directoryNotice +
       excerptNotice +
       (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '') +
       followNotice
+  }
+
+  function renderDirectoryStatus() {
+    if (!nodes.directoryStatus) return
+    nodes.directoryStatus.removeAttribute('role')
+    if (state.directory.error) {
+      nodes.directoryStatus.setAttribute('role', 'alert')
+      const message = element('span', '',
+        'The complete city directory could not be loaded. Selectors show the currently loaded fallback. ')
+      const retry = element('button', 'directory-retry', 'Retry loading the complete directory')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'directory-retry'
+      retry.addEventListener('click', () => void loadDirectory())
+      nodes.directoryStatus.replaceChildren(message, retry)
+      return
+    }
+    if (state.directory.loading || !state.directory.loaded) {
+      nodes.directoryStatus.textContent =
+        'Loading the complete city directory. Map and content below are currently loaded separately.'
+      return
+    }
+    nodes.directoryStatus.textContent = 'Complete city directory: ' +
+      String(state.directory.places.length) + ' places and ' +
+      String(state.directory.residents.length) +
+      ' residents. Map, presence, and content below are currently loaded separately.'
   }
 
   function renderView() {
@@ -2527,6 +2714,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? active.dataset.focusFallbackId || null
       : null
     renderView()
+    renderDirectoryStatus()
     writeHash()
     if (state.view === 'archive') renderArchive()
     if (!snapshot) return
@@ -2550,15 +2738,217 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function choosePlace(id, openPlace) {
-    const place = state.snapshot?.flatPlaces.find(candidate => candidate.id === id)
+    const place = state.snapshot?.flatPlaces.find(candidate => candidate.id === id) ||
+      directoryPlace(id) || focusedPlace(id)
     if (!place) return
     navigate({ placeId: id, view: openPlace ? 'place' : state.view })
   }
 
   function chooseResident(handle) {
-    const resident = state.snapshot?.residents.find(candidate => candidate.handle === handle)
+    const resident = state.snapshot?.residents.find(candidate => candidate.handle === handle) ||
+      state.directory.residents.find(candidate => candidate.handle === handle) ||
+      focusedResident(handle)
     if (!resident) return
     navigate({ resident: handle })
+  }
+
+  async function loadDirectory(force) {
+    if (state.directory.loading) return
+    state = {
+      ...state,
+      directory: Object.freeze({ ...state.directory, loading: true, error: false }),
+    }
+    renderDirectoryStatus()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/window', window.location.origin)
+      url.searchParams.set('view', 'directory')
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('public directory unavailable')
+      const directory = normalizeDirectory(await response.json())
+      state = {
+        ...state,
+        directory: Object.freeze({
+          ...directory,
+          loaded: true,
+          loading: false,
+          error: false,
+          marker: state.changeMarker || null,
+        }),
+      }
+      if (state.snapshot) populateFilters(state.snapshot)
+      renderAll()
+      void ensureFocusedSelection()
+    } catch {
+      state = {
+        ...state,
+        directory: Object.freeze({ ...state.directory, loading: false, error: true }),
+      }
+      if (state.snapshot) populateFilters(state.snapshot)
+      renderAll()
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
+  async function loadFocusedPlace(placeId, force) {
+    if (!state.snapshot || state.snapshot.flatPlaces.some(place => place.id === placeId)) return
+    const current = state.focusedPlaces[String(placeId)]
+    if (current?.loading || (!force && current?.place)) return
+    state = {
+      ...state,
+      focusedPlaces: {
+        ...state.focusedPlaces,
+        [String(placeId)]: Object.freeze({
+          loading: true,
+          error: false,
+          marker: current?.marker || null,
+          place: current?.place || null,
+        }),
+      },
+    }
+    renderAll()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/map', window.location.origin)
+      url.searchParams.set('view', 'outline')
+      url.searchParams.set('parent_id', String(placeId))
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('focused place unavailable')
+      const payload = await response.json()
+      const [normalized] = normalizePlaces([payload?.place], 0, new Set())
+      if (!normalized || normalized.id !== placeId) throw new Error('wrong focused place')
+      const reference = directoryPlace(placeId)
+      const place = Object.freeze({
+        ...normalized,
+        children: [],
+        path: reference?.path || normalized.name + ' · Place #' + String(placeId),
+      })
+      state = {
+        ...state,
+        focusedPlaces: {
+          ...state.focusedPlaces,
+          [String(placeId)]: Object.freeze({
+            loading: false,
+            error: false,
+            marker: state.changeMarker || null,
+            place,
+          }),
+        },
+      }
+    } catch {
+      state = {
+        ...state,
+        focusedPlaces: {
+          ...state.focusedPlaces,
+          [String(placeId)]: Object.freeze({
+            loading: false,
+            error: !current?.place,
+            marker: current?.marker || null,
+            place: current?.place || null,
+          }),
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      renderAll()
+    }
+  }
+
+  async function loadFocusedResident(handle, force) {
+    if (!state.snapshot || state.snapshot.residents.some(resident => resident.handle === handle)) return
+    const current = state.focusedResidents[handle]
+    if (current?.loading || (!force && current?.resident)) return
+    state = {
+      ...state,
+      focusedResidents: {
+        ...state.focusedResidents,
+        [handle]: Object.freeze({
+          loading: true,
+          error: false,
+          marker: current?.marker || null,
+          resident: current?.resident || null,
+        }),
+      },
+    }
+    renderAll()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/residents', window.location.origin)
+      url.searchParams.set('view', 'presence')
+      url.searchParams.set('handle', handle)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('focused resident unavailable')
+      const payload = await response.json()
+      const [resident] = normalizeResidents([payload?.resident])
+      if (!resident || resident.handle !== handle) throw new Error('wrong focused resident')
+      state = {
+        ...state,
+        focusedResidents: {
+          ...state.focusedResidents,
+          [handle]: Object.freeze({
+            loading: false,
+            error: false,
+            marker: state.changeMarker || null,
+            resident,
+          }),
+        },
+      }
+    } catch {
+      state = {
+        ...state,
+        focusedResidents: {
+          ...state.focusedResidents,
+          [handle]: Object.freeze({
+            loading: false,
+            error: !current?.resident,
+            marker: current?.marker || null,
+            resident: current?.resident || null,
+          }),
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      renderAll()
+    }
+  }
+
+  async function ensureFocusedSelection(options) {
+    const forcePlace = options?.forcePlace === true
+    const forceResident = options?.forceResident === true
+    if (!state.snapshot) return
+    if (state.placeId && !state.snapshot.flatPlaces.some(place => place.id === state.placeId)) {
+      const entry = state.focusedPlaces[String(state.placeId)]
+      if (!entry || forcePlace) await loadFocusedPlace(state.placeId, forcePlace)
+    }
+    if (state.resident && !state.snapshot.residents.some(resident => resident.handle === state.resident)) {
+      const entry = state.focusedResidents[state.resident]
+      if (!entry || forceResident) await loadFocusedResident(state.resident, forceResident)
+    }
   }
 
   async function getSnapshot(signal, minimumMarker) {
@@ -2666,6 +3056,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   async function refreshCity() {
     if (state.refreshing) return
+    const hadSnapshot = state.hasSnapshot
     const navigationRevisionAtStart = navigationRevision
     state = { ...state, refreshing: true }
     setStatus(state.hasSnapshot ? 'Checking the streets…' : 'Opening the shutters…', 'working')
@@ -2700,6 +3091,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           }
           populateFilters(snapshot)
           renderAll()
+          void ensureFocusedSelection({ forceResident: true })
           setStatus('Watching · no persisted changes', 'live')
           return
         } catch {
@@ -2748,6 +3140,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       populateFilters(snapshot)
       renderAll()
+      if (hadSnapshot && replaceAuthored &&
+          (state.directory.loaded || state.directory.error) && !state.directory.loading) {
+        void loadDirectory(true)
+      }
+      void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
       refreshFilteredViews()
       setStatus(snapshot.refreshedAt ? 'Watching · checked ' + snapshot.refreshedAt.toLocaleTimeString([], {
         hour: 'numeric', minute: '2-digit',
@@ -2779,7 +3176,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const view = tab.dataset.view
       if (!VIEWS.includes(view)) return
       let placeId = state.placeId
-      if (view === 'place' && !state.resident &&
+      if (view === 'place' && !state.resident && !state.placeId &&
         !selectedPlace(state.snapshot || { residents: [], flatPlaces: [] })) {
         placeId = state.snapshot?.flatPlaces[0]?.id || null
       }
@@ -2816,6 +3213,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   window.addEventListener('hashchange', () => {
     state = { ...state, ...readHashState() }
     renderAll()
+    void ensureFocusedSelection()
   })
   document.addEventListener('visibilitychange', () => {
     window.clearTimeout(state.pollTimer)
@@ -2825,6 +3223,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   state = { ...state, ...readHashState() }
   renderView()
   writeHash()
+  void loadDirectory(false)
   void refreshCity()
 })()
 `

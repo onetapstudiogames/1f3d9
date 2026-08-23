@@ -1,5 +1,8 @@
 import { PUBLIC_EVENT_KINDS } from './public-events.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { HANDLE_RE } from './core.ts'
+import { sql } from './db.ts'
+import { positiveId } from './input.ts'
 import {
   extractPublicCollectionRows,
   finalizePublicPage,
@@ -79,12 +82,73 @@ const PRESENCE_SQL = `
   ORDER BY page.joined_at DESC NULLS LAST, page.id DESC NULLS LAST
 `
 
+const FOCUSED_PRESENCE_SQL = `
+  /* public:resident-presence */
+  SELECT resident.id, resident.handle, resident.joined_at,
+    presence.current_place_id,
+    (resident.joined_at < now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
+      AND NOT coalesce(activity.recent_public_act, false)) AS asleep
+  FROM residents resident
+  LEFT JOIN resident_presence presence ON presence.resident_id = resident.id
+  LEFT JOIN LATERAL (
+    SELECT true AS recent_public_act
+    FROM events event
+    WHERE event.actor = resident.handle
+      AND event.at >= now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
+      AND event.kind = ANY(ARRAY[${PUBLIC_EVENT_KIND_SQL}]::text[])
+    ORDER BY event.at DESC
+    LIMIT 1
+  ) activity ON TRUE
+  WHERE resident.handle = $1
+  LIMIT 1
+`
+
 export interface PublicResidentPage {
   readonly residents: readonly Record<string, unknown>[]
   readonly totalItems: number
   readonly totalTextBytes: number
   readonly hasMore: boolean
   readonly nextBeforeId: number | null
+}
+
+export interface PublicResidentPresence {
+  readonly id: number
+  readonly handle: string
+  readonly joined_at: string
+  readonly current_place_id: number | null
+  readonly asleep: boolean
+}
+
+function publicResidentPresence(
+  row: Readonly<Record<string, unknown>>,
+): PublicResidentPresence {
+  const id = positiveId(row.id)
+  const handle = typeof row.handle === 'string' && HANDLE_RE.test(row.handle) ? row.handle : null
+  const currentPlaceId = row.current_place_id == null ? null : positiveId(row.current_place_id)
+  const joined = typeof row.joined_at === 'string' || row.joined_at instanceof Date
+    ? new Date(row.joined_at)
+    : null
+  if (
+    id === null || handle === null || joined === null || !Number.isFinite(joined.getTime())
+    || (row.current_place_id != null && currentPlaceId === null)
+    || typeof row.asleep !== 'boolean'
+  ) {
+    throw new Error('invalid public resident presence row')
+  }
+  return Object.freeze({
+    id,
+    handle,
+    joined_at: joined.toISOString(),
+    current_place_id: currentPlaceId,
+    asleep: row.asleep,
+  })
+}
+
+export async function readPublicResidentPresence(
+  handle: string,
+): Promise<PublicResidentPresence | null> {
+  const rows = await sql.query(FOCUSED_PRESENCE_SQL, [handle]) as readonly Record<string, unknown>[]
+  return rows[0] ? publicResidentPresence(rows[0]) : null
 }
 
 export async function readPublicResidentPage(

@@ -368,6 +368,42 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
 })
 
+test('Wave 9 complete names and bounded window truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /\/api\/window\?view=directory/iu, `${name}: directory route`)
+    assert.match(
+      text,
+      /(?:complete|every public)[^\n]{0,100}(?:place names?|names? of public places)[^\n]{0,160}(?:resident handles?|handles? of public residents)|(?:place names?|names? of public places)[^\n]{0,160}(?:resident handles?|handles? of public residents)[^\n]{0,100}(?:complete|every public)/iu,
+      `${name}: complete public names`,
+    )
+    assert.match(
+      text,
+      /(?:place[^\n]{0,80}\bid\b[^\n]{0,80}\bparent_id\b[^\n]{0,80}\bname\b|\bid\b[^\n]{0,80}\bparent_id\b[^\n]{0,80}\bname\b[^\n]{0,80}place)/iu,
+      `${name}: minimal place facts`,
+    )
+    assert.match(
+      text,
+      /(?:resident[^\n]{0,80}\bid\b[^\n]{0,80}\bhandle\b|\bid\b[^\n]{0,80}\bhandle\b[^\n]{0,80}resident)/iu,
+      `${name}: minimal resident facts`,
+    )
+    assert.match(
+      text,
+      /(?:directory|selectors?)[^\n]{0,220}(?:bounded|currently loaded|focused)[^\n]{0,220}(?:contents?|presence|details)|(?:bounded|currently loaded|focused)[^\n]{0,220}(?:contents?|presence|details)[^\n]{0,220}(?:directory|selectors?)/iu,
+      `${name}: names do not widen loaded content`,
+    )
+  }
+
+  assert.match(
+    decisions,
+    /\| 43 \| \*\*The human window uses a complete lightweight names directory\.\*\*/iu,
+    'decision 43 locks complete names without complete contents',
+  )
+})
+
 test('Wave 3 room text limits, strict omissions, and continuation truths stay aligned', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

@@ -182,6 +182,26 @@ button { color: inherit; }
   border-radius: 0;
   font-size: 0.72rem;
 }
+.directory-status {
+  align-self: center;
+  max-width: 22rem;
+  padding: 0.55rem 0.7rem;
+  color: var(--sky);
+  font-size: 0.67rem;
+  line-height: 1.35;
+}
+.directory-retry, .selection-retry {
+  padding: 0;
+  color: var(--signal);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.selection-error { padding: 0.75rem; color: var(--brick-deep); background: #fff2df; }
 .share-view {
   display: grid;
   place-items: center;
@@ -691,6 +711,7 @@ button { color: inherit; }
   .city-sign { grid-template-columns: 1fr; }
   .watch-state { border-block-start: 3px solid #061e17; border-inline-start: 0; }
   .view-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .directory-status { grid-column: 1 / -1; max-width: none; border-block-start: 2px solid var(--line); }
   .share-view { grid-column: 1 / -1; border-block-start: 2px solid var(--line); border-inline-start: 0; }
   .place-orientation { grid-template-columns: 1fr; }
   .orientation-block + .orientation-block { border-block-start: 2px solid var(--line); border-inline-start: 0; }

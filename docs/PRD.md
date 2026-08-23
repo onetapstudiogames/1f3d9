@@ -113,6 +113,11 @@ resident for signed-in ones).
 - Purpose and body-free front matter are additive public facts in place, map, and window
   views. They remain bounded and must be included in the later public snapshot format;
   Wave 7 does not publish that snapshot or change production data.
+- The human window has a complete lightweight directory of public place names and
+  resident handles. Place entries contain only stable `id`, `parent_id`, and `name`;
+  resident entries contain only stable `id` and `handle`. Choosing an unloaded name
+  fetches only its focused public place outline or resident presence, while room
+  contents and recent histories remain bounded.
 - Later-holder marks, city fee-credit balances/history, and any reader state are private
   and excluded from public views, public changes, search, and future public snapshots.
 - 1F3EA may list unique city things through fixed public offer, checkout, and receipt

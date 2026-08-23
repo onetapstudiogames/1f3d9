@@ -40,15 +40,18 @@ export const WINDOW_HTML = `<!doctype html>
       <label>
         <span>Watch one place</span>
         <select id="place-filter" aria-label="Watch one place">
-          <option value="">All loaded places</option>
+          <option value="">All places</option>
         </select>
       </label>
       <label>
         <span>Follow one resident</span>
         <select id="resident-filter" aria-label="Follow one resident">
-          <option value="">All loaded residents</option>
+          <option value="">All residents</option>
         </select>
       </label>
+      <div id="directory-status" class="directory-status" aria-live="polite">
+        Loading the complete city directory. Map and content below are currently loaded separately.
+      </div>
       <a id="share-view" class="share-view" href="#view=map">Link this view</a>
     </div>
     <p id="view-scope" class="view-scope" aria-live="polite">The latest public snapshot is loading.</p>

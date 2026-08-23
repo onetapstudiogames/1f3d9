@@ -83,7 +83,10 @@ import {
   isPublicExactReadBusy,
   PUBLIC_EXACT_READ_BUSY_MESSAGE,
 } from './public-exact-query.ts'
-import { readPublicResidentPage } from './public-residents.ts'
+import {
+  readPublicResidentPage,
+  readPublicResidentPresence,
+} from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
 import {
   loadPublicSearchResults,
@@ -393,6 +396,25 @@ mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
   const queries = c.req.queries()
+  if (Object.hasOwn(queries, 'handle')) {
+    const allowed = allowedPublicQuery(queries, ['view', 'handle'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const viewValue = singlePublicQueryValue(queries, 'view')
+    if (!viewValue.ok) return err(c, 400, viewValue.error)
+    const handleValue = singlePublicQueryValue(queries, 'handle')
+    if (!handleValue.ok) return err(c, 400, handleValue.error)
+    if (
+      viewValue.value !== 'presence'
+      || handleValue.value === null
+      || !HANDLE_RE.test(handleValue.value)
+      || Object.keys(queries).length !== 2
+    ) {
+      return err(c, 400, 'focused resident presence needs exactly view=presence and one valid handle')
+    }
+    const resident = await readPublicResidentPresence(handleValue.value)
+    if (!resident) return err(c, 404, 'resident not found')
+    return c.json({ resident })
+  }
   const allowed = allowedPublicQuery(queries, ['view', 'before_id', 'limit'])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const viewValue = singlePublicQueryValue(queries, 'view')

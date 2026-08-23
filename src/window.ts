@@ -45,6 +45,7 @@ import {
   loadPublicPlaceFrontMatter,
   type PublicFrontMatterHeading,
 } from './room-orientation.ts'
+import { cachedPublicDirectory } from './public-directory.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -1202,6 +1203,14 @@ export async function windowSnapshot(c: Context) {
   const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
   if (!afterMarkerValue.ok) {
     return c.json({ error: 'invalid public window snapshot query' }, 400)
+  }
+  if (viewValue.value === 'directory') {
+    if (Object.keys(queries).length !== 1) {
+      return c.json({ error: 'invalid public window snapshot query' }, 400)
+    }
+    const directory = await cachedPublicDirectory()
+    c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+    return c.json({ view: 'directory', ...directory })
   }
   if (viewValue.value != null) {
     const outlineKeys = afterMarkerValue.value === null ? 1 : 2
