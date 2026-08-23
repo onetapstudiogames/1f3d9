@@ -225,8 +225,6 @@ export const WINDOW_JS = `(() => {
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
   const MAX_FORWARD_RECONCILE_PAGES = 8
-  const COLLAPSED_BODY_CHARACTERS = 360
-  const COLLAPSED_BODY_LINES = 5
   const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{2,31}$/
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
   const MODERATED_TEXT = '[removed by maintainer]'
@@ -2090,10 +2088,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
-  function isLongBody(body) {
-    return body.length > COLLAPSED_BODY_CHARACTERS || body.split('\\n').length > COLLAPSED_BODY_LINES
-  }
-
   // Context neighbours are picked by position in the room, never by clock, so
   // a quiet room can put a day between a note and the one before it. Say the
   // real distance rather than implying a closeness the rule never promised.
@@ -2129,10 +2123,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const bodyNode = element('p', kind + '-body public-body', body + (truncated ? '…' : ''))
     const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)
     const bodyKey = kind + ':' + String(id)
-    const collapsible = isLongBody(body)
-    const startExpanded = !collapsible || state.expandedBodies.includes(bodyKey)
+    const startExpanded = state.expandedBodies.includes(bodyKey)
     bodyNode.id = bodyId
     bodyNode.dataset.expanded = String(startExpanded)
+    bodyNode.dataset.bodyKey = bodyKey
     block.append(bodyNode)
 
     let availability = null
@@ -2159,31 +2153,65 @@ ${WINDOW_CLIENT_SAFETY_JS}
       block.append(availability)
     }
 
-    if (collapsible) {
-      // Expansion lives in state under a stable key so a background refresh
-      // re-renders the body exactly as the reader left it.
-      const disclosure = element('button', 'body-disclosure',
-        startExpanded ? 'Show less' : 'Show more')
-      disclosure.type = 'button'
-      disclosure.setAttribute('aria-expanded', String(startExpanded))
-      disclosure.setAttribute('aria-controls', bodyId)
-      disclosure.dataset.focusKey = 'body:' + bodyKey
-      if (availability) disclosure.setAttribute('aria-describedby', availability.id)
-      disclosure.addEventListener('click', () => {
-        const expanded = !state.expandedBodies.includes(bodyKey)
-        state = {
-          ...state,
-          expandedBodies: expanded
-            ? [...state.expandedBodies, bodyKey]
-            : state.expandedBodies.filter(key => key !== bodyKey),
-        }
-        bodyNode.dataset.expanded = String(expanded)
-        disclosure.setAttribute('aria-expanded', String(expanded))
-        disclosure.textContent = expanded ? 'Show less' : 'Show more'
-      })
-      block.append(disclosure)
-    }
+    // The browser decides whether the five-line clamp actually hides text.
+    // Keep the control hidden until the connected element can be measured.
+    const disclosure = element('button', 'body-disclosure',
+      startExpanded ? 'Show less' : 'Show more')
+    disclosure.type = 'button'
+    disclosure.hidden = true
+    disclosure.setAttribute('aria-expanded', String(startExpanded))
+    disclosure.setAttribute('aria-controls', bodyId)
+    disclosure.dataset.focusKey = 'body:' + bodyKey
+    if (availability) disclosure.setAttribute('aria-describedby', availability.id)
+    disclosure.addEventListener('click', () => {
+      const expanded = !state.expandedBodies.includes(bodyKey)
+      state = {
+        ...state,
+        expandedBodies: expanded
+          ? [...state.expandedBodies, bodyKey]
+          : state.expandedBodies.filter(key => key !== bodyKey),
+      }
+      bodyNode.dataset.expanded = String(expanded)
+      disclosure.setAttribute('aria-expanded', String(expanded))
+      disclosure.textContent = expanded ? 'Show less' : 'Show more'
+    })
+    block.append(disclosure)
     return block
+  }
+
+  function syncBodyDisclosures() {
+    const entries = []
+    for (const block of document.querySelectorAll('.body-block')) {
+      if (block.closest('[hidden]')) continue
+      const bodyNode = block.querySelector('.public-body')
+      const disclosure = block.querySelector('.body-disclosure')
+      const bodyKey = bodyNode?.dataset.bodyKey
+      if (!bodyNode || !disclosure || !bodyKey) continue
+      bodyNode.dataset.expanded = 'false'
+      entries.push({ bodyNode, disclosure, bodyKey })
+    }
+
+    const collapsedHeights = entries.map(entry => entry.bodyNode.getBoundingClientRect().height)
+    for (const entry of entries) entry.bodyNode.dataset.expanded = 'true'
+    const expandedHeights = entries.map(entry => entry.bodyNode.getBoundingClientRect().height)
+
+    entries.forEach((entry, index) => {
+      const collapsible = expandedHeights[index] > collapsedHeights[index] + 1
+      const expanded = collapsible && state.expandedBodies.includes(entry.bodyKey)
+      entry.bodyNode.dataset.expanded = String(!collapsible || expanded)
+      entry.disclosure.hidden = !collapsible
+      entry.disclosure.setAttribute('aria-expanded', String(expanded))
+      entry.disclosure.textContent = expanded ? 'Show less' : 'Show more'
+    })
+  }
+
+  let bodyDisclosureFrame = 0
+  function scheduleBodyDisclosureSync() {
+    if (bodyDisclosureFrame) return
+    bodyDisclosureFrame = window.requestAnimationFrame(() => {
+      bodyDisclosureFrame = 0
+      syncBodyDisclosures()
+    })
   }
 
   function renderThings(target, things, placeOf) {
@@ -2937,6 +2965,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     } else if (state.view === 'agreements') {
       renderAgreements(snapshot)
     }
+    syncBodyDisclosures()
     if (nodes.placeFilter) nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
     if (nodes.placeSearch && nodes.placeSearch.value !== state.placeSearch) {
       nodes.placeSearch.value = state.placeSearch
@@ -3440,6 +3469,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
   window.addEventListener('hashchange', syncStateFromLocation)
   window.addEventListener('popstate', syncStateFromLocation)
+  window.addEventListener('resize', scheduleBodyDisclosureSync)
   document.addEventListener('visibilitychange', () => {
     window.clearTimeout(state.pollTimer)
     if (!document.hidden) void refreshCity()
