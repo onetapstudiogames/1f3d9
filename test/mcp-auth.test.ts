@@ -28,7 +28,11 @@ interface ToolDefinition {
   name: string
   title?: string
   description: string
-  inputSchema: { properties?: Record<string, unknown>; required?: string[] }
+  inputSchema: {
+    additionalProperties?: boolean
+    properties?: Record<string, unknown>
+    required?: string[]
+  }
   annotations?: {
     readOnlyHint?: boolean
     destructiveHint?: boolean
@@ -263,6 +267,96 @@ test('every advertised MCP tool has a short plain title on its exact door catalo
       assert.equal(tool.title, TOOL_TITLES[tool.name as keyof typeof TOOL_TITLES], `${path}: ${tool.name}`)
       assert.match(tool.title ?? '', /^[A-Z][A-Za-z ]{2,39}$/u, `${path}: ${tool.name}`)
     }
+  }
+})
+
+test('world payment tools distinguish the five-minute reservation from bounded recovery on both doors', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const tools = await listTools(gateway, path, authorization)
+    const claim = toolByName(tools, 'claim_world')
+    const reconcile = toolByName(tools, 'reconcile_world')
+    const cancel = toolByName(tools, 'cancel_world')
+
+    assert.match(claim.description, /five-minute city reservation/iu, `${path}: reservation`)
+    assert.match(claim.description, /payment_pending[\s\S]*two-hour recovery window/iu, `${path}: recovery`)
+    assert.match(claim.description, /without paying again/iu, `${path}: no duplicate payment`)
+    assert.doesNotMatch(claim.description, /even after the window/iu, `${path}: ambiguous window`)
+
+    assert.match(reconcile.description, /two-hour recovery[\s\S]*terminal/iu, `${path}: terminal recovery`)
+    assert.match(reconcile.description, /market-first cancellation[\s\S]*release/iu, `${path}: release order`)
+    assert.doesNotMatch(reconcile.description, /never unlocks on timeout/iu, `${path}: stale timeout claim`)
+
+    assert.match(cancel.description, /market listing is terminal/iu, `${path}: terminal market state`)
+    assert.match(cancel.description, /no live reservation or payment_pending/iu, `${path}: live payment guard`)
+  }
+})
+
+test('both MCP doors keep every shared tool label, input, and safety hint identical', async () => {
+  setHostedChatFlag(true)
+  const hostedHarness = createHarness()
+  const hostedTools = await listTools(
+    hostedHarness.gateway,
+    '/mcp/connect',
+    `Bearer ${OAUTH_ACCESS_TOKEN}`,
+  )
+
+  setHostedChatFlag(false)
+  const keyHarness = createHarness()
+  const keyTools = await listTools(keyHarness.gateway, '/mcp', `Bearer ${LEGACY_SECRET}`)
+
+  for (const hostedTool of hostedTools) {
+    const keyTool = toolByName(keyTools, hostedTool.name)
+    assert.deepEqual({
+      title: hostedTool.title,
+      description: hostedTool.description,
+      inputSchema: hostedTool.inputSchema,
+      annotations: hostedTool.annotations,
+    }, {
+      title: keyTool.title,
+      description: keyTool.description,
+      inputSchema: keyTool.inputSchema,
+      annotations: keyTool.annotations,
+    }, hostedTool.name)
+    assert.equal(hostedTool.inputSchema.additionalProperties, false, `${hostedTool.name}: closed input`)
+    assert.deepEqual(Object.keys(hostedTool.annotations ?? {}).sort(), [
+      'destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint',
+    ], `${hostedTool.name}: complete safety labels`)
+    assert.equal(
+      Object.values(hostedTool.annotations ?? {}).every(value => typeof value === 'boolean'),
+      true,
+      `${hostedTool.name}: boolean safety labels`,
+    )
+  }
+})
+
+test('tools that can spend, consume, replace, or transfer advertise that destructive reach', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const tools = await listTools(gateway, path, authorization)
+
+    for (const name of ['found', 'make', 'laws', 'reconcile_world']) {
+      assert.equal(toolByName(tools, name).annotations?.destructiveHint, true, `${path}: ${name}`)
+    }
+
+    const make = toolByName(tools, 'make')
+    assert.match(make.description, /ingredients?[\s\S]*permanently withdrawn/iu, `${path}: consumed ingredients`)
+    assert.match(
+      String((make.inputSchema.properties?.ingredient_ids as { description?: string }).description ?? ''),
+      /permanently withdrawn on success/iu,
+      `${path}: ingredient input warning`,
+    )
+
+    const reconcile = toolByName(tools, 'reconcile_world')
+    assert.match(reconcile.description, /valid finalized payment[\s\S]*ownership transfer/iu, `${path}: transfer effect`)
   }
 })
 

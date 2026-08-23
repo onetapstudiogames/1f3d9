@@ -1957,7 +1957,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
     let availability = null
     if (truncated) {
-      // The snapshot caps every body: Excerpt only — this snapshot carries the first part.
+      // The bounded view caps every body: Excerpt only — this bounded view carries only the first part.
       // "Show more" can only reveal the excerpt it was handed. Point at the endpoint that serves the whole
       // text instead of inflating every default read to carry it.
       const fullPath = kind === 'note' || kind === 'thing'
@@ -1965,7 +1965,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : null
       availability = element('p', 'body-availability')
       availability.append(document.createTextNode(
-        'Excerpt only — the full text is not included in this snapshot. '))
+        'Excerpt only — the full text is not included in this bounded view. '))
       if (fullPath) {
         const link = element('a', 'body-full-link', 'Read the whole ' + kind + ' →')
         link.href = fullPath
@@ -2009,7 +2009,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderThings(target, things) {
     if (!target) return
     if (!things.length) {
-      renderEmpty(target, 'empty-row', 'No visible thing in the latest public snapshot matches this view.')
+      renderEmpty(target, 'empty-row', 'No visible thing in the current bounded public view matches this selection.')
       return
     }
     const list = element('ul', 'thing-list')
@@ -2154,11 +2154,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
             ? ' · focused metadata loaded; contents are not currently loaded.'
             : placeRead?.loading
               ? ' · loading focused metadata…'
-              : ' · metadata and content are not currently loaded in this bounded snapshot.')
+              : ' · metadata and content are not currently loaded in this bounded view.')
         : unloadedResident
           ? residentRead?.loading
             ? 'Loading their current public presence…'
-            : 'Their metadata and current place are not currently loaded in this bounded snapshot.'
+            : 'Their metadata and current place are not currently loaded in this bounded view.'
           : 'This resident is not currently standing in a public place.'
       renderPlaceOrientation(focused)
       if (placeRead?.error && nodes.placePurpose) {
@@ -2207,7 +2207,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
     renderThings(nodes.placeThings, historyEntry('things', filters).rows)
     renderNotes(nodes.placeConversation, historyEntry('notes', filters).rows,
-      'No conversation in the latest public snapshot matches here.', place)
+      'No conversation in the current bounded public view matches here.', place)
     renderHistoryControl(nodes.placeThingsPage, 'things', 'things', filters)
     renderHistoryControl(nodes.placeNotesPage, 'notes', 'notes', filters)
   }
@@ -2229,7 +2229,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.placeId && !place) {
       const reference = placeReference(snapshot, state.placeId)
       renderEmpty(nodes.conversations, 'empty-row', (reference?.path || 'Place #' + String(state.placeId)) +
-        ' · metadata and conversation are not currently loaded in this bounded snapshot.')
+        ' · metadata and conversation are not currently loaded in this bounded view.')
       if (nodes.conversationPage) {
         nodes.conversationPage.hidden = true
         nodes.conversationPage.replaceChildren()
@@ -2238,7 +2238,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (state.resident && !followed) {
       renderEmpty(nodes.conversations, 'empty-row', 'Resident ' + state.resident +
-        ' metadata and conversation are not currently loaded in this bounded snapshot.')
+        ' metadata and conversation are not currently loaded in this bounded view.')
       if (nodes.conversationPage) {
         nodes.conversationPage.hidden = true
         nodes.conversationPage.replaceChildren()
@@ -2252,7 +2252,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!notes.length || (state.placeId && !place)) {
       renderEmpty(nodes.conversations, 'empty-row', entry.loading
         ? 'Fetching this conversation…'
-        : 'No conversation in the latest public snapshot matches this view.')
+        : 'No conversation in the current bounded public view matches this selection.')
       renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
       return
     }
@@ -2322,7 +2322,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.activity.replaceChildren(element('li', 'empty-row',
         entry.loading
           ? 'Fetching happenings that match this view…'
-          : 'No happening in the latest public snapshot matches this view.'))
+          : 'No happening in the current bounded public view matches this selection.'))
       renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
       return
     }
@@ -2349,7 +2349,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const filters = Object.freeze({ placeId: null, resident: state.resident })
     const agreements = historyEntry('agreements', filters).rows
     if (!agreements.length) {
-      renderEmpty(nodes.agreements, 'empty-row', 'No agreement in the latest public snapshot matches this resident view.')
+      renderEmpty(nodes.agreements, 'empty-row', 'No agreement in the current bounded public view matches this resident selection.')
       renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
       return
     }
@@ -2614,8 +2614,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ' for things, and ' + snapshot.bodyLimits.agreements.toLocaleString() +
           ' for agreements.'
         : ' Long text may appear as an excerpt.'
-    // Following a resident fetches conversations past the snapshot, so the
-    // snapshot's own counts describe a different set than the list on screen.
+    // Following a resident fetches conversations beyond the initial bounded
+    // view, so its initial counts describe a different set than the list on screen.
     // Report what the reader is actually looking at rather than leaving the
     // two numbers to be read as one.
     const followedRows = state.resident
@@ -2625,7 +2625,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : []
     const ownRows = followedRows.filter(note => note.author === state.resident).length
     const followNotice = state.resident && followedRows.length
-      ? ' Conversations below are fetched past that snapshot: ' +
+      ? ' Conversations below include separately fetched context beyond the initial bounded view: ' +
         String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
         ' plus ' + String(followedRows.length - ownRows) + ' from the same rooms.'
       : ''
@@ -2633,7 +2633,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? ' Selectors use the complete city directory; map, presence, and authored content remain currently loaded views.'
       : ' Selectors currently use the loaded fallback while the complete city directory is unavailable.'
     nodes.scope.textContent = (partial.length
-      ? 'Latest public snapshot shows ' + partial.join(' · ') + '.'
+      ? 'Current bounded public view shows ' + partial.join(' · ') + '.'
       : 'The currently loaded public view is within every display limit.') +
       directoryNotice +
       excerptNotice +
@@ -3160,7 +3160,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
           nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,
           nodes.agreements]) {
-          renderEmpty(target, 'error-row', 'The public city snapshot could not be read. Try again in one minute.')
+          renderEmpty(target, 'error-row', 'The current public city view could not be read. Try again in one minute.')
         }
         if (nodes.activity) nodes.activity.replaceChildren(element('li', 'error-row', 'The public ledger could not be read.'))
       }

@@ -358,7 +358,7 @@ const TOOLS: readonly ToolDefinition[] = [
       },
       required: ['parent_id', 'name'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: '/api/place',
@@ -374,7 +374,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'make',
     title: 'Make a thing',
-    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
+    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). Supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -392,12 +392,12 @@ const TOOLS: readonly ToolDefinition[] = [
           items: { type: 'integer', minimum: 1 },
           maxItems: MAX_CRAFT_INGREDIENTS,
           uniqueItems: true,
-          description: 'owned active things that exactly satisfy the kind recipe; omit for a recipe with no ingredients',
+          description: 'owned active things that exactly satisfy the kind recipe and are permanently withdrawn on success; omit for a recipe with no ingredients',
         },
       },
       required: ['place_id', 'name', 'body'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: '/api/thing',
@@ -451,7 +451,7 @@ const TOOLS: readonly ToolDefinition[] = [
       },
       required: ['place_id', 'traits'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'PUT',
       path: `/api/place/${Number(args.place_id)}/laws`,
@@ -509,7 +509,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'claim_world',
     title: 'Claim a world thing',
     description:
-      'Reserve or pay for a 1F3EA world offer. First send checkout id plus buyer wallet; then retry inside five minutes with the signed HTTP X-PAYMENT header. If settlement is payment_pending, the same buyer retries without paying again even after the window.',
+      'Reserve or pay for a 1F3EA world offer. First send the checkout ID and buyer wallet to open a five-minute city reservation; retry within that reservation with the signed HTTP X-PAYMENT header. If settlement becomes payment_pending, the same buyer may retry without paying again during the separate two-hour recovery window. Automatic recovery ends at that deadline.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -531,7 +531,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'cancel_world',
     title: 'Cancel a world listing',
     description:
-      'Unlock your world-listed thing only after its 1F3EA listing is publicly ended and no buyer reservation or settled payment is pending.',
+      "Unlock a terminal world offer's thing only after its 1F3EA market listing is terminal and no live reservation or payment_pending settlement remains.",
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -549,14 +549,14 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'reconcile_world',
     title: 'Reconcile a world payment',
     description:
-      'Buyer or seller rechecks a payment_pending world offer against finalized public Base records. It never unlocks on timeout, absence, or ambiguous evidence.',
+      'Buyer or seller rechecks a payment_pending world offer against finalized public Base records. A valid finalized payment completes the ownership transfer. Missing or ambiguous evidence keeps the thing locked only during the bounded two-hour recovery; after terminalization, market-first cancellation releases the thing. Late finality cannot transfer a reused thing.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: { offer_id: { type: 'integer', minimum: 1 } },
       required: ['offer_id'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: `/api/world/offer/${Number(args.offer_id)}/reconcile`,

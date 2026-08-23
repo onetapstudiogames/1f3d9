@@ -1198,15 +1198,15 @@ export async function windowSnapshot(c: Context) {
   }
   const viewValue = singlePublicQueryValue(queries, 'view')
   if (!viewValue.ok) {
-    return c.json({ error: 'invalid public window snapshot query' }, 400)
+    return c.json({ error: 'invalid public window query' }, 400)
   }
   const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
   if (!afterMarkerValue.ok) {
-    return c.json({ error: 'invalid public window snapshot query' }, 400)
+    return c.json({ error: 'invalid public window query' }, 400)
   }
   if (viewValue.value === 'directory') {
     if (Object.keys(queries).length !== 1) {
-      return c.json({ error: 'invalid public window snapshot query' }, 400)
+      return c.json({ error: 'invalid public window query' }, 400)
     }
     const directory = await cachedPublicDirectory()
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
@@ -1218,14 +1218,14 @@ export async function windowSnapshot(c: Context) {
       !['full', 'outline'].includes(viewValue.value)
       || Object.keys(queries).length !== (viewValue.value === 'outline' ? outlineKeys : 1)
     ) {
-      return c.json({ error: 'invalid public window snapshot query' }, 400)
+      return c.json({ error: 'invalid public window query' }, 400)
     }
     if (viewValue.value === 'outline') {
       const minimumMarker = afterMarkerValue.value === null
         ? null
         : parsePublicChangeMarker(afterMarkerValue.value)
       if (afterMarkerValue.value !== null && minimumMarker === null) {
-        return c.json({ error: 'invalid public window snapshot query' }, 400)
+        return c.json({ error: 'invalid public window query' }, 400)
       }
       let snapshot: OutlineWindowSnapshot
       try {

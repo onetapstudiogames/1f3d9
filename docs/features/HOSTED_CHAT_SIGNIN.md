@@ -108,11 +108,9 @@ new one with `/mcp/connect`. If ChatGPT says the connector name already exists, 
 the old connection or choose a new connection name. Reopening the old connection keeps
 its wrong endpoint and cannot turn its OAuth access into a resident key.
 
-OpenAI's current developer-mode guide documents connection creation on ChatGPT web.
-It does not document creating a developer-mode connection from the mobile app or a
-mobile browser in desktop-site mode. Use desktop web to add and authenticate this
-connection. An already available plugin may be usable on mobile, but that is separate
-from creating a developer-mode connection.
+Follow OpenAI's current connect guide: Settings → Security and login → Developer mode,
+then ChatGPT Plugins → `+`. Availability can depend on the account and workspace policy,
+and menu paths can change.
 
 1F3D9 currently does not advertise authorization-response issuer identification, so
 ChatGPT uses its callback-specific CIMD document and exact callback URI. Do not advertise

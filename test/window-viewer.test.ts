@@ -47,6 +47,30 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.doesNotThrow(() => new Function(WINDOW_JS))
 })
 
+test('the live window distinguishes its current bounded view from dated public snapshots', () => {
+  assert.match(WINDOW_HTML, /The current bounded public view is loading\./)
+  assert.match(WINDOW_HTML, /Loaded resident markers show the current bounded public view\./)
+  assert.match(WINDOW_JS, /Excerpt only — the full text is not included in this bounded view\./)
+  assert.match(WINDOW_JS, /Current bounded public view shows/)
+  assert.match(WINDOW_JS, /The current public city view could not be read\./)
+  assert.doesNotMatch(WINDOW_HTML, /Reading the luggage tags/iu)
+
+  const oldVisibleCopy = [
+    'latest public snapshot',
+    'not included in this snapshot',
+    'not currently loaded in this bounded snapshot',
+    'fetched past that snapshot',
+    'public city snapshot could not be read',
+  ]
+  for (const phrase of oldVisibleCopy) {
+    assert.doesNotMatch(`${WINDOW_HTML}\n${WINDOW_JS}`, new RegExp(phrase, 'iu'), phrase)
+  }
+
+  const routeSource = windowModule.windowSnapshot.toString()
+  assert.match(routeSource, /invalid public window query/iu)
+  assert.doesNotMatch(routeSource, /invalid public window snapshot query/iu)
+})
+
 test('deliberate navigation makes real history and refresh keeps reading state', () => {
   // Tabs, place and resident choices, and filter changes push a history
   // entry; only unchanged-hash renders fall through to replaceState.
@@ -144,7 +168,7 @@ test('long public bodies share one honest, accessible disclosure', () => {
   }
   assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
-  assert.match(WINDOW_JS, /Excerpt only — this snapshot carries the first part\./)
+  assert.match(WINDOW_JS, /Excerpt only — this bounded view carries only the first part\./)
   // An excerpt is a dead end unless the reader is told where the rest lives.
   // Notes and things have single-item endpoints; agreements do not, and the
   // notice must say so rather than offering a link that would 404.
@@ -569,10 +593,10 @@ test('the selected-place panel identifies owner choices and links front matter w
 })
 
 test('a followed view says how many notes it is actually showing', () => {
-  // The snapshot counters describe the snapshot; the conversation list is a
+  // The initial bounded-view counters and the expanded conversation list are
   // separate fetch. Printing only the first next to the second read as one
   // number describing the other.
-  assert.match(WINDOW_JS, /Conversations below are fetched past that snapshot:/)
+  assert.match(WINDOW_JS, /Conversations below include separately fetched context beyond the initial bounded view:/)
   assert.match(WINDOW_JS, /' plus ' \+ String\(followedRows\.length - ownRows\)/)
 })
 
@@ -902,5 +926,5 @@ test('snapshot totals preserve city-wide counts beyond the displayed caps', () =
     events: 9_000,
   })
   assert.match(WINDOW_JS, /payload\.totals/)
-  assert.match(WINDOW_JS, /latest public snapshot/i)
+  assert.match(WINDOW_JS, /current bounded public view/i)
 })

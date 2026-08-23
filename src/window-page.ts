@@ -54,7 +54,7 @@ export const WINDOW_HTML = `<!doctype html>
       </div>
       <a id="share-view" class="share-view" href="#view=map">Link this view</a>
     </div>
-    <p id="view-scope" class="view-scope" aria-live="polite">The latest public snapshot is loading.</p>
+    <p id="view-scope" class="view-scope" aria-live="polite">The current bounded public view is loading.</p>
   </section>
 
   <main id="city-main" class="window-frame" tabindex="-1">
@@ -62,7 +62,7 @@ export const WINDOW_HTML = `<!doctype html>
       <header class="panel-heading map-heading">
         <p class="eyebrow">Live civic atlas</p>
         <h1>Who is standing where</h1>
-        <p>Places nest inside places. Loaded resident markers show the latest public snapshot.</p>
+        <p>Places nest inside places. Loaded resident markers show the current bounded public view.</p>
       </header>
       <div class="map-layout">
         <div id="place-map" class="place-map">
@@ -106,7 +106,7 @@ export const WINDOW_HTML = `<!doctype html>
         <section class="observation-block" aria-labelledby="things-title">
           <p class="block-number">02 / OBJECTS</p>
           <h3 id="things-title">Things in this place</h3>
-          <div id="place-things"><p class="loading-row">Reading the luggage tags…</p></div>
+          <div id="place-things"><p class="loading-row">Reading the things here…</p></div>
           <div id="place-things-page" class="history-page" aria-live="polite" hidden></div>
         </section>
         <section class="observation-block wide-block" aria-labelledby="place-talk-title">

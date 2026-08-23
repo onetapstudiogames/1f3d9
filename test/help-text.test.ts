@@ -14,8 +14,17 @@ const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
 const decisions = read('../docs/DECISIONS.md')
 const hostedSignin = read('../docs/features/HOSTED_CHAT_SIGNIN.md')
+const contributorGuide = read('../CLAUDE.md')
 const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
+const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
+
+test('contributor guidance names the current locked-decision count', () => {
+  const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
+    .map(match => Number(match[1]))
+  assert.equal(recorded.at(-1), 44)
+  assert.match(contributorGuide, /\(44 recorded decisions — do not relitigate locked\s+rows\)/u)
+})
 
 const ACTION_SHAPES = [
   '{"action":"move","to_place_id":123}',
@@ -47,6 +56,21 @@ test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-addr
       /(?:name already exists|remove|delete)[^\n]{0,220}(?:old|existing|connection|connector)/iu,
       `${name}: stale connector recovery`,
     )
+  }
+})
+
+test('ChatGPT setup does not invent a mobile support restriction absent from official guidance', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['hosted sign-in guide', hostedSignin],
+    ['runtime discovery copy', hostedDiscoverySource],
+  ] as const) {
+    assert.doesNotMatch(text, /mobile-browser|mobile browser|not (?:from |the )?(?:a )?mobile app|use desktop web for setup/iu, name)
   }
 })
 
@@ -226,7 +250,7 @@ test('later-holder help keeps discovery deliberate, metadata-only, and honest ab
 
   const forbidden = [
     'you left this', 'your memory', 'your previous self',
-    'what you forgot', 'welcome back', 'inheritance',
+    'what you forgot', 'welcome back', 'inheritance', 'the next you',
   ]
   for (const [name, text] of [
     ['front door', frontdoor], ['compact machine map', llms], ['MCP tools', mcpSource],
@@ -346,7 +370,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
   }
 
   assert.match(mcpSource, /name:\s*'say'[\s\S]{0,260}reading-cost meter/iu)
-  assert.match(mcpSource, /name:\s*'make'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'make'[\s\S]{0,600}reading-cost meter/iu)
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })
 

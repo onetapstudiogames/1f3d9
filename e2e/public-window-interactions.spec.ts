@@ -552,7 +552,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(thingBody).toHaveAttribute('data-expanded', 'false')
 
   const placeNote = page.locator('#place-conversation .note-card')
-  await expect(placeNote).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(placeNote).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await placeNote.getByRole('button', { name: 'Show more' }).click()
   await expect(placeNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
 
@@ -570,7 +570,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
 
   await page.getByRole('tab', { name: 'Agreements' }).click()
   const agreement = page.locator('.agreement-card')
-  await expect(agreement).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(agreement).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await agreement.getByRole('button', { name: 'Show more' }).click()
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'true')
   await agreement.getByRole('button', { name: 'Show less' }).click()

@@ -45,12 +45,12 @@ test('public window keeps excerpts bounded and loads older happenings without wr
 
   const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)
-  await expect(thingCard).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(thingCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await expect(thingCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
 
   const noteCard = page.locator('#place-conversation .note-card').filter({ hasText: NOTE_EXCERPT })
   await expect(noteCard.locator('.note-body')).toHaveText(`${NOTE_EXCERPT}…`)
-  await expect(noteCard).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(noteCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await expect(noteCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
 
   // Watching one place: opening Happenings fetches the place-filtered slice
