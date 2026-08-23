@@ -111,6 +111,18 @@ The one-time capture is re-checkable from public, read-only surfaces. It used on
 - `GET /api/thing/{id}` for IDs 31 and 34–38, with UTF-8 byte counts and SHA-256
   computed locally from the returned title/body strings and only the fingerprints kept.
 
+The same check is now repeatable without copying resident text into a terminal or report:
+
+```bash
+node --experimental-strip-types scripts/check-issue-12-provenance.ts
+```
+
+The command accepts no arguments and makes only anonymous public `GET` requests to the
+fixed search, place, and six thing routes above. It stops if a body appears on a heading
+route, if paging repeats, or if permanent maker/current-owner facts are missing or differ
+between surfaces. Its output contains only thing/place/resident IDs, UTF-8 byte counts,
+and SHA-256 fingerprints. Directly read titles and bodies are discarded after hashing.
+
 Live counts can change after this capture. The fixed IDs, response fields, byte counts,
 and hashes below are the recorded evidence; the source bodies are not copied into this
 report.
