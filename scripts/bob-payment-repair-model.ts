@@ -1,6 +1,6 @@
 import { USDC, type TransferCheck } from '../src/chain.ts'
 
-export const BOB_REPAIR_APPLY_ACKNOWLEDGEMENT = 'APPLY_BOB_PAYMENT_REPAIR_WAVE_11'
+export const BOB_REPAIR_APPLY_ACKNOWLEDGEMENT = 'APPLY_BOB_PAYMENT_REPAIR_WAVE_15'
 export const BOB_COFFEE_REVIEW_REASON =
   'Founder-approved no-effect closure for the paid coffee-shop probe; compensating city fee credit is tracked by its deterministic source key.'
 export const BOB_REPAIR_CREDIT_REASON =

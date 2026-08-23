@@ -1,15 +1,14 @@
 # Payment recovery operator runbook
 
-Next action: do not run Bob's command before Wave 11 is explicitly approved.
+Next action: run the read-only preflight only after the Wave 15 release is ready.
 
-The Wave 5 command is dry-run-only from the command line today. It reads fresh
-production facts and Base finality, then prints an exact plan or aborts. It does
-not contain a live apply hookup, so Wave 5 cannot create a place, close an
-attempt, add a fee, claim a payment, or issue credit.
+The command is dry-run-first. It reads fresh production facts and Base finality,
+then prints an exact plan or aborts. Its live mode is separately locked behind
+an exact acknowledgement and one all-or-nothing database transaction.
 
 ## 1. Preconditions — about 2 minutes
 
-1. Obtain the user's explicit Wave 11 approval for both the release and Bob's
+1. Confirm the recorded user approval for both the Wave 15 release and Bob's
    live repair.
 2. Deploy and verify the reviewed payment-recovery and city-credit migrations
    and code first. Both guarded recovery deadlines are already in the past.
@@ -73,21 +72,24 @@ Any missing, changed, uncertain, ambiguous, partially completed, or extra fact
 aborts the command. Do not update a constant merely to make a changed dry run
 pass. Re-investigate the production row and Base evidence instead.
 
-## 4. Wave 11 apply gate — operator hookup required
+## 4. Wave 15 apply gate — exact acknowledgement required
 
 The exact acknowledgement is:
 
 ```text
-APPLY_BOB_PAYMENT_REPAIR_WAVE_11
+APPLY_BOB_PAYMENT_REPAIR_WAVE_15
 ```
 
-The parser accepts `--apply --ack APPLY_BOB_PAYMENT_REPAIR_WAVE_11`, but the
-checked-in CLI deliberately aborts because no live operator implementation is
-installed. Wave 11 must review and inject `BobPaymentRepairApplyOperations`
-into `runBobPaymentRepair`. Each action carries the already-validated request,
-root/place shape, payment terms, recovery timestamps, and canonical Base block
-facts, so the hookup does not reconstruct them from globals. It must meet these
-five conditions:
+After the dry run reports exactly the expected three actions, run:
+
+```powershell
+node --experimental-strip-types scripts/repair-bob-payments.ts --target production --database <expected-name> --apply --ack APPLY_BOB_PAYMENT_REPAIR_WAVE_15
+```
+
+The checked-in apply operations are intentionally specific to Bob's two recorded
+transactions. Each action carries the already-validated request, root/place
+shape, payment terms, recovery timestamps, and canonical Base block facts. The
+implementation enforces these five conditions:
 
 1. Use only the transaction object passed to each method. Do not open a second
    connection, commit early, or perform an external side effect.

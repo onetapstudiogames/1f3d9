@@ -1,6 +1,4 @@
-// Dry-run-first, guarded operator planning for Bob's two stuck city payments.
-// This file never installs a live apply implementation. Wave 11 must inject the
-// reviewed, transaction-bound operations after separate production approval.
+// Dry-run-first, guarded operator repair for Bob's two stuck city payments.
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Client } from 'pg'
@@ -9,6 +7,7 @@ import {
   classifyUsdcTransfer,
 } from '../src/chain.ts'
 import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
+import { bobPaymentRepairApplyOperations } from './bob-payment-repair-apply.ts'
 import {
   describeDatabaseUrl,
   requireDatabaseName,
@@ -731,11 +730,7 @@ export async function runBobPaymentRepair(options: Readonly<{
       ;(options.log ?? console.log)(JSON.stringify(preflight))
       return preflight
     }
-    if (!options.applyOperations) {
-      throw new BobPaymentRepairAbortError(
-        'operator apply operations are not installed; keep this command in dry-run mode',
-      )
-    }
+    const applyOperations = options.applyOperations ?? bobPaymentRepairApplyOperations
 
     const completed = await transaction(client, 'apply', async () => {
       const snapshot = await readBobRepairSnapshot(client, true)
@@ -746,7 +741,7 @@ export async function runBobPaymentRepair(options: Readonly<{
         || actionSignatures(revalidated) !== actionSignatures(preflight)
       ) abort('facts or proposed actions changed between dry-run and apply revalidation')
 
-      await applyWorkPlan(client, options.applyOperations!, revalidated)
+      await applyWorkPlan(client, applyOperations, revalidated)
       const resultingSnapshot = await readBobRepairSnapshot(client, true)
       const resultingPlan = buildBobPaymentRepairPlan(resultingSnapshot, chainEvidence)
       if (resultingPlan.state !== 'no_work') {

@@ -179,6 +179,7 @@ function cloneSnapshot(snapshot: BobRepairSnapshot): Mutable<BobRepairSnapshot> 
 }
 
 test('guarded Bob constants preserve the independently verified production facts', () => {
+  assert.equal(BOB_REPAIR_APPLY_ACKNOWLEDGEMENT, 'APPLY_BOB_PAYMENT_REPAIR_WAVE_15')
   assert.deepEqual(BOB_REPAIR_EXPECTATIONS.coffee.request, EXPECTED_REQUESTS.coffee)
   assert.deepEqual(BOB_REPAIR_EXPECTATIONS.theBlueAI.request, EXPECTED_REQUESTS.theBlueAI)
   assert.equal(BOB_REPAIR_EXPECTATIONS.coffee.blockNumber, '50297998')
@@ -317,7 +318,7 @@ test('partial, duplicated, or changed completion never becomes a retry no-op', (
   }
 })
 
-test('apply mode requires the one exact Wave 11 acknowledgement', () => {
+test('apply mode requires the one exact Wave 15 acknowledgement', () => {
   assert.throws(
     () => parseBobPaymentRepairArgs(['--target', 'production', '--database', 'city', '--apply']),
     /acknowledgement/iu,
@@ -392,6 +393,29 @@ class FakeClient {
     if (text.includes('ISOLATION LEVEL SERIALIZABLE')) this.onSerializableBegin?.()
     const marker = /\/\*\s*bob-payment-repair:([a-z-]+)\s*\*\//u.exec(text)?.[1]
     if (marker === this.failureMarker) throw new Error('injected read failure')
+    if (text.includes('bob-payment-repair-apply:create-place')) return { rows: [{ id: 901 }] }
+    if (text.includes('bob-payment-repair-apply:payment-use')) {
+      return { rows: [{ tx_hash: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash }] }
+    }
+    if (text.includes('bob-payment-repair-apply:fee')) return { rows: [{ id: 811 }] }
+    if (text.includes('bob-payment-repair-apply:complete-attempt')) {
+      return { rows: [{ public_id: BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId }] }
+    }
+    if (text.includes('bob-payment-repair-apply:close-coffee')) {
+      return { rows: [{ public_id: BOB_REPAIR_EXPECTATIONS.coffee.attemptId }] }
+    }
+    if (text.includes('city-credit:issue-balance')) {
+      this.snapshot = finalSnapshot()
+      return { rows: [{ balance_units: '1000000' }] }
+    }
+    if (text.includes('city-credit:issue')) {
+      return { rows: [{
+        id: '71', entry_kind: 'founder_issue', resident_id: 68, founder_id: 1,
+        amount_units: '1000000', source_key: BOB_REPAIR_CREDIT_SOURCE_KEY,
+        reason: BOB_REPAIR_CREDIT_REASON, created: true,
+        created_at: '2026-08-23T12:00:00.000Z',
+      }] }
+    }
     if (!marker) return { rows: [] }
     const rowsByMarker: Readonly<Record<string, readonly Record<string, unknown>[]>> = {
       residents: this.snapshot.residents,
@@ -636,10 +660,10 @@ test('a partial apply result fails the exact post-check and rolls back', async (
   assert.equal(client.calls.map(call => String(call[0])).filter(statement => statement === 'COMMIT').length, 1)
 })
 
-test('apply without the Wave 11 operator hookup aborts before a write transaction', async () => {
+test('apply without an injected hookup uses the installed guarded operations', async () => {
   const client = new FakeClient(initialSnapshot())
 
-  await assert.rejects(runBobPaymentRepair({
+  const result = await runBobPaymentRepair({
     argv: [
       '--target', 'production', '--database', 'city', '--apply', '--ack',
       BOB_REPAIR_APPLY_ACKNOWLEDGEMENT,
@@ -649,10 +673,14 @@ test('apply without the Wave 11 operator hookup aborts before a write transactio
     createClient: () => client,
     classify: testClassify,
     log: () => {},
-  }), /operator apply operations are not installed/iu)
+  })
 
+  assert.equal(result.state, 'no_work')
   const statements = client.calls.map(call => String(call[0]))
-  assert.doesNotMatch(statements.join('\n'), /ISOLATION LEVEL SERIALIZABLE/iu)
+  assert.match(statements.join('\n'), /ISOLATION LEVEL SERIALIZABLE/iu)
+  assert.match(statements.join('\n'), /bob-payment-repair-apply:complete-attempt/iu)
+  assert.match(statements.join('\n'), /bob-payment-repair-apply:close-coffee/iu)
+  assert.match(statements.join('\n'), /city-credit:issue/iu)
 })
 
 test('re-running apply after exact completion is a read-only no-op', async () => {
