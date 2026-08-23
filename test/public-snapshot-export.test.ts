@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -103,6 +103,56 @@ test('export uses one frozen read-only transaction and verifies the restricted r
     )
     assert.equal(officialEnvelope.record.later_holder_discovery.method, 'POST')
     assert.match(officialEnvelope.record.market_bridge.payment_reconcile, /\/api\/world\/offer\/:id\/reconcile$/u)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('credential-shaped public text aborts before any snapshot bundle is written', async () => {
+  const credential = `1f3d9_sk_${'ab'.repeat(24)}`
+  const sourcePayload = Object.freeze({
+    id: 3,
+    status: 'exported',
+    body: `already-public incident evidence ${credential}`,
+  })
+  let ended = false
+  const client: SnapshotDatabaseClient = {
+    connect: async () => undefined,
+    query: async text => {
+      if (/snapshot-export:attest-role/iu.test(text)) return { rows: [{
+        current_user: 'city_snapshot_export',
+        transaction_read_only: 'on',
+        can_read_view: true,
+        can_read_residents: false,
+        can_write_residents: false,
+        can_read_public_base: false,
+        can_write_public_base: false,
+        can_read_private: false,
+        view_columns: ['class_name', 'record_id', 'sort_key', 'payload'],
+      }] }
+      if (/snapshot-export:records/iu.test(text)) return { rows: [{
+        class_name: 'notes',
+        record_id: '3',
+        sort_key: '3',
+        payload: sourcePayload,
+        exported_at: '2026-08-23T12:34:56.000Z',
+      }] }
+      return { rows: [] }
+    },
+    end: async () => { ended = true },
+  }
+  const root = await mkdtemp(join(tmpdir(), '1f3d9-snapshot-credential-'))
+  try {
+    const outputDirectory = join(root, 'snapshot')
+    await assert.rejects(() => exportPublicSnapshot({
+      outputDirectory,
+      databaseUrl: 'postgresql://city_snapshot_export:secret@db.example/city',
+      sourceCommit: 'f'.repeat(40),
+      client,
+    }), /credential/iu)
+    assert.equal(sourcePayload.body, `already-public incident evidence ${credential}`)
+    assert.deepEqual(await readdir(root), [], 'a failed export must leave no partial bundle')
+    assert.equal(ended, true)
   } finally {
     await rm(root, { force: true, recursive: true })
   }

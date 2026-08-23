@@ -24,37 +24,6 @@ REVOKE ALL ON SCHEMA public FROM city_snapshot_export;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM city_snapshot_export;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM city_snapshot_export;
 
-CREATE OR REPLACE FUNCTION city_snapshot.safe_text(value TEXT)
-RETURNS TEXT
-LANGUAGE SQL
-IMMUTABLE
-STRICT
-SET search_path = pg_catalog
-AS $safe_text$
-  SELECT CASE
-    WHEN value ~* '1f3d9_(sk|at|rt|ac|rc)_[0-9a-f]{8,}'
-      THEN '[redacted: this text contained a resident credential]'
-    ELSE value
-  END
-$safe_text$;
-
-CREATE OR REPLACE FUNCTION city_snapshot.safe_json(value JSONB)
-RETURNS JSONB
-LANGUAGE SQL
-IMMUTABLE
-STRICT
-SET search_path = pg_catalog
-AS $safe_json$
-  SELECT CASE
-    WHEN value::TEXT ~* '1f3d9_(sk|at|rt|ac|rc)_[0-9a-f]{8,}'
-      THEN jsonb_build_object('redacted', 'this public JSON contained a resident credential')
-    ELSE value
-  END
-$safe_json$;
-
-REVOKE ALL ON FUNCTION city_snapshot.safe_text(TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION city_snapshot.safe_json(JSONB) FROM PUBLIC;
-
 CREATE OR REPLACE VIEW city_snapshot.public_records
 WITH (security_barrier = true)
 AS
@@ -142,7 +111,7 @@ effective_laws AS (
     jsonb_agg(jsonb_build_object(
       'trait_id', trait.id,
       'name', trait.name,
-      'recipe', city_snapshot.safe_json(trait.recipe),
+      'recipe', trait.recipe,
       'source_place_id', candidate.place_id,
       'position', candidate.position
     ) ORDER BY candidate.depth, candidate.position, trait.id) AS laws
@@ -209,7 +178,7 @@ SELECT 'residents'::TEXT AS class_name, slot.id::TEXT AS record_id, slot.id AS s
       'id', resident.id,
       'status', 'exported',
       'handle', resident.handle,
-      'model', city_snapshot.safe_text(resident.model),
+      'model', resident.model,
       'joined_at', resident.joined_at
     )
   END AS payload
@@ -252,9 +221,9 @@ SELECT 'places', slot.id::TEXT, slot.id,
       'status', 'exported',
       'parent_id', place.parent_id,
       'place_kind', place.place_kind,
-      'name', city_snapshot.safe_text(place.name),
-      'description', city_snapshot.safe_text(place.description),
-      'purpose', city_snapshot.safe_text(place.purpose),
+      'name', place.name,
+      'description', place.description,
+      'purpose', place.purpose,
       'owner_id', place.owner_id,
       'owner', owner.handle,
       'open_to_building', place.open_to_building,
@@ -264,7 +233,7 @@ SELECT 'places', slot.id::TEXT, slot.id,
         SELECT jsonb_agg(jsonb_build_object(
           'id', thing.id,
           'type', 'thing',
-          'name', city_snapshot.safe_text(thing.name),
+          'name', thing.name,
           'body_text_bytes', octet_length(thing.body),
           'maker_id', thing.maker_id,
           'made_by', maker.handle,
@@ -318,8 +287,8 @@ SELECT 'things', slot.id::TEXT, slot.id,
       'id', thing.id,
       'status', 'exported',
       'place_id', thing.place_id,
-      'name', city_snapshot.safe_text(thing.name),
-      'body', city_snapshot.safe_text(thing.body),
+      'name', thing.name,
+      'body', thing.body,
       'maker_id', thing.maker_id,
       'made_by', maker.handle,
       'current_owner_id', thing.owner_id,
@@ -362,7 +331,7 @@ SELECT 'notes', slot.id::TEXT, slot.id,
       'place_id', note.place_id,
       'author_id', note.author_id,
       'author', author.handle,
-      'body', city_snapshot.safe_text(note.body),
+      'body', note.body,
       'created_at', note.created_at
     )
   END
@@ -386,8 +355,8 @@ SELECT 'traits', slot.id::TEXT, slot.id,
       'id', trait.id,
       'status', 'exported',
       'name', trait.name,
-      'description', city_snapshot.safe_text(trait.description),
-      'recipe', city_snapshot.safe_json(trait.recipe),
+      'description', trait.description,
+      'recipe', trait.recipe,
       'mechanical', trait.mechanical,
       'coiner_id', trait.coiner_id,
       'coiner', coiner.handle,
@@ -417,7 +386,7 @@ SELECT 'kinds', slot.id::TEXT, slot.id,
       'owner_id', kind.owner_id,
       'owner', owner.handle,
       'revision', revision.revision,
-      'description', city_snapshot.safe_text(revision.description),
+      'description', revision.description,
       'traits', coalesce((
         SELECT jsonb_agg(
           CASE WHEN trait_hidden.action = 'remove'
@@ -430,7 +399,7 @@ SELECT 'kinds', slot.id::TEXT, slot.id,
         LEFT JOIN latest_moderation trait_hidden
           ON trait_hidden.target_type = 'trait' AND trait_hidden.target_id = named_trait.id
       ), '[]'::JSONB),
-      'recipe', city_snapshot.safe_json(CASE
+      'recipe', CASE
         WHEN jsonb_typeof(revision.recipe) = 'array' THEN coalesce((
           SELECT jsonb_agg(
             CASE WHEN ingredient_hidden.action = 'remove'
@@ -447,7 +416,7 @@ SELECT 'kinds', slot.id::TEXT, slot.id,
             AND ingredient_hidden.target_id = ingredient_kind.id
         ), '[]'::JSONB)
         ELSE revision.recipe
-      END),
+      END,
       'created_at', kind.created_at,
       'revision_created_at', revision.created_at
     )
@@ -473,7 +442,7 @@ SELECT 'agreements', slot.id::TEXT, slot.id,
     ELSE jsonb_build_object(
       'id', agreement.id,
       'status', 'exported',
-      'body', city_snapshot.safe_text(agreement.body),
+      'body', agreement.body,
       'created_by_id', agreement.created_by_id,
       'created_by', creator.handle,
       'parties', coalesce((
@@ -578,7 +547,7 @@ SELECT 'moderation', slot.id::TEXT, slot.id,
       'target_type', moderation.target_type,
       'target_id', moderation.target_id,
       'action', moderation.action,
-      'reason', city_snapshot.safe_text(moderation.reason),
+      'reason', moderation.reason,
       'actor_id', moderation.actor_id,
       'actor', actor.handle,
       'created_at', moderation.created_at
@@ -643,7 +612,7 @@ SELECT 'world_market_offers', slot.id::TEXT, slot.id,
       END,
       'asset_type', 'thing',
       'asset_id', offer.asset_id,
-      'asset_name', city_snapshot.safe_text(thing.name),
+      'asset_name', thing.name,
       'maker_id', thing.maker_id,
       'made_by', maker.handle,
       'current_owner_id', thing.owner_id,
@@ -660,10 +629,10 @@ SELECT 'world_market_offers', slot.id::TEXT, slot.id,
       'market_draft_id', offer.market_draft_id,
       'market_listing_id', offer.market_listing_id,
       'market_checkout_id', offer.market_checkout_id,
-      'market_buyer', city_snapshot.safe_text(offer.market_buyer),
+      'market_buyer', offer.market_buyer,
       'pending_x402_tx_hash', offer.pending_x402_tx_hash,
       'pending_x402_at', offer.pending_x402_at,
-      'x402_invalid_reason', city_snapshot.safe_text(offer.x402_invalid_reason),
+      'x402_invalid_reason', offer.x402_invalid_reason,
       'x402_invalid_at', offer.x402_invalid_at,
       'reserved_at', offer.reserved_at,
       'reserved_until', offer.reserved_until,
@@ -692,6 +661,6 @@ LEFT JOIN latest_moderation hidden
 
 REVOKE ALL ON city_snapshot.public_records FROM PUBLIC;
 GRANT USAGE ON SCHEMA city_snapshot TO city_snapshot_export;
-GRANT EXECUTE ON FUNCTION city_snapshot.safe_text(TEXT) TO city_snapshot_export;
-GRANT EXECUTE ON FUNCTION city_snapshot.safe_json(JSONB) TO city_snapshot_export;
 GRANT SELECT ON city_snapshot.public_records TO city_snapshot_export;
+DROP FUNCTION IF EXISTS city_snapshot.safe_text(TEXT);
+DROP FUNCTION IF EXISTS city_snapshot.safe_json(JSONB);

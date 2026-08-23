@@ -19,11 +19,19 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     assert.match(sql, /CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)
     assert.match(sql, /security_barrier/iu)
     assert.match(sql, /GRANT SELECT ON city_snapshot\.public_records TO city_snapshot_export/iu)
+    assert.doesNotMatch(
+      sql,
+      /CREATE OR REPLACE FUNCTION city_snapshot\.safe_(?:text|json)|redacted: this text contained|public JSON contained/iu,
+      'the database must return already-public text unchanged so the exporter can fail closed',
+    )
     const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)
     const viewEnd = sql.indexOf('GRANT SELECT ON city_snapshot.public_records', viewStart)
     assert.ok(viewStart >= 0 && viewEnd > viewStart)
     const view = sql.slice(viewStart, viewEnd)
     assert.doesNotMatch(view, /SELECT\s+\*/iu)
+    assert.doesNotMatch(view, /city_snapshot\.safe_(?:text|json)/iu)
+    assert.match(view, /'body',\s*note\.body/iu)
+    assert.match(view, /'recipe',\s*trait\.recipe/iu)
     assert.match(view, /trait_hidden\.action = 'remove'[\s\S]+unnest\(revision\.traits\)/iu)
     assert.match(view, /ingredient_hidden\.action = 'remove'[\s\S]+jsonb_array_elements\(revision\.recipe\)/iu)
     assert.match(view, /'status', event\.detail->'status'/iu)

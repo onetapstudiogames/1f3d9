@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -53,13 +53,14 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   const container = `1f3d9-public-snapshot-${runId}`
   const administratorPassword = randomBytes(24).toString('hex')
   const snapshotPassword = randomBytes(24).toString('hex')
-  const outputDirectory = await mkdtemp(join(tmpdir(), '1f3d9-public-snapshot-'))
+  const outputRoot = await mkdtemp(join(tmpdir(), '1f3d9-public-snapshot-'))
+  const outputDirectory = join(outputRoot, 'snapshot')
   let administrator: Client | undefined
   let reader: Client | undefined
   t.after(async () => {
     await reader?.end().catch(() => undefined)
     await administrator?.end().catch(() => undefined)
-    await rm(outputDirectory, { force: true, recursive: true })
+    await rm(outputRoot, { force: true, recursive: true })
     docker(['rm', '--force', container], true)
   })
 
@@ -189,6 +190,22 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
 
   const snapshotUrl =
     `postgresql://city_snapshot_export:${snapshotPassword}@127.0.0.1:${port}/${POSTGRES_DATABASE}`
+  const credentialOutput = join(outputRoot, 'credential-failure')
+  const credentialReader = new Client({ connectionString: snapshotUrl, ssl: false })
+  await assert.rejects(() => exportPublicSnapshot({
+    outputDirectory: credentialOutput,
+    databaseUrl: snapshotUrl,
+    sourceCommit: 'f'.repeat(40),
+    client: credentialReader,
+  }), /credential/iu)
+  assert.deepEqual(await readdir(outputRoot), [], 'credential evidence must leave no partial bundle')
+  assert.equal(
+    (await administrator.query<{ model: string }>('SELECT model FROM residents WHERE id = 2')).rows[0]?.model,
+    `historical 1f3d9_sk_${'ab'.repeat(24)}`,
+    'the export must never alter already-public source text',
+  )
+  await administrator.query("UPDATE residents SET model = 'exact public model' WHERE id = 2")
+
   reader = new Client({ connectionString: snapshotUrl, ssl: false })
   let insertedConcurrentRow = false
   const frozenReader: SnapshotDatabaseClient = {

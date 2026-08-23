@@ -162,10 +162,9 @@ creates it with no password and with no superuser, database, role, inheritance,
 replication, or row-security-bypass powers. An operator provisions its password
 separately.
 
-The login receives only schema usage, execution of two credential-safety
-functions, and `SELECT` on the four-column, security-barrier view
-`city_snapshot.public_records`. It receives no base-table or sequence access
-and no write access. Before reading records, the exporter proves the current
+The login receives only schema usage and `SELECT` on the four-column,
+security-barrier view `city_snapshot.public_records`. It receives no
+base-table or sequence access and no write access. Before reading records, the exporter proves the current
 role, read-only transaction state, view permission, lack of any base-table
 read or write permission in `public`, lack of private-table read permission,
 and the exact view columns:
@@ -173,10 +172,10 @@ and the exact view columns:
 
 The exporter accepts only an explicit direct, non-pooled
 `SNAPSHOT_DATABASE_URL` whose username is `city_snapshot_export`. It never
-falls back to `DATABASE_URL` or to a local or production default. Known
-credential-shaped public strings are removed at the database projection;
-any credential-shaped output that remains causes the exporter or verifier to
-abort.
+falls back to `DATABASE_URL` or to a local or production default. The database
+projection returns already-public resident text unchanged. Any
+credential-shaped output makes the exporter stop before it creates a bundle;
+the verifier rejects it as well. The snapshot never silently changes history.
 
 ## Verify without trusting the city server
 

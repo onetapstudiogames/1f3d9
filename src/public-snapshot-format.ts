@@ -199,7 +199,6 @@ export async function createSnapshotBundle(input: Readonly<{
 }>): Promise<SnapshotBundle> {
   if (!COMMIT_RE.test(input.sourceCommit)) throw new TypeError('sourceCommit must be a full lowercase Git commit')
   const tag = tagFor(input.exportedAt)
-  await prepareOutputDirectory(input.outputDirectory)
 
   const grouped = new Map<string, PublicSnapshotRecord[]>(
     EXPORTED_CLASS_NAMES.map(className => [className, []]),
@@ -219,6 +218,7 @@ export async function createSnapshotBundle(input: Readonly<{
   }
 
   const files: SnapshotFile[] = []
+  const fileBytes = new Map<string, Buffer>()
   const counts: Record<string, number> = {}
   for (const className of EXPORTED_CLASS_NAMES) {
     const records = [...grouped.get(className)!].sort(compareRecord)
@@ -234,13 +234,16 @@ export async function createSnapshotBundle(input: Readonly<{
       })
     })
     const path = `${className}.ndjson`
-    const written = await writeExactFile(
-      input.outputDirectory,
-      path,
-      Buffer.from(`${lines.join('\n')}${lines.length === 0 ? '' : '\n'}`, 'utf8'),
-    )
+    const bytes = Buffer.from(`${lines.join('\n')}${lines.length === 0 ? '' : '\n'}`, 'utf8')
+    fileBytes.set(path, bytes)
     counts[className] = records.length
-    files.push(Object.freeze({ ...written, class_name: className, records: records.length }))
+    files.push(Object.freeze({
+      path,
+      sha256: sha256(bytes),
+      bytes: bytes.byteLength,
+      class_name: className,
+      records: records.length,
+    }))
   }
 
   const manifest = Object.freeze({
@@ -266,6 +269,11 @@ export async function createSnapshotBundle(input: Readonly<{
   })
   const manifestBytes = Buffer.from(`${canonicalJson(manifest)}\n`, 'utf8')
   assertNoCredential(manifestBytes.toString('utf8'), 'snapshot manifest')
+
+  await prepareOutputDirectory(input.outputDirectory)
+  for (const file of files) {
+    await writeExactFile(input.outputDirectory, file.path, fileBytes.get(file.path)!)
+  }
   const manifestFile = await writeExactFile(input.outputDirectory, 'manifest.json', manifestBytes)
   const cityRoot = manifestFile.sha256
 
