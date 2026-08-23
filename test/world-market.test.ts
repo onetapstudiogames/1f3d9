@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Hono, type Context } from 'hono'
-import { mountWorldMarketRoutes, type WorldMarketDependencies } from '../src/world-market.ts'
+import {
+  mountWorldMarketRoutes,
+  publicMarketGet,
+  type WorldMarketDependencies,
+} from '../src/world-market.ts'
 import { mcp } from '../src/mcp.ts'
 import { canonicalPaymentRequest, type PaymentAttemptRecord } from '../src/payment-attempts.ts'
 
@@ -285,7 +289,10 @@ function worldSaleRequestHash(offer: Parameters<typeof worldRequestForOffer>[0])
   return canonicalPaymentRequest(worldRequestForOffer(offer)).hash
 }
 
-function makeHarness(patch: Partial<FakeState> = {}) {
+function makeHarness(
+  patch: Partial<FakeState> = {},
+  suppliedMarketGet?: WorldMarketDependencies['marketGet'],
+) {
   let state = initialState(patch)
   if (state.offer?.pending_payment_attempt_id && state.paymentAttempt == null) {
     const attempt = fakePaymentAttempt(state.now)
@@ -666,7 +673,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
     authenticate,
     now: () => new Date(state.now),
     marketOrigin: MARKET,
-    marketGet: async path => {
+    marketGet: suppliedMarketGet ?? (async path => {
       if (state.marketFailure) throw new Error('market offline')
       if (state.marketInvalid) return { nope: true }
       if (path === '/api/world/draft/71') return { draft: state.draft }
@@ -674,7 +681,7 @@ function makeHarness(patch: Partial<FakeState> = {}) {
         return { checkout: { ...state.checkout, id: Number(path.split('/').at(-1)) } }
       }
       throw new Error(`unexpected market path: ${path}`)
-    },
+    }),
     findPayment: async () => state.paymentAttempt,
     runPayment: async () => {
       if (state.paymentAttempt?.status === 'completed' && state.paymentAttempt.response) {
@@ -862,6 +869,93 @@ test('seller locks an owned active thing from a valid pending market draft', asy
   assert.equal(harness.getState().thingLocked, true)
   assert.ok(harness.getState().queries.some(call =>
     call.text.includes('world-market:create') && /update\s+things/i.test(call.text) && /insert\s+into\s+transfer_offers/i.test(call.text)))
+})
+
+test('listing distinguishes a missing market draft from market failure and invalid records', async () => {
+  const cases: ReadonlyArray<{
+    name: string
+    fetcher: typeof fetch
+    status: number
+    error: string
+  }> = [
+    {
+      name: 'missing draft',
+      fetcher: async () => Response.json({ error: 'no such world draft' }, { status: 404 }),
+      status: 404,
+      error: 'no such market draft 71',
+    },
+    {
+      name: 'transport failure',
+      fetcher: async () => { throw new TypeError('fetch failed') },
+      status: 503,
+      error: 'the market public record is unavailable; nothing changed',
+    },
+    {
+      name: 'invalid public record',
+      fetcher: async () => Response.json({ nope: true }),
+      status: 502,
+      error: 'the market returned an invalid public draft',
+    },
+  ]
+
+  for (const entry of cases) {
+    const harness = makeHarness(
+      {},
+      path => publicMarketGet(MARKET, path, entry.fetcher),
+    )
+    const response = await harness.app.request('/api/world/listing', {
+      method: 'POST',
+      headers: jsonHeaders(SELLER_SECRET),
+      body: JSON.stringify({ thing_id: 41, market_draft_id: 71 }),
+    })
+
+    assert.equal(response.status, entry.status, entry.name)
+    assert.deepEqual(await response.json(), { error: entry.error }, entry.name)
+    assert.equal(harness.getState().thingLocked, false, entry.name)
+  }
+})
+
+test('claim and cancel name missing market records without reporting an outage', async () => {
+  const missingCheckout = makeHarness(
+    { offer: openOffer(), thingLocked: true },
+    path => publicMarketGet(MARKET, path, async () =>
+      Response.json({ error: 'no such world checkout' }, { status: 404 })),
+  )
+  const checkoutResponse = await missingCheckout.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(checkoutResponse.status, 404)
+  assert.deepEqual(await checkoutResponse.json(), { error: 'no such market checkout 81' })
+
+  const missingListing = makeHarness(
+    { offer: openOffer(), thingLocked: true },
+    path => publicMarketGet(MARKET, path, async () =>
+      path.endsWith('/checkout/81')
+        ? Response.json({ checkout: checkout() })
+        : Response.json({ error: 'no such world draft' }, { status: 404 })),
+  )
+  const listingResponse = await missingListing.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(listingResponse.status, 404)
+  assert.deepEqual(await listingResponse.json(), { error: 'no such market draft 71' })
+
+  const missingCancellation = makeHarness(
+    { offer: openOffer(), thingLocked: true },
+    path => publicMarketGet(MARKET, path, async () =>
+      Response.json({ error: 'no such world draft' }, { status: 404 })),
+  )
+  const cancellationResponse = await missingCancellation.app.request('/api/world/offer/101/cancel', {
+    method: 'POST',
+    headers: jsonHeaders(SELLER_SECRET),
+    body: JSON.stringify({}),
+  })
+  assert.equal(cancellationResponse.status, 404)
+  assert.deepEqual(await cancellationResponse.json(), { error: 'no such market draft 71' })
 })
 
 test('listing rejects nonowners, mismatched drafts, unknown fields, and unavailable records', async () => {

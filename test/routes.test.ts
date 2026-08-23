@@ -7140,7 +7140,7 @@ test('official facts, events, residents, and treasury are public and anti-token'
     releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
     format: 'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md',
     verifier: 'https://github.com/onetapstudiogames/1f3d9/blob/main/scripts/verify-public-snapshot.ts',
-    cadence: 'daily after the workflow is enabled',
+    cadence: 'daily at 08:17 UTC via the enabled workflow (cron 17 8 * * *)',
     scope: 'the full approved anonymous public record, not only the names directory',
     corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
     recovery: 'public snapshots exclude private recovery data and are not recovery backups',

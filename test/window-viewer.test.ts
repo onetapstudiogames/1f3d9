@@ -79,8 +79,8 @@ test('deliberate navigation makes real history and refresh keeps reading state',
   assert.match(WINDOW_JS, /if \(window\.location\.hash === hash\) return/)
   assert.match(WINDOW_JS, /window\.addEventListener\('popstate', syncStateFromLocation\)/)
   assert.match(WINDOW_JS, /navigate\(\{ view, placeId \}\)/)
-  assert.match(WINDOW_JS, /navigate\(\{ placeId: safeId\(nodes\.placeFilter\.value\), placeSearch: '' \}\)/)
-  assert.match(WINDOW_JS, /navigate\(\{ resident: safeHandle\(nodes\.residentFilter\.value\) \}\)/)
+  assert.match(WINDOW_JS, /placeId: safeId\(nodes\.placeFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
+  assert.match(WINDOW_JS, /resident: safeHandle\(nodes\.residentFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   // Expanded bodies are keyed state, and focus lands back on the rebuilt
   // control after a background refresh re-renders the DOM.
   assert.match(WINDOW_JS, /expandedBodies: \[\]/)

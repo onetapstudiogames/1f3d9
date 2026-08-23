@@ -717,13 +717,11 @@ test('complete directory selection loads one focused place and its inside conten
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · Place #11',
-    'inner_hall — the whole continent',
-    'quiet_annex',
+    'root_plaza · #11',
+    'inner_hall · #12',
+    '\u00a0\u00a0quiet_annex · #77',
   ])
-  expect(await page.locator('#place-filter optgroup').evaluateAll(groups =>
-    groups.map(group => group.getAttribute('label')),
-  )).toEqual(['World root', 'Inside inner_hall'])
+  await expect(page.locator('#place-filter optgroup')).toHaveCount(0)
   const placeFilterBox = await page.locator('#place-filter').boundingBox()
   expect(placeFilterBox?.width ?? 0).toBeGreaterThan(220)
   await expect(page.locator('#view-scope')).toContainText(/currently loaded 2 of 5 places/i)
@@ -775,10 +773,13 @@ test('complete directory selection loads one focused place and its inside conten
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
 })
 
-test('place search narrows the phone selector and keeps the continent heading', async ({ page }) => {
+test('directory search owns a dropdown and finds both places and residents', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 851 })
-  const search = page.locator('#place-search')
-  await expect(page.getByRole('searchbox', { name: 'Search places', exact: true })).toBeVisible()
+  const search = page.locator('#directory-search')
+  await expect(page.getByRole('combobox', {
+    name: 'Search places and residents', exact: true,
+  })).toBeVisible()
+  expect(await search.evaluate(node => node.closest('.view-filters'))).toBeNull()
   const selector = page.locator('#place-filter')
   const searchBox = await search.boundingBox()
   const selectorBox = await selector.boundingBox()
@@ -788,23 +789,39 @@ test('place search narrows the phone selector and keeps the continent heading', 
   expect((selectorBox?.x ?? 391) + (selectorBox?.width ?? 0)).toBeLessThanOrEqual(390)
   await search.fill('quiet')
 
-  await expect(page.locator('#place-search-status')).toHaveText('1 place matches.')
+  await expect(page.locator('#directory-search-status')).toHaveText('1 result: 1 place and 0 residents.')
+  const results = page.locator('#directory-search-results')
+  await expect(results).toBeVisible()
+  await expect(search).toHaveAttribute('aria-expanded', 'true')
+  await expect(results.getByRole('option')).toHaveText(/quiet_annex · #77/)
+  const resultsBox = await results.boundingBox()
+  expect(resultsBox?.y ?? 0).toBeGreaterThanOrEqual((searchBox?.y ?? 0) + (searchBox?.height ?? 0))
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'quiet_annex',
+    'root_plaza · #11',
+    'inner_hall · #12',
+    '\u00a0\u00a0quiet_annex · #77',
   ])
-  expect(await page.locator('#place-filter optgroup').evaluateAll(groups =>
-    groups.map(group => group.getAttribute('label')),
-  )).toEqual(['Inside inner_hall'])
 
   const focusedRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
   })
-  await selector.selectOption('77')
+  await results.getByRole('option').click()
   await focusedRequest
   await expect(search).toHaveValue('')
-  await expect(page.locator('#place-search-status')).toHaveText('3 places available.')
+  await expect(results).toBeHidden()
+
+  const residentRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
+  })
+  await search.fill('far-walker')
+  await expect(page.locator('#directory-search-status')).toHaveText('1 result: 0 places and 1 resident.')
+  await expect(results.getByRole('option')).toHaveText(/far-walker · #9/)
+  await results.getByRole('option').click()
+  await residentRequest
+  await expect(page).toHaveURL(/resident=far-walker/)
 })
 
 test('complete resident selection uses one focused presence read and a directory path', async ({ page }) => {
@@ -837,9 +854,7 @@ test('cold deep link replaces its numbered fallback when the directory arrives l
 })
 
 test('missing directory selection stays available under an honest fallback group', async ({ page }) => {
-  const fallbackGroup = page.locator('#place-filter optgroup[label="Current selection"]')
-  await expect(fallbackGroup).toHaveCount(1)
-  const fallbackOption = fallbackGroup.locator('option')
+  const fallbackOption = page.locator('#place-filter option[value="999"]')
   await expect(fallbackOption).toHaveText('Place #999 · not currently loaded')
   await expect(fallbackOption).toHaveAttribute('value', '999')
   await expect(page.locator('#place-filter')).toHaveValue('999')
@@ -860,8 +875,8 @@ test('directory failure is accessible and retryable without hiding the loaded fa
   await expect(alert).toContainText(/complete city directory could not be loaded/i)
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · Place #11',
-    'inner_hall — the whole continent',
+    'root_plaza · #11',
+    'inner_hall · #12',
   ])
 
   await alert.getByRole('button', { name: 'Retry loading the complete directory' }).click()
@@ -960,10 +975,10 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · Place #11',
-    'inner_hall — the whole continent',
-    'renamed_annex',
-    'fresh_gallery',
+    'root_plaza · #11',
+    'inner_hall · #12',
+    '\u00a0\u00a0renamed_annex · #77',
+    '\u00a0\u00a0fresh_gallery · #78',
   ])
   await expect(page.locator('#place-focus-title')).toHaveText('renamed_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(

@@ -119,9 +119,9 @@ export interface WorldMarketDependencies {
 }
 
 class MarketReadError extends Error {
-  readonly kind: 'unavailable' | 'invalid'
+  readonly kind: 'unavailable' | 'invalid' | 'not_found'
 
-  constructor(kind: 'unavailable' | 'invalid') {
+  constructor(kind: 'unavailable' | 'invalid' | 'not_found') {
     super(kind)
     this.kind = kind
   }
@@ -265,10 +265,14 @@ async function readLimitedJson(response: Response): Promise<unknown> {
   }
 }
 
-async function publicMarketGet(origin: string, path: string): Promise<unknown> {
+export async function publicMarketGet(
+  origin: string,
+  path: string,
+  marketFetch: typeof fetch = fetch,
+): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(`${origin}${path}`, {
+    response = await marketFetch(`${origin}${path}`, {
       method: 'GET',
       headers: { accept: 'application/json' },
       redirect: 'error',
@@ -277,8 +281,14 @@ async function publicMarketGet(origin: string, path: string): Promise<unknown> {
   } catch {
     throw new MarketReadError('unavailable')
   }
+  if (response.status === 404) throw new MarketReadError('not_found')
   if (!response.ok) throw new MarketReadError('unavailable')
   return readLimitedJson(response)
+}
+
+function missingMarketRecord(path: string): string {
+  const match = /^\/api\/world\/(draft|checkout)\/([1-9]\d*)$/u.exec(path)
+  return match ? `no such market ${match[1]} ${match[2]}` : 'no such market public record'
 }
 
 function configuredMarketOrigin(): string {
@@ -562,6 +572,9 @@ async function getMarket(
   try {
     return await dependencies.marketGet(path)
   } catch (error) {
+    if (error instanceof MarketReadError && error.kind === 'not_found') {
+      return err(c, 404, missingMarketRecord(path))
+    }
     const message = error instanceof MarketReadError && error.kind === 'invalid'
       ? 'the market returned an invalid public record'
       : 'the market public record is unavailable; nothing changed'
