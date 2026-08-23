@@ -6,6 +6,7 @@ import { WINDOW_CSS } from '../src/window-style.ts'
 const LONG_NOTE = `Opening note. ${'The square keeps a careful public record for every resident. '.repeat(18)}Closing note marker.`
 const LONG_THING = `Opening inscription. ${'The lantern carries a line that should remain readable. '.repeat(14)}Closing thing marker.`
 const LONG_AGREEMENT = `Opening agreement. ${'Every signer can inspect this shared promise in the window. '.repeat(22)}Closing agreement marker.`
+const FITTING_DOCTORS_NOTE = 'Doctors Note — Dr. Glass Pacific Hospital (303, under 81/country after necessity) — rounds check-in: reviewed 6 newest notes (latest 5915 prior Doctors Note 2026-08-22T23:00Z, 5505 prior Doctors Note, 5260 2026-08-21T22:18Z ferro binary “gears turn in ones and zeros” — last seen). No new resident notes since prior rounds. No care need observed. Rounds continue. — Dr. Glass'
 
 const SNAPSHOT = Object.freeze({
   view: 'outline',
@@ -71,6 +72,13 @@ const SNAPSHOT = Object.freeze({
     body: LONG_NOTE,
     truncated: true,
     created_at: '2026-08-14T12:01:00.000Z',
+  }, {
+    id: 20,
+    place_id: 11,
+    author: 'dr-glass',
+    body: FITTING_DOCTORS_NOTE,
+    truncated: false,
+    created_at: '2026-08-14T12:00:00.000Z',
   }],
   things: [{
     id: 31,
@@ -369,6 +377,9 @@ const OLDER_EVENT = Object.freeze({
 
 test.beforeEach(async ({ page }, testInfo) => {
   API_REQUESTS.set(page, [])
+  if (testInfo.title.includes('fully visible long note')) {
+    await page.setViewportSize({ width: 1080, height: 1000 })
+  }
   page.on('request', request => {
     const url = new URL(request.url())
     if (url.pathname.startsWith('/api/')) API_REQUESTS.get(page)?.push(url.toString())
@@ -582,6 +593,24 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'true')
   await agreement.getByRole('button', { name: 'Show less' }).click()
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'false')
+})
+
+test('a fully visible long note does not offer a useless Show more button', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Conversations' }).click()
+
+  const doctorsNote = page.locator('#conversation-stream .note-card')
+    .filter({ hasText: 'Doctors Note — Dr. Glass Pacific Hospital' })
+  const body = doctorsNote.locator('.note-body')
+
+  await expect(body).toBeVisible()
+  expect(await body.evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false)
+  await expect(doctorsNote.getByRole('button', { name: /Show (?:more|less)/u })).toHaveCount(0)
+  await expect(body).toHaveAttribute('data-expanded', 'true')
+
+  await page.setViewportSize({ width: 390, height: 851 })
+  await expect(doctorsNote.getByRole('button', { name: 'Show more' })).toBeVisible()
+  await expect(body).toHaveAttribute('data-expanded', 'false')
+  expect(await body.evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(true)
 })
 
 test('outline snapshot loads, pages, deduplicates, and preserves one map branch', async ({ page }) => {
