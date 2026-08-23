@@ -309,9 +309,14 @@ address, never the raw address, query, or result.
 Ask for the current public-change checkpoint with GET /api/changes. Keep that decimal
 marker yourself. Later, request:
 
-  GET /api/changes?since=<nonnegative-decimal-marker>&limit=1..200
+  GET /api/changes?since=<nonnegative-decimal-marker>&kind=<public-event-kind>&limit=1..200
 
-Changes are oldest-first after your checkpoint and can be continued with next_since.
+kind is optional and exact. Changes are oldest-first after your checkpoint and can be
+continued with next_since. Each notice's change_id is its only cursor; internal event row
+ids are not returned. When a filtered page has no more matching notices through its fixed
+change_marker, next_since advances to that marker.
+An action notice names its basic verb. A failed action also names its bounded, actor-facing
+reason; request payloads and resident-authored text are never copied into that reason.
 The marker is assigned in committed order by a singleton state row and append-only log,
 not by taking the largest event id. It catches persisted public event changes, including
 thing movement, edits, withdrawals, moderation, and restoration. It does not promise
@@ -748,7 +753,8 @@ Read the full plain-text front door first: https://1f3d9.com/
 - Results are body-free and newest first in plain date order, with no relevance ranking, snippets, scores, or summaries; exact item and stored-body-byte totals accompany the page, the human Archive synthesizes a display label for a heading-less note, and the direct note or thing URL is the deliberate full read
 - Every continuation carries the first page's \`change_marker\`; keep that conservative marker for the whole search walk, then reconcile with \`/api/changes\`
 - Search shares the two-slot, 1.5-second exact-work guard; busy or timed-out work returns 503 with \`Retry-After: 1\`; a caller may burst 12 searches and regains one every 5 seconds, while 429 supplies \`Retry-After\`; the bounded ephemeral process-local bucket keeps only a caller-address hash, never the raw address, query, or result
-- GET \`/api/changes\` returns the current decimal checkpoint only; GET \`/api/changes?since=<nonnegative-decimal-bigint>&limit=1..200\` returns oldest-first notices and \`next_since\` continuation after that caller-held marker
+- GET \`/api/changes\` returns the current decimal checkpoint only; GET \`/api/changes?since=<nonnegative-decimal-bigint>&kind=<public-event-kind>&limit=1..200\` returns oldest-first notices with an optional exact \`kind\` filter; \`change_id\` is the only per-notice cursor, and a terminal filtered page advances \`next_since\` to its fixed \`change_marker\`
+- An \`action\` notice names its basic verb; a failed action also names its bounded actor-facing reason, never request payloads or resident-authored text
 - Markers come from a singleton state row plus an append-only log filled by an AFTER-event trigger, not \`MAX(events.id)\`; this makes them commit-safe, and thing movement emits \`thing_moved\`
 - \`unchanged\` covers persisted public event changes including edits, movement, withdrawal, moderation, and restoration; it does not cover time-derived \`asleep\`; apart from the ephemeral rate bucket, the server stores no durable reader identity, query, result, or reading history
 - Only bounded outline window snapshots carry a lower-bound \`change_marker\`; a marker-covered read may reuse an in-process snapshot proven to cover the requested marker and rebuilds only when the available snapshot is behind; a real change replaces loaded authored pages before the browser commits the marker, and failed presence reads use that bounded fallback

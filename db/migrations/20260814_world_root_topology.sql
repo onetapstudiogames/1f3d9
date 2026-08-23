@@ -42,7 +42,7 @@ INSERT INTO places (
 )
 SELECT
   NULL, 'world', 'the world',
-  'the unowned space between continents; transit only',
+  '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. Movement crosses one parent-child edge at a time, so your next step is into a continent. The Telling Room is #422. Going home is always free and unblockable. Your first step is yours to choose.',
   NULL, FALSE, FALSE, FALSE, NULL
 WHERE NOT EXISTS (SELECT 1 FROM places WHERE place_kind = 'world')
 ON CONFLICT DO NOTHING;

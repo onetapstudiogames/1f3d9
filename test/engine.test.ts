@@ -16,6 +16,7 @@ import {
   runAction,
   setEngineTransactionRunnerForTests,
   setHome,
+  withEngineTransaction,
   type ActionInput,
   type TaggedSql,
 } from '../src/engine.ts'
@@ -471,7 +472,7 @@ test('go_home ignores supplied source traps and bypasses every block query', asy
   assert.equal(calls.some(call => /WITH RECURSIVE ancestry/.test(call.text)), false)
 })
 
-test('an action cannot claim laws from a place other than the actor current place', async () => {
+test('a place_id mismatch tells the caller where they must be standing', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {
       return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
@@ -487,9 +488,91 @@ test('an action cannot claim laws from a place other than the actor current plac
   }, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'action place must be the actor current place'
+    && error.message === 'you must be standing in place_id 99; your current place_id is 2'
   ))
   assert.equal(calls.some(call => /INSERT INTO action_runs/.test(call.text)), false)
+})
+
+test('a place_id mismatch explains when the caller current place_id is unset', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: null, home_place_id: null, updated_at: 'now' }]
+    }
+    return []
+  })
+
+  await assert.rejects(runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 99,
+  }, db), (error: unknown) => (
+    error instanceof EngineError
+    && error.status === 403
+    && error.message === 'you must be standing in place_id 99; your current place_id is unset'
+  ))
+  assert.equal(calls.some(call => /INSERT INTO action_runs/.test(call.text)), false)
+})
+
+test('a location race reports the new place_id in caller terms', async () => {
+  let presenceReads = 0
+  const { db } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      presenceReads += 1
+      return [{
+        resident_id: 7,
+        current_place_id: presenceReads === 1 ? 2 : 3,
+        home_place_id: 4,
+        updated_at: 'now',
+      }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 144 }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 244 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 2,
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 409)
+  assert.equal(result.error, 'your current place_id changed to 3; retry with place_id 3')
+})
+
+test('a location race explains when the current place_id becomes unset', async () => {
+  let presenceReads = 0
+  const { db } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      presenceReads += 1
+      return [{
+        resident_id: 7,
+        current_place_id: presenceReads === 1 ? 2 : null,
+        home_place_id: 4,
+        updated_at: 'now',
+      }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 145 }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 245 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 2,
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 409)
+  assert.equal(
+    result.error,
+    'your current place_id is now unset; check where you are standing before retrying',
+  )
 })
 
 test('traitless consume still withdraws the owned source thing', async () => {
@@ -578,7 +661,7 @@ for (const [condition, expectedStatus, expectedError] of [
   [
     { open_to_use: true, withdrawn_at: null, active_offer_id: null, has_open_offer: false, place_id: 3 },
     403,
-    /not in the action place/i,
+    /thing_id 41 must be in place_id 2; its current place_id is 3/i,
   ],
 ] as const) {
   test(`shared use enforces source readiness (${expectedStatus}: ${expectedError.source})`, async () => {
@@ -633,7 +716,7 @@ test('shared use requires the visitor to have a current place', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 403)
-  assert.match(result.error ?? '', /not in the action place/i)
+  assert.equal(result.error, 'thing_id 41 cannot be used because your current place_id is unset')
 })
 
 test('an open thing is not a shared consumable', async () => {
@@ -916,7 +999,7 @@ test('wait refuses an actor queue already at its unresolved cap', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 429)
-  assert.equal(result.error, 'pending effect limit reached for actor')
+  assert.equal(result.error, 'you have reached the pending effect limit')
   assert.equal(calls.some(call => /INSERT INTO pending_effects/.test(call.text)), false)
 })
 
@@ -1152,7 +1235,10 @@ test('a move effect cannot target a resident in another place, even to send them
   }, db)
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 403)
-  assert.equal(result.error, 'resident target is not in the action place')
+  assert.equal(
+    result.error,
+    'target resident must be standing in place_id 2; target current place_id is 3',
+  )
   assert.equal(calls.some(call => /UPDATE resident_presence presence/.test(call.text)), false)
 })
 
@@ -1256,14 +1342,20 @@ test('a caller quota failure preserves HTTP 429 and never records applied', asyn
   const resolutions = calls.filter(call => /INSERT INTO action_resolutions/.test(call.text))
   assert.equal(resolutions.length, 1)
   assert.equal(resolutions[0]?.values[1], 'failed')
+  assert.deepEqual(JSON.parse(String(resolutions[0]?.values.at(-2))), {
+    action_id: 111,
+    action: 'talk',
+    status: 'failed',
+    error: 'daily primitive quota reached',
+  })
 })
 
-test('an unknown action failure is useful in server logs but stays generic for the caller', async t => {
+test('an unknown action failure is generic in the public record but useful in server logs', async t => {
   const logged: unknown[][] = []
   t.mock.method(console, 'error', (...values: unknown[]) => {
     logged.push(values)
   })
-  const { db } = fakeSql(({ text }) => {
+  const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {
       return [{ resident_id: 7, current_place_id: 112, home_place_id: 112, updated_at: 'now' }]
     }
@@ -1304,6 +1396,18 @@ test('an unknown action failure is useful in server logs but stays generic for t
     error_code: '42702',
   })
   assert.doesNotMatch(JSON.stringify(logged), /private authored text|private SQL parameters/u)
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.deepEqual(JSON.parse(String(resolution.values.at(-2))), {
+    action_id: 33530,
+    action: 'make',
+    status: 'failed',
+    error: 'effect execution failed',
+  })
+  assert.doesNotMatch(
+    String(resolution.values.at(-2)),
+    /private authored text|private SQL parameters|column reference/iu,
+  )
 })
 
 test('extra caller JSON cannot inject a forged law program', async () => {
@@ -1373,6 +1477,33 @@ test('production-style timer resolution locks before re-reading unresolved work'
   }
   assert.equal(calls.some(call => /pg_advisory_xact_lock/.test(call.text)), true)
   assert.equal(calls.some(call => /FOR UPDATE OF pending/.test(call.text)), true)
+})
+
+test('nested engine work reuses the transaction opened by the test runner', async () => {
+  const { db } = fakeSql(() => [])
+  let transactionStarts = 0
+  let active = false
+  setEngineTransactionRunnerForTests(async (database, work) => {
+    transactionStarts += 1
+    assert.equal(active, false, 'the runner must not open a nested transaction')
+    active = true
+    try {
+      return await work(database, true)
+    } finally {
+      active = false
+    }
+  })
+  try {
+    await withEngineTransaction(db, async transaction => {
+      await withEngineTransaction(transaction, async (nested, atomic) => {
+        assert.equal(nested, transaction)
+        assert.equal(atomic, false)
+      })
+    })
+  } finally {
+    setEngineTransactionRunnerForTests(null)
+  }
+  assert.equal(transactionStarts, 1)
 })
 
 test('overdue repeats preserve the original logical clock while catching up', async () => {

@@ -92,6 +92,7 @@ test('a resident with no current place is out of scope rather than a database fa
   await assert.rejects(requireResidentAtActionPlace(8, 2, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'resident target is not in the action place'
+    && error.message ===
+      'target resident must be standing in place_id 2; target current place_id is unset'
   ))
 })

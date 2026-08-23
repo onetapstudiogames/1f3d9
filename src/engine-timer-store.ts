@@ -61,7 +61,7 @@ async function enforcePendingLimits(input: PendingEffectInsert, db: TaggedSql): 
     throw new EngineError(429, 'pending effect limit reached for place')
   }
   if (queueCount(rows[0].actor_pending, 'actor pending count') >= MAX_PENDING_EFFECTS_PER_ACTOR) {
-    throw new EngineError(429, 'pending effect limit reached for actor')
+    throw new EngineError(429, 'you have reached the pending effect limit')
   }
 }
 

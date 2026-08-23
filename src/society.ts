@@ -28,7 +28,7 @@ import {
 } from './payment-sale-operations.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
 import { moderatePublicRows } from './moderation-store.ts'
-import { runTalkNoteAction } from './note-action.ts'
+import { findRecentTalkNoteDuplicate, runTalkNoteAction } from './note-action.ts'
 import { WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import {
   allowedPublicQuery,
@@ -204,6 +204,25 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
 
+    const duplicate = await findRecentTalkNoteDuplicate({
+      placeId,
+      residentId: resident.id,
+      residentHandle: resident.handle,
+      text,
+    })
+    if (duplicate) {
+      return c.json({
+        note: {
+          id: duplicate.id,
+          place_id: duplicate.place_id ?? placeId,
+          author: duplicate.author ?? resident.handle,
+          body: duplicate.body ?? text,
+          ...(duplicate.created_at ? { created_at: duplicate.created_at } : {}),
+        },
+        reading_cost: await safeReadingCostMeter(placeId, duplicate.body ?? text),
+      }, 200)
+    }
+
     const places = await sql`
       SELECT id, parent_id, owner_id, open_to_notes FROM places WHERE id = ${placeId}
     ` as {
@@ -220,12 +239,8 @@ export function mountSocietyRoutes(app: Hono): void {
     if (place.owner_id !== resident.id && !place.open_to_notes)
       return err(c, 403, 'this place is not open to notes')
     await resolveDueEffects(placeId)
-    // This fast rejection avoids presenting an INSERT to the database when the
-    // caller is already known to be capped. The CTE below still rechecks the
-    // counter so concurrent requests cannot overspend it.
     if (resident.notes_today >= QUOTAS.notes)
       return err(c, 429, `${QUOTAS.notes} notes per UTC day`)
-
     const talk = await runTalkNoteAction({
       placeId,
       residentId: resident.id,
@@ -243,7 +258,7 @@ export function mountSocietyRoutes(app: Hono): void {
         ...(note.created_at ? { created_at: note.created_at } : {}),
       },
       reading_cost: await safeReadingCostMeter(placeId, note.body ?? text),
-    }, 201)
+    }, talk.replayed ? 200 : 201)
   })
 
   app.post('/api/agreement', async c => {
@@ -597,6 +612,7 @@ export function mountSocietyRoutes(app: Hono): void {
       recipientId: recipient,
       payload: { mode: 'gift' },
       primitiveHandledByCaller: true,
+      primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
         if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
         const rows = await transaction.query(`
@@ -683,6 +699,7 @@ export function mountSocietyRoutes(app: Hono): void {
       recipientId: buyerId,
       payload: { mode: 'offer' },
       primitiveHandledByCaller: true,
+      primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
         if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
         try {

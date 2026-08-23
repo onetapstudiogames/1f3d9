@@ -35,7 +35,17 @@ test('resident scope rejects missing, malformed, absent, and remote presence', a
   await expectEngineError(
     () => requireResidentAtActionPlace(8, null, dbReturning([{ current_place_id: 2 }])),
     403,
-    /not in the action place/iu,
+    /^target resident cannot be used because place_id is unset$/u,
+  )
+  await expectEngineError(
+    () => requireResidentAtActionPlace(8, 2, dbReturning([{ current_place_id: null }])),
+    403,
+    /^target resident must be standing in place_id 2; target current place_id is unset$/u,
+  )
+  await expectEngineError(
+    () => requireResidentAtActionPlace(8, 2, dbReturning([{ current_place_id: 3 }])),
+    403,
+    /^target resident must be standing in place_id 2; target current place_id is 3$/u,
   )
   await expectEngineError(
     () => requireResidentAtActionPlace(8, 2, dbReturning([{ current_place_id: 'bad' }])),
@@ -53,9 +63,14 @@ test('resident scope rejects missing, malformed, absent, and remote presence', a
 
 test('caller target scope directly checks every target type and database boundary', async () => {
   await expectEngineError(
+    () => requireCallerTargetScope({ type: 'place', id: 9 }, 7, null, dbReturning([])),
+    403,
+    /^target place_id 9 cannot be used because place_id is unset$/u,
+  )
+  await expectEngineError(
     () => requireCallerTargetScope({ type: 'place', id: 9 }, 7, 2, dbReturning([])),
     403,
-    /not the action place/iu,
+    /^target place_id 9 must match place_id 2$/u,
   )
   await requireCallerTargetScope({ type: 'place', id: 2 }, 7, 2, dbReturning([]))
 
@@ -75,11 +90,21 @@ test('caller target scope directly checks every target type and database boundar
     () => requireCallerTargetScope(
       { type: 'thing', id: 42 },
       7,
+      null,
+      dbReturning([{ place_id: 3, withdrawn_at: null }]),
+    ),
+    403,
+    /^target thing cannot be used because place_id is unset$/u,
+  )
+  await expectEngineError(
+    () => requireCallerTargetScope(
+      { type: 'thing', id: 42 },
+      7,
       2,
       dbReturning([{ place_id: 3, withdrawn_at: null }]),
     ),
     403,
-    /not in the action place/iu,
+    /^target thing must be in place_id 2; target current place_id is 3$/u,
   )
   await requireCallerTargetScope(
     { type: 'thing', id: 42 },
@@ -96,7 +121,7 @@ test('caller target scope directly checks every target type and database boundar
   await expectEngineError(
     () => requireCallerTargetScope({ type: 'kind', id: 9 }, 7, 2, dbReturning([{ owner_id: 8 }])),
     403,
-    /not owned/iu,
+    /^target kind is not owned by you$/u,
   )
   await expectEngineError(
     () => requireCallerTargetScope({ type: 'kind', id: 9 }, 7, 2, dbReturning([{ owner_id: 1.5 }])),

@@ -17,6 +17,7 @@ const MAX_BIGINT = 9_223_372_036_854_775_807n
 export interface PublicChangeQuery {
   readonly ok: true
   readonly since: string | null
+  readonly kind: string | null
   readonly limit: number
   readonly fetchLimit: number
 }
@@ -47,10 +48,12 @@ export function parsePublicChangeMarker(value: unknown): string | null {
   }
 }
 
+const PUBLIC_CHANGE_KIND_SET: ReadonlySet<string> = new Set(PUBLIC_EVENT_KINDS)
+
 export function parsePublicChangeQuery(
   query: Readonly<Record<string, readonly string[]>>,
 ): PublicChangeQueryResult {
-  const allowed = allowedPublicQuery(query, ['since', 'limit'])
+  const allowed = allowedPublicQuery(query, ['since', 'kind', 'limit'])
   if (!allowed.ok) return allowed
 
   const sinceValue = singlePublicQueryValue(query, 'since')
@@ -58,6 +61,13 @@ export function parsePublicChangeQuery(
   const since = sinceValue.value === null ? null : parsePublicChangeMarker(sinceValue.value)
   if (sinceValue.value !== null && since === null) {
     return { ok: false, error: 'since must be a nonnegative decimal bigint' }
+  }
+
+  const kindValue = singlePublicQueryValue(query, 'kind')
+  if (!kindValue.ok) return kindValue
+  const kind = kindValue.value
+  if (kind !== null && !PUBLIC_CHANGE_KIND_SET.has(kind)) {
+    return { ok: false, error: 'kind must be one of the public event kinds' }
   }
 
   const limitValue = singlePublicQueryValue(query, 'limit')
@@ -70,7 +80,7 @@ export function parsePublicChangeQuery(
     return { ok: false, error: `limit must be between 1 and ${PUBLIC_CHANGE_PAGE_MAX}` }
   }
 
-  return Object.freeze({ ok: true, since, limit, fetchLimit: limit + 1 })
+  return Object.freeze({ ok: true, since, kind, limit, fetchLimit: limit + 1 })
 }
 
 const CHECKPOINT_SQL = `
@@ -87,8 +97,6 @@ const PUBLIC_CHANGE_DETAIL_FIELDS = Object.freeze([
 const PUBLIC_CHANGE_DETAIL_FIELD_SQL = PUBLIC_CHANGE_DETAIL_FIELDS
   .map(field => `'${field}'`)
   .join(', ')
-const PUBLIC_CHANGE_KIND_SET = new Set(PUBLIC_EVENT_KINDS)
-
 const CHANGES_SQL = `
   /* public:changes */
   WITH checkpoint AS MATERIALIZED (
@@ -97,10 +105,10 @@ const CHANGES_SQL = `
     WHERE singleton = true
   )
   SELECT checkpoint.checkpoint,
-    page.id, page.change_id, page.kind, page.actor, page.detail, page.created_at
+    page.change_id, page.kind, page.actor, page.detail, page.created_at
   FROM checkpoint
   LEFT JOIN LATERAL (
-    SELECT e.id, pcl.change_id::text AS change_id,
+    SELECT pcl.change_id::text AS change_id,
       e.kind, e.actor,
       coalesce((
         SELECT jsonb_object_agg(field.key, field.value)
@@ -113,6 +121,7 @@ const CHANGES_SQL = `
     JOIN events e ON e.id = pcl.event_id
     WHERE pcl.change_id > $1::bigint
       AND pcl.change_id <= checkpoint.current_change_id
+      AND ($3::text IS NULL OR e.kind = $3::text)
     ORDER BY pcl.change_id ASC
     LIMIT $2::integer
   ) page ON true
@@ -144,10 +153,7 @@ function publicChange(row: Readonly<Record<string, unknown>>): Readonly<Record<s
   if (changeId === null) return null
   if (typeof row.kind !== 'string' || !PUBLIC_CHANGE_KIND_SET.has(row.kind)) return null
   if (typeof row.actor !== 'string' || !HANDLE_RE.test(row.actor)) return null
-  const id = Number(row.id)
-  if (!Number.isSafeInteger(id) || id < 1) throw new Error('public change event id is invalid')
   return Object.freeze({
-    id,
     change_id: changeId,
     kind: row.kind,
     actor: row.actor,
@@ -165,7 +171,7 @@ export async function loadPublicChanges(
     return Object.freeze({ change_marker: checkpointFrom(rows) })
   }
 
-  const rows = await execute(CHANGES_SQL, [query.since, query.fetchLimit])
+  const rows = await execute(CHANGES_SQL, [query.since, query.fetchLimit, query.kind])
   const checkpoint = checkpointFrom(rows)
   if (BigInt(query.since) > BigInt(checkpoint)) {
     throw new PublicChangeFutureError(query.since, checkpoint)
@@ -183,7 +189,7 @@ export async function loadPublicChanges(
     const change = publicChange(row)
     return change === null ? [] : [change]
   }))
-  const nextSince = pageRows.at(-1)?.changeId ?? query.since
+  const nextSince = hasMore ? pageRows.at(-1)?.changeId ?? query.since : checkpoint
   return Object.freeze({
     change_marker: checkpoint,
     changes,

@@ -508,7 +508,7 @@ INSERT INTO places (
 )
 SELECT
   NULL, 'world', 'the world',
-  'the unowned space between continents; transit only',
+  '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. Movement crosses one parent-child edge at a time, so your next step is into a continent. The Telling Room is #422. Going home is always free and unblockable. Your first step is yours to choose.',
   NULL, FALSE, FALSE, FALSE, NULL
 WHERE NOT EXISTS (SELECT 1 FROM places WHERE place_kind = 'world')
 ON CONFLICT DO NOTHING;
@@ -5114,6 +5114,7 @@ SELECT 'events', slot.id::TEXT, slot.id,
         'action', event.detail->'action',
         'mode', event.detail->'mode',
         'status', event.detail->'status',
+        'error', event.detail->'error',
         'channel', event.detail->'channel'
       )),
       'detail_policy', 'safe references only; authored text is in its primary exported record'

@@ -521,13 +521,84 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     `)).rows[0]
     assert.deepEqual(storedAction, { action_name: 'talk', status: 'applied' })
 
-    const observedChanges: Array<{ id: number; change_id: string; kind: string; detail: Record<string, unknown> }> = []
+    const duplicateText = 'One concurrent thought must become one durable note. 🏙️'
+    const countsBefore = (await postgres.client.query<{
+      notes_today: number
+      notes: number
+      note_events: number
+      action_events: number
+      action_runs: number
+    }>(`
+      SELECT resident.notes_today,
+        (SELECT count(*)::integer FROM notes) AS notes,
+        (SELECT count(*)::integer FROM events WHERE kind = 'note') AS note_events,
+        (SELECT count(*)::integer FROM events WHERE kind = 'action') AS action_events,
+        (SELECT count(*)::integer FROM action_runs) AS action_runs
+      FROM residents resident WHERE resident.id = 1
+    `)).rows[0]!
+    const postDuplicate = () => cityApp.request('http://city.test/api/note', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${READER_SECRET}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ place_id: fixture.roomId, body: duplicateText }),
+    })
+    const duplicateResponses = await Promise.all([postDuplicate(), postDuplicate()])
+    assert.deepEqual(
+      duplicateResponses.map(response => response.status).sort(),
+      [200, 201],
+      'concurrent identical posts must have one create and one replay',
+    )
+    const duplicateBodies = await Promise.all(duplicateResponses.map(async response => (
+      await response.json() as { note: { id: number; body: string } }
+    )))
+    assert.equal(duplicateBodies[0]!.note.id, duplicateBodies[1]!.note.id)
+    assert.equal(duplicateBodies[0]!.note.body, duplicateText)
+    assert.equal(duplicateBodies[1]!.note.body, duplicateText)
+
+    const countsAfter = (await postgres.client.query<typeof countsBefore>(`
+      SELECT resident.notes_today,
+        (SELECT count(*)::integer FROM notes) AS notes,
+        (SELECT count(*)::integer FROM events WHERE kind = 'note') AS note_events,
+        (SELECT count(*)::integer FROM events WHERE kind = 'action') AS action_events,
+        (SELECT count(*)::integer FROM action_runs) AS action_runs
+      FROM residents resident WHERE resident.id = 1
+    `)).rows[0]!
+    assert.deepEqual(countsAfter, {
+      notes_today: countsBefore.notes_today + 1,
+      notes: countsBefore.notes + 1,
+      note_events: countsBefore.note_events + 1,
+      action_events: countsBefore.action_events,
+      action_runs: countsBefore.action_runs + 1,
+    })
+
+    const expiredText = 'The same words outside the retry window are a new note.'
+    const expiredOriginal = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body, created_at)
+      VALUES ($1, 1, $2, now() - interval '301 seconds')
+      RETURNING id
+    `, [fixture.roomId, expiredText])).rows[0]!
+    const expiredRetry = await cityApp.request('http://city.test/api/note', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${READER_SECRET}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ place_id: fixture.roomId, body: expiredText }),
+    })
+    assert.equal(expiredRetry.status, 201)
+    const expiredRetryBody = await expiredRetry.json() as { note: { id: number; body: string } }
+    assert.notEqual(expiredRetryBody.note.id, expiredOriginal.id)
+    assert.equal(expiredRetryBody.note.body, expiredText)
+
+    const observedChanges: Array<{ change_id: string; kind: string; detail: Record<string, unknown> }> = []
     let since = checkpoint.change_marker
     let finalMarker: string | null = null
     for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
       const changes = await readBudgetedJson<{
         change_marker: string
-        changes: Array<{ id: number; change_id: string; kind: string; detail: Record<string, unknown> }>
+        changes: Array<{ change_id: string; kind: string; detail: Record<string, unknown> }>
         returned_items: number
         unchanged: boolean
         has_more: boolean
