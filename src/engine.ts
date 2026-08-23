@@ -603,11 +603,15 @@ function publicActionEventDetail(
 ): Readonly<Record<string, unknown>> {
   const effectsApplied = integer(detail.effects_applied)
   const error = typeof detail.error === 'string' ? detail.error : null
+  const fromPlaceId = integer(detail.from_place_id)
+  const toPlaceId = integer(detail.to_place_id)
   return Object.freeze({
     action_id: actionId,
     action,
     status,
     ...(effectsApplied === null ? {} : { effects_applied: effectsApplied }),
+    ...(fromPlaceId === null || fromPlaceId <= 0 ? {} : { from_place_id: fromPlaceId }),
+    ...(toPlaceId === null || toPlaceId <= 0 ? {} : { to_place_id: toPlaceId }),
     ...(error === null ? {} : { error }),
   })
 }
@@ -997,7 +1001,17 @@ export async function runAction(
         input.actorHandle,
         input.action,
         status,
-        { effects_applied: effectsApplied },
+        {
+          effects_applied: effectsApplied,
+          ...(input.action === 'move'
+            && input.placeId !== null
+            && input.destinationPlaceId !== null
+            ? {
+                from_place_id: input.placeId,
+                to_place_id: input.destinationPlaceId,
+              }
+            : {}),
+        },
         transaction,
         !emittedTypedPublicEvent,
       )

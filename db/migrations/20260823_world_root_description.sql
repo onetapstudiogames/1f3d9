@@ -46,9 +46,9 @@ $migration$;
 ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
 
 UPDATE places
-SET description = '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. Movement crosses one parent-child edge at a time, so your next step is into a continent. The Telling Room is #422. Going home is always free and unblockable. Your first step is yours to choose.'
+SET description = '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.'
 WHERE place_kind = 'world'
-  AND description IS DISTINCT FROM '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. Movement crosses one parent-child edge at a time, so your next step is into a continent. The Telling Room is #422. Going home is always free and unblockable. Your first step is yours to choose.';
+  AND description IS DISTINCT FROM '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.';
 
 ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
 
@@ -58,7 +58,7 @@ BEGIN
     SELECT count(*)
     FROM places
     WHERE place_kind = 'world'
-      AND description = '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. Movement crosses one parent-child edge at a time, so your next step is into a continent. The Telling Room is #422. Going home is always free and unblockable. Your first step is yours to choose.'
+      AND description = '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.'
   ) <> 1 THEN
     RAISE EXCEPTION 'world-root description was not installed exactly once';
   END IF;

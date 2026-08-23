@@ -262,7 +262,21 @@ for (const action of ['use', 'move', 'go_home'] as const) {
     assert.equal(result.status, action === 'use' ? 'noop' : 'applied')
     const resolution = actionResolution(calls)
     assert.equal(resolution.values.at(-1), true)
-    assert.equal(JSON.parse(String(resolution.values.at(-2))).action, action)
+    const publicDetail = JSON.parse(String(resolution.values.at(-2))) as Record<string, unknown>
+    assert.equal(publicDetail.action, action)
+    if (action === 'move') {
+      assert.deepEqual(publicDetail, {
+        action_id: 501,
+        action: 'move',
+        status: 'applied',
+        effects_applied: 0,
+        from_place_id: 2,
+        to_place_id: 4,
+      })
+    } else {
+      assert.equal(Object.hasOwn(publicDetail, 'from_place_id'), false)
+      assert.equal(Object.hasOwn(publicDetail, 'to_place_id'), false)
+    }
   })
 }
 
