@@ -190,12 +190,7 @@ export async function publishSnapshot(input: Readonly<{
       contentType: file.path.endsWith('.json') ? 'application/json' : 'application/x-ndjson',
       uploadName: file.path,
     })
-    const uploadedAsset = object(uploaded.body)
-    if (
-      uploaded.status !== 201 ||
-      uploadedAsset?.name !== file.path ||
-      uploadedAsset.size !== bytes.byteLength
-    ) {
+    if (uploaded.status !== 201) {
       throw new Error(`GitHub did not upload ${file.path}; draft release left unpublished`)
     }
   }
