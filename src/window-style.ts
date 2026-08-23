@@ -15,6 +15,7 @@ export const WINDOW_CSS = `:root {
   --line: #20382f;
   --paper-line: #9d9276;
   --focus: #fff19b;
+  --cursor-tint: #d7e5dc;
   --content: 82rem;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -213,9 +214,10 @@ button { color: inherit; }
   cursor: pointer;
 }
 .directory-search-option:last-child { border-block-end: 0; }
-.directory-search-option[aria-selected="true"], .directory-search-option:hover {
+.directory-search-option[aria-selected="true"] {
   color: var(--ink);
-  background: var(--signal);
+  background: var(--cursor-tint);
+  box-shadow: inset 4px 0 0 var(--forest);
 }
 .directory-search-option strong { font-size: 0.78rem; }
 .directory-search-option small { color: currentColor; font-size: 0.64rem; }

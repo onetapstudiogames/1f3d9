@@ -8,6 +8,7 @@ import {
   WINDOW_JS,
 } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
+import { WINDOW_CSS } from '../src/window-style.ts'
 
 test('directory paths stay honest for broken or adversarial parent graphs', () => {
   const directory = deriveWindowDirectoryPlaces([
@@ -156,4 +157,14 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_JS, /directory-search-option-/)
   assert.match(WINDOW_JS, /removeAttribute\('aria-activedescendant'\)/)
   assert.match(WINDOW_JS, /not currently loaded/)
+})
+
+test('directory search uses one quiet active cursor instead of a second hover highlight', () => {
+  assert.doesNotMatch(WINDOW_CSS, /\.directory-search-option:hover/u)
+
+  const activeRule = WINDOW_CSS.match(
+    /\.directory-search-option\[aria-selected="true"\]\s*\{([^}]*)\}/u,
+  )?.[1] ?? ''
+  assert.match(activeRule, /background:\s*var\(--cursor-tint\)/u)
+  assert.doesNotMatch(activeRule, /var\(--signal\)/u)
 })

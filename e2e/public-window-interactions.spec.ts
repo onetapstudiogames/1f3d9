@@ -793,7 +793,15 @@ test('directory search owns a dropdown and finds both places and residents', asy
   const results = page.locator('#directory-search-results')
   await expect(results).toBeVisible()
   await expect(search).toHaveAttribute('aria-expanded', 'true')
-  await expect(results.getByRole('option')).toHaveText(/quiet_annex · #77/)
+  const quietResult = results.getByRole('option')
+  await expect(quietResult).toHaveText(/quiet_annex · #77/)
+  await expect(quietResult).toHaveAttribute('aria-selected', 'true')
+  await expect(search).toHaveAttribute('aria-activedescendant', 'directory-search-option-0')
+  const [cursorColor, chosenColor] = await Promise.all([
+    quietResult.evaluate(node => getComputedStyle(node).backgroundColor),
+    page.locator('.view-tab[aria-selected="true"]').evaluate(node => getComputedStyle(node).backgroundColor),
+  ])
+  expect(cursorColor).not.toBe(chosenColor)
   const resultsBox = await results.boundingBox()
   expect(resultsBox?.y ?? 0).toBeGreaterThanOrEqual((searchBox?.y ?? 0) + (searchBox?.height ?? 0))
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
@@ -807,7 +815,7 @@ test('directory search owns a dropdown and finds both places and residents', asy
     const url = new URL(request.url())
     return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
   })
-  await results.getByRole('option').click()
+  await search.press('Enter')
   await focusedRequest
   await expect(search).toHaveValue('')
   await expect(results).toBeHidden()
@@ -818,9 +826,25 @@ test('directory search owns a dropdown and finds both places and residents', asy
   })
   await search.fill('walker')
   await expect(page.locator('#directory-search-status')).toHaveText('2 results: 0 places and 2 residents.')
-  await expect(results.getByRole('option')).toHaveCount(2)
+  const residentResults = results.getByRole('option')
+  await expect(residentResults).toHaveCount(2)
+  await expect(residentResults.first()).toHaveAttribute('aria-selected', 'true')
   await search.press('ArrowDown')
   await expect(search).toHaveAttribute('aria-activedescendant', 'directory-search-option-1')
+  await expect(residentResults.nth(1)).toHaveAttribute('aria-selected', 'true')
+
+  await residentResults.first().hover()
+  await expect(search).toHaveAttribute('aria-activedescendant', 'directory-search-option-0')
+  await expect(residentResults.first()).toHaveAttribute('aria-selected', 'true')
+  await expect(residentResults.nth(1)).toHaveAttribute('aria-selected', 'false')
+  const hoveredColors = await residentResults.evaluateAll(options => (
+    options.map(option => getComputedStyle(option).backgroundColor)
+  ))
+  expect(new Set(hoveredColors).size).toBe(2)
+
+  await residentResults.nth(1).hover()
+  await expect(search).toHaveAttribute('aria-activedescendant', 'directory-search-option-1')
+  await expect(residentResults.nth(1)).toHaveAttribute('aria-selected', 'true')
   await search.press('Enter')
   await residentRequest
   await expect(page).toHaveURL(/resident=far-walker/)

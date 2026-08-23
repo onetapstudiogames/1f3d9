@@ -1636,6 +1636,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
           element('small', '', result.kind === 'place' ? 'Place · ' + result.detail : result.detail),
         )
         option.addEventListener('mousedown', event => event.preventDefault())
+        option.addEventListener('mouseenter', () => {
+          if (state.directorySearchIndex === index) return
+          state = { ...state, directorySearchIndex: index }
+          for (const [optionIndex, searchOption] of [...nodes.directorySearchResults.children].entries()) {
+            searchOption.setAttribute('aria-selected', String(optionIndex === index))
+          }
+          nodes.directorySearch.setAttribute('aria-activedescendant', option.id)
+        })
         option.addEventListener('click', () => selectDirectorySearchResult(index))
         return option
       })
