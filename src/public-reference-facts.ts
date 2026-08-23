@@ -79,7 +79,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       releases: PUBLIC_SNAPSHOT_RELEASES,
       format: PUBLIC_SNAPSHOT_FORMAT_DOCUMENTATION,
       verifier: PUBLIC_SNAPSHOT_OFFLINE_VERIFIER,
-      cadence: 'daily after the workflow is enabled',
+      cadence: 'daily at 08:17 UTC via the enabled workflow (cron 17 8 * * *)',
       scope: 'the full approved anonymous public record, not only the names directory',
       corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
       recovery: 'public snapshots exclude private recovery data and are not recovery backups',

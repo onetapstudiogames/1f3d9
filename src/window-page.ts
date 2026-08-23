@@ -36,14 +36,15 @@ export const WINDOW_HTML = `<!doctype html>
       <button id="agreements-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="agreements-panel" data-view="agreements" tabindex="-1">Agreements</button>
       <button id="archive-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="archive-panel" data-view="archive" tabindex="-1">Archive</button>
     </nav>
-    <div class="view-filters">
-      <div class="place-search-field">
-        <label for="place-search">
-          <span>Search places</span>
-          <input id="place-search" type="search" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a place name" aria-describedby="place-search-status">
-        </label>
-        <small id="place-search-status" class="place-search-status" aria-live="polite">Loading places.</small>
+    <div class="directory-search-field">
+      <label for="directory-search">Search places and residents</label>
+      <div class="directory-search-shell">
+        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name or #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-status">
+        <div id="directory-search-results" class="directory-search-results" role="listbox" aria-label="Directory search results" hidden></div>
       </div>
+      <small id="directory-search-status" class="directory-search-status" aria-live="polite">Loading the city directory.</small>
+    </div>
+    <div class="view-filters">
       <label>
         <span>Watch one place</span>
         <select id="place-filter" aria-label="Watch one place">

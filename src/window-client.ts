@@ -45,12 +45,23 @@ export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{
   path: string
 }>
 
-export type WindowDirectoryPlaceOptionGroup = Readonly<{
+export type WindowDirectoryPlaceOption = Readonly<{
+  id: number
+  depth: number
   label: string
-  options: readonly Readonly<{
-    id: number
-    label: string
-  }>[]
+}>
+
+export type WindowDirectoryResident = Readonly<{
+  id: number
+  handle: string
+}>
+
+export type WindowDirectorySearchResult = Readonly<{
+  kind: 'place' | 'resident'
+  id: number
+  value: string
+  label: string
+  detail: string
 }>
 
 export function windowDirectoryPlaceScopeIds(
@@ -113,13 +124,11 @@ export function deriveWindowDirectoryPlaces(
   return [...unique.values()].map(value => ({ ...value, path: pathFor(value) }))
 }
 
-export function groupWindowDirectoryPlaces(
+export function listWindowDirectoryPlaces(
   values: readonly WindowDirectoryPlaceWithPath[],
-  query = '',
-): WindowDirectoryPlaceOptionGroup[] {
+): WindowDirectoryPlaceOption[] {
   const placesById = new Map(values.map(place => [place.id, place]))
   const rootIds = new Set(values.filter(place => place.parent_id === null).map(place => place.id))
-  const normalizedQuery = query.trim().toLowerCase()
   const continentFor = (place: WindowDirectoryPlaceWithPath) => {
     if (place.parent_id === null) return null
     const seen = new Set<number>()
@@ -134,79 +143,116 @@ export function groupWindowDirectoryPlaces(
     }
     return undefined
   }
-  const continentNameCounts = new Map<string, number>()
-  for (const place of values) {
-    const continent = continentFor(place)
-    if (!continent || continent.id !== place.id) continue
-    const key = continent.name.toLowerCase()
-    continentNameCounts.set(key, (continentNameCounts.get(key) ?? 0) + 1)
-  }
-
   type MutableGroup = {
-    label: string
     wholePlaceId: number | null
-    options: Array<{ id: number, label: string }>
+    options: Array<{ id: number, depth: number, label: string }>
   }
   const groups = new Map<string, MutableGroup>()
-  const ensureGroup = (key: string, label: string, wholePlaceId: number | null) => {
+  const ensureGroup = (key: string, wholePlaceId: number | null) => {
     const existing = groups.get(key)
     if (existing) return existing
-    const created: MutableGroup = { label, wholePlaceId, options: [] }
+    const created: MutableGroup = { wholePlaceId, options: [] }
     groups.set(key, created)
     return created
   }
 
   for (const place of values) {
-    const searchText = `${place.name}\n${place.path}\nplace #${place.id}`.toLowerCase()
-    if (normalizedQuery && !searchText.includes(normalizedQuery)) continue
     const parts = place.path.split(' / ').filter(Boolean)
     if (place.parent_id === null) {
-      ensureGroup('root', 'World root', null).options.push({
+      ensureGroup('root', null).options.push({
         id: place.id,
-        label: `${place.name} · Place #${place.id}`,
+        depth: 0,
+        label: `${place.name} · #${place.id}`,
       })
       continue
     }
 
     const continent = continentFor(place)
     if (!continent) {
-      ensureGroup('other', 'Other places', null).options.push({
+      ensureGroup('other', null).options.push({
         id: place.id,
-        label: `${place.name} · Place #${place.id}`,
+        depth: 0,
+        label: `${place.name} · #${place.id}`,
       })
       continue
     }
-    const duplicateContinentName = (continentNameCounts.get(continent.name.toLowerCase()) ?? 0) > 1
-    const groupLabel = `Inside ${continent.name}` +
-      (duplicateContinentName ? ` · Place #${continent.id}` : '')
     const parent = placesById.get(place.parent_id)
-    const shortLabel = place.id === continent.id
-      ? `${place.name} — the whole continent` +
-        (duplicateContinentName ? ` · Place #${place.id}` : '')
-      : `${place.name}${parts.length > 3 && parent ? ` — in ${parent.name}` : ''}`
-    ensureGroup(`continent:${continent.id}`, groupLabel, continent.id).options.push({
+    const depth = Math.max(0, parts.length - 2)
+    const shortLabel = `${place.name}${depth > 1 && parent ? ` — in ${parent.name}` : ''} · #${place.id}`
+    ensureGroup(`continent:${continent.id}`, continent.id).options.push({
       id: place.id,
+      depth,
       label: shortLabel,
     })
   }
 
-  return [...groups.values()].map(group => {
-    const labelCounts = new Map<string, number>()
-    for (const option of group.options) {
-      labelCounts.set(option.label, (labelCounts.get(option.label) ?? 0) + 1)
-    }
-    const options = group.options.map(option => ({
-      ...option,
-      label: (labelCounts.get(option.label) ?? 0) > 1
-        ? `${option.label} · Place #${option.id}`
-        : option.label,
-    })).sort((left, right) =>
+  return [...groups.values()].flatMap(group => [...group.options]
+    .sort((left, right) =>
       Number(right.id === group.wholePlaceId) - Number(left.id === group.wholePlaceId))
-    return Object.freeze({
-      label: group.label,
-      options: Object.freeze(options.map(option => Object.freeze(option))),
-    })
-  })
+    .map(option => Object.freeze(option)))
+}
+
+export function searchWindowDirectory(
+  places: readonly WindowDirectoryPlaceWithPath[],
+  residents: readonly WindowDirectoryResident[],
+  query: string,
+  limit = 20,
+): WindowDirectorySearchResult[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return []
+  const safeLimit = Math.max(0, Math.floor(limit))
+  const score = (primary: string, searchText: string, id: number): number | null => {
+    const normalizedPrimary = primary.toLowerCase()
+    if (
+      normalizedQuery === normalizedPrimary || normalizedQuery === String(id) ||
+      normalizedQuery === `#${id}` || normalizedQuery === `place #${id}` ||
+      normalizedQuery === `resident #${id}`
+    ) return 0
+    if (normalizedPrimary.startsWith(normalizedQuery)) return 1
+    return searchText.toLowerCase().includes(normalizedQuery) ? 2 : null
+  }
+  const candidates = [
+    ...places.flatMap((place, order) => {
+      const matchScore = score(
+        place.name,
+        `${place.name}\n${place.path}\nplace #${place.id}\n#${place.id}`,
+        place.id,
+      )
+      return matchScore === null ? [] : [{
+        score: matchScore,
+        order,
+        result: Object.freeze({
+          kind: 'place' as const,
+          id: place.id,
+          value: String(place.id),
+          label: `${place.name} · #${place.id}`,
+          detail: place.path,
+        }),
+      }]
+    }),
+    ...residents.flatMap((resident, index) => {
+      const matchScore = score(
+        resident.handle,
+        `${resident.handle}\nresident #${resident.id}\n#${resident.id}`,
+        resident.id,
+      )
+      return matchScore === null ? [] : [{
+        score: matchScore,
+        order: places.length + index,
+        result: Object.freeze({
+          kind: 'resident' as const,
+          id: resident.id,
+          value: resident.handle,
+          label: `${resident.handle} · #${resident.id}`,
+          detail: 'Resident',
+        }),
+      }]
+    }),
+  ]
+  return candidates
+    .sort((left, right) => left.score - right.score || left.order - right.order)
+    .slice(0, safeLimit)
+    .map(candidate => candidate.result)
 }
 
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
@@ -215,7 +261,8 @@ const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
 const MERGE_RESIDENT_ROWS_JS = mergeResidentRows.toString()
 const WINDOW_PLACE_LABEL_JS = windowPlaceLabel.toString()
 const DERIVE_WINDOW_DIRECTORY_PLACES_JS = deriveWindowDirectoryPlaces.toString()
-const GROUP_WINDOW_DIRECTORY_PLACES_JS = groupWindowDirectoryPlaces.toString()
+const LIST_WINDOW_DIRECTORY_PLACES_JS = listWindowDirectoryPlaces.toString()
+const SEARCH_WINDOW_DIRECTORY_JS = searchWindowDirectory.toString()
 const WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS = windowDirectoryPlaceScopeIds.toString()
 
 export const WINDOW_JS = `(() => {
@@ -235,7 +282,8 @@ export const WINDOW_JS = `(() => {
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
   const deriveWindowDirectoryPlaces = ${DERIVE_WINDOW_DIRECTORY_PLACES_JS}
-  const groupWindowDirectoryPlaces = ${GROUP_WINDOW_DIRECTORY_PLACES_JS}
+  const listWindowDirectoryPlaces = ${LIST_WINDOW_DIRECTORY_PLACES_JS}
+  const searchWindowDirectory = ${SEARCH_WINDOW_DIRECTORY_JS}
   const windowDirectoryPlaceScopeIds = ${WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS}
 
   const nodes = {
@@ -245,8 +293,9 @@ export const WINDOW_JS = `(() => {
     map: document.getElementById('place-map'),
     roster: document.getElementById('resident-roster'),
     residentPage: document.getElementById('resident-page'),
-    placeSearch: document.getElementById('place-search'),
-    placeSearchStatus: document.getElementById('place-search-status'),
+    directorySearch: document.getElementById('directory-search'),
+    directorySearchResults: document.getElementById('directory-search-results'),
+    directorySearchStatus: document.getElementById('directory-search-status'),
     placeFilter: document.getElementById('place-filter'),
     residentFilter: document.getElementById('resident-filter'),
     directoryStatus: document.getElementById('directory-status'),
@@ -309,7 +358,8 @@ export const WINDOW_JS = `(() => {
       initialized: false, error: null,
     },
     view: 'map',
-    placeSearch: '',
+    directorySearch: '',
+    directorySearchIndex: -1,
     placeId: null,
     resident: null,
   }
@@ -1506,48 +1556,126 @@ ${WINDOW_CLIENT_SAFETY_JS}
     void ensureFocusedSelection()
   }
 
+  function directorySearchSources(snapshot) {
+    return state.directory.loaded
+      ? { places: state.directory.places, residents: state.directory.residents }
+      : { places: snapshot.flatPlaces, residents: snapshot.residents }
+  }
+
+  function directorySearchRows(snapshot) {
+    const sources = directorySearchSources(snapshot)
+    return searchWindowDirectory(
+      sources.places,
+      sources.residents,
+      state.directorySearch,
+    )
+  }
+
+  function closeDirectorySearchResults() {
+    if (nodes.directorySearchResults) nodes.directorySearchResults.hidden = true
+    if (nodes.directorySearch) {
+      nodes.directorySearch.setAttribute('aria-expanded', 'false')
+      nodes.directorySearch.removeAttribute('aria-activedescendant')
+    }
+  }
+
+  function selectDirectorySearchResult(index) {
+    if (!state.snapshot) return
+    const result = directorySearchRows(state.snapshot)[index]
+    if (!result) return
+    state = { ...state, directorySearch: '', directorySearchIndex: -1 }
+    if (nodes.directorySearch) nodes.directorySearch.value = ''
+    closeDirectorySearchResults()
+    if (result.kind === 'place') choosePlace(result.id, false)
+    else chooseResident(result.value)
+  }
+
+  function renderDirectorySearch(snapshot, open = document.activeElement === nodes.directorySearch) {
+    if (!nodes.directorySearch || !nodes.directorySearchResults || !nodes.directorySearchStatus) return
+    if (nodes.directorySearch.value !== state.directorySearch) {
+      nodes.directorySearch.value = state.directorySearch
+    }
+    const sources = directorySearchSources(snapshot)
+    const query = state.directorySearch.trim()
+    const results = directorySearchRows(snapshot)
+    const placeCount = results.filter(result => result.kind === 'place').length
+    const residentCount = results.length - placeCount
+    if (!query) {
+      nodes.directorySearchStatus.textContent = String(sources.places.length) +
+        (sources.places.length === 1 ? ' place and ' : ' places and ') +
+        String(sources.residents.length) +
+        (sources.residents.length === 1 ? ' resident available.' : ' residents available.')
+      nodes.directorySearchResults.replaceChildren()
+      closeDirectorySearchResults()
+      return
+    }
+
+    nodes.directorySearchStatus.textContent = String(results.length) +
+      (results.length === 1 ? ' result: ' : ' results: ') +
+      String(placeCount) + (placeCount === 1 ? ' place and ' : ' places and ') +
+      String(residentCount) + (residentCount === 1 ? ' resident.' : ' residents.')
+    if (!results.length) {
+      const empty = element('div', 'directory-search-empty', 'No places or residents match this search.')
+      empty.setAttribute('role', 'option')
+      empty.setAttribute('aria-disabled', 'true')
+      nodes.directorySearchResults.replaceChildren(empty)
+      nodes.directorySearch.removeAttribute('aria-activedescendant')
+      state = { ...state, directorySearchIndex: -1 }
+    } else {
+      const activeIndex = Math.min(Math.max(state.directorySearchIndex, 0), results.length - 1)
+      if (activeIndex !== state.directorySearchIndex) {
+        state = { ...state, directorySearchIndex: activeIndex }
+      }
+      const options = results.map((result, index) => {
+        const option = element('div', 'directory-search-option')
+        option.id = 'directory-search-option-' + String(index)
+        option.setAttribute('role', 'option')
+        option.setAttribute('aria-selected', String(index === activeIndex))
+        option.append(
+          element('strong', '', result.label),
+          element('small', '', result.kind === 'place' ? 'Place · ' + result.detail : result.detail),
+        )
+        option.addEventListener('mousedown', event => event.preventDefault())
+        option.addEventListener('mouseenter', () => {
+          if (state.directorySearchIndex === index) return
+          state = { ...state, directorySearchIndex: index }
+          for (const [optionIndex, searchOption] of [...nodes.directorySearchResults.children].entries()) {
+            searchOption.setAttribute('aria-selected', String(optionIndex === index))
+          }
+          nodes.directorySearch.setAttribute('aria-activedescendant', option.id)
+        })
+        option.addEventListener('click', () => selectDirectorySearchResult(index))
+        return option
+      })
+      nodes.directorySearchResults.replaceChildren(...options)
+      nodes.directorySearch.setAttribute('aria-activedescendant', 'directory-search-option-' + String(activeIndex))
+    }
+    nodes.directorySearchResults.hidden = !open
+    nodes.directorySearch.setAttribute('aria-expanded', String(open))
+  }
+
   function populateFilters(snapshot) {
+    const places = state.directory.loaded ? state.directory.places : snapshot.flatPlaces
     if (nodes.placeFilter) {
-      const places = state.directory.loaded ? state.directory.places : snapshot.flatPlaces
+      const choices = listWindowDirectoryPlaces(places)
+      const visiblePlaceIds = new Set(choices.map(option => option.id))
       const placeholder = element('option', '', 'All places')
       placeholder.value = ''
-      const filterNodes = [placeholder]
-      const groups = groupWindowDirectoryPlaces(places, state.placeSearch)
-      const visiblePlaceIds = new Set(groups.flatMap(group => group.options.map(option => option.id)))
-      for (const group of groups) {
-        const optgroup = document.createElement('optgroup')
-        optgroup.label = group.label
-        for (const choice of group.options) {
-          const option = element('option', '', choice.label)
-          option.value = String(choice.id)
-          optgroup.append(option)
-        }
-        filterNodes.push(optgroup)
-      }
-      if (state.placeSearch && groups.length === 0) {
-        const noMatches = element('option', '', 'No places match this search')
-        noMatches.disabled = true
-        filterNodes.push(noMatches)
-      }
+      const options = [placeholder, ...choices.map(choice => {
+        const option = element('option', '', '\u00a0\u00a0'.repeat(choice.depth) + choice.label)
+        option.value = String(choice.id)
+        return option
+      })]
       if (state.placeId && !visiblePlaceIds.has(state.placeId)) {
-        const optgroup = document.createElement('optgroup')
-        optgroup.label = 'Current selection'
         const selected = places.find(place => place.id === state.placeId)
         const option = element('option', '', selected
-          ? selected.name + ' — current selection'
+          ? selected.name + ' · #' + String(selected.id)
           : 'Place #' + String(state.placeId) + ' · not currently loaded')
         option.value = String(state.placeId)
-        optgroup.append(option)
-        filterNodes.push(optgroup)
+        options.push(option)
       }
-      nodes.placeFilter.replaceChildren(...filterNodes)
+      nodes.placeFilter.replaceChildren(...options)
       nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
-      if (nodes.placeSearchStatus) {
-        const matchCount = groups.reduce((total, group) => total + group.options.length, 0)
-        nodes.placeSearchStatus.textContent = state.placeSearch
-          ? String(matchCount) + (matchCount === 1 ? ' place matches.' : ' places match.')
-          : String(places.length) + ' places available.'
-      }
     }
     if (nodes.residentFilter) {
       const residents = state.directory.loaded ? state.directory.residents : snapshot.residents
@@ -1564,6 +1692,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.residentFilter.replaceChildren(...options)
       nodes.residentFilter.value = state.resident || ''
     }
+    renderDirectorySearch(snapshot)
   }
 
   function selectedResident(snapshot) {
@@ -2967,9 +3096,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     syncBodyDisclosures()
     if (nodes.placeFilter) nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
-    if (nodes.placeSearch && nodes.placeSearch.value !== state.placeSearch) {
-      nodes.placeSearch.value = state.placeSearch
-    }
+    renderDirectorySearch(snapshot)
     if (nodes.residentFilter) nodes.residentFilter.value = state.resident || ''
     restoreFocus(focusKey, focusFallbackKey, focusFallbackId)
   }
@@ -2978,8 +3105,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const place = state.snapshot?.flatPlaces.find(candidate => candidate.id === id) ||
       directoryPlace(id) || focusedPlace(id)
     if (!place) return
-    if (nodes.placeSearch) nodes.placeSearch.value = ''
-    navigate({ placeId: id, placeSearch: '', view: openPlace ? 'place' : state.view })
+    if (nodes.directorySearch) nodes.directorySearch.value = ''
+    closeDirectorySearchResults()
+    navigate({
+      placeId: id,
+      directorySearch: '',
+      directorySearchIndex: -1,
+      view: openPlace ? 'place' : state.view,
+    })
     if (state.snapshot) populateFilters(state.snapshot)
   }
 
@@ -2988,7 +3121,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state.directory.residents.find(candidate => candidate.handle === handle) ||
       focusedResident(handle)
     if (!resident) return
-    navigate({ resident: handle })
+    if (nodes.directorySearch) nodes.directorySearch.value = ''
+    closeDirectorySearchResults()
+    navigate({ resident: handle, directorySearch: '', directorySearchIndex: -1 })
   }
 
   async function loadDirectory(force) {
@@ -3437,24 +3572,64 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
-  nodes.placeSearch?.addEventListener('input', () => {
-    state = { ...state, placeSearch: String(nodes.placeSearch.value || '').slice(0, 100) }
-    if (state.snapshot) populateFilters(state.snapshot)
+  nodes.directorySearch?.addEventListener('input', () => {
+    state = {
+      ...state,
+      directorySearch: String(nodes.directorySearch.value || '').slice(0, 100),
+      directorySearchIndex: 0,
+    }
+    if (state.snapshot) renderDirectorySearch(state.snapshot, true)
   })
-  nodes.placeSearch?.addEventListener('keydown', event => {
-    if (event.key !== 'Escape' || !state.placeSearch) return
+  nodes.directorySearch?.addEventListener('focus', () => {
+    if (state.snapshot && state.directorySearch) renderDirectorySearch(state.snapshot, true)
+  })
+  nodes.directorySearch?.addEventListener('blur', () => {
+    window.setTimeout(() => {
+      if (document.activeElement !== nodes.directorySearch) closeDirectorySearchResults()
+    }, 0)
+  })
+  nodes.directorySearch?.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && state.directorySearch) {
+      event.preventDefault()
+      nodes.directorySearch.value = ''
+      state = { ...state, directorySearch: '', directorySearchIndex: -1 }
+      if (state.snapshot) renderDirectorySearch(state.snapshot, false)
+      return
+    }
+    if (!state.snapshot || !['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return
+    const results = directorySearchRows(state.snapshot)
+    if (!results.length) return
     event.preventDefault()
-    nodes.placeSearch.value = ''
-    state = { ...state, placeSearch: '' }
-    if (state.snapshot) populateFilters(state.snapshot)
+    if (event.key === 'Enter') {
+      selectDirectorySearchResult(Math.max(0, state.directorySearchIndex))
+      return
+    }
+    const offset = event.key === 'ArrowDown' ? 1 : -1
+    const current = Math.max(0, state.directorySearchIndex)
+    state = {
+      ...state,
+      directorySearchIndex: (current + offset + results.length) % results.length,
+    }
+    renderDirectorySearch(state.snapshot, true)
   })
   nodes.placeFilter?.addEventListener('change', () => {
-    if (nodes.placeSearch) nodes.placeSearch.value = ''
-    navigate({ placeId: safeId(nodes.placeFilter.value), placeSearch: '' })
+    if (nodes.directorySearch) nodes.directorySearch.value = ''
+    closeDirectorySearchResults()
+    navigate({
+      placeId: safeId(nodes.placeFilter.value),
+      directorySearch: '',
+      directorySearchIndex: -1,
+    })
     if (state.snapshot) populateFilters(state.snapshot)
   })
   nodes.residentFilter?.addEventListener('change', () => {
-    navigate({ resident: safeHandle(nodes.residentFilter.value) })
+    if (nodes.directorySearch) nodes.directorySearch.value = ''
+    closeDirectorySearchResults()
+    navigate({
+      resident: safeHandle(nodes.residentFilter.value),
+      directorySearch: '',
+      directorySearchIndex: -1,
+    })
   })
   nodes.archiveSearch?.addEventListener('click', () => void loadArchive(true))
   nodes.archiveQuery?.addEventListener('keydown', event => {

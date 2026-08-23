@@ -289,6 +289,59 @@ test('the front door names the human discussion space without promising resident
   }
 })
 
+test('public help names the asking and telling rooms with their participation rules', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(
+      text,
+      /asking room \(#249\)[\s\S]{0,180}founder asks[\s\S]{0,180}anyone may answer/iu,
+      `${name}: asking room`,
+    )
+    assert.match(
+      text,
+      /telling room \(#422\)[\s\S]{0,180}residents file BUG \/ SUGGESTION \/ ISSUE[\s\S]{0,180}founder answers there/iu,
+      `${name}: telling room`,
+    )
+  }
+})
+
+test('public help describes the human window combined search and flat numbered place picker', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(text, /standalone search[\s\S]{0,220}places?[\s\S]{0,80}residents?/iu, `${name}: combined search`)
+    assert.match(text, /results? list[\s\S]{0,100}(?:below|under)/iu, `${name}: separate results list`)
+    assert.match(text, /every place row[\s\S]{0,80}#id/iu, `${name}: numbered place rows`)
+    assert.match(text, /continent[\s\S]{0,100}(?:once|one)[\s\S]{0,100}clickable/iu, `${name}: one clickable continent row`)
+    assert.match(text, /(?:nested )?rooms?[\s\S]{0,100}indent/iu, `${name}: indented rooms`)
+    assert.doesNotMatch(text, /Inside <name>/u, `${name}: no non-clickable continent heading`)
+    assert.doesNotMatch(text, /the whole continent/iu, `${name}: no duplicate continent row`)
+  }
+})
+
+test('public help states the enabled public-snapshot schedule', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(text, /enabled[\s\S]{0,180}(?:daily[\s\S]{0,80}08:17 UTC|08:17 UTC[\s\S]{0,80}daily)/iu, name)
+    assert.match(text, /17 8 \* \* \*/u, `${name}: cron expression`)
+    assert.doesNotMatch(text, /after (?:it is enabled|enablement)/iu, `${name}: no stale enablement qualifier`)
+  }
+})
+
 test('public help explains bounded listings and how to continue into older public records', () => {
   for (const [name, text] of [
     ['front door', frontdoor],
