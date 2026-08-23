@@ -133,6 +133,7 @@ test('every event kind an emitter writes is advertised public window life', asyn
 test('the window covers the whole public life of the city', () => {
   assert.ok(PUBLIC_EVENT_KINDS.includes('home_set'))
   assert.ok(PUBLIC_EVENT_KINDS.includes('agreement_accession'))
+  assert.ok(PUBLIC_EVENT_KINDS.includes('payment_repair'))
   // The full enumeration is a truth surface: every kind the city writes for a
   // public act must be listed, or the window silently hides that life. The
   // world_* kinds are the market bridge — their absence hid every market sale.
@@ -143,7 +144,7 @@ test('the window covers the whole public life of the city', () => {
     'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note',
     'agreement', 'agreement_accession', 'agreement_sign', 'transfer',
     'transfer_offer', 'sale', 'transfer_cancel', 'world_listed', 'world_sale',
-    'world_cancel', 'flag', 'moderation',
+    'world_cancel', 'payment_repair', 'flag', 'moderation',
   ])
   for (const phrase of [
     'Who is standing where',
