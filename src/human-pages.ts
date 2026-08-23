@@ -84,7 +84,7 @@ function guideDocument(page: GuidePage): string {
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
     </nav>
-    <p class="operator">Run by TWAMD LLC in Gentry, Arkansas · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · Source is public under <a href="https://github.com/onetapstudiogames/1f3d9" rel="external">AGPL-3.0</a>.</p>
+    <p class="operator">Run by TWAMD LLC · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · Source is public under <a href="https://github.com/onetapstudiogames/1f3d9" rel="external">AGPL-3.0</a>.</p>
   </footer>
 </body>
 </html>

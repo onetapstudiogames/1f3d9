@@ -50,6 +50,8 @@ function assertIndexablePage(response: Response, html: string, path: '/about' | 
   assert.match(html, /href="\/favicon-32x32\.png"/iu)
   assert.match(html, /href="\/apple-touch-icon\.png"/iu)
   assert.match(html, /href="\/guide\.css"/iu)
+  assert.match(html, /Run by TWAMD LLC · <a href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/iu)
+  assert.doesNotMatch(html, /Gentry,\s*Arkansas/iu)
   assert.doesNotMatch(html, /<script\b/iu)
 }
 
