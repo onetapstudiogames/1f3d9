@@ -36,6 +36,20 @@ export interface RecoveryGenerationResult extends IdentityResidentResult {
 
 const SHA256_HASH = /^[0-9a-f]{64}$/
 
+/**
+ * PostgreSQL aborts one whole transaction when it breaks a deadlock. Identity
+ * confirmation statements are atomic, so the aborted statement is safe to try
+ * once more after the competing confirmation has been allowed to finish.
+ */
+export async function retryIdentityDeadlockOnce<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (postgresErrorCode(error) !== '40P01') throw error
+    return operation()
+  }
+}
+
 function requireRecoveryCodeHashes(hashes: readonly string[]): void {
   if (
     hashes.length !== 8 ||
@@ -353,7 +367,7 @@ export async function stageRootRecovery(input: {
   return rows[0] ?? null
 }
 
-export async function confirmRootRecovery(input: {
+async function confirmRootRecoveryOnce(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
@@ -459,6 +473,14 @@ export async function confirmRootRecovery(input: {
   }
 }
 
+export async function confirmRootRecovery(input: {
+  sessionHash: string
+  csrfHash: string
+  replacementSecretHash: string
+}): Promise<IdentityResidentResult | null> {
+  return retryIdentityDeadlockOnce(() => confirmRootRecoveryOnce(input))
+}
+
 export async function cancelRootRecovery(input: {
   sessionHash: string
   csrfHash: string
@@ -534,7 +556,7 @@ export type RootRotationResult =
   | ({ status: 'rotated' } & IdentityResidentResult)
   | { status: 'rate_limited' }
 
-export async function confirmRootRotation(input: {
+async function confirmRootRotationOnce(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
@@ -686,6 +708,14 @@ export async function confirmRootRotation(input: {
     if (postgresErrorCode(error) === '23505') return null
     throw error
   }
+}
+
+export async function confirmRootRotation(input: {
+  sessionHash: string
+  csrfHash: string
+  replacementSecretHash: string
+}): Promise<RootRotationResult | null> {
+  return retryIdentityDeadlockOnce(() => confirmRootRotationOnce(input))
 }
 
 export async function cancelRootRotation(input: {

@@ -265,6 +265,21 @@ function mergedServices(
   }
 }
 
+function logRecoveryFailure(attempt: PaymentRecoveryAttempt, error: unknown): void {
+  const detail = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : String(error)
+  console.error('payment recovery attempt failed', {
+    attemptId: attempt.publicId,
+    actorId: attempt.actorId,
+    operation: attempt.operation,
+    method: attempt.method,
+    status: attempt.status,
+    recoveryDeadlineAt: attempt.recoveryDeadlineAt,
+    error: detail,
+  })
+}
+
 export interface PaymentRecoveryRuntime {
   dependencies: PaymentRecoveryDependencies
   getOwnedAttempt(publicId: string, actorId: number): Promise<PaymentAttemptRecord | null>
@@ -453,6 +468,7 @@ export function createPaymentRecoveryRuntime(
       })
       return simpleOutcome('founder_review', value.publicId)
     },
+    reportFailure: logRecoveryFailure,
   }
 
   return {

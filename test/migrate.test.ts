@@ -19,6 +19,8 @@ const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_i
 const publicChangeMarkersMigrationFile = 'db/migrations/20260821_public_change_markers.sql' as const
 const thingMakerMigrationFile = 'db/migrations/20260822_thing_maker.sql' as const
 const laterHolderMarksMigrationFile = 'db/migrations/20260822_later_holder_marks.sql' as const
+const paymentRecoveryTriggerRepairMigrationFile =
+  'db/migrations/20260823_payment_recovery_trigger_repair.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -362,6 +364,46 @@ test('later-holder marks are selected as one explicit transactional preview or p
     },
   )
   assert.equal(production.migrationFile, laterHolderMarksMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+})
+
+test('payment recovery trigger repair is selected as one explicit transactional preview or production migration', () => {
+  const migration = migrationDdl(paymentRecoveryTriggerRepairMigrationFile)
+  assert.match(migration, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu)
+  assert.match(migration, /payment recovery window is immutable/iu)
+  assert.match(migration, /payment_pending',\s*'completed',\s*'invalid',\s*'expired'/iu)
+  assert.match(migration, /OLD\.status\s*=\s*'expired'[\s\S]*NEW\.status\s*=\s*'founder_review'/iu)
+  assert.equal(
+    prepareMigrationExecution(paymentRecoveryTriggerRepairMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-recovery-trigger-repair'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, paymentRecoveryTriggerRepairMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-recovery-trigger-repair'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-recovery-trigger-repair-release',
+    },
+  )
+  assert.equal(production.migrationFile, paymentRecoveryTriggerRepairMigrationFile)
   assert.equal(production.executionMode, 'transactional')
 })
 

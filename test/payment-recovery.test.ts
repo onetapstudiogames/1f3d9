@@ -60,6 +60,7 @@ function dependencies(
       state: 'founder_review',
       attemptId: current.publicId,
     }),
+    reportFailure: () => {},
     ...overrides,
   }
 }
@@ -290,17 +291,61 @@ test('batch recovery isolates one failed attempt and keeps processing bounded wo
     attempt({ publicId: 'pay_two' }),
     attempt({ publicId: 'pay_three' }),
   ]
+  const failures: Array<{ attemptId: string; message: string }> = []
+  const failure = new Error('temporary RPC failure')
   const result = await runPaymentRecoveryBatch(2, dependencies({
     listRecoverable: async input => {
       assert.equal(input.limit, 2)
       return attempts.slice(0, input.limit)
     },
     resumeX402: async current => {
-      if (current.publicId === 'pay_one') throw new Error('temporary RPC failure')
+      if (current.publicId === 'pay_one') throw failure
       return { state: 'payment_pending', attemptId: current.publicId }
+    },
+    reportFailure: (current, error) => failures.push({
+      attemptId: current.publicId,
+      message: error instanceof Error ? error.message : String(error),
+    }),
+  }))
+
+  assert.deepEqual(result, {
+    scanned: 2,
+    completed: 0,
+    pending: 1,
+    busy: 0,
+    terminalized: 0,
+    failed: 1,
+  })
+  assert.deepEqual(failures, [{
+    attemptId: 'pay_one',
+    message: failure.message,
+  }])
+})
+
+test('batch recovery reports the failed attempt before moving to the next one', async () => {
+  const attempts = [
+    attempt({ publicId: 'pay_one' }),
+    attempt({ publicId: 'pay_two' }),
+  ]
+  const reported: Array<{ attemptId: string; message: string }> = []
+  const result = await runPaymentRecoveryBatch(2, dependencies({
+    listRecoverable: async () => attempts,
+    resumeX402: async current => {
+      if (current.publicId === 'pay_one') throw new Error('deadline transition rejected')
+      return { state: 'payment_pending', attemptId: current.publicId }
+    },
+    reportFailure: (current, error) => {
+      reported.push({
+        attemptId: current.publicId,
+        message: error instanceof Error ? error.message : String(error),
+      })
     },
   }))
 
+  assert.deepEqual(reported, [{
+    attemptId: 'pay_one',
+    message: 'deadline transition rejected',
+  }])
   assert.deepEqual(result, {
     scanned: 2,
     completed: 0,

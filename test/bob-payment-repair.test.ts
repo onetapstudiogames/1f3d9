@@ -16,7 +16,7 @@ import {
   type BobTransferEvidence,
 } from '../scripts/repair-bob-payments.ts'
 
-type Mutable<T> = { -readonly [Key in keyof T]: Mutable<T[Key]> }
+type Mutable<T> = T extends object ? { -readonly [Key in keyof T]: Mutable<T[Key]> } : T
 
 const EXPECTED_REQUESTS = Object.freeze({
   coffee: Object.freeze({
@@ -73,6 +73,7 @@ function expectedAttempt(
     invalid_reason: null,
     completed_at: null,
     updated_at: expected.updatedAt,
+    database_now: '2026-08-23T12:00:00.000Z',
     ...overrides,
   }
 }
@@ -220,6 +221,63 @@ test('pure planning proposes exactly one frontier, one no-effect close, and one 
   assert.equal(close?.guard.recovery_deadline_at, BOB_REPAIR_EXPECTATIONS.coffee.recoveryDeadlineAt)
 })
 
+test('an expired automatic lease is repairable and its observed update time becomes the exact guard', () => {
+  const snapshot = cloneSnapshot(initialSnapshot())
+  snapshot.attempts[0] = expectedAttempt('coffee', {
+    lease_owner: 'expired-cron-lease',
+    lease_expires_at: '2026-08-23T11:59:30.000Z',
+    updated_at: '2026-08-23T11:59:00.000Z',
+  })
+  snapshot.attempts[1] = expectedAttempt('theBlueAI', {
+    lease_owner: 'expired-cron-lease',
+    lease_expires_at: '2026-08-23T11:59:31.000Z',
+    updated_at: '2026-08-23T11:59:01.000Z',
+  })
+
+  const plan = buildBobPaymentRepairPlan(snapshot, transfers())
+  assert.equal(plan.state, 'work_required')
+  const complete = plan.actions.find(action => action.kind === 'complete_theblueai')
+  const close = plan.actions.find(action => action.kind === 'close_coffee_probe')
+  assert.equal(complete?.guard.expected_updated_at, '2026-08-23T11:59:01.000Z')
+  assert.equal(close?.guard.expected_updated_at, '2026-08-23T11:59:00.000Z')
+})
+
+test('active, malformed, future-dated, or backward-moving lease state is never repairable', () => {
+  const cases: readonly Readonly<{
+    name: string
+    overrides: Readonly<Record<string, unknown>>
+  }>[] = [
+    {
+      name: 'active lease',
+      overrides: {
+        lease_owner: 'active-cron-lease',
+        lease_expires_at: '2026-08-23T12:00:30.000Z',
+        updated_at: '2026-08-23T11:59:00.000Z',
+      },
+    },
+    { name: 'owner without expiry', overrides: { lease_owner: 'broken-lease' } },
+    { name: 'expiry without owner', overrides: { lease_expires_at: '2026-08-23T11:59:30.000Z' } },
+    {
+      name: 'future update time',
+      overrides: { updated_at: '2026-08-23T12:00:01.000Z' },
+    },
+    {
+      name: 'backward update time',
+      overrides: { updated_at: '2026-08-22T07:00:00.000Z' },
+    },
+  ]
+
+  for (const candidate of cases) {
+    const snapshot = cloneSnapshot(initialSnapshot())
+    snapshot.attempts[0] = expectedAttempt('coffee', candidate.overrides)
+    assert.throws(
+      () => buildBobPaymentRepairPlan(snapshot, transfers()),
+      BobPaymentRepairAbortError,
+      candidate.name,
+    )
+  }
+})
+
 test('every guarded database fact aborts when changed or ambiguous', () => {
   const cases: readonly Readonly<{
     name: string
@@ -245,7 +303,7 @@ test('every guarded database fact aborts when changed or ambiguous', () => {
     { name: 'amount', change: snapshot => { snapshot.attempts[0]!.amount_units = '999999' } },
     { name: 'stored finality', change: snapshot => { snapshot.attempts[0]!.finalized_block_number = '1' } },
     { name: 'recovery deadline', change: snapshot => { snapshot.attempts[0]!.recovery_deadline_at = '2026-08-22T10:00:00.000Z' } },
-    { name: 'updated timestamp', change: snapshot => { snapshot.attempts[0]!.updated_at = '2026-08-22T08:00:00.000Z' } },
+    { name: 'database clock missing', change: snapshot => { snapshot.attempts[0]!.database_now = null } },
     { name: 'used hash', change: snapshot => { snapshot.paymentUses.push({ tx_hash: BOB_REPAIR_EXPECTATIONS.coffee.txHash }) } },
     { name: 'fee row', change: snapshot => { snapshot.fees.push({ tx_hash: BOB_REPAIR_EXPECTATIONS.coffee.txHash }) } },
     { name: 'name conflict', change: snapshot => { snapshot.places.push({ name: 'theblueai', owner_id: 99 }) } },
