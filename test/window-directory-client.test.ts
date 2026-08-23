@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   deriveWindowDirectoryPlaces,
   groupWindowDirectoryPlaces,
+  windowDirectoryPlaceScopeIds,
   WINDOW_JS,
 } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
@@ -57,18 +58,63 @@ test('place selector groups branches and shortens deep labels', () => {
       options: [{ id: 1, label: 'the world · Place #1' }],
     },
     {
-      label: 'the verge',
+      label: 'Inside the verge',
       options: [
-        { id: 2, label: 'the verge · Place #2' },
-        { id: 3, label: 'lobby · Place #3' },
-        { id: 4, label: 'coffee-shop — in lobby · Place #4' },
+        { id: 2, label: 'the verge — the whole continent' },
+        { id: 3, label: 'lobby' },
+        { id: 4, label: 'coffee-shop — in lobby' },
       ],
     },
     {
-      label: 'the harbor',
-      options: [{ id: 5, label: 'the harbor · Place #5' }],
+      label: 'Inside the harbor',
+      options: [{ id: 5, label: 'the harbor — the whole continent' }],
     },
   ])
+})
+
+test('place selector search matches names, paths, and place numbers without losing groups', () => {
+  const places = deriveWindowDirectoryPlaces([
+    { id: 1, parent_id: null, name: 'the world' },
+    { id: 2, parent_id: 1, name: 'the verge' },
+    { id: 3, parent_id: 2, name: 'lobby' },
+    { id: 4, parent_id: 3, name: 'coffee-shop' },
+    { id: 5, parent_id: 1, name: 'the harbor' },
+  ])
+
+  assert.deepEqual(groupWindowDirectoryPlaces(places, 'coffee'), [{
+    label: 'Inside the verge',
+    options: [{ id: 4, label: 'coffee-shop — in lobby' }],
+  }])
+  assert.deepEqual(groupWindowDirectoryPlaces(places, 'THE VERGE'), [{
+    label: 'Inside the verge',
+    options: [
+      { id: 2, label: 'the verge — the whole continent' },
+      { id: 3, label: 'lobby' },
+      { id: 4, label: 'coffee-shop — in lobby' },
+    ],
+  }])
+  assert.deepEqual(groupWindowDirectoryPlaces(places, '#5'), [{
+    label: 'Inside the harbor',
+    options: [{ id: 5, label: 'the harbor — the whole continent' }],
+  }])
+  assert.deepEqual(groupWindowDirectoryPlaces(places, 'nowhere'), [])
+})
+
+test('a watched place scope contains itself and every nested place', () => {
+  const places = [
+    { id: 1, parent_id: null, name: 'the world' },
+    { id: 2, parent_id: 1, name: 'the verge' },
+    { id: 3, parent_id: 2, name: 'lobby' },
+    { id: 4, parent_id: 3, name: 'coffee-shop' },
+    { id: 5, parent_id: 1, name: 'the harbor' },
+    { id: 6, parent_id: 7, name: 'cycle-a' },
+    { id: 7, parent_id: 6, name: 'cycle-b' },
+  ]
+
+  assert.deepEqual(windowDirectoryPlaceScopeIds(places, 2), [2, 3, 4])
+  assert.deepEqual(windowDirectoryPlaceScopeIds(places, 3), [3, 4])
+  assert.deepEqual(windowDirectoryPlaceScopeIds(places, 99), [99])
+  assert.deepEqual(windowDirectoryPlaceScopeIds(places, 6), [6, 7])
 })
 
 test('place selector keeps malformed branches honest and duplicate names distinct', () => {
@@ -87,11 +133,12 @@ test('place selector keeps malformed branches honest and duplicate names distinc
       options: [{ id: 1, label: 'the world · Place #1' }],
     },
     {
-      label: 'same branch',
-      options: [
-        { id: 2, label: 'same branch · Place #2' },
-        { id: 3, label: 'same branch · Place #3' },
-      ],
+      label: 'Inside same branch · Place #2',
+      options: [{ id: 2, label: 'same branch — the whole continent · Place #2' }],
+    },
+    {
+      label: 'Inside same branch · Place #3',
+      options: [{ id: 3, label: 'same branch — the whole continent · Place #3' }],
     },
     {
       label: 'Other places',
@@ -105,6 +152,9 @@ test('place selector keeps malformed branches honest and duplicate names distinc
 })
 
 test('the window distinguishes the complete directory from currently loaded contents', () => {
+  assert.match(WINDOW_HTML, /id="place-search"/)
+  assert.match(WINDOW_HTML, /type="search"/)
+  assert.match(WINDOW_HTML, /Search places/i)
   assert.match(WINDOW_HTML, />All places</)
   assert.match(WINDOW_HTML, />All residents</)
   assert.match(WINDOW_HTML, /id="directory-status"/)
@@ -117,6 +167,7 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_JS, /searchParams\.set\('handle', handle\)/)
   assert.match(WINDOW_JS, /Retry loading the complete directory/)
   assert.match(WINDOW_JS, /groupWindowDirectoryPlaces/)
+  assert.match(WINDOW_JS, /windowDirectoryPlaceScopeIds/)
   assert.match(WINDOW_JS, /createElement\('optgroup'\)/)
   assert.match(WINDOW_JS, /Current selection/)
 })

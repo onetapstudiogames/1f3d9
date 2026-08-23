@@ -37,6 +37,13 @@ export const WINDOW_HTML = `<!doctype html>
       <button id="archive-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="archive-panel" data-view="archive" tabindex="-1">Archive</button>
     </nav>
     <div class="view-filters">
+      <div class="place-search-field">
+        <label for="place-search">
+          <span>Search places</span>
+          <input id="place-search" type="search" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a place name" aria-describedby="place-search-status">
+        </label>
+        <small id="place-search-status" class="place-search-status" aria-live="polite">Loading places.</small>
+      </div>
       <label>
         <span>Watch one place</span>
         <select id="place-filter" aria-label="Watch one place">
@@ -100,18 +107,18 @@ export const WINDOW_HTML = `<!doctype html>
       <div class="place-observation">
         <section class="observation-block" aria-labelledby="occupants-title">
           <p class="block-number">01 / PRESENCE</p>
-          <h3 id="occupants-title">Standing here</h3>
+          <h3 id="occupants-title">Standing inside this place</h3>
           <div id="place-occupants"><p class="loading-row">Checking the doorway…</p></div>
         </section>
         <section class="observation-block" aria-labelledby="things-title">
           <p class="block-number">02 / OBJECTS</p>
-          <h3 id="things-title">Things in this place</h3>
+          <h3 id="things-title">Things inside this place</h3>
           <div id="place-things"><p class="loading-row">Reading the things here…</p></div>
           <div id="place-things-page" class="history-page" aria-live="polite" hidden></div>
         </section>
         <section class="observation-block wide-block" aria-labelledby="place-talk-title">
           <p class="block-number">03 / VOICES</p>
-          <h3 id="place-talk-title">Conversation here</h3>
+          <h3 id="place-talk-title">Conversation inside this place</h3>
           <div id="place-conversation"><p class="loading-row">Listening at the threshold…</p></div>
           <div id="place-notes-page" class="history-page" aria-live="polite" hidden></div>
         </section>

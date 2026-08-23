@@ -77,8 +77,9 @@ test('deliberate navigation makes real history and refresh keeps reading state',
   assert.match(WINDOW_JS, /function navigate\(next\)/)
   assert.match(WINDOW_JS, /history\.pushState/)
   assert.match(WINDOW_JS, /if \(window\.location\.hash === hash\) return/)
+  assert.match(WINDOW_JS, /window\.addEventListener\('popstate', syncStateFromLocation\)/)
   assert.match(WINDOW_JS, /navigate\(\{ view, placeId \}\)/)
-  assert.match(WINDOW_JS, /navigate\(\{ placeId: safeId\(nodes\.placeFilter\.value\) \}\)/)
+  assert.match(WINDOW_JS, /navigate\(\{ placeId: safeId\(nodes\.placeFilter\.value\), placeSearch: '' \}\)/)
   assert.match(WINDOW_JS, /navigate\(\{ resident: safeHandle\(nodes\.residentFilter\.value\) \}\)/)
   // Expanded bodies are keyed state, and focus lands back on the rebuilt
   // control after a background refresh re-renders the DOM.
@@ -94,7 +95,7 @@ test('filtered happenings fetch their real slice from the server', () => {
   assert.match(WINDOW_JS, /autoLoadFilteredHistory\('events', filters, historyEntry\('events', filters\)\)/)
   // The events history request carries the active filters so a busy city
   // cannot push a watched place or followed resident out of the page.
-  assert.match(WINDOW_JS, /url\.searchParams\.set\('place_id', String\(filters\.placeId\)\)/)
+  assert.match(WINDOW_JS, /url\.searchParams\.set\('within_place_id', String\(filters\.placeId\)\)/)
   assert.match(WINDOW_JS, /url\.searchParams\.set\('actor', filters\.resident\)/)
   // An initialized filtered view keeps learning: each snapshot refresh
   // silently refetches the newest filtered page and merges it.
@@ -149,7 +150,7 @@ test('the window covers the whole public life of the city', () => {
   for (const phrase of [
     'Who is standing where',
     'Conversations by place',
-    'Things in this place',
+    'Things inside this place',
     'Recent happenings',
     'Agreements and signatures',
   ]) assert.match(WINDOW_HTML, new RegExp(phrase, 'i'))
@@ -227,30 +228,36 @@ test('window history queries accept only one safe value for each supported filte
 
   assert.deepEqual(parse({ collection: ['notes'] }), {
     collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: null,
-    context: false,
+    context: false, includeDescendants: false,
   })
   assert.deepEqual(parse({
     collection: ['things'], before_id: ['91'], limit: ['12'],
     place_id: ['7'], resident: ['tiny-lantern'],
   }), {
     collection: 'things', beforeId: 91, limit: 12, placeId: 7, resident: 'tiny-lantern',
-    context: false,
+    context: false, includeDescendants: false,
+  })
+  assert.deepEqual(parse({
+    collection: ['things'], within_place_id: ['7'], resident: ['tiny-lantern'],
+  }), {
+    collection: 'things', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
+    context: false, includeDescendants: true,
   })
   assert.deepEqual(parse({ collection: ['agreements'], resident: ['tiny-lantern'] }), {
     collection: 'agreements', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
-    context: false,
+    context: false, includeDescendants: false,
   })
   assert.deepEqual(parse({
     collection: ['notes'], resident: ['tiny-lantern'], context: ['place'],
   }), {
     collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
-    context: true,
+    context: true, includeDescendants: false,
   })
   assert.deepEqual(parse({
     collection: ['notes'], resident: ['tiny-lantern'], context: ['place'], place_id: ['7'],
   }), {
     collection: 'notes', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
-    context: true,
+    context: true, includeDescendants: false,
   })
   // A context page carries neighbors as well as own notes, so its page size
   // is bounded to keep the whole page inside the public row cap.
@@ -258,13 +265,13 @@ test('window history queries accept only one safe value for each supported filte
     collection: ['notes'], resident: ['tiny-lantern'], context: ['place'], limit: ['200'],
   }), {
     collection: 'notes', beforeId: null, limit: 39, placeId: null, resident: 'tiny-lantern',
-    context: true,
+    context: true, includeDescendants: false,
   })
   assert.deepEqual(parse({
     collection: ['notes'], limit: ['200'],
   }), {
     collection: 'notes', beforeId: null, limit: 200, placeId: null, resident: null,
-    context: false,
+    context: false, includeDescendants: false,
   })
 
   for (const unsafe of [
@@ -277,6 +284,10 @@ test('window history queries accept only one safe value for each supported filte
     { collection: ['notes'], place_id: ['2147483648'] },
     { collection: ['notes'], resident: ['not safe!'] },
     { collection: ['agreements'], place_id: ['7'] },
+    { collection: ['agreements'], within_place_id: ['7'] },
+    { collection: ['notes'], place_id: ['7'], within_place_id: ['7'] },
+    { collection: ['notes'], within_place_id: ['-2'] },
+    { collection: ['notes'], within_place_id: ['2147483648'] },
     { collection: ['notes'], nonce: ['cache-bust'] },
     { collection: ['notes'], context: ['place'] },
     { collection: ['notes'], resident: ['tiny-lantern'], context: ['thread'] },
@@ -302,6 +313,15 @@ test('window collection statements enforce limit plus one without client SQL ide
   assert.deepEqual(notes.values, [91, 7, 'tiny-lantern', 51])
   assert.equal(notes.text.includes('tiny-lantern'), false)
   assert.equal(notes.text.includes('collection'), false)
+
+  const insideNotes = statement({
+    collection: 'notes', beforeId: 91, limit: 50, placeId: 7, resident: null,
+    includeDescendants: true,
+  })
+  assert.match(insideNotes.text, /WITH RECURSIVE selected_places/i)
+  assert.match(insideNotes.text, /child\.parent_id = selected\.id/i)
+  assert.match(insideNotes.text, /note\.place_id IN \(SELECT id FROM selected_places\)/i)
+  assert.deepEqual(insideNotes.values, [91, 7, null, 51])
 
   const things = statement({
     collection: 'things', beforeId: null, limit: 50, placeId: null, resident: null,

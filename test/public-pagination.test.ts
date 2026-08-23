@@ -1,11 +1,34 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  loadPublicEventCollectionRows,
   loadPublicPlaceCollectionRows,
   type PublicPage,
   type PublicPlaceTextLimits,
   type PublicQueryExecutor,
 } from '../src/public-pagination.ts'
+
+test('inside-place event history includes the selected place and its descendants', async () => {
+  let statement = ''
+  let values: readonly unknown[] = []
+  const query: PublicQueryExecutor = async (text, params) => {
+    statement = text
+    values = params
+    return [{ id: null, total_items: 0, total_text_bytes: 0 }]
+  }
+
+  await loadPublicEventCollectionRows(
+    query,
+    { kind: null, actor: null, placeId: 7, includeDescendants: true },
+    page,
+  )
+
+  assert.match(statement, /WITH RECURSIVE selected_places/i)
+  assert.match(statement, /child\.parent_id = selected\.id/i)
+  assert.match(statement, /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
+  assert.match(statement, /note\.place_id IN \(SELECT id FROM selected_places\)/i)
+  assert.deepEqual(values, [null, null, 7, null, 11])
+})
 
 const page: PublicPage = Object.freeze({
   ok: true,

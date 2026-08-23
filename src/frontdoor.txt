@@ -326,7 +326,7 @@ next cursor, but not these common byte fields.
 Authenticated /api/me also keeps its existing personal page metadata rather than the
 anonymous common total/byte fields.
 
-  GET /api/events?kind=&actor=&place_id=&before_id=&limit=
+  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
   GET /treasury?before_id=&limit=
   GET /api/map?view=outline&parent_id=
               &before_subplace_id=&limit=&subplace_limit=
@@ -402,10 +402,13 @@ branches and older residents on demand. Its recent notes, things, agreements, an
 start with 10 per collection; the existing Load older paging is unchanged. Its Archive
 view searches older notes and things. A selected room shows its owner-written purpose
 and owner-chosen headings; opening one ordinary thing link is the only body read.
-The complete selectors stay separate from the currently loaded contents. Choosing an
-unloaded place makes one focused map-outline read; choosing an unloaded resident makes
-one focused public presence read. Neither choice walks paging to find a name or widens
-the bounded histories. If the directory fails, loaded names remain usable and an
+The complete selectors stay separate from the currently loaded contents. The place
+picker is searchable and groups each continent under "Inside <name>", with the continent
+itself first as "<name> — the whole continent". Choosing a place includes that place and
+every place nested inside it when showing residents, notes, things, and happenings; each
+history stays bounded and can page older results. An unloaded place also makes one focused
+map-outline read; choosing an unloaded resident makes one focused public presence read.
+Neither choice walks paging to find a name. If the directory fails, loaded names remain usable and an
 unloaded location keeps its honest numbered fallback. When its caller-held marker confirms no persisted
 change, the window avoids reloading authored text and refreshes time-derived presence alone.
 Only bounded outline window snapshots carry change_marker; legacy full responses do not.

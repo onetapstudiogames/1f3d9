@@ -33,7 +33,7 @@ body {
   background-size: 2.2rem 2.2rem, 2.2rem 2.2rem, auto;
 }
 a { color: inherit; text-underline-offset: 0.22em; }
-button, select { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
 [hidden] { display: none !important; }
 
@@ -136,14 +136,20 @@ button { color: inherit; }
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
   margin-block-start: 0.85rem;
   color: var(--paper-light);
   background: var(--forest-deep);
   border: 4px solid var(--line);
   box-shadow: 11px 11px 0 rgba(0, 0, 0, 0.46);
 }
-.view-tabs { display: flex; min-width: 0; overflow-x: auto; }
+.view-tabs {
+  grid-row: 1;
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+}
 .view-tab {
   min-width: max-content;
   padding: 0.9rem 1rem;
@@ -160,12 +166,26 @@ button { color: inherit; }
 .view-tab:hover { color: #fff; background: rgba(255, 255, 255, 0.07); }
 .view-tab[aria-selected="true"] { color: var(--ink); background: var(--signal); }
 .view-filters {
+  grid-row: 2;
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   background: #102c23;
-  border-inline-start: 3px solid var(--line);
+  border-block-start: 3px solid var(--line);
 }
-.view-filters label { display: grid; align-content: center; gap: 0.2rem; padding: 0.42rem 0.65rem; }
+.view-filters > label, .place-search-field {
+  display: grid;
+  flex: 1 1 14rem;
+  align-content: center;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.42rem 0.65rem;
+}
+.place-search-field label {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
 .view-filters label > span {
   color: var(--sky);
   font-size: 0.58rem;
@@ -173,14 +193,23 @@ button { color: inherit; }
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.view-filters select {
-  width: min(16rem, 26vw);
-  padding: 0.3rem 1.6rem 0.3rem 0.4rem;
+.view-filters input, .view-filters select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.3rem 0.4rem;
   color: #fff;
   background: var(--night-soft);
   border: 1px solid #6e9689;
   border-radius: 0;
   font-size: 0.72rem;
+}
+.view-filters select { padding-inline-end: 1.6rem; }
+.view-filters input::placeholder { color: #b7cbc4; opacity: 1; }
+.place-search-status {
+  min-height: 1em;
+  color: var(--sky);
+  font-size: 0.58rem;
+  line-height: 1.2;
 }
 .directory-status {
   align-self: center;
@@ -691,10 +720,8 @@ button { color: inherit; }
 }
 
 @media (max-width: 72rem) {
-  .view-console { grid-template-columns: 1fr; }
-  .view-filters { border-block-start: 3px solid var(--line); border-inline-start: 0; }
-  .view-filters label { flex: 1; }
-  .view-filters select { width: 100%; }
+  .directory-status { flex: 1 1 18rem; max-width: none; }
+  .share-view { flex: 1 1 8rem; }
 }
 @media (max-width: 54rem) {
   .map-layout { grid-template-columns: 1fr; }
@@ -711,7 +738,6 @@ button { color: inherit; }
   .city-sign { grid-template-columns: 1fr; }
   .watch-state { border-block-start: 3px solid #061e17; border-inline-start: 0; }
   .view-filters { display: grid; grid-template-columns: 1fr; }
-  .view-filters label:first-child { grid-column: 1; }
   .directory-status { grid-column: 1 / -1; max-width: none; border-block-start: 2px solid var(--line); }
   .share-view { grid-column: 1 / -1; border-block-start: 2px solid var(--line); border-inline-start: 0; }
   .place-orientation { grid-template-columns: 1fr; }

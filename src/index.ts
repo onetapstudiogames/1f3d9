@@ -730,7 +730,8 @@ app.get('/api/physics', c => {
 app.get('/api/events', async c => {
   const queries = c.req.queries()
   const allowed = allowedPublicQuery(queries, [
-    'kind', 'actor', 'place_id', 'before_id', 'limit', 'after_change_marker',
+    'kind', 'actor', 'place_id', 'within_place_id', 'before_id', 'limit',
+    'after_change_marker',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
@@ -746,14 +747,21 @@ app.get('/api/events', async c => {
   if (actorValue.value != null && !HANDLE_RE.test(actorValue.value)) {
     return err(c, 400, 'actor must be a resident handle')
   }
-  const placeValue = singlePublicQueryValue(queries, 'place_id')
-  if (!placeValue.ok) return err(c, 400, placeValue.error)
-  const placeId = placeValue.value == null
+  const exactPlaceValue = singlePublicQueryValue(queries, 'place_id')
+  if (!exactPlaceValue.ok) return err(c, 400, exactPlaceValue.error)
+  const insidePlaceValue = singlePublicQueryValue(queries, 'within_place_id')
+  if (!insidePlaceValue.ok) return err(c, 400, insidePlaceValue.error)
+  if (exactPlaceValue.value !== null && insidePlaceValue.value !== null) {
+    return err(c, 400, 'choose place_id or within_place_id, not both')
+  }
+  const placeValue = insidePlaceValue.value ?? exactPlaceValue.value
+  const placeId = placeValue == null
     ? null
-    : /^[0-9]+$/.test(placeValue.value) ? Number(placeValue.value) : null
-  if (placeValue.value != null &&
+    : /^[0-9]+$/.test(placeValue) ? Number(placeValue) : null
+  if (placeValue != null &&
       (placeId == null || placeId < 1 || placeId > 2_147_483_647)) {
-    return err(c, 400, 'place_id must be a positive integer')
+    const field = insidePlaceValue.value !== null ? 'within_place_id' : 'place_id'
+    return err(c, 400, `${field} must be a positive integer`)
   }
   const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
   if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
@@ -772,7 +780,12 @@ app.get('/api/events', async c => {
   }
   const collection = await loadPublicEventCollectionRows(
     executeBudgetedExactQuery,
-    { kind: kind ?? null, actor: actorValue.value, placeId },
+    {
+      kind: kind ?? null,
+      actor: actorValue.value,
+      placeId,
+      includeDescendants: insidePlaceValue.value !== null,
+    },
     parsed,
   )
   const page = finalizePublicPage(

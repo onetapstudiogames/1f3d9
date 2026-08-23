@@ -2526,6 +2526,144 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       }
     })
 
+    await t.test('inside-place history includes the selected place and nested rooms while exact history stays exact', async () => {
+      const client = await postgres.client.connect()
+      try {
+        await client.query('BEGIN')
+        const nestedPlaceId = (await client.query<{ id: number }>(
+          `INSERT INTO places (parent_id, place_kind, name, owner_id)
+           VALUES ($1, 'place', 'Inside-history child', 1)
+           RETURNING id`,
+          [city.targetPlaceId],
+        )).rows[0]!.id
+
+        const rootNoteId = (await client.query<{ id: number }>(
+          `INSERT INTO notes (place_id, author_id, body)
+           VALUES ($1, 1, 'inside-history root note') RETURNING id`,
+          [city.targetPlaceId],
+        )).rows[0]!.id
+        const nestedNoteId = (await client.query<{ id: number }>(
+          `INSERT INTO notes (place_id, author_id, body)
+           VALUES ($1, 1, 'inside-history nested note') RETURNING id`,
+          [nestedPlaceId],
+        )).rows[0]!.id
+        const outsideNoteId = (await client.query<{ id: number }>(
+          `INSERT INTO notes (place_id, author_id, body)
+           VALUES ($1, 1, 'inside-history outside note') RETURNING id`,
+          [city.smallPlaceId],
+        )).rows[0]!.id
+
+        const rootThingId = (await client.query<{ id: number }>(
+          `INSERT INTO things (place_id, name, body, owner_id, maker_id)
+           VALUES ($1, 'inside-history-root-thing', 'root thing', 1, 1) RETURNING id`,
+          [city.targetPlaceId],
+        )).rows[0]!.id
+        const nestedThingId = (await client.query<{ id: number }>(
+          `INSERT INTO things (place_id, name, body, owner_id, maker_id)
+           VALUES ($1, 'inside-history-nested-thing', 'nested thing', 1, 1) RETURNING id`,
+          [nestedPlaceId],
+        )).rows[0]!.id
+        const outsideThingId = (await client.query<{ id: number }>(
+          `INSERT INTO things (place_id, name, body, owner_id, maker_id)
+           VALUES ($1, 'inside-history-outside-thing', 'outside thing', 1, 1) RETURNING id`,
+          [city.smallPlaceId],
+        )).rows[0]!.id
+
+        const rootEventId = (await client.query<{ id: number }>(
+          `INSERT INTO events (kind, actor, detail)
+           VALUES ('laws_changed', 'resident-1', jsonb_build_object('place_id', $1::integer))
+           RETURNING id`,
+          [city.targetPlaceId],
+        )).rows[0]!.id
+        const nestedEventId = (await client.query<{ id: number }>(
+          `INSERT INTO events (kind, actor, detail)
+           VALUES ('laws_changed', 'resident-1', jsonb_build_object('place_id', $1::integer))
+           RETURNING id`,
+          [nestedPlaceId],
+        )).rows[0]!.id
+        const outsideEventId = (await client.query<{ id: number }>(
+          `INSERT INTO events (kind, actor, detail)
+           VALUES ('laws_changed', 'resident-1', jsonb_build_object('place_id', $1::integer))
+           RETURNING id`,
+          [city.smallPlaceId],
+        )).rows[0]!.id
+
+        const transactionQuery: PublicQueryExecutor = async (text, values) => (
+          await client.query(text, [...values])
+        ).rows as Record<string, unknown>[]
+        const windowModule: WindowModule = await import('../../src/window.ts')
+        const historyQuery = (
+          collection: 'notes' | 'things',
+          includeDescendants: boolean,
+        ) => Object.freeze({
+          collection,
+          beforeId: null,
+          limit: 200,
+          placeId: city.targetPlaceId,
+          includeDescendants,
+          resident: null,
+          context: false,
+        })
+
+        const exactNotes = await windowModule.readWindowCollectionPage(
+          historyQuery('notes', false), transactionQuery,
+        )
+        const insideNotes = await windowModule.readWindowCollectionPage(
+          historyQuery('notes', true), transactionQuery,
+        )
+        const exactThings = await windowModule.readWindowCollectionPage(
+          historyQuery('things', false), transactionQuery,
+        )
+        const insideThings = await windowModule.readWindowCollectionPage(
+          historyQuery('things', true), transactionQuery,
+        )
+
+        const assertExactAndInside = (
+          exactIds: readonly number[],
+          insideIds: readonly number[],
+          rootId: number,
+          nestedId: number,
+          outsideId: number,
+        ) => {
+          assert.ok(exactIds.includes(rootId))
+          assert.ok(!exactIds.includes(nestedId))
+          assert.ok(!exactIds.includes(outsideId))
+          assert.ok(insideIds.includes(rootId))
+          assert.ok(insideIds.includes(nestedId))
+          assert.ok(!insideIds.includes(outsideId))
+        }
+        assertExactAndInside(
+          exactNotes.items.map(item => item.id), insideNotes.items.map(item => item.id),
+          rootNoteId, nestedNoteId, outsideNoteId,
+        )
+        assertExactAndInside(
+          exactThings.items.map(item => item.id), insideThings.items.map(item => item.id),
+          rootThingId, nestedThingId, outsideThingId,
+        )
+
+        const exactEvents = await loadPublicEventRows(
+          transactionQuery,
+          { kind: 'laws_changed', actor: 'resident-1', placeId: city.targetPlaceId },
+          page(null, 200),
+        )
+        const insideEvents = await loadPublicEventRows(
+          transactionQuery,
+          {
+            kind: 'laws_changed', actor: 'resident-1', placeId: city.targetPlaceId,
+            includeDescendants: true,
+          },
+          page(null, 200),
+        )
+        assertExactAndInside(
+          rowIds(exactEvents), rowIds(insideEvents),
+          rootEventId, nestedEventId, outsideEventId,
+        )
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined)
+        client.release()
+      }
+    })
+
     await t.test('agreement party and open filters keep exact totals in every combination', async () => {
       const { default: cityApp } = await import('../../src/index.ts')
       for (const party of [null, 'resident-1']) {

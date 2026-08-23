@@ -428,7 +428,7 @@ POST /api/founder/city-credit auth, founder root key — issue one fixed fee cre
 GET  /api/founder/city-credit/:handle auth, founder root key — inspect one private account
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
 GET  /api/official          real addresses, no-token statement, and public-snapshot discovery
-GET  /api/events            append-only log; ?kind=, ?actor=, ?place_id=, ?before_id=, ?limit=1..200
+GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history
 GET  /treasury              public books
@@ -544,8 +544,10 @@ census admits first, then the remaining exact citywide totals pass the same shar
 work-budget guard before map or history reads begin. The initial recent
 notes, things, agreements, and events stay at 10 per collection; their existing Load
 older controls page backward without changing what is public. Watching one
-place or following one resident fetches that view's real server-side slice by
-itself; following a resident also brings bounded same-place context notes so
+place fetches that place plus every nested place as its real bounded server-side slice.
+The complete picker is searchable, groups each continent under `Inside <name>`, and lists
+the continent itself first as `<name> — the whole continent`. Following one resident
+fetches that resident's slice and bounded same-place context notes so
 what others said back stays visible — a contextual view, not reply threads.
 The selected-place panel labels the owner-written purpose and ordered owner-chosen front
 matter. Those links use the ordinary direct thing read; the window does not fetch a
@@ -553,7 +555,8 @@ selected body automatically.
 The complete names directory remains separate from these currently loaded contents.
 Choosing an unloaded place performs one focused `/api/map?view=outline&parent_id=...`
 read; choosing an unloaded resident performs one focused public presence read. Neither
-choice walks the directory pages or widens the bounded histories. If the directory is
+choice walks the directory pages; selected histories remain bounded and page independently.
+If the directory is
 unavailable, already loaded names remain usable and records keep the honest numbered
 place fallback.
 The recent-activity lookup uses `events_actor_at_desc`. Fresh schemas create it directly;

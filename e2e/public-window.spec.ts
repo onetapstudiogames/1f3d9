@@ -13,7 +13,7 @@ interface PublicWindowTestState {
   readonly event_queries?: Array<{
     readonly before_id?: unknown
     readonly limit?: unknown
-    readonly place_id?: unknown
+    readonly within_place_id?: unknown
   }>
 }
 
@@ -36,6 +36,13 @@ test('public window keeps excerpts bounded and loads older happenings without wr
     if (isWrite(request)) browserWrites.push({ method: request.method(), url: request.url() })
   })
 
+  const baselineResponse = await page.request.get('/__e2e/public-window-state')
+  expect(baselineResponse.status()).toBe(200)
+  const baselineState = await baselineResponse.json() as PublicWindowTestState
+  const baselineEventCount = baselineState.event_queries?.length ?? 0
+  const baselineDetailCount = baselineState.detail_requests?.length ?? 0
+  const baselineWriteCount = baselineState.write_requests?.length ?? 0
+
   await page.goto('/window#view=place&place=11')
 
   await expect(page.getByRole('status')).toContainText('Watching')
@@ -57,7 +64,7 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   // from the server by itself instead of leaving the view falsely quiet.
   const filteredResponse = page.waitForResponse(response => {
     const url = new URL(response.url())
-    return url.pathname === '/api/events' && url.searchParams.get('place_id') === '11' &&
+    return url.pathname === '/api/events' && url.searchParams.get('within_place_id') === '11' &&
       !url.searchParams.has('before_id') &&
       url.searchParams.get('limit') === '50' && response.status() === 200
   })
@@ -67,7 +74,7 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   const olderResponse = page.waitForResponse(response => {
     const url = new URL(response.url())
     return url.pathname === '/api/events' && url.searchParams.get('before_id') === '502' &&
-      url.searchParams.get('place_id') === '11' &&
+      url.searchParams.get('within_place_id') === '11' &&
       url.searchParams.get('limit') === '50' && response.status() === 200
   })
   await page.getByRole('button', { name: 'Load older happenings' }).click()
@@ -81,12 +88,12 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   const stateResponse = await page.request.get('/__e2e/public-window-state')
   expect(stateResponse.status()).toBe(200)
   const state = await stateResponse.json() as PublicWindowTestState
-  expect(state.event_queries).toEqual([
-    { before_id: null, limit: 50, place_id: 11 },
-    { before_id: 502, limit: 50, place_id: 11 },
+  expect((state.event_queries ?? []).slice(baselineEventCount)).toEqual([
+    { before_id: null, limit: 50, within_place_id: 11 },
+    { before_id: 502, limit: 50, within_place_id: 11 },
   ])
-  expect(state.detail_requests).toEqual([])
-  expect(state.write_requests).toEqual([])
+  expect((state.detail_requests ?? []).slice(baselineDetailCount)).toEqual([])
+  expect((state.write_requests ?? []).slice(baselineWriteCount)).toEqual([])
   expect(browserWrites).toEqual([])
 })
 
@@ -100,7 +107,7 @@ test('unfiltered happenings still page older history on demand', async ({ page }
   const olderResponse = page.waitForResponse(response => {
     const url = new URL(response.url())
     return url.pathname === '/api/events' && url.searchParams.get('before_id') === '502' &&
-      !url.searchParams.has('place_id') &&
+      !url.searchParams.has('within_place_id') &&
       url.searchParams.get('limit') === '50' && response.status() === 200
   })
   await page.getByRole('button', { name: 'Load older happenings' }).click()

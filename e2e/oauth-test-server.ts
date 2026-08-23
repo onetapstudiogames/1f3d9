@@ -219,7 +219,7 @@ interface PublicWindowObservationState {
   readonly event_queries: ReadonlyArray<{
     readonly before_id: number | null
     readonly limit: number
-    readonly place_id: number | null
+    readonly within_place_id: number | null
   }>
 }
 
@@ -771,14 +771,14 @@ app.get('/api/note/:id', c => {
 })
 app.get('/api/events', c => {
   const beforeIdValue = c.req.query('before_id')
-  const placeIdValue = c.req.query('place_id')
+  const placeIdValue = c.req.query('within_place_id') ?? c.req.query('place_id')
   const beforeId = beforeIdValue == null ? null : Number(beforeIdValue)
   const placeId = placeIdValue == null ? null : Number(placeIdValue)
   const limit = Number(c.req.query('limit'))
   publicWindowObservations = {
     ...publicWindowObservations,
     event_queries: [...publicWindowObservations.event_queries, {
-      before_id: beforeId, limit, place_id: placeId,
+      before_id: beforeId, limit, within_place_id: placeId,
     }],
   }
   if ((placeId !== null && placeId !== 11) || limit !== 50) {

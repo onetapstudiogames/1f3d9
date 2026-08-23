@@ -8298,6 +8298,15 @@ test('event history narrows by actor and by observed place', async () => {
   assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
   assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4'])
 
+  reset({ scenario: 'public pagination' })
+  const inside = await app.request('/api/events?within_place_id=2&limit=3')
+  assert.equal(inside.status, 200)
+  const insideRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
+  assert.match(insideRead?.query ?? '', /WITH RECURSIVE selected_places/i)
+  assert.match(insideRead?.query ?? '', /child\.parent_id\s*=\s*selected\.id/i)
+  assert.match(insideRead?.query ?? '', /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
+  assert.deepEqual(insideRead?.params, [null, null, '2', null, '4'])
+
   const invalid = [
     '/api/events?actor=Not%20A%20Handle',
     '/api/events?actor=x',
@@ -8306,6 +8315,10 @@ test('event history narrows by actor and by observed place', async () => {
     '/api/events?place_id=nope',
     '/api/events?place_id=2147483648',
     '/api/events?place_id=2&place_id=3',
+    '/api/events?within_place_id=0',
+    '/api/events?within_place_id=nope',
+    '/api/events?within_place_id=2&within_place_id=3',
+    '/api/events?place_id=2&within_place_id=2',
   ]
   for (const path of invalid) {
     reset({ scenario: 'public pagination' })

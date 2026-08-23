@@ -324,7 +324,7 @@ const API_REQUESTS = new WeakMap<Page, string[]>()
 
 const OLDER_NOTE = Object.freeze({
   id: 20,
-  place_id: 11,
+  place_id: 77,
   author: 'leafwalker',
   body: 'An older conversation remains readable.',
   created_at: '2026-08-13T12:01:00.000Z',
@@ -340,7 +340,7 @@ const OLDER_GLOBAL_NOTE = Object.freeze({
 
 const OLDER_THING = Object.freeze({
   id: 30,
-  place_id: 11,
+  place_id: 77,
   name: 'old_bench',
   body: 'An older object remains visible.',
   owner: 'leafwalker',
@@ -396,7 +396,7 @@ test.beforeEach(async ({ page }, testInfo) => {
     const collection = url.searchParams.get('collection')
     if (!collection) return route.fulfill({ json: SNAPSHOT })
     if (collection === 'notes') {
-      const note = url.searchParams.has('place_id') ? OLDER_NOTE : OLDER_GLOBAL_NOTE
+      const note = url.searchParams.has('within_place_id') ? OLDER_NOTE : OLDER_GLOBAL_NOTE
       return route.fulfill({
         json: {
           notes: [note], has_more: false, next_before_id: null, change_marker: '20',
@@ -504,6 +504,9 @@ test('selected Place labels and preserves owner-chosen body-free front matter wi
   await page.getByRole('tab', { name: 'Place' }).click()
 
   const placePanel = page.locator('#place-panel')
+  await expect(page.locator('#place-occupants')).toContainText(
+    'resident #7 · at root_plaza / inner_hall',
+  )
   await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toBeVisible()
   await expect(placePanel).toContainText(SNAPSHOT.places[0].purpose)
   await expect(placePanel.getByText('Owner-chosen front matter', { exact: true })).toBeVisible()
@@ -555,6 +558,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(thingBody).toHaveAttribute('data-expanded', 'false')
 
   const placeNote = page.locator('#place-conversation .note-card')
+    .filter({ hasText: 'Opening note.' })
   await expect(placeNote).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await placeNote.getByRole('button', { name: 'Show more' }).click()
   await expect(placeNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
@@ -678,21 +682,21 @@ test('outline snapshot loads, pages, deduplicates, and preserves one map branch'
   await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
 })
 
-test('complete directory selection uses one focused place read without loading contents', async ({ page }) => {
+test('complete directory selection loads one focused place and its inside contents', async ({ page }) => {
   await expect(page.locator('#directory-status')).toContainText(
     'Complete city directory: 3 places and 2 residents',
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
     'root_plaza · Place #11',
-    'inner_hall · Place #12',
-    'quiet_annex · Place #77',
+    'inner_hall — the whole continent',
+    'quiet_annex',
   ])
   expect(await page.locator('#place-filter optgroup').evaluateAll(groups =>
     groups.map(group => group.getAttribute('label')),
-  )).toEqual(['World root', 'inner_hall'])
+  )).toEqual(['World root', 'Inside inner_hall'])
   const placeFilterBox = await page.locator('#place-filter').boundingBox()
-  expect(placeFilterBox?.width ?? 0).toBeGreaterThan(240)
+  expect(placeFilterBox?.width ?? 0).toBeGreaterThan(220)
   await expect(page.locator('#view-scope')).toContainText(/currently loaded 2 of 5 places/i)
 
   const focusedRequest = page.waitForRequest(request => {
@@ -706,23 +710,72 @@ test('complete directory selection uses one focused place read without loading c
     parent_id: '77',
   })
 
+  const insideThings = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'things' &&
+      url.searchParams.get('within_place_id') === '77'
+  })
+  const insideNotes = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('within_place_id') === '77'
+  })
   await page.getByRole('tab', { name: 'Place' }).click()
+  await Promise.all([insideThings, insideNotes])
   await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
-    'root_plaza / inner_hall / quiet_annex · focused metadata loaded',
+    'root_plaza / inner_hall / quiet_annex · kept by far-walker · showing this place and everything inside it',
   )
-  await expect(page.locator('#place-things')).toContainText('not currently loaded')
+  await expect(page.locator('#place-things')).toContainText('old_bench')
+  await expect(page.locator('#place-things')).toContainText('at root_plaza / inner_hall / quiet_annex')
+  await expect(page.locator('#place-conversation')).toContainText('An older conversation remains readable.')
+  await expect(page.locator('#place-conversation')).toContainText(
+    'root_plaza / inner_hall / quiet_annex',
+  )
 
   const requests = (API_REQUESTS.get(page) ?? []).map(value => new URL(value))
   expect(requests.filter(url =>
     url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77')).toHaveLength(1)
   expect(requests.filter(url =>
-    url.pathname === '/api/window' && url.searchParams.get('place_id') === '77')).toHaveLength(0)
+    url.pathname === '/api/window' && url.searchParams.get('within_place_id') === '77'))
+    .toHaveLength(2)
 
   await page.getByRole('tab', { name: 'Map' }).focus()
   await page.getByRole('tab', { name: 'Map' }).press('ArrowRight')
   await expect(page.getByRole('tab', { name: 'Place' })).toBeFocused()
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('place search narrows the phone selector and keeps the continent heading', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 851 })
+  const search = page.locator('#place-search')
+  await expect(page.getByRole('searchbox', { name: 'Search places', exact: true })).toBeVisible()
+  const selector = page.locator('#place-filter')
+  const searchBox = await search.boundingBox()
+  const selectorBox = await selector.boundingBox()
+  expect(searchBox?.x ?? -1).toBeGreaterThanOrEqual(0)
+  expect((searchBox?.x ?? 391) + (searchBox?.width ?? 0)).toBeLessThanOrEqual(390)
+  expect(selectorBox?.width ?? 0).toBeGreaterThan(300)
+  expect((selectorBox?.x ?? 391) + (selectorBox?.width ?? 0)).toBeLessThanOrEqual(390)
+  await search.fill('quiet')
+
+  await expect(page.locator('#place-search-status')).toHaveText('1 place matches.')
+  expect(await page.locator('#place-filter option').allTextContents()).toEqual([
+    'All places',
+    'quiet_annex',
+  ])
+  expect(await page.locator('#place-filter optgroup').evaluateAll(groups =>
+    groups.map(group => group.getAttribute('label')),
+  )).toEqual(['Inside inner_hall'])
+
+  const focusedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  })
+  await selector.selectOption('77')
+  await focusedRequest
+  await expect(search).toHaveValue('')
+  await expect(page.locator('#place-search-status')).toHaveText('3 places available.')
 })
 
 test('complete resident selection uses one focused presence read and a directory path', async ({ page }) => {
@@ -750,7 +803,7 @@ test('cold deep link replaces its numbered fallback when the directory arrives l
   await expect(page.locator('#directory-status')).toContainText('Complete city directory')
   await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
-    'root_plaza / inner_hall / quiet_annex · focused metadata loaded',
+    'root_plaza / inner_hall / quiet_annex · kept by far-walker · showing this place and everything inside it',
   )
 })
 
@@ -779,7 +832,7 @@ test('directory failure is accessible and retryable without hiding the loaded fa
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
     'root_plaza · Place #11',
-    'inner_hall · Place #12',
+    'inner_hall — the whole continent',
   ])
 
   await alert.getByRole('button', { name: 'Retry loading the complete directory' }).click()
@@ -794,7 +847,7 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   await page.getByRole('tab', { name: 'Place' }).click()
   await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
-    'root_plaza / inner_hall / quiet_annex · focused metadata loaded',
+    'root_plaza / inner_hall / quiet_annex · kept by far-walker · showing this place and everything inside it',
   )
 
   await page.unroute('**/api/changes**')
@@ -817,6 +870,25 @@ test('refresh reloads the complete directory and a focused unloaded place after 
     const url = new URL(route.request().url())
     if (url.searchParams.get('view') === 'directory') {
       return route.fulfill({ json: DIRECTORY_REFRESHED })
+    }
+    const collection = url.searchParams.get('collection')
+    if (collection === 'notes') {
+      return route.fulfill({
+        json: { notes: [OLDER_NOTE], has_more: false, next_before_id: null, change_marker: '21' },
+      })
+    }
+    if (collection === 'things') {
+      return route.fulfill({
+        json: { things: [OLDER_THING], has_more: false, next_before_id: null, change_marker: '21' },
+      })
+    }
+    if (collection === 'agreements') {
+      return route.fulfill({
+        json: {
+          agreements: [OLDER_AGREEMENT], has_more: false, next_before_id: null,
+          change_marker: '21',
+        },
+      })
     }
     if (url.searchParams.get('after_change_marker') === '21') {
       return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
@@ -860,13 +932,13 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
     'root_plaza · Place #11',
-    'inner_hall · Place #12',
-    'renamed_annex · Place #77',
-    'fresh_gallery · Place #78',
+    'inner_hall — the whole continent',
+    'renamed_annex',
+    'fresh_gallery',
   ])
   await expect(page.locator('#place-focus-title')).toHaveText('renamed_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
-    'root_plaza / inner_hall / renamed_annex · focused metadata loaded',
+    'root_plaza / inner_hall / renamed_annex · kept by far-walker · showing this place and everything inside it',
   )
   await expect(page.locator('#place-purpose')).toContainText(
     'A renamed room proved by a refreshed focused map read.',
@@ -982,7 +1054,7 @@ test('unloaded place and resident deep links describe the bounded gap without fa
     .slice(requestsBeforePlaceConversation)
     .map(value => new URL(value))
     .filter(url => url.searchParams.get('collection') === 'notes' &&
-      url.searchParams.get('place_id') === '999')
+      url.searchParams.get('within_place_id') === '999')
   expect(placeConversationRequests).toHaveLength(0)
 
   await page.goto('/window#view=conversations&resident=missing-reader')
@@ -1254,37 +1326,33 @@ test('recent window slices can be extended independently in every public view', 
   const olderConversationRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
-      url.searchParams.get('before_id') === '21' && !url.searchParams.has('place_id')
+      url.searchParams.get('before_id') === '21' && !url.searchParams.has('within_place_id')
   })
   await page.getByRole('button', { name: 'Load older conversations' }).click()
   await olderConversationRequest
   await expect(page.locator('#conversation-stream')).toContainText('An older conversation remains readable.')
   await expect(page.getByRole('button', { name: 'Load older conversations' })).toHaveCount(0)
 
-  await page.getByRole('tab', { name: 'Place' }).click()
-  const olderThingRequest = page.waitForRequest(request => {
+  const insideThingRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/window' && url.searchParams.get('collection') === 'things' &&
-      url.searchParams.get('place_id') === '11' && !url.searchParams.has('before_id')
+      url.searchParams.get('within_place_id') === '11' && !url.searchParams.has('before_id')
   })
-  await page.getByRole('button', { name: 'Load older things' }).click()
-  await olderThingRequest
-  await expect(page.locator('#place-things')).toContainText('old_bench')
-
-  const olderPlaceNoteRequest = page.waitForRequest(request => {
+  const insideNoteRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
-      url.searchParams.get('place_id') === '11' && !url.searchParams.has('before_id')
+      url.searchParams.get('within_place_id') === '11' && !url.searchParams.has('before_id')
   })
-  await page.getByRole('button', { name: 'Load older notes' }).click()
-  await olderPlaceNoteRequest
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await Promise.all([insideThingRequest, insideNoteRequest])
+  await expect(page.locator('#place-things')).toContainText('old_bench')
   await expect(page.locator('#place-conversation')).toContainText('An older conversation remains readable.')
 
   // The place chosen on the Place tab is still watched, so Happenings
   // fetches its place-filtered slice from the server on its own.
   const filteredEventRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
-    return url.pathname === '/api/events' && url.searchParams.get('place_id') === '11' &&
+    return url.pathname === '/api/events' && url.searchParams.get('within_place_id') === '11' &&
       !url.searchParams.has('before_id')
   })
   await page.getByRole('tab', { name: 'Happenings' }).click()
@@ -1292,7 +1360,7 @@ test('recent window slices can be extended independently in every public view', 
   const olderEventRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/events' && url.searchParams.get('before_id') === '51' &&
-      url.searchParams.get('place_id') === '11'
+      url.searchParams.get('within_place_id') === '11'
   })
   await page.getByRole('button', { name: 'Load older happenings' }).click()
   await olderEventRequest
@@ -1539,7 +1607,6 @@ test('a changed snapshot drops previously loaded authored content before saving 
 })
 
 test('an older history response already in flight cannot repopulate a newer marker snapshot', async ({ page }) => {
-  await page.getByRole('tab', { name: 'Place' }).click()
   let releaseOlderHistory: (() => void) | null = null
   await page.route('**/api/window**', async route => {
     const url = new URL(route.request().url())
@@ -1559,7 +1626,7 @@ test('an older history response already in flight cannot repopulate a newer mark
     const url = new URL(request.url())
     return url.pathname === '/api/window' && url.searchParams.get('collection') === 'things'
   })
-  await page.getByRole('button', { name: 'Load older things' }).click()
+  await page.getByRole('tab', { name: 'Place' }).click()
   await olderRequest
 
   await page.route('**/api/changes**', route => route.fulfill({

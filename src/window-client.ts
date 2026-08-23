@@ -53,6 +53,30 @@ export type WindowDirectoryPlaceOptionGroup = Readonly<{
   }>[]
 }>
 
+export function windowDirectoryPlaceScopeIds(
+  values: readonly WindowDirectoryPlace[],
+  placeId: number,
+): number[] {
+  const children = new Map<number, number[]>()
+  for (const value of values) {
+    if (value.parent_id === null) continue
+    const siblings = children.get(value.parent_id) ?? []
+    if (!siblings.includes(value.id)) children.set(value.parent_id, [...siblings, value.id])
+  }
+
+  const found: number[] = []
+  const seen = new Set<number>()
+  const queue = [placeId]
+  while (queue.length) {
+    const id = queue.shift()
+    if (id === undefined || seen.has(id)) continue
+    seen.add(id)
+    found.push(id)
+    queue.push(...(children.get(id) ?? []))
+  }
+  return found
+}
+
 export function deriveWindowDirectoryPlaces(
   values: readonly WindowDirectoryPlace[],
 ): WindowDirectoryPlaceWithPath[] {
@@ -91,32 +115,98 @@ export function deriveWindowDirectoryPlaces(
 
 export function groupWindowDirectoryPlaces(
   values: readonly WindowDirectoryPlaceWithPath[],
+  query = '',
 ): WindowDirectoryPlaceOptionGroup[] {
-  const groups = new Map<string, Array<{ id: number, label: string }>>()
   const placesById = new Map(values.map(place => [place.id, place]))
-  const ensureGroup = (label: string) => {
-    const existing = groups.get(label)
+  const rootIds = new Set(values.filter(place => place.parent_id === null).map(place => place.id))
+  const normalizedQuery = query.trim().toLowerCase()
+  const continentFor = (place: WindowDirectoryPlaceWithPath) => {
+    if (place.parent_id === null) return null
+    const seen = new Set<number>()
+    let current: WindowDirectoryPlaceWithPath | undefined = place
+    while (current && current.parent_id !== null) {
+      if (seen.has(current.id)) return undefined
+      seen.add(current.id)
+      const parent = placesById.get(current.parent_id)
+      if (!parent) return undefined
+      if (rootIds.has(parent.id)) return current
+      current = parent
+    }
+    return undefined
+  }
+  const continentNameCounts = new Map<string, number>()
+  for (const place of values) {
+    const continent = continentFor(place)
+    if (!continent || continent.id !== place.id) continue
+    const key = continent.name.toLowerCase()
+    continentNameCounts.set(key, (continentNameCounts.get(key) ?? 0) + 1)
+  }
+
+  type MutableGroup = {
+    label: string
+    wholePlaceId: number | null
+    options: Array<{ id: number, label: string }>
+  }
+  const groups = new Map<string, MutableGroup>()
+  const ensureGroup = (key: string, label: string, wholePlaceId: number | null) => {
+    const existing = groups.get(key)
     if (existing) return existing
-    const created: Array<{ id: number, label: string }> = []
-    groups.set(label, created)
+    const created: MutableGroup = { label, wholePlaceId, options: [] }
+    groups.set(key, created)
     return created
   }
 
   for (const place of values) {
+    const searchText = `${place.name}\n${place.path}\nplace #${place.id}`.toLowerCase()
+    if (normalizedQuery && !searchText.includes(normalizedQuery)) continue
     const parts = place.path.split(' / ').filter(Boolean)
-    const groupLabel = place.parent_id === null
-      ? 'World root'
-      : parts[1] || 'Other places'
-    const parent = place.parent_id === null ? undefined : placesById.get(place.parent_id)
-    const parentContext = parts.length > 3 && parent ? ` — in ${parent.name}` : ''
-    const shortLabel = `${place.name}${parentContext} · Place #${place.id}`
-    ensureGroup(groupLabel).push({ id: place.id, label: shortLabel })
+    if (place.parent_id === null) {
+      ensureGroup('root', 'World root', null).options.push({
+        id: place.id,
+        label: `${place.name} · Place #${place.id}`,
+      })
+      continue
+    }
+
+    const continent = continentFor(place)
+    if (!continent) {
+      ensureGroup('other', 'Other places', null).options.push({
+        id: place.id,
+        label: `${place.name} · Place #${place.id}`,
+      })
+      continue
+    }
+    const duplicateContinentName = (continentNameCounts.get(continent.name.toLowerCase()) ?? 0) > 1
+    const groupLabel = `Inside ${continent.name}` +
+      (duplicateContinentName ? ` · Place #${continent.id}` : '')
+    const parent = placesById.get(place.parent_id)
+    const shortLabel = place.id === continent.id
+      ? `${place.name} — the whole continent` +
+        (duplicateContinentName ? ` · Place #${place.id}` : '')
+      : `${place.name}${parts.length > 3 && parent ? ` — in ${parent.name}` : ''}`
+    ensureGroup(`continent:${continent.id}`, groupLabel, continent.id).options.push({
+      id: place.id,
+      label: shortLabel,
+    })
   }
 
-  return [...groups.entries()].map(([label, options]) => Object.freeze({
-    label,
-    options: Object.freeze(options.map(option => Object.freeze({ ...option }))),
-  }))
+  return [...groups.values()].map(group => {
+    const labelCounts = new Map<string, number>()
+    for (const option of group.options) {
+      labelCounts.set(option.label, (labelCounts.get(option.label) ?? 0) + 1)
+    }
+    const options = group.options.map(option => ({
+      ...option,
+      label: (labelCounts.get(option.label) ?? 0) > 1
+        ? `${option.label} · Place #${option.id}`
+        : option.label,
+    })).sort((left, right) =>
+      Number(right.id === group.wholePlaceId) - Number(left.id === group.wholePlaceId))
+    return Object.freeze({
+      label: group.label,
+      options: Object.freeze(options.map(option => Object.freeze(option))),
+    })
+  })
 }
 
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
@@ -126,6 +216,7 @@ const MERGE_RESIDENT_ROWS_JS = mergeResidentRows.toString()
 const WINDOW_PLACE_LABEL_JS = windowPlaceLabel.toString()
 const DERIVE_WINDOW_DIRECTORY_PLACES_JS = deriveWindowDirectoryPlaces.toString()
 const GROUP_WINDOW_DIRECTORY_PLACES_JS = groupWindowDirectoryPlaces.toString()
+const WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS = windowDirectoryPlaceScopeIds.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -147,6 +238,7 @@ export const WINDOW_JS = `(() => {
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
   const deriveWindowDirectoryPlaces = ${DERIVE_WINDOW_DIRECTORY_PLACES_JS}
   const groupWindowDirectoryPlaces = ${GROUP_WINDOW_DIRECTORY_PLACES_JS}
+  const windowDirectoryPlaceScopeIds = ${WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -155,6 +247,8 @@ export const WINDOW_JS = `(() => {
     map: document.getElementById('place-map'),
     roster: document.getElementById('resident-roster'),
     residentPage: document.getElementById('resident-page'),
+    placeSearch: document.getElementById('place-search'),
+    placeSearchStatus: document.getElementById('place-search-status'),
     placeFilter: document.getElementById('place-filter'),
     residentFilter: document.getElementById('resident-filter'),
     directoryStatus: document.getElementById('directory-status'),
@@ -217,6 +311,7 @@ export const WINDOW_JS = `(() => {
       initialized: false, error: null,
     },
     view: 'map',
+    placeSearch: '',
     placeId: null,
     resident: null,
   }
@@ -1253,28 +1348,34 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function filterHistoryRows(collection, rows, filters, snapshot) {
+    const placeIds = filters.placeId ? placeScopeSet(filters.placeId, snapshot) : null
     if (collection === 'notes') return rows.filter(row =>
-      (!filters.placeId || row.place_id === filters.placeId) &&
+      (!placeIds || placeIds.has(row.place_id)) &&
       (!filters.resident || row.author === filters.resident))
     if (collection === 'things') return rows.filter(row =>
-      (!filters.placeId || row.place_id === filters.placeId) &&
+      (!placeIds || placeIds.has(row.place_id)) &&
       (!filters.resident || row.owner === filters.resident))
     if (collection === 'agreements') return rows.filter(row => !filters.resident ||
       row.created_by === filters.resident || row.parties.includes(filters.resident) ||
       row.parties_truncated)
     return rows.filter(row =>
       (!filters.resident || row.actor === filters.resident) &&
-      (!filters.placeId || eventPlaceId(row, snapshot) === filters.placeId))
+      (!placeIds || placeIds.has(eventPlaceId(row, snapshot))))
   }
 
   function historyTotal(collection, filters) {
     const snapshot = state.snapshot
     if (!snapshot) return 0
-    const place = filters.placeId
-      ? snapshot.flatPlaces.find(candidate => candidate.id === filters.placeId)
-      : null
-    if (collection === 'notes') return place ? place.notes : snapshot.totals.conversations
-    if (collection === 'things') return place ? place.things : snapshot.totals.things
+    const placeIds = filters.placeId ? placeScopeSet(filters.placeId, snapshot) : null
+    const places = placeIds
+      ? snapshot.flatPlaces.filter(candidate => placeIds.has(candidate.id))
+      : []
+    if (collection === 'notes') return placeIds
+      ? places.reduce((total, place) => total + place.notes, 0)
+      : snapshot.totals.conversations
+    if (collection === 'things') return placeIds
+      ? places.reduce((total, place) => total + place.things, 0)
+      : snapshot.totals.things
     if (collection === 'agreements') return snapshot.totals.agreements
     return snapshot.totals.events
   }
@@ -1413,7 +1514,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const placeholder = element('option', '', 'All places')
       placeholder.value = ''
       const filterNodes = [placeholder]
-      for (const group of groupWindowDirectoryPlaces(places)) {
+      const groups = groupWindowDirectoryPlaces(places, state.placeSearch)
+      const visiblePlaceIds = new Set(groups.flatMap(group => group.options.map(option => option.id)))
+      for (const group of groups) {
         const optgroup = document.createElement('optgroup')
         optgroup.label = group.label
         for (const choice of group.options) {
@@ -1423,16 +1526,30 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
         filterNodes.push(optgroup)
       }
-      if (state.placeId && !places.some(place => place.id === state.placeId)) {
+      if (state.placeSearch && groups.length === 0) {
+        const noMatches = element('option', '', 'No places match this search')
+        noMatches.disabled = true
+        filterNodes.push(noMatches)
+      }
+      if (state.placeId && !visiblePlaceIds.has(state.placeId)) {
         const optgroup = document.createElement('optgroup')
         optgroup.label = 'Current selection'
-        const option = element('option', '', 'Place #' + String(state.placeId) + ' · not currently loaded')
+        const selected = places.find(place => place.id === state.placeId)
+        const option = element('option', '', selected
+          ? selected.name + ' — current selection'
+          : 'Place #' + String(state.placeId) + ' · not currently loaded')
         option.value = String(state.placeId)
         optgroup.append(option)
         filterNodes.push(optgroup)
       }
       nodes.placeFilter.replaceChildren(...filterNodes)
       nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
+      if (nodes.placeSearchStatus) {
+        const matchCount = groups.reduce((total, group) => total + group.options.length, 0)
+        nodes.placeSearchStatus.textContent = state.placeSearch
+          ? String(matchCount) + (matchCount === 1 ? ' place matches.' : ' places match.')
+          : String(places.length) + ' places available.'
+      }
     }
     if (nodes.residentFilter) {
       const residents = state.directory.loaded ? state.directory.residents : snapshot.residents
@@ -1463,6 +1580,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : null
   }
 
+  function placeScopeSet(placeId, snapshot) {
+    const places = state.directory.loaded
+      ? state.directory.places
+      : snapshot?.flatPlaces || []
+    return new Set(windowDirectoryPlaceScopeIds(places, placeId))
+  }
+
   function placeReference(snapshot, placeId) {
     if (!placeId) return null
     return directoryPlace(placeId) ||
@@ -1489,7 +1613,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function residentsAt(snapshot, placeId) {
-    return snapshot.residents.filter(resident => resident.current_place_id === placeId &&
+    const placeIds = placeScopeSet(placeId, snapshot)
+    return snapshot.residents.filter(resident => placeIds.has(resident.current_place_id) &&
       (!state.resident || resident.handle === state.resident))
   }
 
@@ -1896,7 +2021,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderRoster(snapshot) {
     if (!nodes.roster) return
     renderResidentPage()
-    const placeIds = new Set(mapRoots(snapshot).flatMap(root => flattenPlaces([root], []).map(place => place.id)))
+    const selectedPlaceIds = state.placeId ? placeScopeSet(state.placeId, snapshot) : null
     const selectedFocusedResident = state.resident && !selectedResident(snapshot)
       ? focusedResident(state.resident)
       : null
@@ -1905,8 +2030,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : snapshot.residents
     const visible = availableResidents.filter(resident =>
       (!state.resident || resident.handle === state.resident) &&
-      (!state.placeId || resident.current_place_id === state.placeId ||
-        placeIds.has(resident.current_place_id)))
+      (!selectedPlaceIds || selectedPlaceIds.has(resident.current_place_id)))
     if (!visible.length) {
       const empty = element('p', 'empty-row', snapshot.residents.length
         ? 'Watching. No currently loaded resident matches this view.'
@@ -1941,10 +2065,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.roster.replaceChildren(fragment)
   }
 
-  function renderPeople(target, residents) {
+  function renderPeople(target, residents, placeOf) {
     if (!target) return
     if (!residents.length) {
-      renderEmpty(target, 'empty-row', 'No included resident matching this view is standing here.')
+      renderEmpty(target, 'empty-row', 'No included resident matching this view is standing inside this place.')
       return
     }
     const list = element('ul', 'person-list')
@@ -1954,8 +2078,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       follow.type = 'button'
       follow.dataset.focusKey = 'person:' + resident.handle
       follow.addEventListener('click', () => chooseResident(resident.handle))
+      const location = windowPlaceLabel(
+        resident.current_place_id,
+        placeOf ? placeOf(resident.current_place_id) : null,
+      )
       item.append(follow, element('span', 'resident-number',
-        'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
+        'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '') +
+        (location ? ' · at ' + location : '')))
       return item
     }))
     target.replaceChildren(list)
@@ -2057,7 +2186,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return block
   }
 
-  function renderThings(target, things) {
+  function renderThings(target, things, placeOf) {
     if (!target) return
     if (!things.length) {
       renderEmpty(target, 'empty-row', 'No visible thing in the current bounded public view matches this selection.')
@@ -2078,6 +2207,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
           (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind') +
           (thing.open_to_use ? ' · open to shared use' : ' · owner use only')),
       )
+      const location = windowPlaceLabel(
+        thing.place_id,
+        placeOf ? placeOf(thing.place_id) : null,
+      )
+      if (location) {
+        thingMeta.append(
+          document.createTextNode(' · at '),
+          element('span', 'thing-location', location),
+        )
+      }
       item.append(element('h4', '', thing.name), thingMeta)
       if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
       const traits = element('div', 'trait-list')
@@ -2119,14 +2258,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return card
   }
 
-  function renderNotes(target, notes, emptyMessage, place) {
+  function renderNotes(target, notes, emptyMessage, placeOf) {
     if (!target) return
     if (!notes.length) {
       renderEmpty(target, 'empty-row', emptyMessage)
       return
     }
     const list = element('div', 'note-list')
-    list.append(...notes.map(note => noteCard(note, place)))
+    list.append(...notes.map(note => noteCard(
+      note,
+      typeof placeOf === 'function' ? placeOf(note.place_id) : placeOf,
+    )))
     target.replaceChildren(list)
   }
 
@@ -2182,9 +2324,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderPlace(snapshot) {
     const followed = selectedResident(snapshot)
-    const place = selectedPlace(snapshot) || (!state.resident && !state.placeId
-      ? snapshot.flatPlaces[0] || null
-      : null)
+    const place = selectedPlace(snapshot) ||
+      (state.placeId ? focusedPlace(state.placeId) : null) ||
+      (!state.resident && !state.placeId ? snapshot.flatPlaces[0] || null : null)
     if (!place) {
       const residentMetadata = followed || focusedResident(state.resident)
       const focused = focusedPlace(state.placeId)
@@ -2252,13 +2394,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (nodes.placeTitle) nodes.placeTitle.textContent = place.name
     if (nodes.placeSummary) nodes.placeSummary.textContent = place.path + (place.owner
       ? ' · kept by ' + place.owner
-      : ' · nobody owns it · transit only')
+      : ' · nobody owns it · transit only') +
+      (state.placeId ? ' · showing this place and everything inside it' : '')
     renderPlaceOrientation(place)
-    renderPeople(nodes.occupants, residentsAt(snapshot, place.id))
+    renderPeople(
+      nodes.occupants,
+      residentsAt(snapshot, place.id),
+      placeId => placeReference(snapshot, placeId),
+    )
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
-    renderThings(nodes.placeThings, historyEntry('things', filters).rows)
+    autoLoadFilteredHistory('things', filters, historyEntry('things', filters))
+    autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
+    renderThings(
+      nodes.placeThings,
+      historyEntry('things', filters).rows,
+      placeId => placeReference(snapshot, placeId),
+    )
     renderNotes(nodes.placeConversation, historyEntry('notes', filters).rows,
-      'No conversation in the current bounded public view matches here.', place)
+      'No conversation in the current bounded public view matches here.',
+      placeId => placeReference(snapshot, placeId))
     renderHistoryControl(nodes.placeThingsPage, 'things', 'things', filters)
     renderHistoryControl(nodes.placeNotesPage, 'notes', 'notes', filters)
   }
@@ -2275,7 +2429,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
     const followed = selectedResident(snapshot)
     const place = state.placeId
-      ? snapshot.flatPlaces.find(candidate => candidate.id === state.placeId) || null
+      ? placeReference(snapshot, state.placeId)
       : null
     if (state.placeId && !place) {
       const reference = placeReference(snapshot, state.placeId)
@@ -2311,11 +2465,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const group = element('section', 'conversation-group')
       const heading = element('header', '')
       heading.append(
-        element('h3', '', place.name),
+        element('h3', '', 'Inside ' + place.name),
         element('span', 'place-facts', place.path + ' · ' + String(notes.length) + ' shown'),
       )
       const list = element('div', 'note-list')
-      list.append(...notes.map(note => noteCard(note, place)))
+      list.append(...notes.map(note => noteCard(note, placeReference(snapshot, note.place_id))))
       group.append(heading, list)
       nodes.conversations.replaceChildren(group)
     } else {
@@ -2501,11 +2655,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     // smaller page to stay well inside the client's 200-row safety cap.
     url.searchParams.set('limit', filters.context ? '25' : '50')
     if (collection === 'events') {
-      if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
+      if (filters.placeId) url.searchParams.set('within_place_id', String(filters.placeId))
       if (filters.resident) url.searchParams.set('actor', filters.resident)
     } else {
       url.searchParams.set('collection', collection)
-      if (filters.placeId) url.searchParams.set('place_id', String(filters.placeId))
+      if (filters.placeId) url.searchParams.set('within_place_id', String(filters.placeId))
       if (filters.resident) url.searchParams.set('resident', filters.resident)
       if (filters.context) url.searchParams.set('context', 'place')
     }
@@ -2586,7 +2740,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   async function loadHistory(collection, filters) {
     const current = historyEntry(collection, filters)
-    if (current.loading || (!current.hasMore && !current.error)) return
+    if (current.loading || (current.initialized && !current.hasMore && !current.error)) return
     const requestAuthoredRevision = authoredRevision
     const requestMarker = state.changeMarker
     setHistoryEntry(collection, filters, { ...current, loading: true, error: false })
@@ -2784,6 +2938,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       renderAgreements(snapshot)
     }
     if (nodes.placeFilter) nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
+    if (nodes.placeSearch && nodes.placeSearch.value !== state.placeSearch) {
+      nodes.placeSearch.value = state.placeSearch
+    }
     if (nodes.residentFilter) nodes.residentFilter.value = state.resident || ''
     restoreFocus(focusKey, focusFallbackKey, focusFallbackId)
   }
@@ -2792,7 +2949,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const place = state.snapshot?.flatPlaces.find(candidate => candidate.id === id) ||
       directoryPlace(id) || focusedPlace(id)
     if (!place) return
-    navigate({ placeId: id, view: openPlace ? 'place' : state.view })
+    if (nodes.placeSearch) nodes.placeSearch.value = ''
+    navigate({ placeId: id, placeSearch: '', view: openPlace ? 'place' : state.view })
+    if (state.snapshot) populateFilters(state.snapshot)
   }
 
   function chooseResident(handle) {
@@ -3249,8 +3408,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  nodes.placeSearch?.addEventListener('input', () => {
+    state = { ...state, placeSearch: String(nodes.placeSearch.value || '').slice(0, 100) }
+    if (state.snapshot) populateFilters(state.snapshot)
+  })
+  nodes.placeSearch?.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !state.placeSearch) return
+    event.preventDefault()
+    nodes.placeSearch.value = ''
+    state = { ...state, placeSearch: '' }
+    if (state.snapshot) populateFilters(state.snapshot)
+  })
   nodes.placeFilter?.addEventListener('change', () => {
-    navigate({ placeId: safeId(nodes.placeFilter.value) })
+    if (nodes.placeSearch) nodes.placeSearch.value = ''
+    navigate({ placeId: safeId(nodes.placeFilter.value), placeSearch: '' })
+    if (state.snapshot) populateFilters(state.snapshot)
   })
   nodes.residentFilter?.addEventListener('change', () => {
     navigate({ resident: safeHandle(nodes.residentFilter.value) })
@@ -3261,11 +3433,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     event.preventDefault()
     void loadArchive(true)
   })
-  window.addEventListener('hashchange', () => {
+  function syncStateFromLocation() {
     state = { ...state, ...readHashState() }
     renderAll()
     void ensureFocusedSelection()
-  })
+  }
+  window.addEventListener('hashchange', syncStateFromLocation)
+  window.addEventListener('popstate', syncStateFromLocation)
   document.addEventListener('visibilitychange', () => {
     window.clearTimeout(state.pollTimer)
     if (!document.hidden) void refreshCity()

@@ -565,7 +565,7 @@ export function mergeWindowThingTraits(
 }
 
 const WINDOW_HISTORY_KEYS = new Set([
-  'collection', 'before_id', 'limit', 'place_id', 'resident', 'context',
+  'collection', 'before_id', 'limit', 'place_id', 'within_place_id', 'resident', 'context',
 ])
 const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements'])
 
@@ -586,6 +586,7 @@ export interface WindowHistoryQuery {
   readonly beforeId: number | null
   readonly limit: number
   readonly placeId: number | null
+  readonly includeDescendants?: boolean
   readonly resident: string | null
   readonly context: boolean
 }
@@ -610,7 +611,10 @@ export function parseWindowHistoryQuery(
   const page = parsePublicPage(queries, 'before_id', 'limit')
   if (!page.ok) return null
 
-  const placeValue = oneWindowQueryValue(queries, 'place_id')
+  const exactPlaceValue = oneWindowQueryValue(queries, 'place_id')
+  const insidePlaceValue = oneWindowQueryValue(queries, 'within_place_id')
+  if (exactPlaceValue !== undefined && insidePlaceValue !== undefined) return null
+  const placeValue = insidePlaceValue === undefined ? exactPlaceValue : insidePlaceValue
   const parsedPlaceId = /^\d+$/.test(placeValue ?? '') ? positiveInteger(placeValue) : null
   const placeId = placeValue === undefined
     ? null
@@ -623,6 +627,7 @@ export function parseWindowHistoryQuery(
     : typeof residentValue === 'string' && HANDLE_RE.test(residentValue) ? residentValue : null
   if (residentValue !== undefined && resident === null) return null
   if (collection === 'agreements' && placeId !== null) return null
+  const includeDescendants = insidePlaceValue !== undefined
 
   // context=place asks for the same-place notes around a followed
   // resident's own notes. It has exactly one value and only makes sense
@@ -637,6 +642,7 @@ export function parseWindowHistoryQuery(
     beforeId: page.cursor,
     limit: context ? Math.min(page.limit, NOTE_CONTEXT_PAGE_MAX) : page.limit,
     placeId,
+    includeDescendants,
     resident,
     context,
   })
@@ -649,6 +655,16 @@ export interface WindowCollectionStatement {
 
 export function windowCollectionStatement(options: WindowHistoryQuery): WindowCollectionStatement {
   const fetchLimit = options.limit + 1
+  const includeDescendants = options.includeDescendants === true
+  const selectedPlacesCte = `selected_places AS (
+      SELECT place.id FROM places place WHERE place.id = $2::integer
+      UNION
+      SELECT child.id FROM places child
+      JOIN selected_places selected ON child.parent_id = selected.id
+    )`
+  const placePredicate = (field: string): string => includeDescendants
+    ? `($2::integer IS NULL OR ${field} IN (SELECT id FROM selected_places))`
+    : `($2::integer IS NULL OR ${field} = $2::integer)`
   if (options.collection === 'notes' && options.context) {
     // The followed resident's own notes drive the page; each own note brings
     // along up to NOTE_CONTEXT_NEIGHBORS same-place notes on either side so
@@ -665,12 +681,12 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
     // across pages when neighbors sit between two own notes; ids are stable,
     // so readers merge them by id.
     return Object.freeze({
-      text: `WITH resident_notes AS (
+      text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte},` : 'WITH'} resident_notes AS (
           SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
             row_number() OVER (ORDER BY note.id DESC) AS own_position
           FROM notes note JOIN residents author ON author.id = note.author_id
           WHERE ($1::integer IS NULL OR note.id < $1::integer)
-            AND ($2::integer IS NULL OR note.place_id = $2::integer)
+            AND ${placePredicate('note.place_id')}
             AND author.handle = $3::text
           ORDER BY note.id DESC
           LIMIT $4::integer
@@ -709,10 +725,10 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
   }
   if (options.collection === 'notes') {
     return Object.freeze({
-      text: `SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
+      text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
         FROM notes note JOIN residents author ON author.id = note.author_id
         WHERE ($1::integer IS NULL OR note.id < $1::integer)
-          AND ($2::integer IS NULL OR note.place_id = $2::integer)
+          AND ${placePredicate('note.place_id')}
           AND ($3::text IS NULL OR author.handle = $3::text)
         ORDER BY note.id DESC
         LIMIT $4::integer`,
@@ -721,7 +737,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
   }
   if (options.collection === 'things') {
     return Object.freeze({
-      text: `SELECT thing.id, thing.place_id, thing.name, thing.body,
+      text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT thing.id, thing.place_id, thing.name, thing.body,
           thing.maker_id, maker.handle AS made_by,
           thing.owner_id AS owner_id, thing.owner_id AS current_owner_id,
           current_owner.handle AS current_owner,
@@ -737,7 +753,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
         WHERE thing.withdrawn_at IS NULL
           AND ($1::integer IS NULL OR thing.id < $1::integer)
-          AND ($2::integer IS NULL OR thing.place_id = $2::integer)
+          AND ${placePredicate('thing.place_id')}
           AND ($3::text IS NULL OR current_owner.handle = $3::text)
         ORDER BY thing.id DESC
         LIMIT $4::integer`,

@@ -186,42 +186,53 @@ export interface PublicEventFilters {
   readonly kind: string | null
   readonly actor: string | null
   readonly placeId: number | null
+  readonly includeDescendants?: boolean
 }
 
-const PUBLIC_EVENT_FILTER = `
+function publicEventFilter(includeDescendants: boolean): string {
+  const numericPlace = (field: string): string => includeDescendants
+    ? `${field} IN (SELECT id FROM selected_places)`
+    : `${field} = $3::integer`
+  const textPlace = (field: string): string => includeDescendants
+    ? `${field} IN (SELECT id::text FROM selected_places)`
+    : `${field} = ($3::integer)::text`
+  return `
   ($1::text IS NULL OR event.kind = $1::text)
   AND ($2::text IS NULL OR event.actor = $2::text)
   AND ($3::integer IS NULL
-    OR event.detail->>'place_id' = ($3::integer)::text
+    OR ${textPlace("event.detail->>'place_id'")}
     OR (event.detail->>'thing_id' ~ '^[0-9]{1,9}$' AND EXISTS (
       SELECT 1 FROM things thing
       WHERE thing.id = (event.detail->>'thing_id')::integer
-        AND thing.place_id = $3::integer AND thing.withdrawn_at IS NULL))
+        AND ${numericPlace('thing.place_id')} AND thing.withdrawn_at IS NULL))
     OR (event.detail->>'note_id' ~ '^[0-9]{1,9}$' AND EXISTS (
       SELECT 1 FROM notes note
       WHERE note.id = (event.detail->>'note_id')::integer
-        AND note.place_id = $3::integer))
-    OR (event.detail->>'asset_type' = 'place' AND event.detail->>'asset_id' = ($3::integer)::text)
+        AND ${numericPlace('note.place_id')}))
+    OR (event.detail->>'asset_type' = 'place' AND ${textPlace("event.detail->>'asset_id'")})
     OR (event.detail->>'asset_type' = 'thing'
       AND event.detail->>'asset_id' ~ '^[0-9]{1,9}$' AND EXISTS (
       SELECT 1 FROM things thing
       WHERE thing.id = (event.detail->>'asset_id')::integer
-        AND thing.place_id = $3::integer AND thing.withdrawn_at IS NULL))
-    OR (event.detail->>'type' = 'place' AND event.detail->>'id' = ($3::integer)::text)
+        AND ${numericPlace('thing.place_id')} AND thing.withdrawn_at IS NULL))
+    OR (event.detail->>'type' = 'place' AND ${textPlace("event.detail->>'id'")})
     OR (event.detail->>'type' = 'thing'
       AND event.detail->>'id' ~ '^[0-9]{1,9}$' AND EXISTS (
       SELECT 1 FROM things thing
       WHERE thing.id = (event.detail->>'id')::integer
-        AND thing.place_id = $3::integer AND thing.withdrawn_at IS NULL))
+        AND ${numericPlace('thing.place_id')} AND thing.withdrawn_at IS NULL))
     OR (event.detail->>'offer_id' ~ '^[0-9]{1,9}$' AND EXISTS (
       SELECT 1 FROM transfer_offers offer
       WHERE offer.id = (event.detail->>'offer_id')::integer
-        AND ((offer.asset_type = 'place' AND offer.asset_id = $3::integer)
+        AND ((offer.asset_type = 'place' AND ${numericPlace('offer.asset_id')})
           OR (offer.asset_type = 'thing' AND EXISTS (
             SELECT 1 FROM things thing
             WHERE thing.id = offer.asset_id
-              AND thing.place_id = $3::integer
+              AND ${numericPlace('thing.place_id')}
               AND thing.withdrawn_at IS NULL))))))`
+}
+
+const PUBLIC_EVENT_FILTER = publicEventFilter(false)
 
 export interface PublicCollectionRows {
   readonly rows: readonly Record<string, unknown>[]
@@ -247,9 +258,19 @@ export async function loadPublicEventCollectionRows(
   filters: PublicEventFilters,
   page: PublicPage,
 ): Promise<Readonly<PublicCollectionRows>> {
+  const includeDescendants = filters.includeDescendants === true
+  const eventFilter = includeDescendants ? publicEventFilter(true) : PUBLIC_EVENT_FILTER
+  const withClause = includeDescendants
+    ? `WITH RECURSIVE selected_places AS (
+       SELECT place.id FROM places place WHERE place.id = $3::integer
+       UNION
+       SELECT child.id FROM places child
+       JOIN selected_places selected ON child.parent_id = selected.id
+     ), totals AS (`
+    : 'WITH totals AS ('
   const rows = await query(
     `/* public:events */
-     WITH totals AS (
+     ${withClause}
        SELECT count(*)::integer AS total_items,
          coalesce(sum(
            octet_length(coalesce(event.detail->>'body', ''))
@@ -257,7 +278,7 @@ export async function loadPublicEventCollectionRows(
            + octet_length(coalesce(event.detail->>'reason', ''))
          ), 0)::bigint AS total_text_bytes
        FROM events event
-       WHERE ${PUBLIC_EVENT_FILTER}
+       WHERE ${eventFilter}
      )
      SELECT page.id, page.at, page.kind, page.actor, page.detail,
        totals.total_items, totals.total_text_bytes
@@ -265,7 +286,7 @@ export async function loadPublicEventCollectionRows(
      LEFT JOIN LATERAL (
        SELECT event.id, event.at, event.kind, event.actor, event.detail
        FROM events event
-       WHERE ${PUBLIC_EVENT_FILTER}
+       WHERE ${eventFilter}
          AND ($4::integer IS NULL OR event.id < $4::integer)
        ORDER BY event.id DESC
        LIMIT $5::integer
