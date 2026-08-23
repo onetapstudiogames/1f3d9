@@ -234,7 +234,7 @@ export async function createSnapshotBundle(input: Readonly<{
       })
     })
     const path = `${className}.ndjson`
-    const bytes = Buffer.from(`${lines.join('\n')}${lines.length === 0 ? '' : '\n'}`, 'utf8')
+    const bytes = Buffer.from(`${lines.join('\n')}\n`, 'utf8')
     fileBytes.set(path, bytes)
     counts[className] = records.length
     files.push(Object.freeze({
@@ -366,7 +366,7 @@ export async function verifySnapshotDirectory(directory: string): Promise<Snapsh
       !CLASS_NAME_RE.test(file.class_name) ||
       file.path !== `${file.class_name}.ndjson` ||
       !Number.isSafeInteger(file.records) || file.records < 0 ||
-      !Number.isSafeInteger(file.bytes) || file.bytes < 0 ||
+      !Number.isSafeInteger(file.bytes) || file.bytes < 1 ||
       !SHA256_RE.test(file.sha256)
     ) throw new Error('manifest contains an invalid file entry')
     const bytes = await readFile(join(directory, file.path))
@@ -375,8 +375,8 @@ export async function verifySnapshotDirectory(directory: string): Promise<Snapsh
       throw new Error(`${file.path} hash or byte count does not match the manifest`)
     }
     const text = bytes.toString('utf8')
-    const lines = text === '' ? [] : text.endsWith('\n') ? text.slice(0, -1).split('\n') : []
-    if (text !== '' && lines.length === 0) throw new Error(`${file.path} must end with LF`)
+    if (!text.endsWith('\n')) throw new Error(`${file.path} must end with LF`)
+    const lines = text === '\n' ? [] : text.slice(0, -1).split('\n')
     if (lines.length !== file.records || manifest.counts[file.class_name] !== lines.length) {
       throw new Error(`${file.path} record count does not match the manifest`)
     }

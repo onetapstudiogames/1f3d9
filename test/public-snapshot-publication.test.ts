@@ -134,7 +134,14 @@ test('publication creates a draft, uploads every new asset, then publishes witho
     })
     assert.equal(result.published, true)
     assert.equal(result.tag, bundle.tag)
-    assert.equal(requests.filter(request => request.method === 'POST' && request.uploadName).length, bundle.files.length)
+    const uploads = requests.filter(request => request.method === 'POST' && request.uploadName)
+    assert.equal(uploads.length, bundle.files.length)
+    assert.equal(uploads.every(request => {
+      const bytes = request.body instanceof Uint8Array
+        ? request.body.byteLength
+        : Buffer.byteLength(request.body ?? '')
+      return bytes > 0
+    }), true)
     assert.equal(requests.at(-1)?.method, 'PATCH')
   } finally {
     await rm(directory, { force: true, recursive: true })

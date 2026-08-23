@@ -355,7 +355,9 @@ them. Credential-shaped output aborts verification; credentials, OAuth data, pri
 flag reports, payment attempts, direct offers, fee credit, later-holder marks, and
 operations data never belong in the artifact.
 
-Each exported class has one deterministically ordered NDJSON file. Canonical JSON keeps
+Each exported class has one deterministically ordered NDJSON file. A class with no
+records is exactly one LF byte so the release host can carry it while its count remains
+zero. Canonical JSON keeps
 string code points unchanged, including Unicode combining forms and embedded line
 endings represented in JSON. Each record has a 16-character lowercase hexadecimal
 SHA-256 prefix for citation; each file and the city root have full 64-character SHA-256

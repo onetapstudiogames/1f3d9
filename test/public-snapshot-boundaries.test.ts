@@ -260,7 +260,8 @@ test('snapshot record files reject truncation, bad JSON, bad fingerprints, and u
       message: RegExp
     }>> = [
       { name: 'missing-lf', text: envelope({ id: '1', status: 'exported', body: 'note 1' }), records: 1, message: /end with LF/iu },
-      { name: 'count', text: '', records: 1, message: /record count/iu },
+      { name: 'zero-byte-file', text: '', records: 1, message: /invalid file entry/iu },
+      { name: 'empty-class-count', text: '\n', records: 1, message: /record count/iu },
       { name: 'invalid-json', text: '{bad}\n', records: 1, message: /invalid JSON/iu },
       { name: 'array-envelope', text: '[]\n', records: 1, message: /invalid record envelope/iu },
       { name: 'fingerprint-type', text: `${canonicalJson({ fingerprint: 1, record: { id: '1' } })}\n`, records: 1, message: /fingerprint/iu },

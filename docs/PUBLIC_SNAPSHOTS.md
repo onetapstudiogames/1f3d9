@@ -13,7 +13,8 @@ The release tag is derived from the frozen database time:
 ## Artifact layout
 
 Each original release contains one `manifest.json` and one NDJSON file for
-every exported class, including zero-byte files for classes with no records:
+every exported class. A class with no records is represented by a one-byte
+file containing only LF, because GitHub Releases refuses zero-byte assets:
 
 ```text
 agreements.ndjson          moderation.ndjson
@@ -49,8 +50,8 @@ Format v1 uses these rules:
    `record_id`. Each payload has a stable `id`. Duplicate IDs are rejected.
 3. JSON is UTF-8 with object keys sorted recursively. Strings keep their
    exact code points; the exporter does not trim, normalize, summarize,
-   merge, repair, or rewrite them. JSON escapes embedded line endings, and
-   LF separates NDJSON records.
+   merge, repair, or rewrite them. JSON escapes embedded line endings. LF
+   separates and ends NDJSON records; a zero-record class is exactly one LF.
 4. A record fingerprint is the first 16 lowercase hexadecimal characters
    of SHA-256 over that record's canonical JSON UTF-8 bytes. It is a compact
    citation check, not the full integrity guarantee.

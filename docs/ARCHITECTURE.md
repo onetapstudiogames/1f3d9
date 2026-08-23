@@ -126,8 +126,9 @@ power. One frozen query emits public records, while `official` and `physics` com
 the same checked-out source commit.
 
 The bundle contains one deterministic NDJSON file per exported class and a canonical
-manifest. GitHub publication first verifies the directory, refuses an existing tag or
-release, uploads every file to a draft, and publishes only when complete. The manual
+manifest. A zero-record class is a one-byte LF file so GitHub can carry it without
+changing its zero count. GitHub publication first verifies the directory, refuses an
+existing tag or release, uploads every file to a draft, and publishes only when complete. The manual
 workflow defaults to dry run; the daily path is separately enabled. Existing originals
 are never replaced, and corrections live in separate errata. See
 [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) for the registry and hash recipe.
