@@ -16,19 +16,20 @@ import {
   type DatabaseIdentity,
 } from './database-target.ts'
 import {
-  BOB_COFFEE_REVIEW_REASON,
+  BOB_COFFEE_REPAIR_REASON,
   BOB_HANDLE,
   BOB_REPAIR_APPLY_ACKNOWLEDGEMENT,
   BOB_REPAIR_CREDIT_REASON,
   BOB_REPAIR_CREDIT_SOURCE_KEY,
+  BOB_REPAIR_EXPIRY_REASON,
   BOB_REPAIR_EXPECTATIONS,
   BOB_RESIDENT_ID,
+  BOB_THEBLUEAI_REPAIR_REASON,
   BobPaymentRepairAbortError,
   EXPECTED_PAYER,
   EXPECTED_RECIPIENT,
   EXPECTED_TOKEN,
   FOUNDER_RESIDENT_ID,
-  ONE_USDC,
   ONE_USDC_UNITS,
   abort,
   boolean,
@@ -51,11 +52,13 @@ import {
 } from './bob-payment-repair-model.ts'
 
 export {
-  BOB_COFFEE_REVIEW_REASON,
+  BOB_COFFEE_REPAIR_REASON,
   BOB_REPAIR_APPLY_ACKNOWLEDGEMENT,
   BOB_REPAIR_CREDIT_REASON,
   BOB_REPAIR_CREDIT_SOURCE_KEY,
+  BOB_REPAIR_EXPIRY_REASON,
   BOB_REPAIR_EXPECTATIONS,
+  BOB_THEBLUEAI_REPAIR_REASON,
   BobPaymentRepairAbortError,
 } from './bob-payment-repair-model.ts'
 
@@ -120,34 +123,22 @@ function observedRepairTimestamp(row: QueryRow, expected: AttemptExpectation): s
   return updatedAt
 }
 
-function validateRepairableLease(row: QueryRow, expected: AttemptExpectation): void {
-  const hasOwner = row.lease_owner != null
-  const hasExpiry = row.lease_expires_at != null
-  if (!hasOwner && !hasExpiry) return
-  const expiry = iso(row.lease_expires_at)
-  const databaseNow = iso(row.database_now)
-  if (
-    hasOwner !== hasExpiry
-    || expiry == null
-    || databaseNow == null
-    || Date.parse(expiry) > Date.parse(databaseNow)
-  ) abort(`${expected.attemptId} has an active or malformed recovery lease`)
-}
-
-function validatePendingAttempt(row: QueryRow, expected: AttemptExpectation): string {
+function validateExpiredAttempt(row: QueryRow, expected: AttemptExpectation): string {
   validateAttemptImmutable(row, expected)
-  validateRepairableLease(row, expected)
+  if (row.lease_owner != null || row.lease_expires_at != null) {
+    abort(`${expected.attemptId} expired state retained a recovery lease`)
+  }
   const updatedAt = observedRepairTimestamp(row, expected)
   const finalityIsEmpty = row.finalized_block_number == null
     && row.finalized_block_hash == null
     && row.finalized_block_time == null
     && row.finalized_at == null
   if (
-    text(row, 'status') !== 'payment_pending'
+    text(row, 'status') !== 'expired'
     || !finalityIsEmpty
-    || row.invalid_reason != null
+    || text(row, 'invalid_reason') !== BOB_REPAIR_EXPIRY_REASON
     || row.completed_at != null
-  ) abort(`${expected.attemptId} pending state or stored finality changed`)
+  ) abort(`${expected.attemptId} expired state or stored finality changed`)
   return updatedAt
 }
 
@@ -180,23 +171,6 @@ function validateChainEvidence(
   ) abort(`${expected.txHash} canonical transfer facts changed`)
 }
 
-function rowsForAttempt(
-  rows: readonly QueryRow[],
-  expected: AttemptExpectation,
-): readonly QueryRow[] {
-  return rows.filter(row => (
-    text(row, 'payment_attempt_id') === expected.attemptId
-    || text(row, 'tx_hash')?.toLowerCase() === expected.txHash
-  ))
-}
-
-function rowsForTransaction(
-  rows: readonly QueryRow[],
-  expected: AttemptExpectation,
-): readonly QueryRow[] {
-  return rows.filter(row => text(row, 'tx_hash')?.toLowerCase() === expected.txHash)
-}
-
 function matchingNamePlaces(snapshot: BobRepairSnapshot, name: string): readonly QueryRow[] {
   return snapshot.places.filter(row => text(row, 'name')?.toLowerCase() === name.toLowerCase())
 }
@@ -219,8 +193,8 @@ function validateInitialState(snapshot: BobRepairSnapshot): Readonly<{
     snapshot.attempts.filter(row => text(row, 'public_id') === BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId),
     'TheBlueAI attempt',
   )
-  validatePendingAttempt(coffee, BOB_REPAIR_EXPECTATIONS.coffee)
-  validatePendingAttempt(theBlueAI, BOB_REPAIR_EXPECTATIONS.theBlueAI)
+  validateExpiredAttempt(coffee, BOB_REPAIR_EXPECTATIONS.coffee)
+  validateExpiredAttempt(theBlueAI, BOB_REPAIR_EXPECTATIONS.theBlueAI)
   exactRow(snapshot.worldRoots, 'world root')
   const root = snapshot.worldRoots[0]!
   if (
@@ -233,28 +207,12 @@ function validateInitialState(snapshot: BobRepairSnapshot): Readonly<{
   if (snapshot.fees.length !== 0) abort('one of Bob\'s transaction hashes already has a fee row')
   if (snapshot.places.length !== 0) abort('TheBlueAI or coffee-shop is no longer available')
   if (snapshot.credits.length !== 0) abort('the deterministic founder credit source is already occupied')
+  if (snapshot.events.length !== 0) abort('the deterministic repair event keys are already occupied')
   return Object.freeze({
     worldRootId: integer(root, 'id')!,
     coffee,
     theBlueAI,
   })
-}
-
-function exactPaymentUse(row: QueryRow, expected: AttemptExpectation): boolean {
-  return text(row, 'tx_hash')?.toLowerCase() === expected.txHash
-    && text(row, 'payment_attempt_id') === expected.attemptId
-    && integer(row, 'actor_id') === BOB_RESIDENT_ID
-    && text(row, 'purpose') === 'frontier'
-    && normalizedWallet(row.payer_wallet) === EXPECTED_PAYER
-    && normalizedWallet(row.payee_wallet) === EXPECTED_RECIPIENT
-    && text(row, 'amount_usdc') === ONE_USDC
-}
-
-function exactFee(row: QueryRow, expected: AttemptExpectation): boolean {
-  return integer(row, 'resident_id') === BOB_RESIDENT_ID
-    && text(row, 'purpose') === 'frontier'
-    && text(row, 'amount_usdc') === ONE_USDC
-    && text(row, 'tx_hash')?.toLowerCase() === expected.txHash
 }
 
 function exactTheBlueAIPlace(row: QueryRow, rootId: number): boolean {
@@ -276,6 +234,31 @@ function exactFounderCredit(row: QueryRow): boolean {
     && integer(row, 'founder_id') === FOUNDER_RESIDENT_ID
     && text(row, 'source_key') === BOB_REPAIR_CREDIT_SOURCE_KEY
     && text(row, 'reason') === BOB_REPAIR_CREDIT_REASON
+}
+
+function repairEventKey(expected: AttemptExpectation): string {
+  return `bob-payment-repair:${expected.attemptId}`
+}
+
+function exactRepairEvent(
+  row: QueryRow,
+  expected: AttemptExpectation,
+  outcome: string,
+  extras: Readonly<Record<string, unknown>> = {},
+): boolean {
+  const detail = row.detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return false
+  const record = detail as Readonly<Record<string, unknown>>
+  return text(row, 'kind') === 'payment_repair'
+    && text(row, 'actor') === 'host'
+    && text(record, 'repair_key') === repairEventKey(expected)
+    && text(record, 'attempt_id') === expected.attemptId
+    && text(record, 'transaction')?.toLowerCase() === expected.txHash
+    && integer(record, 'resident_id') === BOB_RESIDENT_ID
+    && text(record, 'source_status') === 'expired'
+    && text(record, 'payment_status') === 'founder_review'
+    && text(record, 'outcome') === outcome
+    && Object.entries(extras).every(([key, value]) => record[key] === value)
 }
 
 function validateFinalState(snapshot: BobRepairSnapshot): void {
@@ -312,25 +295,16 @@ function validateFinalState(snapshot: BobRepairSnapshot): void {
   validateStoredFinality(theBlueAI, BOB_REPAIR_EXPECTATIONS.theBlueAI)
   if (
     text(coffee, 'status') !== 'founder_review'
-    || text(coffee, 'invalid_reason') !== BOB_COFFEE_REVIEW_REASON
+    || text(coffee, 'invalid_reason') !== BOB_REPAIR_EXPIRY_REASON
     || coffee.completed_at != null
   ) abort('coffee-shop is not the exact closed founder-review outcome')
   if (
-    text(theBlueAI, 'status') !== 'completed'
-    || theBlueAI.invalid_reason != null
-    || iso(theBlueAI.completed_at) == null
-  ) abort('TheBlueAI attempt is not the exact completed outcome')
-
-  const coffeeUses = rowsForAttempt(snapshot.paymentUses, BOB_REPAIR_EXPECTATIONS.coffee)
-  const blueUses = rowsForAttempt(snapshot.paymentUses, BOB_REPAIR_EXPECTATIONS.theBlueAI)
-  if (coffeeUses.length !== 0 || blueUses.length !== 1 || !exactPaymentUse(blueUses[0]!, BOB_REPAIR_EXPECTATIONS.theBlueAI)) {
-    abort('payment use history is not the exact approved outcome')
-  }
-  const coffeeFees = rowsForTransaction(snapshot.fees, BOB_REPAIR_EXPECTATIONS.coffee)
-  const blueFees = rowsForTransaction(snapshot.fees, BOB_REPAIR_EXPECTATIONS.theBlueAI)
-  if (coffeeFees.length !== 0 || blueFees.length !== 1 || !exactFee(blueFees[0]!, BOB_REPAIR_EXPECTATIONS.theBlueAI)) {
-    abort('fee history is not the exact approved outcome')
-  }
+    text(theBlueAI, 'status') !== 'founder_review'
+    || text(theBlueAI, 'invalid_reason') !== BOB_REPAIR_EXPIRY_REASON
+    || theBlueAI.completed_at != null
+  ) abort('TheBlueAI attempt is not the exact founder-review correction')
+  if (snapshot.paymentUses.length !== 0) abort('payment use history is not the exact approved outcome')
+  if (snapshot.fees.length !== 0) abort('fee history is not the exact approved outcome')
   const coffeePlaces = matchingNamePlaces(snapshot, 'coffee-shop')
   const bluePlaces = matchingNamePlaces(snapshot, 'TheBlueAI')
   if (coffeePlaces.length !== 0 || bluePlaces.length !== 1 || !exactTheBlueAIPlace(bluePlaces[0]!, rootId)) {
@@ -339,6 +313,28 @@ function validateFinalState(snapshot: BobRepairSnapshot): void {
   if (snapshot.credits.length !== 1 || !exactFounderCredit(snapshot.credits[0]!)) {
     abort('founder credit history is not the exact approved outcome')
   }
+  if (snapshot.events.length !== 2) abort('payment repair event history is not the exact approved outcome')
+  const coffeeEvent = snapshot.events.find(row => {
+    const detail = row.detail
+    return detail && typeof detail === 'object' && !Array.isArray(detail)
+      && text(detail as QueryRow, 'attempt_id') === BOB_REPAIR_EXPECTATIONS.coffee.attemptId
+  })
+  const blueEvent = snapshot.events.find(row => {
+    const detail = row.detail
+    return detail && typeof detail === 'object' && !Array.isArray(detail)
+      && text(detail as QueryRow, 'attempt_id') === BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId
+  })
+  if (
+    !coffeeEvent
+    || !blueEvent
+    || !exactRepairEvent(coffeeEvent, BOB_REPAIR_EXPECTATIONS.coffee, BOB_COFFEE_REPAIR_REASON)
+    || !exactRepairEvent(
+      blueEvent,
+      BOB_REPAIR_EXPECTATIONS.theBlueAI,
+      BOB_THEBLUEAI_REPAIR_REASON,
+      { place_name: 'TheBlueAI', place_id: integer(bluePlaces[0]!, 'id') },
+    )
+  ) abort('payment repair event history is not the exact approved outcome')
 }
 
 function hasFinalStateSignal(snapshot: BobRepairSnapshot): boolean {
@@ -404,6 +400,7 @@ export function buildBobPaymentRepairPlan(
     actions: Object.freeze([
       Object.freeze({
         kind: 'complete_theblueai',
+        source_state: 'expired',
         attempt_id: BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId,
         transaction: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
         resident_id: BOB_RESIDENT_ID,
@@ -420,11 +417,12 @@ export function buildBobPaymentRepairPlan(
       }),
       Object.freeze({
         kind: 'close_coffee_probe',
+        source_state: 'expired',
         attempt_id: BOB_REPAIR_EXPECTATIONS.coffee.attemptId,
         transaction: BOB_REPAIR_EXPECTATIONS.coffee.txHash,
         resident_id: BOB_RESIDENT_ID,
         terminal_state: 'founder_review',
-        reason: BOB_COFFEE_REVIEW_REASON,
+        reason: BOB_COFFEE_REPAIR_REASON,
         guard: guardedPayment(BOB_REPAIR_EXPECTATIONS.coffee, initial.coffee),
       }),
       Object.freeze({
@@ -562,6 +560,10 @@ export async function readBobRepairSnapshot(
     BOB_REPAIR_EXPECTATIONS.coffee.txHash,
     BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
   ]
+  const repairKeys = [
+    repairEventKey(BOB_REPAIR_EXPECTATIONS.coffee),
+    repairEventKey(BOB_REPAIR_EXPECTATIONS.theBlueAI),
+  ]
 
   const residents = await queryRows(database, `
     /* bob-payment-repair:residents */
@@ -581,8 +583,8 @@ export async function readBobRepairSnapshot(
       attempt.recovery_started_at, attempt.recovery_deadline_at, attempt.tx_hash,
       attempt.finalized_block_number::text AS finalized_block_number,
       attempt.finalized_block_hash, attempt.finalized_block_time, attempt.finalized_at,
-      attempt.invalid_reason, attempt.updated_at, attempt.completed_at
-      , clock_timestamp() AS database_now
+      attempt.invalid_reason, attempt.updated_at, attempt.completed_at,
+      clock_timestamp() AS database_now
     FROM payment_attempts attempt
     LEFT JOIN residents resident ON resident.id = attempt.actor_id
     WHERE attempt.public_id = ANY($1::text[])
@@ -632,6 +634,18 @@ export async function readBobRepairSnapshot(
     ORDER BY id
     ${historyLock}
   `, [BOB_REPAIR_CREDIT_SOURCE_KEY])
+  const events = await queryRows(database, `
+    /* bob-payment-repair:events */
+    SELECT kind, actor, detail
+    FROM events
+    WHERE kind = 'payment_repair'
+      AND (
+        detail->>'attempt_id' = ANY($1::text[])
+        OR detail->>'repair_key' = ANY($2::text[])
+      )
+    ORDER BY id
+    ${historyLock}
+  `, [attemptIds, repairKeys])
 
   return Object.freeze({
     residents: Object.freeze([...residents]),
@@ -641,6 +655,7 @@ export async function readBobRepairSnapshot(
     worldRoots: Object.freeze([...worldRoots]),
     places: Object.freeze([...places]),
     credits: Object.freeze([...credits]),
+    events: Object.freeze([...events]),
   })
 }
 

@@ -266,9 +266,17 @@ function mergedServices(
 }
 
 function logRecoveryFailure(attempt: PaymentRecoveryAttempt, error: unknown): void {
-  const detail = error instanceof Error
+  const rawDetail = error instanceof Error
     ? `${error.name}: ${error.message}`
     : String(error)
+  const detail = rawDetail
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/giu, '[redacted database URL]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
+    .replace(/1f3d9_sk_[A-Za-z0-9_-]+/giu, '[redacted resident key]')
+    .slice(0, 400)
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '').slice(0, 32)
+    : ''
   console.error('payment recovery attempt failed', {
     attemptId: attempt.publicId,
     actorId: attempt.actorId,
@@ -276,6 +284,7 @@ function logRecoveryFailure(attempt: PaymentRecoveryAttempt, error: unknown): vo
     method: attempt.method,
     status: attempt.status,
     recoveryDeadlineAt: attempt.recoveryDeadlineAt,
+    errorCode: code || null,
     error: detail,
   })
 }
