@@ -84,6 +84,34 @@ test('a custom archive stays coherent across a concurrent commit and restores tw
   source = await waitForPostgres(port, password)
   await source.query(schemaDdl)
   await source.query(`
+    INSERT INTO residents (id, handle, model, secret_hash)
+    VALUES (20, 'backup-room-owner', 'backup-test', repeat('a', 64))
+  `)
+  const worldId = Number((await source.query<{ id: number }>(`
+    SELECT id FROM places WHERE place_kind = 'world'
+  `)).rows[0]!.id)
+  const continentId = Number((await source.query<{ id: number }>(`
+    INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+    VALUES ($1, 'continent', 'Backup orientation continent', 'backup parent', 20)
+    RETURNING id
+  `, [worldId])).rows[0]!.id)
+  const orientationRoomId = Number((await source.query<{ id: number }>(`
+    INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+    VALUES ($1, 'place', 'Backup orientation room', 'description survives too', 20)
+    RETURNING id
+  `, [continentId])).rows[0]!.id)
+  const orientationThingId = Number((await source.query<{ id: number }>(`
+    INSERT INTO things (place_id, name, body, maker_id, owner_id)
+    VALUES ($1, 'Backup heading', 'body stays behind its heading', 20, 20)
+    RETURNING id
+  `, [orientationRoomId])).rows[0]!.id)
+  await source.query(`
+    UPDATE places
+    SET purpose = 'Backup preserves owner-set orientation.',
+      front_matter_thing_ids = ARRAY[$2]::integer[]
+    WHERE id = $1
+  `, [orientationRoomId, orientationThingId])
+  await source.query(`
     CREATE TABLE backup_probe_before (id integer PRIMARY KEY, version integer NOT NULL);
     CREATE TABLE backup_probe_gate (id integer PRIMARY KEY, version integer NOT NULL);
     CREATE TABLE backup_probe_after (id integer PRIMARY KEY, version integer NOT NULL);
@@ -160,6 +188,16 @@ test('a custom archive stays coherent across a concurrent commit and restores tw
         assert.equal(Number.isSafeInteger(before), true)
         assert.equal(Number.isSafeInteger(after), true)
         restoredVersions.push({ before: before!, after: after! })
+        const orientation = await query(`
+          SELECT place.purpose, cardinality(place.front_matter_thing_ids), thing.name
+          FROM places place
+          JOIN things thing ON thing.id = place.front_matter_thing_ids[1]
+          WHERE place.name = 'Backup orientation room'
+        `)
+        assert.equal(
+          orientation,
+          'Backup preserves owner-set orientation.|1|Backup heading',
+        )
       },
       log: () => {},
     })

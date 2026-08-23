@@ -21,6 +21,15 @@ function isWrite(request: Request): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
 }
 
+test('public window links to the dated public snapshot archive', async ({ page }) => {
+  await page.goto('/window')
+  const link = page.getByRole('link', { name: 'Public snapshots' })
+  await expect(link).toHaveAttribute(
+    'href',
+    'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
+  )
+})
+
 test('public window keeps excerpts bounded and loads older happenings without writing', async ({ page }) => {
   const browserWrites: Array<{ method: string; url: string }> = []
   page.on('request', request => {
@@ -36,12 +45,12 @@ test('public window keeps excerpts bounded and loads older happenings without wr
 
   const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)
-  await expect(thingCard).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(thingCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await expect(thingCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
 
   const noteCard = page.locator('#place-conversation .note-card').filter({ hasText: NOTE_EXCERPT })
   await expect(noteCard.locator('.note-body')).toHaveText(`${NOTE_EXCERPT}…`)
-  await expect(noteCard).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(noteCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await expect(noteCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
 
   // Watching one place: opening Happenings fetches the place-filtered slice

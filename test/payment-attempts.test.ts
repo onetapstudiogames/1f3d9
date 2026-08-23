@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   PaymentAttemptConflictError,
+  acquireDueSettlementLease,
   acquireSettlementLease,
+  appendLateFinalityEvidence,
   bindPaymentEvidence,
   canonicalPaymentRequest,
   completePaymentAttempt,
@@ -11,9 +13,13 @@ import {
   findPaymentAttempt,
   findReplayableTargetPaymentAttempt,
   getPaymentAttempt,
+  getPaymentAttemptRecord,
   invalidatePaymentAttempt,
+  listRecoverablePaymentAttempts,
+  markPaymentAttemptFounderReview,
   markPaymentAttemptNeedsReview,
   releaseSettlementLease,
+  toPrivatePaymentAttempt,
   toPublicPaymentAttempt,
   x402NonceKey,
   type PaymentAttemptInput,
@@ -88,6 +94,7 @@ function row(overrides: Partial<PaymentAttemptRecord> = {}): PaymentAttemptRecor
     offerId: 91,
     assetType: 'thing',
     assetId: 42,
+    request: { offer_id: 91, nested: { a: 1, b: 2 } },
     requestHash: canonical.hash,
     method: 'x402',
     network: 'base',
@@ -105,6 +112,8 @@ function row(overrides: Partial<PaymentAttemptRecord> = {}): PaymentAttemptRecor
     status: 'settling',
     leaseOwner: null,
     leaseExpiresAt: null,
+    recoveryStartedAt: null,
+    recoveryDeadlineAt: null,
     txHash: null,
     finalizedBlockNumber: null,
     finalizedBlockHash: null,
@@ -184,6 +193,11 @@ test('headerless recovery is actor-, target-, and immutable-request-bound', asyn
     existing.publicId,
   )
   assert.deepEqual(database.calls[0]?.params, [7, 'direct_sale', 'direct_sale:offer:91:v3'])
+  assert.match(database.calls[0]?.text ?? '', /WITH\s+closed_due_target\s+AS/iu)
+  assert.match(
+    database.calls[0]?.text ?? '',
+    /operation\s+IN\s*\(\s*'frontier'\s*,\s*'kind_invention'\s*,\s*'kind_revision'\s*\)/iu,
+  )
   await assert.rejects(
     findReplayableTargetPaymentAttempt(database, {
       ...recovery,
@@ -202,6 +216,12 @@ test('create-or-read returns an exact live attempt without another insert', asyn
   assert.equal(result.disposition, 'existing')
   assert.equal(result.attempt.publicId, existing.publicId)
   assert.equal(database.calls.length, 1)
+  assert.match(database.calls[0]?.text ?? '', /WITH\s+closed_due_target\s+AS/iu)
+  assert.match(database.calls[0]?.text ?? '', /recovery_deadline_at\s*<=\s*clock_timestamp\(\)/iu)
+  assert.match(
+    database.calls[0]?.text ?? '',
+    /operation\s+IN\s*\(\s*'frontier'\s*,\s*'kind_invention'\s*,\s*'kind_revision'\s*\)/iu,
+  )
   assert.match(database.calls[0]?.text ?? '', /status\s+IN\s*\(\s*'settling'\s*,\s*'payment_pending'\s*,\s*'needs_review'\s*,\s*'completed'/iu)
 })
 
@@ -322,6 +342,51 @@ test('settlement leases use an atomic compare-and-swap and do not expose a losin
   assert.deepEqual(loser, { acquired: false, attempt: row({ leaseOwner: 'lease_winner' }) })
 })
 
+test('due-only settlement leases use the database deadline and read current state on a miss', async () => {
+  const due = row({
+    status: 'payment_pending',
+    txHash: TX,
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+    leaseOwner: 'due_worker',
+    leaseExpiresAt: '2026-08-16T14:00:30.000Z',
+  })
+  const winnerDatabase = new QueuedDatabase([due])
+
+  const winner = await acquireDueSettlementLease(
+    winnerDatabase,
+    { publicId: due.publicId, actorId: due.actorId, leaseMilliseconds: 30_000 },
+    () => 'due_worker',
+  )
+
+  assert.equal(winner.acquired, true)
+  assert.match(winnerDatabase.calls[0]?.text ?? '', /payment-attempts:lease-due/iu)
+  assert.match(
+    winnerDatabase.calls[0]?.text ?? '',
+    /recovery_deadline_at\s+IS\s+NOT\s+NULL[\s\S]*recovery_deadline_at\s*<=\s*clock_timestamp\(\)/iu,
+  )
+  assert.match(
+    winnerDatabase.calls[0]?.text ?? '',
+    /lease_expires_at\s+IS\s+NULL\s+OR\s+lease_expires_at\s*<=\s*clock_timestamp\(\)/iu,
+  )
+
+  const beforeDeadline = row({
+    status: 'payment_pending',
+    txHash: TX,
+    recoveryStartedAt: '2026-08-16T12:00:00.001Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.001Z',
+  })
+  const loserDatabase = new QueuedDatabase([], [beforeDeadline])
+  const loser = await acquireDueSettlementLease(
+    loserDatabase,
+    { publicId: beforeDeadline.publicId, actorId: beforeDeadline.actorId, leaseMilliseconds: 30_000 },
+    () => 'losing_worker',
+  )
+  assert.equal(loser.acquired, false)
+  assert.equal(loser.attempt?.recoveryDeadlineAt, '2026-08-16T14:00:00.001Z')
+  assert.match(loserDatabase.calls[1]?.text ?? '', /payment-attempts:lease-due-read/iu)
+})
+
 test('a pending or pre-settlement retry releases only its own lease', async () => {
   const pending = row({ status: 'payment_pending', leaseOwner: null, leaseExpiresAt: null })
   const database = new QueuedDatabase([pending])
@@ -365,6 +430,8 @@ test('transaction and finality evidence bind once under the lease', async () => 
   assert.match(database.calls[0]?.text ?? '', /tx_hash\s+IS\s+NULL\s+OR\s+tx_hash\s*=\s*\$\d+/iu)
   assert.match(database.calls[0]?.text ?? '', /finalized_block_hash\s+IS\s+NULL\s+OR\s+finalized_block_hash\s*=\s*\$\d+/iu)
   assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*\$\d+/iu)
+  assert.match(database.calls[0]?.text ?? '', /recovery_started_at\s*=\s*coalesce\s*\(\s*recovery_started_at/iu)
+  assert.match(database.calls[0]?.text ?? '', /interval\s+'2 hours'/iu)
 })
 
 test('facilitator response bytes survive evidence binding and durable row reload', async () => {
@@ -546,7 +613,7 @@ test('completion rejects non-object, mismatched, or oversized exact response bod
   }
 })
 
-test('invalid and expired are forward-only terminal transitions', async () => {
+test('invalid and deadline expiry are forward-only terminal transitions', async () => {
   const invalid = row({ status: 'invalid', invalidReason: 'authorization did not settle' })
   const invalidDb = new QueuedDatabase([invalid])
   assert.equal((await invalidatePaymentAttempt(invalidDb, {
@@ -563,7 +630,8 @@ test('invalid and expired are forward-only terminal transitions', async () => {
     leaseOwner: 'lease_winner',
     reason: 'authorization expired unused',
   })).status, 'expired')
-  assert.match(expiredDb.calls[0]?.text ?? '', /status\s*=\s*'settling'/iu)
+  assert.match(expiredDb.calls[0]?.text ?? '', /status\s+IN\s*\(\s*'settling'\s*,\s*'payment_pending'\s*,\s*'needs_review'\s*\)/iu)
+  assert.match(expiredDb.calls[0]?.text ?? '', /recovery_deadline_at\s*<=\s*clock_timestamp\(\)/iu)
 
   const completed = row({ status: 'completed' })
   const blockedDb = new QueuedDatabase([], [completed])
@@ -593,6 +661,88 @@ test('ambiguous settlement becomes durable review and never asks for another pay
   assert.equal(toPublicPaymentAttempt(result).do_not_pay_again, true)
   assert.match(database.calls[0]?.text ?? '', /status\s*=\s*'needs_review'/iu)
   assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*NULL/iu)
+  assert.match(database.calls[0]?.text ?? '', /recovery_started_at\s*=\s*coalesce\s*\(\s*recovery_started_at/iu)
+})
+
+test('bounded recovery scans are ordered, lease-aware, and reject unbounded limits', async () => {
+  const due = row({
+    status: 'payment_pending',
+    txHash: TX,
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+  })
+  const database = new QueuedDatabase([due])
+
+  const attempts = await listRecoverablePaymentAttempts(database, { limit: 25 })
+
+  assert.equal(attempts[0]?.publicId, due.publicId)
+  assert.deepEqual(database.calls[0]?.params, [25])
+  assert.match(database.calls[0]?.text ?? '', /status\s+IN\s*\(\s*'settling'\s*,\s*'payment_pending'\s*,\s*'needs_review'\s*\)/iu)
+  assert.match(database.calls[0]?.text ?? '', /lease_expires_at\s+IS\s+NULL\s+OR\s+lease_expires_at\s*<=\s*clock_timestamp\(\)/iu)
+  assert.match(database.calls[0]?.text ?? '', /ORDER\s+BY\s+recovery_deadline_at[\s\S]*updated_at[\s\S]*public_id/iu)
+  await assert.rejects(
+    listRecoverablePaymentAttempts(new QueuedDatabase(), { limit: 101 }),
+    /limit/iu,
+  )
+})
+
+test('a leased live attempt can become terminal founder review without a domain effect', async () => {
+  const review = row({
+    status: 'founder_review',
+    txHash: TX,
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+    invalidReason: 'final payment disposition needs founder review',
+  })
+  const database = new QueuedDatabase([review])
+
+  const result = await markPaymentAttemptFounderReview(database, {
+    publicId: review.publicId,
+    leaseOwner: 'lease_winner',
+    reason: 'final payment disposition needs founder review',
+  })
+
+  assert.equal(result.status, 'founder_review')
+  assert.match(database.calls[0]?.text ?? '', /status\s*=\s*'founder_review'/iu)
+  assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*NULL/iu)
+  assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*\$2/iu)
+})
+
+test('late finalized evidence is atomically appended only from expired into founder review', async () => {
+  const late = row({
+    status: 'founder_review',
+    txHash: TX,
+    finalizedBlockNumber: 22_000_010n,
+    finalizedBlockHash: BLOCK_HASH,
+    finalizedBlockTime: '2026-08-16T14:00:01.000Z',
+    finalizedAt: '2026-08-16T14:01:00.000Z',
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+    invalidReason: 'automatic recovery deadline reached',
+  })
+  const database = new QueuedDatabase([late])
+
+  const result = await appendLateFinalityEvidence(database, {
+    publicId: late.publicId,
+    txHash: TX,
+    finality: {
+      blockNumber: 22_000_010n,
+      blockHash: BLOCK_HASH,
+      blockTime: '2026-08-16T14:00:01.000Z',
+      finalizedAt: '2026-08-16T14:01:00.000Z',
+    },
+    reason: 'matching payment finalized after automatic recovery ended',
+  })
+
+  assert.equal(result.status, 'founder_review')
+  assert.match(database.calls[0]?.text ?? '', /status\s*=\s*'founder_review'/iu)
+  assert.match(database.calls[0]?.text ?? '', /status\s*=\s*'expired'/iu)
+  assert.match(database.calls[0]?.text ?? '', /tx_hash\s*=\s*coalesce\s*\(\s*tx_hash\s*,\s*lower/iu)
+  assert.match(database.calls[0]?.text ?? '', /invalid_reason\s*=\s*coalesce\s*\(\s*invalid_reason\s*,\s*\$7\s*\)/iu)
+  assert.equal(database.calls[0]?.params[6], 'matching payment finalized after automatic recovery ended')
+  assert.match(database.calls[0]?.text ?? '', /tx_hash\s*=\s*lower\s*\(\s*\$2\s*\)/iu)
+  assert.match(database.calls[0]?.text ?? '', /finalized_block_number\s+IS\s+NULL/iu)
+  assert.match(database.calls[0]?.text ?? '', /recovery_deadline_at\s*<=\s*clock_timestamp\(\)/iu)
 })
 
 test('public pending/completed views say not to pay again and omit payment secrets', () => {
@@ -624,10 +774,99 @@ test('public pending/completed views say not to pay again and omit payment secre
 
   assert.equal(toPublicPaymentAttempt(row({ status: 'payment_pending' })).do_not_pay_again, true)
   assert.equal(toPublicPaymentAttempt(row({ status: 'expired' })).do_not_pay_again, false)
+  assert.equal(toPublicPaymentAttempt(row({
+    status: 'expired',
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+  })).do_not_pay_again, true)
+})
+
+test('expired recovered x402 custody says not to repay and remains explicitly recheckable without a hash', () => {
+  const recovered = toPrivatePaymentAttempt(row({
+    status: 'expired',
+    txHash: null,
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+  }))
+  assert.equal(recovered.do_not_pay_again, true)
+  assert.equal(recovered.next_action, 'recheck_for_late_finality')
+
+  const legacyUnused = toPrivatePaymentAttempt(row({
+    status: 'expired',
+    method: 'x402',
+    txHash: null,
+    recoveryStartedAt: null,
+    recoveryDeadlineAt: null,
+  }))
+  assert.equal(legacyUnused.do_not_pay_again, false)
+  assert.equal(legacyUnused.next_action, 'closed')
+})
+
+test('private attempt serialization exposes only allowlisted recovery and bound-request facts', () => {
+  const storedRequest = {
+    offer_id: 91,
+    buyer_wallet: PAYER,
+    seller_wallet: PAYEE,
+    price_usdc: 2,
+    asset_type: 'thing',
+    asset_id: 42,
+    authorization: { signature: 'secret' },
+  }
+  const secretRow = {
+    ...row({
+      status: 'payment_pending',
+      request: storedRequest,
+      requestHash: canonicalPaymentRequest(storedRequest).hash,
+      txHash: TX,
+      recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+      recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+    }),
+    request_json: { authorization: { signature: 'secret' } },
+    paymentResponseHeader: FACILITATOR_RESPONSE_HEADER,
+    x402_payload_digest: '66'.repeat(32),
+    lease_owner: 'resident-data-that-must-not-leak',
+  }
+
+  const privateView = toPrivatePaymentAttempt(secretRow)
+  assert.deepEqual(privateView, {
+    id: 'pay_existing_0001',
+    state: 'payment_pending',
+    operation: 'direct_sale',
+    method: 'x402',
+    target: 'direct_sale:offer:91:v3',
+    request: {
+      offer_id: 91,
+      buyer_wallet: PAYER,
+      seller_wallet: PAYEE,
+      price_usdc: 2,
+      asset_type: 'thing',
+      asset_id: 42,
+    },
+    result: null,
+    transaction: TX,
+    recovery_started_at: '2026-08-16T12:00:00.000Z',
+    recovery_deadline_at: '2026-08-16T14:00:00.000Z',
+    do_not_pay_again: true,
+    network: 'base',
+    token: USDC,
+    recipient: PAYEE,
+    amount_units: '2000000',
+    next_action: 'wait_or_recheck',
+  })
+  assert.doesNotMatch(
+    JSON.stringify(privateView),
+    /authorization|signature|payload_digest|nonce|facilitator|lease_owner|resident-data/iu,
+  )
 })
 
 test('result retrieval is actor-bound and returns the durable public representation', async () => {
-  const completed = row({ status: 'completed', responseStatus: 201, response: { ok: true } })
+  const completed = row({
+    status: 'completed',
+    responseStatus: 201,
+    response: { ok: true },
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+  })
   const database = new QueuedDatabase([completed])
 
   const result = await getPaymentAttempt(database, {
@@ -636,9 +875,41 @@ test('result retrieval is actor-bound and returns the durable public representat
   })
 
   assert.equal(result?.id, completed.publicId)
-  assert.equal(result?.response_status, 201)
+  assert.equal(result?.state, 'completed')
+  assert.equal(result?.next_action, 'complete')
   assert.match(database.calls[0]?.text ?? '', /public_id\s*=\s*\$1[\s\S]*actor_id\s*=\s*\$2/iu)
   assert.deepEqual(database.calls[0]?.params, [completed.publicId, completed.actorId])
+})
+
+test('owner-bound record lookup returns strict stored request and timing facts', async () => {
+  const pending = row({
+    status: 'payment_pending',
+    txHash: TX,
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+  })
+  const database = new QueuedDatabase([pending])
+
+  const result = await getPaymentAttemptRecord(database, {
+    publicId: pending.publicId,
+    actorId: pending.actorId,
+  })
+
+  assert.deepEqual(result?.request, { offer_id: 91, nested: { a: 1, b: 2 } })
+  assert.equal(result?.recoveryStartedAt, '2026-08-16T12:00:00.000Z')
+  assert.equal(result?.recoveryDeadlineAt, '2026-08-16T14:00:00.000Z')
+  assert.match(database.calls[0]?.text ?? '', /public_id\s*=\s*\$1[\s\S]*actor_id\s*=\s*\$2/iu)
+
+  await assert.rejects(
+    getPaymentAttemptRecord(new QueuedDatabase([{
+      ...pending,
+      recoveryDeadlineAt: '2026-08-16T14:00:00.001Z',
+    }]), {
+      publicId: pending.publicId,
+      actorId: pending.actorId,
+    }),
+    /recovery window/iu,
+  )
 })
 
 test('operation recovery finds only the actor-bound attempt for one offer', async () => {

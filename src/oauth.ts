@@ -29,6 +29,16 @@ import {
   type OAuthEnvironment,
 } from './oauth-config.ts'
 import {
+  beginTrace,
+  defaultDiagnostics,
+  recordFailure as recordDiagnosticFailure,
+  traceForClient,
+  type OAuthDiagnosticSink,
+  type OAuthFailureStage,
+  type OAuthRequestTrace,
+} from './oauth-diagnostics.ts'
+import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
+import {
   postgresOAuthStore,
   resolveOAuthAccessTokenPassive,
   type AuthorizationRequestRecord,
@@ -48,22 +58,27 @@ export {
   verifyPkceS256,
 } from './oauth-config.ts'
 
+export type {
+  OAuthDiagnosticRecord,
+  OAuthDiagnosticSink,
+  OAuthFailureStage,
+} from './oauth-diagnostics.ts'
+
+export { collectRecoveryCodeSet } from './oauth-recovery.ts'
+
 const SESSION_COOKIE = '__Host-1f3d9_oauth'
 const MAX_FORM_BYTES = 8_192
 const MAX_UI_LOCALES = 256
 const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
 const ACCESS_TOKEN_SECONDS = 10 * 60
 const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
-const RECOVERY_CODE_COUNT = 8
-const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
-type RecoveryCodeSet = readonly [string, string, string, string, string, string, string, string]
-
 type OAuthStore = typeof postgresOAuthStore
 
 export interface OAuthRouteOptions {
   environment?: OAuthEnvironment
   store?: OAuthStore
   fetcher?: typeof fetch
+  diagnostics?: OAuthDiagnosticSink
 }
 
 interface OAuthRuntime {
@@ -74,31 +89,21 @@ interface OAuthRuntime {
   resource: string
   staticClients: ReturnType<typeof parseOAuthClients>
   cimdOrigins: ReturnType<typeof parseCimdOrigins>
+  diagnostics: OAuthDiagnosticSink
+}
+
+function recordFailure(
+  oauth: OAuthRuntime,
+  trace: OAuthRequestTrace,
+  stage: OAuthFailureStage,
+  errorClass: string,
+  status: number,
+): void {
+  recordDiagnosticFailure(oauth.diagnostics, trace, stage, errorClass, status)
 }
 
 function opaque(prefix = ''): string {
   return prefix + randomBytes(32).toString('hex')
-}
-
-function newRecoveryCode(): string {
-  return RECOVERY_CODE_PREFIX + randomBytes(32).toString('hex')
-}
-
-export function collectRecoveryCodeSet(makeCode: () => string): RecoveryCodeSet {
-  const codes = new Set<string>()
-  for (let attempt = 0; codes.size < RECOVERY_CODE_COUNT; attempt += 1) {
-    if (attempt >= 64) throw new Error('secure recovery-code generation failed')
-    codes.add(makeCode())
-  }
-  const values = [...codes]
-  return [
-    values[0]!, values[1]!, values[2]!, values[3]!,
-    values[4]!, values[5]!, values[6]!, values[7]!,
-  ]
-}
-
-function newRecoveryCodeSet(): RecoveryCodeSet {
-  return collectRecoveryCodeSet(newRecoveryCode)
 }
 
 function lastAddress(value: string | undefined): string | undefined {
@@ -146,7 +151,7 @@ function page(title: string, body: string): string {
 
 function html(
   c: Context,
-  status: 200 | 400 | 403 | 409 | 429,
+  status: 200 | 400 | 403 | 409 | 429 | 503,
   title: string,
   body: string,
   callbackOrigin?: string,
@@ -163,7 +168,7 @@ function registeredCallbackOrigin(redirectUri: string): string {
   return redirect.origin
 }
 
-function browserError(c: Context, status: 400 | 403 | 409 | 429, message: string) {
+function browserError(c: Context, status: 400 | 403 | 409 | 429 | 503, message: string) {
   return html(
     c,
     status,
@@ -295,6 +300,7 @@ function runtime(options: OAuthRouteOptions): OAuthRuntime | null {
     resource: oauthResource(environment),
     staticClients: parseOAuthClients(environment.HOSTED_CHAT_OAUTH_CLIENTS),
     cimdOrigins: parseCimdOrigins(environment.HOSTED_CHAT_CIMD_ORIGINS),
+    diagnostics: options.diagnostics ?? defaultDiagnostics,
   }
 }
 
@@ -339,27 +345,15 @@ function redirectWithDenial(
   return c.redirect(location.href, 303)
 }
 
-async function issueNewResidentCode(
-  c: Context,
-  oauth: OAuthRuntime,
-  sessionHash: string,
-  csrfHash: string,
-  residentSecretHash: string,
-) {
-  const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
-  const redirect = await oauth.store.confirmNewResidentAndIssueAuthorizationCode({
-    sessionHash,
-    csrfHash,
-    residentSecretHash,
-    authorizationCodeHash: sha256(authorizationCode),
-  })
-  if (!redirect) return browserError(c, 403, 'This sign-in request expired or was already used.')
-  return redirectWithCode(c, redirect, authorizationCode)
-}
-
 function tokenError(c: Context, error: 'invalid_request' | 'invalid_client' | 'invalid_grant') {
   privateHeaders(c)
   return c.json({ error }, 400)
+}
+
+function tokenUnavailable(c: Context) {
+  privateHeaders(c)
+  c.header('Retry-After', '1')
+  return c.json({ error: 'temporarily_unavailable' }, 503)
 }
 
 function tokenResponse(c: Context, accessToken: string, refreshToken: string) {
@@ -408,8 +402,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   }))
 
   app.get('/oauth/authorize', async c => {
+    let trace = beginTrace(c)
     const query = queryObject(new URL(c.req.url))
-    if (!query) return browserError(c, 400, 'The sign-in request was not valid.')
+    if (!query) {
+      recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
+      return browserError(c, 400, 'The sign-in request was not valid.')
+    }
+    trace = traceForClient(trace, query.client_id, oauth.staticClients)
     let client
     try {
       const clientId = typeof query.client_id === 'string' ? query.client_id : ''
@@ -420,6 +419,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         oauth.fetcher,
       )
     } catch {
+      recordFailure(oauth, trace, 'client_metadata', 'client_not_approved', 400)
       return browserError(c, 400, 'The requesting chat app is not approved.')
     }
 
@@ -427,28 +427,50 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     try {
       request = validateAuthorizationRequest(query, [client], oauth.resource)
     } catch {
+      recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
       return browserError(c, 400, 'The sign-in request was not valid.')
     }
-    if (!(await admitted(
-      oauth.store,
-      [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.clientId}`],
-      'authorize',
-      60,
-    ))) return browserError(c, 429, 'Too many sign-in attempts. Try again in one hour.')
+    let isAdmitted
+    try {
+      isAdmitted = await admitted(
+        oauth.store,
+        [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.clientId}`],
+        'authorize',
+        60,
+      )
+    } catch {
+      c.header('Retry-After', '1')
+      recordFailure(oauth, trace, 'authorization_store', 'storage_unavailable', 503)
+      return browserError(c, 503, '1F3D9 could not start sign-in. Try again in a moment.')
+    }
+    if (!isAdmitted) {
+      recordFailure(oauth, trace, 'authorization_request', 'rate_limited', 429)
+      return browserError(c, 429, 'Too many sign-in attempts. Try again in one hour.')
+    }
 
     const session = opaque()
     const csrf = opaque()
-    await oauth.store.createAuthorizationRequest({
-      sessionHash: sha256(session),
-      csrfHash: sha256(csrf),
-      clientId: request.clientId,
-      clientName: request.clientName,
-      redirectUri: request.redirectUri,
-      resource: request.resource,
-      scope: request.scope,
-      state: request.state,
-      codeChallenge: request.codeChallenge,
-    })
+    try {
+      await oauth.store.createAuthorizationRequest({
+        sessionHash: sha256(session),
+        csrfHash: sha256(csrf),
+        clientId: request.clientId,
+        clientName: request.clientName,
+        redirectUri: request.redirectUri,
+        resource: request.resource,
+        scope: request.scope,
+        state: request.state,
+        codeChallenge: request.codeChallenge,
+      })
+    } catch {
+      c.header('Retry-After', '1')
+      recordFailure(oauth, trace, 'authorization_store', 'storage_unavailable', 503)
+      return browserError(
+        c,
+        503,
+        '1F3D9 could not start sign-in. Try again in a moment with the same connector address.',
+      )
+    }
     setSessionCookie(c, session)
     return html(
       c,
@@ -460,104 +482,125 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   })
 
   app.post('/oauth/authorize', async c => {
-    if (!trustedBrowserForm(c, oauth.origin)) {
-      return browserError(c, 403, 'This approval did not come from the 1F3D9 sign-in page.')
-    }
-    const values = await form(c)
-    const session = cookieValue(c)
-    const action = values ? one(values, 'action', 20) : null
-    const csrf = values ? one(values, 'csrf', 128) : null
-    if (!values || !session || !csrf || !['link', 'register', 'confirm', 'cancel'].includes(action ?? '')) {
-      return browserError(c, 403, 'This sign-in page expired or is incomplete.')
-    }
-    const actionFields = {
-      link: ['action', 'csrf', 'resident_key'],
-      register: ['action', 'csrf', 'handle', 'model'],
-      confirm: ['action', 'csrf', 'resident_key'],
-      cancel: ['action', 'csrf'],
-    } as const
-    if (!hasExactlyKnownFields(values, actionFields[action as keyof typeof actionFields])) {
-      return browserError(c, 403, 'This sign-in form contained unexpected information.')
-    }
-    const sessionHash = sha256(session)
-    const csrfHash = sha256(csrf)
-    const request = await oauth.store.getAuthorizationRequest(sessionHash)
-    if (!request) return browserError(c, 403, 'This sign-in request expired or was already used.')
-
-    if (action === 'cancel') {
-      const redirect = await oauth.store.cancelAuthorizationRequest({ sessionHash, csrfHash })
-      if (!redirect) return browserError(c, 403, 'This sign-in request expired or was already used.')
-      return redirectWithDenial(c, redirect)
+    let trace = beginTrace(c)
+    const fail = (
+      status: 400 | 403 | 409 | 429 | 503,
+      errorClass: string,
+      message: string,
+    ) => {
+      recordFailure(oauth, trace, 'browser_approval', errorClass, status)
+      return browserError(c, status, message)
     }
 
-    if (action === 'confirm') {
-      const residentKey = one(values, 'resident_key', 80)
-      if (
-        !residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey) || request.intent !== 'new' ||
-        request.resident_id !== null || request.new_handle === null ||
-        request.new_model === null || request.root_key_confirmed_at !== null
-      ) {
-        return browserError(c, 403, 'This resident is not waiting for key confirmation.')
-      }
-      if (!(await admitted(
-        oauth.store,
-        [`signup-confirm-ip:${clientAddress(c, oauth.environment)}`, `signup-confirm-session:${sessionHash}`],
-        'resident_key',
-        10,
-      ))) return browserError(c, 429, 'Too many key attempts. Try again in one hour.')
-      return issueNewResidentCode(c, oauth, sessionHash, csrfHash, sha256(residentKey))
-    }
-
-    if (action === 'link') {
-      const residentKey = one(values, 'resident_key', 80)
-      if (!residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)) {
-        return browserError(c, 403, 'That resident key could not be verified.')
-      }
-      if (!(await admitted(
-        oauth.store,
-        [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
-        'resident_key',
-        10,
-      ))) return browserError(c, 429, 'Too many key attempts. Try again in one hour.')
-      const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
-      const redirect = await oauth.store.approveExistingResidentAndIssueAuthorizationCode({
-        sessionHash,
-        csrfHash,
-        residentSecretHash: sha256(residentKey),
-        authorizationCodeHash: sha256(authorizationCode),
-      })
-      if (!redirect) return browserError(c, 403, 'That resident key could not be verified.')
-      return redirectWithCode(c, redirect, authorizationCode)
-    }
-
-    const handle = String(values.get('handle') ?? '').toLowerCase().trim()
-    const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
-    const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-    if (!HANDLE_RE.test(handle) || isReservedHandle(handle) || modelText === null) {
-      return browserError(c, 400, 'The resident name or model label was not valid.')
-    }
-    if (!(await admitted(
-      oauth.store,
-      [`signup-ip:${clientAddress(c, oauth.environment)}`],
-      'authorize',
-      3,
-    ))) return browserError(c, 429, 'The registrar is busy. Try again in one hour.')
-    if (!(await admitted(
-      oauth.store,
-      ['signup-global'],
-      'authorize',
-      300,
-    ))) return browserError(c, 429, 'The registrar is busy. Try again in one hour.')
-    if (!(await admitted(
-      oauth.store,
-      [`signup-client:${request.client_id}`],
-      'authorize',
-      300,
-    ))) return browserError(c, 429, 'The registrar is busy. Try again in one hour.')
-
-    const residentSecret = newSecret()
-    const recoveryCodes = newRecoveryCodeSet()
     try {
+      if (!trustedBrowserForm(c, oauth.origin)) {
+        return fail(403, 'untrusted_browser_request', 'This approval did not come from the 1F3D9 sign-in page.')
+      }
+      const values = await form(c)
+      const session = cookieValue(c)
+      const action = values ? one(values, 'action', 20) : null
+      const csrf = values ? one(values, 'csrf', 128) : null
+      if (!values || !session || !csrf || !['link', 'register', 'confirm', 'cancel'].includes(action ?? '')) {
+        return fail(403, 'invalid_form', 'This sign-in page expired or is incomplete.')
+      }
+      const actionFields = {
+        link: ['action', 'csrf', 'resident_key'],
+        register: ['action', 'csrf', 'handle', 'model'],
+        confirm: ['action', 'csrf', 'resident_key'],
+        cancel: ['action', 'csrf'],
+      } as const
+      if (!hasExactlyKnownFields(values, actionFields[action as keyof typeof actionFields])) {
+        return fail(403, 'unexpected_form_fields', 'This sign-in form contained unexpected information.')
+      }
+      const sessionHash = sha256(session)
+      const csrfHash = sha256(csrf)
+      const request = await oauth.store.getAuthorizationRequest(sessionHash)
+      if (!request) return fail(403, 'request_expired', 'This sign-in request expired or was already used.')
+      trace = traceForClient(trace, request.client_id, oauth.staticClients)
+
+      if (action === 'cancel') {
+        const redirect = await oauth.store.cancelAuthorizationRequest({ sessionHash, csrfHash })
+        if (!redirect) return fail(403, 'request_expired', 'This sign-in request expired or was already used.')
+        return redirectWithDenial(c, redirect)
+      }
+
+      if (action === 'confirm') {
+        const residentKey = one(values, 'resident_key', 80)
+        if (
+          !residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey) || request.intent !== 'new' ||
+          request.resident_id !== null || request.new_handle === null ||
+          request.new_model === null || request.root_key_confirmed_at !== null
+        ) {
+          return fail(403, 'confirmation_not_ready', 'This resident is not waiting for key confirmation.')
+        }
+        if (!(await admitted(
+          oauth.store,
+          [`signup-confirm-ip:${clientAddress(c, oauth.environment)}`, `signup-confirm-session:${sessionHash}`],
+          'resident_key',
+          10,
+        ))) return fail(429, 'rate_limited', 'Too many key attempts. Try again in one hour.')
+        const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
+        const redirect = await oauth.store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash,
+          csrfHash,
+          residentSecretHash: sha256(residentKey),
+          authorizationCodeHash: sha256(authorizationCode),
+        })
+        if (!redirect) {
+          return fail(403, 'confirmation_rejected', 'This sign-in request expired or was already used.')
+        }
+        return redirectWithCode(c, redirect, authorizationCode)
+      }
+
+      if (action === 'link') {
+        const residentKey = one(values, 'resident_key', 80)
+        if (!residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)) {
+          return fail(403, 'resident_key_rejected', 'That resident key could not be verified.')
+        }
+        if (!(await admitted(
+          oauth.store,
+          [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
+          'resident_key',
+          10,
+        ))) return fail(429, 'rate_limited', 'Too many key attempts. Try again in one hour.')
+        const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
+        const redirect = await oauth.store.approveExistingResidentAndIssueAuthorizationCode({
+          sessionHash,
+          csrfHash,
+          residentSecretHash: sha256(residentKey),
+          authorizationCodeHash: sha256(authorizationCode),
+        })
+        if (!redirect) return fail(403, 'resident_key_rejected', 'That resident key could not be verified.')
+        return redirectWithCode(c, redirect, authorizationCode)
+      }
+
+      const handle = String(values.get('handle') ?? '').toLowerCase().trim()
+      const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
+      const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
+      if (!HANDLE_RE.test(handle) || isReservedHandle(handle) || modelText === null) {
+        return fail(400, 'invalid_identity', 'The resident name or model label was not valid.')
+      }
+      if (!(await admitted(
+        oauth.store,
+        [`signup-ip:${clientAddress(c, oauth.environment)}`],
+        'authorize',
+        3,
+      ))) return fail(429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+      if (!(await admitted(
+        oauth.store,
+        ['signup-global'],
+        'authorize',
+        300,
+      ))) return fail(429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+      if (!(await admitted(
+        oauth.store,
+        [`signup-client:${request.client_id}`],
+        'authorize',
+        300,
+      ))) return fail(429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+
+      const residentSecret = newSecret()
+      const recoveryCodes = newRecoveryCodeSet()
       const pending = await oauth.store.stageNewResidentRegistration({
         sessionHash,
         csrfHash,
@@ -566,9 +609,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         residentSecretHash: sha256(residentSecret),
         recoveryCodeHashes: recoveryCodes.map(sha256),
       })
-      if (!pending) return browserError(c, 403, 'This sign-in request expired or was already used.')
+      if (!pending) return fail(403, 'request_expired', 'This sign-in request expired or was already used.')
       if (pending.status === 'handle_taken') {
-        return browserError(c, 409, 'That resident name is already taken.')
+        return fail(409, 'handle_taken', 'That resident name is already taken.')
       }
       setSessionCookie(c, session)
       return html(
@@ -580,111 +623,139 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       )
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
-        return browserError(c, 409, 'That resident name is already taken.')
+        return fail(409, 'handle_taken', 'That resident name is already taken.')
       }
-      throw error
+      c.header('Retry-After', '1')
+      return fail(503, 'storage_unavailable', '1F3D9 could not complete sign-in. Try again in a moment.')
     }
   })
 
   app.post('/oauth/token', async c => {
-    const values = await form(c)
-    if (!values || c.req.header('authorization') || values.has('client_secret')) {
-      return tokenError(c, 'invalid_request')
-    }
-    const grantType = one(values, 'grant_type', 64)
-    const allowedTokenFields = grantType === 'authorization_code'
-      ? ['grant_type', 'client_id', 'redirect_uri', 'resource', 'code', 'code_verifier', 'scope']
-      : grantType === 'refresh_token'
-        ? ['grant_type', 'client_id', 'resource', 'refresh_token', 'scope']
-        : []
-    if (!allowedTokenFields.length || !hasExactlyKnownFields(values, allowedTokenFields)) {
-      return tokenError(c, 'invalid_request')
-    }
-    const clientId = one(values, 'client_id', 2_048)
-    const resource = one(values, 'resource', 2_048)
-    const requestedScope = values.has('scope') ? one(values, 'scope', 128) : OAUTH_SCOPE
-    if (requestedScope !== OAUTH_SCOPE) return tokenError(c, 'invalid_request')
-    if (!clientId || resource !== oauth.resource) return tokenError(c, 'invalid_client')
-    if (!(await admitted(
-      oauth.store,
-      [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
-      grantType === 'refresh_token' ? 'refresh' : 'token',
-      120,
-    ))) return tokenError(c, 'invalid_grant')
-
-    if (grantType === 'authorization_code') {
-      const rawCode = one(values, 'code', 100)
-      const redirectUri = one(values, 'redirect_uri', 4_096)
-      const verifier = one(values, 'code_verifier', 128)
-      if (
-        !rawCode?.startsWith(OAUTH_AUTHORIZATION_CODE_PREFIX) ||
-        !redirectUri ||
-        !verifier
-      ) return tokenError(c, 'invalid_grant')
-      const codeHash = sha256(rawCode)
-      const code = await oauth.store.getAuthorizationCode(codeHash)
-      if (
-        !code ||
-        code.clientId !== clientId ||
-        code.redirectUri !== redirectUri ||
-        code.resource !== resource ||
-        code.scope !== OAUTH_SCOPE ||
-        !verifyPkceS256(verifier, code.codeChallenge)
-      ) return tokenError(c, 'invalid_grant')
-
-      const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
-      const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
-      const exchanged = await oauth.store.exchangeAuthorizationCode({
-        codeHash,
-        clientId,
-        redirectUri,
-        resource,
-        accessTokenHash: sha256(accessToken),
-        refreshTokenHash: sha256(refreshToken),
-      })
-      if (!exchanged) return tokenError(c, 'invalid_grant')
-      return tokenResponse(c, accessToken, refreshToken)
+    let trace = beginTrace(c)
+    let stage: OAuthFailureStage = 'token_request'
+    const fail = (
+      error: 'invalid_request' | 'invalid_client' | 'invalid_grant',
+      errorClass: string = error,
+    ) => {
+      recordFailure(oauth, trace, stage, errorClass, 400)
+      return tokenError(c, error)
     }
 
-    if (grantType === 'refresh_token') {
-      const presented = one(values, 'refresh_token', 100)
-      if (!presented?.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) {
-        return tokenError(c, 'invalid_grant')
+    try {
+      const values = await form(c)
+      if (!values || c.req.header('authorization') || values.has('client_secret')) {
+        return fail('invalid_request')
       }
-      const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
-      const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
-      const rotated = await oauth.store.rotateRefreshToken({
-        presentedRefreshTokenHash: sha256(presented),
-        clientId,
-        resource,
-        accessTokenHash: sha256(accessToken),
-        newRefreshTokenHash: sha256(refreshToken),
-      })
-      if (rotated !== 'rotated') return tokenError(c, 'invalid_grant')
-      return tokenResponse(c, accessToken, refreshToken)
+      const grantType = one(values, 'grant_type', 64)
+      const allowedTokenFields = grantType === 'authorization_code'
+        ? ['grant_type', 'client_id', 'redirect_uri', 'resource', 'code', 'code_verifier', 'scope']
+        : grantType === 'refresh_token'
+          ? ['grant_type', 'client_id', 'resource', 'refresh_token', 'scope']
+          : []
+      if (!allowedTokenFields.length || !hasExactlyKnownFields(values, allowedTokenFields)) {
+        return fail('invalid_request')
+      }
+      const clientId = one(values, 'client_id', 2_048)
+      trace = traceForClient(trace, clientId, oauth.staticClients)
+      const resource = one(values, 'resource', 2_048)
+      const requestedScope = values.has('scope') ? one(values, 'scope', 128) : OAUTH_SCOPE
+      if (requestedScope !== OAUTH_SCOPE) return fail('invalid_request', 'invalid_scope')
+      if (!clientId || resource !== oauth.resource) return fail('invalid_client')
+      stage = grantType === 'refresh_token' ? 'token_refresh' : 'token_exchange'
+      if (!(await admitted(
+        oauth.store,
+        [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
+        grantType === 'refresh_token' ? 'refresh' : 'token',
+        120,
+      ))) return fail('invalid_grant', 'rate_limited')
+
+      if (grantType === 'authorization_code') {
+        const rawCode = one(values, 'code', 100)
+        const redirectUri = one(values, 'redirect_uri', 4_096)
+        const verifier = one(values, 'code_verifier', 128)
+        if (
+          !rawCode?.startsWith(OAUTH_AUTHORIZATION_CODE_PREFIX) ||
+          !redirectUri ||
+          !verifier
+        ) return fail('invalid_grant')
+        const codeHash = sha256(rawCode)
+        const code = await oauth.store.getAuthorizationCode(codeHash)
+        if (
+          !code ||
+          code.clientId !== clientId ||
+          code.redirectUri !== redirectUri ||
+          code.resource !== resource ||
+          code.scope !== OAUTH_SCOPE ||
+          !verifyPkceS256(verifier, code.codeChallenge)
+        ) return fail('invalid_grant')
+
+        const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
+        const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
+        const exchanged = await oauth.store.exchangeAuthorizationCode({
+          codeHash,
+          clientId,
+          redirectUri,
+          resource,
+          accessTokenHash: sha256(accessToken),
+          refreshTokenHash: sha256(refreshToken),
+        })
+        if (!exchanged) return fail('invalid_grant')
+        return tokenResponse(c, accessToken, refreshToken)
+      }
+
+      if (grantType === 'refresh_token') {
+        const presented = one(values, 'refresh_token', 100)
+        if (!presented?.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) {
+          return fail('invalid_grant')
+        }
+        const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
+        const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
+        const rotated = await oauth.store.rotateRefreshToken({
+          presentedRefreshTokenHash: sha256(presented),
+          clientId,
+          resource,
+          accessTokenHash: sha256(accessToken),
+          newRefreshTokenHash: sha256(refreshToken),
+        })
+        if (rotated !== 'rotated') return fail('invalid_grant')
+        return tokenResponse(c, accessToken, refreshToken)
+      }
+      return fail('invalid_request')
+    } catch {
+      recordFailure(oauth, trace, stage, 'storage_unavailable', 503)
+      return tokenUnavailable(c)
     }
-    return tokenError(c, 'invalid_request')
   })
 
   app.post('/oauth/revoke', async c => {
-    const values = await form(c)
-    if (!values || c.req.header('authorization') || values.has('client_secret')) {
-      privateHeaders(c)
-      return c.body(null, 200)
-    }
-    const token = one(values, 'token', 100)
-    const clientId = one(values, 'client_id', 2_048)
-    if (
-      token && clientId &&
-      (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX) || token.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) &&
-      await admitted(
-        oauth.store,
-        [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
-        'revoke',
-        120,
-      )
-    ) {
-      await oauth.store.revokeTokenFamilyByToken({ tokenHash: sha256(token), clientId })
+    let trace = beginTrace(c)
+    try {
+      const values = await form(c)
+      const clientId = values ? one(values, 'client_id', 2_048) : null
+      trace = traceForClient(trace, clientId, oauth.staticClients)
+      if (!values || c.req.header('authorization') || values.has('client_secret')) {
+        recordFailure(oauth, trace, 'revocation', 'invalid_request', 200)
+      } else {
+        const token = one(values, 'token', 100)
+        const validToken = Boolean(
+          token &&
+          (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX) || token.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)),
+        )
+        if (!token || !clientId || !validToken) {
+          recordFailure(oauth, trace, 'revocation', 'invalid_request', 200)
+        } else if (!(await admitted(
+          oauth.store,
+          [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
+          'revoke',
+          120,
+        ))) {
+          recordFailure(oauth, trace, 'revocation', 'rate_limited', 200)
+        } else {
+          await oauth.store.revokeTokenFamilyByToken({ tokenHash: sha256(token!), clientId })
+        }
+      }
+    } catch {
+      recordFailure(oauth, trace, 'revocation', 'storage_unavailable', 200)
     }
     privateHeaders(c)
     return c.body(null, 200)

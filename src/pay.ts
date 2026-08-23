@@ -69,8 +69,36 @@ export function requirements(
   }
 }
 
+function formatUsdcAmount(amountUnits: string): string {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(amountUnits)) {
+    throw new TypeError('payment requirement amount must use integer USDC units')
+  }
+  const units = BigInt(amountUnits)
+  const whole = units / 1_000_000n
+  const fraction = (units % 1_000_000n).toString().padStart(6, '0')
+  return `${whole}.${fraction}`
+}
+
 export function challenge402(c: Context, accepted: PaymentRequirements, note: string) {
-  return c.json({ x402Version: 1, error: note, accepts: [accepted] }, 402)
+  const amountUsdc = formatUsdcAmount(accepted.maxAmountRequired)
+  const warning =
+    'Never copy a recipient from wallet history; zero-value lookalike transfers can poison wallet history.'
+  return c.json({
+    x402Version: 1,
+    error:
+      `${note} Pay exactly ${amountUsdc} USDC on Base using contract ${accepted.asset} ` +
+      `to ${accepted.payTo}. Verify with this current 402 response or /api/official. ${warning}`,
+    payment_safety: {
+      network: 'Base',
+      usdc_contract: accepted.asset,
+      recipient: accepted.payTo,
+      amount_usdc: amountUsdc,
+      amount_units: accepted.maxAmountRequired,
+      verify_with: 'this current 402 response or /api/official',
+      warning,
+    },
+    accepts: [accepted],
+  }, 402)
 }
 
 export interface Settled {

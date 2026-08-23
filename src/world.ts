@@ -8,11 +8,8 @@ import {
   publicText,
   stringList,
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
-import {
-  CLAIM_FEE_USDC,
-  TREASURY,
-} from './pay.ts'
 import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
+import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
 import { effectiveLaws, residentPresence, resolveDueEffects } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
@@ -20,7 +17,6 @@ import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
 import {
   isWorldRootRow,
-  WORLD_ROOT_NAME,
   WORLD_TRANSIT_ONLY_ERROR,
 } from './world-root.ts'
 import {
@@ -29,12 +25,14 @@ import {
   conflictMessage,
   DESCRIPTION_MAX,
   DOMAIN,
+  feeSelectionConflict,
   hasDuplicateNames,
   hasOnly,
   isResponse,
   jsonBody,
   openOffer,
-  releasePaymentLease,
+  reconcileTreasuryCompletionNoEffect,
+  returnFailedTreasuryFee,
   requireResident,
   THING_BODY_MAX_BYTES,
   treasuryFee,
@@ -64,9 +62,20 @@ import {
   parsePublicChangeMarker,
   PublicChangeFutureError,
 } from './public-changes.ts'
+import {
+  loadPublicPlaceFrontMatter,
+  parsePlaceFrontMatter,
+  parsePlacePurpose,
+} from './room-orientation.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
+
+function publicPlaceWriteRow(row: PlaceRow): Readonly<Record<string, unknown>> {
+  return Object.freeze(Object.fromEntries(
+    Object.entries(row).filter(([field]) => field !== 'front_matter_thing_ids'),
+  ))
+}
 
 async function everyTraitExists(names: readonly string[]): Promise<boolean> {
   if (names.length === 0) return true
@@ -91,20 +100,20 @@ async function activePlaceLabels(placeId: number): Promise<string[]> {
 async function readPublicMap(): Promise<{ places: unknown[] }> {
   const rows = (await sql`
     WITH RECURSIVE place_tree AS (
-      SELECT p.id, p.parent_id, p.name, p.description, p.owner_id,
+      SELECT p.id, p.parent_id, p.name, p.description, p.purpose, p.owner_id,
         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
         ARRAY[p.id] AS path
       FROM places p
       WHERE p.parent_id IS NULL
       UNION ALL
-      SELECT child.id, child.parent_id, child.name, child.description, child.owner_id,
+      SELECT child.id, child.parent_id, child.name, child.description, child.purpose, child.owner_id,
         child.open_to_building, child.open_to_things, child.open_to_notes, child.created_at,
         parent.path || child.id
       FROM places child
       JOIN place_tree parent ON parent.id = child.parent_id
       WHERE NOT child.id = ANY(parent.path)
     )
-    SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.owner_id,
+    SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.purpose, tree.owner_id,
       owner.handle AS owner, tree.open_to_building, tree.open_to_things,
       tree.open_to_notes, tree.created_at,
       (SELECT count(*)::int FROM places child WHERE child.parent_id = tree.id) AS places,
@@ -116,7 +125,14 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
     ORDER BY tree.path
   `) as PlaceRow[]
   const publicRows = await moderatePublicRows('place', rows)
-  return { places: buildPlaceTree(publicRows as PlaceRow[], null) }
+  const frontMatter = await loadPublicPlaceFrontMatter(executePublicQuery, rows.map(row => row.id))
+  const orientedRows = publicRows.map(row => Object.freeze({
+    ...row,
+    front_matter: (row as unknown as Record<string, unknown>).moderated === true
+      ? Object.freeze([])
+      : frontMatter.get(row.id) ?? Object.freeze([]),
+  }))
+  return { places: buildPlaceTree(orientedRows as PlaceRow[], null) }
 }
 
 // The whole-city rebuild is the busiest anonymous read, so one short-lived
@@ -261,7 +277,8 @@ export function mountWorldRoutes(app: Hono): void {
         })
       : textLimits
     const places = (await sql`
-      SELECT p.id, p.parent_id, p.name, p.description, p.owner_id, owner.handle AS owner,
+      SELECT p.id, p.parent_id, p.name, p.description, p.purpose,
+        p.owner_id, owner.handle AS owner,
         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
       FROM places p
       LEFT JOIN residents owner ON owner.id = p.owner_id
@@ -270,7 +287,7 @@ export function mountWorldRoutes(app: Hono): void {
     const place = places[0]
     if (!place) return err(c, 404, 'place not found')
 
-    const [collections, labels, laws] = await Promise.all([
+    const [collections, labels, laws, frontMatterByPlace] = await Promise.all([
       loadPublicPlaceCollectionRows(executePublicQuery, id, {
         subplaces: subplaceRequest,
         things: thingRequest,
@@ -278,6 +295,7 @@ export function mountWorldRoutes(app: Hono): void {
       }, view === 'full', effectiveTextLimits),
       activePlaceLabels(id),
       effectiveLaws(id),
+      loadPublicPlaceFrontMatter(executePublicQuery, [id]),
     ])
     const subplacesPage = collections.pages == null
       ? {
@@ -285,9 +303,12 @@ export function mountWorldRoutes(app: Hono): void {
             collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
             subplaceRequest.limit,
           ),
-          returnedTextBytes: view === 'full'
+          returnedTextBytes: utf8TextBytes(
+            collections.subplaces.slice(0, subplaceRequest.limit),
+            'purpose',
+          ) + (view === 'full'
             ? utf8TextBytes(collections.subplaces.slice(0, subplaceRequest.limit), 'description')
-            : 0,
+            : 0),
           stoppedForTextLimit: false,
           nextItemId: null,
           nextItemTextBytes: null,
@@ -339,6 +360,9 @@ export function mountWorldRoutes(app: Hono): void {
     return publicJson(c, {
       ...(requestedView == null ? {} : { view }),
       place: { ...publicPlace, labels, laws: publicDetails.laws },
+      front_matter: (publicPlace as unknown as Record<string, unknown>).moderated === true
+        ? Object.freeze([])
+        : frontMatterByPlace.get(id) ?? Object.freeze([]),
       subplaces: publicSubplaces,
       things: publicDetails.things,
       notes: publicNotes,
@@ -416,6 +440,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/place', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const selectionConflict = feeSelectionConflict(c)
+    if (selectionConflict) return selectionConflict
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     if (!hasOnly(body, [
@@ -467,6 +493,8 @@ export function mountWorldRoutes(app: Hono): void {
       if (isWorldRootRow(parent)) {
         // An explicit world parent is the same paid frontier operation as the
         // long-standing parent_id:null request. It is never a free build.
+      } else if (c.req.header('x-1f3d9-fee-credit')) {
+        return err(c, 400, 'city fee credit is only supported for the paid frontier, kind invention, or kind revision fee')
       } else if (parent.owner_id !== resident.id && !parent.open_to_building) {
         return err(c, 403, 'this place does not permit visitors to build')
       } else try {
@@ -499,7 +527,7 @@ export function mountWorldRoutes(app: Hono): void {
           SELECT new_place.*, ${resident.handle}::text AS owner FROM new_place
         `) as PlaceRow[]
         if (!rows[0]) return err(c, 409, 'parent place changed or closed to building; retry')
-        return c.json({ place: rows[0] }, 201)
+        return c.json({ place: publicPlaceWriteRow(rows[0]) }, 201)
       } catch (error) {
         const message = conflictMessage(error, 'a place with that name already exists there')
         if (message) return err(c, 409, message)
@@ -527,102 +555,38 @@ export function mountWorldRoutes(app: Hono): void {
     )
     if (fee instanceof Response) return fee
     try {
-      const rows = (await sql`
-        WITH world_root AS MATERIALIZED (
-          SELECT root.id
-          FROM places root
-          WHERE root.parent_id IS NULL AND root.owner_id IS NULL
-            AND root.place_kind = 'world'
-            AND root.name = ${WORLD_ROOT_NAME}
-            AND (${parentId}::integer IS NULL OR root.id = ${parentId})
-          ORDER BY root.id LIMIT 1
-          FOR SHARE
-        ), world_root_parent AS MATERIALIZED (
-          SELECT id FROM world_root
-          UNION ALL
-          SELECT NULL::integer
-          WHERE ${body.parent_id === null}
-            AND NOT EXISTS (SELECT 1 FROM world_root)
-          LIMIT 1
-        ), payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = ${fee.attemptId}
-            AND lease_owner = ${fee.leaseOwner}
-            AND status = 'payment_pending'
-            AND tx_hash = ${fee.txHash}
-            AND actor_id = ${resident.id}
-            AND operation = 'frontier'
-          FOR UPDATE
-        ), new_place AS (
-          INSERT INTO places (
-            parent_id, place_kind, name, description, owner_id,
-            open_to_building, open_to_things, open_to_notes
-          )
-          SELECT world_root_parent.id, 'continent', ${name}, ${description}, ${resident.id},
-            ${openToBuilding ?? false}, ${openToThings ?? false}, ${openToNotes ?? false}
-          FROM world_root_parent CROSS JOIN payment_attempt
-          RETURNING *
-        ), payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, purpose, actor_id,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT ${fee.txHash}, ${fee.attemptId}, 'frontier', ${resident.id},
-            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
-          FROM new_place
-          RETURNING tx_hash
-        ), new_presence AS (
-          INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
-          SELECT ${resident.id}, id, id FROM new_place
-          ON CONFLICT (resident_id) DO NOTHING
-        ), new_fee AS (
-          INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-          SELECT ${resident.id}, 'frontier', ${CLAIM_FEE_USDC}, payment_use.tx_hash
-          FROM payment_use JOIN new_place ON true
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'place_created', ${resident.handle}, jsonb_build_object(
-            'place_id', id, 'parent_id', parent_id, 'name', name,
-            'frontier', true, 'fee_tx_hash', ${fee.txHash}::text
-          ) FROM new_place
-        ), response_payload AS (
-          SELECT jsonb_build_object(
-            'place', to_jsonb(new_place) || jsonb_build_object('owner', ${resident.handle}::text),
-            'fee_tx', ${fee.txHash}::text
-          ) AS body
-          FROM new_place
-        ), completed_attempt AS (
-          SELECT complete_payment_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'place', 'id', new_place.id),
-            201::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM new_place CROSS JOIN payment_use CROSS JOIN response_payload
+      const completion = await completeTreasuryPaymentOperation(
+        { query: sql.query },
+        { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+      )
+      if (completion.state !== 'completed') {
+        return await reconcileTreasuryCompletionNoEffect(
+          c,
+          fee,
+          resident.id,
+          completion.state === 'deadline_passed'
+            ? 'frontier recovery deadline passed before completion'
+            : 'frontier target changed before completion',
         )
-        SELECT new_place.*, ${resident.handle}::text AS owner,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM new_place CROSS JOIN completed_attempt
-      `) as Array<PlaceRow & { response_body: string }>
-      const returned = rows[0]
-      if (!returned) {
-        await releasePaymentLease(fee)
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: fee.attemptId,
-          fee_tx: fee.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same request with the same X-PAYMENT header',
-        }, 202)
       }
-      const { response_body: responseBody } = returned
-      return completedTreasuryFeeResponse(fee, responseBody, 201)
+      return completedTreasuryFeeResponse(
+        completion.responseBody,
+        completion.status,
+        completion.paymentResponseHeader,
+      )
     } catch (error) {
       const message = conflictMessage(error, 'place name or payment proof already used')
-      if (message) return err(c, 409, message)
+      if (fee.rail === 'credit') {
+        return await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          message ?? 'frontier founding failed before completion',
+          message ? 409 : 503,
+        ) as Response
+      }
+      if (message) {
+        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+      }
       throw error
     }
   })
@@ -634,19 +598,25 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'place id must be a positive integer')
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
-    const fields = ['description', 'open_to_building', 'open_to_things', 'open_to_notes'] as const
+    const fields = [
+      'description', 'purpose', 'front_matter_thing_ids',
+      'open_to_building', 'open_to_things', 'open_to_notes',
+    ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
-      return err(c, 400, 'edit description or one of the three permission switches')
+      return err(c, 400, 'edit description, purpose, front matter, or a permission switch')
     }
 
     const description = body.description === undefined
       ? undefined
       : publicText(body.description, { maximumCharacters: DESCRIPTION_MAX, allowEmpty: true })
+    const purpose = parsePlacePurpose(body.purpose)
+    const frontMatterThingIds = parsePlaceFrontMatter(body.front_matter_thing_ids)
     const openToBuilding = optionalBoolean(body.open_to_building)
     const openToThings = optionalBoolean(body.open_to_things)
     const openToNotes = optionalBoolean(body.open_to_notes)
-    if (description === null || openToBuilding === null || openToThings === null || openToNotes === null) {
-      return err(c, 400, 'description must be safe text and permissions must be booleans')
+    if (description === null || purpose === null || frontMatterThingIds === null
+        || openToBuilding === null || openToThings === null || openToNotes === null) {
+      return err(c, 400, 'place text, front matter, or permissions are invalid')
     }
 
     const existingRows = (await sql`
@@ -670,32 +640,127 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 409, 'place cannot be edited while it has an open sale offer')
     }
 
-    const rows = (await sql`
-      WITH editable AS (
-        SELECT p.id
-        FROM places p
-        LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
-          AND offer.asset_id = p.id AND offer.status = 'open'
-        WHERE p.id = ${id} AND p.owner_id = ${resident.id}
-          AND p.active_offer_id IS NULL AND offer.id IS NULL
-        FOR UPDATE OF p
-      ), changed AS (
-        UPDATE places SET
-          description = coalesce(${description ?? null}::text, description),
-          open_to_building = coalesce(${openToBuilding ?? null}::boolean, open_to_building),
-          open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
-          open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes)
-        WHERE id IN (SELECT id FROM editable)
-        RETURNING *
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'place_edited', ${resident.handle}, jsonb_build_object('place_id', id)
-        FROM changed
-      )
-      SELECT changed.*, ${resident.handle}::text AS owner FROM changed
-    `) as PlaceRow[]
+    if (frontMatterThingIds !== undefined && frontMatterThingIds.length > 0) {
+      const eligibleRows = await sql`
+        /* room-orientation-eligibility */
+        SELECT thing.id
+        FROM things thing
+        LEFT JOIN LATERAL (
+          SELECT moderation.action
+          FROM moderation_actions moderation
+          WHERE moderation.target_type = 'thing'
+            AND moderation.target_id = thing.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC
+          LIMIT 1
+        ) latest_moderation ON TRUE
+        WHERE thing.id = ANY(${[...frontMatterThingIds]}::integer[])
+          AND thing.place_id = ${id}
+          AND thing.withdrawn_at IS NULL
+          AND coalesce(latest_moderation.action, 'restore') <> 'remove'
+      ` as Array<{ id: number }>
+      const eligibleIds = new Set(eligibleRows.map(row => row.id))
+      if (!frontMatterThingIds.every(thingId => eligibleIds.has(thingId))) {
+        return err(c, 400, 'front matter must use active public things in this place')
+      }
+    }
+
+    let rows: PlaceRow[]
+    try {
+      rows = (await sql`
+        WITH candidate_locks AS MATERIALIZED (
+          SELECT thing.id,
+            thing.place_id = ${id}
+              AND thing.withdrawn_at IS NULL
+              AND coalesce(latest_moderation.action, 'restore') <> 'remove' AS eligible
+          FROM things thing
+          LEFT JOIN LATERAL (
+            SELECT moderation.action
+            FROM moderation_actions moderation
+            WHERE moderation.target_type = 'thing'
+              AND moderation.target_id = thing.id
+            ORDER BY moderation.created_at DESC, moderation.id DESC
+            LIMIT 1
+          ) latest_moderation ON TRUE
+          WHERE ${frontMatterThingIds !== undefined}::boolean
+            AND thing.id = ANY(${frontMatterThingIds === undefined ? [] : [...frontMatterThingIds]}::integer[])
+          ORDER BY thing.id
+          FOR UPDATE OF thing
+        ), selection_state AS MATERIALIZED (
+          SELECT CASE
+            WHEN NOT ${frontMatterThingIds !== undefined}::boolean THEN true
+            WHEN cardinality(${frontMatterThingIds === undefined ? [] : [...frontMatterThingIds]}::integer[]) = 0 THEN true
+            ELSE count(*) = cardinality(${frontMatterThingIds === undefined ? [] : [...frontMatterThingIds]}::integer[])
+              AND coalesce(bool_and(eligible), false)
+          END AS eligible
+          FROM candidate_locks
+        ), editable AS MATERIALIZED (
+          SELECT p.id
+          FROM places p
+          CROSS JOIN selection_state selection
+          LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
+            AND offer.asset_id = p.id AND offer.status = 'open'
+          WHERE p.id = ${id} AND p.owner_id = ${resident.id}
+            AND p.active_offer_id IS NULL AND offer.id IS NULL
+            AND selection.eligible
+          FOR UPDATE OF p
+        ), changed AS (
+          UPDATE places SET
+            description = CASE WHEN ${description !== undefined}::boolean
+              THEN ${description ?? ''}::text ELSE description END,
+            purpose = CASE WHEN ${purpose !== undefined}::boolean
+              THEN ${purpose ?? ''}::text ELSE purpose END,
+            front_matter_thing_ids = CASE WHEN ${frontMatterThingIds !== undefined}::boolean
+              THEN ${frontMatterThingIds === undefined ? [] : [...frontMatterThingIds]}::integer[]
+              ELSE front_matter_thing_ids END,
+            open_to_building = coalesce(${openToBuilding ?? null}::boolean, open_to_building),
+            open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
+            open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes)
+          WHERE id IN (SELECT id FROM editable)
+            AND (
+              (${description !== undefined}::boolean
+                AND description IS DISTINCT FROM ${description ?? ''}::text)
+              OR (${purpose !== undefined}::boolean
+                AND purpose IS DISTINCT FROM ${purpose ?? ''}::text)
+              OR (${frontMatterThingIds !== undefined}::boolean
+                AND front_matter_thing_ids IS DISTINCT FROM
+                  ${frontMatterThingIds === undefined ? [] : [...frontMatterThingIds]}::integer[])
+              OR (${openToBuilding !== undefined}::boolean
+                AND open_to_building IS DISTINCT FROM ${openToBuilding ?? false}::boolean)
+              OR (${openToThings !== undefined}::boolean
+                AND open_to_things IS DISTINCT FROM ${openToThings ?? false}::boolean)
+              OR (${openToNotes !== undefined}::boolean
+                AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
+            )
+          RETURNING *
+        ), new_event AS (
+          INSERT INTO events (kind, actor, detail)
+          SELECT 'place_edited', ${resident.handle}, jsonb_build_object('place_id', id)
+          FROM changed
+        ), result AS (
+          SELECT changed.* FROM changed
+          UNION ALL
+          SELECT current.*
+          FROM places current
+          JOIN editable ON editable.id = current.id
+          WHERE NOT EXISTS (SELECT 1 FROM changed)
+        )
+        SELECT result.*, ${resident.handle}::text AS owner FROM result
+      `) as PlaceRow[]
+    } catch (error) {
+      const code = error != null && typeof error === 'object'
+        ? String((error as { code?: unknown }).code ?? '')
+        : ''
+      if ((code === '23514' || code === '23503') && frontMatterThingIds !== undefined) {
+        return err(c, 409, 'front matter eligibility changed; retry')
+      }
+      throw error
+    }
     if (!rows[0]) return err(c, 409, 'place changed or received an open sale offer; retry')
-    return c.json({ place: rows[0] })
+    const frontMatter = await loadPublicPlaceFrontMatter(executePublicQuery, [id])
+    return c.json({
+      place: publicPlaceWriteRow(rows[0]),
+      front_matter: frontMatter.get(id) ?? Object.freeze([]),
+    })
   })
 
   app.put('/api/place/:id/laws', async c => {
@@ -765,6 +830,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/kind', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const selectionConflict = feeSelectionConflict(c)
+    if (selectionConflict) return selectionConflict
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     if (!hasOnly(body, ['name', 'description', 'traits', 'recipe'])) {
@@ -803,88 +870,40 @@ export function mountWorldRoutes(app: Hono): void {
     )
     if (fee instanceof Response) return fee
     try {
-      const rows = (await sql`
-        WITH payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = ${fee.attemptId}
-            AND lease_owner = ${fee.leaseOwner}
-            AND status = 'payment_pending'
-            AND tx_hash = ${fee.txHash}
-            AND actor_id = ${resident.id}
-            AND operation = 'kind_invention'
-          FOR UPDATE
-        ), new_kind AS (
-          INSERT INTO kinds (name, owner_id, current_revision)
-          SELECT ${name}, ${resident.id}, 1 FROM payment_attempt
-          RETURNING id, name, owner_id, current_revision, created_at
-        ), new_revision AS (
-          INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
-          SELECT id, 1, ${description}, ${traits}, ${JSON.stringify(recipe)}::jsonb
-          FROM new_kind
-          RETURNING kind_id, revision, description, traits, recipe
-        ), payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, purpose, actor_id,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_invention', ${resident.id},
-            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
-          FROM new_revision
-          RETURNING tx_hash
-        ), new_fee AS (
-          INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-          SELECT ${resident.id}, 'kind_invention', ${CLAIM_FEE_USDC}, payment_use.tx_hash
-          FROM payment_use JOIN new_kind ON true
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'kind_invented', ${resident.handle}, jsonb_build_object(
-            'kind_id', new_kind.id, 'name', new_kind.name,
-            'revision', new_revision.revision, 'fee_tx_hash', ${fee.txHash}::text
-          ) FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
-        ), result_row AS (
-          SELECT new_kind.id, new_kind.name, new_kind.owner_id, ${resident.handle}::text AS owner,
-            new_revision.revision, new_revision.description, new_revision.traits,
-            new_revision.recipe, new_kind.created_at
-          FROM new_kind JOIN new_revision ON new_revision.kind_id = new_kind.id
-        ), response_payload AS (
-          SELECT jsonb_build_object(
-            'kind', to_jsonb(result_row),
-            'fee_tx', ${fee.txHash}::text
-          ) AS body
-          FROM result_row
-        ), completed_attempt AS (
-          SELECT complete_payment_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
-            201::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
+      const completion = await completeTreasuryPaymentOperation(
+        { query: sql.query },
+        { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+      )
+      if (completion.state !== 'completed') {
+        return await reconcileTreasuryCompletionNoEffect(
+          c,
+          fee,
+          resident.id,
+          completion.state === 'deadline_passed'
+            ? 'kind invention recovery deadline passed before completion'
+            : 'kind invention target changed before completion',
         )
-        SELECT result_row.*,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM result_row CROSS JOIN completed_attempt
-      `) as Array<KindRow & { response_body: string }>
-      const returned = rows[0]
-      if (!returned) {
-        await releasePaymentLease(fee)
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: fee.attemptId,
-          fee_tx: fee.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same request with the same X-PAYMENT header',
-        }, 202)
       }
-      return completedTreasuryFeeResponse(fee, returned.response_body, 201)
+      return completedTreasuryFeeResponse(
+        completion.responseBody,
+        completion.status,
+        completion.paymentResponseHeader,
+      )
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
-      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
       const message = conflictMessage(error, 'kind name or payment proof already used')
-      if (message) return err(c, 409, message)
+      if (fee.rail === 'credit') {
+        return await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          unknownTrait ? `kind ${unknownTrait}` : message ?? 'kind invention failed before completion',
+          unknownTrait ? 400 : message ? 409 : 503,
+        ) as Response
+      }
+      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
+      if (message) {
+        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+      }
       throw error
     }
   })
@@ -892,6 +911,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/kind/:id/revise', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const selectionConflict = feeSelectionConflict(c)
+    if (selectionConflict) return selectionConflict
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'kind id must be a positive integer')
     const body = await jsonBody(c)
@@ -953,100 +974,42 @@ export function mountWorldRoutes(app: Hono): void {
     )
     if (fee instanceof Response) return fee
     try {
-      const rows = (await sql`
-        WITH payment_attempt AS MATERIALIZED (
-          SELECT public_id
-          FROM payment_attempts
-          WHERE public_id = ${fee.attemptId}
-            AND lease_owner = ${fee.leaseOwner}
-            AND status = 'payment_pending'
-            AND tx_hash = ${fee.txHash}
-            AND actor_id = ${resident.id}
-            AND operation = 'kind_revision'
-            AND asset_type = 'kind' AND asset_id = ${id}
-          FOR UPDATE
-        ), locked_kind AS (
-          SELECT k.id, k.name, k.owner_id, k.current_revision
-          FROM kinds k
-          LEFT JOIN transfer_offers offer ON offer.asset_type = 'kind'
-            AND offer.asset_id = k.id AND offer.status = 'open'
-          WHERE k.id = ${id} AND k.owner_id = ${resident.id}
-            AND k.active_offer_id IS NULL AND offer.id IS NULL
-          FOR UPDATE OF k
-        ), new_revision AS (
-          INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
-          SELECT locked_kind.id, locked_kind.current_revision + 1,
-            ${description}, ${traits}, ${JSON.stringify(recipe)}::jsonb
-          FROM locked_kind CROSS JOIN payment_attempt
-          RETURNING kind_id, revision, description, traits, recipe
-        ), changed_kind AS (
-          UPDATE kinds SET current_revision = new_revision.revision
-          FROM new_revision
-          WHERE kinds.id = new_revision.kind_id
-          RETURNING kinds.id, kinds.name, kinds.owner_id, kinds.created_at
-        ), payment_use AS (
-          INSERT INTO payment_uses (
-            tx_hash, payment_attempt_id, purpose, actor_id,
-            payer_wallet, payee_wallet, amount_usdc
-          )
-          SELECT ${fee.txHash}, ${fee.attemptId}, 'kind_revision', ${resident.id},
-            ${fee.payerWallet}, ${TREASURY}, ${CLAIM_FEE_USDC}
-          FROM changed_kind
-          RETURNING tx_hash
-        ), new_fee AS (
-          INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-          SELECT ${resident.id}, 'kind_revision', ${CLAIM_FEE_USDC}, payment_use.tx_hash
-          FROM payment_use JOIN changed_kind ON true
-        ), new_event AS (
-          INSERT INTO events (kind, actor, detail)
-          SELECT 'kind_revised', ${resident.handle}, jsonb_build_object(
-            'kind_id', changed_kind.id, 'name', changed_kind.name,
-            'revision', new_revision.revision, 'fee_tx_hash', ${fee.txHash}::text
-          ) FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
-        ), result_row AS (
-          SELECT changed_kind.id, changed_kind.name, changed_kind.owner_id,
-            ${resident.handle}::text AS owner, new_revision.revision,
-            new_revision.description, new_revision.traits, new_revision.recipe,
-            changed_kind.created_at
-          FROM changed_kind JOIN new_revision ON new_revision.kind_id = changed_kind.id
-        ), response_payload AS (
-          SELECT jsonb_build_object(
-            'kind', to_jsonb(result_row),
-            'fee_tx', ${fee.txHash}::text
-          ) AS body
-          FROM result_row
-        ), completed_attempt AS (
-          SELECT complete_payment_attempt(
-            ${fee.attemptId},
-            ${fee.leaseOwner},
-            jsonb_build_object('kind', 'kind_revision', 'id', result_row.id, 'revision', result_row.revision),
-            200::smallint,
-            response_payload.body,
-            convert_to(response_payload.body::text, 'UTF8')
-          ) AS attempt
-          FROM result_row CROSS JOIN payment_use CROSS JOIN response_payload
+      const completion = await completeTreasuryPaymentOperation(
+        { query: sql.query },
+        { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+      )
+      if (completion.state !== 'completed') {
+        return await reconcileTreasuryCompletionNoEffect(
+          c,
+          fee,
+          resident.id,
+          completion.state === 'deadline_passed'
+            ? 'kind revision recovery deadline passed before completion'
+            : 'kind revision target changed before completion',
         )
-        SELECT result_row.*,
-          convert_from((completed_attempt.attempt).response_body_bytes, 'UTF8') AS response_body
-        FROM result_row CROSS JOIN completed_attempt
-      `) as Array<KindRow & { response_body: string }>
-      const returned = rows[0]
-      if (!returned) {
-        await releasePaymentLease(fee)
-        return c.json({
-          payment: 'pending',
-          payment_attempt_id: fee.attemptId,
-          fee_tx: fee.txHash,
-          do_not_pay_again: true,
-          retry: 'retry this same request with the same X-PAYMENT header',
-        }, 202)
       }
-      return completedTreasuryFeeResponse(fee, returned.response_body, 200)
+      return completedTreasuryFeeResponse(
+        completion.responseBody,
+        completion.status,
+        completion.paymentResponseHeader,
+      )
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
-      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
       const message = conflictMessage(error, 'payment proof already used')
-      if (message) return err(c, 409, message)
+      if (fee.rail === 'credit') {
+        return await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          unknownTrait
+            ? `kind revision ${unknownTrait}`
+            : message ?? 'kind revision failed before completion',
+          unknownTrait ? 400 : message ? 409 : 503,
+        ) as Response
+      }
+      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
+      if (message) {
+        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+      }
       throw error
     }
   })

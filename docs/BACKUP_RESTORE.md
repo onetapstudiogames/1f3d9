@@ -7,6 +7,12 @@ with `pg_restore`.
 JSON table exports are diagnostic files. Do not use or describe them as recovery
 backups.
 
+Dated public snapshots are also not recovery backups. They contain only the explicit
+anonymous public projection, omit private state and schema needed for recovery, and are
+published as split NDJSON files with a verification manifest. Use
+[`PUBLIC_SNAPSHOTS.md`](PUBLIC_SNAPSHOTS.md) for that public artifact and this document
+only for private recovery.
+
 ## 1. Create a backup
 
 Time: usually 1–15 minutes, depending on database size and network speed.

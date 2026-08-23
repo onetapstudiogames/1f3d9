@@ -47,6 +47,30 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.doesNotThrow(() => new Function(WINDOW_JS))
 })
 
+test('the live window distinguishes its current bounded view from dated public snapshots', () => {
+  assert.match(WINDOW_HTML, /The current bounded public view is loading\./)
+  assert.match(WINDOW_HTML, /Loaded resident markers show the current bounded public view\./)
+  assert.match(WINDOW_JS, /Excerpt only — the full text is not included in this bounded view\./)
+  assert.match(WINDOW_JS, /Current bounded public view shows/)
+  assert.match(WINDOW_JS, /The current public city view could not be read\./)
+  assert.doesNotMatch(WINDOW_HTML, /Reading the luggage tags/iu)
+
+  const oldVisibleCopy = [
+    'latest public snapshot',
+    'not included in this snapshot',
+    'not currently loaded in this bounded snapshot',
+    'fetched past that snapshot',
+    'public city snapshot could not be read',
+  ]
+  for (const phrase of oldVisibleCopy) {
+    assert.doesNotMatch(`${WINDOW_HTML}\n${WINDOW_JS}`, new RegExp(phrase, 'iu'), phrase)
+  }
+
+  const routeSource = windowModule.windowSnapshot.toString()
+  assert.match(routeSource, /invalid public window query/iu)
+  assert.doesNotMatch(routeSource, /invalid public window snapshot query/iu)
+})
+
 test('deliberate navigation makes real history and refresh keeps reading state', () => {
   // Tabs, place and resident choices, and filter changes push a history
   // entry; only unchanged-hash renders fall through to replaceState.
@@ -144,7 +168,7 @@ test('long public bodies share one honest, accessible disclosure', () => {
   }
   assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
-  assert.match(WINDOW_JS, /Excerpt only — this snapshot carries the first part\./)
+  assert.match(WINDOW_JS, /Excerpt only — this bounded view carries only the first part\./)
   // An excerpt is a dead end unless the reader is told where the rest lives.
   // Notes and things have single-item endpoints; agreements do not, and the
   // notice must say so rather than offering a link that would 404.
@@ -462,11 +486,117 @@ test('thing cards and Archive results name maker and current owner separately', 
   assert.match(WINDOW_JS, /currently owned by /)
 })
 
+test('bounded map and window rooms carry a short purpose and ordered body-free front matter', () => {
+  const purpose = 'p'.repeat(280)
+  const frontMatter = [41, 42, 43, 44].map((id, index) => ({
+    id,
+    type: 'thing',
+    name: `room heading ${index + 1}`,
+    body: `body ${index + 1} must stay behind its direct link`,
+    snippet: `snippet ${index + 1} must not cross the glass`,
+    body_text_bytes: 20 + index,
+    maker_id: 6,
+    made_by: 'old-maker',
+    owner_id: 7,
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner: 'tiny-lantern',
+  }))
+  const places = windowModule.publicPlaceTree([{
+    id: 80,
+    parent_id: null,
+    name: 'reading-room',
+    owner: 'tiny-lantern',
+    purpose,
+    front_matter: frontMatter,
+    places: 0,
+    things: 4,
+    notes: 0,
+  }, {
+    id: 81,
+    parent_id: null,
+    name: 'quiet-room',
+    owner: 'tiny-lantern',
+    places: 0,
+    things: 0,
+    notes: 0,
+  }, {
+    id: 82,
+    parent_id: null,
+    name: 'overlong-purpose-room',
+    owner: 'tiny-lantern',
+    purpose: 'x'.repeat(281),
+    front_matter: [],
+    places: 0,
+    things: 0,
+    notes: 0,
+  }, {
+    id: 83,
+    parent_id: null,
+    name: 'front-matter-shrank-room',
+    owner: 'tiny-lantern',
+    purpose: '',
+    front_matter: [frontMatter[2]],
+    places: 0,
+    things: 1,
+    notes: 0,
+  }]) as unknown as Array<Record<string, unknown>>
+
+  const readingRoom = places.find(place => place.id === 80)
+  assert.equal(readingRoom?.purpose, purpose)
+  assert.ok(Array.isArray(readingRoom?.front_matter))
+  const headings = readingRoom?.front_matter as Array<Record<string, unknown>>
+  assert.equal(headings.length, 3)
+  assert.deepEqual(
+    headings.map(heading => ({
+      id: heading.id,
+      name: heading.name,
+      body_text_bytes: heading.body_text_bytes,
+      made_by: heading.made_by,
+      current_owner: heading.current_owner,
+    })),
+    frontMatter.slice(0, 3).map(heading => ({
+      id: heading.id,
+      name: heading.name,
+      body_text_bytes: heading.body_text_bytes,
+      made_by: heading.made_by,
+      current_owner: heading.current_owner,
+    })),
+  )
+  assert.ok(headings.every(heading => !('body' in heading) && !('snippet' in heading)))
+  assert.equal(places.find(place => place.id === 81)?.purpose, '')
+  assert.deepEqual(places.find(place => place.id === 81)?.front_matter, [])
+  const boundedPurpose = places.find(place => place.id === 82)?.purpose
+  assert.equal(typeof boundedPurpose, 'string')
+  assert.ok((boundedPurpose as string).length <= 280)
+  const shrunkFrontMatter = places.find(place => place.id === 83)?.front_matter
+  assert.ok(Array.isArray(shrunkFrontMatter))
+  assert.deepEqual(
+    (shrunkFrontMatter as Array<Record<string, unknown>>).map(heading => heading.id),
+    [43],
+  )
+})
+
+test('the selected-place panel identifies owner choices and links front matter without fetching bodies', () => {
+  assert.match(WINDOW_JS, /owner-written purpose/iu)
+  assert.match(WINDOW_JS, /owner-chosen front matter/iu)
+  assert.match(WINDOW_JS, /rawPlace\.purpose/)
+  assert.match(WINDOW_JS, /rawPlace\.front_matter/)
+  assert.match(WINDOW_JS, /place\.purpose/)
+  assert.match(WINDOW_JS, /place\.front_matter/)
+  assert.match(WINDOW_JS, /place\.front_matter\.map\(/)
+  assert.match(WINDOW_JS, /href\s*=\s*['"]\/api\/thing\/['"]\s*\+\s*String\([^)]*\.id\)/)
+  assert.match(WINDOW_JS, /made by[\s\S]{0,600}currently owned by[\s\S]{0,600}UTF-8 bytes/iu)
+  assert.doesNotMatch(WINDOW_JS, /front_matter\.(?:sort|toSorted|reverse|splice)\(/)
+  assert.doesNotMatch(WINDOW_JS, /new URL\(\s*['"]\/api\/thing\//u)
+  assert.doesNotMatch(WINDOW_JS, /fetch\s*\([^)]*\/api\/thing\//u)
+})
+
 test('a followed view says how many notes it is actually showing', () => {
-  // The snapshot counters describe the snapshot; the conversation list is a
+  // The initial bounded-view counters and the expanded conversation list are
   // separate fetch. Printing only the first next to the second read as one
   // number describing the other.
-  assert.match(WINDOW_JS, /Conversations below are fetched past that snapshot:/)
+  assert.match(WINDOW_JS, /Conversations below include separately fetched context beyond the initial bounded view:/)
   assert.match(WINDOW_JS, /' plus ' \+ String\(followedRows\.length - ownRows\)/)
 })
 
@@ -796,5 +926,5 @@ test('snapshot totals preserve city-wide counts beyond the displayed caps', () =
     events: 9_000,
   })
   assert.match(WINDOW_JS, /payload\.totals/)
-  assert.match(WINDOW_JS, /latest public snapshot/i)
+  assert.match(WINDOW_JS, /current bounded public view/i)
 })

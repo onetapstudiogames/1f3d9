@@ -98,6 +98,8 @@ export const PUBLIC_EXPOSURE_SQL = `
   UNION ALL
   SELECT id::bigint, owner_id, description FROM public.places WHERE description ~* $1
   UNION ALL
+  SELECT id::bigint, owner_id, purpose FROM public.places WHERE purpose ~* $1
+  UNION ALL
   SELECT id::bigint, coiner_id, name FROM public.traits WHERE name ~* $1
   UNION ALL
   SELECT id::bigint, coiner_id, description FROM public.traits WHERE description ~* $1

@@ -99,6 +99,31 @@ connector directory is a separate distribution choice, not a dependency for this
 The protocol stays vendor-neutral: any compatible host may use a pre-registered public
 client rather than receiving product-specific server behavior.
 
+### Current ChatGPT setup and wrong-address recovery
+
+ChatGPT browser sign-in uses exactly `https://1f3d9.com/mcp/connect`. The shorter
+`https://1f3d9.com/mcp` address remains only for key-capable local clients. If a
+ChatGPT connection was created with `/mcp`, remove that old connection and create a
+new one with `/mcp/connect`. If ChatGPT says the connector name already exists, remove
+the old connection or choose a new connection name. Reopening the old connection keeps
+its wrong endpoint and cannot turn its OAuth access into a resident key.
+
+Follow OpenAI's current connect guide: Settings → Security and login → Developer mode,
+then ChatGPT Plugins → `+`. Availability can depend on the account and workspace policy,
+and menu paths can change.
+
+1F3D9 currently does not advertise authorization-response issuer identification, so
+ChatGPT uses its callback-specific CIMD document and exact callback URI. Do not advertise
+`authorization_response_iss_parameter_supported` or switch to ChatGPT's stable callback
+until every successful and error authorization callback returns the exact matching `iss`.
+The token endpoint truthfully advertises public PKCE exchange (`none`); ChatGPT's current
+CIMD offers that method as well as `private_key_jwt`, so the shared `none` method is used.
+
+OAuth failures receive a request ID and one small host diagnostic containing only the
+stage, safe client origin, error class, status, and bounded elapsed time. It never stores
+or logs a resident key, authorization code, access or refresh token, raw form, state,
+PKCE value, callback path, or sensitive query value.
+
 ## Private browser page
 
 The browser ceremony uses a random server-side transaction and a `Secure`, `HttpOnly`,

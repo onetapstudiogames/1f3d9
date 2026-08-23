@@ -103,9 +103,11 @@ interface FakePaymentAttempt {
   start_block: string | null
   start_time: string | null
   end_time: string | null
-  status: 'settling' | 'payment_pending' | 'completed' | 'invalid' | 'expired' | 'needs_review'
+  status: 'settling' | 'payment_pending' | 'completed' | 'credit_returned' | 'invalid' | 'expired' | 'needs_review' | 'founder_review'
   lease_owner: string | null
   lease_expires_at: string | null
+  recovery_started_at?: string | null
+  recovery_deadline_at?: string | null
   tx_hash: string | null
   finalized_block_number: string | null
   finalized_block_hash: string | null
@@ -119,6 +121,20 @@ interface FakePaymentAttempt {
   created_at: string
   updated_at: string
   completed_at: string | null
+  request_json?: Record<string, unknown> | null
+}
+interface FakeCityCreditEntry {
+  id: string
+  resident_id: number
+  entry_kind: 'founder_issue' | 'spend' | 'return'
+  amount_units: string
+  founder_id: number | null
+  source_key: string | null
+  request_id: string | null
+  payment_attempt_id: string | null
+  related_spend_id: string | null
+  reason: string | null
+  created_at: string
 }
 interface FakeLaterHolderItem {
   mark_id: string
@@ -180,12 +196,22 @@ interface FakeState {
   chainAgeSeconds: number
   paymentHashes: Set<string>
   paymentAttempts: Map<string, FakePaymentAttempt>
+  cityCreditBalances: Map<number, bigint>
+  cityCreditEntries: FakeCityCreditEntry[]
+  nextCityCreditEntryId: number
   paymentReplaySchemaReady: boolean
   facilitatorVerify: boolean
   facilitatorSettle: boolean
   flagSlotsUsed: Record<string, number>
   failPaidWriteOnce: boolean
+  interruptTreasuryCompletionOnce: boolean
+  treasuryCompletionHeader?: string
   placeDescription: string
+  roomPurpose: string
+  frontMatterThingIds: number[]
+  frontMatterMovedThingIds: number[]
+  frontMatterHiddenThingIds: number[]
+  frontMatterRaceLost: boolean
   noteBody: string
   exactTotalsBusy: boolean
   exactTotalsBusyAfter: number | null
@@ -245,12 +271,21 @@ const initialState = (): FakeState => ({
   chainAgeSeconds: 60,
   paymentHashes: new Set<string>(),
   paymentAttempts: new Map(),
+  cityCreditBalances: new Map(),
+  cityCreditEntries: [],
+  nextCityCreditEntryId: 1,
   paymentReplaySchemaReady: true,
   facilitatorVerify: false,
   facilitatorSettle: false,
   flagSlotsUsed: {},
   failPaidWriteOnce: false,
+  interruptTreasuryCompletionOnce: false,
   placeDescription: 'a place made from words',
+  roomPurpose: '',
+  frontMatterThingIds: [],
+  frontMatterMovedThingIds: [],
+  frontMatterHiddenThingIds: [],
+  frontMatterRaceLost: false,
   noteBody: 'hello from the square',
   exactTotalsBusy: false,
   exactTotalsBusyAfter: null,
@@ -282,7 +317,9 @@ const placeRow = (id = 2, parentId: number | null = 1) => ({
   id,
   parent_id: parentId,
   name: id === 1 ? 'First Continent' : id === 2 ? 'Lantern Town' : 'Small Plot',
+  purpose: state.roomPurpose,
   description: state.placeDescription,
+  front_matter_thing_ids: [...state.frontMatterThingIds],
   owner_id: id === 3 ? state.actorId : state.placeOwnerId,
   owner: id === 3 ? state.actorHandle : 'founder',
   open_to_building: state.openToBuilding,
@@ -332,6 +369,54 @@ const thingRow = (id = 41) => ({
     : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
   created_at: '2026-08-11T00:00:00.000Z',
 })
+
+const roomOrientationThingRow = (id: number) => {
+  const fixtures = {
+    41: {
+      name: 'porch lantern', body: 'warm light', maker_id: 7, made_by: 'tiny-lantern',
+      owner_id: 7, owner: 'tiny-lantern',
+    },
+    42: {
+      name: 'neighbor chest', body: 'locked shut', maker_id: 8, made_by: 'neighbor',
+      owner_id: 8, owner: 'neighbor',
+    },
+    43: {
+      name: 'borrowed field guide', body: 'three careful routes 🏙',
+      maker_id: 8, made_by: 'neighbor', owner_id: 7, owner: 'tiny-lantern',
+    },
+    44: {
+      name: 'unselected stool', body: 'plain pine', maker_id: 7, made_by: 'tiny-lantern',
+      owner_id: 7, owner: 'tiny-lantern',
+    },
+  } as const
+  const fixture = fixtures[id as keyof typeof fixtures]
+  if (!fixture) throw new Error(`unknown room-orientation thing fixture: ${id}`)
+  return {
+    id,
+    type: 'thing' as const,
+    place_id: state.frontMatterMovedThingIds.includes(id) ? 3 : 2,
+    name: fixture.name,
+    body: fixture.body,
+    body_text_bytes: Buffer.byteLength(fixture.body, 'utf8'),
+    maker_id: fixture.maker_id,
+    made_by: fixture.made_by,
+    current_owner_id: fixture.owner_id,
+    current_owner: fixture.owner,
+    owner_id: fixture.owner_id,
+    owner: fixture.owner,
+    withdrawn_at: id === 41
+      ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
+      : id === 42
+        ? (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null)
+        : null,
+  }
+}
+
+const visibleRoomFrontMatter = () => state.frontMatterThingIds
+  .map(roomOrientationThingRow)
+  .filter(row => row.place_id === 2 && row.withdrawn_at === null)
+  .filter(row => !state.frontMatterHiddenThingIds.includes(row.id))
+  .map(({ body: _body, place_id: _placeId, withdrawn_at: _withdrawnAt, ...heading }) => heading)
 
 const descendingPage = <T extends { id: number }>(
   rows: readonly T[],
@@ -499,10 +584,406 @@ function recordPayment(query: string, params: unknown[]) {
   state = { ...state, paymentHashes: new Set([...state.paymentHashes, canonical]) }
 }
 
+function integerArrayValue(value: unknown): number[] | null {
+  let decoded: unknown = value
+  if (typeof value === 'string') {
+    try {
+      decoded = value.startsWith('[')
+        ? JSON.parse(value)
+        : value.startsWith('{')
+          ? value.slice(1, -1).split(',').filter(Boolean)
+          : value
+    } catch {
+      return null
+    }
+  }
+  if (!Array.isArray(decoded)) return null
+  const ids = decoded.map(item => Number(
+    typeof item === 'string' ? item.replace(/^"|"$/gu, '') : item,
+  ))
+  return ids.every(id => Number.isSafeInteger(id) && id > 0) ? ids : null
+}
+
+function frontMatterIdsIn(params: readonly unknown[]): number[] | null {
+  for (const value of params) {
+    const ids = integerArrayValue(value)
+    if (ids !== null) return ids
+  }
+  const individualIds = params
+    .map(Number)
+    .filter(id => Number.isSafeInteger(id) && id >= 41 && id <= 44)
+  return individualIds.length > 0 ? individualIds : null
+}
+
+function roomPurposeIn(params: readonly unknown[]): string | null {
+  return (params.find(value => typeof value === 'string' && (
+    [
+      'safe',
+      'two\nlines',
+      'A small room for deliberate reading.',
+      'A retry-safe reading room.',
+      'Keep the old description.',
+    ].includes(value) || value.length === 281
+  )) as string | undefined) ?? null
+}
+
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
 
+  if (q.includes('front_matter_thing_ids') && q.includes('select')
+      && /\b(?:from|join)\s+things\b/iu.test(q)
+      && !/\b(?:insert|update|delete)\b/iu.test(q)) {
+    return state.scenario === 'room orientation'
+      ? visibleRoomFrontMatter().map((heading, position) => ({ ...heading, place_id: 2, position }))
+      : []
+  }
+
+  if (state.scenario === 'room orientation') {
+    const writesFrontMatter = q.includes('front_matter_thing_ids')
+      && /\b(?:insert|update|delete)\b/iu.test(q)
+    const updatesOrientation = q.includes('update places')
+      && (q.includes('purpose') || q.includes('front_matter_thing_ids'))
+    if (writesFrontMatter || updatesOrientation) {
+      if (state.frontMatterRaceLost) return []
+      const parsedIds = frontMatterIdsIn(params)
+      const ids = parsedIds
+      if (ids && ids.some(id => {
+        const row = roomOrientationThingRow(id)
+        return row.place_id !== 2 || row.withdrawn_at !== null
+          || state.frontMatterHiddenThingIds.includes(id)
+      })) {
+        throw Object.assign(
+          new Error('front matter must use active public things in the same place'),
+          { code: '23514' },
+        )
+      }
+      const purpose = roomPurposeIn(params)
+      state = {
+        ...state,
+        ...(ids === null ? {} : { frontMatterThingIds: [...ids] }),
+        ...(purpose === null ? {} : { roomPurpose: purpose }),
+      }
+      return [{
+        ...placeRow(2, 1),
+        purpose: state.roomPurpose,
+        front_matter_thing_ids: [...state.frontMatterThingIds],
+        active_offer_id: null,
+        has_open_offer: false,
+      }]
+    }
+    if (q.includes('from things') && !q.includes('/* public:place-collections')) {
+      const requested = frontMatterIdsIn(params) ?? []
+      return requested.map(roomOrientationThingRow)
+        .filter(row => row.place_id === 2 && row.withdrawn_at === null)
+        .filter(row => !state.frontMatterHiddenThingIds.includes(row.id))
+    }
+    if (q.includes('from places') && q.includes('purpose') && !q.includes('/* public:')) {
+      return [{
+        ...placeRow(2, 1),
+        purpose: state.roomPurpose,
+        front_matter_thing_ids: [...state.frontMatterThingIds],
+        active_offer_id: null,
+        has_open_offer: false,
+      }]
+    }
+  }
+
+  if (q.includes('select id from residents where handle')) {
+    const handle = String(params[0])
+    const residentId = handle === 'founder' ? 1 : handle === 'tiny-lantern' ? 7 : handle === 'neighbor' ? 8 : null
+    return residentId === null ? [] : [{ id: residentId }]
+  }
+  if (q.includes('/* city-credit:issue */')) {
+    const founderId = Number(params[0])
+    const residentId = Number(params[1])
+    const sourceKey = String(params[2])
+    const reason = String(params[3])
+    const amountUnits = String(params[4])
+    const existing = state.cityCreditEntries.find(entry => entry.source_key === sourceKey)
+    if (existing) {
+      return [{
+        ...existing,
+        entry_id: existing.id,
+        created: false,
+        balance_units: String(state.cityCreditBalances.get(existing.resident_id) ?? 0n),
+      }]
+    }
+    if (![1, 7, 8].includes(residentId)) return []
+    const entry: FakeCityCreditEntry = {
+      id: String(state.nextCityCreditEntryId),
+      resident_id: residentId,
+      entry_kind: 'founder_issue',
+      amount_units: amountUnits,
+      founder_id: founderId,
+      source_key: sourceKey,
+      request_id: null,
+      payment_attempt_id: null,
+      related_spend_id: null,
+      reason,
+      created_at: '2026-08-11T00:00:00.000Z',
+    }
+    const balance = (state.cityCreditBalances.get(residentId) ?? 0n) + BigInt(amountUnits)
+    state = {
+      ...state,
+      cityCreditBalances: new Map(state.cityCreditBalances).set(residentId, balance),
+      cityCreditEntries: [...state.cityCreditEntries, entry],
+      nextCityCreditEntryId: state.nextCityCreditEntryId + 1,
+    }
+    return [{ ...entry, entry_id: entry.id, created: true, balance_units: String(balance) }]
+  }
+  if (q.includes('/* city-credit:read-account */')) {
+    const residentId = Number(params[0])
+    const beforeId = params[1] == null ? null : BigInt(String(params[1]))
+    const limit = params[2] == null ? 20 : Number(params[2])
+    const matching = state.cityCreditEntries
+      .filter(entry => entry.resident_id === residentId && (beforeId === null || BigInt(entry.id) < beforeId))
+      .sort((left, right) => Number(BigInt(right.id) - BigInt(left.id)))
+    const history = matching.slice(0, limit).map(entry => {
+      const attempt = entry.payment_attempt_id == null
+        ? null
+        : state.paymentAttempts.get(entry.payment_attempt_id) ?? null
+      return {
+        ...entry,
+        operation: attempt?.operation ?? null,
+        target_key: attempt?.target_key ?? null,
+      }
+    })
+    return [{
+      resident_id: residentId,
+      balance_units: String(state.cityCreditBalances.get(residentId) ?? 0n),
+      history,
+      has_more: matching.length > limit,
+    }]
+  }
+  if (q.includes('/* city-credit:issue-balance */')) {
+    const residentId = Number(params[0])
+    const balance = state.cityCreditBalances.get(residentId)
+    return balance == null ? [] : [{ balance_units: String(balance) }]
+  }
+  if (q.includes('/* city-credit:begin-spend */')) {
+    const actorId = Number(params[0])
+    const operation = String(params[1])
+    const targetKey = String(params[2])
+    const requestId = String(params[3])
+    const requestHash = String(params[4])
+    const requestJson = JSON.parse(String(params[5])) as Record<string, unknown>
+    const amountUnits = String(params[6])
+    const newAttemptId = String(params[7])
+    const newLeaseOwner = String(params[8])
+    const assetType = params[10] == null ? null : String(params[10])
+    const assetId = params[11] == null ? null : Number(params[11])
+    let spend = state.cityCreditEntries.find(entry =>
+      entry.entry_kind === 'spend'
+      && entry.resident_id === actorId
+      && entry.request_id === requestId)
+    if (!spend) {
+      spend = state.cityCreditEntries.find(entry => {
+        if (entry.entry_kind !== 'spend' || entry.payment_attempt_id == null) return false
+        const attempt = state.paymentAttempts.get(entry.payment_attempt_id)
+        return attempt?.operation === operation
+          && attempt.target_key === targetKey
+          && ['settling', 'payment_pending', 'needs_review', 'completed'].includes(attempt.status)
+      })
+    }
+    if (!spend) {
+      const balance = state.cityCreditBalances.get(actorId) ?? 0n
+      if (balance < BigInt(amountUnits)) {
+        throw Object.assign(new Error('insufficient city fee credit'), { code: '23514' })
+      }
+      const now = '2026-08-11T00:00:00.000Z'
+      const recoveryStartAt = Date.now()
+      const attempt: FakePaymentAttempt = {
+        public_id: newAttemptId,
+        actor_id: actorId,
+        counterparty_id: null,
+        operation,
+        target_key: targetKey,
+        offer_id: null,
+        asset_type: assetType,
+        asset_id: assetId,
+        request_hash: requestHash,
+        request_json: requestJson,
+        method: 'credit',
+        network: null,
+        token: null,
+        payer_wallet: null,
+        payee_wallet: null,
+        amount_units: amountUnits,
+        x402_nonce: null,
+        x402_payload_digest: null,
+        x402_valid_after: null,
+        x402_valid_before: null,
+        start_block: null,
+        start_time: null,
+        end_time: null,
+        status: 'payment_pending',
+        lease_owner: newLeaseOwner,
+        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+        recovery_started_at: new Date(recoveryStartAt).toISOString(),
+        recovery_deadline_at: new Date(
+          recoveryStartAt + 2 * 60 * 60 * 1000,
+        ).toISOString(),
+        tx_hash: null,
+        finalized_block_number: null,
+        finalized_block_hash: null,
+        finalized_block_time: null,
+        finalized_at: null,
+        invalid_reason: null,
+        result_json: null,
+        response_status: null,
+        response_json: null,
+        response_body_bytes: null,
+        created_at: now,
+        updated_at: now,
+        completed_at: null,
+      }
+      spend = {
+        id: String(state.nextCityCreditEntryId),
+        resident_id: actorId,
+        entry_kind: 'spend',
+        amount_units: amountUnits,
+        founder_id: null,
+        source_key: null,
+        request_id: requestId,
+        payment_attempt_id: newAttemptId,
+        related_spend_id: null,
+        reason: null,
+        created_at: now,
+      }
+      state = {
+        ...state,
+        cityCreditBalances: new Map(state.cityCreditBalances).set(actorId, balance - BigInt(amountUnits)),
+        cityCreditEntries: [...state.cityCreditEntries, spend],
+        nextCityCreditEntryId: state.nextCityCreditEntryId + 1,
+        paymentAttempts: new Map(state.paymentAttempts).set(newAttemptId, attempt),
+      }
+    }
+    let attempt = state.paymentAttempts.get(spend.payment_attempt_id!)!
+    let leaseAcquired = attempt.lease_owner === newLeaseOwner
+    if (attempt.status === 'payment_pending' && attempt.lease_owner == null) {
+      attempt = {
+        ...attempt,
+        lease_owner: newLeaseOwner,
+        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      }
+      state = {
+        ...state,
+        paymentAttempts: new Map(state.paymentAttempts).set(attempt.public_id, attempt),
+      }
+      leaseAcquired = true
+    }
+    const returned = state.cityCreditEntries.find(entry =>
+      entry.entry_kind === 'return' && entry.related_spend_id === spend!.id)
+    const responseBody = attempt.response_body_bytes?.toString('utf8') ?? null
+    return [{
+      state: attempt.status === 'completed'
+        ? 'completed'
+        : attempt.status === 'credit_returned'
+          ? 'returned'
+          : leaseAcquired ? 'ready' : 'busy',
+      attempt_id: attempt.public_id,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      target_key: attempt.target_key,
+      method: attempt.method,
+      asset_type: attempt.asset_type,
+      asset_id: attempt.asset_id,
+      request_id: spend.request_id,
+      request_hash: attempt.request_hash,
+      request_json: attempt.request_json,
+      amount_units: attempt.amount_units,
+      spend_entry_id: spend.id,
+      return_entry_id: returned?.id ?? null,
+      response_status: attempt.response_status,
+      response_json: attempt.response_json,
+      response_body: responseBody,
+      lease_acquired: leaseAcquired,
+      lease_owner: leaseAcquired ? attempt.lease_owner : null,
+    }]
+  }
+  if (q.includes('/* city-credit:return-spend */')) {
+    const actorId = Number(params[0])
+    const attemptId = String(params[1])
+    const leaseOwner = String(params[2])
+    const reason = String(params[3])
+    const responseStatus = Number(params[4])
+    const response = JSON.parse(String(params[5])) as Record<string, unknown>
+    const amountUnits = String(params[7])
+    const attempt = state.paymentAttempts.get(attemptId)
+    const spend = state.cityCreditEntries.find(entry =>
+      entry.entry_kind === 'spend' && entry.payment_attempt_id === attemptId)
+    if (!attempt || !spend || attempt.actor_id !== actorId) return []
+    let returned = state.cityCreditEntries.find(entry =>
+      entry.entry_kind === 'return' && entry.related_spend_id === spend.id)
+    const returnCreated = returned == null
+    if (!returned) {
+      if (attempt.lease_owner !== leaseOwner || attempt.status !== 'payment_pending') return []
+      returned = {
+        id: String(state.nextCityCreditEntryId),
+        resident_id: actorId,
+        entry_kind: 'return',
+        amount_units: amountUnits,
+        founder_id: null,
+        source_key: null,
+        request_id: null,
+        payment_attempt_id: attemptId,
+        related_spend_id: spend.id,
+        reason,
+        created_at: '2026-08-11T00:00:01.000Z',
+      }
+      const completed: FakePaymentAttempt = {
+        ...attempt,
+        status: 'credit_returned',
+        lease_owner: null,
+        lease_expires_at: null,
+        response_status: responseStatus,
+        response_json: response,
+        response_body_bytes: Buffer.from(JSON.stringify(response), 'utf8'),
+        updated_at: '2026-08-11T00:00:01.000Z',
+      }
+      state = {
+        ...state,
+        cityCreditBalances: new Map(state.cityCreditBalances).set(
+          actorId,
+          (state.cityCreditBalances.get(actorId) ?? 0n) + BigInt(amountUnits),
+        ),
+        cityCreditEntries: [...state.cityCreditEntries, returned],
+        nextCityCreditEntryId: state.nextCityCreditEntryId + 1,
+        paymentAttempts: new Map(state.paymentAttempts).set(attemptId, completed),
+      }
+    }
+    const completed = state.paymentAttempts.get(attemptId)!
+    return [{
+      ...completed,
+      prior_return_id: returnCreated ? null : returned.id,
+    }]
+  }
+  if (q.includes('/* city-credit:return-result */')) {
+    const actorId = Number(params[0])
+    const attemptId = String(params[1])
+    const attempt = state.paymentAttempts.get(attemptId)
+    const spend = state.cityCreditEntries.find(entry =>
+      entry.entry_kind === 'spend' && entry.payment_attempt_id === attemptId)
+    const returned = spend == null ? null : state.cityCreditEntries.find(entry =>
+      entry.entry_kind === 'return' && entry.related_spend_id === spend.id)
+    if (!attempt || !spend || !returned || attempt.actor_id !== actorId) return []
+    return [{
+      state: 'returned',
+      attempt_id: attemptId,
+      actor_id: actorId,
+      operation: attempt.operation,
+      target_key: attempt.target_key,
+      request_id: spend.request_id,
+      request_hash: attempt.request_hash,
+      request_json: attempt.request_json,
+      amount_units: attempt.amount_units,
+      spend_entry_id: spend.id,
+      return_entry_id: returned.id,
+      response_status: attempt.response_status,
+      response_json: attempt.response_json,
+    }]
+  }
   if (q.includes('/* private:later-holder-notice */')) {
     return [{ count: state.laterHolderItems.length }]
   }
@@ -642,6 +1123,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       asset_type: params[6] == null ? null : String(params[6]),
       asset_id: params[7] == null ? null : Number(params[7]),
       request_hash: String(params[8]),
+      request_json: JSON.parse(String(params[9])) as Record<string, unknown>,
       method: params[10] == null ? null : String(params[10]),
       network: params[11] == null ? null : String(params[11]),
       token: params[12] == null ? null : String(params[12]).toLowerCase(),
@@ -658,6 +1140,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       status: 'settling' as const,
       lease_owner: null,
       lease_expires_at: null,
+      recovery_started_at: null,
+      recovery_deadline_at: null,
       tx_hash: null,
       finalized_block_number: null,
       finalized_block_hash: null,
@@ -681,7 +1165,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     if (
       !current || current.actor_id !== Number(params[1])
       || !['settling', 'payment_pending', 'needs_review'].includes(current.status)
-      || current.lease_owner != null
+      || (
+        current.lease_owner != null
+        && current.lease_expires_at != null
+        && new Date(current.lease_expires_at).getTime() > Date.now()
+      )
     ) return []
     const updated: FakePaymentAttempt = {
       ...current,
@@ -701,6 +1189,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (!current || current.lease_owner !== String(params[1])) return []
+    const recoveryStartAt = state.scenario === 'treasury deadline passed'
+      ? Date.now() - 2 * 60 * 60 * 1000
+      : Date.now()
     const updated: FakePaymentAttempt = {
       ...current,
       status: 'payment_pending',
@@ -709,6 +1200,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       finalized_block_hash: current.finalized_block_hash ?? (params[4] == null ? null : String(params[4]).toLowerCase()),
       finalized_block_time: current.finalized_block_time ?? (params[5] == null ? null : String(params[5])),
       finalized_at: current.finalized_at ?? (params[6] == null ? null : String(params[6])),
+      recovery_started_at: current.recovery_started_at ?? new Date(recoveryStartAt).toISOString(),
+      recovery_deadline_at: current.recovery_deadline_at ?? new Date(
+        recoveryStartAt + 2 * 60 * 60 * 1000,
+      ).toISOString(),
       response_json: current.response_json ?? (params[7] == null ? null : {
         __1f3d9_x402_response_v1: { header: String(params[7]) },
       }),
@@ -772,9 +1267,32 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     state = { ...state, paymentAttempts: next }
     return [{ ...updated }]
   }
+  if (q.includes('/* payment-attempts:founder-review */')) {
+    const key = String(params[0])
+    const current = state.paymentAttempts.get(key)
+    if (
+      !current
+      || current.lease_owner !== String(params[1])
+      || !['settling', 'payment_pending', 'needs_review'].includes(current.status)
+    ) return []
+    const updated: FakePaymentAttempt = {
+      ...current,
+      status: 'founder_review',
+      invalid_reason: current.invalid_reason ?? String(params[2]),
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    state = {
+      ...state,
+      paymentAttempts: new Map(state.paymentAttempts).set(key, updated),
+    }
+    return [{ ...updated }]
+  }
   if (
     q.includes('/* payment-attempts:invalidate-read */')
     || q.includes('/* payment-attempts:needs-review-read */')
+    || q.includes('/* payment-attempts:founder-review-read */')
   ) {
     const row = state.paymentAttempts.get(String(params[0]))
     return row ? [{ ...row }] : []
@@ -812,6 +1330,331 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     })
     state = { ...state, paymentAttempts: next }
     return [{ ...next.get(key)! }]
+  }
+
+  if (q.includes('/* payment-sale-operations:read-attempt */')) {
+    const attempt = state.paymentAttempts.get(String(params[0]))
+    if (!attempt || attempt.offer_id !== state.offer.id) return []
+    const request = attempt.request_json ?? null
+    const wrapped = attempt.response_json?.__1f3d9_x402_response_v1
+    const wrapper = wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)
+      ? wrapped as Record<string, unknown>
+      : null
+    const response = wrapper?.body && typeof wrapper.body === 'object' && !Array.isArray(wrapper.body)
+      ? wrapper.body as Record<string, unknown>
+      : attempt.response_json
+    const assetId = Number(request?.asset_id ?? attempt.asset_id ?? 41)
+    const price = Number(request?.price_usdc ?? 2)
+    const buyerWallet = String(request?.buyer_wallet ?? attempt.payer_wallet ?? BUYER_WALLET).toLowerCase()
+    const sellerWallet = String(request?.seller_wallet ?? attempt.payee_wallet ?? SELLER_WALLET).toLowerCase()
+    return [{
+      attempt_id: attempt.public_id,
+      actor_id: attempt.actor_id,
+      counterparty_id: attempt.counterparty_id,
+      operation: attempt.operation,
+      target_key: attempt.target_key,
+      attempt_offer_id: attempt.offer_id,
+      attempt_asset_type: attempt.asset_type,
+      attempt_asset_id: attempt.asset_id,
+      request_hash: attempt.request_hash,
+      request_json: request,
+      method: attempt.method,
+      network: attempt.network,
+      token: attempt.token,
+      payer_wallet: attempt.payer_wallet,
+      payee_wallet: attempt.payee_wallet,
+      amount_units: attempt.amount_units,
+      start_time: attempt.start_time,
+      end_time: attempt.end_time,
+      status: attempt.status,
+      lease_owner: attempt.lease_owner,
+      tx_hash: attempt.tx_hash,
+      finalized_block_number: attempt.finalized_block_number,
+      finalized_block_hash: attempt.finalized_block_hash,
+      finalized_block_time: attempt.finalized_block_time,
+      finalized_at: attempt.finalized_at,
+      recovery_started_at: attempt.recovery_started_at,
+      recovery_deadline_at: attempt.recovery_deadline_at,
+      recovery_open: attempt.recovery_deadline_at != null
+        && Date.parse(attempt.recovery_deadline_at) > Date.now(),
+      offer_id: state.offer.id,
+      channel: state.offer.channel ?? 'direct',
+      asset_type: attempt.asset_type,
+      asset_id: assetId,
+      seller_id: 7,
+      seller: 'tiny-lantern',
+      buyer_id: 8,
+      buyer: 'neighbor',
+      price_usdc: price,
+      seller_wallet: sellerWallet,
+      buyer_wallet: state.offer.buyerWallet ?? buyerWallet,
+      offer_status: state.offer.status,
+      reserved_by: state.offer.reservedUntil == null ? null : 8,
+      reserved_at: state.offer.reservedAt,
+      reserved_until: state.offer.reservedUntil,
+      market_origin: 'https://1f3ea.com',
+      market_draft_id: null,
+      market_listing_id: null,
+      market_checkout_id: null,
+      market_buyer: null,
+      pending_payment_attempt_id: null,
+      pending_x402_tx_hash: null,
+      pending_x402_payer: null,
+      pending_x402_at: null,
+      x402_evidence_state: 'none',
+      current_owner_id: state.thingOwnerId,
+      active_offer_id: state.offer.status === 'open' ? state.offer.id : null,
+      withdrawn_at: state.thingWithdrawn ? new Date().toISOString() : null,
+      asset_name: 'porch lantern',
+      maker_id: 7,
+      made_by: 'tiny-lantern',
+      response_status: attempt.response_status,
+      response,
+      response_body: attempt.response_body_bytes == null
+        ? null
+        : Buffer.from(attempt.response_body_bytes).toString('utf8'),
+      payment_response_header: wrapper?.header == null ? null : String(wrapper.header),
+    }]
+  }
+  if (q.includes('/* payment-sale-operations:complete-direct */')) {
+    const attemptId = String(params[0])
+    const leaseOwner = String(params[1])
+    const attempt = state.paymentAttempts.get(attemptId)
+    if (
+      !attempt || attempt.lease_owner !== leaseOwner || attempt.status !== 'payment_pending'
+      || attempt.offer_id !== state.offer.id || state.offer.status !== 'open'
+    ) return []
+    const createdAt = '2026-08-11T00:00:00.000Z'
+    const response = {
+      offer: { id: state.offer.id, status: 'claimed' },
+      transfer: {
+        id: 91,
+        type: attempt.asset_type,
+        asset_id: attempt.asset_id,
+        from: 'tiny-lantern',
+        to: 'neighbor',
+        price_usdc: Number(attempt.amount_units ?? 0) / 1_000_000,
+        tx_hash: attempt.tx_hash,
+        created_at: createdAt,
+      },
+    }
+    const responseBody = JSON.stringify(response)
+    const wrapped = attempt.response_json?.__1f3d9_x402_response_v1
+    const wrapper = wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)
+      ? wrapped as Record<string, unknown>
+      : null
+    const completed: FakePaymentAttempt = {
+      ...attempt,
+      status: 'completed',
+      lease_owner: null,
+      lease_expires_at: null,
+      result_json: { kind: 'transfer_offer', id: state.offer.id },
+      response_status: 200,
+      response_json: wrapper?.header == null
+        ? response
+        : { __1f3d9_x402_response_v1: { header: wrapper.header, body: response } },
+      response_body_bytes: Buffer.from(responseBody, 'utf8'),
+      updated_at: createdAt,
+      completed_at: createdAt,
+    }
+    state = {
+      ...state,
+      offer: { ...state.offer, status: 'claimed' },
+      thingOwnerId: attempt.actor_id,
+      paymentHashes: new Set(state.paymentHashes).add(String(attempt.tx_hash)),
+      paymentAttempts: new Map(state.paymentAttempts).set(attemptId, completed),
+    }
+    return [{
+      state: 'completed',
+      attempt_id: attemptId,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      method: attempt.method,
+      response_status: 200,
+      response,
+      response_body: responseBody,
+      payment_response_header: wrapper?.header == null ? null : String(wrapper.header),
+    }]
+  }
+  if (q.includes('/* payment-sale-operations:close-target */')) {
+    const attemptId = String(params[0])
+    const leaseOwner = String(params[1])
+    const terminalState = String(params[2]) as 'expired' | 'founder_review'
+    const attempt = state.paymentAttempts.get(attemptId)
+    if (!attempt || attempt.lease_owner !== leaseOwner) return []
+    const closed: FakePaymentAttempt = {
+      ...attempt,
+      status: terminalState,
+      invalid_reason: attempt.invalid_reason ?? String(params[3]),
+      lease_owner: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    }
+    state = {
+      ...state,
+      offer: attempt.operation === 'direct_sale'
+        ? { ...state.offer, status: 'canceled' }
+        : state.offer,
+      paymentAttempts: new Map(state.paymentAttempts).set(attemptId, closed),
+    }
+    return [{
+      state: terminalState,
+      attempt_id: attemptId,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      method: attempt.method,
+      target_released: attempt.operation === 'direct_sale',
+    }]
+  }
+
+  if (q.includes('/* payment-treasury-operations:complete */')) {
+    const attemptId = String(params[0])
+    const leaseOwner = String(params[1])
+    const attempt = state.paymentAttempts.get(attemptId)
+    if (
+      !attempt
+      || attempt.lease_owner !== leaseOwner
+      || attempt.status !== 'payment_pending'
+    ) return []
+    if (state.interruptTreasuryCompletionOnce) {
+      state = {
+        ...state,
+        interruptTreasuryCompletionOnce: false,
+        paymentAttempts: new Map(state.paymentAttempts).set(attemptId, {
+          ...attempt,
+          lease_expires_at: new Date(Date.now() - 1).toISOString(),
+        }),
+      }
+      throw Object.assign(new Error('connection interrupted before treasury completion'), { code: '57P01' })
+    }
+    const deadline = attempt.recovery_deadline_at == null
+      ? null
+      : new Date(attempt.recovery_deadline_at).getTime()
+    if (deadline != null && deadline <= Date.now()) {
+      return [{ state: 'deadline_passed', attempt_id: attemptId }]
+    }
+    if (deadline == null || state.failPaidWriteOnce || !attempt.request_json) {
+      if (state.failPaidWriteOnce) state = { ...state, failPaidWriteOnce: false }
+      return [{
+        state: 'target_changed',
+        attempt_id: attemptId,
+        reason: 'stored treasury request is invalid or its target changed',
+      }]
+    }
+
+    let responseStatus: 200 | 201
+    let response: Record<string, unknown>
+    let result: Record<string, unknown>
+    if (attempt.operation === 'frontier') {
+      const request = attempt.request_json
+      const place = {
+        ...placeRow(3, 1),
+        name: String(request.name),
+        description: String(request.description),
+        open_to_building: Boolean(request.open_to_building),
+        open_to_things: Boolean(request.open_to_things),
+        open_to_notes: Boolean(request.open_to_notes),
+      }
+      responseStatus = 201
+      result = { kind: 'place', id: place.id }
+      response = { place }
+    } else if (attempt.operation === 'kind_invention') {
+      const request = attempt.request_json
+      const kind = {
+        id: 3,
+        name: String(request.name),
+        owner_id: attempt.actor_id,
+        owner: residentHandleForFakeId(attempt.actor_id),
+        revision: 1,
+        description: String(request.description),
+        traits: request.traits,
+        recipe: request.recipe,
+        created_at: '2026-08-11T00:00:00.000Z',
+      }
+      responseStatus = 201
+      result = { kind: 'kind_revision', id: kind.id, revision: kind.revision }
+      response = { kind }
+    } else if (attempt.operation === 'kind_revision') {
+      const request = attempt.request_json
+      const kind = {
+        ...kindRow(),
+        revision: state.kindRevision + 1,
+        description: String(request.description),
+        traits: request.traits,
+        recipe: request.recipe,
+      }
+      responseStatus = 200
+      result = { kind: 'kind_revision', id: kind.id, revision: kind.revision }
+      response = { kind }
+    } else {
+      return [{
+        state: 'target_changed',
+        attempt_id: attemptId,
+        reason: 'stored treasury request is invalid or its target changed',
+      }]
+    }
+
+    if (attempt.method === 'x402') {
+      if (!attempt.tx_hash || state.paymentHashes.has(attempt.tx_hash)) {
+        return [{
+          state: 'target_changed',
+          attempt_id: attemptId,
+          reason: 'stored treasury request is invalid or its target changed',
+        }]
+      }
+      response = { ...response, fee_tx: attempt.tx_hash }
+      state = {
+        ...state,
+        paymentHashes: new Set([...state.paymentHashes, attempt.tx_hash]),
+      }
+    } else {
+      const balance = state.cityCreditBalances.get(attempt.actor_id) ?? 0n
+      response = {
+        ...response,
+        city_fee_credit: {
+          spent_usdc: '1.000000',
+          balance_usdc: `${balance / 1_000_000n}.${String(balance % 1_000_000n).padStart(6, '0')}`,
+        },
+      }
+    }
+
+    const responseBody = JSON.stringify(response)
+    const durable = attempt.response_json?.__1f3d9_x402_response_v1
+    const paymentResponseHeader = state.treasuryCompletionHeader ?? (
+      durable && typeof durable === 'object' && !Array.isArray(durable)
+        ? String((durable as Record<string, unknown>).header ?? '')
+        : null
+    )
+    const completed: FakePaymentAttempt = {
+      ...attempt,
+      status: 'completed',
+      lease_owner: null,
+      lease_expires_at: null,
+      result_json: result,
+      response_status: responseStatus,
+      response_json: attempt.method === 'x402'
+        ? { __1f3d9_x402_response_v1: { header: paymentResponseHeader, body: response } }
+        : response,
+      response_body_bytes: Buffer.from(responseBody, 'utf8'),
+      updated_at: '2026-08-11T00:00:01.000Z',
+      completed_at: '2026-08-11T00:00:01.000Z',
+    }
+    state = {
+      ...state,
+      paymentAttempts: new Map(state.paymentAttempts).set(attemptId, completed),
+    }
+    return [{
+      state: 'completed',
+      attempt_id: attemptId,
+      actor_id: attempt.actor_id,
+      operation: attempt.operation,
+      method: attempt.method,
+      response_status: responseStatus,
+      response_json: response,
+      response_body: responseBody,
+      payment_response_header: attempt.method === 'x402' ? paymentResponseHeader : null,
+      reason: null,
+    }]
   }
 
   // link_kind_revision_traits refuses a trait nobody has coined yet.
@@ -1084,7 +1927,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('/* public:moderation */')) {
     return [{ id: null, total_items: 0, total_text_bytes: 0 }]
   }
-  if (q.includes('from moderation_actions')) {
+  if (
+    q.includes('from moderation_actions')
+    && !q.includes('update places set')
+    && !q.includes('/* public:window-directory */')
+  ) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
         || value === 'note' || value === 'agreement'
@@ -1188,6 +2035,39 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       return [{ agreement_id: 61, opened_at: '2026-08-11T00:00:00.000Z' }]
     }
     return [{ id: state.actorId }]
+  }
+
+  if (q.includes('/* public:window-directory */')) {
+    return [{
+      entry_type: 'place', id: 1, parent_id: null, name: 'the world',
+      handle: null, description: 'must not escape', owner_id: null,
+      joined_at: null, model: 'must not escape', current_place_id: null,
+      asleep: null, secret_hash: 'must not escape',
+    }, {
+      entry_type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]',
+      handle: null, description: 'removed original body', owner_id: 7,
+      joined_at: null, model: 'must not escape', current_place_id: 2,
+      asleep: null, secret_hash: 'must not escape',
+    }, {
+      entry_type: 'resident', id: 7, parent_id: null, name: null, handle: 'tiny-lantern',
+      description: 'must not escape', owner_id: null,
+      joined_at: '2026-08-11T00:00:00.000Z', model: 'openai-codex',
+      current_place_id: 2, asleep: false, secret_hash: 'must not escape',
+    }]
+  }
+
+  if (q.includes('/* public:resident-presence */')) {
+    if (params[0] !== 'tiny-lantern') return []
+    return [{
+      id: 7,
+      handle: 'tiny-lantern',
+      joined_at: '2026-08-11T00:00:00.000Z',
+      current_place_id: 2,
+      asleep: false,
+      model: 'openai-codex',
+      secret_hash: 'must not escape',
+      quota_day: '2026-08-11',
+    }]
   }
 
   if (state.scenario === 'remaining pagination' || state.scenario === 'window outline') {
@@ -1535,6 +2415,40 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       return []
     }
     const returned = placeRow(3, 2)
+    const creditAttemptId = String(params.find(value =>
+      typeof value === 'string' && value.startsWith('credit_attempt_')) ?? '')
+    if (creditAttemptId && q.includes('complete_city_credit_attempt')) {
+      const attempt = state.paymentAttempts.get(creditAttemptId)
+      const assetMatches = !q.includes("asset_type = 'kind' AND asset_id =")
+        || (attempt?.asset_type === 'kind' && attempt.asset_id === 3)
+      if (attempt && assetMatches) {
+        const balance = state.cityCreditBalances.get(attempt.actor_id) ?? 0n
+        const response = {
+          place: returned,
+          city_fee_credit: {
+            spent_usdc: '1.000000',
+            balance_usdc: `${balance / 1_000_000n}.${String(balance % 1_000_000n).padStart(6, '0')}`,
+          },
+        }
+        const responseBody = JSON.stringify(response)
+        state = {
+          ...state,
+          paymentAttempts: new Map(state.paymentAttempts).set(creditAttemptId, {
+            ...attempt,
+            status: 'completed',
+            lease_owner: null,
+            lease_expires_at: null,
+            result_json: { kind: 'place', id: returned.id },
+            response_status: 201,
+            response_json: response,
+            response_body_bytes: Buffer.from(responseBody, 'utf8'),
+            updated_at: '2026-08-11T00:00:00.000Z',
+            completed_at: '2026-08-11T00:00:00.000Z',
+          }),
+        }
+        return [{ ...returned, response_body: responseBody }]
+      }
+    }
     if (q.includes('complete_payment_attempt')) {
       const attemptId = String(params.find(value => typeof value === 'string' && value.startsWith('pay_')) ?? '')
       const attempt = state.paymentAttempts.get(attemptId)
@@ -1573,15 +2487,54 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       } : {}),
     }]
   }
+  if (q.includes('update places set'))
+    return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
     return [placeRow(2, 1)]
   }
   if (q.includes('from places') && (q.includes('where p.id') || q.includes('where id'))) return [placeRow(2, 1)]
-  if (q.includes('update places set'))
-    return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
 
   if (q.includes('insert into kinds') || q.includes('insert into kind_revisions') || q.includes('update kinds')) {
+    if (state.failPaidWriteOnce) {
+      state = { ...state, failPaidWriteOnce: false }
+      return []
+    }
     const returned = { ...kindRow(), revision: state.kindRevision + 1 }
+    const creditAttemptId = String(params.find(value =>
+      typeof value === 'string' && value.startsWith('credit_attempt_')) ?? '')
+    if (creditAttemptId && q.includes('complete_city_credit_attempt')) {
+      const attempt = state.paymentAttempts.get(creditAttemptId)
+      const assetMatches = !q.includes("asset_type = 'kind' AND asset_id =")
+        || (attempt?.asset_type === 'kind' && attempt.asset_id === 3)
+      if (attempt && assetMatches) {
+        const balance = state.cityCreditBalances.get(attempt.actor_id) ?? 0n
+        const response = {
+          kind: returned,
+          city_fee_credit: {
+            spent_usdc: '1.000000',
+            balance_usdc: `${balance / 1_000_000n}.${String(balance % 1_000_000n).padStart(6, '0')}`,
+          },
+        }
+        const responseBody = JSON.stringify(response)
+        const status = q.includes('insert into kinds') ? 201 : 200
+        state = {
+          ...state,
+          paymentAttempts: new Map(state.paymentAttempts).set(creditAttemptId, {
+            ...attempt,
+            status: 'completed',
+            lease_owner: null,
+            lease_expires_at: null,
+            result_json: { kind: 'kind_revision', id: returned.id, revision: returned.revision },
+            response_status: status,
+            response_json: response,
+            response_body_bytes: Buffer.from(responseBody, 'utf8'),
+            updated_at: '2026-08-11T00:00:00.000Z',
+            completed_at: '2026-08-11T00:00:00.000Z',
+          }),
+        }
+        return [{ ...returned, response_body: responseBody }]
+      }
+    }
     if (q.includes('complete_payment_attempt')) {
       const attemptId = String(params.find(value => typeof value === 'string' && value.startsWith('pay_')) ?? '')
       const attempt = state.paymentAttempts.get(attemptId)
@@ -2056,7 +3009,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       traits: state.kindTraitNames,
     }]
   }
-  if (q.includes('from things')) {
+  if (q.includes('from things') && !q.includes('update places set')) {
     if (q.includes('where thing.id') || q.includes('where id =')) {
       const target = Number(params[0] ?? 41)
       if (target === 41) {
@@ -2380,7 +3333,7 @@ test('note validation distinguishes place errors and preserves valid Unicode exa
   assert.deepEqual(acceptedBody.reading_cost, {
     available: true,
     size_unit: 'utf8_bytes',
-    counted_text: 'place descriptions, active thing bodies, and note bodies',
+    counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
     new_item_text_bytes: Buffer.byteLength(body, 'utf8'),
     room_stored_text_bytes: 1234,
     current_first_read_text_bytes: 456,
@@ -2398,8 +3351,10 @@ test('a meter read failure never turns a committed note into a retryable write f
   const body = await response.json() as { reading_cost: Record<string, unknown> }
   assert.deepEqual(body.reading_cost, {
     available: false,
+    reason: 'measurement_failed',
+    measurement_timeout_ms: 1500,
     size_unit: 'utf8_bytes',
-    counted_text: 'place descriptions, active thing bodies, and note bodies',
+    counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
     new_item_text_bytes: Buffer.byteLength('already committed', 'utf8'),
     room_stored_text_bytes: null,
     current_first_read_text_bytes: null,
@@ -2407,15 +3362,62 @@ test('a meter read failure never turns a committed note into a retryable write f
   })
 })
 
-test('a hung meter read has a short deadline after a committed write', async () => {
+test('a hung meter read stops its loader and reports a bounded database timeout', async () => {
   const { safeReadingCostMeter } = await import('../src/reading-cost.ts')
+  let queryOptions: {
+    readonly signal: AbortSignal
+    readonly statementTimeoutMs: number
+  } | undefined
+  let loaderStopped = false
   const startedAt = Date.now()
   const meter = await safeReadingCostMeter(2, 'already committed', {
     timeoutMs: 20,
-    load: () => new Promise(() => {}),
+    load: (_placeId, _newItemText, options) => {
+      queryOptions = options
+      return new Promise((_resolve, reject) => {
+        options?.signal.addEventListener('abort', () => {
+          loaderStopped = true
+          reject(new Error('loader stopped'))
+        }, { once: true })
+      })
+    },
   })
-  assert.equal(meter.available, false)
+  assert.deepEqual(meter, {
+    available: false,
+    reason: 'measurement_timeout',
+    measurement_timeout_ms: 20,
+    size_unit: 'utf8_bytes',
+    counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
+    new_item_text_bytes: Buffer.byteLength('already committed', 'utf8'),
+    room_stored_text_bytes: null,
+    current_first_read_text_bytes: null,
+    note: 'the write succeeded; the reading-cost measurement timed out and its database query has a bounded deadline; do not retry',
+  })
+  assert.ok(queryOptions, 'the loader must receive cancellation controls')
+  assert.ok(queryOptions.statementTimeoutMs > 0)
+  assert.ok(queryOptions.statementTimeoutMs < 20)
+  assert.equal(queryOptions.signal.aborted, true)
+  assert.equal(loaderStopped, true)
   assert.ok(Date.now() - startedAt < 500, 'a meter must not hold a successful write open')
+})
+
+test('the reading-cost query installs its database deadline before measuring', async () => {
+  const { safeReadingCostMeter } = await import('../src/reading-cost.ts')
+  reset({ scenario: 'validation' })
+
+  const meter = await safeReadingCostMeter(2, 'already committed')
+
+  assert.equal(meter.available, true)
+  const calls = sqlCalls()
+  const timeoutIndex = calls.findIndex(call => /^\s*SET\s+LOCAL\s+statement_timeout/iu.test(
+    call.query ?? '',
+  ))
+  const meterIndex = calls.findIndex(call => /\/\* public:reading_cost \*\//iu.test(
+    call.query ?? '',
+  ))
+  assert.ok(timeoutIndex >= 0, 'the database must receive a statement timeout')
+  assert.ok(meterIndex > timeoutIndex, 'the database deadline must precede the meter query')
+  assert.match(calls[timeoutIndex]?.query ?? '', /'\d+ms'/u)
 })
 
 test('the legacy full public map stays exact and explicit full shares its short cache', async () => {
@@ -2809,6 +3811,72 @@ test('window modes reject mixed, duplicate, and unknown options before PostgreSQ
   }
 })
 
+test('the directory window is one cached, moderated, body-free statement with exact keys', async () => {
+  const originalNow = Date.now
+  try {
+    const frozenNow = originalNow() - 120_000
+    Date.now = () => frozenNow
+    reset({ scenario: 'window directory' })
+
+    const firstResponse = await app.request('/api/window?view=directory')
+    assert.equal(firstResponse.status, 200)
+    assert.equal(
+      firstResponse.headers.get('cache-control'),
+      'public, max-age=15, s-maxage=60, stale-while-revalidate=300',
+    )
+    const directory = await firstResponse.json() as Record<string, unknown> & {
+      places: Array<Record<string, unknown>>
+      residents: Array<Record<string, unknown>>
+    }
+    assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents', 'view'])
+    assert.equal(directory.view, 'directory')
+    assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id'])
+    assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id'])
+    assert.deepEqual(directory.places, [
+      { id: 1, parent_id: null, name: 'the world' },
+      { id: 2, parent_id: 1, name: '[removed by maintainer]' },
+    ])
+    assert.deepEqual(directory.residents, [{ id: 7, handle: 'tiny-lantern' }])
+
+    const directoryCalls = sqlCalls().filter(call =>
+      /\/\* public:window-directory \*\//iu.test(call.query ?? ''))
+    assert.equal(directoryCalls.length, 1)
+    assert.match(directoryCalls[0]?.query ?? '', /moderation_actions/iu)
+    assert.doesNotMatch(
+      directoryCalls[0]?.query ?? '',
+      /\b(?:description|purpose|owner_id|secret_hash|model|joined_at|current_place_id|asleep)\b/iu,
+    )
+
+    const callsAfterFirst = sqlCalls().length
+    const cachedResponse = await app.request('/api/window?view=directory')
+    assert.equal(cachedResponse.status, 200)
+    assert.deepEqual(await cachedResponse.json(), directory)
+    assert.equal(sqlCalls().length, callsAfterFirst)
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('the directory window rejects mixed, duplicate, unknown, and credentialed input before PostgreSQL', async () => {
+  const cases: Array<{ path: string; headers?: Record<string, string> }> = [
+    { path: '/api/window?view=directory&view=outline' },
+    { path: '/api/window?view=directory&after_change_marker=9' },
+    { path: '/api/window?view=directory&collection=places' },
+    { path: '/api/window?view=directory&unknown=1' },
+    { path: '/api/window?view=directory', headers: { Authorization: `Bearer ${SECRET}` } },
+    { path: '/api/window?view=directory', headers: { Cookie: 'session=private' } },
+  ]
+  for (const entry of cases) {
+    reset({ scenario: 'window directory' })
+    const response = await app.request(
+      entry.path,
+      entry.headers === undefined ? undefined : { headers: entry.headers },
+    )
+    assert.equal(response.status, 400, entry.path)
+    assert.equal(sqlCalls().length, 0, `${entry.path} must fail before PostgreSQL work`)
+  }
+})
+
 test('a marker-covered outline bypasses stale caches and rejects a future marker', async () => {
   reset({ scenario: 'window outline', publicChangeMarker: '10' })
   const covered = await app.request('/api/window?view=outline&after_change_marker=10')
@@ -3035,13 +4103,232 @@ test('only a place owner can edit its description and three permission switches'
       open_to_notes: false,
     }),
   })
-  assert.equal(changed.status, 200)
+  assert.equal(changed.status, 200, await changed.clone().text())
 
   setActor(8, 'neighbor')
   const rejected = await app.request('/api/place/2', {
     method: 'PATCH', headers: authHeaders(OTHER_SECRET), body: JSON.stringify({ open_to_building: false }),
   })
   assert.equal(rejected.status, 403)
+})
+
+type RoomFrontMatterHeading = {
+  id: number
+  type: string
+  name: string
+  body_text_bytes: number
+  maker_id: number
+  made_by: string
+  current_owner_id: number
+  current_owner: string
+  owner_id: number
+  owner: string
+  body?: unknown
+  body_snippet?: unknown
+  snippet?: unknown
+}
+
+function assertRoomFrontMatter(
+  headings: readonly RoomFrontMatterHeading[],
+  expectedIds: readonly number[],
+) {
+  assert.deepEqual(headings.map(heading => heading.id), expectedIds)
+  for (const heading of headings) {
+    assert.equal(heading.type, 'thing')
+    assert.equal(typeof heading.name, 'string')
+    assert.ok(heading.body_text_bytes > 0)
+    assert.ok(heading.maker_id > 0)
+    assert.match(heading.made_by, /^(?:tiny-lantern|neighbor)$/u)
+    assert.ok(heading.current_owner_id > 0)
+    assert.match(heading.current_owner, /^(?:tiny-lantern|neighbor)$/u)
+    assert.equal(heading.owner_id, heading.current_owner_id)
+    assert.equal(heading.owner, heading.current_owner)
+    assert.equal(Object.hasOwn(heading, 'body'), false)
+    assert.equal(Object.hasOwn(heading, 'body_snippet'), false)
+    assert.equal(Object.hasOwn(heading, 'snippet'), false)
+  }
+}
+
+test('a place owner sets purpose and two or three ordered front-matter headings without changing description', async () => {
+  reset({ scenario: 'room orientation', placeOwnerId: 7 })
+  const payload = {
+    purpose: 'A small room for deliberate reading.',
+    front_matter_thing_ids: [43, 41, 42],
+  }
+  const changed = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload),
+  })
+  assert.equal(changed.status, 200, await changed.clone().text())
+  const body = await changed.json() as {
+    place: { purpose: string; description: string }
+    front_matter: RoomFrontMatterHeading[]
+  }
+  assert.equal(body.place.purpose, payload.purpose)
+  assert.equal(body.place.description, 'a place made from words')
+  assert.equal(Object.hasOwn(body.place, 'front_matter_thing_ids'), false)
+  assertRoomFrontMatter(body.front_matter, payload.front_matter_thing_ids)
+  assert.deepEqual(body.front_matter[0], {
+    ...body.front_matter[0],
+    id: 43,
+    type: 'thing',
+    name: 'borrowed field guide',
+    body_text_bytes: Buffer.byteLength('three careful routes 🏙', 'utf8'),
+    maker_id: 8,
+    made_by: 'neighbor',
+    current_owner_id: 7,
+    current_owner: 'tiny-lantern',
+    owner_id: 7,
+    owner: 'tiny-lantern',
+  })
+
+  const retried = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload),
+  })
+  assert.equal(retried.status, 200, await retried.clone().text())
+  const retriedBody = await retried.json() as {
+    place: { purpose: string; description: string }
+    front_matter: RoomFrontMatterHeading[]
+  }
+  assert.equal(retriedBody.place.purpose, payload.purpose)
+  assert.equal(retriedBody.place.description, 'a place made from words')
+  assertRoomFrontMatter(retriedBody.front_matter, payload.front_matter_thing_ids)
+})
+
+test('room orientation is owner-only and rejects malformed or ineligible selections', async () => {
+  reset({
+    scenario: 'room orientation', placeOwnerId: 7,
+    roomPurpose: 'A retry-safe reading room.', frontMatterThingIds: [41, 42],
+  })
+  setActor(8, 'neighbor')
+  const forbidden = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ purpose: 'Keep the old description.' }),
+  })
+  assert.equal(forbidden.status, 403, await forbidden.text())
+  assert.equal(state.roomPurpose, 'A retry-safe reading room.')
+  assert.deepEqual(state.frontMatterThingIds, [41, 42])
+
+  setActor(7, 'tiny-lantern')
+  const malformedBodies: readonly Record<string, unknown>[] = [
+    { purpose: 'safe', surprise: true },
+    { purpose: 42 },
+    { purpose: 'two\nlines' },
+    { purpose: 'x'.repeat(281) },
+    { front_matter_thing_ids: '41,42' },
+    { front_matter_thing_ids: [41] },
+    { front_matter_thing_ids: [41, 42, 43, 44] },
+    { front_matter_thing_ids: [41, 41] },
+    { front_matter_thing_ids: [0, 42] },
+  ]
+  for (const malformed of malformedBodies) {
+    const response = await app.request('/api/place/2', {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(malformed),
+    })
+    assert.equal(response.status, 400, JSON.stringify({ malformed, body: await response.text() }))
+    assert.equal(state.roomPurpose, 'A retry-safe reading room.')
+    assert.deepEqual(state.frontMatterThingIds, [41, 42])
+  }
+
+  for (const patch of [
+    { frontMatterMovedThingIds: [42] },
+    { targetThingWithdrawn: true },
+    { frontMatterHiddenThingIds: [42] },
+  ] satisfies readonly Partial<FakeState>[]) {
+    reset({ scenario: 'room orientation', placeOwnerId: 7, ...patch })
+    const response = await app.request('/api/place/2', {
+      method: 'PATCH', headers: authHeaders(),
+      body: JSON.stringify({ front_matter_thing_ids: [41, 42] }),
+    })
+    assert.equal(response.status, 400, await response.text())
+    assert.equal(state.roomPurpose, '')
+    assert.deepEqual(state.frontMatterThingIds, [])
+  }
+})
+
+test('public outline and full place reads expose ordered body-free orientation headings only while eligible', async () => {
+  reset({
+    scenario: 'room orientation',
+    roomPurpose: 'A small room for deliberate reading.',
+    frontMatterThingIds: [43, 41, 42],
+  })
+  for (const view of ['outline', 'full'] as const) {
+    const response = await app.request(`/api/place/2?view=${view}`)
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as {
+      place: { purpose: string; description?: string }
+      front_matter: RoomFrontMatterHeading[]
+    }
+    assert.equal(body.place.purpose, 'A small room for deliberate reading.')
+    assertRoomFrontMatter(body.front_matter, [43, 41, 42])
+  }
+
+  state = { ...state, calls: [], frontMatterMovedThingIds: [43] }
+  const afterMove = await app.request('/api/place/2?view=outline')
+  assert.equal(afterMove.status, 200)
+  assertRoomFrontMatter(
+    (await afterMove.json() as { front_matter: RoomFrontMatterHeading[] }).front_matter,
+    [41, 42],
+  )
+
+  state = { ...state, calls: [], thingWithdrawn: true }
+  const afterWithdrawal = await app.request('/api/place/2?view=full')
+  assert.equal(afterWithdrawal.status, 200)
+  assertRoomFrontMatter(
+    (await afterWithdrawal.json() as { front_matter: RoomFrontMatterHeading[] }).front_matter,
+    [42],
+  )
+
+  state = { ...state, calls: [], frontMatterHiddenThingIds: [42] }
+  const afterModeration = await app.request('/api/place/2?view=outline')
+  assert.equal(afterModeration.status, 200)
+  const hiddenBody = await afterModeration.json() as { front_matter: RoomFrontMatterHeading[] }
+  assertRoomFrontMatter(hiddenBody.front_matter, [])
+  assert.equal(hiddenBody.front_matter.some(heading => heading.id === 44), false)
+
+  const orientationRead = sqlCalls().find(call => {
+    const query = call.query ?? ''
+    return /front_matter_thing_ids/iu.test(query) && /\bthings\b|\bunnest\s*\(/iu.test(query)
+  })
+  assert.ok(orientationRead, 'public place reads must load only the selected front-matter rows')
+  assert.match(orientationRead.query ?? '', /with\s+ordinality|order\s+by[\s\S]*(?:position|ordinality)/iu)
+})
+
+test('an empty selection clears front matter and a stale eligibility race returns a retryable conflict', async () => {
+  reset({
+    scenario: 'room orientation', placeOwnerId: 7,
+    roomPurpose: 'A retry-safe reading room.', frontMatterThingIds: [41, 42],
+  })
+  const cleared = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(),
+    body: JSON.stringify({ front_matter_thing_ids: [] }),
+  })
+  assert.equal(cleared.status, 200, await cleared.clone().text())
+  const clearedBody = await cleared.json() as {
+    place: { purpose: string; description: string }
+    front_matter: RoomFrontMatterHeading[]
+  }
+  assert.equal(clearedBody.place.purpose, 'A retry-safe reading room.')
+  assert.equal(clearedBody.place.description, 'a place made from words')
+  assertRoomFrontMatter(clearedBody.front_matter, [])
+
+  reset({ scenario: 'room orientation', placeOwnerId: 7, frontMatterRaceLost: true })
+  const raced = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(),
+    body: JSON.stringify({ front_matter_thing_ids: [41, 42] }),
+  })
+  assert.equal(raced.status, 409, await raced.clone().text())
+  assert.match((await raced.json() as { error: string }).error, /retry/iu)
+
+  state = { ...state, frontMatterRaceLost: false, calls: [] }
+  const retry = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(),
+    body: JSON.stringify({ front_matter_thing_ids: [41, 42] }),
+  })
+  assert.equal(retry.status, 200, await retry.clone().text())
+  assertRoomFrontMatter(
+    (await retry.json() as { front_matter: RoomFrontMatterHeading[] }).front_matter,
+    [41, 42],
+  )
 })
 
 test('traits are globally named, free, and mechanical only when an inert recipe is present', async () => {
@@ -3553,7 +4840,7 @@ test('a reserved buyer can retry with signed x402 and ownership closes atomicall
   const settledWrite = sqlCalls().find(call =>
     /payment_uses/i.test(call.query ?? '') && /transfer_offers/i.test(call.query ?? '') && /update\s+things/i.test(call.query ?? ''))
   assert.ok(settledWrite)
-  assert.match(settledWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*\$\d+/i)
+  assert.match(settledWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*offer\.actor_id/i)
   assert.doesNotMatch(settledWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   const settlementsBeforeReplay = state.calls.filter(call => call.url.includes('/settle')).length
@@ -3594,6 +4881,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
   assert.equal(reservation.status, 402)
 
   const exactBody = '{\n  "transfer": {"id":91,"type":"thing","asset_id":42,"from":"tiny-lantern","to":"neighbor","price_usdc":2,"tx_hash":"' + TX1.toLowerCase() + '"},\n  "offer": {"status":"claimed","id":90}\n}'
+  const storedHeader = Buffer.from('{"ok":true}', 'utf8').toString('base64')
   const completedAttempt: FakePaymentAttempt = {
     public_id: 'pay_' + '88'.repeat(32),
     actor_id: 8,
@@ -3602,7 +4890,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
     target_key: 'direct-sale:90',
     offer_id: 90,
     asset_type: 'thing',
-    asset_id: 42,
+    asset_id: 41,
     request_hash: canonicalPaymentRequest({
       offer_id: 90,
       buyer_wallet: BUYER_WALLET,
@@ -3611,6 +4899,14 @@ test('a completed direct-sale replay preserves its x402 response header', async 
       asset_type: 'thing',
       asset_id: 41,
     }).hash,
+    request_json: {
+      offer_id: 90,
+      buyer_wallet: BUYER_WALLET,
+      seller_wallet: SELLER_WALLET,
+      price_usdc: 2,
+      asset_type: 'thing',
+      asset_id: 41,
+    },
     method: 'x402',
     network: 'base',
     token: USDC.toLowerCase(),
@@ -3636,15 +4932,20 @@ test('a completed direct-sale replay preserves its x402 response header', async 
     result_json: { kind: 'transfer_offer', id: 90 },
     response_status: 200,
     response_json: {
-      offer: { id: 90, status: 'claimed' },
-      transfer: {
-        id: 91,
-        type: 'thing',
-        asset_id: 42,
-        from: 'tiny-lantern',
-        to: 'neighbor',
-        price_usdc: 2,
-        tx_hash: TX1.toLowerCase(),
+      __1f3d9_x402_response_v1: {
+        header: storedHeader,
+        body: {
+          offer: { id: 90, status: 'claimed' },
+          transfer: {
+            id: 91,
+            type: 'thing',
+            asset_id: 42,
+            from: 'tiny-lantern',
+            to: 'neighbor',
+            price_usdc: 2,
+            tx_hash: TX1.toLowerCase(),
+          },
+        },
       },
     },
     response_body_bytes: Buffer.from(exactBody, 'utf8'),
@@ -3665,7 +4966,7 @@ test('a completed direct-sale replay preserves its x402 response header', async 
 
   assert.equal(replay.status, 200, await replay.clone().text())
   assert.equal(await replay.text(), exactBody)
-  assert.ok(replay.headers.get('X-PAYMENT-RESPONSE'))
+  assert.equal(replay.headers.get('X-PAYMENT-RESPONSE'), storedHeader)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 0)
 })
 
@@ -3936,14 +5237,14 @@ test('frontier x402 records custody before settlement and raw transaction proofs
   assert.match(JSON.stringify(await replay.json()), /unsupported field|x-payment/i)
 })
 
-test('frontier x402 retry uses the same signed authorization and does not settle twice', async () => {
+test('frontier x402 retry after an interrupted completion uses the same authorization and does not settle twice', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,
     facilitatorSettle: true,
     chainFrom: SELLER_WALLET,
     chainTo: TREASURY,
-    failPaidWriteOnce: true,
+    interruptTreasuryCompletionOnce: true,
   })
   const requestBody = JSON.stringify({
     parent_id: null,
@@ -3956,8 +5257,7 @@ test('frontier x402 retry uses the same signed authorization and does not settle
     headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
     body: requestBody,
   })
-  assert.equal(first.status, 202, await first.clone().text())
-  assert.match(await first.text(), /pending|payment/i)
+  assert.equal(first.status, 500, await first.clone().text())
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
 
   const retry = await app.request('/api/place', {
@@ -3971,14 +5271,14 @@ test('frontier x402 retry uses the same signed authorization and does not settle
   assert.equal(state.paymentHashes.size, 1)
 })
 
-test('frontier x402 retry can resume the same pending payment without replaying X-PAYMENT', async () => {
+test('frontier x402 retry can resume an interrupted payment without replaying X-PAYMENT', async () => {
   reset({
     scenario: 'paid claims',
     facilitatorVerify: true,
     facilitatorSettle: true,
     chainFrom: SELLER_WALLET,
     chainTo: TREASURY,
-    failPaidWriteOnce: true,
+    interruptTreasuryCompletionOnce: true,
   })
   const requestBody = JSON.stringify({
     parent_id: null,
@@ -3991,7 +5291,7 @@ test('frontier x402 retry can resume the same pending payment without replaying 
     headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
     body: requestBody,
   })
-  assert.equal(first.status, 202, await first.clone().text())
+  assert.equal(first.status, 500, await first.clone().text())
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
 
   const retry = await app.request('/api/place', {
@@ -4012,7 +5312,7 @@ test('frontier x402 headerless retry fails closed when the request body changed'
     facilitatorSettle: true,
     chainFrom: SELLER_WALLET,
     chainTo: TREASURY,
-    failPaidWriteOnce: true,
+    interruptTreasuryCompletionOnce: true,
   })
   const first = await app.request('/api/place', {
     method: 'POST',
@@ -4023,7 +5323,7 @@ test('frontier x402 headerless retry fails closed when the request body changed'
       description: 'original body',
     }),
   })
-  assert.equal(first.status, 202, await first.clone().text())
+  assert.equal(first.status, 500, await first.clone().text())
 
   const retry = await app.request('/api/place', {
     method: 'POST',
@@ -4037,6 +5337,41 @@ test('frontier x402 headerless retry fails closed when the request body changed'
   assert.equal(retry.status, 409, await retry.clone().text())
   assert.match(await retry.text(), /payment attempt|immutable|different/i)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+})
+
+test('frontier x402 completion at the recovery deadline has no domain effect and enters founder review', async () => {
+  reset({
+    scenario: 'treasury deadline passed',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+  })
+
+  const response = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      parent_id: null,
+      name: 'Too Late Continent',
+      description: 'must remain uncreated',
+    }),
+  })
+
+  assert.equal(response.status, 409, await response.clone().text())
+  const attempt = [...state.paymentAttempts.values()][0]
+  assert.deepEqual(await response.json(), {
+    payment: 'founder_review',
+    payment_attempt_id: [...state.paymentAttempts.keys()][0],
+    fee_tx: attempt?.tx_hash,
+    do_not_pay_again: true,
+    reason: 'frontier recovery deadline passed before completion',
+  })
+  assert.equal(attempt?.status, 'founder_review')
+  assert.equal(attempt?.lease_owner, null)
+  assert.equal(state.paymentHashes.size, 0)
+  assert.equal(state.calls.filter(call =>
+    /payment-treasury-operations:complete/iu.test(call.query ?? '')).length, 1)
 })
 
 test('kind invention can replay its completed canonical response without replaying X-PAYMENT', async () => {
@@ -4073,6 +5408,408 @@ test('kind invention can replay its completed canonical response without replayi
   assert.equal(replay.headers.get('X-PAYMENT-RESPONSE'), firstPaymentResponse)
   assert.equal(await replay.text(), firstText)
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, 1)
+})
+
+test('treasury completion returns the canonical stored x402 response header', async () => {
+  const canonicalHeader = Buffer.from(JSON.stringify({
+    success: true,
+    transaction: TX_CASE_UPPER,
+    recovered: true,
+  })).toString('base64')
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    treasuryCompletionHeader: canonicalHeader,
+  })
+
+  const response = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      parent_id: null,
+      name: 'Canonical Header Continent',
+      description: 'uses the durable header reloaded by completion',
+    }),
+  })
+
+  assert.equal(response.status, 201, await response.clone().text())
+  assert.equal(response.headers.get('X-PAYMENT-RESPONSE'), canonicalHeader)
+})
+
+test('only founder resident one issues one private city fee credit and exact retries do not issue twice', async () => {
+  reset()
+  const issuanceBody = JSON.stringify({
+    resident_handle: 'tiny-lantern',
+    source_key: 'wave4-grant-0001',
+    reason: 'Wave 4 route test grant',
+  })
+
+  const nonFounder = await app.request('/api/founder/city-credit', {
+    method: 'POST', headers: authHeaders(), body: issuanceBody,
+  })
+  assert.equal(nonFounder.status, 403)
+  assert.equal(state.cityCreditEntries.length, 0)
+
+  setActor(1, 'founder')
+  const issued = await app.request('/api/founder/city-credit', {
+    method: 'POST', headers: authHeaders(), body: issuanceBody,
+  })
+  assert.equal(issued.status, 201, await issued.clone().text())
+  const issuedBody = await issued.json() as {
+    resident_handle: string
+    city_fee_credit: Record<string, unknown>
+  }
+  assert.equal(issuedBody.resident_handle, 'tiny-lantern')
+  assert.deepEqual(issuedBody.city_fee_credit, {
+    disposition: 'created',
+    entry_id: '1',
+    resident_id: 7,
+    amount: '1.000000',
+    amount_units: '1000000',
+    balance: '1.000000',
+    balance_usdc: '1.000000',
+    balance_units: '1000000',
+    reason: 'Wave 4 route test grant',
+    created_at: '2026-08-11T00:00:00.000Z',
+  })
+  assert.equal(issued.headers.get('cache-control'), 'no-store')
+
+  const retried = await app.request('/api/founder/city-credit', {
+    method: 'POST', headers: authHeaders(), body: issuanceBody,
+  })
+  assert.equal(retried.status, 200, await retried.clone().text())
+  assert.equal((await retried.json() as {
+    city_fee_credit: { disposition: string }
+  }).city_fee_credit.disposition, 'existing')
+  assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'founder_issue').length, 1)
+  assert.equal(state.cityCreditBalances.get(7), 1_000_000n)
+
+  const changed = await app.request('/api/founder/city-credit', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      resident_handle: 'tiny-lantern',
+      source_key: 'wave4-grant-0001',
+      reason: 'changed reason must conflict',
+    }),
+  })
+  assert.equal(changed.status, 409, await changed.clone().text())
+  assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'founder_issue').length, 1)
+
+  const founderRead = await app.request('/api/founder/city-credit/tiny-lantern', {
+    headers: authHeaders(),
+  })
+  assert.equal(founderRead.status, 200)
+  assert.equal(founderRead.headers.get('cache-control'), 'no-store')
+
+  setActor(7, 'tiny-lantern')
+  const me = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(me.status, 200, await me.clone().text())
+  const meBody = await me.json() as {
+    city_fee_credit: { balance_usdc: string; history: Array<{ kind: string }> }
+  }
+  assert.equal(meBody.city_fee_credit.balance_usdc, '1.000000')
+  assert.deepEqual(meBody.city_fee_credit.history.map(entry => entry.kind), ['founder_issue'])
+  assert.equal(me.headers.get('cache-control'), 'no-store')
+
+  const officialText = await (await app.request('/api/official')).text()
+  const treasuryText = await (await app.request('/treasury')).text()
+  assert.doesNotMatch(officialText + treasuryText, /wave4-grant-0001|1000000/u)
+})
+
+test('/api/me reports a private exact zero city fee credit account before any issuance', async () => {
+  reset()
+  const response = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    city_fee_credit: Record<string, unknown>
+    pages: { city_fee_credit: Record<string, unknown> }
+  }
+  assert.deepEqual(body.city_fee_credit, {
+    resident_id: 7,
+    balance: '0.000000',
+    balance_usdc: '0.000000',
+    balance_units: '0',
+    history: [],
+    page: { has_more: false, next_before_credit_id: null },
+  })
+  assert.deepEqual(body.pages.city_fee_credit, {
+    has_more: false,
+    next_before_credit_id: null,
+  })
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+})
+
+const CITY_CREDIT_ROUTE_CASES = [
+  {
+    label: 'frontier',
+    path: '/api/place',
+    status: 201,
+    requestId: 'wave4-frontier-0001',
+    body: { parent_id: null, name: 'Credit Continent', description: 'founded with credit' },
+    invalidBody: { parent_id: null, name: '', description: 'invalid before debit' },
+    resultKey: 'place',
+    failureReason: 'frontier target changed before completion',
+  },
+  {
+    label: 'kind invention',
+    path: '/api/kind',
+    status: 201,
+    requestId: 'wave4-kind-0000001',
+    body: { name: 'credit-lantern', description: 'made with credit', traits: [], recipe: [] },
+    invalidBody: {
+      name: 'invalid-credit-kind', description: 'invalid before debit',
+      traits: ['glowing', 'glowing'], recipe: [],
+    },
+    resultKey: 'kind',
+    failureReason: 'kind invention target changed before completion',
+  },
+  {
+    label: 'kind revision',
+    path: '/api/kind/3/revise',
+    status: 200,
+    requestId: 'wave4-revision-001',
+    body: { description: 'revised with credit', traits: ['glowing'], recipe: [] },
+    invalidBody: {
+      description: 'invalid before debit', traits: ['glowing', 'glowing'], recipe: [],
+    },
+    resultKey: 'kind',
+    failureReason: 'kind revision target changed before completion',
+  },
+] as const
+
+const cityCreditDomainWriteCount = () => sqlCalls().filter(call =>
+  /complete_city_credit_attempt/iu.test(call.query ?? '')).length
+
+const assertCityCreditNoStore = (response: Response, label: string) => {
+  assert.match(
+    response.headers.get('cache-control') ?? '',
+    /(?:^|,)\s*no-store\s*(?:,|$)/iu,
+    `${label}: city fee credit response must be private and non-cacheable`,
+  )
+}
+
+test('each eligible paid action deliberately spends one own city fee credit and replays exactly', async () => {
+
+  for (const creditCase of CITY_CREDIT_ROUTE_CASES) {
+    reset({
+      scenario: 'paid claims',
+      cityCreditBalances: new Map([[7, 1_000_000n]]),
+    })
+    const requestBody = JSON.stringify(creditCase.body)
+    const headers = {
+      ...authHeaders(),
+      'X-1F3D9-FEE-CREDIT': creditCase.requestId,
+    }
+    const first = await app.request(creditCase.path, {
+      method: 'POST', headers, body: requestBody,
+    })
+    assert.equal(first.status, creditCase.status, `${creditCase.label}: ${await first.clone().text()}`)
+    assertCityCreditNoStore(first, `${creditCase.label} success`)
+    const firstText = await first.text()
+    const firstBody = JSON.parse(firstText) as Record<string, unknown>
+    assert.ok(firstBody[creditCase.resultKey], creditCase.label)
+    assert.deepEqual(firstBody.city_fee_credit, {
+      spent_usdc: '1.000000',
+      balance_usdc: '0.000000',
+    }, creditCase.label)
+    assert.equal(Object.hasOwn(firstBody, 'fee_tx'), false, creditCase.label)
+    assert.equal(first.headers.get('x-payment-response'), null, creditCase.label)
+    assert.equal(state.cityCreditBalances.get(7), 0n, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
+    assert.equal(state.paymentHashes.size, 0, creditCase.label)
+    assert.equal(networkCalled('/verify'), false, creditCase.label)
+    assert.equal(networkCalled('/settle'), false, creditCase.label)
+    const paidWrite = sqlCalls().find(call => /complete_city_credit_attempt/iu.test(call.query ?? ''))
+    assert.ok(paidWrite?.query, `${creditCase.label}: missing atomic paid write`)
+    const eventStart = paidWrite.query.indexOf('INSERT INTO events')
+    const responseStart = paidWrite.query.indexOf('completed_x402_attempt AS', eventStart)
+    assert.ok(eventStart >= 0 && responseStart > eventStart, `${creditCase.label}: missing public event boundary`)
+    assert.doesNotMatch(
+      paidWrite.query.slice(eventStart, responseStart),
+      /city_fee_credit|balance_usdc|request_id|source_key/iu,
+      `${creditCase.label}: private credit accounting leaked into its public event`,
+    )
+    const domainWrites = sqlCalls().filter(call =>
+      /insert\s+into\s+(?:places|kinds|kind_revisions)|update\s+kinds/iu.test(call.query ?? '')).length
+
+    const replay = await app.request(creditCase.path, {
+      method: 'POST', headers, body: requestBody,
+    })
+    assert.equal(replay.status, creditCase.status, `${creditCase.label}: ${await replay.clone().text()}`)
+    assertCityCreditNoStore(replay, `${creditCase.label} replay`)
+    assert.equal(await replay.text(), firstText, creditCase.label)
+    assert.equal(state.cityCreditBalances.get(7), 0n, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
+    assert.equal(sqlCalls().filter(call =>
+      /insert\s+into\s+(?:places|kinds|kind_revisions)|update\s+kinds/iu.test(call.query ?? '')).length,
+    domainWrites, `${creditCase.label}: replay must not repeat the domain write`)
+  }
+})
+
+test('city fee credit selection rejects insufficient balance, mixed rails, and free interior use before debit', async () => {
+  reset({ scenario: 'paid claims' })
+  const insufficient = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-1F3D9-FEE-CREDIT': 'wave4-empty-00001' },
+    body: JSON.stringify({ parent_id: null, name: 'No Credit Continent', description: '' }),
+  })
+  assert.equal(insufficient.status, 409, await insufficient.clone().text())
+  assertCityCreditNoStore(insufficient, 'insufficient credit')
+  assert.match(await insufficient.text(), /insufficient city fee credit/i)
+  assert.equal(state.cityCreditEntries.length, 0)
+  assert.equal(networkCalled('/verify'), false)
+  assert.equal(networkCalled('/settle'), false)
+
+  reset({ scenario: 'paid claims', cityCreditBalances: new Map([[7, 1_000_000n]]) })
+  const mixed = await app.request('/api/place', {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'X-PAYMENT': X_PAYMENT,
+      'X-1F3D9-FEE-CREDIT': 'wave4-mixed-00001',
+    },
+    body: JSON.stringify({ parent_id: null, name: 'Mixed Rail Continent', description: '' }),
+  })
+  assert.equal(mixed.status, 400, await mixed.clone().text())
+  assertCityCreditNoStore(mixed, 'mixed payment rails')
+  assert.match(await mixed.text(), /choose one payment method/i)
+  assert.equal(state.cityCreditEntries.length, 0)
+  assert.equal(state.paymentAttempts.size, 0)
+  assert.equal(networkCalled('/verify'), false)
+  assert.equal(networkCalled('/settle'), false)
+  const mixedStorageWrites = sqlCalls().filter(call =>
+    /\b(?:insert|update|delete)\b/iu.test(call.query ?? '')
+      && !/update\s+residents\s+set\s+things_today/iu.test(call.query ?? ''))
+  assert.equal(
+    mixedStorageWrites.length,
+    0,
+    `mixed payment rails reached storage: ${mixedStorageWrites[0]?.query?.replace(/\s+/gu, ' ').trim() ?? 'unknown write'}`,
+  )
+
+  reset({ cityCreditBalances: new Map([[7, 1_000_000n]]) })
+  const freeInterior = await app.request('/api/place', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'X-1F3D9-FEE-CREDIT': 'wave4-free-000001' },
+    body: JSON.stringify({ parent_id: 2, name: 'Free Interior', description: '' }),
+  })
+  assert.equal(freeInterior.status, 400, await freeInterior.clone().text())
+  assertCityCreditNoStore(freeInterior, 'free interior selector')
+  assert.match(await freeInterior.text(), /only supported for the paid/i)
+  assert.equal(state.cityCreditBalances.get(7), 1_000_000n)
+  assert.equal(state.cityCreditEntries.length, 0)
+  assert.equal(state.paymentAttempts.size, 0)
+})
+
+test('every city-credit fee action fails validation before debit', async () => {
+  for (const creditCase of CITY_CREDIT_ROUTE_CASES) {
+    reset({
+      scenario: 'paid claims',
+      cityCreditBalances: new Map([[7, 1_000_000n]]),
+    })
+    const response = await app.request(creditCase.path, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'X-1F3D9-FEE-CREDIT': `${creditCase.requestId}-before`,
+      },
+      body: JSON.stringify(creditCase.invalidBody),
+    })
+    assert.equal(response.status, 400, `${creditCase.label}: ${await response.clone().text()}`)
+    assertCityCreditNoStore(response, `${creditCase.label} pre-debit failure`)
+    assert.equal(state.cityCreditBalances.get(7), 1_000_000n, creditCase.label)
+    assert.equal(state.cityCreditEntries.length, 0, creditCase.label)
+    assert.equal(state.paymentAttempts.size, 0, creditCase.label)
+    assert.equal(cityCreditDomainWriteCount(), 0, creditCase.label)
+    assert.equal(networkCalled('/verify'), false, creditCase.label)
+    assert.equal(networkCalled('/settle'), false, creditCase.label)
+  }
+})
+
+test('every post-debit city-credit fee failure appends one exact return and replays it', async () => {
+  for (const creditCase of CITY_CREDIT_ROUTE_CASES) {
+    reset({
+      scenario: 'paid claims',
+      cityCreditBalances: new Map([[7, 1_000_000n]]),
+      failPaidWriteOnce: true,
+    })
+    const requestBody = JSON.stringify(creditCase.body)
+    const headers = {
+      ...authHeaders(),
+      'X-1F3D9-FEE-CREDIT': `${creditCase.requestId}-return`,
+    }
+    const first = await app.request(creditCase.path, {
+      method: 'POST', headers, body: requestBody,
+    })
+    assert.equal(first.status, 409, `${creditCase.label}: ${await first.clone().text()}`)
+    assertCityCreditNoStore(first, `${creditCase.label} returned error`)
+    const firstText = await first.text()
+    assert.deepEqual(JSON.parse(firstText), {
+      error: `${creditCase.failureReason}; city fee credit returned`,
+      city_fee_credit: 'credit_returned',
+      returned_usdc: '1.000000',
+    }, creditCase.label)
+    assert.equal(state.cityCreditBalances.get(7), 1_000_000n, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1, creditCase.label)
+    assert.equal(cityCreditDomainWriteCount(), 1, creditCase.label)
+
+    const replay = await app.request(creditCase.path, {
+      method: 'POST', headers, body: requestBody,
+    })
+    assert.equal(replay.status, 409, `${creditCase.label}: ${await replay.clone().text()}`)
+    assertCityCreditNoStore(replay, `${creditCase.label} returned replay`)
+    assert.equal(await replay.text(), firstText, creditCase.label)
+    assert.equal(state.cityCreditBalances.get(7), 1_000_000n, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1, creditCase.label)
+    assert.equal(cityCreditDomainWriteCount(), 1, `${creditCase.label}: replay repeated the failed domain write`)
+    assert.equal(networkCalled('/settle'), false, creditCase.label)
+  }
+})
+
+test('concurrent duplicate city-credit fee calls make one debit and one domain effect for every action', async () => {
+  for (const creditCase of CITY_CREDIT_ROUTE_CASES) {
+    reset({
+      scenario: 'paid claims',
+      cityCreditBalances: new Map([[7, 1_000_000n]]),
+    })
+    const requestBody = JSON.stringify(creditCase.body)
+    const headers = {
+      ...authHeaders(),
+      'X-1F3D9-FEE-CREDIT': `${creditCase.requestId}-race`,
+    }
+    const responses = await Promise.all([
+      app.request(creditCase.path, { method: 'POST', headers, body: requestBody }),
+      app.request(creditCase.path, { method: 'POST', headers, body: requestBody }),
+    ])
+    const success = responses.find(response => response.status === creditCase.status)
+    assert.ok(success, `${creditCase.label}: concurrent calls did not complete one domain effect`)
+    for (const response of responses) {
+      assertCityCreditNoStore(response, `${creditCase.label} concurrent response`)
+      assert.ok(
+        response.status === creditCase.status || response.status === 202,
+        `${creditCase.label}: unexpected concurrent status ${response.status}: ${await response.clone().text()}`,
+      )
+    }
+    const successText = await success.text()
+    const exactReplay = await app.request(creditCase.path, {
+      method: 'POST', headers, body: requestBody,
+    })
+    assert.equal(exactReplay.status, creditCase.status, `${creditCase.label}: ${await exactReplay.clone().text()}`)
+    assertCityCreditNoStore(exactReplay, `${creditCase.label} concurrent replay`)
+    assert.equal(await exactReplay.text(), successText, creditCase.label)
+    assert.equal(state.cityCreditBalances.get(7), 0n, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 0, creditCase.label)
+    assert.equal(state.paymentAttempts.size, 1, creditCase.label)
+    assert.equal(cityCreditDomainWriteCount(), 1, creditCase.label)
+    assert.equal(networkCalled('/verify'), false, creditCase.label)
+    assert.equal(networkCalled('/settle'), false, creditCase.label)
+  }
 })
 
 test('events keep the public contract while paging stably by kind and id', async () => {
@@ -5153,6 +6890,59 @@ test('resident views reject invalid, duplicate, and unknown options before Postg
   }
 })
 
+test('focused resident presence returns one exact public record or 404', async () => {
+  reset({ scenario: 'focused resident presence' })
+  const response = await app.request(
+    '/api/residents?view=presence&handle=tiny-lantern',
+  )
+  assert.equal(response.status, 200)
+  const body = await response.json() as {
+    resident: Record<string, unknown>
+  }
+  assert.deepEqual(Object.keys(body), ['resident'])
+  assert.deepEqual(Object.keys(body.resident).sort(), [
+    'asleep', 'current_place_id', 'handle', 'id', 'joined_at',
+  ])
+  assert.deepEqual(body, {
+    resident: {
+      id: 7,
+      handle: 'tiny-lantern',
+      joined_at: '2026-08-11T00:00:00.000Z',
+      current_place_id: 2,
+      asleep: false,
+    },
+  })
+  const reads = sqlCalls().filter(call =>
+    /\/\* public:resident-presence \*\//iu.test(call.query ?? ''))
+  assert.equal(reads.length, 1)
+  assert.deepEqual(reads[0]?.params, ['tiny-lantern'])
+  assert.match(reads[0]?.query ?? '', /where\s+resident\.handle\s*=\s*\$1/iu)
+  assert.doesNotMatch(reads[0]?.query ?? '', /\b(?:secret_hash|model|quota_day)\b/iu)
+
+  reset({ scenario: 'focused resident presence' })
+  const missing = await app.request('/api/residents?view=presence&handle=not-here')
+  assert.equal(missing.status, 404)
+  assert.deepEqual(await missing.json(), { error: 'resident not found' })
+})
+
+test('focused resident presence rejects pagination, mixed, duplicate, invalid, and unknown options before PostgreSQL', async () => {
+  for (const path of [
+    '/api/residents?handle=tiny-lantern',
+    '/api/residents?view=presence&handle=tiny-lantern&limit=1',
+    '/api/residents?view=presence&handle=tiny-lantern&before_id=7',
+    '/api/residents?view=presence&handle=tiny-lantern&view=presence',
+    '/api/residents?view=presence&handle=tiny-lantern&handle=neighbor',
+    '/api/residents?view=presence&handle=tiny-lantern&unknown=1',
+    '/api/residents?view=presence&handle=Tiny-Lantern',
+    '/api/residents?view=presence&handle=ab',
+  ]) {
+    reset({ scenario: 'focused resident presence' })
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+    assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+  }
+})
+
 test('resident census pages by arrival time with stable id ties and no boundary repeats', async () => {
   reset({ scenario: 'resident arrival pagination' })
   const firstResponse = await app.request('/api/residents?limit=2')
@@ -5324,13 +7114,37 @@ test('official facts, events, residents, and treasury are public and anti-token'
   const official = await app.request('/api/official')
   assert.equal(official.status, 200)
   const facts = await official.json() as {
-    domain: string; treasury: string; network: string; token: null; statement: string
+    domain: string
+    treasury: string
+    network: string
+    token: null
+    statement: string
+    public_snapshots: {
+      format_version: number
+      releases: string
+      format: string
+      verifier: string
+      cadence: string
+      scope: string
+      corrections: string
+      recovery: string
+    }
   }
   assert.equal(facts.domain, 'https://1f3d9.com')
   assert.equal(facts.treasury.toLowerCase(), TREASURY)
   assert.equal(facts.network, 'base')
   assert.equal(facts.token, null)
   assert.match(facts.statement, /no .*token|there is no/i)
+  assert.deepEqual(facts.public_snapshots, {
+    format_version: 1,
+    releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
+    format: 'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md',
+    verifier: 'https://github.com/onetapstudiogames/1f3d9/blob/main/scripts/verify-public-snapshot.ts',
+    cadence: 'daily after the workflow is enabled',
+    scope: 'the full approved anonymous public record, not only the names directory',
+    corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
+    recovery: 'public snapshots exclude private recovery data and are not recovery backups',
+  })
 
   const [events, residents, treasury] = await Promise.all([
     app.request('/api/events'), app.request('/api/residents'), app.request('/treasury'),
@@ -5462,7 +7276,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
-    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'transfer',
+    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
     'mark_for_later', 'me', 'moderate',
   ])

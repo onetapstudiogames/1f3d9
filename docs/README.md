@@ -13,6 +13,8 @@ Start with the document that matches the question:
 
 Public and feature documents:
 
+- [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) defines the dated anonymous public-record
+  format, complete class registry, hash recipe, and offline verification contract.
 - [published/FRONTDOOR.md](published/FRONTDOOR.md) is the voice north star and mirrors
   the public front-door body.
 - [features/HOSTED_CHAT_SIGNIN.md](features/HOSTED_CHAT_SIGNIN.md) defines the hosted-chat
@@ -20,6 +22,8 @@ Public and feature documents:
 
 Operations:
 
+- [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md) covers restricted
+  export setup, manual dry runs, append-only publication, and separate errata.
 - [runbooks/DEPLOYMENT.md](runbooks/DEPLOYMENT.md) explains how a GitHub commit reaches
   production and how to verify or roll it back.
 - [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md) covers Neon snapshots, local

@@ -206,26 +206,41 @@ test('both private registration doors place a confirmed resident at world withou
 })
 
 test('paid frontier founding stores a continent under the world instead of creating another SQL root', async () => {
-  const source = await readFile(new URL('../src/world.ts', import.meta.url), 'utf8')
+  const [source, treasury] = await Promise.all([
+    readFile(new URL('../src/world.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/payment-treasury-operations.ts', import.meta.url), 'utf8'),
+  ])
   const ordinaryStart = source.indexOf('WITH permitted_parent AS')
   const ordinaryEnd = source.indexOf('const fee = await treasuryFee', ordinaryStart)
   const ordinary = source.slice(ordinaryStart, ordinaryEnd)
   const start = source.indexOf('const fee = await treasuryFee')
   const end = source.indexOf("app.patch('/api/place/:id'", start)
   const frontier = source.slice(start, end)
+  const frontierParentMatch = treasury.match(
+    /frontier_parent AS MATERIALIZED \(([\s\S]*?)\), new_frontier_place AS \(/i,
+  )
+  const frontierPlaceMatch = treasury.match(
+    /new_frontier_place AS \(([\s\S]*?)\), new_frontier_presence AS \(/i,
+  )
 
   assert.ok(ordinaryStart >= 0 && ordinaryEnd > ordinaryStart, 'ordinary branch must remain identifiable')
   assert.ok(start >= 0 && end > start, 'frontier branch must remain identifiable')
+  assert.ok(frontierParentMatch, 'frontier parent selection must remain identifiable')
+  assert.ok(frontierPlaceMatch, 'frontier place insert must remain identifiable')
+  const frontierParent = frontierParentMatch?.[1] ?? ''
+  const frontierPlace = frontierPlaceMatch?.[1] ?? ''
   assert.match(ordinary, /place_kind/i)
   assert.match(ordinary, /'place'/i)
-  assert.match(frontier, /owner_id\s+IS\s+NULL/i)
-  assert.match(frontier, /parent_id\s+IS\s+NULL/i)
-  assert.match(frontier, /place_kind/i)
-  assert.match(frontier, /'continent'/i)
-  assert.doesNotMatch(frontier, /SELECT\s+NULL,\s*\$\{name\}/i)
+  assert.match(frontier, /completeTreasuryPaymentOperation/i)
+  assert.match(frontierParent, /owner_id\s+IS\s+NULL/i)
+  assert.match(frontierParent, /parent_id\s+IS\s+NULL/i)
+  assert.match(frontierParent, /place_kind\s+=\s+'world'/i)
+  assert.match(frontierPlace, /place_kind/i)
+  assert.match(frontierPlace, /'continent'/i)
+  assert.doesNotMatch(frontierPlace, /SELECT\s+NULL,\s*'continent'/i)
   assert.match(
-    frontier,
-    /SELECT\s+(?:world|root|world_root)[\w.]*\.id,\s*'continent',\s*\$\{name\}/i,
+    frontierPlace,
+    /SELECT\s+parent\.parent_id,\s*'continent',\s*request\.requested_name/i,
   )
 })
 
@@ -373,8 +388,11 @@ test('home can only be set to owned land where the resident is already standing'
 })
 
 test('founding never teleports a resident whose presence already exists at world', async () => {
-  const source = await readFile(new URL('../src/world.ts', import.meta.url), 'utf8')
-  const conflictClauses = source.match(/ON CONFLICT \(resident_id\)[\s\S]{0,500}/g) ?? []
+  const [source, treasury] = await Promise.all([
+    readFile(new URL('../src/world.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/payment-treasury-operations.ts', import.meta.url), 'utf8'),
+  ])
+  const conflictClauses = `${source}\n${treasury}`.match(/ON CONFLICT \(resident_id\)[\s\S]{0,500}/g) ?? []
 
   assert.ok(conflictClauses.length >= 2, 'ordinary and frontier founding both handle existing presence')
   for (const clause of conflictClauses) {

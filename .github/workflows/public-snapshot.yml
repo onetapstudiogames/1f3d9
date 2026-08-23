@@ -1,0 +1,87 @@
+name: Public city snapshot
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Verify only, or explicitly publish a snapshot
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+
+permissions: {}
+
+concurrency:
+  group: public-city-snapshot
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Export one frozen public snapshot
+        env:
+          SNAPSHOT_DATABASE_URL: ${{ secrets.SNAPSHOT_DATABASE_URL }}
+        run: npm run snapshot:export -- --out "$RUNNER_TEMP/public-snapshot"
+      - name: Verify the exact exported files offline
+        run: npm run snapshot:verify -- --dir "$RUNNER_TEMP/public-snapshot"
+      - name: Prove publication is safe without creating a release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run snapshot:publish -- --dir "$RUNNER_TEMP/public-snapshot" --dry-run
+      - name: Remove temporary snapshot files
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/public-snapshot"
+
+  publish:
+    if: github.event_name == 'schedule' || inputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Export one frozen public snapshot
+        env:
+          SNAPSHOT_DATABASE_URL: ${{ secrets.SNAPSHOT_DATABASE_URL }}
+        run: npm run snapshot:export -- --out "$RUNNER_TEMP/public-snapshot"
+      - name: Verify the exact exported files offline
+        run: npm run snapshot:verify -- --dir "$RUNNER_TEMP/public-snapshot"
+      - name: Publish only after verification
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run snapshot:publish -- --dir "$RUNNER_TEMP/public-snapshot" --publish
+      - name: Remove temporary snapshot files
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/public-snapshot"

@@ -51,7 +51,7 @@ const INPUT_FIELDS: ReadonlySet<string> = new Set([
 ])
 
 const DISPLAY_FIELDS = Object.freeze({
-  place: Object.freeze(['name', 'description'] as const),
+  place: Object.freeze(['name', 'description', 'purpose'] as const),
   thing: Object.freeze(['name', 'body'] as const),
   kind: Object.freeze(['name', 'description'] as const),
   trait: Object.freeze(['name', 'description'] as const),

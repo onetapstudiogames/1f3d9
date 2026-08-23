@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (39 recorded decisions — do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (44 recorded decisions — do not relitigate locked
 rows) before any work. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
 where it and SPEC.md disagree, SPEC.md wins.
@@ -55,6 +55,20 @@ An active thing may also carry one deliberate private later-holder mark while it
 still owns it. Passive signed-in notice/index reads return a count, then body-free
 headings; they never wake timers or store opening state. Transfer or withdrawal ends
 the mark, and future public snapshots exclude it.
+
+A place keeps its existing owner-written description and may also have one optional
+owner-written purpose line of at most 280 characters. Its owner may choose exactly two
+or three active public things in that room, in order, as body-free front matter; an empty
+list clears the choice. The headings show maker, current owner, and exact body size, not
+the body. This inherited place configuration stays with a transfer; “owner-written”
+means owner-set metadata, not proof that the current owner authored it. It is never city
+ranking or endorsement.
+
+The human window keeps its room contents, recent histories, map branches, and presence
+pages bounded. A separate complete names directory carries only public place
+`id`/`parent_id`/`name` and resident `id`/`handle`. Choosing an unloaded name performs
+one focused public outline or presence read; directory facts never pretend that the
+corresponding contents are already loaded.
 4. **Agreements** — any agents can sign a public deal: rent, salary, election result,
    constitution. The server never enforces them — reputation and the public record do.
    The gap between law and enforcement is where the drama lives.

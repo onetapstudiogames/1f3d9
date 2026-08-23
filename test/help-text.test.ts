@@ -9,10 +9,22 @@ const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 const frontdoor = read('../src/frontdoor.txt')
 const llms = read('../src/llms.txt')
 const specification = read('../docs/SYSTEM_DESIGN.md')
+const productRequirements = read('../docs/PRD.md')
+const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
 const decisions = read('../docs/DECISIONS.md')
+const hostedSignin = read('../docs/features/HOSTED_CHAT_SIGNIN.md')
+const contributorGuide = read('../CLAUDE.md')
 const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
+const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
+
+test('contributor guidance names the current locked-decision count', () => {
+  const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
+    .map(match => Number(match[1]))
+  assert.equal(recorded.at(-1), 44)
+  assert.match(contributorGuide, /\(44 recorded decisions — do not relitigate locked\s+rows\)/u)
+})
 
 const ACTION_SHAPES = [
   '{"action":"move","to_place_id":123}',
@@ -22,6 +34,45 @@ const ACTION_SHAPES = [
   '{"action":"give","target_type":"place","target_id":123,"to_handle":"resident-handle"}',
   '{"action":"go_home"}',
 ] as const
+
+test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-address recovery', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['hosted sign-in guide', hostedSignin],
+    ['MCP descriptions', mcpSource],
+  ] as const) {
+    assert.match(
+      text,
+      /(?:(?:key-capable|local)\b[^\n]{0,180}\/mcp\b|\/mcp\b[^\n]{0,180}(?:key-capable|local)\b)/iu,
+      `${name}: key door`,
+    )
+    assert.match(text, /ChatGPT[\s\S]{0,320}\/mcp\/connect\b/iu, `${name}: hosted door`)
+    assert.match(
+      text,
+      /(?:name already exists|remove|delete)[^\n]{0,220}(?:old|existing|connection|connector)/iu,
+      `${name}: stale connector recovery`,
+    )
+  }
+})
+
+test('ChatGPT setup does not invent a mobile support restriction absent from official guidance', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['hosted sign-in guide', hostedSignin],
+    ['runtime discovery copy', hostedDiscoverySource],
+  ] as const) {
+    assert.doesNotMatch(text, /mobile-browser|mobile browser|not (?:from |the )?(?:a )?mobile app|use desktop web for setup/iu, name)
+  }
+})
 
 test('public help gives exact action shapes and required combinations', () => {
   for (const [name, text] of [
@@ -41,6 +92,81 @@ test('public help gives exact action shapes and required combinations', () => {
     assert.match(text, /No\s+other\s+fields\s+are\s+accepted/iu, name)
     assert.match(text, /talk\s+and\s+make\s+use\s+(?:their\s+)?dedicated\s+endpoints/iu, name)
   }
+})
+
+test('city fee credit help stays deliberate, private, fixed, and non-transferable', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /X-1F3D9-FEE-CREDIT/iu, `${name}: explicit credit selector`)
+    assert.match(text, /frontier[\s\S]{0,300}kind invention[\s\S]{0,120}kind revision/iu, `${name}: eligible fees`)
+    assert.match(text, /(?:unique|stable|same)[^\n]{0,100}request id/iu, `${name}: retry request id`)
+    assert.match(text, /(?:never|no)[^\n]{0,120}(?:fallback|silently)[^\n]{0,120}(?:credit|x402)|(?:credit|x402)[^\n]{0,120}(?:never|no)[^\n]{0,120}(?:fallback|silently)/iu, `${name}: no fallback`)
+    assert.match(text, /\/api\/me[^\n]{0,180}(?:private|own)[^\n]{0,120}(?:balance|history)|(?:private|own)[^\n]{0,180}(?:balance|history)[^\n]{0,120}\/api\/me/iu, `${name}: private account`)
+    assert.match(text, /(?:cannot|never|no)[^\n]{0,180}(?:transfer|sell|redeem|cash out)/iu, `${name}: no transferable value`)
+  }
+
+  assert.match(decisions, /\| 40 \|[^\n]*founder-issued city fee credit/iu)
+})
+
+test('paid city-action help explains bounded recovery without another payment', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['published front door', frontdoorDocument],
+    ['system design', specification],
+  ] as const) {
+    assert.match(text, /pending[^.]{0,180}automatically rechecked[^.]{0,120}(?:at most|for up to) two hours/iu, `${name}: bounded automatic recheck`)
+    assert.match(text, /private GET \/api\/payment-attempt\/:id/iu, `${name}: private attempt inspection`)
+    assert.match(text, /empty-body POST \/api\/payment-attempt\/:id\/recheck/iu, `${name}: explicit empty-body recheck`)
+    assert.match(text, /(?:inspect|recheck|resume)[^.]{0,180}without paying again/iu, `${name}: no second payment`)
+    assert.match(text, /(?:at|when) the (?:two-hour )?deadline[^.]{0,180}(?:held )?name[^.]{0,80}released/iu, `${name}: deadline releases the name`)
+    assert.match(text, /exact[^.]{0,100}(?:spent|debited) (?:city fee )?credit[^.]{0,100}returned/iu, `${name}: exact credit return`)
+    assert.match(text, /uncertain x402[^.]{0,120}(?:never|does not|cannot)[^.]{0,80}(?:mint|create)[^.]{0,60}(?:city fee )?credit/iu, `${name}: no timeout mint`)
+    assert.match(text, /late real payment[^.]{0,120}founder review[^.]{0,180}(?:cannot|never)[^.]{0,80}(?:seize|take)[^.]{0,80}(?:reused|new owner)/iu, `${name}: safe late review`)
+    assert.match(text, /late real payment[^.]{0,360}(?:cannot|never|does not)[^.]{0,120}(?:complete|trigger)[^.]{0,100}(?:old action|old effect)[^.]{0,60}automat/iu, `${name}: no automatic late effect`)
+  }
+
+  for (const [name, text] of [
+    ['product requirements', productRequirements],
+    ['architecture', architecture],
+  ] as const) {
+    assert.match(text, /two hours/iu, `${name}: recovery window`)
+    assert.match(text, /\/api\/payment-attempt\/:id/iu, `${name}: private recovery route family`)
+    assert.match(text, /founder review/iu, `${name}: late payment disposition`)
+    assert.match(text, /(?:exact|same)[^.]{0,100}(?:credit|debit)[^.]{0,100}return|return[^.]{0,100}(?:exact|same)[^.]{0,100}(?:credit|debit)/iu, `${name}: credit conservation`)
+  }
+
+  assert.match(decisions, /\| 41 \|[^\n]*bounded payment recovery/iu)
+})
+
+test('payment safety copy pins the production rail and rejects poisoned wallet history', () => {
+  const usdc = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+  const treasury = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['published front door', frontdoorDocument],
+    ['system design', specification],
+  ] as const) {
+    assert.ok(text.includes(usdc), `${name}: exact Base USDC contract`)
+    assert.ok(text.includes(treasury), `${name}: exact city treasury recipient`)
+    assert.match(text, /Base/iu, `${name}: network`)
+    assert.match(text, /1\.000000 USDC/iu, `${name}: exact city fee`)
+    assert.match(text, /current (?:402|HTTP 402)(?: response)?[^.]{0,120}\/api\/official|\/api\/official[^.]{0,120}current (?:402|HTTP 402)(?: response)?/iu, `${name}: current authoritative response`)
+    assert.match(text, /never copy[^.]{0,100}wallet history/iu, `${name}: wallet-history ban`)
+    assert.match(text, /zero-value lookalike transfers?[^.]{0,120}(?:poison|pollute)[^.]{0,80}wallet history/iu, `${name}: poisoned history warning`)
+    assert.match(text, /seller[^.]{0,120}(?:recipient|amount)[^.]{0,160}current\s+sale\s+challenge|current\s+sale\s+challenge[^.]{0,160}seller[^.]{0,120}(?:recipient|amount)/iu, `${name}: seller challenge terms`)
+  }
+
+  assert.match(frontdoor, /\bpayment_attempt\b/iu, 'front door: planned MCP recovery action')
+  assert.match(llms, /\bpayment_attempt\b/iu, 'compact machine map: planned MCP recovery action')
 })
 
 test('the truth release keeps every public surface honest', () => {
@@ -124,7 +250,7 @@ test('later-holder help keeps discovery deliberate, metadata-only, and honest ab
 
   const forbidden = [
     'you left this', 'your memory', 'your previous self',
-    'what you forgot', 'welcome back', 'inheritance',
+    'what you forgot', 'welcome back', 'inheritance', 'the next you',
   ]
   for (const [name, text] of [
     ['front door', frontdoor], ['compact machine map', llms], ['MCP tools', mcpSource],
@@ -208,7 +334,7 @@ test('public help states the complete resident census contract', () => {
   ] as const) {
     const censusStart = text.indexOf('/api/residents')
     assert.ok(censusStart >= 0, `${name}: resident census route`)
-    const censusContract = text.slice(censusStart, censusStart + 1_200)
+    const censusContract = text.slice(censusStart, censusStart + 1_600)
     assert.match(
       censusContract,
       /(?:default(?:s| page(?: size)?)?[^\n]{0,100}200|200[^\n]{0,100}(?:default|page size))/iu,
@@ -235,6 +361,8 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
     assert.match(text, /stored authored text/iu, `${name}: counted text stage`)
     assert.match(text, /reading_cost/iu, `${name}: writer meter`)
     assert.match(text, /meter[^\n]{0,180}unavailable[^\n]{0,180}(?:write succeeded|do not retry)|(?:write succeeded|do not retry)[^\n]{0,180}meter[^\n]{0,180}unavailable/iu, `${name}: meter-only failure`)
+    assert.match(text, /measurement_timeout/iu, `${name}: named meter timeout`)
+    assert.match(text, /database[ -]query[\s\S]{0,100}(?:earlier|bounded)[\s\S]{0,80}deadline|(?:earlier|bounded)[\s\S]{0,80}database[ -]query[\s\S]{0,80}deadline/iu, `${name}: bounded meter query`)
     assert.match(text, /unknown query options?[^\n]{0,80}400|400[^\n]{0,80}unknown query options?/iu, `${name}: honest unknown option`)
     assert.match(text, /503[^\n]{0,120}Retry-After:\s*1|Retry-After:\s*1[^\n]{0,120}503/iu, `${name}: exact-read retry contract`)
     assert.match(text, /(?:map|window)[^\n]{0,180}(?:separate|existing|current) shapes?|(?:separate|existing|current) shapes?[^\n]{0,180}(?:map|window)/iu, `${name}: map/window exception`)
@@ -242,7 +370,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
   }
 
   assert.match(mcpSource, /name:\s*'say'[\s\S]{0,260}reading-cost meter/iu)
-  assert.match(mcpSource, /name:\s*'make'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'make'[\s\S]{0,600}reading-cost meter/iu)
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })
 
@@ -286,8 +414,44 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 22 tools[\s\S]{0,500}legacy `\/mcp` advertises all 22[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}21[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 23 tools[\s\S]{0,500}legacy `\/mcp` advertises all 23[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}22[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
+  )
+})
+
+test('Wave 9 complete names and bounded window truths stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /\/api\/window\?view=directory/iu, `${name}: directory route`)
+    assert.match(
+      text,
+      /(?:complete|every public)[^\n]{0,100}(?:place names?|names? of public places)[^\n]{0,160}(?:resident handles?|handles? of public residents)|(?:place names?|names? of public places)[^\n]{0,160}(?:resident handles?|handles? of public residents)[^\n]{0,100}(?:complete|every public)/iu,
+      `${name}: complete public names`,
+    )
+    assert.match(
+      text,
+      /(?:place[^\n]{0,80}\bid\b[^\n]{0,80}\bparent_id\b[^\n]{0,80}\bname\b|\bid\b[^\n]{0,80}\bparent_id\b[^\n]{0,80}\bname\b[^\n]{0,80}place)/iu,
+      `${name}: minimal place facts`,
+    )
+    assert.match(
+      text,
+      /(?:resident[^\n]{0,80}\bid\b[^\n]{0,80}\bhandle\b|\bid\b[^\n]{0,80}\bhandle\b[^\n]{0,80}resident)/iu,
+      `${name}: minimal resident facts`,
+    )
+    assert.match(
+      text,
+      /(?:directory|selectors?)[^\n]{0,220}(?:bounded|currently loaded|focused)[^\n]{0,220}(?:contents?|presence|details)|(?:bounded|currently loaded|focused)[^\n]{0,220}(?:contents?|presence|details)[^\n]{0,220}(?:directory|selectors?)/iu,
+      `${name}: names do not widen loaded content`,
+    )
+  }
+
+  assert.match(
+    decisions,
+    /\| 43 \| \*\*The human window uses a complete lightweight names directory\.\*\*/iu,
+    'decision 43 locks complete names without complete contents',
   )
 })
 
@@ -348,6 +512,56 @@ test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
       text,
       /no durable[^\n]{0,160}(?:reader identity|reading history)/iu,
       `${name}: no reading history`,
+    )
+  }
+})
+
+test('Wave 7 help keeps room purpose and owner-chosen front matter neutral and body-free', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /owner[- ]written[^\n]{0,100}\bpurpose\b|\bpurpose\b[^\n]{0,100}owner[- ]written/iu,
+      `${name}: owner-written purpose`,
+    )
+    assert.match(text, /\bpurpose\b[^\n]{0,140}\b280\b|\b280\b[^\n]{0,140}\bpurpose\b/iu, `${name}: purpose limit`)
+    assert.match(
+      text,
+      /\bpurpose\b[\s\S]{0,220}(?:does not replace|separate from)[\s\S]{0,120}\bdescription\b|\bdescription\b[\s\S]{0,220}(?:preserved|remains|still)[\s\S]{0,120}\bpurpose\b/iu,
+      `${name}: purpose does not erase the description`,
+    )
+    assert.match(
+      text,
+      /front[ -]matter[\s\S]{0,220}(?:exactly )?(?:two|2)[\s/]+(?:or[\s/]+)?(?:three|3)[\s\S]{0,160}order/iu,
+      `${name}: two or three ordered choices`,
+    )
+    assert.match(
+      text,
+      /front[ -]matter[\s\S]{0,320}\bactive\b[\s\S]{0,180}(?:same (?:room|place)|in that (?:room|place))|(?:same (?:room|place)|in that (?:room|place))[\s\S]{0,180}\bactive\b[\s\S]{0,320}front[ -]matter/iu,
+      `${name}: active things from the same room`,
+    )
+    assert.match(
+      text,
+      /front[ -]matter[\s\S]{0,320}(?:body[- ]free|(?:omits?|never (?:includes?|returns?))[\s\S]{0,100}\bbod(?:y|ies)\b)/iu,
+      `${name}: body-free room read`,
+    )
+    assert.match(
+      text,
+      /unavailable[\s\S]{0,180}(?:disappear|omit|remove)[\s\S]{0,180}(?:no|not|never)[^\n]{0,100}(?:replace|substitute|auto-select)/iu,
+      `${name}: unavailable choices disappear without replacement`,
+    )
+    assert.match(
+      text,
+      /front[ -]matter[\s\S]{0,320}(?:no|not|never|does not)[^\n]{0,100}\brank(?:s|ed|ing)?\b/iu,
+      `${name}: no ranking`,
+    )
+    assert.match(
+      text,
+      /front[ -]matter[\s\S]{0,320}(?:no|not|never|does not)[^\n]{0,100}\bendorse(?:s|d|ment)?\b/iu,
+      `${name}: no endorsement`,
     )
   }
 })

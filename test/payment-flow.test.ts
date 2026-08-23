@@ -6,7 +6,11 @@ import {
   runDurableX402,
   type PaymentFlowDependencies,
 } from '../src/payment-flow.ts'
-import { findPaymentAttempt, type PaymentAttemptRecord } from '../src/payment-attempts.ts'
+import {
+  canonicalPaymentRequest,
+  findPaymentAttempt,
+  type PaymentAttemptRecord,
+} from '../src/payment-attempts.ts'
 
 const PAYER = '0x1111111111111111111111111111111111111111'
 const PAYEE = '0x2222222222222222222222222222222222222222'
@@ -22,6 +26,8 @@ const FACILITATOR_RESPONSE = {
 }
 const FACILITATOR_RESPONSE_HEADER = Buffer.from(JSON.stringify(FACILITATOR_RESPONSE)).toString('base64')
 const EXACT_RESPONSE_BODY = '{\n  "thing": { "id": 42 },\n  "ok": true\n}'
+const ATTEMPT_REQUEST = { action: 'claim', offer_id: 91 }
+const ATTEMPT_REQUEST_HASH = canonicalPaymentRequest(ATTEMPT_REQUEST).hash
 const accepted = requirements(PAYEE, 2, '/api/transfer', 'test sale')
 const paymentHeader = Buffer.from(JSON.stringify({
   x402Version: 1,
@@ -50,7 +56,8 @@ function attempt(overrides: Partial<PaymentAttemptRecord> = {}): PaymentAttemptR
     offerId: 91,
     assetType: 'thing',
     assetId: 42,
-    requestHash: '88'.repeat(32),
+    requestHash: ATTEMPT_REQUEST_HASH,
+    request: ATTEMPT_REQUEST,
     method: 'x402',
     network: 'base',
     token: accepted.asset.toLowerCase(),
@@ -77,6 +84,8 @@ function attempt(overrides: Partial<PaymentAttemptRecord> = {}): PaymentAttemptR
     responseStatus: null,
     response: null,
     responseBody: null,
+    recoveryStartedAt: null,
+    recoveryDeadlineAt: null,
     createdAt: '2027-01-15T08:00:00.000Z',
     updatedAt: '2027-01-15T08:00:00.000Z',
     completedAt: null,
@@ -156,7 +165,7 @@ const input = {
   offerId: 91,
   assetType: 'thing' as const,
   assetId: 42,
-  request: { action: 'claim', offer_id: 91 },
+  request: ATTEMPT_REQUEST,
   notBefore: new Date('2027-01-15T08:00:00.000Z'),
   notAfter: new Date('2027-01-15T08:15:00.500Z'),
 }
@@ -211,6 +220,7 @@ test('new payment fails closed before verification or settlement when byte repla
 
 test('a persisted transaction skips verification and settlement on retry', async () => {
   const events: string[] = []
+  let persistedHeader: string | null | undefined
   const deps = dependencies(events, {
     createOrRead: async () => {
       events.push('create')
@@ -224,10 +234,19 @@ test('a persisted transaction skips verification and settlement on retry', async
         attempt: attempt({ status: 'payment_pending', txHash: TX, leaseOwner: 'lease-owner' }),
       }
     },
+    bindEvidence: async (_database, evidence) => {
+      events.push('bind-final')
+      persistedHeader = evidence.paymentResponseHeader
+      return attempt({
+        status: 'payment_pending', txHash: TX, leaseOwner: 'lease-owner',
+        paymentResponseHeader: persistedHeader ?? null,
+      })
+    },
   })
 
   assert.equal((await runDurableX402(input, deps)).state, 'ready')
   assert.deepEqual(events, ['block', 'create', 'schema', 'lease', 'classify', 'bind-final'])
+  assert.ok(persistedHeader)
 })
 
 test('an ambiguous settlement becomes durable review and never invites a new payment', async () => {
@@ -386,6 +405,37 @@ test('a finalized transfer outside the conservative window is terminally rejecte
   assert.ok(!events.includes('bind-final'))
 })
 
+test('a sale mismatch uses atomic target invalidation when the caller provides no invalidator', async () => {
+  const events: string[] = []
+  const fullDependencies = dependencies(events, {
+    classify: async () => {
+      events.push('classify')
+      return { state: 'invalid_final', reason: 'confirmed_mismatch' }
+    },
+  })
+  const { invalidate: genericInvalidator, ...partialDependencies } = fullDependencies
+  assert.equal(typeof genericInvalidator, 'function')
+  const statements: string[] = []
+  const result = await runDurableX402({
+    ...input,
+    database: {
+      query: async (statement: string) => {
+        statements.push(statement)
+        return [{
+          state: 'invalid', attempt_id: attempt().publicId,
+          actor_id: 7, operation: 'direct_sale', method: 'x402',
+          target_released: true, evidence_synchronized: false,
+        }]
+      },
+    },
+  }, partialDependencies)
+
+  assert.equal(result.state, 'rejected')
+  assert.equal(events.includes('invalidate'), false)
+  assert.equal(statements.length, 1)
+  assert.match(statements[0]!, /payment-sale-operations:invalidate-target/u)
+})
+
 test('a stored pending attempt can finish after wall-clock expiry when its block was inside the original window', async () => {
   const events: string[] = []
   const stored = attempt({
@@ -411,6 +461,37 @@ test('a stored pending attempt can finish after wall-clock expiry when its block
 
   assert.equal(result.state, 'ready')
   assert.deepEqual(events, ['schema', 'lease', 'classify', 'bind-final'])
+})
+
+test('resume persists its canonical x402 receipt before business completion', async () => {
+  const events: string[] = []
+  const stored = attempt({ status: 'payment_pending', txHash: TX, paymentResponseHeader: null })
+  let persistedHeader: string | null | undefined
+  const deps = dependencies(events, {
+    acquireLease: async () => {
+      events.push('lease')
+      return {
+        acquired: true,
+        leaseOwner: 'lease-owner',
+        attempt: { ...stored, leaseOwner: 'lease-owner' },
+      }
+    },
+    bindEvidence: async (_database, evidence) => {
+      events.push('bind-final')
+      persistedHeader = evidence.paymentResponseHeader
+      return { ...stored, leaseOwner: 'lease-owner', paymentResponseHeader: persistedHeader ?? null }
+    },
+  })
+
+  const result = await resumeDurableX402({
+    database: input.database,
+    attempt: stored,
+    actorId: stored.actorId,
+  }, deps)
+
+  assert.equal(result.state, 'ready')
+  assert.ok(persistedHeader)
+  assert.equal(result.state === 'ready' ? result.paymentResponseHeader : null, persistedHeader)
 })
 
 test('resume never settles an attempt whose transaction outcome is still unknown', async () => {

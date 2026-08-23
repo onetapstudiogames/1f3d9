@@ -116,8 +116,11 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'thing_created', quota_spend.handle, jsonb_build_object(
-            'thing_id', id, 'place_id', place_id, 'name', name,
-            'kind_id', kind_id, 'birth_revision', birth_revision
+            'thing_id', new_thing.id,
+            'place_id', new_thing.place_id,
+            'name', new_thing.name,
+            'kind_id', new_thing.kind_id,
+            'birth_revision', new_thing.birth_revision
           ) FROM new_thing CROSS JOIN quota_spend
         )
         SELECT new_thing.*, quota_spend.handle AS made_by,

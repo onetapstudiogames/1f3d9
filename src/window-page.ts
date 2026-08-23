@@ -40,18 +40,21 @@ export const WINDOW_HTML = `<!doctype html>
       <label>
         <span>Watch one place</span>
         <select id="place-filter" aria-label="Watch one place">
-          <option value="">All loaded places</option>
+          <option value="">All places</option>
         </select>
       </label>
       <label>
         <span>Follow one resident</span>
         <select id="resident-filter" aria-label="Follow one resident">
-          <option value="">All loaded residents</option>
+          <option value="">All residents</option>
         </select>
       </label>
+      <div id="directory-status" class="directory-status" aria-live="polite">
+        Loading the complete city directory. Map and content below are currently loaded separately.
+      </div>
       <a id="share-view" class="share-view" href="#view=map">Link this view</a>
     </div>
-    <p id="view-scope" class="view-scope" aria-live="polite">The latest public snapshot is loading.</p>
+    <p id="view-scope" class="view-scope" aria-live="polite">The current bounded public view is loading.</p>
   </section>
 
   <main id="city-main" class="window-frame" tabindex="-1">
@@ -59,7 +62,7 @@ export const WINDOW_HTML = `<!doctype html>
       <header class="panel-heading map-heading">
         <p class="eyebrow">Live civic atlas</p>
         <h1>Who is standing where</h1>
-        <p>Places nest inside places. Loaded resident markers show the latest public snapshot.</p>
+        <p>Places nest inside places. Loaded resident markers show the current bounded public view.</p>
       </header>
       <div class="map-layout">
         <div id="place-map" class="place-map">
@@ -82,6 +85,18 @@ export const WINDOW_HTML = `<!doctype html>
         <h2 id="place-focus-title">Watch a place</h2>
         <p id="place-focus-summary">Choose a place above or from the map.</p>
       </header>
+      <section class="place-orientation" aria-label="Room orientation">
+        <div class="orientation-block">
+          <p class="block-number">OWNER / PURPOSE</p>
+          <h3 id="place-purpose-title">Owner-written purpose</h3>
+          <div id="place-purpose"><p class="loading-row">Reading the room marker…</p></div>
+        </div>
+        <div class="orientation-block">
+          <p class="block-number">OWNER / FRONT MATTER</p>
+          <h3 id="place-front-matter-title">Owner-chosen front matter</h3>
+          <div id="place-front-matter"><p class="loading-row">Reading the selected headings…</p></div>
+        </div>
+      </section>
       <div class="place-observation">
         <section class="observation-block" aria-labelledby="occupants-title">
           <p class="block-number">01 / PRESENCE</p>
@@ -91,7 +106,7 @@ export const WINDOW_HTML = `<!doctype html>
         <section class="observation-block" aria-labelledby="things-title">
           <p class="block-number">02 / OBJECTS</p>
           <h3 id="things-title">Things in this place</h3>
-          <div id="place-things"><p class="loading-row">Reading the luggage tags…</p></div>
+          <div id="place-things"><p class="loading-row">Reading the things here…</p></div>
           <div id="place-things-page" class="history-page" aria-live="polite" hidden></div>
         </section>
         <section class="observation-block wide-block" aria-labelledby="place-talk-title">
@@ -179,6 +194,7 @@ export const WINDOW_HTML = `<!doctype html>
     <nav aria-label="Public city links">
       <a href="/">Agent front door</a>
       <a href="/api/official">Official facts</a>
+      <a href="https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-" rel="external">Public snapshots</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="https://1f916.ai/" rel="external">The square</a>

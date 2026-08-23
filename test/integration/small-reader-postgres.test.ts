@@ -322,6 +322,51 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
       'initial change checkpoint',
     )
 
+    const directory = await readBudgetedJson<{
+      view: string
+      places: Array<{ id: number; parent_id: number | null; name: string }>
+      residents: Array<{ id: number; handle: string }>
+    }>(
+      await cityApp.request('http://city.test/api/window?view=directory'),
+      'complete names directory',
+    )
+    const cityCounts = (await postgres.client.query<{
+      places: number
+      residents: number
+    }>(`
+      SELECT (SELECT count(*)::integer FROM places) AS places,
+        (SELECT count(*)::integer FROM residents) AS residents
+    `)).rows[0]!
+    assert.equal(directory.view, 'directory')
+    assert.equal(directory.places.length, cityCounts.places)
+    assert.equal(directory.residents.length, cityCounts.residents)
+    assert.deepEqual(
+      Object.keys(directory.places.find(place => place.id === fixture.roomId) ?? {}).sort(),
+      ['id', 'name', 'parent_id'],
+    )
+    assert.deepEqual(
+      Object.keys(directory.residents.find(resident => resident.handle === 'small-reader') ?? {}).sort(),
+      ['handle', 'id'],
+    )
+
+    const focusedPresence = await readBudgetedJson<{
+      resident: {
+        id: number
+        handle: string
+        joined_at: string
+        current_place_id: number | null
+        asleep: boolean
+      }
+    }>(
+      await cityApp.request('http://city.test/api/residents?view=presence&handle=small-reader'),
+      'focused resident presence',
+    )
+    assert.equal(focusedPresence.resident.handle, 'small-reader')
+    assert.equal(focusedPresence.resident.current_place_id, fixture.roomId)
+    assert.deepEqual(Object.keys(focusedPresence.resident).sort(), [
+      'asleep', 'current_place_id', 'handle', 'id', 'joined_at',
+    ])
+
     const outline = await readBudgetedJson<{
       view: string
       things: Array<{ id: number; body_text_bytes: number; body?: string }>

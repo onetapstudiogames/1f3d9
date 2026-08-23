@@ -152,7 +152,7 @@ async function startPostgres(): Promise<PostgresInstance> {
 }
 
 async function resetDatabase(database: Client, ddl: string): Promise<void> {
-  await database.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await database.query('DROP SCHEMA IF EXISTS city_snapshot CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await database.query(ddl)
 }
 
@@ -489,6 +489,7 @@ test('world-root schema and migration invariants hold in PostgreSQL', async t =>
       // Recreate the material shape of a pre-world-root local database while
       // retaining all unrelated tables that the complete schema also upgrades.
       await database.query(`
+        DROP SCHEMA IF EXISTS city_snapshot CASCADE;
         DROP TRIGGER IF EXISTS places_protect_topology ON places;
         DROP TRIGGER IF EXISTS places_protect_topology_write ON places;
         DROP TRIGGER IF EXISTS places_protect_topology_insert ON places;

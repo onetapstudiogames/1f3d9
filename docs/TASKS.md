@@ -5,6 +5,9 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] After explicit release approval, apply the public-snapshot migration, provision
+  the restricted export login, complete the manual dry run, and publish the first dated
+  snapshot using [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
 - [ ] Add a real-PostgreSQL regression test for recent-note ordering across more than one
@@ -12,6 +15,9 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Recently closed
 
+- [x] Build the format-v1 full anonymous public snapshot exporter, closed class registry,
+  fingerprints and hashes, offline verifier, append-only publisher, discovery links,
+  and safe manual/daily workflow without running a real publication.
 - [x] Cursor-page notes in public places while retaining every note in Postgres. Place
   reads now expose `before_note_id`, `note_limit`, and `notes_page` metadata, with route
   and real-PostgreSQL coverage.

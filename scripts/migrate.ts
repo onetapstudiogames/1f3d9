@@ -46,6 +46,10 @@ type RemoteMigration =
   | 'public-change-markers'
   | 'thing-maker'
   | 'later-holder-marks'
+  | 'city-credit'
+  | 'payment-recovery'
+  | 'room-orientation'
+  | 'public-snapshots'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -71,6 +75,10 @@ export type MigrationFile =
   | 'db/migrations/20260821_public_change_markers.sql'
   | 'db/migrations/20260822_thing_maker.sql'
   | 'db/migrations/20260822_later_holder_marks.sql'
+  | 'db/migrations/20260822_city_credit.sql'
+  | 'db/migrations/20260822_payment_recovery.sql'
+  | 'db/migrations/20260822_room_orientation.sql'
+  | 'db/migrations/20260823_public_snapshots.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -97,6 +105,8 @@ const PRODUCTION_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION'
 const PREVIEW_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW'
 const LOCAL_ACKNOWLEDGEMENT = 'APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE'
 const WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT = 'REPARENT_CONTINENTS_UNDER_UNOWNED_WORLD_ROOT'
+const CITY_CREDIT_ACKNOWLEDGEMENT = 'INSTALL_PRIVATE_CITY_CREDIT_LEDGER'
+const CITY_CREDIT = Object.freeze({ 'city-credit': '20260822_city_credit.sql' } as const)
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
 const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'hosted-chat-signin': 'db/migrations/20260813_hosted_chat_signin.sql',
@@ -121,6 +131,10 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'public-change-markers': 'db/migrations/20260821_public_change_markers.sql',
   'thing-maker': 'db/migrations/20260822_thing_maker.sql',
   'later-holder-marks': 'db/migrations/20260822_later_holder_marks.sql',
+  'city-credit': `db/migrations/${CITY_CREDIT['city-credit']}`,
+  'payment-recovery': 'db/migrations/20260822_payment_recovery.sql',
+  'room-orientation': 'db/migrations/20260822_room_orientation.sql',
+  'public-snapshots': 'db/migrations/20260823_public_snapshots.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
@@ -200,6 +214,14 @@ export function resolveMigrationRun(
   ) {
     throw new Error(
       `world-root topology requires CONFIRM_WORLD_ROOT_TOPOLOGY=${WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT}`,
+    )
+  }
+  if (
+    migration === 'city-credit' &&
+    environment.CONFIRM_CITY_CREDIT !== CITY_CREDIT_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      `city credit requires CONFIRM_CITY_CREDIT=${CITY_CREDIT_ACKNOWLEDGEMENT}`,
     )
   }
 

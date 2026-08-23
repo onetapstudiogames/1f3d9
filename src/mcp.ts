@@ -5,6 +5,7 @@ import {
   sanitizePublicReadText,
 } from './credential-safety.ts'
 import { MAX_CRAFT_INGREDIENTS } from './physics.ts'
+import { parseCityCreditRequestId } from './city-credit.ts'
 import {
   isLaterHolderCursor,
   LATER_HOLDER_CURSOR_LENGTH,
@@ -32,6 +33,11 @@ const HOSTED_TOOL_NAMESPACE = 'mcp_for_1f3d9_'
 const MCP_SEARCH_CURSOR_MAX_LENGTH = 2_048
 const MCP_CHANGE_MARKER_MAX_LENGTH = 19
 const MAX_CHANGE_MARKER = 9_223_372_036_854_775_807n
+const PAYMENT_ATTEMPT_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$'
+const PAYMENT_ATTEMPT_ID = new RegExp(PAYMENT_ATTEMPT_ID_PATTERN, 'u')
+const CITY_FEE_USDC = '1.000000'
+const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const CITY_TREASURY = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -70,20 +76,39 @@ const publicMcpDoorAuthMessage = () =>
   `To sign in, connect at ${publicOrigin()}/mcp/connect. ` +
   `If you already have a resident key, send it in the HTTP Authorization header to ${publicOrigin()}/mcp.`
 
+const wrongHostedDoorMessage = () =>
+  `Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients. ` +
+  `Remove the ChatGPT connection that uses /mcp, then add a new connection using exactly ` +
+  `${publicOrigin()}/mcp/connect. If ChatGPT says the connector name already exists, use a new name ` +
+  'or remove the old connection first; reopening it keeps the wrong address. Never paste a resident key into chat.'
+
 const rotationGuidance = () => identityRotationEnabled()
   ? `To voluntarily replace a current root key, use only the first-party no-store browser at ${publicOrigin()}/rotate. ` +
     'Rotation is never an MCP tool, and no credential belongs in chat or tool input or output. '
   : ''
 
+const paymentSafetyGuidance = () =>
+  `The exact city claim fee is ${CITY_FEE_USDC} USDC on Base, using USDC contract ` +
+  `${BASE_USDC} and treasury recipient ${CITY_TREASURY}. Use only the current 402 response or /api/official ` +
+  'for payment facts; never copy a recipient from wallet history because zero-value lookalike transfers can poison it. ' +
+  'Peer-sale recipients and amounts come only from the current sale challenge. A pending paid action is automatically ' +
+  'rechecked for no more than two hours from its first stored evidence. Do not pay again; inspect or explicitly recheck ' +
+  'it through payment_attempt. At the deadline its name is released, exact spent city fee credit is returned, and a ' +
+  'late real payment can enter founder review but cannot complete the old action automatically. '
+
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
   `and does not have to be your model's—then use the private browser flow at ${publicOrigin()}/join. ` +
+  `This ${publicOrigin()}/mcp door is for key-capable local clients. ChatGPT browser sign-in must use ` +
+  `${publicOrigin()}/mcp/connect. If a ChatGPT connection was created with /mcp, remove it and create a new ` +
+  'connection; reopening the old connection keeps the wrong address. ' +
   'A permanent resident key must never pass through an MCP tool result or chat. ' +
   rotationGuidance() +
   'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
-  'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
+  'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, say, and check payment_attempt. ' +
   'Put the bearer secret only in the HTTP ' +
-  'Authorization header. Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
+  'Authorization header. ' +
+  paymentSafetyGuidance() +
   'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
   'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
   'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
@@ -94,8 +119,8 @@ const serverInstructions = (hostedChat: boolean) => hostedChat
     'Never put a resident key or OAuth credential in chat or tool arguments. ' +
     rotationGuidance() +
     'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
-    'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, and say. ' +
-    'Frontier founding and kind invention or revision cost $1 USDC on Base. ' +
+    'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, say, and check payment_attempt. ' +
+    paymentSafetyGuidance() +
     'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
     'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
     'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
@@ -107,6 +132,7 @@ interface ToolRoute {
   method: HttpMethod
   path: string
   body?: Record<string, unknown>
+  headers?: Readonly<Record<string, string>>
 }
 
 interface ToolDefinition {
@@ -155,6 +181,7 @@ const ME_PAGE_KEYS = [
   'before_agreement_id', 'agreement_limit',
   'before_note_id', 'note_limit',
   'before_offer_id', 'offer_limit',
+  'before_credit_id', 'credit_limit',
 ] as const
 
 function lookPlacePath(args: Record<string, unknown>): string {
@@ -309,7 +336,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'found',
     title: 'Found a place',
     description:
-      'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there.',
+      'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there. If the founder has privately issued you city fee credit, send a new city_credit_request_id to deliberately spend exactly one credit instead of using X-PAYMENT.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -323,10 +350,15 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
+        city_credit_request_id: {
+          type: 'string', minLength: 8, maxLength: 128,
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
+          description: 'non-secret retry identifier that deliberately spends one private city fee credit on a frontier claim',
+        },
       },
       required: ['parent_id', 'name'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: '/api/place',
@@ -334,12 +366,15 @@ const TOOLS: readonly ToolDefinition[] = [
         'parent_id', 'name', 'description', 'open_to_building', 'open_to_things',
         'open_to_notes',
       ]),
+      ...(own(args, 'city_credit_request_id')
+        ? { headers: { 'x-1f3d9-fee-credit': String(args.city_credit_request_id) } }
+        : {}),
     }),
   },
   {
     name: 'make',
     title: 'Make a thing',
-    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). The response includes a neutral UTF-8 reading-cost meter.',
+    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). Supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -357,12 +392,12 @@ const TOOLS: readonly ToolDefinition[] = [
           items: { type: 'integer', minimum: 1 },
           maxItems: MAX_CRAFT_INGREDIENTS,
           uniqueItems: true,
-          description: 'owned active things that exactly satisfy the kind recipe; omit for a recipe with no ingredients',
+          description: 'owned active things that exactly satisfy the kind recipe and are permanently withdrawn on success; omit for a recipe with no ingredients',
         },
       },
       required: ['place_id', 'name', 'body'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: '/api/thing',
@@ -416,7 +451,7 @@ const TOOLS: readonly ToolDefinition[] = [
       },
       required: ['place_id', 'traits'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'PUT',
       path: `/api/place/${Number(args.place_id)}/laws`,
@@ -474,7 +509,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'claim_world',
     title: 'Claim a world thing',
     description:
-      'Reserve or pay for a 1F3EA world offer. First send checkout id plus buyer wallet; then retry inside five minutes with the signed HTTP X-PAYMENT header. If settlement is payment_pending, the same buyer retries without paying again even after the window.',
+      'Reserve or pay for a 1F3EA world offer. First send the checkout ID and buyer wallet to open a five-minute city reservation; retry within that reservation with the signed HTTP X-PAYMENT header. If settlement becomes payment_pending, the same buyer may retry without paying again during the separate two-hour recovery window. Automatic recovery ends at that deadline.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -496,7 +531,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'cancel_world',
     title: 'Cancel a world listing',
     description:
-      'Unlock your world-listed thing only after its 1F3EA listing is publicly ended and no buyer reservation or settled payment is pending.',
+      "Unlock a terminal world offer's thing only after its 1F3EA market listing is terminal and no live reservation or payment_pending settlement remains.",
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -514,18 +549,49 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'reconcile_world',
     title: 'Reconcile a world payment',
     description:
-      'Buyer or seller rechecks a payment_pending world offer against finalized public Base records. It never unlocks on timeout, absence, or ambiguous evidence.',
+      'Buyer or seller rechecks a payment_pending world offer against finalized public Base records. A valid finalized payment completes the ownership transfer. Missing or ambiguous evidence keeps the thing locked only during the bounded two-hour recovery; after terminalization, market-first cancellation releases the thing. Late finality cannot transfer a reused thing.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: { offer_id: { type: 'integer', minimum: 1 } },
       required: ['offer_id'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: `/api/world/offer/${Number(args.offer_id)}/reconcile`,
       body: {},
+    }),
+  },
+  {
+    name: 'payment_attempt',
+    title: 'Check a payment attempt',
+    description:
+      'Privately inspect one of your stored payment attempts or explicitly recheck it from immutable stored terms. Recheck never accepts payment proof or changed operation terms. If an attempt is pending, do not pay again: automatic recovery continues only through its two-hour deadline.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: { type: 'string', enum: ['inspect', 'recheck'] },
+        attempt_id: {
+          type: 'string', minLength: 3, maxLength: 128,
+          pattern: PAYMENT_ATTEMPT_ID_PATTERN,
+        },
+      },
+      required: ['action', 'attempt_id'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: args.action === 'recheck' ? 'POST' : 'GET',
+      path: `/api/payment-attempt/${encodeURIComponent(String(args.attempt_id))}${
+        args.action === 'recheck' ? '/recheck' : ''
+      }`,
+      ...(args.action === 'recheck' ? { body: {} } : {}),
     }),
   },
   {
@@ -726,6 +792,8 @@ const TOOLS: readonly ToolDefinition[] = [
         note_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
         before_offer_id: { type: 'integer', minimum: 1 },
         offer_limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        before_credit_id: { type: 'integer', minimum: 1 },
+        credit_limit: { type: 'integer', minimum: 1, maximum: 50 },
       },
     },
     // Checking me wakes due timers where the resident stands; a resolved timer
@@ -942,6 +1010,21 @@ function invalidPublicReadArgument(
     }
     if (!own(args, 'action')) return 'Mark action is required.'
   }
+  if (name === 'payment_attempt') {
+    if (!own(args, 'action') || !own(args, 'attempt_id')) {
+      return 'Payment attempt action and attempt_id are required.'
+    }
+    if (typeof args.attempt_id !== 'string' || !PAYMENT_ATTEMPT_ID.test(args.attempt_id)) {
+      return 'Payment attempt attempt_id is invalid.'
+    }
+  }
+  if (name === 'found' && own(args, 'city_credit_request_id')) {
+    try {
+      parseCityCreditRequestId(args.city_credit_request_id)
+    } catch {
+      return 'Found city_credit_request_id must be one safe non-secret ASCII request id.'
+    }
+  }
   if (name === 'look' && own(args, 'thing_id')) {
     if (typeof args.thing_id !== 'number' || !Number.isSafeInteger(args.thing_id) || args.thing_id < 1) {
       return 'Look thing_id must be a positive integer.'
@@ -1081,7 +1164,12 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
     ? requestedName.slice(HOSTED_TOOL_NAMESPACE.length)
     : requestedName
-  if (name === 'later_holder_items' || name === 'mark_for_later' || name === 'me') {
+  if (
+    name === 'later_holder_items'
+    || name === 'mark_for_later'
+    || name === 'me'
+    || name === 'payment_attempt'
+  ) {
     c.header('Cache-Control', 'no-store')
     c.header('Pragma', 'no-cache')
     c.header('Vary', 'Authorization')
@@ -1090,6 +1178,11 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
     ? rawArguments as Record<string, unknown>
     : {}
+  if (name === 'found' && own(args, 'city_credit_request_id')) {
+    c.header('Cache-Control', 'no-store')
+    c.header('Pragma', 'no-cache')
+    c.header('Vary', 'Authorization')
+  }
   const tool = TOOLS.find(candidate => candidate.name === name)
   if (!tool) return rpcError(c, id, -32602, `no such tool: ${name}`)
   if (containsSecretArgument(args)) {
@@ -1129,6 +1222,18 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(c, id, classifiedErrorText(publicMcpDoorAuthMessage(), 'auth_required'), true)
   }
 
+  if (
+    !hostedChat &&
+    /^Bearer\s+1f3d9_at_[0-9a-f]{64}$/iu.test(c.req.header('authorization') ?? '')
+  ) {
+    return toolResult(
+      c,
+      id,
+      classifiedErrorText(wrongHostedDoorMessage(), 'auth_required'),
+      true,
+    )
+  }
+
   if (hostedChat && name === 'moderate') {
     const oauthChallenge = defaultOAuthChallenge()
     return toolResult(
@@ -1149,6 +1254,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   if (authorization) headers.authorization = authorization
   const payment = c.req.header('x-payment')
   if (payment) headers['x-payment'] = payment
+  for (const [name, value] of Object.entries(route.headers ?? {})) headers[name] = value
   for (const headerName of ['x-vercel-forwarded-for', 'x-forwarded-for'] as const) {
     const value = c.req.header(headerName)
     if (value) headers[headerName] = value

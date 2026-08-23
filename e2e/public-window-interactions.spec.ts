@@ -15,6 +15,34 @@ const SNAPSHOT = Object.freeze({
     parent_id: null,
     name: 'root_plaza',
     owner: 'mapkeeper',
+    purpose: 'A reading room where the mapkeeper points visitors to two durable records.',
+    front_matter: [{
+      id: 33,
+      type: 'thing',
+      place_id: 11,
+      name: 'borrowed_field_guide',
+      maker_id: 7,
+      made_by: 'leafwalker',
+      current_owner_id: 8,
+      current_owner: 'mapkeeper',
+      owner_id: 8,
+      owner: 'mapkeeper',
+      body_text_bytes: 47,
+      created_at: '2026-08-14T11:58:00.000Z',
+    }, {
+      id: 32,
+      type: 'thing',
+      place_id: 11,
+      name: 'room_compass',
+      maker_id: 8,
+      made_by: 'mapkeeper',
+      current_owner_id: 8,
+      current_owner: 'mapkeeper',
+      owner_id: 8,
+      owner: 'mapkeeper',
+      body_text_bytes: 52,
+      created_at: '2026-08-14T11:57:00.000Z',
+    }],
     places: 1,
     things: 2,
     notes: 2,
@@ -105,6 +133,85 @@ const SNAPSHOT = Object.freeze({
     events: { has_more: true, next_before_id: 51 },
   },
   refreshed_at: '2026-08-14T12:04:00.000Z',
+})
+
+const DIRECTORY = Object.freeze({
+  view: 'directory',
+  places: [
+    { id: 11, parent_id: null, name: 'root_plaza' },
+    { id: 12, parent_id: 11, name: 'inner_hall' },
+    { id: 77, parent_id: 12, name: 'quiet_annex' },
+  ],
+  residents: [
+    { id: 7, handle: 'leafwalker' },
+    { id: 9, handle: 'far-walker' },
+  ],
+})
+
+const DIRECTORY_REFRESHED = Object.freeze({
+  view: 'directory',
+  places: [
+    { id: 11, parent_id: null, name: 'root_plaza' },
+    { id: 12, parent_id: 11, name: 'inner_hall' },
+    { id: 77, parent_id: 12, name: 'renamed_annex' },
+    { id: 78, parent_id: 12, name: 'fresh_gallery' },
+  ],
+  residents: [
+    { id: 7, handle: 'leafwalker' },
+    { id: 9, handle: 'far-walker' },
+  ],
+})
+
+const FOCUSED_PLACE = Object.freeze({
+  view: 'outline',
+  place: {
+    id: 77,
+    parent_id: 12,
+    name: 'quiet_annex',
+    owner: 'far-walker',
+    purpose: 'A quiet room known through one focused map read.',
+    front_matter: [],
+    places: 0,
+    things: 4,
+    notes: 3,
+    children: [],
+  },
+  subplaces: [],
+  subplaces_page: {
+    has_more: false,
+    next_before_subplace_id: null,
+  },
+})
+
+const FOCUSED_PLACE_REFRESHED = Object.freeze({
+  view: 'outline',
+  place: {
+    id: 77,
+    parent_id: 12,
+    name: 'renamed_annex',
+    owner: 'far-walker',
+    purpose: 'A renamed room proved by a refreshed focused map read.',
+    front_matter: [],
+    places: 0,
+    things: 5,
+    notes: 1,
+    children: [],
+  },
+  subplaces: [],
+  subplaces_page: {
+    has_more: false,
+    next_before_subplace_id: null,
+  },
+})
+
+const FOCUSED_RESIDENT = Object.freeze({
+  resident: {
+    id: 9,
+    handle: 'far-walker',
+    current_place_id: 77,
+    asleep: false,
+    joined_at: '2026-08-11T12:00:00.000Z',
+  },
 })
 
 const FIRST_BRANCH_PAGE = Object.freeze({
@@ -260,15 +367,29 @@ const OLDER_EVENT = Object.freeze({
   detail: { place_id: 11, thing_id: 30 },
 })
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   API_REQUESTS.set(page, [])
   page.on('request', request => {
     const url = new URL(request.url())
     if (url.pathname.startsWith('/api/')) API_REQUESTS.get(page)?.push(url.toString())
   })
   await page.goto('/__e2e/health')
-  await page.route('**/api/window**', route => {
+  if (testInfo.title.includes('cold deep link') || testInfo.title.includes('focused selection retry')) {
+    await page.evaluate(() => { window.location.hash = '#view=place&place=77' })
+  }
+  let directoryAttempts = 0
+  await page.route('**/api/window**', async route => {
     const url = new URL(route.request().url())
+    if (url.searchParams.get('view') === 'directory') {
+      directoryAttempts += 1
+      if (testInfo.title.includes('cold deep link')) {
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      if (testInfo.title.includes('directory failure') && directoryAttempts === 1) {
+        return route.fulfill({ status: 503, json: { error: 'test directory failure' } })
+      }
+      return route.fulfill({ json: DIRECTORY })
+    }
     const collection = url.searchParams.get('collection')
     if (!collection) return route.fulfill({ json: SNAPSHOT })
     if (collection === 'notes') {
@@ -293,8 +414,16 @@ test.beforeEach(async ({ page }) => {
       },
     })
   })
+  let focusedPlaceAttempts = 0
   await page.route('**/api/map**', route => {
     const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') === '77') {
+      focusedPlaceAttempts += 1
+      if (testInfo.title.includes('focused selection retry') && focusedPlaceAttempts === 1) {
+        return route.fulfill({ status: 503, json: { error: 'test focused place failure' } })
+      }
+      return route.fulfill({ json: FOCUSED_PLACE })
+    }
     if (url.searchParams.get('parent_id') !== '12') {
       return route.fulfill({ status: 404, json: { error: 'unknown test branch' } })
     }
@@ -305,6 +434,10 @@ test.beforeEach(async ({ page }) => {
     })
   })
   await page.route('**/api/residents**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('handle') === 'far-walker') {
+      return route.fulfill({ json: FOCUSED_RESIDENT })
+    }
     return route.fulfill({ json: RESIDENT_PAGE })
   })
   await page.route('**/api/events**', route => {
@@ -363,6 +496,46 @@ test('real window route loads its production assets and renders the public snaps
   await expect(page.locator('.window-footer')).not.toContainText('reddit.com/r/TheAiCity')
 })
 
+test('selected Place labels and preserves owner-chosen body-free front matter without reading things', async ({ page }) => {
+  expect(SNAPSHOT.places[0].front_matter.every(heading => !Object.hasOwn(heading, 'body'))).toBe(true)
+  await page.getByRole('tab', { name: 'Place' }).click()
+
+  const placePanel = page.locator('#place-panel')
+  await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toBeVisible()
+  await expect(placePanel).toContainText(SNAPSHOT.places[0].purpose)
+  await expect(placePanel.getByText('Owner-chosen front matter', { exact: true })).toBeVisible()
+
+  const frontMatter = placePanel.getByRole('list', { name: 'Owner-chosen front matter' })
+  const headings = frontMatter.getByRole('listitem')
+  await expect(headings).toHaveCount(2)
+  await expect(headings.nth(0)).toContainText('borrowed_field_guide')
+  await expect(headings.nth(0)).toContainText('made by leafwalker')
+  await expect(headings.nth(0)).toContainText('currently owned by mapkeeper')
+  await expect(headings.nth(0)).toContainText('47 UTF-8 bytes')
+  await expect(headings.nth(1)).toContainText('room_compass')
+  await expect(headings.nth(1)).toContainText('made by mapkeeper')
+  await expect(headings.nth(1)).toContainText('currently owned by mapkeeper')
+  await expect(headings.nth(1)).toContainText('52 UTF-8 bytes')
+  await expect(frontMatter.locator('.thing-body')).toHaveCount(0)
+  await expect(frontMatter.getByRole('button', { name: /Show (?:more|less)/u })).toHaveCount(0)
+
+  const readLinks = frontMatter.getByRole('link')
+  await expect(readLinks).toHaveCount(2)
+  await expect(readLinks.nth(0)).toContainText('borrowed_field_guide')
+  await expect(readLinks.nth(0)).toHaveAttribute('href', '/api/thing/33')
+  await expect(readLinks.nth(1)).toContainText('room_compass')
+  await expect(readLinks.nth(1)).toHaveAttribute('href', '/api/thing/32')
+  expect(await readLinks.evaluateAll(links => links.map(link => link.getAttribute('href')))).toEqual([
+    '/api/thing/33',
+    '/api/thing/32',
+  ])
+
+  const automaticThingReads = (API_REQUESTS.get(page) ?? []).filter(value => {
+    return /^\/api\/thing(?:\/|$)/u.test(new URL(value).pathname)
+  })
+  expect(automaticThingReads).toEqual([])
+})
+
 test('long notes, things, and agreements can be expanded and collapsed', async ({ page }) => {
 
   await page.getByRole('tab', { name: 'Place' }).click()
@@ -379,7 +552,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(thingBody).toHaveAttribute('data-expanded', 'false')
 
   const placeNote = page.locator('#place-conversation .note-card')
-  await expect(placeNote).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(placeNote).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await placeNote.getByRole('button', { name: 'Show more' }).click()
   await expect(placeNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
 
@@ -397,7 +570,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
 
   await page.getByRole('tab', { name: 'Agreements' }).click()
   const agreement = page.locator('.agreement-card')
-  await expect(agreement).toContainText('Excerpt only — the full text is not included in this snapshot.')
+  await expect(agreement).toContainText('Excerpt only — the full text is not included in this bounded view.')
   await agreement.getByRole('button', { name: 'Show more' }).click()
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'true')
   await agreement.getByRole('button', { name: 'Show less' }).click()
@@ -406,7 +579,8 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
 
 test('outline snapshot loads, pages, deduplicates, and preserves one map branch', async ({ page }) => {
   const initialRequest = API_REQUESTS.get(page)?.map(value => new URL(value)).find(url => {
-    return url.pathname === '/api/window' && !url.searchParams.has('collection')
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+      !url.searchParams.has('collection')
   })
   expect(initialRequest?.searchParams.get('view')).toBe('outline')
   expect([...initialRequest?.searchParams.keys() ?? []]).toEqual(['view'])
@@ -501,6 +675,187 @@ test('outline snapshot loads, pages, deduplicates, and preserves one map branch'
   await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
 })
 
+test('complete directory selection uses one focused place read without loading contents', async ({ page }) => {
+  await expect(page.locator('#directory-status')).toContainText(
+    'Complete city directory: 3 places and 2 residents',
+  )
+  expect(await page.locator('#place-filter option').allTextContents()).toEqual([
+    'All places',
+    'root_plaza',
+    'root_plaza / inner_hall',
+    'root_plaza / inner_hall / quiet_annex',
+  ])
+  await expect(page.locator('#view-scope')).toContainText(/currently loaded 2 of 5 places/i)
+
+  const focusedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  })
+  await page.locator('#place-filter').selectOption('77')
+  const focusedUrl = new URL((await focusedRequest).url())
+  expect(Object.fromEntries(focusedUrl.searchParams)).toEqual({
+    view: 'outline',
+    parent_id: '77',
+  })
+
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
+  await expect(page.locator('#place-focus-summary')).toContainText(
+    'root_plaza / inner_hall / quiet_annex · focused metadata loaded',
+  )
+  await expect(page.locator('#place-things')).toContainText('not currently loaded')
+
+  const requests = (API_REQUESTS.get(page) ?? []).map(value => new URL(value))
+  expect(requests.filter(url =>
+    url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77')).toHaveLength(1)
+  expect(requests.filter(url =>
+    url.pathname === '/api/window' && url.searchParams.get('place_id') === '77')).toHaveLength(0)
+
+  await page.getByRole('tab', { name: 'Map' }).focus()
+  await page.getByRole('tab', { name: 'Map' }).press('ArrowRight')
+  await expect(page.getByRole('tab', { name: 'Place' })).toBeFocused()
+  await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('complete resident selection uses one focused presence read and a directory path', async ({ page }) => {
+  const focusedRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
+  })
+  await page.locator('#resident-filter').selectOption('far-walker')
+  const focusedUrl = new URL((await focusedRequest).url())
+  expect(Object.fromEntries(focusedUrl.searchParams)).toEqual({
+    view: 'presence',
+    handle: 'far-walker',
+  })
+
+  const roster = page.locator('#resident-roster')
+  await expect(roster.getByRole('button', { name: 'far-walker', exact: true })).toBeVisible()
+  await expect(roster).toContainText('root_plaza / inner_hall / quiet_annex')
+  const requests = (API_REQUESTS.get(page) ?? []).map(value => new URL(value))
+  expect(requests.filter(url =>
+    url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'))
+    .toHaveLength(1)
+})
+
+test('cold deep link replaces its numbered fallback when the directory arrives later', async ({ page }) => {
+  await expect(page.locator('#directory-status')).toContainText('Complete city directory')
+  await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
+  await expect(page.locator('#place-focus-summary')).toContainText(
+    'root_plaza / inner_hall / quiet_annex · focused metadata loaded',
+  )
+})
+
+test('focused selection retry retains a useful keyboard focus target', async ({ page }) => {
+  const retry = page.getByRole('button', { name: 'Retry loading this place' })
+  await expect(retry).toBeVisible()
+  await retry.focus()
+  await retry.click()
+
+  await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
+  await expect(page.locator('#place-focus-title')).toBeFocused()
+})
+
+test('directory failure is accessible and retryable without hiding the loaded fallback', async ({ page }) => {
+  const alert = page.locator('#directory-status[role="alert"]')
+  await expect(alert).toContainText(/complete city directory could not be loaded/i)
+  expect(await page.locator('#place-filter option').allTextContents()).toEqual([
+    'All places',
+    'root_plaza',
+    'root_plaza / inner_hall',
+  ])
+
+  await alert.getByRole('button', { name: 'Retry loading the complete directory' }).click()
+  await expect(page.locator('#directory-status')).toContainText(
+    'Complete city directory: 3 places and 2 residents',
+  )
+  await expect(page.locator('#place-filter')).toContainText('quiet_annex')
+})
+
+test('refresh reloads the complete directory and a focused unloaded place after authored changes', async ({ page }) => {
+  await page.locator('#place-filter').selectOption('77')
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
+  await expect(page.locator('#place-focus-summary')).toContainText(
+    'root_plaza / inner_hall / quiet_annex · focused metadata loaded',
+  )
+
+  await page.unroute('**/api/changes**')
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    return route.fulfill({
+      json: since === '20'
+        ? {
+          change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+          unchanged: false, has_more: false, next_since: '21',
+        }
+        : {
+          change_marker: '21', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '21',
+        },
+    })
+  })
+  await page.unroute('**/api/window**')
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('view') === 'directory') {
+      return route.fulfill({ json: DIRECTORY_REFRESHED })
+    }
+    if (url.searchParams.get('after_change_marker') === '21') {
+      return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+    }
+    return route.fulfill({ json: SNAPSHOT })
+  })
+  await page.unroute('**/api/map**')
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') === '77') {
+      return route.fulfill({ json: FOCUSED_PLACE_REFRESHED })
+    }
+    if (url.searchParams.get('parent_id') !== '12') {
+      return route.fulfill({ status: 404, json: { error: 'unknown test branch' } })
+    }
+    return route.fulfill({
+      json: url.searchParams.get('before_subplace_id') === '14'
+        ? SECOND_BRANCH_PAGE
+        : FIRST_BRANCH_PAGE,
+    })
+  })
+
+  const coveredSnapshot = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('after_change_marker') === '21'
+  })
+  const refreshedDirectory = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'directory'
+  })
+  const refreshedFocusedPlace = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([coveredSnapshot, refreshedDirectory, refreshedFocusedPlace])
+
+  await expect(page.locator('#directory-status')).toContainText(
+    'Complete city directory: 4 places and 2 residents',
+  )
+  expect(await page.locator('#place-filter option').allTextContents()).toEqual([
+    'All places',
+    'root_plaza',
+    'root_plaza / inner_hall',
+    'root_plaza / inner_hall / renamed_annex',
+    'root_plaza / inner_hall / fresh_gallery',
+  ])
+  await expect(page.locator('#place-focus-title')).toHaveText('renamed_annex')
+  await expect(page.locator('#place-focus-summary')).toContainText(
+    'root_plaza / inner_hall / renamed_annex · focused metadata loaded',
+  )
+  await expect(page.locator('#place-purpose')).toContainText(
+    'A renamed room proved by a refreshed focused map read.',
+  )
+})
+
 test('resident presence pages load once, deduplicate, and keep honest roster scope', async ({ page }) => {
   const loadResidents = page.getByRole('button', { name: 'Load more residents' })
   await expect(loadResidents).toHaveAttribute('aria-busy', 'false')
@@ -528,10 +883,9 @@ test('resident presence pages load once, deduplicate, and keep honest roster sco
 
   const residentOptions = await page.locator('#resident-filter option').allTextContents()
   expect(residentOptions).toEqual([
-    'All loaded residents',
+    'All residents',
     'leafwalker · #7',
-    'nightwatcher · #6',
-    'wayfarer · #5',
+    'far-walker · #9',
   ])
   await expect(roster.getByRole('button', { name: 'leafwalker', exact: true })).toBeFocused()
 })
@@ -778,13 +1132,9 @@ test('refresh forward-reconciles multi-page bursts without gaps and refreshes br
   await expect(branchCard.locator('.place-facts')).toContainText('6 inside · 4 things · 2 notes')
 
   expect(await page.locator('#resident-filter option').allTextContents()).toEqual([
-    'All loaded residents',
-    'newcomer-two · #2',
-    'newcomer-hundred · #100',
-    'newcomer-one · #1',
+    'All residents',
     'leafwalker · #7',
-    'nightwatcher · #6',
-    'wayfarer · #5',
+    'far-walker · #9',
   ])
 })
 

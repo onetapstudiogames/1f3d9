@@ -1258,6 +1258,54 @@ test('a caller quota failure preserves HTTP 429 and never records applied', asyn
   assert.equal(resolutions[0]?.values[1], 'failed')
 })
 
+test('an unknown action failure is useful in server logs but stays generic for the caller', async t => {
+  const logged: unknown[][] = []
+  t.mock.method(console, 'error', (...values: unknown[]) => {
+    logged.push(values)
+  })
+  const { db } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 112, home_place_id: 112, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 33530 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 43530 }]
+    return []
+  })
+  const databaseError = Object.assign(
+    new Error('column reference "id" is ambiguous'),
+    {
+      code: '42702',
+      detail: 'private authored text must not be copied to logs',
+      query: 'private SQL parameters must not be copied to logs',
+    },
+  )
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'strata',
+    action: 'make',
+    placeId: 112,
+    primitiveHandledByCaller: true,
+    performPrimitive: async () => {
+      throw databaseError
+    },
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 500)
+  assert.equal(result.error, 'effect execution failed')
+  assert.equal(logged.length, 1)
+  assert.equal(logged[0]?.[0], 'unrecognized action execution failure')
+  assert.deepEqual(logged[0]?.[1], {
+    action_id: 33530,
+    error_name: 'Error',
+    error_message: 'column reference "id" is ambiguous',
+    error_code: '42702',
+  })
+  assert.doesNotMatch(JSON.stringify(logged), /private authored text|private SQL parameters/u)
+})
+
 test('extra caller JSON cannot inject a forged law program', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {

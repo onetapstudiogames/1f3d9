@@ -1,13 +1,16 @@
 import { sql } from './db.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { PUBLIC_PAGE_DEFAULT, finalizePublicPage } from './public-pagination.ts'
+import { loadPublicPlaceFrontMatter, type PublicFrontMatterHeading } from './room-orientation.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>> {
   readonly id: number
   readonly parent_id: number | null
   readonly name: string
+  readonly purpose: string
   readonly description_text_bytes: number
+  readonly front_matter: readonly PublicFrontMatterHeading[]
   readonly owner_id: number | null
   readonly owner: string | null
   readonly open_to_building: boolean
@@ -27,7 +30,7 @@ export interface PublicMapOutline {
     total_items: number
     total_text_bytes: number
     returned_items: number
-    returned_text_bytes: 0
+    returned_text_bytes: number
     has_more: boolean
     next_before_subplace_id: number | null
   }>
@@ -69,7 +72,9 @@ function publicTimestamp(value: unknown): string {
 
 function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlinePlace {
   const id = nullablePositiveId(row.id, 'place id')
-  if (id == null || typeof row.name !== 'string') throw new Error('public map place is invalid')
+  if (id == null || typeof row.name !== 'string' || typeof row.purpose !== 'string') {
+    throw new Error('public map place is invalid')
+  }
   const parentId = nullablePositiveId(row.parent_id, 'parent id')
   const ownerId = nullablePositiveId(row.owner_id, 'owner id')
   const descriptionTextBytes = Object.hasOwn(row, 'description_text_bytes')
@@ -87,7 +92,9 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     id,
     parent_id: parentId,
     name: row.name,
+    purpose: row.purpose,
     description_text_bytes: descriptionTextBytes,
+    front_matter: Object.freeze([]),
     owner_id: ownerId,
     owner,
     open_to_building: row.open_to_building,
@@ -109,7 +116,7 @@ export async function readPublicMapOutline(
   const rawRows = await sql.query(
     `/* public:map-outline */
      WITH outline_parent AS MATERIALIZED (
-       SELECT p.id, p.parent_id, p.name,
+       SELECT p.id, p.parent_id, p.name, p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
@@ -129,7 +136,7 @@ export async function readPublicMapOutline(
        ORDER BY p.id
        LIMIT 1
      ), subplace_page AS MATERIALIZED (
-       SELECT p.id, p.parent_id, p.name,
+       SELECT p.id, p.parent_id, p.name, p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
@@ -167,12 +174,22 @@ export async function readPublicMapOutline(
     limit,
   )
   const moderated = await moderatePublicRows('place', [parent, ...page.items])
+  const frontMatter = await loadPublicPlaceFrontMatter(
+    async (text, params) => await sql.query(text, [...params]) as Record<string, unknown>[],
+    [parent.id, ...page.items.map(place => place.id)],
+  )
   const publicParent = Object.freeze({
     ...moderated[0] as PublicMapOutlinePlace,
+    front_matter: (moderated[0] as Record<string, unknown>).moderated === true
+      ? Object.freeze([])
+      : frontMatter.get(parent.id) ?? Object.freeze([]),
     children: Object.freeze([]) as readonly never[],
   })
-  const publicSubplaces = Object.freeze(page.items.map((_row, index) => Object.freeze({
+  const publicSubplaces = Object.freeze(page.items.map((row, index) => Object.freeze({
     ...moderated[index + 1] as PublicMapOutlinePlace,
+    front_matter: (moderated[index + 1] as Record<string, unknown>).moderated === true
+      ? Object.freeze([])
+      : frontMatter.get(row.id) ?? Object.freeze([]),
     children: Object.freeze([]) as readonly never[],
   })))
   return Object.freeze({
@@ -182,7 +199,10 @@ export async function readPublicMapOutline(
       total_items: totalItems,
       total_text_bytes: totalTextBytes,
       returned_items: publicSubplaces.length,
-      returned_text_bytes: 0 as const,
+      returned_text_bytes: page.items.reduce(
+        (total, place) => total + Buffer.byteLength(place.purpose, 'utf8'),
+        0,
+      ),
       has_more: page.hasMore,
       next_before_subplace_id: page.nextCursor,
     }),

@@ -11,6 +11,14 @@ reviewed Git commit and make production impossible to reproduce from `main`.
 
 ## Release a change
 
+### Payment-recovery prerequisite
+
+Before every release containing bounded payment recovery, confirm that a valid
+server-only `CRON_SECRET` is provisioned in Vercel Preview and Production. Check the
+provider setting without printing or copying either value into logs. The scheduled
+five-minute cron in `vercel.json` requires the existing Vercel Pro plan, so confirm
+that plan remains active before deploying.
+
 ### Later-holder prerequisite
 
 Before the first application rollout containing deliberate later-holder discovery,
