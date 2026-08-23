@@ -370,8 +370,9 @@ test('later-holder marks are selected as one explicit transactional preview or p
 test('payment recovery trigger repair is selected as one explicit transactional preview or production migration', () => {
   const migration = migrationDdl(paymentRecoveryTriggerRepairMigrationFile)
   assert.match(migration, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu)
+  assert.match(migration, /payment recovery window is immutable/iu)
   assert.match(migration, /payment_pending',\s*'completed',\s*'invalid',\s*'expired'/iu)
-  assert.match(migration, /OLD\.status\s*=\s*'expired'[\s\S]*NEW\.status\s+IN\s+\('expired',\s*'founder_review'\)/iu)
+  assert.match(migration, /OLD\.status\s*=\s*'expired'[\s\S]*NEW\.status\s*=\s*'founder_review'/iu)
   assert.equal(
     prepareMigrationExecution(paymentRecoveryTriggerRepairMigrationFile, migration).mode,
     'transactional',
