@@ -836,7 +836,7 @@ test('payment recovery migration and primitives preserve exact deadline and term
     assert.deepEqual(canceled.rows, [{ status: 'canceled' }])
   })
 
-  await t.test('the approved Bob repair creates one exact continent, closes the probe, and issues one credit', async () => {
+  await t.test('the approved Bob repair creates one exact continent, closes the probe, records repair events, and issues one credit', async () => {
     await reset(database)
     await database.query(`
       INSERT INTO residents (id, handle, model, secret_hash)
@@ -853,18 +853,19 @@ test('payment recovery migration and primitives preserve exact deadline and term
           method, network, token, payer_wallet, payee_wallet, amount_units,
           x402_nonce, x402_payload_digest, start_block, start_time, end_time,
           status, tx_hash, response_json, recovery_started_at, recovery_deadline_at,
-          created_at, updated_at
+          created_at, updated_at, invalid_reason
         ) VALUES (
           $1, 68, 'frontier', $2, $3, $4::jsonb,
           'x402', 'base', $5, $6, $7, 1000000,
           $8, repeat('7', 64), 49000000,
           '2026-08-22T07:00:00Z', '2026-08-22T08:30:00Z',
-          'payment_pending', $9,
+          'expired', $9,
           jsonb_build_object(
             '__1f3d9_x402_response_v1', jsonb_build_object('header', 'dGVzdA==')
           ),
           $10::timestamptz, $11::timestamptz,
-          '2026-08-22T07:00:00Z', $12::timestamptz
+          '2026-08-22T07:00:00Z', $12::timestamptz,
+          'automatic payment recovery deadline passed'
         )
       `, [
         expected.attemptId,
@@ -908,16 +909,19 @@ test('payment recovery migration and primitives preserve exact deadline and term
       )
       assert.ok(firstOperation)
       await bobPaymentRepairApplyOperations.completeTheBlueAI(rollbackClient, firstOperation)
-      const inside = await rollbackClient.query<{ places: number; uses: number; fees: number }>(`
+      const inside = await rollbackClient.query<{ places: number; uses: number; fees: number; founder_review: number; repair_events: number }>(`
         SELECT
           (SELECT count(*)::integer FROM places WHERE name = 'TheBlueAI') AS places,
           (SELECT count(*)::integer FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
-          (SELECT count(*)::integer FROM fees WHERE tx_hash = $2) AS fees
+          (SELECT count(*)::integer FROM fees WHERE tx_hash = $2) AS fees,
+          (SELECT count(*)::integer FROM payment_attempts
+            WHERE public_id = $1 AND status = 'founder_review') AS founder_review,
+          (SELECT count(*)::integer FROM events WHERE kind = 'payment_repair') AS repair_events
       `, [
         BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId,
         BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
       ])
-      assert.deepEqual(inside.rows, [{ places: 1, uses: 1, fees: 1 }])
+      assert.deepEqual(inside.rows, [{ places: 1, uses: 0, fees: 0, founder_review: 1, repair_events: 1 }])
       await rollbackClient.query('ROLLBACK')
     } finally {
       rollbackClient.release()
@@ -926,20 +930,20 @@ test('payment recovery migration and primitives preserve exact deadline and term
       places: number
       uses: number
       fees: number
-      pending: number
+      founder_review: number
     }>(`
       SELECT
         (SELECT count(*)::integer FROM places WHERE name = 'TheBlueAI') AS places,
         (SELECT count(*)::integer FROM payment_uses WHERE payment_attempt_id = $1) AS uses,
         (SELECT count(*)::integer FROM fees WHERE tx_hash = $2) AS fees,
         (SELECT count(*)::integer FROM payment_attempts
-          WHERE public_id = $1 AND status = 'payment_pending'
-            AND finalized_block_number IS NULL) AS pending
+          WHERE public_id = $1 AND status = 'expired'
+            AND finalized_block_number IS NULL) AS founder_review
     `, [
       BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId,
       BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
     ])
-    assert.deepEqual(afterRollback.rows, [{ places: 0, uses: 0, fees: 0, pending: 1 }])
+    assert.deepEqual(afterRollback.rows, [{ places: 0, uses: 0, fees: 0, founder_review: 1 }])
 
     const client = await database.connect()
     try {
@@ -979,7 +983,11 @@ test('payment recovery migration and primitives preserve exact deadline and term
       blue_fees: number
       coffee_fees: number
       credits: number
-      events: number
+      repair_events: number
+      blue_status: string
+      coffee_status: string
+      blue_reason: string | null
+      coffee_reason: string | null
     }>(`
       SELECT
         (SELECT count(*)::integer FROM places WHERE name = 'TheBlueAI') AS blue_places,
@@ -990,8 +998,11 @@ test('payment recovery migration and primitives preserve exact deadline and term
         (SELECT count(*)::integer FROM fees WHERE tx_hash = $4) AS coffee_fees,
         (SELECT count(*)::integer FROM city_credit_entries
           WHERE source_key = $5) AS credits,
-        (SELECT count(*)::integer FROM events WHERE kind = 'place_created'
-          AND detail->>'name' = 'TheBlueAI') AS events
+        (SELECT count(*)::integer FROM events WHERE kind = 'payment_repair') AS repair_events,
+        (SELECT status FROM payment_attempts WHERE public_id = $1) AS blue_status,
+        (SELECT status FROM payment_attempts WHERE public_id = $2) AS coffee_status,
+        (SELECT invalid_reason FROM payment_attempts WHERE public_id = $1) AS blue_reason,
+        (SELECT invalid_reason FROM payment_attempts WHERE public_id = $2) AS coffee_reason
     `, [
       BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId,
       BOB_REPAIR_EXPECTATIONS.coffee.attemptId,
@@ -1002,12 +1013,16 @@ test('payment recovery migration and primitives preserve exact deadline and term
     assert.deepEqual(exactCounts.rows, [{
       blue_places: 1,
       coffee_places: 0,
-      blue_uses: 1,
+      blue_uses: 0,
       coffee_uses: 0,
-      blue_fees: 1,
+      blue_fees: 0,
       coffee_fees: 0,
       credits: 1,
-      events: 1,
+      repair_events: 2,
+      blue_status: 'founder_review',
+      coffee_status: 'founder_review',
+      blue_reason: 'automatic payment recovery deadline passed',
+      coffee_reason: 'automatic payment recovery deadline passed',
     }])
 
     const retryPlan = buildBobPaymentRepairPlan(

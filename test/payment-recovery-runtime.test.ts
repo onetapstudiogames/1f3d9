@@ -297,6 +297,33 @@ test('runtime returns only the exact prior credit spend at its deadline', async 
   assert.equal(returned, 1)
 })
 
+test('automatic recovery logs the real server error without logging credentials', () => {
+  const runtime = createPaymentRecoveryRuntime(database, serviceDefaults())
+  const logged: unknown[][] = []
+  const original = console.error
+  console.error = (...values: unknown[]) => { logged.push(values) }
+  try {
+    const failure = Object.assign(new Error(
+      'invalid payment attempt transition at postgresql://operator:secret@example.test/city Bearer private-token 1f3d9_sk_private',
+    ), { code: '55000' })
+    runtime.dependencies.reportFailure?.({
+      publicId: ATTEMPT_ID,
+      actorId: 68,
+      operation: 'frontier',
+      method: 'x402',
+      status: 'payment_pending',
+      recoveryDeadlineAt: '2026-08-22T02:00:00.000Z',
+    }, failure)
+  } finally {
+    console.error = original
+  }
+
+  const serialized = JSON.stringify(logged)
+  assert.match(serialized, /invalid payment attempt transition/iu)
+  assert.match(serialized, /55000/u)
+  assert.doesNotMatch(serialized, /operator:secret|private-token|1f3d9_sk_private/iu)
+})
+
 test('late finalized x402 evidence is preserved for review without completing an operation', async () => {
   const expired = attempt({ status: 'expired' })
   let appended = 0

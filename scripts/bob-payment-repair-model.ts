@@ -1,10 +1,13 @@
 import { USDC, type TransferCheck } from '../src/chain.ts'
 
 export const BOB_REPAIR_APPLY_ACKNOWLEDGEMENT = 'APPLY_BOB_PAYMENT_REPAIR_WAVE_15'
-export const BOB_COFFEE_REVIEW_REASON =
-  'Founder-approved no-effect closure for the paid coffee-shop probe; compensating city fee credit is tracked by its deterministic source key.'
+export const BOB_REPAIR_EXPIRY_REASON = 'automatic payment recovery deadline passed'
+export const BOB_COFFEE_REPAIR_REASON =
+  'host stored the settled payment proof, created no place, and issued one city fee credit'
 export const BOB_REPAIR_CREDIT_REASON =
   'Extra finalized coffee-shop probe payment; no place was created.'
+export const BOB_THEBLUEAI_REPAIR_REASON =
+  'host created the paid place after automatic recovery expired the settled payment'
 
 export const BOB_RESIDENT_ID = 68
 export const BOB_HANDLE = 'bob'
@@ -94,6 +97,7 @@ export type BobRepairSnapshot = Readonly<{
   worldRoots: readonly QueryRow[]
   places: readonly QueryRow[]
   credits: readonly QueryRow[]
+  events: readonly QueryRow[]
 }>
 
 export type BobTransferEvidence = TransferCheck
@@ -121,6 +125,7 @@ export type GuardedBobPaymentFacts = Readonly<{
 
 export type CompleteTheBlueAIAction = Readonly<{
   kind: 'complete_theblueai'
+  source_state: 'expired'
   attempt_id: string
   transaction: string
   resident_id: 68
@@ -138,6 +143,7 @@ export type CompleteTheBlueAIAction = Readonly<{
 
 export type CloseCoffeeProbeAction = Readonly<{
   kind: 'close_coffee_probe'
+  source_state: 'expired'
   attempt_id: string
   transaction: string
   resident_id: 68

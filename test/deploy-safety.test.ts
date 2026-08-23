@@ -1239,6 +1239,14 @@ test('payment recovery trigger repair is an explicitly selected function correct
     },
   )
   assert.equal(production.migrationFile, 'db/migrations/20260823_payment_recovery_trigger_repair.sql')
+  assert.match(
+    packageJson.scripts['migrate:preview:payment-recovery-trigger-repair'] ?? '',
+    /--target preview --migration payment-recovery-trigger-repair$/,
+  )
+  assert.match(
+    packageJson.scripts['migrate:production:payment-recovery-trigger-repair'] ?? '',
+    /--target production --migration payment-recovery-trigger-repair$/,
+  )
 })
 
 test('public pagination indexes are an explicitly selected additive release', () => {

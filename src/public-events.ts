@@ -28,6 +28,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   world_listed: 'listed a thing on the world market',
   world_sale: 'bought a thing through the world market',
   world_cancel: 'canceled a world market listing',
+  payment_repair: 'recorded a host payment correction',
   flag: 'flagged a public record',
   moderation: 'used a logged maintainer power',
 })

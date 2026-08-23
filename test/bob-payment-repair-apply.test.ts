@@ -4,6 +4,7 @@ import {
   BOB_REPAIR_EXPECTATIONS,
   BOB_REPAIR_CREDIT_REASON,
   BOB_REPAIR_CREDIT_SOURCE_KEY,
+  BOB_REPAIR_EXPIRY_REASON,
   buildBobPaymentRepairPlan,
   type BobRepairSnapshot,
   type BobTransferEvidence,
@@ -35,7 +36,7 @@ function attempt(key: 'coffee' | 'theBlueAI') {
     payer_wallet: BOB_REPAIR_EXPECTATIONS.payer,
     payee_wallet: BOB_REPAIR_EXPECTATIONS.recipient,
     amount_units: '1000000',
-    status: 'payment_pending',
+    status: 'expired',
     lease_owner: null,
     lease_expires_at: null,
     recovery_started_at: expected.recoveryStartedAt,
@@ -45,7 +46,7 @@ function attempt(key: 'coffee' | 'theBlueAI') {
     finalized_block_hash: null,
     finalized_block_time: null,
     finalized_at: null,
-    invalid_reason: null,
+    invalid_reason: BOB_REPAIR_EXPIRY_REASON,
     completed_at: null,
     updated_at: expected.updatedAt,
     database_now: '2026-08-23T12:00:00.000Z',
@@ -61,6 +62,7 @@ function snapshot(): BobRepairSnapshot {
     worldRoots: [{ id: 1, name: 'the world', place_kind: 'world', owner_id: null }],
     places: [],
     credits: [],
+    events: [],
   }
 }
 
@@ -97,11 +99,7 @@ class RecordingDatabase {
   async query(text: string, values: readonly unknown[] = []) {
     this.calls.push({ text, values })
     if (text.includes('bob-payment-repair-apply:create-place')) return { rows: [{ id: 901 }] }
-    if (text.includes('bob-payment-repair-apply:payment-use')) {
-      return { rows: [{ tx_hash: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash }] }
-    }
-    if (text.includes('bob-payment-repair-apply:fee')) return { rows: [{ id: 811 }] }
-    if (text.includes('bob-payment-repair-apply:complete-attempt')) {
+    if (text.includes('bob-payment-repair-apply:review-theblueai')) {
       return { rows: [{ public_id: BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId }] }
     }
     if (text.includes('bob-payment-repair-apply:close-coffee')) {
@@ -130,16 +128,16 @@ test('approved Bob apply operations use only the supplied transaction and exact 
 
   const text = database.calls.map(call => call.text).join('\n')
   assert.match(text, /bob-payment-repair-apply:create-place/iu)
-  assert.match(text, /bob-payment-repair-apply:complete-attempt/iu)
+  assert.match(text, /bob-payment-repair-apply:review-theblueai/iu)
   assert.match(text, /bob-payment-repair-apply:close-coffee/iu)
   assert.match(text, /city-credit:issue/iu)
   assert.match(text, /request_hash/iu)
   assert.match(text, /recovery_started_at/iu)
   assert.match(text, /recovery_deadline_at/iu)
   assert.match(text, /finalized_block_number/iu)
-  assert.match(text, /INSERT INTO payment_uses/iu)
-  assert.match(text, /INSERT INTO fees/iu)
   assert.match(text, /INSERT INTO events/iu)
+  assert.doesNotMatch(text, /INSERT INTO payment_uses|INSERT INTO fees/iu)
+  assert.match(text, /status\s*=\s*'founder_review'/iu)
   assert.doesNotMatch(text, /CREATE\s+(?:ROLE|USER)|ALTER\s+ROLE|session_replication_role/iu)
 
   const values = database.calls.flatMap(call => [...call.values]).map(String)
@@ -168,14 +166,12 @@ test('an operation that cannot affect exactly one approved row aborts', async ()
   )
 })
 
-test('apply guards accept only the exact observed update time with a null or expired lease', async () => {
+test('apply guards require the exact expired row with no lease', async () => {
   const base = snapshot()
   const expired: BobRepairSnapshot = {
     ...base,
     attempts: base.attempts.map((row, index) => ({
       ...row,
-      lease_owner: 'expired-cron-lease',
-      lease_expires_at: `2026-08-23T11:59:3${index}.000Z`,
       updated_at: `2026-08-23T11:59:0${index}.000Z`,
     })),
   }
@@ -194,7 +190,8 @@ test('apply guards accept only the exact observed update time with a null or exp
   assert.ok(guarded)
   assert.match(
     guarded.text,
-    /lease_owner\s+IS\s+NULL[\s\S]*lease_expires_at\s+IS\s+NULL[\s\S]*OR[\s\S]*lease_owner\s+IS\s+NOT\s+NULL[\s\S]*lease_expires_at\s*<=\s*clock_timestamp\(\)/iu,
+    /status\s*=\s*'expired'[\s\S]*lease_owner\s+IS\s+NULL[\s\S]*lease_expires_at\s+IS\s+NULL[\s\S]*invalid_reason\s*=\s*'automatic payment recovery deadline passed'/iu,
   )
+  assert.doesNotMatch(guarded.text, /lease_owner\s+IS\s+NOT\s+NULL/iu)
   assert.ok(guarded.values.map(String).includes('2026-08-23T11:59:01.000Z'))
 })

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  BOB_COFFEE_REVIEW_REASON,
+  BOB_COFFEE_REPAIR_REASON,
   BOB_REPAIR_APPLY_ACKNOWLEDGEMENT,
   BOB_REPAIR_CREDIT_REASON,
   BOB_REPAIR_CREDIT_SOURCE_KEY,
+  BOB_REPAIR_EXPIRY_REASON,
   BOB_REPAIR_EXPECTATIONS,
+  BOB_THEBLUEAI_REPAIR_REASON,
   BobPaymentRepairAbortError,
   buildBobPaymentRepairPlan,
   parseBobPaymentRepairArgs,
@@ -60,7 +62,7 @@ function expectedAttempt(
     payer_wallet: BOB_REPAIR_EXPECTATIONS.payer,
     payee_wallet: BOB_REPAIR_EXPECTATIONS.recipient,
     amount_units: '1000000',
-    status: 'payment_pending',
+    status: 'expired',
     lease_owner: null,
     lease_expires_at: null,
     recovery_started_at: expected.recoveryStartedAt,
@@ -70,7 +72,7 @@ function expectedAttempt(
     finalized_block_hash: null,
     finalized_block_time: null,
     finalized_at: null,
-    invalid_reason: null,
+    invalid_reason: BOB_REPAIR_EXPIRY_REASON,
     completed_at: null,
     updated_at: expected.updatedAt,
     database_now: '2026-08-23T12:00:00.000Z',
@@ -110,6 +112,7 @@ function initialSnapshot(): BobRepairSnapshot {
     worldRoots: [{ id: 1, name: 'the world', place_kind: 'world', owner_id: null }],
     places: [],
     credits: [],
+    events: [],
   }
 }
 
@@ -125,34 +128,21 @@ function finalSnapshot(): BobRepairSnapshot {
         finalized_block_hash: BOB_REPAIR_EXPECTATIONS.coffee.blockHash,
         finalized_block_time: BOB_REPAIR_EXPECTATIONS.coffee.blockTime,
         finalized_at: '2026-08-22T12:00:00.000Z',
-        invalid_reason: BOB_COFFEE_REVIEW_REASON,
+        invalid_reason: BOB_REPAIR_EXPIRY_REASON,
         updated_at: '2026-08-22T12:00:01.000Z',
       }),
       expectedAttempt('theBlueAI', {
-        status: 'completed',
+        status: 'founder_review',
         finalized_block_number: BOB_REPAIR_EXPECTATIONS.theBlueAI.blockNumber,
         finalized_block_hash: BOB_REPAIR_EXPECTATIONS.theBlueAI.blockHash,
         finalized_block_time: BOB_REPAIR_EXPECTATIONS.theBlueAI.blockTime,
         finalized_at: '2026-08-22T12:00:00.000Z',
-        completed_at: '2026-08-22T12:00:01.000Z',
+        invalid_reason: BOB_REPAIR_EXPIRY_REASON,
         updated_at: '2026-08-22T12:00:01.000Z',
       }),
     ],
-    paymentUses: [{
-      tx_hash: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
-      payment_attempt_id: BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId,
-      actor_id: 68,
-      purpose: 'frontier',
-      payer_wallet: BOB_REPAIR_EXPECTATIONS.payer,
-      payee_wallet: BOB_REPAIR_EXPECTATIONS.recipient,
-      amount_usdc: '1.000000',
-    }],
-    fees: [{
-      resident_id: 68,
-      purpose: 'frontier',
-      amount_usdc: '1.000000',
-      tx_hash: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
-    }],
+    paymentUses: [],
+    fees: [],
     places: [{
       id: 901,
       parent_id: 1,
@@ -172,6 +162,36 @@ function finalSnapshot(): BobRepairSnapshot {
       source_key: BOB_REPAIR_CREDIT_SOURCE_KEY,
       reason: BOB_REPAIR_CREDIT_REASON,
     }],
+    events: [
+      {
+        kind: 'payment_repair',
+        actor: 'host',
+        detail: {
+          repair_key: `bob-payment-repair:${BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId}`,
+          attempt_id: BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId,
+          resident_id: 68,
+          source_status: 'expired',
+          outcome: BOB_THEBLUEAI_REPAIR_REASON,
+          payment_status: 'founder_review',
+          place_id: 901,
+          place_name: 'TheBlueAI',
+          transaction: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash,
+        },
+      },
+      {
+        kind: 'payment_repair',
+        actor: 'host',
+        detail: {
+          repair_key: `bob-payment-repair:${BOB_REPAIR_EXPECTATIONS.coffee.attemptId}`,
+          attempt_id: BOB_REPAIR_EXPECTATIONS.coffee.attemptId,
+          resident_id: 68,
+          source_status: 'expired',
+          outcome: BOB_COFFEE_REPAIR_REASON,
+          payment_status: 'founder_review',
+          transaction: BOB_REPAIR_EXPECTATIONS.coffee.txHash,
+        },
+      },
+    ],
   }
 }
 
@@ -190,7 +210,7 @@ test('guarded Bob constants preserve the independently verified production facts
   assert.equal(BOB_REPAIR_CREDIT_SOURCE_KEY, `bob-payment-repair:${BOB_REPAIR_EXPECTATIONS.coffee.attemptId}`)
 })
 
-test('pure planning proposes exactly one frontier, one no-effect close, and one credit', () => {
+test('pure planning proposes exactly one place repair, one no-effect close, and one credit', () => {
   const plan = buildBobPaymentRepairPlan(initialSnapshot(), transfers())
 
   assert.equal(plan.state, 'work_required')
@@ -217,20 +237,18 @@ test('pure planning proposes exactly one frontier, one no-effect close, and one 
     open_to_notes: false,
   })
   assert.equal(complete?.guard.canonical_block_hash, BOB_REPAIR_EXPECTATIONS.theBlueAI.blockHash)
+  assert.equal(complete?.source_state, 'expired')
   assert.equal(close?.guard.request_hash, BOB_REPAIR_EXPECTATIONS.coffee.requestHash)
   assert.equal(close?.guard.recovery_deadline_at, BOB_REPAIR_EXPECTATIONS.coffee.recoveryDeadlineAt)
+  assert.equal(close?.source_state, 'expired')
 })
 
-test('an expired automatic lease is repairable and its observed update time becomes the exact guard', () => {
+test('the observed expiry time becomes the exact repair guard', () => {
   const snapshot = cloneSnapshot(initialSnapshot())
   snapshot.attempts[0] = expectedAttempt('coffee', {
-    lease_owner: 'expired-cron-lease',
-    lease_expires_at: '2026-08-23T11:59:30.000Z',
     updated_at: '2026-08-23T11:59:00.000Z',
   })
   snapshot.attempts[1] = expectedAttempt('theBlueAI', {
-    lease_owner: 'expired-cron-lease',
-    lease_expires_at: '2026-08-23T11:59:31.000Z',
     updated_at: '2026-08-23T11:59:01.000Z',
   })
 
@@ -242,17 +260,29 @@ test('an expired automatic lease is repairable and its observed update time beco
   assert.equal(close?.guard.expected_updated_at, '2026-08-23T11:59:00.000Z')
 })
 
-test('active, malformed, future-dated, or backward-moving lease state is never repairable', () => {
+test('pending rows are rejected because production already moved both attempts to expired', () => {
+  const snapshot = cloneSnapshot(initialSnapshot())
+  snapshot.attempts[0] = expectedAttempt('coffee', {
+    status: 'payment_pending',
+    invalid_reason: null,
+  })
+
+  assert.throws(
+    () => buildBobPaymentRepairPlan(snapshot, transfers()),
+    BobPaymentRepairAbortError,
+  )
+})
+
+test('any lease or invalid update time on an expired attempt is never repairable', () => {
   const cases: readonly Readonly<{
     name: string
     overrides: Readonly<Record<string, unknown>>
   }>[] = [
     {
-      name: 'active lease',
+      name: 'old expired lease',
       overrides: {
-        lease_owner: 'active-cron-lease',
-        lease_expires_at: '2026-08-23T12:00:30.000Z',
-        updated_at: '2026-08-23T11:59:00.000Z',
+        lease_owner: 'old-cron-lease',
+        lease_expires_at: '2026-08-23T11:59:30.000Z',
       },
     },
     { name: 'owner without expiry', overrides: { lease_owner: 'broken-lease' } },
@@ -292,6 +322,7 @@ test('every guarded database fact aborts when changed or ambiguous', () => {
     { name: 'malformed request', change: snapshot => { snapshot.attempts[0]!.request_json = { name: undefined } } },
     { name: 'request hash', change: snapshot => { snapshot.attempts[0]!.request_hash = '0'.repeat(64) } },
     { name: 'status', change: snapshot => { snapshot.attempts[0]!.status = 'settling' } },
+    { name: 'reason missing', change: snapshot => { snapshot.attempts[0]!.invalid_reason = null } },
     { name: 'transaction hash', change: snapshot => { snapshot.attempts[0]!.tx_hash = `0x${'11'.repeat(32)}` } },
     { name: 'target', change: snapshot => { snapshot.attempts[0]!.target_key = 'frontier:root:changed' } },
     { name: 'operation', change: snapshot => { snapshot.attempts[0]!.operation = 'kind_invention' } },
@@ -310,6 +341,7 @@ test('every guarded database fact aborts when changed or ambiguous', () => {
     { name: 'root missing', change: snapshot => { snapshot.worldRoots = [] } },
     { name: 'root ambiguous', change: snapshot => { snapshot.worldRoots.push({ ...snapshot.worldRoots[0]!, id: 2 }) } },
     { name: 'credit pre-exists', change: snapshot => { snapshot.credits.push({ source_key: BOB_REPAIR_CREDIT_SOURCE_KEY }) } },
+    { name: 'repair event pre-exists', change: snapshot => { snapshot.events.push({ detail: { attempt_id: BOB_REPAIR_EXPECTATIONS.coffee.attemptId } }) } },
   ]
 
   for (const candidate of cases) {
@@ -359,8 +391,8 @@ test('the exact eventual result is a safe retry no-op', () => {
 
 test('partial, duplicated, or changed completion never becomes a retry no-op', () => {
   const cases = [
-    (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.fees = [] },
-    (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.paymentUses.push({ ...snapshot.paymentUses[0]! }) },
+    (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.events = [] },
+    (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.events.push({ ...snapshot.events[0]! }) },
     (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.places[0]!.name = 'Theblueai' },
     (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.credits[0]!.amount_units = '2000000' },
     (snapshot: Mutable<BobRepairSnapshot>) => { snapshot.attempts[0]!.invalid_reason = 'changed' },
@@ -452,11 +484,7 @@ class FakeClient {
     const marker = /\/\*\s*bob-payment-repair:([a-z-]+)\s*\*\//u.exec(text)?.[1]
     if (marker === this.failureMarker) throw new Error('injected read failure')
     if (text.includes('bob-payment-repair-apply:create-place')) return { rows: [{ id: 901 }] }
-    if (text.includes('bob-payment-repair-apply:payment-use')) {
-      return { rows: [{ tx_hash: BOB_REPAIR_EXPECTATIONS.theBlueAI.txHash }] }
-    }
-    if (text.includes('bob-payment-repair-apply:fee')) return { rows: [{ id: 811 }] }
-    if (text.includes('bob-payment-repair-apply:complete-attempt')) {
+    if (text.includes('bob-payment-repair-apply:review-theblueai')) {
       return { rows: [{ public_id: BOB_REPAIR_EXPECTATIONS.theBlueAI.attemptId }] }
     }
     if (text.includes('bob-payment-repair-apply:close-coffee')) {
@@ -483,6 +511,7 @@ class FakeClient {
       'world-roots': this.snapshot.worldRoots,
       places: this.snapshot.places,
       credits: this.snapshot.credits,
+      events: this.snapshot.events,
     }
     return { rows: rowsByMarker[marker] ?? [] }
   }
@@ -736,9 +765,10 @@ test('apply without an injected hookup uses the installed guarded operations', a
   assert.equal(result.state, 'no_work')
   const statements = client.calls.map(call => String(call[0]))
   assert.match(statements.join('\n'), /ISOLATION LEVEL SERIALIZABLE/iu)
-  assert.match(statements.join('\n'), /bob-payment-repair-apply:complete-attempt/iu)
+  assert.match(statements.join('\n'), /bob-payment-repair-apply:review-theblueai/iu)
   assert.match(statements.join('\n'), /bob-payment-repair-apply:close-coffee/iu)
   assert.match(statements.join('\n'), /city-credit:issue/iu)
+  assert.doesNotMatch(statements.join('\n'), /bob-payment-repair-apply:payment-use|bob-payment-repair-apply:fee/iu)
 })
 
 test('re-running apply after exact completion is a read-only no-op', async () => {

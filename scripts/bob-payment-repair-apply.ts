@@ -1,11 +1,13 @@
 import { isDeepStrictEqual } from 'node:util'
 import { issueCityFeeCredit } from '../src/city-credit.ts'
 import {
-  BOB_COFFEE_REVIEW_REASON,
+  BOB_COFFEE_REPAIR_REASON,
   BOB_REPAIR_CREDIT_REASON,
   BOB_REPAIR_CREDIT_SOURCE_KEY,
+  BOB_REPAIR_EXPIRY_REASON,
   BOB_REPAIR_EXPECTATIONS,
   BOB_RESIDENT_ID,
+  BOB_THEBLUEAI_REPAIR_REASON,
   EXPECTED_PAYER,
   EXPECTED_RECIPIENT,
   EXPECTED_TOKEN,
@@ -77,7 +79,7 @@ function guardValues(guard: GuardedBobPaymentFacts): readonly unknown[] {
   ]
 }
 
-const EXACT_PENDING_GUARD_SQL = `
+const EXACT_EXPIRED_GUARD_SQL = `
     attempt.public_id = $1::text
     AND attempt.actor_id = $2::integer
     AND attempt.operation = 'frontier'
@@ -85,9 +87,9 @@ const EXACT_PENDING_GUARD_SQL = `
     AND attempt.target_key = $4::text
     AND attempt.request_hash = $5::text
     AND attempt.request_json = $6::jsonb
-    AND attempt.updated_at = $7::timestamptz
-    AND attempt.recovery_started_at = $8::timestamptz
-    AND attempt.recovery_deadline_at = $9::timestamptz
+    AND date_trunc('milliseconds', attempt.updated_at) = $7::timestamptz
+    AND date_trunc('milliseconds', attempt.recovery_started_at) = $8::timestamptz
+    AND date_trunc('milliseconds', attempt.recovery_deadline_at) = $9::timestamptz
     AND attempt.method = 'x402'
     AND attempt.network = $10::text
     AND attempt.token = lower($11::text)
@@ -98,20 +100,14 @@ const EXACT_PENDING_GUARD_SQL = `
     AND attempt.offer_id IS NULL
     AND attempt.asset_type IS NULL
     AND attempt.asset_id IS NULL
-    AND attempt.status = 'payment_pending'
-    AND (
-      (attempt.lease_owner IS NULL AND attempt.lease_expires_at IS NULL)
-      OR (
-        attempt.lease_owner IS NOT NULL
-        AND attempt.lease_expires_at IS NOT NULL
-        AND attempt.lease_expires_at <= clock_timestamp()
-      )
-    )
+    AND attempt.status = 'expired'
+    AND attempt.lease_owner IS NULL
+    AND attempt.lease_expires_at IS NULL
     AND attempt.finalized_block_number IS NULL
     AND attempt.finalized_block_hash IS NULL
     AND attempt.finalized_block_time IS NULL
     AND attempt.finalized_at IS NULL
-    AND attempt.invalid_reason IS NULL
+    AND attempt.invalid_reason = 'automatic payment recovery deadline passed'
     AND attempt.completed_at IS NULL
   `
 
@@ -121,7 +117,8 @@ async function completeTheBlueAI(
 ): Promise<void> {
   assertGuard(action.guard, BOB_REPAIR_EXPECTATIONS.theBlueAI)
   if (
-    action.attempt_id !== action.guard.attempt_id
+    action.source_state !== 'expired'
+    || action.attempt_id !== action.guard.attempt_id
     || action.transaction !== action.guard.transaction
     || action.resident_id !== BOB_RESIDENT_ID
     || action.name !== 'TheBlueAI'
@@ -149,7 +146,7 @@ async function completeTheBlueAI(
       AND root.owner_id IS NULL
       AND root.place_kind = 'world'
       AND root.name = 'the world'
-    WHERE ${EXACT_PENDING_GUARD_SQL}
+    WHERE ${EXACT_EXPIRED_GUARD_SQL}
       AND NOT EXISTS (
         SELECT 1 FROM places occupied WHERE lower(occupied.name) = lower($15::text)
       )
@@ -177,89 +174,43 @@ async function completeTheBlueAI(
     ON CONFLICT (resident_id) DO NOTHING
   `, [action.resident_id, placeId])
 
-  const useRows = (await database.query(`
-    /* bob-payment-repair-apply:payment-use */
-    INSERT INTO payment_uses (
-      tx_hash, payment_attempt_id, purpose, actor_id,
-      payer_wallet, payee_wallet, amount_usdc
-    )
-    SELECT lower($3::text), $1::text, 'frontier', $2::integer,
-      lower($12::text), lower($13::text), $14::numeric / 1000000::numeric
-    FROM payment_attempts attempt
-    WHERE ${EXACT_PENDING_GUARD_SQL}
-    RETURNING tx_hash
-  `, guardValues(action.guard))).rows
-  requireOneRow(useRows, 'TheBlueAI payment use')
-
-  const feeRows = (await database.query(`
-    /* bob-payment-repair-apply:fee */
-    INSERT INTO fees (resident_id, purpose, amount_usdc, tx_hash)
-    SELECT $2::integer, 'frontier', $14::numeric / 1000000::numeric, lower($3::text)
-    FROM payment_attempts attempt
-    JOIN payment_uses payment_use
-      ON payment_use.payment_attempt_id = attempt.public_id
-      AND payment_use.tx_hash = attempt.tx_hash
-    WHERE ${EXACT_PENDING_GUARD_SQL}
-    RETURNING id
-  `, guardValues(action.guard))).rows
-  requireOneRow(feeRows, 'TheBlueAI fee history')
-
-  const completedRows = (await database.query(`
-    /* bob-payment-repair-apply:complete-attempt */
-    WITH response AS MATERIALIZED (
-      SELECT jsonb_build_object(
-        'place', (to_jsonb(place) - 'front_matter_thing_ids')
-          || jsonb_build_object('owner', resident.handle),
-        'fee_tx', lower($3::text)
-      ) AS body
-      FROM places place
-      JOIN residents resident ON resident.id = $2::integer AND resident.handle = 'bob'
-      WHERE place.id = $15::integer
-        AND place.parent_id = $16::integer
-        AND place.place_kind = 'continent'
-        AND place.name = 'TheBlueAI'
-        AND place.owner_id = $2::integer
-    ), new_event AS (
+  const reviewedRows = (await database.query(`
+    /* bob-payment-repair-apply:review-theblueai */
+    WITH new_event AS (
       INSERT INTO events (kind, actor, detail)
-      SELECT 'place_created', 'bob', jsonb_build_object(
-        'place_id', $15::integer, 'parent_id', $16::integer,
-        'name', 'TheBlueAI', 'frontier', true, 'fee_tx_hash', lower($3::text)
+      SELECT 'payment_repair', 'host', jsonb_build_object(
+        'repair_key', $20::text,
+        'attempt_id', $1::text,
+        'transaction', lower($3::text),
+        'resident_id', $2::integer,
+        'source_status', 'expired',
+        'payment_status', 'founder_review',
+        'place_id', $15::integer,
+        'parent_id', $16::integer,
+        'place_name', 'TheBlueAI',
+        'outcome', $21::text
       )
-      FROM response
+      FROM payment_attempts attempt
+      WHERE ${EXACT_EXPIRED_GUARD_SQL}
+        AND NOT EXISTS (
+          SELECT 1 FROM events existing
+          WHERE existing.kind = 'payment_repair'
+            AND existing.detail->>'repair_key' = $20::text
+        )
       RETURNING id
     )
     UPDATE payment_attempts attempt
-    SET status = 'completed',
+    SET status = 'founder_review',
       finalized_block_number = $17::bigint,
       finalized_block_hash = lower($18::text),
       finalized_block_time = $19::timestamptz,
       finalized_at = clock_timestamp(),
-      result_json = jsonb_build_object('kind', 'place', 'id', $15::integer),
-      response_status = 201,
-      response_json = CASE
-        WHEN attempt.response_json #>> '{__1f3d9_x402_response_v1,header}' IS NULL
-          THEN response.body
-        ELSE jsonb_build_object(
-          '__1f3d9_x402_response_v1',
-          jsonb_build_object(
-            'header', attempt.response_json #>> '{__1f3d9_x402_response_v1,header}',
-            'body', response.body
-          )
-        )
-      END,
-      response_body_bytes = convert_to(response.body::text, 'UTF8'),
-      completed_at = clock_timestamp(),
+      invalid_reason = $22::text,
       lease_owner = NULL,
       lease_expires_at = NULL,
       updated_at = clock_timestamp()
-    FROM response, new_event
-    WHERE ${EXACT_PENDING_GUARD_SQL}
-      AND char_length(
-        attempt.response_json #>> '{__1f3d9_x402_response_v1,header}'
-      ) BETWEEN 1 AND 87384
-      AND (
-        attempt.response_json #>> '{__1f3d9_x402_response_v1,header}'
-      ) ~ '^[A-Za-z0-9+/]+={0,2}$'
+    FROM new_event
+    WHERE ${EXACT_EXPIRED_GUARD_SQL}
     RETURNING attempt.public_id
   `, [
     ...guardValues(action.guard),
@@ -268,9 +219,12 @@ async function completeTheBlueAI(
     action.guard.canonical_block_number,
     action.guard.canonical_block_hash,
     action.guard.canonical_block_time,
+    `bob-payment-repair:${action.attempt_id}`,
+    BOB_THEBLUEAI_REPAIR_REASON,
+    BOB_REPAIR_EXPIRY_REASON,
   ])).rows
-  const completed = requireOneRow(completedRows, 'TheBlueAI attempt completion')
-  if (completed.public_id !== action.attempt_id) abort('TheBlueAI completed attempt changed')
+  const reviewed = requireOneRow(reviewedRows, 'TheBlueAI founder review')
+  if (reviewed.public_id !== action.attempt_id) abort('TheBlueAI reviewed attempt changed')
 }
 
 async function closeCoffeeProbe(
@@ -279,33 +233,57 @@ async function closeCoffeeProbe(
 ): Promise<void> {
   assertGuard(action.guard, BOB_REPAIR_EXPECTATIONS.coffee)
   if (
-    action.attempt_id !== action.guard.attempt_id
+    action.source_state !== 'expired'
+    || action.attempt_id !== action.guard.attempt_id
     || action.transaction !== action.guard.transaction
     || action.resident_id !== BOB_RESIDENT_ID
     || action.terminal_state !== 'founder_review'
-    || action.reason !== BOB_COFFEE_REVIEW_REASON
+    || action.reason !== BOB_COFFEE_REPAIR_REASON
   ) abort('coffee-shop approved closure action changed')
 
   const rows = (await database.query(`
     /* bob-payment-repair-apply:close-coffee */
+    WITH new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'payment_repair', 'host', jsonb_build_object(
+        'repair_key', $18::text,
+        'attempt_id', $1::text,
+        'transaction', lower($3::text),
+        'resident_id', $2::integer,
+        'source_status', 'expired',
+        'payment_status', 'founder_review',
+        'outcome', $19::text
+      )
+      FROM payment_attempts attempt
+      WHERE ${EXACT_EXPIRED_GUARD_SQL}
+        AND NOT EXISTS (
+          SELECT 1 FROM events existing
+          WHERE existing.kind = 'payment_repair'
+            AND existing.detail->>'repair_key' = $18::text
+        )
+      RETURNING id
+    )
     UPDATE payment_attempts attempt
     SET status = 'founder_review',
       finalized_block_number = $15::bigint,
       finalized_block_hash = lower($16::text),
       finalized_block_time = $17::timestamptz,
       finalized_at = clock_timestamp(),
-      invalid_reason = $18::text,
+      invalid_reason = $20::text,
       lease_owner = NULL,
       lease_expires_at = NULL,
       updated_at = clock_timestamp()
-    WHERE ${EXACT_PENDING_GUARD_SQL}
+    FROM new_event
+    WHERE ${EXACT_EXPIRED_GUARD_SQL}
     RETURNING attempt.public_id
   `, [
     ...guardValues(action.guard),
     action.guard.canonical_block_number,
     action.guard.canonical_block_hash,
     action.guard.canonical_block_time,
+    `bob-payment-repair:${action.attempt_id}`,
     action.reason,
+    BOB_REPAIR_EXPIRY_REASON,
   ])).rows
   const closed = requireOneRow(rows, 'coffee-shop founder review')
   if (closed.public_id !== action.attempt_id) abort('coffee-shop closed attempt changed')

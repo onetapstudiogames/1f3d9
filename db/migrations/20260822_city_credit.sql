@@ -339,6 +339,19 @@ BEGIN
     RAISE EXCEPTION 'payment attempt terms are immutable' USING ERRCODE = '55000';
   END IF;
 
+  IF OLD.recovery_started_at IS NOT NULL AND ROW(
+    NEW.recovery_started_at, NEW.recovery_deadline_at
+  ) IS DISTINCT FROM ROW(
+    OLD.recovery_started_at, OLD.recovery_deadline_at
+  ) THEN
+    RAISE EXCEPTION 'payment recovery window is immutable' USING ERRCODE = '55000';
+  END IF;
+  IF NEW.recovery_started_at IS NOT NULL
+    AND NEW.recovery_deadline_at IS DISTINCT FROM
+      NEW.recovery_started_at + interval '2 hours' THEN
+    RAISE EXCEPTION 'payment recovery deadline is invalid' USING ERRCODE = '55000';
+  END IF;
+
   IF OLD.tx_hash IS NOT NULL AND NEW.tx_hash IS DISTINCT FROM OLD.tx_hash THEN
     RAISE EXCEPTION 'payment attempt transaction is immutable' USING ERRCODE = '55000';
   END IF;
@@ -357,19 +370,63 @@ BEGIN
     RAISE EXCEPTION 'payment facilitator response is immutable' USING ERRCODE = '55000';
   END IF;
 
-  IF OLD.status IN ('completed', 'invalid', 'expired', 'legacy_completed', 'credit_returned')
-    AND NEW IS DISTINCT FROM OLD THEN
+  IF OLD.status IN (
+    'completed', 'invalid', 'founder_review', 'legacy_completed', 'credit_returned'
+  ) AND NEW IS DISTINCT FROM OLD THEN
     RAISE EXCEPTION 'terminal payment attempt is immutable' USING ERRCODE = '55000';
   END IF;
+
+  IF OLD.status = 'expired' THEN
+    IF NOT (
+      NEW.status = 'founder_review'
+      AND OLD.method = 'x402'
+      AND NEW.tx_hash IS NOT NULL
+      AND (OLD.tx_hash IS NULL OR NEW.tx_hash = OLD.tx_hash)
+      AND OLD.finalized_block_number IS NULL
+      AND OLD.finalized_block_hash IS NULL
+      AND OLD.finalized_block_time IS NULL
+      AND OLD.finalized_at IS NULL
+      AND NEW.finalized_block_number IS NOT NULL
+      AND NEW.finalized_block_hash IS NOT NULL
+      AND NEW.finalized_block_time IS NOT NULL
+      AND NEW.finalized_at IS NOT NULL
+      AND (
+        (OLD.invalid_reason IS NOT NULL AND NEW.invalid_reason = OLD.invalid_reason)
+        OR (OLD.invalid_reason IS NULL AND NEW.invalid_reason IS NOT NULL)
+      )
+      AND NEW.lease_owner IS NULL
+      AND NEW.lease_expires_at IS NULL
+      AND (
+        to_jsonb(NEW) - ARRAY[
+          'status', 'tx_hash', 'finalized_block_number', 'finalized_block_hash',
+          'finalized_block_time', 'finalized_at', 'invalid_reason', 'updated_at'
+        ]
+      ) IS NOT DISTINCT FROM (
+        to_jsonb(OLD) - ARRAY[
+          'status', 'tx_hash', 'finalized_block_number', 'finalized_block_hash',
+          'finalized_block_time', 'finalized_at', 'invalid_reason', 'updated_at'
+        ]
+      )
+    ) THEN
+      RAISE EXCEPTION 'expired payment attempt history is immutable'
+        USING ERRCODE = '55000';
+    END IF;
+    IF NEW.updated_at < OLD.updated_at THEN
+      RAISE EXCEPTION 'payment attempt update time cannot move backward'
+        USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+  END IF;
+
   IF NOT (
     (OLD.status = 'settling' AND NEW.status IN (
-      'settling', 'payment_pending', 'invalid', 'expired', 'needs_review'
+      'settling', 'payment_pending', 'invalid', 'expired', 'needs_review', 'founder_review'
     ))
     OR (OLD.status = 'payment_pending' AND NEW.status IN (
-      'payment_pending', 'completed', 'invalid', 'needs_review'
+      'payment_pending', 'completed', 'invalid', 'expired', 'needs_review', 'founder_review'
     ))
     OR (OLD.status = 'needs_review' AND NEW.status IN (
-      'needs_review', 'payment_pending', 'completed', 'invalid'
+      'needs_review', 'payment_pending', 'completed', 'invalid', 'expired', 'founder_review'
     ))
     OR (
       OLD.method = 'credit'

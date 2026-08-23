@@ -49,16 +49,17 @@ configured Neon production project and branch. It then opens one PostgreSQL
 `REPEATABLE READ READ ONLY` transaction. The transaction has short statement,
 lock, and idle timeouts and selects only the guarded resident, attempts,
 payment-use rows, fee rows, world root, two names, and deterministic credit
-source. Payment response headers, bearer secrets, and database URLs are never
-selected or printed.
+source and repair-event keys. Payment response headers, bearer secrets, and
+database URLs are never selected or printed.
 
 The dry run independently requires all of these facts:
 
 1. Resident 68 is still `bob`; both attempt IDs, immutable request bodies and
    hashes, target keys, timestamps, payment terms, and unused hashes match the
    hard-coded evidence.
-2. Both stored attempts are still `payment_pending`, have no stored finality or
-   lease, and retain the migration-derived two-hour recovery timestamps.
+2. Both stored attempts are exactly `expired`, have the automatic recovery
+   deadline reason, no stored finality or lease, and retain the migration-derived
+   two-hour recovery timestamps.
 3. Each Base transaction reclassifies as the exact finalized canonical USDC
    transfer: expected payer, treasury recipient, token, one million units,
    block number, block hash, and block time.
@@ -94,10 +95,12 @@ implementation enforces these five conditions:
 1. Use only the transaction object passed to each method. Do not open a second
    connection, commit early, or perform an external side effect.
 2. `completeTheBlueAI` must atomically create exactly one continent from the
-   guarded request, add the matching payment use and fee, and complete only the
-   guarded finalized attempt.
-3. `closeCoffeeProbe` must append the exact finality evidence and move only that
-   attempt to terminal `founder_review`; it must create no place, use, or fee.
+   guarded request, append one public host correction, and move only that attempt
+   to `founder_review` with the exact finality evidence. It must not add a normal
+   payment-use or fee row or pretend the expired attempt completed normally.
+3. `closeCoffeeProbe` must append the exact finality evidence and one public host
+   correction, then move only that attempt to terminal `founder_review`; it must
+   create no place, use, or fee.
 4. `issueFounderCredit` must call the founder-only credit operation for resident
    68 with source key
    `bob-payment-repair:pay_ae6db1c532fdcca0bdc2c977433e842540a5fa2dc1c41c830627dba60fe5c24b`.
@@ -115,9 +118,9 @@ the pure planner reports `no_work`. Otherwise it rolls back everything.
 
 Run the default dry-run command again. It must report `state: "no_work"` and an
 empty action list. That result requires exactly one matching `TheBlueAI`, no
-`coffee-shop`, one matching payment use and fee for TheBlueAI, terminal founder
-review for the probe, and exactly one founder-issued credit with the deterministic
-source key.
+`coffee-shop`, no matching payment-use or fee rows, terminal founder review for
+both attempts, exactly two public host correction events, and exactly one
+founder-issued credit with the deterministic source key.
 
 If the post-check aborts, stop. Preserve the transaction and credit history,
 capture only the sanitized error text, and use a forward repair after reviewing

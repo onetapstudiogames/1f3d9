@@ -4658,6 +4658,7 @@ public_event_kinds(kind) AS (
     ('world_listed'),
     ('world_sale'),
     ('world_cancel'),
+    ('payment_repair'),
     ('flag'),
     ('moderation')
 ),
