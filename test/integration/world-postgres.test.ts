@@ -4,9 +4,10 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
-import { Pool } from 'pg'
+import { Pool, type PoolClient } from 'pg'
 
 import type { Resident } from '../../src/core.ts'
+import type { TaggedSql } from '../../src/engine.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'world_integration'
@@ -29,6 +30,23 @@ const sql = async (
     await afterAgreementSignPreflight()
   }
   return result.rows as Record<string, unknown>[]
+}
+
+function transactionSql(client: PoolClient): TaggedSql {
+  const tagged = (async (
+    strings: TemplateStringsArray,
+    ...values: readonly unknown[]
+  ): Promise<Record<string, unknown>[]> => {
+    const text = strings.reduce(
+      (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
+      '',
+    )
+    return (await client.query(text, [...values])).rows as Record<string, unknown>[]
+  }) as TaggedSql
+  tagged.query = async (text, values = []) => (
+    await client.query(text, [...values])
+  ).rows
+  return tagged
 }
 
 mock.module(new URL('../../src/db.ts', import.meta.url).href, {
@@ -248,9 +266,109 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     })
 
     const { Hono } = await import('hono')
+    const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
     const { mountSocietyRoutes } = await import('../../src/society.ts')
+    const { mountWorldRoutes } = await import('../../src/world.ts')
     const app = new Hono()
     mountSocietyRoutes(app)
+    mountWorldRoutes(app)
+
+    await t.test('the reported parent and child both accept make through the public route', async () => {
+      const existingRoomId = await resetDatabase()
+      const continentId = Number((await database!.query<{ parent_id: number }>(
+        'SELECT parent_id FROM places WHERE id = $1',
+        [existingRoomId],
+      )).rows[0]!.parent_id)
+      await database!.query(`
+        INSERT INTO places (id, parent_id, place_kind, name, description, owner_id)
+        VALUES
+          (112, $1, 'place', 'the presence exemption', 'reported parent room', 1),
+          (173, 112, 'place', 'the second reading', 'reported child room', 1)
+      `, [continentId])
+      await database!.query(`
+        INSERT INTO traits (id, name, description, recipe, coiner_id)
+        VALUES (50, 'hospitable', 'inert inherited law', NULL, 1)
+      `)
+      await database!.query(`
+        INSERT INTO place_law_changes (place_id, trait_id, change_type, position, actor_id)
+        VALUES (112, 50, 'add', 0, 1)
+      `)
+      await database!.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+        VALUES (1, 112, 112)
+      `)
+      await database!.query(`SELECT setval('places_id_seq', (SELECT max(id) FROM places), true)`)
+      await database!.query(`SELECT setval('things_id_seq', (SELECT max(id) FROM things), true)`)
+
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      let parentResponse: Response
+      let childResponse: Response
+      try {
+        parentResponse = await app.request('/api/thing', {
+          method: 'POST',
+          headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+          body: JSON.stringify({
+            place_id: 112,
+            name: 'strata parent reproduction',
+            body: 'p'.repeat(3_400),
+          }),
+        })
+        await database!.query(`
+          UPDATE resident_presence SET current_place_id = 173 WHERE resident_id = 1
+        `)
+        childResponse = await app.request('/api/thing', {
+          method: 'POST',
+          headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+          body: JSON.stringify({
+            place_id: 173,
+            name: 'strata child control',
+            body: 'c'.repeat(66),
+          }),
+        })
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
+
+      assert.equal(parentResponse.status, 201, await parentResponse.clone().text())
+      assert.equal(childResponse.status, 201, await childResponse.clone().text())
+      const recorded = await database!.query<{
+        action_place_id: number
+        thing_place_id: number
+        event_place_id: string
+        status: string
+      }>(`
+        SELECT action.place_id AS action_place_id,
+          thing.place_id AS thing_place_id,
+          event.detail->>'place_id' AS event_place_id,
+          resolution.status
+        FROM things thing
+        JOIN events event ON event.kind = 'thing_created'
+          AND (event.detail->>'thing_id')::integer = thing.id
+        JOIN action_runs action ON action.actor_id = thing.maker_id
+          AND action.place_id = thing.place_id
+          AND action.action_name = 'make'
+        JOIN action_resolutions resolution ON resolution.action_run_id = action.id
+        WHERE thing.name IN ('strata parent reproduction', 'strata child control')
+        ORDER BY thing.place_id
+      `)
+      assert.deepEqual(recorded.rows, [
+        { action_place_id: 112, thing_place_id: 112, event_place_id: '112', status: 'applied' },
+        { action_place_id: 173, thing_place_id: 173, event_place_id: '173', status: 'applied' },
+      ])
+    })
 
     await t.test('an existing agreement stays closed until its creator opts in', async () => {
       await resetDatabase()

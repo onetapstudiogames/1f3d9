@@ -645,9 +645,32 @@ async function committedResolution(
   return null
 }
 
-function failureFromError(error: unknown): EngineError {
+function logUnrecognizedActionFailure(actionId: number, error: unknown): void {
+  const fields: Record<string, unknown> = { action_id: actionId }
+  if (error instanceof Error) {
+    fields.error_name = error.name.slice(0, 120)
+    fields.error_message = error.message.slice(0, 1_000)
+  } else {
+    fields.error_type = typeof error
+  }
+  const stored = objectRecord(error)
+  if (
+    typeof stored?.code === 'string'
+    && /^[a-z0-9]{1,16}$/iu.test(stored.code)
+  ) fields.error_code = stored.code
+  // Deliberately do not log the action payload, SQL text, parameters, or
+  // database detail: any of those may contain resident-authored text.
+  try {
+    console.error('unrecognized action execution failure', fields)
+  } catch {
+    // Observability cannot be allowed to replace the canonical action outcome.
+  }
+}
+
+function failureFromError(error: unknown, actionId: number): EngineError {
   if (error instanceof EngineError) return error
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
+  logUnrecognizedActionFailure(actionId, error)
   return new EngineError(500, 'effect execution failed')
 }
 
@@ -657,7 +680,7 @@ async function recordFailedExecution(
   error: unknown,
   db: TaggedSql,
 ): Promise<ActionExecution> {
-  const failure = failureFromError(error)
+  const failure = failureFromError(error, actionId)
   const won = await recordActionResolution(
     actionId, actorHandle, 'failed', { error: failure.message }, db,
   )
