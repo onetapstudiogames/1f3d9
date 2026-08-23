@@ -1619,6 +1619,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       empty.setAttribute('role', 'option')
       empty.setAttribute('aria-disabled', 'true')
       nodes.directorySearchResults.replaceChildren(empty)
+      nodes.directorySearch.removeAttribute('aria-activedescendant')
       state = { ...state, directorySearchIndex: -1 }
     } else {
       const activeIndex = Math.min(Math.max(state.directorySearchIndex, 0), results.length - 1)

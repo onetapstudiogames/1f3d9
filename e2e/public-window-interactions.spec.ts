@@ -816,12 +816,15 @@ test('directory search owns a dropdown and finds both places and residents', asy
     const url = new URL(request.url())
     return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
   })
-  await search.fill('far-walker')
-  await expect(page.locator('#directory-search-status')).toHaveText('1 result: 0 places and 1 resident.')
-  await expect(results.getByRole('option')).toHaveText(/far-walker · #9/)
-  await results.getByRole('option').click()
+  await search.fill('walker')
+  await expect(page.locator('#directory-search-status')).toHaveText('2 results: 0 places and 2 residents.')
+  await expect(results.getByRole('option')).toHaveCount(2)
+  await search.press('ArrowDown')
+  await expect(search).toHaveAttribute('aria-activedescendant', 'directory-search-option-1')
+  await search.press('Enter')
   await residentRequest
   await expect(page).toHaveURL(/resident=far-walker/)
+  await expect(page.locator('#directory-search-status')).toHaveText('3 places and 2 residents available.')
 })
 
 test('complete resident selection uses one focused presence read and a directory path', async ({ page }) => {

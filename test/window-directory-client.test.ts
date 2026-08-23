@@ -154,5 +154,6 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_JS, /windowDirectoryPlaceScopeIds/)
   assert.doesNotMatch(WINDOW_JS, /createElement\('optgroup'\)/)
   assert.match(WINDOW_JS, /directory-search-option-/)
+  assert.match(WINDOW_JS, /removeAttribute\('aria-activedescendant'\)/)
   assert.match(WINDOW_JS, /not currently loaded/)
 })
