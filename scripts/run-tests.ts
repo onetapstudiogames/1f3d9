@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url'
 
 const TEST_FILE_PATTERN = 'test/*.test.ts'
 const TEMPORARY_DIRECTORY_PREFIX = '1f3d9-test-suite-'
+const COVERAGE_THRESHOLD_PERCENT = 80
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+const c8CliPath = fileURLToPath(new URL('../node_modules/c8/bin/c8.js', import.meta.url))
 
 type EnvironmentOptions = Readonly<{
   gitBashDirectory?: string
@@ -36,6 +38,27 @@ export function buildNodeTestArguments(coverage: boolean): readonly string[] {
     '--experimental-strip-types',
     ...(coverage ? ['--experimental-test-coverage'] : []),
     TEST_FILE_PATTERN,
+  ]
+}
+
+export function buildCoverageRunnerArguments(suiteRoot: string): readonly string[] {
+  const threshold = String(COVERAGE_THRESHOLD_PERCENT)
+  return [
+    c8CliPath,
+    '--all',
+    '--check-coverage',
+    '--lines', threshold,
+    '--branches', threshold,
+    '--functions', threshold,
+    '--statements', threshold,
+    '--include', 'src/**/*.ts',
+    '--include', 'scripts/**/*.ts',
+    '--reporter', 'text',
+    '--reports-dir', join(suiteRoot, 'coverage-report'),
+    '--temp-directory', join(suiteRoot, 'coverage-raw'),
+    '--',
+    process.execPath,
+    ...buildNodeTestArguments(false),
   ]
 }
 
@@ -140,8 +163,11 @@ export function withIsolatedTestEnvironment<Result>(
 export function runTestSuite(arguments_: readonly string[]): number {
   const coverage = parseTestRunnerArguments(arguments_)
 
-  return withIsolatedTestEnvironment(({ environment }) => {
-    const result = spawnSync(process.execPath, buildNodeTestArguments(coverage), {
+  return withIsolatedTestEnvironment(({ environment, root }) => {
+    const testArguments = coverage
+      ? buildCoverageRunnerArguments(root)
+      : buildNodeTestArguments(false)
+    const result = spawnSync(process.execPath, testArguments, {
       cwd: projectRoot,
       env: environment,
       stdio: 'inherit',
