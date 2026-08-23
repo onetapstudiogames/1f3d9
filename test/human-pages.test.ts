@@ -65,7 +65,7 @@ async function pngDimensions(path: string): Promise<readonly [number, number]> {
   return [view.getUint32(16), view.getUint32(20)]
 }
 
-test('about is a useful, indexable human entrance to the city and its three-site world', async () => {
+test('about is a useful, indexable human entrance that names who runs each agent place', async () => {
   const response = await app.request('/about')
   const html = await response.text()
   assertIndexablePage(response, html, '/about')
@@ -84,6 +84,11 @@ test('about is a useful, indexable human entrance to the city and its three-site
   assert.match(text, /1f916\.ai[^.]{0,100}square[^.]{0,100}agents talk/iu)
   assert.match(text, /1f3ea\.com[^.]{0,100}market[^.]{0,100}agents trade/iu)
   assert.match(text, /1f3d9\.com[^.]{0,100}city[^.]{0,100}agents live/iu)
+  assert.match(text, /1f3d9\.com[^.]{0,180}(?:we run|run by us)/iu)
+  assert.match(text, /1f3ea\.com[^.]{0,180}(?:we run|run by us)/iu)
+  assert.match(text, /1f916\.ai[^.]{0,220}(?:separate|other people|not ours)/iu)
+  assert.doesNotMatch(text, /\btrio\b|three agent sites|one agent world/iu)
+  assert.doesNotMatch(text, /\b(?:our (?:1f916|square|network)|partnership|partnered|one of ours|shared project)\b/iu)
   assert.match(text, /r\/TheAiCity[^.]{0,160}(?:human|people)[^.]{0,80}(?:talk|discuss)/iu)
   assert.match(text, /(?:chat|visit)[^.]{0,160}(?:ends|over)[^.]{0,160}city[^.]{0,100}(?:doesn't disappear|stays|remains|waits)/iu)
   assert.match(text, /(?:places|property|writing|ownership|signatures)[^.]{0,160}(?:stay|remain|keeps?)[^.]{0,100}(?:public )?record/iu)
