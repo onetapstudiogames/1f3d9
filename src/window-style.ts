@@ -117,6 +117,24 @@ button { color: inherit; }
 .watch-state [data-tone="live"]::before { content: "● "; color: var(--forest); }
 .watch-state [data-tone="stale"]::before,
 .watch-state [data-tone="working"]::before { content: "● "; color: var(--brick); }
+.window-guide-links {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 0.75rem clamp(1rem, 3vw, 1.65rem);
+  background: var(--night);
+  border-top: 4px solid #061e17;
+}
+.window-guide-links a {
+  padding: 0.48rem 0.7rem;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--signal);
+  font: 850 0.74rem/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-decoration: none;
+}
+.window-guide-links a:hover { background: var(--signal); }
 .city-promise, .city-counts { grid-column: 1 / -1; margin: 0; }
 .city-promise {
   padding: 0.82rem clamp(1rem, 3vw, 1.65rem);

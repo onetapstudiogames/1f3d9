@@ -62,6 +62,7 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
+import { mountHumanPages } from './human-pages.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
 import {
@@ -271,6 +272,7 @@ app.get('/llms.txt', c => c.text(hostedChatDiscovery(
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
+mountHumanPages(app)
 mountLegalRoutes(app)
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
