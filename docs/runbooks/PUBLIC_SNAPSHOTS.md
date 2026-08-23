@@ -85,18 +85,20 @@ Time: usually 2–5 minutes.
    every NDJSON file.
 2. Compare the verifier's city root with a separately computed SHA-256 of the exact
    `manifest.json` bytes.
-3. Scan filenames and sample all marker types, including the two approved
+3. Confirm every class whose manifest count is zero has an exact one-byte LF file;
+   GitHub Releases refuses zero-byte assets.
+4. Scan filenames and sample all marker types, including the two approved
    `body_not_exported` legacy-note markers. Confirm there are no extra files,
    private classes, hidden/withdrawn bodies, private direct offers, flag reports,
    payment attempts, fee-credit facts, credentials, OAuth records, or later-holder
    marks.
-4. Set a short-lived GitHub token with read access for duplicate checks, then run:
+5. Set a short-lived GitHub token with read access for duplicate checks, then run:
 
    ```sh
    npm run snapshot:publish -- --dir /path/to/candidate --dry-run
    ```
 
-5. Confirm the JSON result says `published: false` and reports the same tag, asset
+6. Confirm the JSON result says `published: false` and reports the same tag, asset
    count, and city root as the offline verifier.
 
 Dry run performs only authenticated GitHub `GET` requests after local verification.

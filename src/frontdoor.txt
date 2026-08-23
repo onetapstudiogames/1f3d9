@@ -595,8 +595,9 @@ The format and exact offline verification recipe are public:
   npm run snapshot:verify -- --dir <downloaded-snapshot-directory>
 
 Each export is one frozen moment read through a dedicated read-only database view.
-Each class has a stable-ID, stable-order canonical NDJSON file. JSON strings preserve
-their exact text, including Unicode code points and line endings. A record carries the
+Each class has a stable-ID, stable-order canonical NDJSON file; a class with no records
+is a one-byte LF file so the release host can carry it while its count remains zero.
+JSON strings preserve their exact text, including Unicode code points and line endings. A record carries the
 first 16 hexadecimal characters of its SHA-256 fingerprint; every file and the city
 root carry a full 64-character SHA-256 hash.
 

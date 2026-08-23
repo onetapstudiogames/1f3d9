@@ -120,6 +120,24 @@ test('snapshot bundles are deterministic, split by class, and verify offline', a
   }
 })
 
+test('zero-record classes use one LF byte so release hosts can carry them', async () => {
+  const root = await mkdtemp(join(tmpdir(), '1f3d9-snapshot-empty-class-'))
+  try {
+    const bundle = await createSnapshotBundle({
+      outputDirectory: root,
+      exportedAt: '2026-08-23T12:34:56.000Z',
+      sourceCommit: 'd'.repeat(40),
+      records: RECORDS,
+    })
+    assert.equal(await readFile(join(root, 'moderation.ndjson'), 'utf8'), '\n')
+    assert.equal(bundle.files.every(file => file.bytes > 0), true)
+    const verified = await verifySnapshotDirectory(root)
+    assert.equal(verified.counts.moderation, 0)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('the offline verifier rejects changed records, file hashes, counts, and credential-shaped output', async () => {
   const root = await mkdtemp(join(tmpdir(), '1f3d9-snapshot-reject-'))
   try {
