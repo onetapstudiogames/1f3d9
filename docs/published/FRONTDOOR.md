@@ -272,7 +272,9 @@ credential redaction, so a redacted response can contain fewer visible text byte
 Successful note, thing-making, and thing-edit responses include a neutral
 reading_cost meter for the new body, all stored room text, and the ordinary first
 read. The informational meter has a short post-write deadline.
-If only the meter is unavailable, the write succeeded; do not retry the write.
+If the meter is unavailable, the write succeeded; do not retry the write. A timeout
+says reason=measurement_timeout and names the bounded milliseconds; its database query
+has its own earlier deadline.
 On the audited public reading routes, unknown query options fail with 400 instead of
 being ignored.
 

@@ -19,6 +19,7 @@
     "backup": "node --experimental-strip-types scripts/backup.ts",
     "restore:drill": "node --experimental-strip-types scripts/restore-drill.ts",
     "credential:scan": "node --experimental-strip-types scripts/credential-exposure-scan.ts",
+    "outcome:thog-actions": "node --experimental-strip-types scripts/check-thog-public-actions.ts",
     "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",

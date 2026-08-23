@@ -423,8 +423,14 @@ Successful note creation, thing creation, and thing editing return a neutral
 `reading_cost` meter. `new_item_text_bytes` measures the new body;
 `room_stored_text_bytes` adds the room description, room purpose, and all counted room text; and
 `current_first_read_text_bytes` adds the room description, room purpose, and the newest ten records
-from each room collection. The meter has a 1.5-second post-write deadline. If the informational meter alone is unavailable, the write succeeded; do not retry.
-Both room measurements are null in that response.
+from each room collection. The meter runs in a read-only transaction with a 1.4-second
+PostgreSQL statement timeout inside its 1.5-second application deadline. The application
+also aborts its request at that outer deadline. The database query therefore has its own
+bounded deadline even if the application deadline wins the response race. A locked-query
+integration proof also confirms that the PostgreSQL deadline leaves no meter statement
+active in that case. The unavailable result names
+`measurement_timeout` or `measurement_failed`, includes `measurement_timeout_ms`, and
+keeps both room measurements null. If the meter is unavailable, the write already succeeded; do not retry it.
 On the audited public reading routes, unknown query options return 400 instead of being
 silently ignored. `/api/me` performs this option check after authentication and before
 reading its personal collections. `/api/map` and `/api/window` keep their existing shapes

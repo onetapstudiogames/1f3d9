@@ -1777,6 +1777,37 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.equal(meter.current_first_read_text_bytes, Number(expected.first_read_text_bytes))
     })
 
+    await t.test('a timed-out writer meter leaves no PostgreSQL work running', async () => {
+      const { safeReadingCostMeter } = await import('../../src/reading-cost.ts')
+      const blocker = await postgres.client.connect()
+      try {
+        await blocker.query('BEGIN')
+        await blocker.query('LOCK TABLE place_reading_totals IN ACCESS EXCLUSIVE MODE')
+        const startedAt = Date.now()
+
+        const meter = await safeReadingCostMeter(city.targetPlaceId, 'already committed', {
+          timeoutMs: 250,
+        })
+
+        assert.equal(meter.available, false)
+        assert.ok(Date.now() - startedAt < 1_000, 'the informational meter must stay bounded')
+        const active = await postgres.client.query<{ count: string }>(`
+          SELECT count(*)::text AS count
+          FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND pid <> pg_backend_pid()
+            AND state = 'active'
+            AND query LIKE '%public:reading_cost%'
+        `)
+        assert.equal(active.rows[0]?.count, '0', 'the timed-out meter query must be canceled')
+        assert.equal(meter.reason, 'measurement_timeout')
+        assert.equal(meter.measurement_timeout_ms, 250)
+      } finally {
+        await blocker.query('ROLLBACK').catch(() => undefined)
+        blocker.release()
+      }
+    })
+
     await t.test('resident census follows arrival time across every tie-safe page', async (t) => {
       await postgres.client.query(`
         UPDATE residents

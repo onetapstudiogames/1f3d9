@@ -16,7 +16,14 @@ const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url)
 let database: Pool | null = null
 let afterAgreementSignPreflight: (() => Promise<void>) | null = null
 
-const sql = async (
+interface IntegrationSql extends TaggedSql {
+  transaction: (
+    work: (transaction: TaggedSql) => readonly Promise<Record<string, unknown>[]>[],
+    options?: Readonly<{ readOnly?: boolean }>,
+  ) => Promise<Record<string, unknown>[][]>
+}
+
+const sql = (async (
   strings: TemplateStringsArray,
   ...values: readonly unknown[]
 ): Promise<Record<string, unknown>[]> => {
@@ -30,7 +37,7 @@ const sql = async (
     await afterAgreementSignPreflight()
   }
   return result.rows as Record<string, unknown>[]
-}
+}) as unknown as IntegrationSql
 
 function transactionSql(client: PoolClient): TaggedSql {
   const tagged = (async (
@@ -47,6 +54,22 @@ function transactionSql(client: PoolClient): TaggedSql {
     await client.query(text, [...values])
   ).rows
   return tagged
+}
+
+sql.transaction = async (work, options = {}) => {
+  assert.ok(database, 'the PostgreSQL test client must be connected')
+  const connection = await database.connect()
+  try {
+    await connection.query(options.readOnly ? 'BEGIN READ ONLY' : 'BEGIN')
+    const results = await Promise.all(work(transactionSql(connection)))
+    await connection.query('COMMIT')
+    return results
+  } catch (error) {
+    await connection.query('ROLLBACK').catch(() => undefined)
+    throw error
+  } finally {
+    connection.release()
+  }
 }
 
 mock.module(new URL('../../src/db.ts', import.meta.url).href, {
@@ -344,6 +367,14 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
 
       assert.equal(parentResponse.status, 201, await parentResponse.clone().text())
       assert.equal(childResponse.status, 201, await childResponse.clone().text())
+      const parentBody = await parentResponse.json() as {
+        readonly reading_cost: { readonly available: boolean }
+      }
+      const childBody = await childResponse.json() as {
+        readonly reading_cost: { readonly available: boolean }
+      }
+      assert.equal(parentBody.reading_cost.available, true)
+      assert.equal(childBody.reading_cost.available, true)
       const recorded = await database!.query<{
         action_place_id: number
         thing_place_id: number

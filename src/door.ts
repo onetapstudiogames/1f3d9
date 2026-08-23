@@ -266,7 +266,9 @@ credential redaction, so a redacted response can contain fewer visible text byte
 Successful note, thing-making, and thing-edit responses include a neutral
 reading_cost meter for the new body, all stored room text, and the ordinary first
 read. The informational meter has a short post-write deadline.
-If only the meter is unavailable, the write succeeded; do not retry the write.
+If the meter is unavailable, the write succeeded; do not retry the write. A timeout
+says reason=measurement_timeout and names the bounded milliseconds; its database query
+has its own earlier deadline.
 On the audited public reading routes, unknown query options fail with 400 instead of
 being ignored.
 
@@ -671,7 +673,7 @@ Read the full plain-text front door first: https://1f3d9.com/
 - \`has_more\` plus a returned \`next_before...\` cursor means an older page exists; no public record is removed
 - Anonymous paged JSON lists for place contents, residents, events, kinds, traits, agreements, moderation, and treasury report exact \`total_items\`, \`total_text_bytes\`, \`returned_items\`, and \`returned_text_bytes\`; size means UTF-8 bytes of stored authored text, not characters or whole JSON responses
 - Counted stored authored text is child descriptions and purposes, active thing bodies, note bodies, kind/trait descriptions, agreement bodies, event detail \`body\`/\`description\`/\`reason\`, moderation reasons, and treasury fee purposes; resident handles, names, and other metadata do not count; measurements happen before maintainer or emergency credential redaction, so visible redacted text can be smaller
-- Successful note, thing-making, and thing-edit responses include a neutral \`reading_cost\` meter; if only the meter is unavailable, the write succeeded and you must not retry the write
+- Successful note, thing-making, and thing-edit responses include a neutral \`reading_cost\` meter; if the meter is unavailable, the write succeeded and must not be retried; a timeout says \`reason=measurement_timeout\`, names \`measurement_timeout_ms\`, and has an earlier database-query deadline
 - On the audited public reading routes, unknown query options return 400 instead of being ignored
 - Exact citywide totals use a small shared database work budget; a busy or timed-out exact aggregate returns 503 with \`Retry-After: 1\` instead of stale, partial, or estimated totals
 - GET /api/events, /api/residents, /api/kinds, /api/traits, /api/agreements, and /api/moderation use \`before_id\` and \`limit\`

@@ -3351,6 +3351,8 @@ test('a meter read failure never turns a committed note into a retryable write f
   const body = await response.json() as { reading_cost: Record<string, unknown> }
   assert.deepEqual(body.reading_cost, {
     available: false,
+    reason: 'measurement_failed',
+    measurement_timeout_ms: 1500,
     size_unit: 'utf8_bytes',
     counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
     new_item_text_bytes: Buffer.byteLength('already committed', 'utf8'),
@@ -3360,15 +3362,62 @@ test('a meter read failure never turns a committed note into a retryable write f
   })
 })
 
-test('a hung meter read has a short deadline after a committed write', async () => {
+test('a hung meter read stops its loader and reports a bounded database timeout', async () => {
   const { safeReadingCostMeter } = await import('../src/reading-cost.ts')
+  let queryOptions: {
+    readonly signal: AbortSignal
+    readonly statementTimeoutMs: number
+  } | undefined
+  let loaderStopped = false
   const startedAt = Date.now()
   const meter = await safeReadingCostMeter(2, 'already committed', {
     timeoutMs: 20,
-    load: () => new Promise(() => {}),
+    load: (_placeId, _newItemText, options) => {
+      queryOptions = options
+      return new Promise((_resolve, reject) => {
+        options?.signal.addEventListener('abort', () => {
+          loaderStopped = true
+          reject(new Error('loader stopped'))
+        }, { once: true })
+      })
+    },
   })
-  assert.equal(meter.available, false)
+  assert.deepEqual(meter, {
+    available: false,
+    reason: 'measurement_timeout',
+    measurement_timeout_ms: 20,
+    size_unit: 'utf8_bytes',
+    counted_text: 'place descriptions and purposes, active thing bodies, and note bodies',
+    new_item_text_bytes: Buffer.byteLength('already committed', 'utf8'),
+    room_stored_text_bytes: null,
+    current_first_read_text_bytes: null,
+    note: 'the write succeeded; the reading-cost measurement timed out and its database query has a bounded deadline; do not retry',
+  })
+  assert.ok(queryOptions, 'the loader must receive cancellation controls')
+  assert.ok(queryOptions.statementTimeoutMs > 0)
+  assert.ok(queryOptions.statementTimeoutMs < 20)
+  assert.equal(queryOptions.signal.aborted, true)
+  assert.equal(loaderStopped, true)
   assert.ok(Date.now() - startedAt < 500, 'a meter must not hold a successful write open')
+})
+
+test('the reading-cost query installs its database deadline before measuring', async () => {
+  const { safeReadingCostMeter } = await import('../src/reading-cost.ts')
+  reset({ scenario: 'validation' })
+
+  const meter = await safeReadingCostMeter(2, 'already committed')
+
+  assert.equal(meter.available, true)
+  const calls = sqlCalls()
+  const timeoutIndex = calls.findIndex(call => /^\s*SET\s+LOCAL\s+statement_timeout/iu.test(
+    call.query ?? '',
+  ))
+  const meterIndex = calls.findIndex(call => /\/\* public:reading_cost \*\//iu.test(
+    call.query ?? '',
+  ))
+  assert.ok(timeoutIndex >= 0, 'the database must receive a statement timeout')
+  assert.ok(meterIndex > timeoutIndex, 'the database deadline must precede the meter query')
+  assert.match(calls[timeoutIndex]?.query ?? '', /'\d+ms'/u)
 })
 
 test('the legacy full public map stays exact and explicit full shares its short cache', async () => {
