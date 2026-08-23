@@ -894,7 +894,7 @@ export async function resolveDueEffects(
         ))
       } catch (error) {
         const pendingId = rowId(raw.id, 'pending effect id')
-        const message = error instanceof Error ? error.message : 'effect execution failed'
+        const message = error instanceof Error ? error.message : 'the city could not complete this action'
         const recorded = await withEngineTransaction(db, (transaction, atomic) => (
           recordFailedEffect(pendingId, placeId, message, transaction, atomic)
         ))

@@ -177,6 +177,13 @@ function createAuthenticatedLookHarness(payload: Record<string, unknown>) {
     }
     return c.json(payload)
   })
+  city.get('/api/note/:id', c => {
+    if (![OAUTH_ACCESS_TOKEN, LEGACY_SECRET]
+      .some(secret => c.req.header('authorization') === `Bearer ${secret}`)) {
+      return c.json({ error: 'A valid resident sign-in is required.' }, 401)
+    }
+    return c.json(payload)
+  })
 
   const gateway = new Hono()
   gateway.post('/mcp', c => mcp(c, city))
@@ -335,9 +342,9 @@ test('both MCP doors keep every shared tool label, input, and safety hint identi
   }
 })
 
-test('say names where to stand and its body limit', async () => {
+test('say states its placement, body, status, and duplicate-note contract', async () => {
   const expectedDescription =
-    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). The response includes a neutral UTF-8 reading-cost meter.'
+    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). A new note returns 201. The same body from you in the same place within five minutes returns the existing note with 200 and creates nothing new. The response includes a neutral UTF-8 reading-cost meter.'
 
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
@@ -355,6 +362,46 @@ test('say names where to stand and its body limit', async () => {
     }, path)
     assert.equal(say.annotations?.idempotentHint, false, path)
   }
+})
+
+test('MCP descriptions state the search, action, transfer, and moderation rules before use', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const tools = await listTools(gateway, path, authorization)
+    const search = toolByName(tools, 'search')
+    const act = toolByName(tools, 'act')
+    const transfer = toolByName(tools, 'transfer')
+
+    assert.match(search.description, /defaults are mode=words, type=all, and limit=10/iu, `${path}: search defaults`)
+    assert.match(search.description, /256 UTF-8 bytes[\s\S]*16 simple words[\s\S]*burst 12[\s\S]*one search every 5 seconds/iu, `${path}: search limits`)
+    assert.match(
+      String((search.inputSchema.properties?.q as { description?: string }).description ?? ''),
+      /1 to 256 UTF-8 bytes/iu,
+      `${path}: q byte limit`,
+    )
+    assert.match(act.description, /move accepts only its required to_place_id/iu, `${path}: move shape`)
+    assert.match(act.description, /use and consume require thing_id/iu, `${path}: thing action shapes`)
+    assert.match(act.description, /may also take target_type with target_id, to_place_id, or to_handle/iu, `${path}: effect inputs`)
+    assert.match(act.description, /give accepts only required to_handle[\s\S]*thing_id[\s\S]*target_type with target_id/iu, `${path}: give shape`)
+    assert.match(act.description, /target_type and target_id always appear together/iu, `${path}: target pair`)
+    assert.match(act.description, /active[\s\S]*same place[\s\S]*open sale/iu, `${path}: thing state gates`)
+    assert.match(transfer.description, /omitting action defaults to give/iu, `${path}: transfer default`)
+    assert.match(transfer.description, /reserve[\s\S]*before payment/iu, `${path}: claim order`)
+    assert.match(transfer.description, /greater than 0[\s\S]*10,000[\s\S]*6 decimal/iu, `${path}: price contract`)
+    assert.deepEqual(transfer.inputSchema.properties?.price_usdc, {
+      type: 'number', exclusiveMinimum: 0, maximum: 10_000,
+      description: 'sale price in USDC; rounded to 6 decimal places',
+    }, `${path}: price schema`)
+  }
+
+  setHostedChatFlag(false)
+  const { gateway } = createHarness()
+  const moderate = toolByName(await listTools(gateway, '/mcp', `Bearer ${LEGACY_SECRET}`), 'moderate')
+  assert.match(moderate.description, /founder resident #1[^.]*root key[^.]*key-capable/iu)
 })
 
 test('changes exposes one cursor and forwards an exact public event kind filter', async () => {
@@ -499,7 +546,7 @@ test('later-holder tools keep passive discovery separate from the private mark w
   }
 })
 
-test('look reads only one explicitly chosen thing and rejects mixed place options', async () => {
+test('look reads one chosen thing or note in full and rejects mixed place options', async () => {
   setHostedChatFlag(true)
   const gateway = createAuthenticatedLookHarness({
     id: 31, name: 'Chosen thing', body: 'chosen full body', place_id: 4,
@@ -510,11 +557,60 @@ test('look reads only one explicitly chosen thing and rejects mixed place option
   assert.equal(read.result.isError, false)
   assert.match(read.result.content[0]!.text, /chosen full body/iu)
 
+  const noteRead = await rpc(gateway, 'tools/call', {
+    name: 'look', arguments: { note_id: 31 },
+  }, `Bearer ${OAUTH_ACCESS_TOKEN}`) as { result: ToolResult }
+  assert.equal(noteRead.result.isError, false)
+  assert.match(noteRead.result.content[0]!.text, /chosen full body/iu)
+
+  const look = toolByName(await listTools(gateway), 'look')
+  assert.match(look.description, /note_id alone returns that note in full/iu)
+  assert.deepEqual(look.inputSchema.properties?.note_id, {
+    type: 'integer', minimum: 1,
+    description: 'read this one public note in full; do not combine with place or paging options',
+  })
+
   const mixed = await rpc(gateway, 'tools/call', {
     name: 'look', arguments: { thing_id: 31, place_id: 4 },
   }, `Bearer ${OAUTH_ACCESS_TOKEN}`) as { result: ToolResult }
   assert.equal(mixed.result.isError, true)
   assert.match(mixed.result.content[0]!.text, /choose|thing_id|place_id/iu)
+
+  const mixedNote = await rpc(gateway, 'tools/call', {
+    name: 'look', arguments: { note_id: 31, place_id: 4 },
+  }, `Bearer ${OAUTH_ACCESS_TOKEN}`) as { result: ToolResult }
+  assert.equal(mixedNote.result.isError, true)
+  assert.match(mixedNote.result.content[0]!.text, /choose|note_id|place_id/iu)
+})
+
+test('hosted errors never send connector residents to the private browser or founder-only tool', async () => {
+  setHostedChatFlag(true)
+  const city = new Hono()
+  city.post('/api/note', c => c.json({
+    error: 'resident sign-in required — use the private browser flow at /join',
+  }, 401))
+  const gateway = new Hono()
+  gateway.post('/mcp/connect', c => mcp(c, city, {
+    hostedChat: true,
+    forwardUnauthorizedStatus: false,
+  }))
+
+  const unauthorized = await rpc(gateway, 'tools/call', {
+    name: 'say', arguments: { place_id: 2, body: 'hello square' },
+  }, `Bearer ${OAUTH_ACCESS_TOKEN}`) as { result: ToolResult }
+  const unauthorizedText = unauthorized.result.content[0]?.text ?? ''
+  assert.match(unauthorizedText, /reconnect through your hosted chat app[^.]*1F3D9 sign-in/iu)
+  assert.doesNotMatch(unauthorizedText, /private browser|\/join/iu)
+
+  const moderate = await rpc(gateway, 'tools/call', {
+    name: 'moderate',
+    arguments: { action: 'remove', target_type: 'note', target_id: 1, reason: 'illegal content' },
+  }, `Bearer ${OAUTH_ACCESS_TOKEN}`) as { result: ToolResult }
+  const moderateText = moderate.result.content[0]?.text ?? ''
+  assert.match(moderateText, /unavailable through hosted chat/iu)
+  assert.match(moderateText, /founder resident #1[^.]*root key[^.]*key-capable/iu)
+  assert.doesNotMatch(moderateText, /hosted sign-in|auth_required/iu)
+  assert.equal(moderate.result._meta?.['mcp/www_authenticate'], undefined)
 })
 
 test('feature on turns a missing resident sign-in into an MCP OAuth challenge', async () => {

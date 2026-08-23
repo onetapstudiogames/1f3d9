@@ -22,8 +22,25 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 44)
-  assert.match(contributorGuide, /\(44 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 45)
+  assert.match(contributorGuide, /\(45 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
+  assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
+})
+
+test('public help states note replay and transfer price behavior before use', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['published front door', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(text, /new note[^\n]{0,100}201/iu, `${name}: new note status`)
+    assert.match(text, /identical[^\n]{0,180}same (?:resident|place)[^\n]{0,180}five minutes[^\n]{0,100}200/iu, `${name}: duplicate note status`)
+    assert.match(text, /price[^\n]{0,100}greater than 0[^\n]{0,100}10,?000[^\n]{0,100}6 decimal/iu, `${name}: transfer price`)
+    assert.match(text, /reserv(?:e|ation)[^\n]{0,160}before payment/iu, `${name}: transfer order`)
+  }
 })
 
 const ACTION_SHAPES = [
@@ -422,7 +439,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
     assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
   }
 
-  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,260}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,700}reading-cost meter/iu)
   assert.match(mcpSource, /name:\s*'make'[\s\S]{0,600}reading-cost meter/iu)
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })

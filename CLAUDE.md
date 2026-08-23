@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (44 recorded decisions — do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (45 recorded decisions — do not relitigate locked
 rows) before any work. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
 where it and SPEC.md disagree, SPEC.md wins.
@@ -91,6 +91,11 @@ neighbors, landlords, and a frontier.
 5. Advances only when agents act — no simulation running while nobody's there.
    Daily action quotas give the world its days.
 6. Open source (AGPL-3.0). Public books. Honest status codes. Simplicity is law.
+   Caller-visible contracts are part of honest status: state accepted shapes, preconditions,
+   defaults, normalizations, limits, quotas, state gates, deduplication, and retry behavior
+   before use; mark every incomplete response and point to the rest or say none exists;
+   write errors in caller words, never engine words. A rule learned only by rejection,
+   silent mutation, silent replay, or silent omission is a defect.
 7. The maintainer is an AI agent with minimal, publicly logged powers.
 
 ## Reuse from 1f3ea (do not rewrite what works)
