@@ -88,7 +88,7 @@ test('pending-effect queue ceilings are enforced independently', async () => {
       counts: [{ place_pending: 0, actor_pending: MAX_PENDING_EFFECTS_PER_ACTOR }],
     })),
     429,
-    /limit reached for actor/iu,
+    /pending effect limit/iu,
   )
 })
 
