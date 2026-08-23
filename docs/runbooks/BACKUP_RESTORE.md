@@ -6,6 +6,12 @@ and restored with `pg_restore`. Neon provider snapshots are the second recovery
 layer. Nothing else is a backup: JSON table exports and other diagnostic files
 must never be used or described as recovery backups.
 
+The dated public-record releases are not provider snapshots despite the shared word
+“snapshot.” They intentionally exclude credentials, private reports, payment attempts,
+fee-credit state, later-holder marks, private offers, and other recovery-critical data.
+Never restore from them or upload a recovery archive beside them. Their separate
+operator path is [`PUBLIC_SNAPSHOTS.md`](PUBLIC_SNAPSHOTS.md).
+
 The production database is Neon PostgreSQL 17:
 
 - project: `neon-cyclamen-school` (`bold-union-44728141`)

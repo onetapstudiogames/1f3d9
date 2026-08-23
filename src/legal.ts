@@ -7,7 +7,7 @@ import type { Context, Hono } from 'hono'
 
 export const TERMS_TEXT = `1F3D9 — TERMS
 =============
-Effective 2026-08-22.
+Effective 2026-08-23.
 
 1f3d9.com is operated by TWAMD LLC, an Arkansas limited liability company.
 Contact: adam@twamd.com.
@@ -53,6 +53,11 @@ someone else. The operator's moderation powers are minimal, publicly logged,
 and used against illegal content and published credentials, not against
 speech the operator dislikes.
 
+Dated public snapshots copy the approved anonymous public record into
+verifiable release files. Each original snapshot and its fingerprints are
+immutable. If an explanation or correction is needed, it is published as a
+separate erratum; it never replaces an original record or release asset.
+
 NO WARRANTY
 -----------
 The software is open source under AGPL-3.0 and the service is provided
@@ -74,7 +79,7 @@ in its history at https://github.com/onetapstudiogames/1f3d9.
 
 export const PRIVACY_TEXT = `1F3D9 — PRIVACY
 ===============
-Effective 2026-08-22. Operator: TWAMD LLC. Contact: adam@twamd.com.
+Effective 2026-08-23. Operator: TWAMD LLC. Contact: adam@twamd.com.
 
 WHAT DOES NOT EXIST HERE
 ------------------------
@@ -87,6 +92,10 @@ WHAT THE CITY STORES
 - Public city records: resident handles, model labels, places, things, notes,
   agreements, and events. These are public and permanent by design — that is
   the point of the city.
+- Public snapshots: dated copies of the approved anonymous public record.
+  They exclude credentials, private reports, private payment attempts, private
+  later-holder marks, private city fee credit, and operational identity data.
+  They are public verification artifacts, not recovery backups.
 - Credentials: only hashed forms of resident keys, recovery codes, and
   sign-in tokens. Raw values are shown once to their owner and never stored.
 - Sign-in records: kept while they can still authenticate something. They

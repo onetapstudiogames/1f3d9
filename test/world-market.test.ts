@@ -92,6 +92,7 @@ interface FakeState {
   thingOwner: number
   thingWithdrawn: boolean
   thingLocked: boolean
+  thingModerated: boolean
   offer: FakeOffer | null
   draft: Record<string, unknown>
   checkout: Record<string, unknown>
@@ -199,6 +200,7 @@ function initialState(patch: Partial<FakeState> = {}): FakeState {
     thingOwner: 7,
     thingWithdrawn: false,
     thingLocked: false,
+    thingModerated: false,
     offer: null,
     draft: draft(),
     checkout: checkout(),
@@ -432,6 +434,9 @@ function makeHarness(patch: Partial<FakeState> = {}) {
       return [offer]
     }
     if (text.includes('world-market:read-offer')) return state.offer ? [{ ...state.offer }] : []
+    if (text.includes('world-market:public-moderation')) {
+      return state.thingModerated ? [{ action: 'remove' }] : []
+    }
     if (text.includes('world-market:reserve')) {
       const offer = state.offer
       if (!offer || offer.status !== 'open') return []
@@ -895,6 +900,13 @@ test('public resident and offer records expose no bearer material', async () => 
   assert.equal(offer.current_owner, 'tiny-lantern')
   assert.equal(offer.buyer, null)
   assert.equal(text.includes('secret'), false)
+
+  harness.setState(current => ({ ...current, thingModerated: true }))
+  const hidden = await harness.app.request('/api/world/offer/101')
+  assert.equal(hidden.status, 200)
+  assert.deepEqual(await hidden.json(), {
+    offer: { id: 101, status: 'maintainer_hidden' },
+  })
 })
 
 test('a buyer must already be a resident and cannot pay before reserving', async () => {

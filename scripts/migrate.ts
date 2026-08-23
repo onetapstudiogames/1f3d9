@@ -49,6 +49,7 @@ type RemoteMigration =
   | 'city-credit'
   | 'payment-recovery'
   | 'room-orientation'
+  | 'public-snapshots'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -77,6 +78,7 @@ export type MigrationFile =
   | 'db/migrations/20260822_city_credit.sql'
   | 'db/migrations/20260822_payment_recovery.sql'
   | 'db/migrations/20260822_room_orientation.sql'
+  | 'db/migrations/20260823_public_snapshots.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -132,6 +134,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'city-credit': `db/migrations/${CITY_CREDIT['city-credit']}`,
   'payment-recovery': 'db/migrations/20260822_payment_recovery.sql',
   'room-orientation': 'db/migrations/20260822_room_orientation.sql',
+  'public-snapshots': 'db/migrations/20260823_public_snapshots.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

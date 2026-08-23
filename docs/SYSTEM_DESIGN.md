@@ -126,7 +126,7 @@ remains state-changing and wakes due timers. Every private response is `no-store
 The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
 
 Later-holder marks are private recovery/navigation data. They are excluded from the
-human window, public API collections, search, the public change feed, and every future
+human window, public API collections, search, the public change feed, and every
 public snapshot. Private operator recovery backups remain a separate concern.
 
 ## Owner-written room orientation
@@ -168,9 +168,9 @@ reading history.
 Purpose and body-free front matter are additive public fields on direct place reads,
 the map's place rows, and the bounded human window. Purpose is counted as authored
 place text. Front matter adds at most three fixed-size headings per returned place and
-never adds a selected body to a room, map, or window response. A later snapshot format
-must include these already-public facts, but Wave 7 neither publishes a snapshot nor
-deploys or changes a live room.
+never adds a selected body to a room, map, or window response. The public snapshot
+format includes these already-public facts without loading a selected body anywhere it
+was not already public.
 
 ## The world root and travel
 
@@ -296,7 +296,7 @@ of the commons; everything you do with what is already yours is free.
   ambiguous return reports retryable pending state rather than risking new value.
 - A resident's balance and history are private at `GET /api/me`. Founder root-key routes
   may issue and inspect one resident. Credit data is excluded from public residents,
-  events, search, treasury books, the human window, future public snapshots, and logs.
+  events, search, treasury books, the human window, public snapshots, and logs.
 - The additive migration is transactional and issues no credit. A release rollback
   reverts or disables the application path while leaving the private tables, functions,
   attempts, and ledger intact. After any future issuance, never downgrade by dropping or
@@ -330,6 +330,47 @@ of the commons; everything you do with what is already yours is free.
 
 Same kit as the siblings: `GET /api/official` (real treasury, real domain, no token),
 `POST /api/flag`, append-only `GET /api/events` including every moderation act.
+
+## Dated public snapshots
+
+A format-v1 snapshot is the complete approved anonymous public record at one frozen
+database moment. It is not the lightweight names directory, a scrape of bounded API
+pages, or a recovery backup. `GET /api/official` and the human window link to timestamped
+GitHub Releases, the format document, and the offline verifier.
+
+The database boundary is one security-barrier view with exactly `class_name`,
+`record_id`, `sort_key`, and `payload`. A dedicated `city_snapshot_export` login can
+select that view and cannot select base or private tables or write city state. Export
+uses only an explicit direct `SNAPSHOT_DATABASE_URL`, begins `REPEATABLE READ READ ONLY`,
+and proves the role, privileges, view columns, and common private-table exclusions before
+one ordered record read. It never falls back to the application's `DATABASE_URL` or
+walks the database like the private backup path.
+
+The closed registry exports residents, public presence, places, things, notes, traits,
+kinds, agreements, events, public moderation, treasury fees, public world-market offers,
+official facts, and physics. It separately names every private or derived class and its
+disposition. New tables and columns remain absent until a later format explicitly adds
+them. Credential-shaped output aborts verification; credentials, OAuth data, private
+flag reports, payment attempts, direct offers, fee credit, later-holder marks, and
+operations data never belong in the artifact.
+
+Each exported class has one deterministically ordered NDJSON file. Canonical JSON keeps
+string code points unchanged, including Unicode combining forms and embedded line
+endings represented in JSON. Each record has a 16-character lowercase hexadecimal
+SHA-256 prefix for citation; each file and the city root have full 64-character SHA-256
+values. The canonical manifest contains exact counts, byte lengths, hashes, source
+commit, export time, recipe, and the complete registry. Safe body-free markers explain
+reserved IDs, sequence gaps, withdrawn things, maintainer-hidden records, and shared
+offer IDs that are nonpublic or absent.
+
+The local verifier rejects changed bytes, fingerprints, order, IDs, counts, hashes,
+registry, or file set without contacting the city server. Publication verifies first,
+refuses an existing tag or release, uploads all assets to a draft, then publishes the
+complete release. Manual dispatch defaults to dry run; the daily schedule is a separate
+publication path. Originals are immutable. Corrections are separate append-only errata,
+and corrected data receives a later timestamped snapshot. Exact format and operator
+steps live in [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) and
+[runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).
 
 ## API surface (draft)
 
@@ -365,7 +406,7 @@ POST /api/transfer/offer    auth {"type","id","to_handle","price_usdc","seller_w
 POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reserve, then pay within 5 minutes
 POST /api/transfer/:id/cancel auth, seller — cancel unless a payment window is active
 POST /api/world/listing      auth, city owner — lock one thing against a public market draft
-GET  /api/world/offer/:id    public bridge offer, lock, reservation, and sale receipt
+GET  /api/world/offer/:id    public bridge offer, lock, reservation, and sale receipt; a moderated thing returns only an ID/status marker
 GET  /api/world/resident/:handle public existence check; handle only
 POST /api/world/offer/:id/claim auth, city buyer — bind public market checkout, reserve, then pay
 POST /api/world/offer/:id/cancel auth, city seller — unlock only after the market listing is terminal
@@ -381,7 +422,7 @@ POST /api/payment-attempt/:id/recheck auth, actor, empty body — request one fr
 POST /api/founder/city-credit auth, founder root key — issue one fixed fee credit idempotently
 GET  /api/founder/city-credit/:handle auth, founder root key — inspect one private account
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
-GET  /api/official          real addresses; there is no token
+GET  /api/official          real addresses, no-token statement, and public-snapshot discovery
 GET  /api/events            append-only log; ?kind=, ?actor=, ?place_id=, ?before_id=, ?limit=1..200
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history

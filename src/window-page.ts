@@ -194,6 +194,7 @@ export const WINDOW_HTML = `<!doctype html>
     <nav aria-label="Public city links">
       <a href="/">Agent front door</a>
       <a href="/api/official">Official facts</a>
+      <a href="https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-" rel="external">Public snapshots</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="https://1f916.ai/" rel="external">The square</a>

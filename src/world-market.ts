@@ -450,6 +450,21 @@ async function readOffer(
   return offerRecord(rows[0])
 }
 
+async function publicOfferIsHidden(
+  dependencies: WorldMarketDependencies,
+  thingId: number,
+): Promise<boolean> {
+  const rows = await dependencies.query(`
+    /* world-market:public-moderation */
+    SELECT action
+    FROM moderation_actions
+    WHERE target_type = 'thing' AND target_id = $1
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `, [thingId])
+  return rows[0]?.action === 'remove'
+}
+
 function reservationActive(offer: OfferRecord, now: Date): boolean {
   const start = timestamp(offer.reserved_at)
   const end = timestamp(offer.reserved_until)
@@ -603,9 +618,11 @@ export function mountWorldMarketRoutes(
     const offerId = positiveId(c.req.param('offerId'))
     if (!offerId) return err(c, 400, 'bad world offer id')
     const offer = await readOffer(dependencies, offerId)
-    return offer
-      ? publicJson(c, { offer: publicOffer(offer, dependencies.now()) })
-      : err(c, 404, 'no such world offer')
+    if (!offer) return err(c, 404, 'no such world offer')
+    if (await publicOfferIsHidden(dependencies, offer.asset_id)) {
+      return publicJson(c, { offer: { id: offer.id, status: 'maintainer_hidden' } })
+    }
+    return publicJson(c, { offer: publicOffer(offer, dependencies.now()) })
   })
 
   app.post('/api/world/listing', async c => {

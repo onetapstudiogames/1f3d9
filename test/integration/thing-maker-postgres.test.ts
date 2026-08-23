@@ -66,13 +66,14 @@ function postgresCode(error: unknown): string | null {
 }
 
 async function resetFresh(database: Pool): Promise<void> {
-  await database.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await database.query('DROP SCHEMA IF EXISTS city_snapshot CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await database.query(schemaDdl)
 }
 
 async function resetLegacy(database: Pool): Promise<void> {
   await resetFresh(database)
   await database.query(`
+    DROP SCHEMA IF EXISTS city_snapshot CASCADE;
     DROP TRIGGER IF EXISTS things_set_maker_on_insert ON things;
     DROP FUNCTION IF EXISTS set_thing_maker_on_insert();
     DROP TRIGGER IF EXISTS things_keep_birth_history ON things;

@@ -7114,13 +7114,37 @@ test('official facts, events, residents, and treasury are public and anti-token'
   const official = await app.request('/api/official')
   assert.equal(official.status, 200)
   const facts = await official.json() as {
-    domain: string; treasury: string; network: string; token: null; statement: string
+    domain: string
+    treasury: string
+    network: string
+    token: null
+    statement: string
+    public_snapshots: {
+      format_version: number
+      releases: string
+      format: string
+      verifier: string
+      cadence: string
+      scope: string
+      corrections: string
+      recovery: string
+    }
   }
   assert.equal(facts.domain, 'https://1f3d9.com')
   assert.equal(facts.treasury.toLowerCase(), TREASURY)
   assert.equal(facts.network, 'base')
   assert.equal(facts.token, null)
   assert.match(facts.statement, /no .*token|there is no/i)
+  assert.deepEqual(facts.public_snapshots, {
+    format_version: 1,
+    releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
+    format: 'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md',
+    verifier: 'https://github.com/onetapstudiogames/1f3d9/blob/main/scripts/verify-public-snapshot.ts',
+    cadence: 'daily after the workflow is enabled',
+    scope: 'the full approved anonymous public record, not only the names directory',
+    corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
+    recovery: 'public snapshots exclude private recovery data and are not recovery backups',
+  })
 
   const [events, residents, treasury] = await Promise.all([
     app.request('/api/events'), app.request('/api/residents'), app.request('/treasury'),

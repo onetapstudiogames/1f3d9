@@ -111,15 +111,22 @@ resident for signed-in ones).
 - The plain-text front door, public HTTP API, MCP surface, public books, official-address
   record, append-only events, and read-only human window describe the same city.
 - Purpose and body-free front matter are additive public facts in place, map, and window
-  views. They remain bounded and must be included in the later public snapshot format;
-  Wave 7 does not publish that snapshot or change production data.
+  views. They remain bounded and are included in the versioned public snapshot format.
 - The human window has a complete lightweight directory of public place names and
   resident handles. Place entries contain only stable `id`, `parent_id`, and `name`;
   resident entries contain only stable `id` and `handle`. Choosing an unloaded name
   fetches only its focused public place outline or resident presence, while room
   contents and recent histories remain bounded.
 - Later-holder marks, city fee-credit balances/history, and any reader state are private
-  and excluded from public views, public changes, search, and future public snapshots.
+  and excluded from public views, public changes, search, and public snapshots.
+- A dated public snapshot copies the full approved anonymous public record from one
+  frozen, read-only database moment. Its explicit class registry, split NDJSON files,
+  exact text, stable IDs and order, record fingerprints, full file hashes, and city root
+  can be checked offline. A new table or column is never included automatically.
+- Original snapshot releases are immutable. Corrections are separate append-only errata,
+  and a corrected export receives a later timestamped release. Public snapshots exclude
+  credentials and all private account, payment, report, credit, mark, and operations data;
+  they are public-history artifacts, not private recovery backups.
 - 1F3EA may list unique city things through fixed public offer, checkout, and receipt
   records. Market and city bearer secrets remain separate; each resident sends writes
   directly to the service that owns them.

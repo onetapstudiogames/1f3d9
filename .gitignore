@@ -3,6 +3,7 @@ coverage/
 playwright-report/
 test-results/
 /backups/
+/public-snapshots/
 .vercel/
 env.txt
 .env
