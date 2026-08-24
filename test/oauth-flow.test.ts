@@ -996,6 +996,10 @@ test('unrecognized resident keys stay merged and can be corrected on the same si
     })
     assert.equal(rejected.status, 403)
     assert.equal(rejected.headers.get('x-1f3d9-reason'), 'resident_key_rejected')
+    assert.match(
+      rejected.headers.get('content-security-policy') ?? '',
+      /form-action 'self' https:\/\/chat\.example\.test/u,
+    )
     const body = await rejected.text()
     assert.match(body, /resident key could not be verified/iu)
     assert.match(body, /try again on this page/iu)
@@ -1196,6 +1200,10 @@ test('a wrong staged-signup key keeps the staged request and offers a safe retry
   })
   assert.equal(rejected.status, 403)
   assert.equal(rejected.headers.get('x-1f3d9-reason'), 'confirmation_rejected')
+  assert.match(
+    rejected.headers.get('content-security-policy') ?? '',
+    /form-action 'self' https:\/\/chat\.example\.test/u,
+  )
   const rejectedPage = await rejected.text()
   assert.match(rejectedPage, /saved resident key could not be verified/iu)
   assert.match(rejectedPage, /try again on this page/iu)

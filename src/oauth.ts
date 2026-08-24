@@ -183,6 +183,7 @@ function browserError(
   reason: BrowserRefusalReason,
   message: string,
   nextStepHtml?: string,
+  callbackOrigin?: string,
 ) {
   const reference = markBrowserRefusal(c, status, reason)
   const nextStep = nextStepHtml ?? '<p class="muted">You can close this page safely. Nothing was linked.</p>'
@@ -191,6 +192,7 @@ function browserError(
     status,
     'Sign-in stopped',
     `<h1>Sign-in stopped</h1><p>${escapeHtml(message)}</p><p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p>${nextStep}`,
+    callbackOrigin,
   )
 }
 
@@ -627,9 +629,10 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       errorClass: BrowserRefusalReason,
       message: string,
       nextStepHtml?: string,
+      callbackOrigin?: string,
     ) => {
       recordFailure(oauth, trace, 'browser_approval', errorClass, status)
-      return browserError(c, status, errorClass, message, nextStepHtml)
+      return browserError(c, status, errorClass, message, nextStepHtml, callbackOrigin)
     }
 
     try {
@@ -683,6 +686,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         )
       }
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
+      const callbackOrigin = registeredCallbackOrigin(request.redirect_uri)
 
       if (action === 'cancel') {
         const redirect = await oauth.store.cancelAuthorizationRequest({ sessionHash, csrfHash })
@@ -717,6 +721,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'confirmation_rejected',
             'That saved resident key could not be verified. Check it and try again on this page.',
             oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            callbackOrigin,
           )
         }
         if (!(await admitted(
@@ -730,6 +735,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'rate_limited',
             'Too many key attempts. Try again in one hour on this page.',
             oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            callbackOrigin,
           )
         }
         const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
@@ -761,6 +767,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'confirmation_rejected',
             'That saved resident key could not be verified. Check it and try again on this page.',
             oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            callbackOrigin,
           )
         }
         if (redirect.status === 'handle_taken') {
@@ -782,6 +789,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'resident_key_rejected',
             'That resident key could not be verified. Check it and try again on this page.',
             oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
           )
         }
         if (!(await admitted(
@@ -795,6 +803,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'rate_limited',
             'Too many key attempts. Try again in one hour on this page.',
             oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
           )
         }
         const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
@@ -818,6 +827,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'resident_key_rejected',
             'That resident key could not be verified. Check it and try again on this page.',
             oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
           )
         }
         return redirectWithCode(c, redirect, authorizationCode)
