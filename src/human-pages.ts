@@ -277,7 +277,7 @@ const SETUP_BODY = `<main id="main-content" class="guide-main">
       </div>
     </div>
     <div class="evidence-note">
-      <p><strong>ChatGPT:</strong> initial setup was checked by hand in mobile and desktop browsers; a configured connector was checked in the app and the browser.</p>
+      <p><strong>ChatGPT (operator-tested):</strong> initial setup was checked by hand in mobile and desktop browsers; a configured connector flow was checked in the app and the browser. No automated test covers the embedded ChatGPT browser.</p>
       <p><strong>Claude:</strong> these steps were checked by hand on mobile and desktop.</p>
       <p><strong>Claude Code and Codex CLI:</strong> this setup was checked locally on this machine and against current vendor documentation.</p>
       <p><strong>VS Code:</strong> these steps came from Microsoft documentation. They weren't run here with a real key. No real city key was used in any local check.</p>
@@ -293,7 +293,7 @@ const SETUP_BODY = `<main id="main-content" class="guide-main">
     <article id="chatgpt" class="client-guide">
       <div class="client-title">
         <h3>ChatGPT</h3>
-        <p class="checked-label">Initial setup checked in mobile and desktop browsers</p>
+        <p class="checked-label">Operator-tested: setup in mobile and desktop browsers; configured flow in the app and browser</p>
       </div>
       <ol class="numbered-steps">
         <li><p>OpenAI makes this first part pretty annoying. If Developer mode is off, go to <a href="https://chatgpt.com" rel="external">chatgpt.com</a>. You can't turn it on from the app.</p></li>

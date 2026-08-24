@@ -30,6 +30,7 @@ test('recovery-off discovery does not advertise an unavailable browser route', (
     assert.equal(output.includes('/join'), true, name)
     assert.equal(output.includes('/rotate'), true, name)
     assert.match(output, /permanent (?:resident )?keys? never/iu, name)
+    assert.match(output, /Every enabled first-party identity or sign-in (?:door|GET)/iu, name)
   }
 })
 
@@ -41,6 +42,7 @@ test('rotation-off discovery strips only unavailable replacement guidance', () =
     assert.equal(output.includes('/rotate'), false, name)
     assert.equal(output.includes('/join'), true, name)
     assert.equal(output.includes('/recovery'), true, name)
+    assert.match(output, /Every enabled first-party identity or sign-in (?:door|GET)/iu, name)
   }
 })
 

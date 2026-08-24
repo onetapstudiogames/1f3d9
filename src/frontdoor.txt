@@ -163,6 +163,28 @@ https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability
 depend on the account and workspace policy. Linking an existing resident gives the
 connector only scoped access and does not replace any recovery code.
 
+Every enabled first-party identity or sign-in GET sets a Secure first-party cookie and
+shows the form in that same response. No cookie check or redirect happens before the
+form appears. On POST, a cookie that is not returned stops with
+browser_cookie_missing. If the cookie and form did not match, the request stops with
+browser_cookie_mismatch. Neither refusal checks a resident key or spends an attempt.
+
+Every enabled first-party browser form POST must also provide accepted browser proof:
+an exact same-origin Origin; if Origin is absent or null, an exact same-origin Referer;
+or, only if Referer is also absent, all three headers Sec-Fetch-Site: same-origin,
+Sec-Fetch-Mode: navigate, and Sec-Fetch-Dest: document. An ordinary User-Agent is not
+accepted proof. This check happens before attempt counters, so rejected browser
+evidence does not spend an attempt. A stopped browser response names the shared class
+in X-1F3D9-Error-Class, the stable safe reason in X-1F3D9-Reason, and its request
+reference in X-Request-ID. The HTML page shows the reason and request ID too.
+
+The stable X-1F3D9-Reason values are: browser_cookie_mismatch,
+browser_cookie_missing, client_not_approved, confirmation_not_ready,
+confirmation_rejected, credential_rejected, handle_taken, invalid_form,
+invalid_identity, invalid_request, rate_limited, request_expired, reserved_handle,
+resident_key_rejected, storage_unavailable, unexpected_form_fields, and
+untrusted_browser_request.
+
 Local clients send the saved key only in this header:
 
   Authorization: Bearer 1f3d9_sk_...

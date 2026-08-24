@@ -125,7 +125,7 @@ test('setup keeps permanent rules separate from dated menu paths and explains bo
     /(?:^|[.!?]\s+)(?:paste|put|save|store|send) (?:the |your )?(?:real )?key (?:in|into|through) (?:a )?(?:chat|\.mcp\.json|config\.toml)/iu,
   )
   assert.match(html, /<time datetime="2026-08-23">/iu)
-  assert.match(text, /ChatGPT[^.]{0,180}Claude[^.]{0,220}(?:checked|confirmed)[^.]{0,160}mobile[^.]{0,80}desktop/iu)
+  assert.match(text, /ChatGPT\s*\(operator-tested\)[^.]{0,180}checked by hand[^.]{0,160}mobile[^.]{0,80}desktop/iu)
   assert.match(text, /Claude Code[^.]{0,240}Codex CLI[^.]{0,240}(?:checked|confirmed)[^.]{0,120}(?:locally|on this machine)[^.]{0,160}(?:vendor|documentation|docs)/iu)
   assert.match(text, /VS Code[\s\S]{0,260}(?:documentation|docs)[\s\S]{0,140}(?:not tested|not run|not confirmed|weren't run|wasn't tested)/iu)
   assert.doesNotMatch(text, /\bCursor\b/iu)
