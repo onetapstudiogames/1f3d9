@@ -334,8 +334,12 @@ function makeMemoryStore(): OAuthStore {
 
     approveExistingResidentAndIssueAuthorizationCode: async input => {
       const request = eligible(input.sessionHash, input.csrfHash)
-      if (!request || request.intent !== null) return null
-      if (input.residentSecretHash !== sha256(existingResidentKey)) return null
+      if (!request || request.intent !== null) {
+        return { status: 'request_unavailable' as const }
+      }
+      if (input.residentSecretHash !== sha256(existingResidentKey)) {
+        return { status: 'resident_key_rejected' as const }
+      }
       requests.set(input.sessionHash, {
         ...request,
         intent: 'existing',
@@ -351,14 +355,16 @@ function makeMemoryStore(): OAuthStore {
         codeChallenge: request.code_challenge,
         used: false,
       })
-      return { redirectUri: request.redirect_uri, state: request.state }
+      return { status: 'approved' as const, redirectUri: request.redirect_uri, state: request.state }
     },
 
     stageNewResidentRegistration: async input => {
       const request = eligible(input.sessionHash, input.csrfHash)
-      if (!request || request.intent !== null || request.resident_id !== null) return null
+      if (!request || request.intent !== null || request.resident_id !== null) {
+        return { status: 'request_unavailable' as const }
+      }
       const handleTaken = [...residents.values()].some(resident => resident.handle === input.handle)
-      if (handleTaken) return { status: 'handle_taken' }
+      if (handleTaken) return { status: 'handle_taken' as const }
       requireRecoveryCodeHashes(input.recoveryCodeHashes)
       requests.set(input.sessionHash, {
         ...request,
@@ -368,7 +374,7 @@ function makeMemoryStore(): OAuthStore {
         newSecretHash: input.residentSecretHash,
         newRecoveryCodeHashes: [...input.recoveryCodeHashes],
       })
-      return { status: 'staged', handle: input.handle }
+      return { status: 'staged' as const, handle: input.handle }
     },
 
     confirmNewResidentAndIssueAuthorizationCode: async input => {
@@ -376,10 +382,16 @@ function makeMemoryStore(): OAuthStore {
       if (
         !request || request.intent !== 'new' || request.resident_id !== null ||
         request.new_handle === null || request.new_model === null || request.newSecretHash === null ||
-        request.newRecoveryCodeHashes === null || !validRecoveryCodeHashes(request.newRecoveryCodeHashes) ||
-        input.residentSecretHash !== request.newSecretHash
-      ) return null
-      if ([...residents.values()].some(resident => resident.handle === request.new_handle)) return null
+        request.newRecoveryCodeHashes === null || !validRecoveryCodeHashes(request.newRecoveryCodeHashes)
+      ) {
+        return { status: 'request_unavailable' as const }
+      }
+      if (input.residentSecretHash !== request.newSecretHash) {
+        return { status: 'confirmation_rejected' as const }
+      }
+      if ([...residents.values()].some(resident => resident.handle === request.new_handle)) {
+        return { status: 'handle_taken' as const }
+      }
       const residentId = nextResidentId++
       residents.set(residentId, {
         id: residentId,
@@ -419,7 +431,7 @@ function makeMemoryStore(): OAuthStore {
         codeChallenge: request.code_challenge,
         used: false,
       })
-      return { redirectUri: request.redirect_uri, state: request.state }
+      return { status: 'approved' as const, redirectUri: request.redirect_uri, state: request.state }
     },
 
     getAuthorizationCode: async codeHash => {
@@ -577,9 +589,11 @@ mountIdentityRoutes(app, {
   store: {
     consumeIdentityRateLimit: async () => true,
     stageResidentRegistration: async input => {
-      if (stagedRegistrations.has(input.sessionHash)) return null
+      if (stagedRegistrations.has(input.sessionHash)) {
+        return { status: 'request_unavailable' as const }
+      }
       if ([...identityResidents.values()].some(resident => resident.handle === input.handle)) {
-        return { status: 'handle_taken' }
+        return { status: 'handle_taken' as const }
       }
       requireRecoveryCodeHashes(input.recoveryCodeHashes)
       stagedRegistrations = new Map(stagedRegistrations).set(input.sessionHash, {
@@ -589,16 +603,22 @@ mountIdentityRoutes(app, {
         residentSecretHash: input.residentSecretHash,
         recoveryCodeHashes: [...input.recoveryCodeHashes],
       })
-      return { status: 'staged', handle: input.handle }
+      return { status: 'staged' as const, handle: input.handle }
     },
     confirmResidentRegistration: async input => {
       const staged = stagedRegistrations.get(input.sessionHash)
       if (
         !staged || staged.csrfHash !== input.csrfHash ||
-        staged.residentSecretHash !== input.residentSecretHash ||
-        !validRecoveryCodeHashes(staged.recoveryCodeHashes) ||
-        [...identityResidents.values()].some(resident => resident.handle === staged.handle)
-      ) return null
+        !validRecoveryCodeHashes(staged.recoveryCodeHashes)
+      ) {
+        return { status: 'request_unavailable' as const }
+      }
+      if (staged.residentSecretHash !== input.residentSecretHash) {
+        return { status: 'credential_rejected' as const }
+      }
+      if ([...identityResidents.values()].some(resident => resident.handle === staged.handle)) {
+        return { status: 'handle_taken' as const }
+      }
       const resident = {
         id: nextIdentityResidentId++,
         handle: staged.handle,
@@ -612,7 +632,7 @@ mountIdentityRoutes(app, {
       }
       recoveryCodes = nextCodes
       stagedRegistrations = deleteMapKey(stagedRegistrations, input.sessionHash)
-      return { residentId: resident.id, handle: resident.handle }
+      return { status: 'confirmed' as const, residentId: resident.id, handle: resident.handle }
     },
     cancelResidentRegistration: async input => {
       const staged = stagedRegistrations.get(input.sessionHash)
@@ -639,7 +659,9 @@ mountIdentityRoutes(app, {
       if (
         !code || code.used || !resident || code.generation !== resident.generation ||
         stagedRecoveries.has(input.sessionHash)
-      ) return null
+      ) {
+        return { status: 'credential_rejected' as const }
+      }
       stagedRecoveries = new Map(stagedRecoveries).set(input.sessionHash, {
         sessionHash: input.sessionHash,
         csrfHash: input.csrfHash,
@@ -647,7 +669,7 @@ mountIdentityRoutes(app, {
         residentId: resident.id,
         recoveryCodeHash: input.recoveryCodeHash,
       })
-      return { residentId: resident.id, handle: resident.handle }
+      return { status: 'staged' as const, handle: resident.handle }
     },
     confirmRootRecovery: async input => {
       const staged = stagedRecoveries.get(input.sessionHash)
@@ -656,9 +678,13 @@ mountIdentityRoutes(app, {
       if (
         !staged || !resident || !code || code.used ||
         staged.csrfHash !== input.csrfHash ||
-        staged.replacementSecretHash !== input.replacementSecretHash ||
         code.generation !== resident.generation
-      ) return null
+      ) {
+        return { status: 'request_unavailable' as const }
+      }
+      if (staged.replacementSecretHash !== input.replacementSecretHash) {
+        return { status: 'credential_rejected' as const }
+      }
       identityResidents = new Map(identityResidents).set(resident.id, {
         ...resident,
         secretHash: input.replacementSecretHash,
@@ -666,7 +692,7 @@ mountIdentityRoutes(app, {
       })
       recoveryCodes = deleteResidentRecoveryCodes(resident.id)
       stagedRecoveries = deleteMapKey(stagedRecoveries, input.sessionHash)
-      return { residentId: resident.id, handle: resident.handle }
+      return { status: 'recovered' as const, residentId: resident.id, handle: resident.handle }
     },
     cancelRootRecovery: async input => {
       const staged = stagedRecoveries.get(input.sessionHash)
@@ -676,23 +702,30 @@ mountIdentityRoutes(app, {
     },
     stageRootRotation: async input => {
       const resident = identityResidentForSecret(input.residentSecretHash)
-      if (!resident || stagedRotations.has(input.sessionHash)) return null
+      if (!resident) return { status: 'credential_rejected' as const }
+      if (stagedRotations.has(input.sessionHash)) {
+        return { status: 'request_unavailable' as const }
+      }
       stagedRotations = new Map(stagedRotations).set(input.sessionHash, {
         sessionHash: input.sessionHash,
         csrfHash: input.csrfHash,
         replacementSecretHash: input.replacementSecretHash,
         residentId: resident.id,
       })
-      return { residentId: resident.id, handle: resident.handle }
+      return { status: 'staged' as const, residentId: resident.id, handle: resident.handle }
     },
     confirmRootRotation: async input => {
       const staged = stagedRotations.get(input.sessionHash)
       const resident = staged ? identityResidents.get(staged.residentId) : null
       if (
         !staged || !resident || staged.sessionHash !== input.sessionHash ||
-        staged.csrfHash !== input.csrfHash ||
-        staged.replacementSecretHash !== input.replacementSecretHash
-      ) return null
+        staged.csrfHash !== input.csrfHash
+      ) {
+        return { status: 'request_unavailable' as const }
+      }
+      if (staged.replacementSecretHash !== input.replacementSecretHash) {
+        return { status: 'credential_rejected' as const }
+      }
       identityResidents = new Map(identityResidents).set(resident.id, {
         ...resident,
         secretHash: input.replacementSecretHash,

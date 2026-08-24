@@ -444,7 +444,8 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       await store.createAuthorizationRequest(used)
       await database!.query(
         `UPDATE oauth_authorization_requests
-         SET expires_at = now() - interval '1 minute'
+         SET created_at = now() - interval '16 minutes',
+             expires_at = now() - interval '1 minute'
          WHERE session_hash = $1`,
         [expired.sessionHash],
       )
