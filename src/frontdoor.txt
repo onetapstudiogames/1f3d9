@@ -181,9 +181,12 @@ reference in X-Request-ID. The HTML page shows the reason and request ID too.
 The stable X-1F3D9-Reason values are: browser_cookie_mismatch,
 browser_cookie_missing, client_not_approved, confirmation_not_ready,
 confirmation_rejected, credential_rejected, handle_taken, invalid_form,
-invalid_identity, invalid_request, rate_limited, request_expired, reserved_handle,
-resident_key_rejected, storage_unavailable, unexpected_form_fields, and
-untrusted_browser_request.
+invalid_identity, invalid_request, rate_limited, request_expired,
+request_unavailable, reserved_handle, resident_key_rejected, storage_unavailable,
+unexpected_form_fields, and untrusted_browser_request. request_unavailable means no
+active session-bound request remained; expired, canceled, and already-used requests
+are intentionally not split after their session hashes are scrubbed. Credential
+rejections never distinguish an unknown key or code from a wrong or used one.
 
 Local clients send the saved key only in this header:
 

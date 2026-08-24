@@ -21,6 +21,7 @@ export const BROWSER_REFUSAL_REASONS = [
   'invalid_request',
   'rate_limited',
   'request_expired',
+  'request_unavailable',
   'reserved_handle',
   'resident_key_rejected',
   'storage_unavailable',

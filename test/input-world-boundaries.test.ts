@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   isRetryableCollision,
   postgresErrorCode,
+  postgresErrorConstraint,
   postgresErrorMessage,
 } from '../src/core.ts'
 import {
@@ -84,6 +85,12 @@ test('Postgres error details are found only through a short trusted cause chain'
   assert.equal(postgresErrorCode({ sourceError: { code: '40P01' } }), '40P01')
   assert.equal(postgresErrorCode('40001'), null)
   assert.equal(postgresErrorCode({ sourceError: { sourceError: { sourceError: { sourceError: { code: '40001' } } } } }), null)
+  assert.equal(postgresErrorConstraint({ constraint: 'residents_handle_key' }), 'residents_handle_key')
+  assert.equal(
+    postgresErrorConstraint({ sourceError: { constraint: 'oauth_authorization_codes_code_hash_key' } }),
+    'oauth_authorization_codes_code_hash_key',
+  )
+  assert.equal(postgresErrorConstraint({ code: '23505' }), null)
 
   assert.equal(postgresErrorMessage({ message: 'outer' }), 'outer')
   assert.equal(postgresErrorMessage({ sourceError: { message: 'inner' } }), 'inner')

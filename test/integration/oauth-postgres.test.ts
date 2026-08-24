@@ -169,6 +169,7 @@ async function seedAuthorizationCode(
     authorizationCodeHash,
   })
   assert.deepEqual(redirect, {
+    status: 'approved',
     redirectUri: request.redirectUri,
     state: request.state,
   })
@@ -269,12 +270,14 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         [staged.handle, staged.model, staged.residentSecretHash, request.sessionHash],
       )
 
-      assert.equal(await store.confirmNewResidentAndIssueAuthorizationCode({
-        sessionHash: request.sessionHash,
-        csrfHash: request.csrfHash,
-        residentSecretHash: staged.residentSecretHash,
-        authorizationCodeHash: sha256('legacy-oauth-no-codes:authorization-code'),
-      }), null)
+      await assert.rejects(
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: staged.residentSecretHash,
+          authorizationCodeHash: sha256('legacy-oauth-no-codes:authorization-code'),
+        }),
+      )
       const state = await database!.query(
         `SELECT
            (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
@@ -341,7 +344,132 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       )
     })
 
-    await t.test('a duplicate-handle race leaks no resident ID, row, event, or authorization code', async () => {
+    await t.test('unknown and wrong resident keys stay merged and leave the same request retryable', async () => {
+      await resetDatabase()
+      const request = authorizationRequestInput('existing-key-retry')
+      await store.createAuthorizationRequest(request)
+      const requestBefore = await requestState(request.sessionHash)
+
+      for (const [index, presentedKey] of [
+        'wrong-existing-resident-key',
+        'unknown-resident-key',
+      ].entries()) {
+        assert.deepEqual(
+          await store.approveExistingResidentAndIssueAuthorizationCode({
+            sessionHash: request.sessionHash,
+            csrfHash: request.csrfHash,
+            residentSecretHash: sha256(presentedKey),
+            authorizationCodeHash: sha256(`existing-key-retry:rejected-code:${index}`),
+          }),
+          { status: 'resident_key_rejected' },
+        )
+        assert.deepEqual(
+          await requestState(request.sessionHash),
+          requestBefore,
+          'a rejected key must not consume or alter the authorization request',
+        )
+      }
+
+      assert.deepEqual(
+        await store.approveExistingResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: sha256('existing-resident-key'),
+          authorizationCodeHash: sha256('existing-key-retry:accepted-code'),
+        }),
+        {
+          status: 'approved',
+          redirectUri: request.redirectUri,
+          state: request.state,
+        },
+      )
+    })
+
+    await t.test('a wrong staged-signup key leaves the same request retryable', async () => {
+      await resetDatabase()
+      const request = authorizationRequestInput('new-key-retry')
+      const pending = stagedRegistration('new-key-retry', 'new-key-retry')
+      await store.createAuthorizationRequest(request)
+      assert.deepEqual(
+        await store.stageNewResidentRegistration(pending),
+        { status: 'staged', handle: pending.handle },
+      )
+      const requestBefore = await requestState(request.sessionHash)
+
+      assert.deepEqual(
+        await store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: sha256('wrong-new-resident-key'),
+          authorizationCodeHash: sha256('new-key-retry:rejected-code'),
+        }),
+        { status: 'confirmation_rejected' },
+      )
+      assert.deepEqual(
+        await requestState(request.sessionHash),
+        requestBefore,
+        'a rejected confirmation key must leave the staged signup intact',
+      )
+      assert.equal(
+        (await database!.query(
+          `SELECT count(*)
+           FROM oauth_authorization_request_recovery_codes code
+           JOIN oauth_authorization_requests request ON request.id = code.request_id
+           WHERE request.session_hash = $1`,
+          [request.sessionHash],
+        )).rows[0]!.count,
+        '8',
+      )
+
+      assert.deepEqual(
+        await store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+          authorizationCodeHash: sha256('new-key-retry:accepted-code'),
+        }),
+        {
+          status: 'approved',
+          redirectUri: request.redirectUri,
+          state: request.state,
+        },
+      )
+    })
+
+    await t.test('expired and used authorization requests are unavailable rather than key rejections', async () => {
+      await resetDatabase()
+      const expired = authorizationRequestInput('unavailable-expired')
+      const used = authorizationRequestInput('unavailable-used')
+      await store.createAuthorizationRequest(expired)
+      await store.createAuthorizationRequest(used)
+      await database!.query(
+        `UPDATE oauth_authorization_requests
+         SET expires_at = now() - interval '1 minute'
+         WHERE session_hash = $1`,
+        [expired.sessionHash],
+      )
+      assert.deepEqual(
+        await store.cancelAuthorizationRequest({
+          sessionHash: used.sessionHash,
+          csrfHash: used.csrfHash,
+        }),
+        { redirectUri: used.redirectUri, state: used.state },
+      )
+
+      for (const request of [expired, used]) {
+        assert.deepEqual(
+          await store.approveExistingResidentAndIssueAuthorizationCode({
+            sessionHash: request.sessionHash,
+            csrfHash: request.csrfHash,
+            residentSecretHash: sha256('existing-resident-key'),
+            authorizationCodeHash: sha256(`${request.state}:unavailable-code`),
+          }),
+          { status: 'request_unavailable' },
+        )
+      }
+    })
+
+    await t.test('a same-handle confirmation returns handle_taken and leaks no resident data', async () => {
       await resetDatabase()
       const request = authorizationRequestInput('duplicate-handle')
       const pendingSecretHash = sha256('pending-new-resident-key')
@@ -372,14 +500,14 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       await database!.query('UPDATE resident_id_allocator SET last_id = 2 WHERE singleton')
       const pendingBefore = await requestState(request.sessionHash)
 
-      const redirect = await store.confirmNewResidentAndIssueAuthorizationCode({
+      const result = await store.confirmNewResidentAndIssueAuthorizationCode({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
         residentSecretHash: pendingSecretHash,
         authorizationCodeHash,
       })
 
-      assert.equal(redirect, null)
+      assert.deepEqual(result, { status: 'handle_taken' })
       assert.deepEqual(await requestState(request.sessionHash), pendingBefore)
 
       const allocator = await database!.query<{ last_id: number }>(
@@ -446,7 +574,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       assert.equal(codes.rows[0]!.count, '1')
     })
 
-    await t.test('new-resident approval rolls every earlier write back when code issue fails', async () => {
+    await t.test('an unrelated authorization-code collision throws and rolls every new-resident write back', async () => {
       await resetDatabase()
       const collidingCodeHash = sha256('new-code-collision')
       await seedAuthorizationCode(store, 'new-seed', collidingCodeHash)
@@ -471,14 +599,19 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       )
       const requestBefore = await requestState(request.sessionHash)
 
-      const redirect = await store.confirmNewResidentAndIssueAuthorizationCode({
-        sessionHash: request.sessionHash,
-        csrfHash: request.csrfHash,
-        residentSecretHash: pendingSecretHash,
-        authorizationCodeHash: collidingCodeHash,
-      })
-
-      assert.equal(redirect, null)
+      await assert.rejects(
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: pendingSecretHash,
+          authorizationCodeHash: collidingCodeHash,
+        }),
+        (error: unknown) => {
+          const postgresError = error as { code?: string; constraint?: string }
+          return postgresError.code === '23505' &&
+            postgresError.constraint === 'oauth_authorization_codes_code_hash_key'
+        },
+      )
       assert.deepEqual(await requestState(request.sessionHash), requestBefore)
 
       const state = await database!.query<{
@@ -550,7 +683,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const canceledRequest = authorizationRequestInput('oauth-canceled-registration')
       const canceled = stagedRegistration('oauth-canceled-registration', 'oauth-canceled-registration')
       await store.createAuthorizationRequest(canceledRequest)
-      assert.equal((await store.stageNewResidentRegistration(canceled))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(canceled)).status, 'staged')
       assert.deepEqual(await store.cancelAuthorizationRequest({
         sessionHash: canceledRequest.sessionHash,
         csrfHash: canceledRequest.csrfHash,
@@ -559,7 +692,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const expiredRequest = authorizationRequestInput('oauth-expired-registration')
       const expired = stagedRegistration('oauth-expired-registration', 'oauth-expired-registration')
       await store.createAuthorizationRequest(expiredRequest)
-      assert.equal((await store.stageNewResidentRegistration(expired))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(expired)).status, 'staged')
       await database!.query(
         `UPDATE oauth_authorization_requests
          SET created_at = now() - interval '16 minutes',
@@ -607,14 +740,16 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const request = authorizationRequestInput('oauth-missing-world')
       const pending = stagedRegistration('oauth-missing-world', 'oauth-missing-world')
       await store.createAuthorizationRequest(request)
-      assert.equal((await store.stageNewResidentRegistration(pending))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(pending)).status, 'staged')
 
-      assert.equal(await store.confirmNewResidentAndIssueAuthorizationCode({
-        sessionHash: request.sessionHash,
-        csrfHash: request.csrfHash,
-        residentSecretHash: pending.residentSecretHash,
-        authorizationCodeHash: sha256('oauth-missing-world:authorization-code'),
-      }), null)
+      await assert.rejects(
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+          authorizationCodeHash: sha256('oauth-missing-world:authorization-code'),
+        }),
+      )
       const state = await database!.query(
         `SELECT
            (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
@@ -645,14 +780,21 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         [pending.recoveryCodeHashes[5]],
       )
       await store.createAuthorizationRequest(request)
-      assert.equal((await store.stageNewResidentRegistration(pending))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(pending)).status, 'staged')
 
-      assert.equal(await store.confirmNewResidentAndIssueAuthorizationCode({
-        sessionHash: request.sessionHash,
-        csrfHash: request.csrfHash,
-        residentSecretHash: pending.residentSecretHash,
-        authorizationCodeHash: sha256('oauth-active-code-collision:authorization-code'),
-      }), null)
+      await assert.rejects(
+        store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+          authorizationCodeHash: sha256('oauth-active-code-collision:authorization-code'),
+        }),
+        (error: unknown) => {
+          const postgresError = error as { code?: string; constraint?: string }
+          return postgresError.code === '23505' &&
+            postgresError.constraint === 'resident_recovery_codes_code_hash_key'
+        },
+      )
       const state = await database!.query(
         `SELECT
            (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
@@ -677,7 +819,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const request = authorizationRequestInput('oauth-event-rollback')
       const pending = stagedRegistration('oauth-event-rollback', 'oauth-event-rollback')
       await store.createAuthorizationRequest(request)
-      assert.equal((await store.stageNewResidentRegistration(pending))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(pending)).status, 'staged')
       await database!.query(`
         CREATE FUNCTION fail_oauth_registration_event() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
@@ -731,7 +873,16 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       const codeHash = sha256('new-resident-success:code')
       await store.createAuthorizationRequest(request)
 
-      assert.equal(
+      assert.deepEqual(
+        await store.confirmNewResidentAndIssueAuthorizationCode({
+          sessionHash: request.sessionHash,
+          csrfHash: request.csrfHash,
+          residentSecretHash,
+          authorizationCodeHash: sha256('new-resident-success:not-ready-code'),
+        }),
+        { status: 'confirmation_not_ready' },
+      )
+      assert.deepEqual(
         await store.stageNewResidentRegistration({
           sessionHash: request.sessionHash,
           csrfHash: sha256('wrong-csrf'),
@@ -740,7 +891,7 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           residentSecretHash,
           recoveryCodeHashes,
         }),
-        null,
+        { status: 'request_unavailable' },
       )
       assert.deepEqual(
         await store.stageNewResidentRegistration({
@@ -794,16 +945,20 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           residentSecretHash,
           authorizationCodeHash: codeHash,
         }),
-        { redirectUri: request.redirectUri, state: request.state },
+        {
+          status: 'approved',
+          redirectUri: request.redirectUri,
+          state: request.state,
+        },
       )
-      assert.equal(
+      assert.deepEqual(
         await store.confirmNewResidentAndIssueAuthorizationCode({
           sessionHash: request.sessionHash,
           csrfHash: request.csrfHash,
           residentSecretHash,
           authorizationCodeHash: sha256('second-code'),
         }),
-        null,
+        { status: 'request_unavailable' },
       )
 
       const resident = await database!.query<{
@@ -861,8 +1016,8 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         store.createAuthorizationRequest(firstRequest),
         store.createAuthorizationRequest(secondRequest),
       ])
-      assert.equal((await store.stageNewResidentRegistration(first))?.status, 'staged')
-      assert.equal((await store.stageNewResidentRegistration(second))?.status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(first)).status, 'staged')
+      assert.equal((await store.stageNewResidentRegistration(second)).status, 'staged')
 
       const results = await Promise.all([
         store.confirmNewResidentAndIssueAuthorizationCode({
@@ -878,9 +1033,12 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           authorizationCodeHash: sha256('oauth-race-second:authorization-code'),
         }),
       ])
-      assert.equal(results.filter(Boolean).length, 1)
-      const winner = results[0] ? first : second
-      const loser = results[0] ? second : first
+      assert.deepEqual(
+        results.map(result => result.status).sort(),
+        ['approved', 'handle_taken'],
+      )
+      const winner = results[0].status === 'approved' ? first : second
+      const loser = results[0].status === 'approved' ? second : first
       const state = await database!.query(
         `SELECT
            (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,

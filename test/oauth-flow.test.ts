@@ -174,9 +174,14 @@ class MemoryOAuthStore {
       if (
         !request || request.csrfHash !== input.csrfHash || request.intent !== null ||
         request.resident_id !== null || residentId === undefined
-      ) return null
+      ) {
+        if (!request || request.csrfHash !== input.csrfHash || request.used) {
+          return { status: 'request_unavailable' as const }
+        }
+        return { status: 'resident_key_rejected' as const }
+      }
       const resident = this.residents.get(residentId)
-      if (!resident) return null
+      if (!resident) return { status: 'resident_key_rejected' as const }
       request.intent = 'existing'
       request.resident_id = resident.id
       request.used = true
@@ -191,7 +196,7 @@ class MemoryOAuthStore {
         expiresAt: Date.now() + 5 * 60_000,
         used: false,
       })
-      return { redirectUri: request.redirect_uri, state: request.state }
+      return { status: 'approved' as const, redirectUri: request.redirect_uri, state: request.state }
     },
 
     stageNewResidentRegistration: async (
@@ -201,7 +206,7 @@ class MemoryOAuthStore {
       if (
         !request || request.csrfHash !== input.csrfHash || request.intent !== null ||
         request.resident_id !== null
-      ) return null
+      ) return { status: 'request_unavailable' as const }
       if ([...this.residents.values()].some(resident => resident.handle === input.handle)) {
         return { status: 'handle_taken' as const }
       }
@@ -236,17 +241,20 @@ class MemoryOAuthStore {
       if (
         !request || request.csrfHash !== input.csrfHash || request.intent !== 'new' ||
         request.resident_id !== null || request.new_handle === null || request.new_model === null ||
-        request.pendingSecretHash === null || request.pendingSecretHash !== input.residentSecretHash ||
+        request.pendingSecretHash === null ||
         request.root_key_confirmed_at !== null || request.pendingRecoveryCodeHashes === null ||
         !validRecoveryCodeHashes(request.pendingRecoveryCodeHashes)
-      ) return null
+      ) return { status: 'request_unavailable' as const }
+      if (request.pendingSecretHash !== input.residentSecretHash) {
+        return { status: 'confirmation_rejected' as const }
+      }
       const allocatedResidentId = this.nextResidentId++
       if ([...this.residents.values()].some(resident => resident.handle === request.new_handle)) {
         // Mirror PostgreSQL statement rollback: the allocator update happens before
         // the unique-handle insert fails, then the whole statement is restored.
         this.nextResidentId = allocatedResidentId
         this.duplicateHandleRollbacks++
-        return null
+        return { status: 'handle_taken' as const }
       }
       const resident: Resident = {
         id: allocatedResidentId,
@@ -279,7 +287,7 @@ class MemoryOAuthStore {
         expiresAt: Date.now() + 5 * 60_000,
         used: false,
       })
-      return { redirectUri: request.redirect_uri, state: request.state }
+      return { status: 'approved' as const, redirectUri: request.redirect_uri, state: request.state }
     },
 
     getAuthorizationCode: async (codeHash: string): Promise<AuthorizationCodeRecord | null> => {
@@ -974,6 +982,36 @@ test('existing resident completes sign-in, PKCE exchange, resolver, replay rejec
   assert.deepEqual(recoveryCodesAfter, recoveryCodesBefore, 'linking must not generate or replace recovery codes')
 })
 
+test('unrecognized resident keys stay merged and can be corrected on the same sign-in request', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const unrecognizedKeys = [
+    `1f3d9_sk_${'cd'.repeat(24)}`,
+    `1f3d9_sk_${'ef'.repeat(24)}`,
+  ]
+
+  for (const residentKey of unrecognizedKeys) {
+    const rejected = await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: residentKey,
+    })
+    assert.equal(rejected.status, 403)
+    assert.equal(rejected.headers.get('x-1f3d9-reason'), 'resident_key_rejected')
+    const body = await rejected.text()
+    assert.match(body, /resident key could not be verified/iu)
+    assert.match(body, /try again on this page/iu)
+    assert.match(body, /name="action" value="link"/u)
+    assert.match(body, /name="resident_key"[^>]*type="password"/iu)
+    assert.match(body, new RegExp(`name="csrf" value="${session.csrf}"`, 'u'))
+    assert.doesNotMatch(body, /Start again|close this page/iu)
+    assert.doesNotMatch(body, new RegExp(residentKey, 'iu'))
+  }
+
+  const corrected = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  })
+  authorizationCode(corrected)
+})
+
 test('a redeemed access token reaches city actions only through the hosted connector', async () => {
   const { app, memory } = fixture()
   app.get('/api/me', async c => {
@@ -1139,6 +1177,40 @@ test('new resident sees its root key once, must re-enter it, then receives only 
   assert.deepEqual(confirmedState.events.map(event => event.actor), ['goldfish-agent'])
 })
 
+test('a wrong staged-signup key keeps the staged request and offers a safe retry form', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const staged = await browserPost(app, session, {
+    action: 'register', csrf: session.csrf, handle: 'retry-staged-key', model: 'hosted-chat',
+  })
+  assert.equal(staged.status, 200)
+  const stagedPage = await staged.text()
+  const rootKey = stagedPage.match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  const recoveryCodes = stagedPage.match(/1f3d9_rc_[0-9a-f]{64}/gu) ?? []
+  assert.ok(rootKey)
+  assert.equal(recoveryCodes.length, 8)
+
+  const wrongKey = `1f3d9_sk_${'fe'.repeat(24)}`
+  const rejected = await browserPost(app, session, {
+    action: 'confirm', csrf: session.csrf, resident_key: wrongKey,
+  })
+  assert.equal(rejected.status, 403)
+  assert.equal(rejected.headers.get('x-1f3d9-reason'), 'confirmation_rejected')
+  const rejectedPage = await rejected.text()
+  assert.match(rejectedPage, /saved resident key could not be verified/iu)
+  assert.match(rejectedPage, /try again on this page/iu)
+  assert.match(rejectedPage, /name="action" value="confirm"/u)
+  assert.match(rejectedPage, /name="resident_key"[^>]*type="password"/iu)
+  assert.match(rejectedPage, new RegExp(`name="csrf" value="${session.csrf}"`, 'u'))
+  assert.doesNotMatch(rejectedPage, /Start again|close this page/iu)
+  assertSecretsAbsent(rejectedPage, [wrongKey, rootKey, ...recoveryCodes])
+
+  const corrected = await browserPost(app, session, {
+    action: 'confirm', csrf: session.csrf, resident_key: rootKey,
+  })
+  authorizationCode(corrected)
+})
+
 test('connector signup retries a random collision until all eight initial recovery codes are unique', async () => {
   const byteValues = [1, 1, 2, 3, 4, 5, 6, 7, 8]
   let draw = 0
@@ -1184,7 +1256,7 @@ test('connector signup discloses no generated secrets when throttling or staging
     const { app, memory } = fixture()
     const session = await begin(app)
     if (stageFailure === 'missing') {
-      Object.assign(memory.api, { stageNewResidentRegistration: async () => null })
+      Object.assign(memory.api, { stageNewResidentRegistration: async () => ({ status: 'request_unavailable' as const }) })
     } else if (stageFailure === 'unique_error') {
       Object.assign(memory.api, {
         stageNewResidentRegistration: async () => {
@@ -1214,7 +1286,7 @@ test('connector signup discloses no generated secrets when throttling or staging
       events: unknown[]
     }
 
-    assert.equal({ missing: 403, duplicate: 409, unique_error: 409, error: 503 }[stageFailure], response.status)
+    assert.equal({ missing: 403, duplicate: 409, unique_error: 503, error: 503 }[stageFailure], response.status)
     assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
     assert.deepEqual(state.residents.map(resident => resident.id), [49])
     assert.equal(state.recoveryCodes.length, 0)
@@ -1260,7 +1332,7 @@ test('connector signup confirmation stays uncommitted when its rate limit or sto
     if (confirmFailure === 'rate_limit') {
       Object.assign(memory.api, { consumeOAuthRateLimit: async () => false })
     } else if (confirmFailure === 'missing') {
-      Object.assign(memory.api, { confirmNewResidentAndIssueAuthorizationCode: async () => null })
+      Object.assign(memory.api, { confirmNewResidentAndIssueAuthorizationCode: async () => ({ status: 'request_unavailable' as const }) })
     } else {
       Object.assign(memory.api, {
         confirmNewResidentAndIssueAuthorizationCode: async () => {
@@ -1368,7 +1440,8 @@ test('same-name pending registrations stay harmless and only one confirmation ca
   const loser = await browserPost(app, second, {
     action: 'confirm', csrf: second.csrf, resident_key: secondKey,
   })
-  assert.equal(loser.status, 403)
+  assert.equal(loser.status, 409)
+  assert.equal(loser.headers.get('x-1f3d9-reason'), 'handle_taken')
   assert.equal(loser.headers.get('location'), null)
   const loserSurface = `${await loser.text()}\n${[...loser.headers].flat().join('\n')}`
   assert.doesNotMatch(loserSurface, new RegExp(`${firstKey}|${secondKey}`, 'i'))
@@ -1512,6 +1585,57 @@ test('browser approval rejects wrong origin and CSRF without reflecting the resi
   )
 })
 
+test('browser approval distinguishes wrong keys from expired sign-in state and avoids harmful restart advice', async () => {
+  {
+    const { app } = fixture()
+    const session = await begin(app)
+    const wrongKey = await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: `1f3d9_sk_${'cd'.repeat(24)}`,
+    })
+    assert.equal(wrongKey.status, 403)
+    assert.equal(wrongKey.headers.get('x-1f3d9-reason'), 'resident_key_rejected')
+    const wrongKeyBody = await wrongKey.text()
+    assert.match(wrongKeyBody, /resident key could not be verified/iu)
+    assert.doesNotMatch(wrongKeyBody, /Start again|href=/iu)
+  }
+
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'staged-expiry-agent', model: 'hosted-chat',
+    })
+    const stagedPage = await staged.text()
+    const rootKey = stagedPage.match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
+    assert.ok(rootKey)
+
+    Object.assign(memory.api, { confirmNewResidentAndIssueAuthorizationCode: async () => ({ status: 'request_unavailable' as const }) })
+    const expired = await browserPost(app, session, {
+      action: 'confirm', csrf: session.csrf, resident_key: rootKey,
+    })
+    assert.equal(expired.status, 403)
+    assert.equal(expired.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    assert.match(await expired.text(), /sign-in request expired|already used/iu)
+  }
+
+  {
+    const { app } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'wrong-confirm-agent', model: 'hosted-chat',
+    })
+    const wrong = await browserPost(app, session, {
+      action: 'confirm', csrf: session.csrf, resident_key: EXISTING_KEY,
+    })
+    assert.equal(staged.status, 200)
+    assert.equal(wrong.status, 403)
+    assert.equal(wrong.headers.get('x-1f3d9-reason'), 'confirmation_rejected')
+    const wrongBody = await wrong.text()
+    assert.match(wrongBody, /saved resident key could not be verified/iu)
+    assert.doesNotMatch(wrongBody, /Start again|href=/iu)
+  }
+})
+
 test('browser approval accepts a same-origin referrer when Origin is withheld', async () => {
   const { app } = fixture()
   const session = await begin(app)
@@ -1638,6 +1762,71 @@ test('token exchange rejects wrong verifier, resource, private-client credential
     assert.equal(duplicate.status, 400)
     assert.deepEqual(await duplicate.json(), { error: 'invalid_request' })
   }
+})
+
+test('expired and used connector requests direct the person back to the chat app', async () => {
+  const stopped: Response[] = []
+
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    memory.expireBrowserSession(session.rawSession)
+    stopped.push(await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+    }))
+  }
+
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'expired-staged-key', model: 'hosted-chat',
+    })
+    const rootKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+    assert.ok(rootKey)
+    memory.expireBrowserSession(session.rawSession)
+    stopped.push(await browserPost(app, session, {
+      action: 'confirm', csrf: session.csrf, resident_key: rootKey,
+    }))
+  }
+
+  {
+    const { app } = fixture()
+    const session = await begin(app)
+    const approved = await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+    })
+    authorizationCode(approved)
+    stopped.push(await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+    }))
+  }
+
+  for (const response of stopped) {
+    assert.equal(response.status, 403)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    const body = await response.text()
+    assert.match(body, /return to the chat app and start sign-in again/iu)
+    assert.doesNotMatch(body, /name="resident_key"/u)
+  }
+})
+
+test('a non-handle unique violation is a storage fault, not a taken-name claim', async () => {
+  const { app, memory } = fixture()
+  const session = await begin(app)
+  Object.assign(memory.api, {
+    approveExistingResidentAndIssueAuthorizationCode: async () => {
+      throw Object.assign(new Error('authorization-code collision'), { code: '23505' })
+    },
+  })
+
+  const response = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  })
+  assert.equal(response.status, 503)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'storage_unavailable')
+  assert.equal(response.headers.get('retry-after'), '1')
+  assert.doesNotMatch(await response.text(), /resident name[^.]*taken|handle_taken/iu)
 })
 
 test('cancel atomically consumes the request before returning access_denied', async () => {

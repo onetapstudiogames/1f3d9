@@ -1,5 +1,10 @@
 import { sql } from './db.ts'
-import { postgresErrorCode, utcToday, type Resident } from './core.ts'
+import {
+  postgresErrorCode,
+  postgresErrorConstraint,
+  utcToday,
+  type Resident,
+} from './core.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export type OAuthAttemptKind = 'authorize' | 'resident_key' | 'token' | 'refresh' | 'revoke'
@@ -35,11 +40,24 @@ export interface AuthorizationRequestRecord {
 export type PendingRegistrationResult =
   | { status: 'staged'; handle: string }
   | { status: 'handle_taken' }
+  | { status: 'request_unavailable' }
 
 export interface AuthorizationRedirect {
   redirectUri: string
   state: string
 }
+
+export type AuthorizationApprovalResult =
+  | ({ status: 'approved' } & AuthorizationRedirect)
+  | { status: 'resident_key_rejected' }
+  | { status: 'request_unavailable' }
+
+export type NewResidentConfirmationResult =
+  | ({ status: 'approved' } & AuthorizationRedirect)
+  | { status: 'confirmation_not_ready' }
+  | { status: 'confirmation_rejected' }
+  | { status: 'handle_taken' }
+  | { status: 'request_unavailable' }
 
 export interface AuthorizationCodeRecord {
   residentId: number
@@ -183,9 +201,19 @@ export async function approveExistingResidentAndIssueAuthorizationCode(input: {
   csrfHash: string
   residentSecretHash: string
   authorizationCodeHash: string
-}): Promise<AuthorizationRedirect | null> {
+}): Promise<AuthorizationApprovalResult> {
   const rows = (await sql`
-    WITH proven_resident AS MATERIALIZED (
+    WITH active_request AS MATERIALIZED (
+      SELECT id, client_id, redirect_uri, resource, scope, state, code_challenge
+      FROM oauth_authorization_requests
+      WHERE session_hash = ${input.sessionHash}
+        AND csrf_hash = ${input.csrfHash}
+        AND intent IS NULL
+        AND resident_id IS NULL
+        AND used_at IS NULL
+        AND expires_at > now()
+      FOR UPDATE
+    ), proven_resident AS MATERIALIZED (
       SELECT id
       FROM residents
       WHERE secret_hash = ${input.residentSecretHash}
@@ -196,13 +224,8 @@ export async function approveExistingResidentAndIssueAuthorizationCode(input: {
           verified_at = now(),
           approved_at = now(),
           used_at = now()
-      FROM proven_resident resident
-      WHERE request.session_hash = ${input.sessionHash}
-        AND request.csrf_hash = ${input.csrfHash}
-        AND request.intent IS NULL
-        AND request.resident_id IS NULL
-        AND request.used_at IS NULL
-        AND request.expires_at > now()
+      FROM active_request active, proven_resident resident
+      WHERE request.id = active.id
       RETURNING request.id, resident.id AS resident_id, request.client_id,
         request.redirect_uri, request.resource, request.scope, request.state,
         request.code_challenge
@@ -215,13 +238,32 @@ export async function approveExistingResidentAndIssueAuthorizationCode(input: {
         resource, scope, code_challenge, 'S256', now() + interval '5 minutes'
       FROM consumed_request
       RETURNING request_id
+    ), completed AS MATERIALIZED (
+      SELECT request.redirect_uri, request.state
+      FROM consumed_request request
+      JOIN issued_code code ON code.request_id = request.id
     )
-    SELECT request.redirect_uri, request.state
-    FROM consumed_request request
-    JOIN issued_code code ON code.request_id = request.id
-  `) as { redirect_uri: string; state: string }[]
-  const redirect = rows[0]
-  return redirect ? { redirectUri: redirect.redirect_uri, state: redirect.state } : null
+    SELECT 'approved'::text AS status, completed.redirect_uri, completed.state
+    FROM completed
+    UNION ALL
+    SELECT 'request_unavailable'::text, NULL::text, NULL::text
+    WHERE NOT EXISTS (SELECT 1 FROM active_request)
+    UNION ALL
+    SELECT 'resident_key_rejected'::text, NULL::text, NULL::text
+    WHERE EXISTS (SELECT 1 FROM active_request)
+      AND NOT EXISTS (SELECT 1 FROM proven_resident)
+  `) as {
+    status: 'approved' | 'resident_key_rejected' | 'request_unavailable'
+    redirect_uri: string | null
+    state: string | null
+  }[]
+  const result = rows[0]
+  if (!result) throw new Error('existing-resident approval produced no outcome')
+  if (result.status !== 'approved') return { status: result.status }
+  if (result.redirect_uri === null || result.state === null) {
+    throw new Error('existing-resident approval returned an incomplete redirect')
+  }
+  return { status: 'approved', redirectUri: result.redirect_uri, state: result.state }
 }
 
 export async function stageNewResidentRegistration(input: {
@@ -231,10 +273,9 @@ export async function stageNewResidentRegistration(input: {
   model: string
   residentSecretHash: string
   recoveryCodeHashes: string[]
-}): Promise<PendingRegistrationResult | null> {
+}): Promise<PendingRegistrationResult> {
   requireInitialRecoveryCodeHashes(input.recoveryCodeHashes)
-  try {
-    const rows = (await sql`
+  const rows = (await sql`
       WITH eligible AS MATERIALIZED (
         SELECT id
         FROM oauth_authorization_requests
@@ -274,15 +315,11 @@ export async function stageNewResidentRegistration(input: {
         (SELECT handle FROM staged
           WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle
     `) as { eligible: boolean; handle: string | null }[]
-    const result = rows[0]
-    if (!result?.eligible) return null
-    return result.handle
-      ? { status: 'staged', handle: result.handle }
-      : { status: 'handle_taken' }
-  } catch (error) {
-    if (postgresErrorCode(error) === '23505') return null
-    throw error
-  }
+  const result = rows[0]
+  if (!result?.eligible) return { status: 'request_unavailable' }
+  return result.handle
+    ? { status: 'staged', handle: result.handle }
+    : { status: 'handle_taken' }
 }
 
 export async function confirmNewResidentAndIssueAuthorizationCode(input: {
@@ -290,28 +327,40 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
   csrfHash: string
   residentSecretHash: string
   authorizationCodeHash: string
-}): Promise<AuthorizationRedirect | null> {
+}): Promise<NewResidentConfirmationResult> {
+  // Resident creation and INSERT INTO resident_presence remain one atomic statement.
   try {
-    // Resident creation and INSERT INTO resident_presence remain one atomic statement.
     const rows = (await sql`
-        WITH eligible AS MATERIALIZED (
+        WITH active_request AS MATERIALIZED (
           SELECT id, client_id, redirect_uri, resource, scope, state,
-            code_challenge, new_handle, new_model, new_secret_hash
+            code_challenge, intent, resident_id, new_handle, new_model,
+            new_secret_hash, verified_at, approved_at, root_key_confirmed_at
           FROM oauth_authorization_requests
           WHERE session_hash = ${input.sessionHash}
             AND csrf_hash = ${input.csrfHash}
-            AND intent = 'new'
+            AND used_at IS NULL
+            AND expires_at > now()
+          FOR UPDATE
+        ), confirmable_request AS MATERIALIZED (
+          SELECT *
+          FROM active_request
+          WHERE intent = 'new'
             AND resident_id IS NULL
             AND new_handle IS NOT NULL
             AND new_model IS NOT NULL
             AND new_secret_hash IS NOT NULL
-            AND new_secret_hash = ${input.residentSecretHash}
             AND verified_at IS NOT NULL
             AND approved_at IS NOT NULL
             AND root_key_confirmed_at IS NULL
-            AND used_at IS NULL
-            AND expires_at > now()
-          FOR UPDATE
+        ), eligible AS MATERIALIZED (
+          SELECT id, client_id, redirect_uri, resource, scope, state,
+            code_challenge, new_handle, new_model, new_secret_hash
+          FROM confirmable_request
+          WHERE new_secret_hash = ${input.residentSecretHash}
+        ), handle_conflict AS MATERIALIZED (
+          SELECT resident.handle
+          FROM residents resident
+          JOIN eligible ON eligible.new_handle = resident.handle
         ), pending_codes AS MATERIALIZED (
           SELECT code.code_hash
           FROM oauth_authorization_request_recovery_codes code
@@ -335,6 +384,7 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             AND EXISTS (SELECT 1 FROM eligible)
             AND EXISTS (SELECT 1 FROM valid_code_set)
             AND EXISTS (SELECT 1 FROM world_root)
+            AND NOT EXISTS (SELECT 1 FROM handle_conflict)
           RETURNING last_id AS id
         ), new_resident AS (
           INSERT INTO residents (id, handle, model, secret_hash, recovery_generation)
@@ -392,17 +442,50 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             AND (SELECT count(*) FROM inserted_recovery_codes) = 8
             AND (SELECT count(*) FROM scrubbed_pending_codes) = 8
           RETURNING request_id
+        ), completed AS MATERIALIZED (
+          SELECT request.redirect_uri, request.state
+          FROM consumed_request request
+          JOIN issued_code code ON code.request_id = request.id
         )
-        SELECT request.redirect_uri, request.state
-        FROM consumed_request request
-        JOIN issued_code code ON code.request_id = request.id
-    `) as { redirect_uri: string; state: string }[]
-    const redirect = rows[0]
-    return redirect ? { redirectUri: redirect.redirect_uri, state: redirect.state } : null
+        SELECT 'approved'::text AS status, completed.redirect_uri, completed.state
+        FROM completed
+        UNION ALL
+        SELECT 'request_unavailable'::text, NULL::text, NULL::text
+        WHERE NOT EXISTS (SELECT 1 FROM active_request)
+        UNION ALL
+        SELECT 'confirmation_not_ready'::text, NULL::text, NULL::text
+        WHERE EXISTS (SELECT 1 FROM active_request)
+          AND NOT EXISTS (SELECT 1 FROM confirmable_request)
+        UNION ALL
+        SELECT 'confirmation_rejected'::text, NULL::text, NULL::text
+        WHERE EXISTS (SELECT 1 FROM confirmable_request)
+          AND NOT EXISTS (SELECT 1 FROM eligible)
+        UNION ALL
+        SELECT 'handle_taken'::text, NULL::text, NULL::text
+        WHERE EXISTS (SELECT 1 FROM eligible)
+          AND EXISTS (SELECT 1 FROM handle_conflict)
+    `) as {
+      status:
+        | 'approved'
+        | 'confirmation_not_ready'
+        | 'confirmation_rejected'
+        | 'handle_taken'
+        | 'request_unavailable'
+      redirect_uri: string | null
+      state: string | null
+    }[]
+    const result = rows[0]
+    if (!result) throw new Error('new-resident confirmation produced no outcome')
+    if (result.status !== 'approved') return { status: result.status }
+    if (result.redirect_uri === null || result.state === null) {
+      throw new Error('new-resident confirmation returned an incomplete redirect')
+    }
+    return { status: 'approved', redirectUri: result.redirect_uri, state: result.state }
   } catch (error) {
-    // A concurrently confirmed registration may win the unique handle race.
-    // The single failed SQL statement rolls back its ID allocation and all writes.
-    if (postgresErrorCode(error) === '23505') return null
+    if (
+      postgresErrorCode(error) === '23505' &&
+      postgresErrorConstraint(error) === 'residents_handle_key'
+    ) return { status: 'handle_taken' }
     throw error
   }
 }
