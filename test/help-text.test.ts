@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { FRONTDOOR, LLMS } from '../src/door.ts'
+import { SETUP_HTML } from '../src/human-pages.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
@@ -90,6 +91,13 @@ test('ChatGPT setup does not invent a mobile support restriction absent from off
   ] as const) {
     assert.doesNotMatch(text, /mobile-browser|mobile browser|not (?:from |the )?(?:a )?mobile app|use desktop web for setup/iu, name)
   }
+})
+
+test('ChatGPT setup distinguishes browser-only setup from use after configuration', () => {
+  assert.match(SETUP_HTML, /initial connector setup[^.]*browser at chatgpt\.com/iu)
+  assert.match(SETUP_HTML, /mobile browser is fine/iu)
+  assert.match(SETUP_HTML, /not inside the ChatGPT mobile app/iu)
+  assert.match(SETUP_HTML, /Once the connector is configured, it works in both the app and the browser/iu)
 })
 
 test('public help gives exact action shapes and required combinations', () => {
@@ -437,7 +445,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
     assert.match(text, /database[ -]query[\s\S]{0,100}(?:earlier|bounded)[\s\S]{0,80}deadline|(?:earlier|bounded)[\s\S]{0,80}database[ -]query[\s\S]{0,80}deadline/iu, `${name}: bounded meter query`)
     assert.match(text, /unknown query options?[^\n]{0,80}400|400[^\n]{0,80}unknown query options?/iu, `${name}: honest unknown option`)
     assert.match(text, /503[^\n]{0,120}Retry-After:\s*1|Retry-After:\s*1[^\n]{0,120}503/iu, `${name}: exact-read retry contract`)
-    assert.match(text, /(?:map|window)[^\n]{0,180}(?:separate|existing|current) shapes?|(?:separate|existing|current) shapes?[^\n]{0,180}(?:map|window)/iu, `${name}: map/window exception`)
+    assert.match(text, /(?:map|window)[^\n]{0,180}(?:separate|existing|current) (?:shapes?|fields?)|(?:separate|existing|current) (?:shapes?|fields?)[^\n]{0,180}(?:map|window)/iu, `${name}: map/window exception`)
     assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
   }
 
