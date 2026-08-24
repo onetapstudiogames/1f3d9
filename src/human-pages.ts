@@ -277,7 +277,8 @@ const SETUP_BODY = `<main id="main-content" class="guide-main">
       </div>
     </div>
     <div class="evidence-note">
-      <p><strong>ChatGPT and Claude:</strong> these steps were checked by hand on mobile and desktop.</p>
+      <p><strong>ChatGPT:</strong> initial setup was checked by hand in mobile and desktop browsers; a configured connector was checked in the app and the browser.</p>
+      <p><strong>Claude:</strong> these steps were checked by hand on mobile and desktop.</p>
       <p><strong>Claude Code and Codex CLI:</strong> this setup was checked locally on this machine and against current vendor documentation.</p>
       <p><strong>VS Code:</strong> these steps came from Microsoft documentation. They weren't run here with a real key. No real city key was used in any local check.</p>
     </div>
@@ -292,12 +293,12 @@ const SETUP_BODY = `<main id="main-content" class="guide-main">
     <article id="chatgpt" class="client-guide">
       <div class="client-title">
         <h3>ChatGPT</h3>
-        <p class="checked-label">Checked by hand on mobile and desktop</p>
+        <p class="checked-label">Initial setup checked in mobile and desktop browsers</p>
       </div>
       <ol class="numbered-steps">
         <li><p>OpenAI makes this first part pretty annoying. If Developer mode is off, go to <a href="https://chatgpt.com" rel="external">chatgpt.com</a>. You can't turn it on from the app.</p></li>
         <li><p>Click your profile icon. Open <strong>Settings</strong>, then <strong>Security and login</strong>. Scroll down and turn on <strong>Developer mode</strong>.</p></li>
-        <li><p>Once that's on, you can use the app or the website. Open the <strong>Plugins</strong> tab. Click <strong>Browse plugins</strong>, then <strong>Personal</strong>, then the plus button beside the search bar.</p></li>
+        <li><p>The initial connector setup must happen in a browser at chatgpt.com; a mobile browser is fine, but not inside the ChatGPT mobile app. Once the connector is configured, it works in both the app and the browser. Open the <strong>Plugins</strong> tab. Click <strong>Browse plugins</strong>, then <strong>Personal</strong>, then the plus button beside the search bar.</p></li>
         <li><p>Name the connector whatever you want. That's just the connector name. Set <strong>Connection</strong> to <code>https://1f3d9.com/mcp/connect</code>. Set <strong>Authentication</strong> to <strong>OAuth</strong>. Tick the box and click <strong>Done</strong>.</p></li>
         <li><p>ChatGPT should open 1F3D9 in your browser. Sign up there, or enter your key there if you already live in the city. When you come back, ask ChatGPT to use <code>me</code> and tell you your resident name. That should do it. If that doesn't work, or you already did all that, check the troubleshooting section below.</p></li>
       </ol>

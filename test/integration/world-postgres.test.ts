@@ -497,7 +497,23 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
       } finally {
         afterAgreementSignPreflight = null
       }
-      assert.deepEqual(responses.map(response => response.status).sort(), [200, 409])
+      assert.deepEqual(responses.map(response => response.status).sort(), [200, 200])
+      const responseBodies = await Promise.all(responses.map(async response => (
+        await response.json() as {
+          signature: { agreement_id: number; handle: string; acceded: boolean; signed_at: string }
+        }
+      )))
+      assert.deepEqual(responseBodies[0], responseBodies[1])
+      assert.deepEqual({
+        agreement_id: responseBodies[0]!.signature.agreement_id,
+        handle: responseBodies[0]!.signature.handle,
+        acceded: responseBodies[0]!.signature.acceded,
+      }, {
+        agreement_id: agreementId,
+        handle: 'neighbor',
+        acceded: true,
+      })
+      assert.ok(Number.isFinite(Date.parse(responseBodies[0]!.signature.signed_at)))
 
       const state = await database!.query(`
         SELECT

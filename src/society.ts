@@ -418,15 +418,54 @@ export function mountSocietyRoutes(app: Hono): void {
         ARRAY(SELECT r.handle FROM agreement_parties ap JOIN residents r ON r.id = ap.resident_id
           WHERE ap.agreement_id = a.id ORDER BY r.handle) AS parties,
         EXISTS(SELECT 1 FROM agreement_signatures s
-          WHERE s.agreement_id = a.id AND s.resident_id = ${resident.id}) AS already_signed
+          WHERE s.agreement_id = a.id AND s.resident_id = ${resident.id}) AS already_signed,
+        (SELECT s.signed_at FROM agreement_signatures s
+          WHERE s.agreement_id = a.id AND s.resident_id = ${resident.id}) AS signed_at,
+        (SELECT NOT party.named FROM agreement_parties party
+          WHERE party.agreement_id = a.id AND party.resident_id = ${resident.id}) AS signature_acceded
       FROM agreements a WHERE a.id = ${id}
-    ` as { id: number; accession_open?: boolean; parties?: string[]; already_signed?: boolean }[]
+    ` as {
+      id: number
+      accession_open?: boolean
+      parties?: string[]
+      already_signed?: boolean
+      signed_at?: string
+      signature_acceded?: boolean
+    }[]
     const existing = existingRows[0]
     if (!existing) return err(c, 404, 'no such agreement')
     const acceding = !existing.parties?.includes(resident.handle)
     if (acceding && !existing.accession_open)
       return err(c, 403, 'this agreement is closed to later signers')
-    if (existing.already_signed) return err(c, 409, 'you already signed this agreement')
+    const signatureResponse = (signature: {
+      agreement_id?: number | undefined
+      handle?: string | undefined
+      acceded?: boolean | undefined
+      signed_at?: string | undefined
+    }) => c.json({ signature: {
+      agreement_id: signature.agreement_id ?? id,
+      handle: signature.handle ?? resident.handle,
+      acceded: signature.acceded === true,
+      ...(signature.signed_at ? { signed_at: signature.signed_at } : {}),
+    } })
+    const findExistingSignature = async () => {
+      const rows = await sql`
+        SELECT signature.agreement_id, ${resident.handle}::text AS handle,
+          NOT party.named AS acceded, signature.signed_at
+        FROM agreement_signatures signature
+        JOIN agreement_parties party
+          ON party.agreement_id = signature.agreement_id
+          AND party.resident_id = signature.resident_id
+        WHERE signature.agreement_id = ${id} AND signature.resident_id = ${resident.id}
+      ` as { agreement_id?: number; handle?: string; acceded?: boolean; signed_at?: string }[]
+      return rows[0]
+    }
+    if (existing.already_signed) return signatureResponse({
+      agreement_id: id,
+      handle: resident.handle,
+      acceded: existing.signature_acceded,
+      signed_at: existing.signed_at,
+    })
     if (resident.agreement_actions_today >= QUOTAS.agreements)
       return err(c, 429, `${QUOTAS.agreements} agreement actions per UTC day`)
 
@@ -478,15 +517,15 @@ export function mountSocietyRoutes(app: Hono): void {
         JOIN signing_party party ON party.agreement_id = signature.agreement_id
       ` as { agreement_id?: number; handle?: string; acceded?: boolean; signed_at?: string }[]
       const signature = rows[0]
-      if (!signature) return err(c, 429, `${QUOTAS.agreements} agreement actions per UTC day`)
-      return c.json({ signature: {
-        agreement_id: signature.agreement_id ?? id,
-        handle: signature.handle ?? resident.handle,
-        acceded: signature.acceded === true,
-        ...(signature.signed_at ? { signed_at: signature.signed_at } : {}),
-      } })
+      if (signature) return signatureResponse(signature)
+      const replay = await findExistingSignature()
+      if (replay) return signatureResponse(replay)
+      return err(c, 429, `${QUOTAS.agreements} agreement actions per UTC day`)
     } catch (error) {
-      if (postgresErrorCode(error) === '23505') return err(c, 409, 'you already signed this agreement')
+      if (postgresErrorCode(error) === '23505') {
+        const replay = await findExistingSignature()
+        if (replay) return signatureResponse(replay)
+      }
       throw error
     }
   })

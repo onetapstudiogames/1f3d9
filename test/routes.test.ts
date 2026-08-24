@@ -2843,7 +2843,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     signatures: ['tiny-lantern'],
     accession_open: state.agreementAccessionOpen,
     opened_at: state.agreementAccessionOpen ? '2026-08-11T00:00:00.000Z' : null,
-    already_signed: false,
+    already_signed: state.scenario === 'agreement replay',
+    signature_acceded: state.agreementAcceded.includes(state.actorHandle),
+    signed_at: state.scenario === 'agreement replay' ? '2026-08-10T23:59:00.000Z' : null,
     open: true,
     created_at: '2026-08-11T00:00:00.000Z',
   }] : []
@@ -3805,6 +3807,7 @@ test('the legacy full window stays exact and explicit full shares its snapshot c
     assert.equal(legacyResponse.status, 200)
     const legacy = await legacyResponse.json() as Record<string, unknown>
     assert.equal(Object.hasOwn(legacy, 'view'), false)
+    assert.equal(legacy.map_complete, false)
     const callsAfterLegacy = sqlCalls().length
 
     const explicitResponse = await app.request('/api/window?view=full')
@@ -4777,6 +4780,30 @@ test('a named party signs without acceding', async () => {
   const body = await signed.json() as { signature: { acceded: boolean } }
   assert.equal(body.signature.acceded, false)
   assert.equal(inserted('agreement_signatures'), 1)
+})
+
+test('a repeated agreement sign replays the original signature without spending quota', async () => {
+  reset({
+    scenario: 'agreement replay',
+    quota: { things: true, notes: true, agreements: false },
+    agreementAcceded: ['tiny-lantern'],
+  })
+
+  const replayed = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
+
+  assert.equal(replayed.status, 200, await replayed.clone().text())
+  assert.deepEqual(await replayed.json(), {
+    signature: {
+      agreement_id: 61,
+      handle: 'tiny-lantern',
+      acceded: true,
+      signed_at: '2026-08-10T23:59:00.000Z',
+    },
+  })
+  assert.equal(inserted('agreement_parties'), 0)
+  assert.equal(inserted('agreement_signatures'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(sqlCalls().some(call => /UPDATE residents SET agreement_actions_today/i.test(call.query ?? '')), false)
 })
 
 test('only the original author may permanently open an existing agreement to accession', async () => {

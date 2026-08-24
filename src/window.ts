@@ -1036,6 +1036,7 @@ async function readFullWindowSnapshot() {
     shown,
     limits: FULL_WINDOW_LIMITS,
     body_limits: WINDOW_BODY_LIMITS,
+    map_complete: false,
     refreshed_at: new Date().toISOString(),
   }
 }

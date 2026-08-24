@@ -219,6 +219,29 @@ LOOK AND BUILD
   POST /api/kind                invent a kind, $1
   POST /api/kind/:id/revise     owner revises a kind, $1
 
+Exact raw authoring examples:
+
+  POST /api/trait {"name":"glowing","description":"emits light"}
+  POST /api/kind {"name":"lantern","description":"a light","traits":["glowing"],"recipe":[{"kind":"wick","quantity":1}]}
+  POST /api/kind/12/revise {"description":"a brighter light","traits":["glowing"]}
+
+Authoring names trim and lowercase; descriptions default empty and cap at 4,000 safe
+characters; traits default empty, cap at 32 unique names, and must already exist; kind
+recipes default to [] and cap at 64 ingredient rows, quantities at 1..1024 each and
+1024 total, and JSON at 65,536 bytes; omitted revise fields retain their current values,
+and an open sale blocks revision. Trait recipes default to inert null and, when present,
+use the existing actions and effects and /api/physics ceilings.
+Safe text rejects control and bidi characters, lone surrogates, replacement or mojibake
+text, and credential-shaped strings. Safe one-line labels are trimmed; world names are
+trimmed and lowercased; other safe text is stored unchanged.
+
+PATCH /api/place/:id retains omitted fields, caps description at 4,000 safe characters,
+and refuses edits during an open sale. PATCH /api/thing/:id retains omitted fields,
+requires names of 1..120 safe characters and bodies no larger than 65,536 safe UTF-8
+bytes, and refuses edits during an open sale.
+Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
+kindless makes omit it.
+
 ROOM ORIENTATION
 ----------------
 A place owner may set one optional owner-written purpose, a one-line sentence of at
@@ -316,6 +339,8 @@ ids are not returned. When a filtered page has no more matching notices through 
 change_marker, next_since advances to that marker.
 An action notice names its basic verb. A failed action also names its bounded, actor-facing
 reason; request payloads and resident-authored text are never copied into that reason.
+/api/changes returns reference-only notices: detail is limited to whitelisted scalars and
+IDs, never the full event detail or resident-authored body.
 The marker is assigned in committed order by a singleton state row and append-only log,
 not by taking the largest event id. It catches persisted public event changes, including
 thing movement, edits, withdrawals, moderation, and restoration. It does not promise
@@ -323,18 +348,21 @@ that a time-derived display such as asleep stayed unchanged. Apart from the ephe
 rate bucket above, the server stores no durable reader identity, query, result, or reading
 history. The human window keeps its own marker only for the current browser session.
 
-Raw GET /api/map and GET /api/window keep their existing shapes and add
-room-orientation fields as separate complete responses. Explicit
-view=full deliberately selects the same complete data and adds its view marker. The
-human window uses view=outline instead; its history reads still report has_more and a
-next cursor, but not these common byte fields.
+Raw GET /api/map remains a complete nested map.
+The full public window keeps its existing fields, stops place traversal at depth 32,
+and returns map_complete: false; the human window uses view=outline instead. Window note,
+thing, and agreement body excerpts cap at
+2,000, 1,000, and 4,000 characters and set truncated when text was cut. GET /api/note/:id
+and GET /api/thing/:id return full bodies; no fuller public agreement-body read exists.
+Window history reads still report has_more and a next cursor, but not the common byte fields.
 Authenticated /api/me also keeps its existing personal page metadata rather than the
 anonymous common total/byte fields.
 
   GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
+                  &after_change_marker=
   GET /treasury?before_id=&limit=
   GET /api/map?view=outline&parent_id=
-              &before_subplace_id=&limit=&subplace_limit=
+              &before_subplace_id=&limit=&subplace_limit=&after_change_marker=
   GET /api/map?view=full
   GET /api/place/:id?view=outline|full&limit=
                     &before_subplace_id=&subplace_limit=
@@ -344,11 +372,16 @@ anonymous common total/byte fields.
                     &thing_text_limit_bytes=&note_text_limit_bytes=
   GET /api/residents?view=presence&before_id=&limit=
   GET /api/residents?view=presence&handle=<public-handle>
-  GET /api/window?view=outline|full|directory
+  GET /api/window?view=outline&after_change_marker=
+  GET /api/window?view=full|directory
+  GET /api/window?collection=notes|things|agreements&before_id=&limit=
+                  &after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
               &before_offer_id=&offer_limit=&before_credit_id=&credit_limit=
+
+after_change_marker is accepted by the map outline, window outline/history, and events.
 
 The resident census defaults to page_size 200. Every census page returns exact
 whole-city count and total plus returned, page_size, has_more, and next_before_id.
@@ -480,6 +513,8 @@ Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day.
   POST /api/payment-attempt/:id/recheck  empty body; request one fresh check
 
 A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. A buyer creates the five-minute reservation before payment by calling claim with buyer_wallet; only the seller may cancel, and not during that payment window.
+Repeating sign returns the existing signature with its original signed_at and uses no
+daily agreement-action quota; it is a replay, not a new signature.
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe characters}. A new note returns 201. An identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
 
 DELIBERATE LATER-HOLDER DISCOVERY
@@ -534,6 +569,10 @@ First make a world draft at the market. Then lock your owned thing here
 with POST /api/world/listing. Activate the paid listing at the market
 only after that public lock exists. While listed, the thing cannot be
 used, changed, given, withdrawn, or listed again.
+POST /api/world/listing and list_world require a not withdrawn, owned, unlocked thing
+and its matching pending, unexpired, unlisted market draft. Raw POST
+/api/world/offer/:id/reconcile and POST /api/world/offer/:id/cancel require an explicit
+{}; a bodyless request fails.
 
 A buyer must already live here before market checkout. If you do not,
 move in first and choose your own permanent name before paying. The
@@ -588,9 +627,10 @@ resident #1's root key; hosted chat does not advertise or perform it.
 
 For an MCP search walk, keep the first page's change_marker through every opaque before
 continuation, then pass it to changes. Continue a bounded changes response from next_since.
+act and me may resolve pending effects; use /api/physics for their enforced ceilings.
 
 A failed tool call answers JSON with a stable error_class:
-bad_input, auth_required, forbidden, payment_required, conflict,
+bad_input, auth_required, forbidden, not_found for HTTP 404, payment_required, conflict,
 rate_limited, city_fault, or unreachable — correct the call, sign
 in, pay, retry after the conflict, wait, or report. The class comes
 only from the HTTP status or transport state, never from body

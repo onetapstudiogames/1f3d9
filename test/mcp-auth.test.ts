@@ -373,12 +373,15 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     const { gateway } = createHarness()
     const tools = await listTools(gateway, path, authorization)
     const search = toolByName(tools, 'search')
+    const look = toolByName(tools, 'look')
     const found = toolByName(tools, 'found')
     const make = toolByName(tools, 'make')
     const act = toolByName(tools, 'act')
     const laws = toolByName(tools, 'laws')
+    const listWorld = toolByName(tools, 'list_world')
     const transfer = toolByName(tools, 'transfer')
     const agree = toolByName(tools, 'agree')
+    const sign = toolByName(tools, 'sign')
     const me = toolByName(tools, 'me')
 
     assert.match(search.description, /defaults are mode=words, type=all, and limit=10/iu, `${path}: search defaults`)
@@ -388,6 +391,8 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
       /1 to 256 UTF-8 bytes/iu,
       `${path}: q byte limit`,
     )
+    assert.match(look.description, /GET \/api\/place\/:id defaults full/iu, `${path}: raw place-read default`)
+    assert.match(look.description, /look place read defaults outline/iu, `${path}: connector place-read default`)
     assert.match(found.description, /name[^.]*1[^.]*120/iu, `${path}: found name limit`)
     assert.match(found.description, /description[^.]*4,?000/iu, `${path}: found description limit`)
     assert.match(found.description, /defaults?[^.]*closed[^.]*notes[^.]*things[^.]*building/iu, `${path}: found permission defaults`)
@@ -402,6 +407,7 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(make.description, /name[^.]*1[^.]*120/iu, `${path}: make name limit`)
     assert.match(make.description, /open_to_use[^.]*defaults? false/iu, `${path}: make open_to_use default`)
     assert.match(make.description, /ingredient_ids[^.]*empty unless kind_id/iu, `${path}: kindless ingredient rule`)
+    assert.match(make.description, /crafted makes return consumed_ingredient_ids[^.]*kindless makes omit/iu, `${path}: make response shape`)
     assert.equal(
       (make.inputSchema.properties?.open_to_use as { default?: unknown }).default,
       false,
@@ -413,6 +419,9 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(act.description, /give accepts only required to_handle[\s\S]*thing_id[\s\S]*target_type with target_id/iu, `${path}: give shape`)
     assert.match(act.description, /target_type and target_id always appear together/iu, `${path}: target pair`)
     assert.match(act.description, /active[\s\S]*same place[\s\S]*open sale/iu, `${path}: thing state gates`)
+    assert.match(act.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
+    assert.match(listWorld.description, /thing[^.]*owned by you[^.]*not withdrawn[^.]*unlocked/iu, `${path}: world thing state`)
+    assert.match(listWorld.description, /draft[^.]*pending[^.]*unexpired[^.]*unlisted/iu, `${path}: world draft state`)
     assert.match(transfer.description, /omitting action defaults to give/iu, `${path}: transfer default`)
     assert.match(transfer.description, /reserve[\s\S]*before payment/iu, `${path}: claim order`)
     assert.match(transfer.description, /greater than 0[\s\S]*10,000[\s\S]*6 decimal/iu, `${path}: price contract`)
@@ -426,6 +435,7 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(agree.description, /1[^.]*32 unique valid resident handles/iu, `${path}: agreement parties`)
     assert.match(agree.description, /already exist/iu, `${path}: agreement party existence`)
     assert.match(agree.description, /1 byte[^.]*64 KB[^.]*safe/iu, `${path}: agreement body limit`)
+    assert.match(sign.description, /repeat[^.]*existing signature[^.]*without spending another agreement action[^.]*changing signed_at/iu, `${path}: signature replay`)
     assert.equal(
       (agree.inputSchema.properties?.parties as { uniqueItems?: unknown }).uniqueItems,
       true,
@@ -435,6 +445,7 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(me.description, /places omit descriptions/iu, `${path}: me place headings`)
     assert.match(me.description, /things omit bodies/iu, `${path}: me thing headings`)
     assert.match(me.description, /kinds omit descriptions/iu, `${path}: me kind headings`)
+    assert.match(me.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
   }
 
   setHostedChatFlag(false)
@@ -1157,7 +1168,7 @@ test('an invalid enum value rejects plainly and never routes to a different acti
 test('failed tool calls carry a stable machine-readable error class on both doors', async () => {
   const statuses = [
     [400, 'bad_input'],
-    [404, 'bad_input'],
+    [404, 'not_found'],
     [401, 'auth_required'],
     [402, 'payment_required'],
     [403, 'forbidden'],
