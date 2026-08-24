@@ -7697,11 +7697,18 @@ test('thing withdrawal is owner-only, one-way, and refused during an open sale',
 
 test('only resident one can remove or restore public content and every use is logged', async () => {
   reset({ scenario: 'maintainer moderation' })
+  const unauthenticated = await app.request('/api/moderation', { method: 'POST' })
+  assert.equal(unauthenticated.status, 401)
+  assert.deepEqual(await unauthenticated.json(), { error: 'founder root key required' })
+
   const denied = await app.request('/api/moderation', {
     method: 'POST', headers: authHeaders(),
     body: JSON.stringify({ action: 'remove', target_type: 'thing', target_id: 41, reason: 'illegal content' }),
   })
   assert.equal(denied.status, 403)
+  assert.deepEqual(await denied.json(), {
+    error: 'only founder resident #1 may remove or restore illegal public content',
+  })
   assert.equal(inserted('moderation_actions'), 0)
 
   setActor(1, 'founder')

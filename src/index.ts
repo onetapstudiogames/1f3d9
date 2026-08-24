@@ -848,8 +848,10 @@ app.post('/api/flag', async c => {
 
 app.post('/api/moderation', async c => {
   const resident = await authRootKey(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
-  if (resident.id !== 1) return err(c, 403, 'only the founder may use maintainer powers')
+  if (!resident) return err(c, 401, 'founder root key required')
+  if (resident.id !== 1) {
+    return err(c, 403, 'only founder resident #1 may remove or restore illegal public content')
+  }
   const input = moderationInput(await c.req.json().catch(() => null))
   if (!input) {
     return err(c, 400, 'need exactly action (remove|restore), target_type, target_id, and a safe reason')

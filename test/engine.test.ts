@@ -104,7 +104,7 @@ test('home can only be set to land the resident owns', async () => {
   await assert.rejects(setHome(7, 12, denied.db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'home must be a place you own'
+    && error.message === 'home must be the owned place where you are standing'
   ))
 
   const allowed = fakeSql(() => [{
@@ -646,12 +646,12 @@ for (const [condition, expectedStatus, expectedError] of [
   [
     { open_to_use: false, withdrawn_at: null, active_offer_id: null, has_open_offer: false, place_id: 2 },
     403,
-    /source thing is not yours/i,
+    /thing_id is not yours/i,
   ],
   [
     { open_to_use: true, withdrawn_at: '2026-08-11T00:00:00.000Z', active_offer_id: null, has_open_offer: false, place_id: 2 },
     404,
-    /source thing not found/i,
+    /thing_id was not found or is withdrawn/i,
   ],
   [
     { open_to_use: true, withdrawn_at: null, active_offer_id: 90, has_open_offer: true, place_id: 2 },
@@ -744,7 +744,7 @@ test('an open thing is not a shared consumable', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 403)
-  assert.match(result.error ?? '', /source thing is not yours/i)
+  assert.match(result.error ?? '', /thing_id is not yours/i)
   assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
 })
 
@@ -1386,7 +1386,7 @@ test('an unknown action failure is generic in the public record but useful in se
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  assert.equal(result.error, 'effect execution failed')
+  assert.equal(result.error, 'the city could not complete this action')
   assert.equal(logged.length, 1)
   assert.equal(logged[0]?.[0], 'unrecognized action execution failure')
   assert.deepEqual(logged[0]?.[1], {
@@ -1402,7 +1402,7 @@ test('an unknown action failure is generic in the public record but useful in se
     action_id: 33530,
     action: 'make',
     status: 'failed',
-    error: 'effect execution failed',
+    error: 'the city could not complete this action',
   })
   assert.doesNotMatch(
     String(resolution.values.at(-2)),

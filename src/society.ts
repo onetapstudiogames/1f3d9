@@ -675,7 +675,7 @@ export function mountSocietyRoutes(app: Hono): void {
       ? body.seller_wallet.toLowerCase()
       : null
     if (!type || !id || !toHandle || price == null || !wallet)
-      return err(c, 400, 'invalid offer; type is place|thing|kind, price is 0-10000 USDC, wallet is a Base address')
+      return err(c, 400, 'invalid offer; type is place|thing|kind, price is greater than 0 and at most 10000 USDC and is rounded to 6 decimals, wallet is a Base address')
 
     const asset = await ownerOf(type, id)
     if (!asset) return err(c, 404, `no such ${type}`)

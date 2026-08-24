@@ -387,7 +387,7 @@ test('the world cannot be selected as home and remains outside every ownership b
   await assert.rejects(setHome(7, 1, denied.db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'home must be a place you own'
+    && error.message === 'home must be the owned place where you are standing'
   ))
 })
 

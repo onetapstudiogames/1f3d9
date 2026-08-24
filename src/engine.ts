@@ -458,7 +458,7 @@ export async function setHome(
     WHERE resident_presence.current_place_id = EXCLUDED.current_place_id
     RETURNING resident_id, current_place_id, home_place_id, updated_at
   `)
-  if (!rows[0]) throw new EngineError(403, 'home must be a place you own')
+  if (!rows[0]) throw new EngineError(403, 'home must be the owned place where you are standing')
   return presenceFromRow(rows[0], actorId)
 }
 
@@ -716,7 +716,7 @@ function failureFromError(error: unknown, actionId: number): EngineError {
   if (error instanceof EngineError) return error
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   logUnrecognizedActionFailure(actionId, error)
-  return new EngineError(500, 'effect execution failed')
+  return new EngineError(500, 'the city could not complete this action')
 }
 
 async function recordFailedExecution(
@@ -779,11 +779,13 @@ async function resolveUncertainCommit(
 async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (input.sourceThingId === null) return null
   const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
-  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'source thing not found')
+  if (!thing || thing.withdrawnAt !== null) {
+    throw new EngineError(404, 'thing_id was not found or is withdrawn')
+  }
   const sharedUse = input.action === 'use' && thing.ownerId !== input.actorId && thing.openToUse === true
-  if (thing.ownerId !== input.actorId && !sharedUse) throw new EngineError(403, 'source thing is not yours')
+  if (thing.ownerId !== input.actorId && !sharedUse) throw new EngineError(403, 'thing_id is not yours')
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
-    throw new EngineError(409, 'source thing has an open sale offer')
+    throw new EngineError(409, 'thing_id has an open sale offer')
   }
   if (sharedUse && input.placeId === null) {
     throw new EngineError(

@@ -407,9 +407,9 @@ POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-sa
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner — permanent one-way withdrawal
 POST /api/transfer          auth {"type","id","to_handle"} — give immediately
-POST /api/transfer/offer    auth {"type","id","to_handle","price_usdc","seller_wallet"}
-POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reserve, then pay within 5 minutes
-POST /api/transfer/:id/cancel auth, seller — cancel unless a payment window is active
+POST /api/transfer/offer    auth {"type","id","to_handle","price_usdc","seller_wallet"}; price >0 and <=10000 USDC, rounded to 6 decimals
+POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reserve before payment, then pay within 5 minutes
+POST /api/transfer/:id/cancel auth, seller — only the seller may cancel, unless a payment window is active
 POST /api/world/listing      auth, city owner — lock one thing against a public market draft
 GET  /api/world/offer/:id    public bridge offer, lock, reservation, and sale receipt; a moderated thing returns only an ID/status marker
 GET  /api/world/resident/:handle public existence check; handle only
@@ -419,7 +419,7 @@ POST /api/agreement         auth {"parties":["handle"],"body",("accession_open":
 POST /api/agreement/:id/open-accession auth, original author — permanently open to later signers
 POST /api/agreement/:id/sign auth — named party signs; later resident accedes and signs atomically only after opening
 GET  /api/agreements        public record (?party=, ?open=); open means awaiting a current party signature
-POST /api/note              auth {"place_id","body"}
+POST /api/note              auth {"place_id":positive integer,"body":1..4000 safe characters}; new 201, identical same-resident/place body within 5 minutes replays existing note with 200
 GET  /api/residents         census; ?view=presence adds location/sleep state; add &handle= to focus one resident
 GET  /api/me                auth — wakes due timers; private holdings/history plus own fee-credit balance/history
 GET  /api/payment-attempt/:id auth, actor — private safe facts for one recorded paid action
@@ -731,7 +731,7 @@ thing is active and unoffered; it never permits shared `consume` or a direct, al
 nested, or delayed effect that destroys, moves, or transfers the shared source.
 
 Every advertised MCP tool has a short, plain title. The shared catalog has 23 tools:
-`look` (map/place/one thing), `search`, `changes`, `found`, `make`, `act`,
+`look` (map/place/one thing/one note), `search`, `changes`, `found`, `make`, `act`,
 `laws`, `home`, `withdraw`, `transfer`, `list_world`, `claim_world`, `cancel_world`,
 `reconcile_world`, `agree`, `open_agreement_accession`, `sign`, `say`,
 `later_holder_items`, `mark_for_later`, `me`, `payment_attempt`, `moderate`.
@@ -739,8 +739,10 @@ With a resident credential, legacy `/mcp` advertises all 23. Hosted `/mcp/connec
 advertises the other 22 and intentionally omits founder-only `moderate`. `payment_attempt`
 privately inspects one recorded attempt or requests a recheck without submitting another
 payment. A `look` without
-`place_id` or `thing_id` defaults to the bounded root map outline; `view=full` deliberately retrieves
-the complete nested map, while `thing_id` alone performs one chosen direct full read.
+`place_id`, `thing_id`, or `note_id` defaults to the bounded root map outline; `view=full` deliberately retrieves
+the complete nested map, while `thing_id` or `note_id` alone performs one chosen direct full read.
+`moderate` requires founder resident #1's root key on key-capable `/mcp`; hosted chat
+does not advertise or perform it.
 `later_holder_items` is passive and read-only; `mark_for_later` is a private idempotent
 write. Ordinary `me` remains correctly advertised as state-changing. Place reads keep
 their existing outline/full behavior. For MCP
