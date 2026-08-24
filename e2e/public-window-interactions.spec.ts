@@ -346,6 +346,30 @@ const OLDER_GLOBAL_NOTE = Object.freeze({
   created_at: '2026-08-13T11:01:00.000Z',
 })
 
+const FAR_WALKER_NOTE = Object.freeze({
+  id: 91,
+  place_id: 77,
+  author: 'far-walker',
+  body: 'Far Walker speaks from the quiet annex.',
+  created_at: '2026-08-15T12:01:00.000Z',
+})
+
+const OLDER_FAR_WALKER_NOTE = Object.freeze({
+  id: 82,
+  place_id: 12,
+  author: 'far-walker',
+  body: 'Far Walker spoke here earlier.',
+  created_at: '2026-08-12T12:01:00.000Z',
+})
+
+const FAR_WALKER_ROOM_CONTEXT = Object.freeze({
+  id: 90,
+  place_id: 77,
+  author: 'mapkeeper',
+  body: 'A neighboring voice supplies room context.',
+  created_at: '2026-08-15T12:00:00.000Z',
+})
+
 const OLDER_THING = Object.freeze({
   id: 30,
   place_id: 77,
@@ -431,6 +455,9 @@ test.beforeEach(async ({ page }, testInfo) => {
   let focusedPlaceAttempts = 0
   await page.route('**/api/map**', route => {
     const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') === '998') {
+      return route.fulfill({ status: 503, json: { error: 'test focused place failure' } })
+    }
     if (url.searchParams.get('parent_id') === '77') {
       focusedPlaceAttempts += 1
       if (testInfo.title.includes('focused selection retry') && focusedPlaceAttempts === 1) {
@@ -449,6 +476,12 @@ test.beforeEach(async ({ page }, testInfo) => {
   })
   await page.route('**/api/residents**', route => {
     const url = new URL(route.request().url())
+    if (url.searchParams.get('handle') === 'missing-reader') {
+      return route.fulfill({ status: 404, json: { error: 'unknown resident' } })
+    }
+    if (url.searchParams.get('handle') === 'failing-reader') {
+      return route.fulfill({ status: 503, json: { error: 'test focused resident failure' } })
+    }
     if (url.searchParams.get('handle') === 'far-walker') {
       return route.fulfill({ json: FOCUSED_RESIDENT })
     }
@@ -773,6 +806,19 @@ test('complete directory selection loads one focused place and its inside conten
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
 })
 
+test('focused place occupants name the missing narrow presence read without widening it', async ({ page }) => {
+  await page.locator('#place-filter').selectOption('77')
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
+  await expect(page.locator('#place-occupants')).toContainText(/no narrow place-specific presence read/i)
+  await expect(page.locator('#place-occupants')).not.toContainText(/no residents? (?:were )?found/i)
+
+  const presenceReads = (API_REQUESTS.get(page) ?? [])
+    .map(value => new URL(value))
+    .filter(url => url.pathname === '/api/residents')
+  expect(presenceReads).toHaveLength(0)
+})
+
 test('directory search owns a dropdown and finds both places and residents', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 851 })
   const search = page.locator('#directory-search')
@@ -855,12 +901,21 @@ test('complete resident selection uses one focused presence read and a directory
   const focusedRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
-  })
+  }, { timeout: 5_000 })
+  const currentPlaceRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  }, { timeout: 5_000 })
   await page.locator('#resident-filter').selectOption('far-walker')
   const focusedUrl = new URL((await focusedRequest).url())
   expect(Object.fromEntries(focusedUrl.searchParams)).toEqual({
     view: 'presence',
     handle: 'far-walker',
+  })
+  const currentPlaceUrl = new URL((await currentPlaceRequest).url())
+  expect(Object.fromEntries(currentPlaceUrl.searchParams)).toEqual({
+    view: 'outline',
+    parent_id: '77',
   })
 
   const roster = page.locator('#resident-roster')
@@ -870,6 +925,197 @@ test('complete resident selection uses one focused presence read and a directory
   expect(requests.filter(url =>
     url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'))
     .toHaveLength(1)
+  expect(requests.filter(url =>
+    url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'))
+    .toHaveLength(1)
+})
+
+test('out-of-snapshot resident history defaults to what they said and pages to exhaustion', async ({ page }) => {
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'notes' ||
+        url.searchParams.get('resident') !== 'far-walker') {
+      return route.fallback()
+    }
+    if (url.searchParams.get('context') === 'place') {
+      return route.fulfill({
+        json: {
+          notes: [FAR_WALKER_NOTE, FAR_WALKER_ROOM_CONTEXT],
+          has_more: false,
+          next_before_id: null,
+          change_marker: '20',
+        },
+      })
+    }
+    if (url.searchParams.get('before_id') === String(FAR_WALKER_NOTE.id)) {
+      return route.fulfill({
+        json: {
+          notes: [OLDER_FAR_WALKER_NOTE],
+          has_more: false,
+          next_before_id: null,
+          change_marker: '20',
+        },
+      })
+    }
+    return route.fulfill({
+      json: {
+        notes: [FAR_WALKER_NOTE],
+        has_more: true,
+        next_before_id: FAR_WALKER_NOTE.id,
+        change_marker: '20',
+      },
+    })
+  })
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  const firstPageRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'far-walker' && !url.searchParams.has('before_id') &&
+      !url.searchParams.has('context')
+  }, { timeout: 5_000 })
+  await page.getByRole('tab', { name: 'Conversations' }).click()
+  const firstPageUrl = new URL((await firstPageRequest).url())
+  expect(firstPageUrl.searchParams.get('limit')).toBe('50')
+  expect(firstPageUrl.searchParams.has('within_place_id')).toBe(false)
+  expect(firstPageUrl.searchParams.has('context')).toBe(false)
+
+  const question = page.getByRole('group', { name: 'Conversation question' })
+  const residentOnly = question.getByRole('button', { name: 'What far-walker said', exact: true })
+  const roomContext = question.getByRole('button', {
+    name: 'What was said around far-walker', exact: true,
+  })
+  await expect(residentOnly).toHaveAttribute('aria-pressed', 'true')
+  await expect(roomContext).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.locator('#conversation-stream')).toContainText(FAR_WALKER_NOTE.body)
+  await expect(page.locator('#conversation-stream')).not.toContainText(FAR_WALKER_ROOM_CONTEXT.body)
+  await expect(page.locator('#conversation-stream .note-author')).toHaveText(['far-walker'])
+
+  const olderRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'far-walker' &&
+      url.searchParams.get('before_id') === String(FAR_WALKER_NOTE.id) &&
+      !url.searchParams.has('context')
+  }, { timeout: 5_000 })
+  await page.getByRole('button', { name: 'Load older conversations' }).click()
+  await olderRequest
+  await expect(page.locator('#conversation-stream')).toContainText(OLDER_FAR_WALKER_NOTE.body)
+  await expect(page.locator('#conversation-stream .note-author')).toHaveText([
+    'far-walker', 'far-walker',
+  ])
+  await expect(page.getByRole('button', { name: 'Load older conversations' })).toHaveCount(0)
+
+  const contextRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'far-walker' &&
+      url.searchParams.get('context') === 'place' && !url.searchParams.has('before_id')
+  }, { timeout: 5_000 })
+  await roomContext.click()
+  const contextUrl = new URL((await contextRequest).url())
+  expect(contextUrl.searchParams.get('limit')).toBe('25')
+  await expect(roomContext).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('#conversation-stream')).toContainText(FAR_WALKER_NOTE.body)
+  await expect(page.locator('#conversation-stream')).toContainText(FAR_WALKER_ROOM_CONTEXT.body)
+
+  await page.goBack()
+  await expect(residentOnly).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('#conversation-stream')).toContainText(OLDER_FAR_WALKER_NOTE.body)
+  await expect(page.locator('#conversation-stream')).not.toContainText(FAR_WALKER_ROOM_CONTEXT.body)
+  await page.goForward()
+  await expect(roomContext).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('#conversation-stream')).toContainText(FAR_WALKER_ROOM_CONTEXT.body)
+
+  await residentOnly.click()
+  await expect(residentOnly).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('#conversation-stream')).toContainText(OLDER_FAR_WALKER_NOTE.body)
+  await expect(page.locator('#conversation-stream')).not.toContainText(FAR_WALKER_ROOM_CONTEXT.body)
+})
+
+test('stale resident and chained place replies never paint under the next selection', async ({ page }) => {
+  let releaseResident!: () => void
+  const heldResident = new Promise<void>(resolve => { releaseResident = resolve })
+  let farWalkerAttempts = 0
+  await page.route('**/api/residents**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('handle') !== 'far-walker') return route.fallback()
+    farWalkerAttempts += 1
+    if (farWalkerAttempts === 1) await heldResident
+    return route.fallback()
+  })
+
+  let releasePlace!: () => void
+  const heldPlace = new Promise<void>(resolve => { releasePlace = resolve })
+  await page.route('**/api/map**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+    await heldPlace
+    return route.fallback()
+  })
+
+  const staleResidentRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
+  }, { timeout: 5_000 })
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await staleResidentRequest
+  await page.locator('#resident-filter').selectOption('leafwalker')
+  releaseResident()
+  await expect(page).toHaveURL(/resident=leafwalker/)
+  await page.waitForTimeout(100)
+  expect((API_REQUESTS.get(page) ?? []).filter(value => {
+    const url = new URL(value)
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  })).toHaveLength(0)
+
+  const stalePlaceRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  }, { timeout: 5_000 })
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await stalePlaceRequest
+  await page.locator('#resident-filter').selectOption('leafwalker')
+  releasePlace()
+
+  await expect(page).toHaveURL(/resident=leafwalker/)
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-focus-title')).toHaveText('inner_hall')
+  await expect(page.locator('#place-focus-summary')).not.toContainText('quiet_annex')
+})
+
+test('a directory-known note author is followable before their presence has been fetched', async ({ page }) => {
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.has('collection') || url.searchParams.get('view') === 'directory') {
+      return route.fallback()
+    }
+    return route.fulfill({
+      json: {
+        ...SNAPSHOT,
+        notes: [FAR_WALKER_NOTE],
+        totals: { ...SNAPSHOT.totals, conversations: 1 },
+        shown: { ...SNAPSHOT.shown, conversations: 1 },
+        pages: {
+          ...SNAPSHOT.pages,
+          notes: { has_more: false, next_before_id: null },
+        },
+      },
+    })
+  })
+  await page.goto('/window#view=conversations')
+
+  const author = page.locator('#conversation-stream').getByRole('button', {
+    name: 'far-walker', exact: true,
+  })
+  await expect(author).toBeVisible()
+  const presenceRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
+  }, { timeout: 5_000 })
+  await author.click()
+  await presenceRequest
+  await expect(page).toHaveURL(/resident=far-walker/)
 })
 
 test('cold deep link replaces its numbered fallback when the directory arrives later', async ({ page }) => {
@@ -880,9 +1126,9 @@ test('cold deep link replaces its numbered fallback when the directory arrives l
   )
 })
 
-test('missing directory selection stays available under an honest fallback group', async ({ page }) => {
+test('missing directory selection stays selected under a confirmed-absence label', async ({ page }) => {
   const fallbackOption = page.locator('#place-filter option[value="999"]')
-  await expect(fallbackOption).toHaveText('Place #999 · not currently loaded')
+  await expect(fallbackOption).toHaveText(/Place #999.*no public place was found/i)
   await expect(fallbackOption).toHaveAttribute('value', '999')
   await expect(page.locator('#place-filter')).toHaveValue('999')
 })
@@ -895,6 +1141,32 @@ test('focused selection retry retains a useful keyboard focus target', async ({ 
 
   await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
   await expect(page.locator('#place-focus-title')).toBeFocused()
+})
+
+test('conversation selection retry keeps focus in the active panel', async ({ page }) => {
+  let attempts = 0
+  await page.route('**/api/residents**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('handle') !== 'far-walker') return route.fallback()
+    attempts += 1
+    return attempts === 1
+      ? route.fulfill({ status: 503, json: { error: 'test focused resident failure' } })
+      : route.fallback()
+  })
+
+  await page.goto('/window#view=conversations&resident=far-walker')
+  const stream = page.locator('#conversation-stream')
+  const retry = page.getByRole('button', { name: 'Retry loading this resident' })
+  await expect(retry).toBeVisible()
+  const recovered = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker' &&
+      response.status() === 200
+  }, { timeout: 5_000 })
+  await retry.focus()
+  await retry.click()
+  await recovered
+  await expect(stream).toBeFocused()
 })
 
 test('directory failure is accessible and retryable without hiding the loaded fallback', async ({ page }) => {
@@ -1094,7 +1366,7 @@ test('an empty presence page says what is empty and offers no dead load control'
   await expect(rootCard.locator('.place-disclosure')).toHaveCount(0)
 })
 
-test('residents at an unloaded address stay visible under an honest label', async ({ page }) => {
+test('residents at a confirmed missing address stay visible under an honest label', async ({ page }) => {
   await page.unroute('**/api/window**')
   await page.route('**/api/window**', route => route.fulfill({
     json: {
@@ -1106,21 +1378,19 @@ test('residents at an unloaded address stay visible under an honest label', asyn
   await page.goto('/window#view=map&place=999')
   const roster = page.locator('#resident-roster')
   await expect(roster.getByRole('button', { name: 'leafwalker', exact: true })).toBeVisible()
-  await expect(roster).toContainText('Place #999 · not currently loaded')
+  await expect(roster).toContainText(/Place #999.*no public place was found/i)
   await expect(page.locator('#window-status')).toHaveAttribute('role', 'status')
 })
 
-test('unloaded place and resident deep links describe the bounded gap without false absence', async ({ page }) => {
+test('confirmed missing selections differ from retryable focused-read failures', async ({ page }) => {
   await page.goto('/window#view=place&place=999')
-  await expect(page.locator('#place-focus-title')).toContainText('Place #999 is not currently loaded')
-  await expect(page.locator('#place-focus-summary')).toContainText(/metadata and content are not currently loaded/i)
-  await expect(page.locator('#place-panel')).not.toContainText(/no place to watch|frontier has no matching/i)
+  await expect(page.locator('#place-panel')).toContainText(/no public place was found/i)
+  await expect(page.getByRole('button', { name: 'Retry loading this place' })).toHaveCount(0)
+  await expect(page.locator('#place-panel')).not.toContainText(/could not be (?:loaded|read)/i)
 
   const requestsBeforePlaceConversation = API_REQUESTS.get(page)?.length ?? 0
   await page.goto('/window#view=conversations&place=999')
-  await expect(page.locator('#conversation-stream')).toContainText(
-    /place #999.*metadata and conversation.*not currently loaded/i,
-  )
+  await expect(page.locator('#conversations-panel')).toContainText(/no public place was found/i)
   const placeConversationRequests = (API_REQUESTS.get(page) ?? [])
     .slice(requestsBeforePlaceConversation)
     .map(value => new URL(value))
@@ -1129,9 +1399,20 @@ test('unloaded place and resident deep links describe the bounded gap without fa
   expect(placeConversationRequests).toHaveLength(0)
 
   await page.goto('/window#view=conversations&resident=missing-reader')
-  await expect(page.locator('#conversation-stream')).toContainText(
-    /resident missing-reader.*metadata and conversation.*not currently loaded/i,
-  )
+  await expect(page.locator('#conversations-panel')).toContainText(/no public resident was found/i)
+  await expect(page.getByRole('button', { name: 'Retry loading this resident' })).toHaveCount(0)
+  await expect(page.locator('#conversation-stream')).not.toContainText(/no conversation .*matches/i)
+
+  await page.goto('/window#view=place&place=998')
+  await expect(page.locator('#place-panel')).toContainText(/could not be (?:loaded|read)/i)
+  await expect(page.getByRole('button', { name: 'Retry loading this place' })).toBeVisible()
+  await expect(page.locator('#place-panel')).not.toContainText(/no public place was found/i)
+
+  await page.goto('/window#view=conversations&resident=failing-reader')
+  await expect(page.locator('#conversations-panel')).toContainText(/could not be (?:loaded|read)/i)
+  await expect(page.getByRole('button', { name: 'Retry loading this resident' })).toBeVisible()
+  await expect(page.locator('#conversation-stream')).not.toContainText(/no conversation .*matches/i)
+  await expect(page.locator('#conversations-panel')).not.toContainText(/no public resident was found/i)
 })
 
 test('unchanged branch and resident cursors become retryable errors instead of loops', async ({ page }) => {
@@ -1390,6 +1671,96 @@ test('a slower refresh cannot overwrite a manual resident page that finishes fir
   await expect(page.locator('#window-status')).toContainText('Watching')
   await expect(page.getByRole('button', { name: 'nightwatcher', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'wayfarer', exact: true })).toBeVisible()
+})
+
+test('filtered Happenings and Agreements separate loading, retryable failure, and empty', async ({ page }) => {
+  let releaseHappenings!: () => void
+  const heldHappenings = new Promise<void>(resolve => { releaseHappenings = resolve })
+  let happeningAttempts = 0
+  await page.route('**/api/events**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+    happeningAttempts += 1
+    if (happeningAttempts === 1) {
+      await heldHappenings
+      return route.fulfill({ status: 503, json: { error: 'test filtered happenings failure' } })
+    }
+    return route.fulfill({
+      json: { events: [], has_more: false, next_before_id: null, change_marker: '20' },
+    })
+  })
+
+  let releaseAgreements!: () => void
+  const heldAgreements = new Promise<void>(resolve => { releaseAgreements = resolve })
+  let agreementAttempts = 0
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'agreements' ||
+        url.searchParams.get('resident') !== 'far-walker') {
+      return route.fallback()
+    }
+    agreementAttempts += 1
+    if (agreementAttempts === 1) {
+      await heldAgreements
+      return route.fulfill({ status: 503, json: { error: 'test filtered agreements failure' } })
+    }
+    return route.fulfill({
+      json: { agreements: [], has_more: false, next_before_id: null, change_marker: '20' },
+    })
+  })
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+
+  const happeningRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker'
+  }, { timeout: 5_000 })
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+  await happeningRequest
+  await expect(page.locator('#activity-list')).toContainText(/fetching happenings/i)
+  releaseHappenings()
+
+  const happeningsPanel = page.locator('#happenings-panel')
+  await expect(happeningsPanel).toContainText(/happenings could not be (?:loaded|read)/i)
+  await expect(page.locator('#activity-list')).not.toContainText(/no happening .*matches/i)
+  const happeningsRetry = happeningsPanel.getByRole('button', {
+    name: 'Retry loading happenings', exact: true,
+  })
+  await expect(happeningsRetry).toBeVisible()
+  const successfulHappenings = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
+      response.status() === 200
+  }, { timeout: 5_000 })
+  await happeningsRetry.click()
+  await successfulHappenings
+  await expect(page.locator('#activity-list')).toContainText(/no happening .*matches/i)
+
+  const agreementRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'agreements' &&
+      url.searchParams.get('resident') === 'far-walker'
+  }, { timeout: 5_000 })
+  await page.getByRole('tab', { name: 'Agreements' }).click()
+  await agreementRequest
+  await expect(page.locator('#agreement-list')).toContainText(/fetching agreements/i)
+  releaseAgreements()
+
+  const agreementsPanel = page.locator('#agreements-panel')
+  await expect(agreementsPanel).toContainText(/agreements could not be (?:loaded|read)/i)
+  await expect(page.locator('#agreement-list')).not.toContainText(/no agreement .*matches/i)
+  const agreementsRetry = agreementsPanel.getByRole('button', {
+    name: 'Retry loading agreements', exact: true,
+  })
+  await expect(agreementsRetry).toBeVisible()
+  const successfulAgreements = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'agreements' &&
+      url.searchParams.get('resident') === 'far-walker' && response.status() === 200
+  }, { timeout: 5_000 })
+  await agreementsRetry.click()
+  await successfulAgreements
+  await expect(page.locator('#agreement-list')).toContainText(/no agreement .*matches/i)
 })
 
 test('recent window slices can be extended independently in every public view', async ({ page }) => {
