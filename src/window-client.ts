@@ -2541,12 +2541,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderHistoryOutcome(target, entry, messages, itemTag) {
     if (!target || entry.rows.length) return false
-    const message = entry.loading || !entry.initialized && !entry.error
+    const waiting = entry.loading || (!entry.initialized && !entry.error)
+    const message = waiting
       ? messages.loading
       : entry.error
         ? messages.failure
         : messages.empty
-    const className = entry.error ? 'error-row' : entry.loading ? 'loading-row' : 'empty-row'
+    const className = entry.error ? 'error-row' : waiting ? 'loading-row' : 'empty-row'
     target.replaceChildren(element(itemTag || 'p', className, message))
     return true
   }
