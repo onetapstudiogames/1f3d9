@@ -182,6 +182,8 @@ async function withStrippedBrowserHeaders(page: Page, path: string, action: () =
 test('shows a clear consent page without exposing a resident key', async ({ page }) => {
   const response = await page.goto(authorizationPath())
 
+  expect(response?.request().redirectedFrom()).toBeNull()
+  expect([...new URL(page.url()).searchParams.keys()].some(name => name.startsWith('_1f3d9_cookie_'))).toBe(false)
   await expect(page.getByRole('heading', { name: 'Let this chat enter 1F3D9?' })).toBeVisible()
   await expect(page.getByText('Hosted Chat Browser Test')).toBeVisible()
   await expect(page.getByLabel('Current resident key')).toBeVisible()
@@ -191,7 +193,9 @@ test('shows a clear consent page without exposing a resident key', async ({ page
   expect(response?.headers()['x-frame-options']).toBe('DENY')
   await expectNoResidentKeyOutsidePage(page)
 
-  const sessionCookie = (await page.context().cookies()).find(cookie => cookie.name === '__Host-1f3d9_oauth')
+  const sessionCookie = (await page.context().cookies()).find(cookie => (
+    cookie.name === '__Host-1f3d9_oauth'
+  ))
   expect(sessionCookie).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Lax' })
 })
 
@@ -546,7 +550,11 @@ test('stops a form whose CSRF proof was changed in the browser', async ({ page }
   })
 
   await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
-  await expect(page.getByText('could not be verified')).toBeVisible()
+  await expect(page.getByText('This sign-in form and its private browser cookie did not match.')).toBeVisible()
+  await expect(page.getByText('browser_cookie_mismatch', { exact: true })).toBeVisible()
+  await expect(page.locator('p', { hasText: 'Request ID:' }).locator('code')).toHaveText(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,
+  )
   expect(page.url().includes(existingResidentKey)).toBe(false)
   expect((await page.content()).includes(existingResidentKey)).toBe(false)
 })

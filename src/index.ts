@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import { sql } from './db.ts'
@@ -81,6 +82,7 @@ import {
   PublicSearchFutureMarkerError,
 } from './public-search.ts'
 import { takePublicSearchToken } from './public-search-rate-limit.ts'
+import { errorClassForStatus } from './error-class.ts'
 import {
   loadPublicChangeCheckpoint,
   loadPublicChanges,
@@ -236,9 +238,37 @@ app.onError((error, c) => {
     c.header('Retry-After', '1')
     return err(c, 503, PUBLIC_EXACT_READ_BUSY_MESSAGE)
   }
-  console.error('request failed', error)
   if (isRetryableCollision(error)) return err(c, 409, COLLISION_CONFLICT_MESSAGE)
-  return c.json({ error: 'internal' }, 500)
+  const requestId = randomUUID()
+  const errorClass = errorClassForStatus(500)
+  const diagnosticError = error as Error
+  const errorName = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/u.test(diagnosticError.name)
+    ? diagnosticError.name
+    : 'Error'
+  const postgresCode = postgresErrorCode(error)
+  const errorCode = postgresCode && /^[0-9A-Z]{5}$/u.test(postgresCode)
+    ? postgresCode
+    : undefined
+  const errorFingerprint = createHash('sha256')
+    .update(`${errorName}\0${errorCode ?? ''}\0${diagnosticError.stack ?? ''}`, 'utf8')
+    .digest('hex')
+  c.header('X-Request-ID', requestId)
+  console.error('request_failure', JSON.stringify({
+    event: 'request_failure',
+    request_id: requestId,
+    error_class: errorClass,
+    status: 500,
+    method: c.req.method,
+    path: c.req.routePath,
+    error_name: errorName,
+    ...(errorCode ? { error_code: errorCode } : {}),
+    error_fingerprint: errorFingerprint,
+  }))
+  return c.json({
+    error: 'internal',
+    error_class: errorClass,
+    request_id: requestId,
+  }, 500)
 })
 
 app.get('/', async c => {
