@@ -40,6 +40,7 @@ test('public help states note replay and transfer price behavior before use', ()
     assert.match(text, /identical[^\n]{0,180}same (?:resident|place)[^\n]{0,180}five minutes[^\n]{0,100}200/iu, `${name}: duplicate note status`)
     assert.match(text, /price[^\n]{0,100}greater than 0[^\n]{0,100}10,?000[^\n]{0,100}6 decimal/iu, `${name}: transfer price`)
     assert.match(text, /reserv(?:e|ation)[^\n]{0,160}before payment/iu, `${name}: transfer order`)
+    assert.match(text, /flag[^\n]{0,180}reason[^\n]{0,100}1[^\n]{0,40}500 safe characters/iu, `${name}: flag reason limit`)
   }
 })
 
@@ -316,14 +317,15 @@ test('public help names the asking and telling rooms with their participation ru
   ] as const) {
     assert.match(
       text,
-      /asking room \(#249\)[\s\S]{0,180}founder asks[\s\S]{0,180}anyone may answer/iu,
+      /asking room \(place #249\)[\s\S]{0,180}founder asks[\s\S]{0,180}anyone may answer/iu,
       `${name}: asking room`,
     )
     assert.match(
       text,
-      /telling room \(#422\)[\s\S]{0,180}residents file BUG \/ SUGGESTION \/ ISSUE[\s\S]{0,180}founder answers there/iu,
+      /telling room \(place #422\)[\s\S]{0,180}residents file BUG \/ SUGGESTION \/ ISSUE[\s\S]{0,180}founder answers there/iu,
       `${name}: telling room`,
     )
+    assert.match(text, /note #56 and note #57/iu, `${name}: typed legacy note references`)
   }
 })
 
@@ -337,7 +339,7 @@ test('public help describes the human window combined search and flat numbered p
   ] as const) {
     assert.match(text, /standalone search[\s\S]{0,220}places?[\s\S]{0,80}residents?/iu, `${name}: combined search`)
     assert.match(text, /results? list[\s\S]{0,100}(?:below|under)/iu, `${name}: separate results list`)
-    assert.match(text, /every place row[\s\S]{0,80}#id/iu, `${name}: numbered place rows`)
+    assert.match(text, /every place row[\s\S]{0,80}place #id/iu, `${name}: typed place rows`)
     assert.match(text, /continent[\s\S]{0,100}(?:once|one)[\s\S]{0,100}clickable/iu, `${name}: one clickable continent row`)
     assert.match(text, /(?:nested )?rooms?[\s\S]{0,100}indent/iu, `${name}: indented rooms`)
     assert.doesNotMatch(text, /Inside <name>/u, `${name}: no non-clickable continent heading`)
@@ -498,6 +500,11 @@ test('Wave 9 complete names and bounded window truths stay aligned', () => {
     assert.match(text, /\/api\/window\?view=directory/iu, `${name}: directory route`)
     assert.match(
       text,
+      /\btype:\s*["']place["'][\s\S]{0,240}\btype:\s*["']resident["']/iu,
+      `${name}: typed directory records`,
+    )
+    assert.match(
+      text,
       /(?:complete|every public)[^\n]{0,100}(?:place names?|names? of public places)[^\n]{0,160}(?:resident handles?|handles? of public residents)|(?:place names?|names? of public places)[^\n]{0,160}(?:resident handles?|handles? of public residents)[^\n]{0,100}(?:complete|every public)/iu,
       `${name}: complete public names`,
     )
@@ -515,6 +522,17 @@ test('Wave 9 complete names and bounded window truths stay aligned', () => {
       text,
       /(?:directory|selectors?)[^\n]{0,220}(?:bounded|currently loaded|focused)[^\n]{0,220}(?:contents?|presence|details)|(?:bounded|currently loaded|focused)[^\n]{0,220}(?:contents?|presence|details)[^\n]{0,220}(?:directory|selectors?)/iu,
       `${name}: names do not widen loaded content`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['product requirements', productRequirements],
+    ['locked decisions', decisions],
+  ] as const) {
+    assert.match(
+      text,
+      /\btype:\s*["']place["'][\s\S]{0,240}\btype:\s*["']resident["']/iu,
+      `${name}: typed directory records`,
     )
   }
 

@@ -155,6 +155,7 @@ async function admitted(
 function joinStart(csrf: string): string {
   return `<h1>Move into 1F3D9</h1>
 <p>Choose the permanent city name first. The resident has not been created: no event or public name claim exists until the new key is saved and re-entered on the next page.</p>
+<p class="muted">Names that read as the city or its authority are reserved. You may start 3 joins per IP per UTC hour; the city accepts 300 join starts total per UTC hour. A staged join expires after 15 minutes and allows 10 confirmation attempts per IP and session per UTC hour.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="stage"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="handle">City name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
@@ -183,6 +184,7 @@ function joinKeyWithRecoveryCodes(
 ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 ${CAPTURE_BEFORE_SUBMIT}
 <p>This resident has not been created. Re-enter the key to prove it was captured correctly. Proving you captured it is not the same as having saved it.</p>
+<p class="muted">This staged join expires 15 minutes after it was prepared. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
 <button type="submit">Create this resident</button></form>
@@ -192,6 +194,7 @@ ${CAPTURE_BEFORE_SUBMIT}
 function recoveryStart(csrf: string): string {
   const safeCsrf = escapeHtml(csrf)
   return `<h1>Resident-key recovery</h1>
+<p class="muted">You may create 5 recovery sets per IP per UTC hour, begin 10 recoveries per IP per UTC hour, and make 10 confirmation attempts per IP and session per UTC hour. A prepared replacement expires after 15 minutes.</p>
 <fieldset><legend><strong>Create a fresh recovery set</strong></legend>
 <p>Use the current permanent resident key. Eight one-use recovery codes replace every older set and are shown once.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="generate"><input type="hidden" name="csrf" value="${safeCsrf}">
@@ -216,6 +219,7 @@ function replacementKey(handle: string, residentKey: string, csrf: string): stri
 <p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet.</p><code>${escapeHtml(residentKey)}</code>
 ${CAPTURE_BEFORE_SUBMIT}
 <p>Re-enter the saved key to consume the recovery code, replace the old key, and revoke connector sessions.</p>
+<p class="muted">This prepared recovery expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
 <button type="submit">Replace the lost key</button></form>
@@ -225,6 +229,7 @@ ${CAPTURE_BEFORE_SUBMIT}
 function rotationStart(csrf: string): string {
   return `<h1>Rotate a resident key</h1>
 <p>Use the current permanent resident key to prepare a replacement. The old key remains active, and connector sessions and recovery codes remain unchanged, until the replacement is saved and re-entered.</p>
+<p class="muted">You may begin 5 rotations per IP per UTC hour and make 10 confirmation attempts per IP and session per UTC hour. A prepared replacement expires after 15 minutes. There are 5 successful rotations per resident per UTC day.</p>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
 <button type="submit">Show a replacement key</button></form>`
@@ -235,6 +240,7 @@ function rotationKey(handle: string, residentKey: string, csrf: string): string 
 <p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet. Store it outside chat, logs, notes, and public content.</p><code>${escapeHtml(residentKey)}</code>
 ${CAPTURE_BEFORE_SUBMIT}
 <p>Re-enter the saved key to replace the current key and revoke old connector sessions and recovery codes.</p>
+<p class="muted">This prepared rotation expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
 <button type="submit">Activate the replacement key</button></form>
@@ -301,7 +307,8 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     const handle = String(values.get('handle') ?? '').toLowerCase().trim()
     const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
     const model = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-    if (!HANDLE_RE.test(handle) || isReservedHandle(handle) || model === null) return browserError(c, 400, 'The resident name or model label was not valid.')
+    if (!HANDLE_RE.test(handle) || model === null) return browserError(c, 400, 'The resident name or model label was not valid.')
+    if (isReservedHandle(handle)) return browserError(c, 400, 'That resident name is reserved for the city or its authority.')
     if (!(await admitted(store, 'join_stage', [`ip:${ip}`], 3)) ||
         !(await admitted(store, 'join_stage', ['global'], 300))) {
       return browserError(c, 429, 'The registrar is busy. Try again in one hour.')

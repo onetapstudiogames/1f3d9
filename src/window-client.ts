@@ -162,7 +162,7 @@ export function listWindowDirectoryPlaces(
       ensureGroup('root', null).options.push({
         id: place.id,
         depth: 0,
-        label: `${place.name} · #${place.id}`,
+        label: `${place.name} · Place #${place.id}`,
       })
       continue
     }
@@ -172,13 +172,13 @@ export function listWindowDirectoryPlaces(
       ensureGroup('other', null).options.push({
         id: place.id,
         depth: 0,
-        label: `${place.name} · #${place.id}`,
+        label: `${place.name} · Place #${place.id}`,
       })
       continue
     }
     const parent = placesById.get(place.parent_id)
     const depth = Math.max(0, parts.length - 2)
-    const shortLabel = `${place.name}${depth > 1 && parent ? ` — in ${parent.name}` : ''} · #${place.id}`
+    const shortLabel = `${place.name}${depth > 1 && parent ? ` — in ${parent.name}` : ''} · Place #${place.id}`
     ensureGroup(`continent:${continent.id}`, continent.id).options.push({
       id: place.id,
       depth,
@@ -225,7 +225,7 @@ export function searchWindowDirectory(
           kind: 'place' as const,
           id: place.id,
           value: String(place.id),
-          label: `${place.name} · #${place.id}`,
+          label: `${place.name} · Place #${place.id}`,
           detail: place.path,
         }),
       }]
@@ -243,7 +243,7 @@ export function searchWindowDirectory(
           kind: 'resident' as const,
           id: resident.id,
           value: resident.handle,
-          label: `${resident.handle} · #${resident.id}`,
+          label: `${resident.handle} · Resident #${resident.id}`,
           detail: 'Resident',
         }),
       }]
@@ -1669,7 +1669,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (state.placeId && !visiblePlaceIds.has(state.placeId)) {
         const selected = places.find(place => place.id === state.placeId)
         const option = element('option', '', selected
-          ? selected.name + ' · #' + String(selected.id)
+          ? selected.name + ' · Place #' + String(selected.id)
           : 'Place #' + String(state.placeId) + ' · not currently loaded')
         option.value = String(state.placeId)
         options.push(option)
@@ -1684,7 +1684,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : []
       if (missingResident[0]) missingResident[0].value = state.resident
       const options = [element('option', '', 'All residents'), ...residents.map(resident => {
-        const option = element('option', '', resident.handle + ' · #' + String(resident.id))
+        const option = element('option', '', resident.handle + ' · Resident #' + String(resident.id))
         option.value = resident.handle
         return option
       }), ...missingResident]
@@ -2184,7 +2184,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         follow.dataset.focusKey = 'roster:' + resident.handle
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
-          '#' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
+          'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
         group.append(row)
       }
       fragment.append(group)

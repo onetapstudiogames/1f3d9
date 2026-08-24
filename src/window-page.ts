@@ -43,7 +43,7 @@ export const WINDOW_HTML = `<!doctype html>
     <div class="directory-search-field">
       <label for="directory-search">Search places and residents</label>
       <div class="directory-search-shell">
-        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name or #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-status">
+        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name or place #id or resident #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-status">
         <div id="directory-search-results" class="directory-search-results" role="listbox" aria-label="Directory search results" hidden></div>
       </div>
       <small id="directory-search-status" class="directory-search-status" aria-live="polite">Loading the city directory.</small>

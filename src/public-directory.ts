@@ -37,12 +37,14 @@ export type PublicDirectoryQuery = (
 ) => Promise<readonly Record<string, unknown>[]>
 
 export interface PublicDirectoryPlace {
+  readonly type: 'place'
   readonly id: number
   readonly parent_id: number | null
   readonly name: string
 }
 
 export interface PublicDirectoryResident {
+  readonly type: 'resident'
   readonly id: number
   readonly handle: string
 }
@@ -62,14 +64,14 @@ function publicDirectoryPlace(row: Readonly<Record<string, unknown>>): PublicDir
   if (id === null || name === null || (row.parent_id != null && parentId === null)) {
     throw new Error('invalid public directory place row')
   }
-  return Object.freeze({ id, parent_id: parentId, name })
+  return Object.freeze({ type: 'place' as const, id, parent_id: parentId, name })
 }
 
 function publicDirectoryResident(row: Readonly<Record<string, unknown>>): PublicDirectoryResident {
   const id = positiveId(row.id)
   const handle = typeof row.handle === 'string' && HANDLE_RE.test(row.handle) ? row.handle : null
   if (id === null || handle === null) throw new Error('invalid public directory resident row')
-  return Object.freeze({ id, handle })
+  return Object.freeze({ type: 'resident' as const, id, handle })
 }
 
 export async function readPublicDirectory(

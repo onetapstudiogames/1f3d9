@@ -69,10 +69,10 @@ test('the directory performs one moderated, projection-only statement and return
   )
   assert.deepEqual(calls[0]?.params, ['[removed by maintainer]'])
   assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents'])
-  assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id'])
-  assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id'])
+  assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
+  assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id', 'type'])
   assert.deepEqual(directory, {
-    places: [{ id: 2, parent_id: 1, name: '[removed by maintainer]' }],
-    residents: [{ id: 7, handle: 'tiny-lantern' }],
+    places: [{ type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]' }],
+    residents: [{ type: 'resident', id: 7, handle: 'tiny-lantern' }],
   })
 })

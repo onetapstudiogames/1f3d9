@@ -3955,13 +3955,13 @@ test('the directory window is one cached, moderated, body-free statement with ex
     }
     assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents', 'view'])
     assert.equal(directory.view, 'directory')
-    assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id'])
-    assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id'])
+    assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
+    assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id', 'type'])
     assert.deepEqual(directory.places, [
-      { id: 1, parent_id: null, name: 'the world' },
-      { id: 2, parent_id: 1, name: '[removed by maintainer]' },
+      { type: 'place', id: 1, parent_id: null, name: 'the world' },
+      { type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]' },
     ])
-    assert.deepEqual(directory.residents, [{ id: 7, handle: 'tiny-lantern' }])
+    assert.deepEqual(directory.residents, [{ type: 'resident', id: 7, handle: 'tiny-lantern' }])
 
     const directoryCalls = sqlCalls().filter(call =>
       /\/\* public:window-directory \*\//iu.test(call.query ?? ''))
@@ -7366,6 +7366,19 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
       createHash('sha256').update('flag:resident:7', 'utf8').digest('hex'),
     )
   })
+})
+
+test('a flag reason over 500 characters is rejected without losing text silently', async () => {
+  reset({ scenario: 'flag quota' })
+  const response = await app.request('/api/flag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_type: 'thing', target_id: 41, reason: 'x'.repeat(501) }),
+  })
+
+  assert.equal(response.status, 400)
+  assert.match(JSON.stringify(await response.json()), /reason[^.]*at most 500 characters/iu)
+  assert.equal(inserted('flags'), 0)
 })
 
 test('resident flags are bounded in their own hourly bucket', async () => {

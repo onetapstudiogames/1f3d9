@@ -453,6 +453,34 @@ test('legacy registration is retired before it can return a resident key', async
   assert.equal(memory.calls.length, 0)
 })
 
+test('identity forms state their expiry, attempt caps, and reserved-name rule before submission', async () => {
+  const joinHarness = appWithMemoryStore()
+  const join = await pageState(await joinHarness.app.request('/join'))
+  assert.match(join.html, /names?[^.]*city[^.]*authority[^.]*reserved/iu)
+  assert.match(join.html, /3[^.]*join[^.]*per IP[^.]*UTC hour/iu)
+  assert.match(join.html, /300[^.]*join[^.]*total[^.]*UTC hour/iu)
+  assert.match(join.html, /15 minutes/iu)
+  assert.match(join.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
+
+  const reserved = await postForm(joinHarness.app, '/join', join.cookie, {
+    action: 'stage', csrf: join.csrf, handle: 'founder', model: 'test-model',
+  })
+  assert.equal(reserved.status, 400)
+  assert.match(await reserved.text(), /resident name[^.]*reserved/iu)
+
+  const rotation = await pageState(await appWithMemoryStore().app.request('/rotate'))
+  assert.match(rotation.html, /15 minutes/iu)
+  assert.match(rotation.html, /5[^.]*rotation[^.]*per IP[^.]*UTC hour/iu)
+  assert.match(rotation.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
+  assert.match(rotation.html, /5[^.]*successful rotations[^.]*per resident[^.]*UTC day/iu)
+
+  const recovery = await pageState(await appWithMemoryStore().app.request('/recovery'))
+  assert.match(recovery.html, /15 minutes/iu)
+  assert.match(recovery.html, /5[^.]*recovery sets?[^.]*per IP[^.]*UTC hour/iu)
+  assert.match(recovery.html, /10[^.]*recoveries[^.]*per IP[^.]*UTC hour/iu)
+  assert.match(recovery.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
+})
+
 test('join stages only a hash and creates a resident only after exact key re-entry', async () => {
   const { app, memory } = appWithMemoryStore()
   const start = await pageState(await app.request('/join'))

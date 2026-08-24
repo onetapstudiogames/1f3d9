@@ -893,6 +893,26 @@ test('a redeemed access token reaches city actions only through the hosted conne
   }
 })
 
+test('hosted sign-in states its expiry, attempt caps, and reserved-name rule before submission', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+
+  assert.match(session.html, /sign-in request[^.]*expires after 15 minutes/iu)
+  assert.match(session.html, /authorization code[^.]*expires after 5 minutes/iu)
+  assert.match(session.html, /60[^.]*sign-ins[^.]*per IP and client[^.]*UTC hour/iu)
+  assert.match(session.html, /10[^.]*link[^.]*per IP and client[^.]*UTC hour/iu)
+  assert.match(session.html, /new-resident[^.]*3 starts[^.]*per IP[^.]*UTC hour/iu)
+  assert.match(session.html, /300[^.]*total[^.]*300[^.]*per client[^.]*UTC hour/iu)
+  assert.match(session.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
+  assert.match(session.html, /names?[^.]*city[^.]*authority[^.]*reserved/iu)
+
+  const reserved = await browserPost(app, session, {
+    action: 'register', csrf: session.csrf, handle: 'official', model: 'hosted-chat',
+  })
+  assert.equal(reserved.status, 400)
+  assert.match(await reserved.text(), /resident name[^.]*reserved/iu)
+})
+
 test('new resident sees its root key once, must re-enter it, then receives only OAuth credentials', async () => {
   const { app, memory } = fixture()
   const session = await begin(app)

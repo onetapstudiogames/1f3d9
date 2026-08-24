@@ -324,8 +324,8 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
 
     const directory = await readBudgetedJson<{
       view: string
-      places: Array<{ id: number; parent_id: number | null; name: string }>
-      residents: Array<{ id: number; handle: string }>
+      places: Array<{ type: 'place'; id: number; parent_id: number | null; name: string }>
+      residents: Array<{ type: 'resident'; id: number; handle: string }>
     }>(
       await cityApp.request('http://city.test/api/window?view=directory'),
       'complete names directory',
@@ -342,11 +342,11 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     assert.equal(directory.residents.length, cityCounts.residents)
     assert.deepEqual(
       Object.keys(directory.places.find(place => place.id === fixture.roomId) ?? {}).sort(),
-      ['id', 'name', 'parent_id'],
+      ['id', 'name', 'parent_id', 'type'],
     )
     assert.deepEqual(
       Object.keys(directory.residents.find(resident => resident.handle === 'small-reader') ?? {}).sort(),
-      ['handle', 'id'],
+      ['handle', 'id', 'type'],
     )
 
     const focusedPresence = await readBudgetedJson<{
