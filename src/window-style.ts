@@ -611,6 +611,43 @@ button { color: inherit; }
 .trait-chip { color: var(--paper-light); background: var(--brick-deep); }
 .trait-chip[data-moderated="true"] { color: var(--ink); background: var(--signal); }
 
+.conversation-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  padding: 0.8rem clamp(0.8rem, 2.5vw, 1.4rem);
+  color: var(--ink);
+  background: var(--paper-light);
+  border-bottom: 3px solid var(--line);
+}
+.conversation-mode[hidden] { display: none; }
+.conversation-question {
+  flex: 1 1 14rem;
+  margin: 0;
+  color: var(--forest-deep);
+  font: 800 0.7rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.conversation-choices { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 0.45rem; }
+.conversation-mode-button {
+  min-height: 2.6rem;
+  padding: 0.55rem 0.75rem;
+  color: var(--forest-deep);
+  background: #fffef8;
+  border: 2px solid var(--line);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+.conversation-mode-button:hover { background: var(--sky); }
+.conversation-mode-button[aria-pressed="true"] {
+  color: var(--paper-light);
+  background: var(--forest);
+  box-shadow: inset 0 -3px 0 var(--forest-deep);
+}
+.conversation-mode-button:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
 .conversation-stream { padding: clamp(0.8rem, 2.5vw, 1.4rem); }
 .conversation-group { display: grid; grid-template-columns: minmax(11rem, 0.3fr) minmax(0, 1fr); gap: 1rem; padding: 1.15rem 0; border-bottom: 3px solid var(--line); }
 .conversation-group:first-child { padding-block-start: 0; }
@@ -810,6 +847,9 @@ button { color: inherit; }
   .activity-row { grid-template-columns: 1fr; }
   .activity-time, .activity-context { grid-column: 1; }
   .place-map { padding: 0.55rem; }
+  .conversation-mode { align-items: stretch; }
+  .conversation-choices { width: 100%; }
+  .conversation-mode-button { flex: 1 1 12rem; }
   .place-tree .place-tree { margin-inline-start: 0.55rem; }
   .place-card { grid-template-columns: 1fr; }
   .place-facts { grid-column: 1; grid-row: auto; text-align: start; }

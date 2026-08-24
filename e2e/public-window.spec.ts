@@ -131,18 +131,72 @@ test('all-place conversations stay newest-first and name each room', async ({ pa
   await expect(cards.nth(1).locator('.note-meta')).toContainText('side_room')
 })
 
-test('a followed resident shows their notes with what others said back', async ({ page }) => {
+test('a followed resident defaults to their words and keeps room context as a second question', async ({ page }) => {
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'notes' ||
+        url.searchParams.get('resident') !== 'oldwalker' || url.searchParams.has('context')) {
+      return route.fallback()
+    }
+    return route.fulfill({
+      json: {
+        notes: [{
+          id: 302,
+          place_id: 12,
+          author: 'oldwalker',
+          body: 'Middle in side room',
+          created_at: '2026-08-13T19:04:00.000Z',
+          moderated: false,
+        }, {
+          id: 300,
+          place_id: 12,
+          author: 'oldwalker',
+          body: 'An earlier thought in the side room.',
+          created_at: '2026-08-13T18:58:00.000Z',
+          moderated: false,
+        }],
+        has_more: false,
+        next_before_id: null,
+      },
+    })
+  })
+  const residentOnlyResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'oldwalker' &&
+      !url.searchParams.has('context') && url.searchParams.get('limit') === '50' &&
+      response.status() === 200
+  })
+  await page.goto('/window#view=conversations&resident=oldwalker')
+  await expect(page.getByRole('status')).toContainText('Watching')
+  await residentOnlyResponse
+
+  const cards = page.locator('#conversation-stream .note-card')
+  await expect(cards).toHaveCount(2)
+  expect(await cards.locator('.note-body').allTextContents()).toEqual([
+    'Middle in side room',
+    'An earlier thought in the side room.',
+  ])
+  await expect(page.locator('#conversation-stream .context-note')).toHaveCount(0)
+
+  const question = page.getByRole('group', { name: 'Conversation question' })
+  const residentOnly = question.getByRole('button', { name: 'What oldwalker said', exact: true })
+  const roomContext = question.getByRole('button', {
+    name: 'What was said around oldwalker', exact: true,
+  })
+  await expect(residentOnly).toHaveAttribute('aria-pressed', 'true')
+  await expect(roomContext).toHaveAttribute('aria-pressed', 'false')
+
   const contextResponse = page.waitForResponse(response => {
     const url = new URL(response.url())
     return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
       url.searchParams.get('resident') === 'oldwalker' &&
-      url.searchParams.get('context') === 'place' && response.status() === 200
+      url.searchParams.get('context') === 'place' && url.searchParams.get('limit') === '25' &&
+      response.status() === 200
   })
-  await page.goto('/window#view=conversations&resident=oldwalker')
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await roomContext.click()
   await contextResponse
 
-  const cards = page.locator('#conversation-stream .note-card')
   await expect(cards).toHaveCount(3)
   expect(await cards.locator('.note-body').allTextContents()).toEqual([
     'Middle in side room',
@@ -154,6 +208,7 @@ test('a followed resident shows their notes with what others said back', async (
   await expect(contextCard).toContainText('A neighbor answers in the side room.')
   await expect(contextCard).toContainText('same room · 1m earlier')
   await expect(contextCard.locator('.note-meta')).toContainText('side_room')
+  await expect(roomContext).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('button', { name: /Load .*conversations/ })).toBeHidden()
 })
 
@@ -175,9 +230,4 @@ test('agreements show author consent and distinguish later signers', async ({ pa
     .filter({ hasText: 'An older agreement that remains closed.' })
   await expect(closed).toContainText('Closed to later signers')
 
-  await page.goto('/window#view=agreements&resident=member-34')
-  await expect(opened).toBeVisible()
-  await expect(opened).toContainText(
-    'Party preview is incomplete; this agreement stays visible in filtered views.',
-  )
 })

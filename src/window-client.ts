@@ -311,6 +311,7 @@ export const WINDOW_JS = `(() => {
     placeThingsPage: document.getElementById('place-things-page'),
     placeConversation: document.getElementById('place-conversation'),
     placeNotesPage: document.getElementById('place-notes-page'),
+    conversationMode: document.getElementById('conversation-mode'),
     conversations: document.getElementById('conversation-stream'),
     conversationPage: document.getElementById('conversation-page'),
     activity: document.getElementById('activity-list'),
@@ -362,6 +363,7 @@ export const WINDOW_JS = `(() => {
     directorySearchIndex: -1,
     placeId: null,
     resident: null,
+    conversationContext: false,
   }
 
   function element(tagName, className, text) {
@@ -1520,10 +1522,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function readHashState() {
     const params = new URLSearchParams(window.location.hash.slice(1))
     const view = params.get('view')
+    const resident = safeHandle(params.get('resident'))
     return {
       view: VIEWS.includes(view) ? view : 'map',
       placeId: safeId(params.get('place')),
-      resident: safeHandle(params.get('resident')),
+      resident,
+      conversationContext: Boolean(resident && params.get('context') === 'place'),
     }
   }
 
@@ -1532,6 +1536,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     params.set('view', state.view)
     if (state.placeId) params.set('place', String(state.placeId))
     if (state.resident) params.set('resident', state.resident)
+    if (state.resident && state.conversationContext) params.set('context', 'place')
     return '#' + params.toString()
   }
 
@@ -1554,6 +1559,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     writeHash(!rovingTabActivation)
     renderAll()
     void ensureFocusedSelection()
+  }
+
+  function activeSelectionKey() {
+    return String(state.placeId || '') + '|resident:' + String(state.resident || '')
   }
 
   function directorySearchSources(snapshot) {
@@ -1668,9 +1677,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       })]
       if (state.placeId && !visiblePlaceIds.has(state.placeId)) {
         const selected = places.find(place => place.id === state.placeId)
+        const focusedRead = state.focusedPlaces[String(state.placeId)]
         const option = element('option', '', selected
           ? selected.name + ' · Place #' + String(selected.id)
-          : 'Place #' + String(state.placeId) + ' · not currently loaded')
+          : focusedRead?.notFound
+            ? 'Place #' + String(state.placeId) + ' · no public place was found'
+            : focusedRead?.error
+              ? 'Place #' + String(state.placeId) + ' · public place could not be loaded'
+              : 'Place #' + String(state.placeId) + ' · loading public place…')
         option.value = String(state.placeId)
         options.push(option)
       }
@@ -1679,8 +1693,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (nodes.residentFilter) {
       const residents = state.directory.loaded ? state.directory.residents : snapshot.residents
+      const focusedRead = state.resident ? state.focusedResidents[state.resident] : null
       const missingResident = state.resident && !residents.some(resident => resident.handle === state.resident)
-        ? [element('option', '', state.resident + ' · not currently loaded')]
+        ? [element('option', '', focusedRead?.notFound
+          ? state.resident + ' · no public resident was found'
+          : focusedRead?.error
+            ? state.resident + ' · public resident could not be loaded'
+            : state.resident + ' · loading public resident…')]
         : []
       if (missingResident[0]) missingResident[0].value = state.resident
       const options = [element('option', '', 'All residents'), ...residents.map(resident => {
@@ -1697,8 +1716,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function selectedResident(snapshot) {
     return state.resident
-      ? snapshot.residents.find(resident => resident.handle === state.resident) || null
+      ? snapshot.residents.find(resident => resident.handle === state.resident) ||
+        focusedResident(state.resident)
       : null
+  }
+
+  function directoryResident(handle) {
+    return handle
+      ? state.directory.residents.find(resident => resident.handle === handle) || null
+      : null
+  }
+
+  function residentReference(snapshot, handle) {
+    if (!handle) return null
+    return snapshot.residents.find(resident => resident.handle === handle) ||
+      focusedResident(handle) || directoryResident(handle)
   }
 
   function directoryPlace(placeId) {
@@ -1717,6 +1749,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function placeReference(snapshot, placeId) {
     if (!placeId) return null
     return directoryPlace(placeId) ||
+      focusedPlace(placeId) ||
       snapshot.flatPlaces.find(place => place.id === placeId) || null
   }
 
@@ -1736,13 +1769,79 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function selectedPlace(snapshot) {
     const followed = selectedResident(snapshot)
     const id = state.placeId || (followed && followed.current_place_id) || null
-    return id ? snapshot.flatPlaces.find(place => place.id === id) || null : null
+    return id
+      ? snapshot.flatPlaces.find(place => place.id === id) || focusedPlace(id)
+      : null
   }
 
   function residentsAt(snapshot, placeId) {
     const placeIds = placeScopeSet(placeId, snapshot)
-    return snapshot.residents.filter(resident => placeIds.has(resident.current_place_id) &&
+    const followed = selectedResident(snapshot)
+    const available = followed && !snapshot.residents.some(resident => resident.handle === followed.handle)
+      ? [...snapshot.residents, followed]
+      : snapshot.residents
+    return available.filter(resident => placeIds.has(resident.current_place_id) &&
       (!state.resident || resident.handle === state.resident))
+  }
+
+  function selectionIssue(snapshot, includeCurrentPlace) {
+    const resident = selectedResident(snapshot)
+    if (state.resident && !resident) {
+      const entry = state.focusedResidents[state.resident]
+      return Object.freeze({
+        kind: 'resident', value: state.resident,
+        status: entry?.notFound ? 'not-found' : entry?.error ? 'error' : 'loading',
+      })
+    }
+    const placeId = state.placeId ||
+      (includeCurrentPlace && resident ? resident.current_place_id : null)
+    const place = placeId
+      ? snapshot.flatPlaces.find(candidate => candidate.id === placeId) || focusedPlace(placeId)
+      : null
+    if (placeId && !place) {
+      const entry = state.focusedPlaces[String(placeId)]
+      return Object.freeze({
+        kind: 'place', value: placeId,
+        status: entry?.notFound ? 'not-found' : entry?.error ? 'error' : 'loading',
+      })
+    }
+    return null
+  }
+
+  function renderSelectionIssue(target, issue, itemTag, focusFallbackId) {
+    if (!target || !issue) return false
+    const loadingMessage = issue.kind === 'resident'
+      ? 'Loading public resident ' + String(issue.value) + '…'
+      : 'Loading public place #' + String(issue.value) + '…'
+    const notFoundMessage = issue.kind === 'resident'
+      ? 'No public resident was found for ' + String(issue.value) + '.'
+      : 'No public place was found for #' + String(issue.value) + '.'
+    const failureMessage = issue.kind === 'resident'
+      ? 'Public resident ' + String(issue.value) + ' could not be loaded.'
+      : 'Public place #' + String(issue.value) + ' could not be loaded.'
+    const row = element(itemTag || 'div', issue.status === 'error' ? 'error-row' :
+      issue.status === 'not-found' ? 'empty-row' : 'loading-row')
+    if (issue.status === 'loading') {
+      row.textContent = loadingMessage
+    } else if (issue.status === 'not-found') {
+      row.textContent = notFoundMessage
+    } else {
+      row.setAttribute('role', 'alert')
+      row.append(element('p', '', failureMessage))
+      const retry = element('button', 'selection-retry', issue.kind === 'resident'
+        ? 'Retry loading this resident'
+        : 'Retry loading this place')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'selection-retry:' + issue.kind + ':' + String(issue.value)
+      retry.dataset.focusFallbackId = focusFallbackId || target.id
+      retry.addEventListener('click', () => {
+        if (issue.kind === 'resident') void ensureFocusedSelection({ forceResident: true })
+        else void loadFocusedPlace(Number(issue.value), true)
+      })
+      row.append(retry)
+    }
+    target.replaceChildren(row)
+    return true
   }
 
   function occupantChip(resident) {
@@ -2004,13 +2103,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderMap(snapshot) {
     if (!nodes.map) return
+    const issue = selectionIssue(snapshot, true)
+    if (issue) {
+      renderSelectionIssue(nodes.map, issue)
+      return
+    }
     const roots = mapRoots(snapshot)
     if (!roots.length) {
-      const missing = state.placeId
-        ? 'Place #' + String(state.placeId) + ' is not currently loaded in this bounded view.'
-        : state.resident
-          ? 'Resident ' + state.resident + ' is not currently loaded in this bounded view.'
-          : 'No public place in the currently loaded view matches this filter.'
+      const missing = state.resident
+        ? state.resident + ' is not currently standing in a public place.'
+        : 'No public place in the currently loaded view matches this filter.'
       renderEmpty(nodes.map, 'empty-row', missing)
       return
     }
@@ -2148,8 +2250,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderRoster(snapshot) {
     if (!nodes.roster) return
     renderResidentPage()
+    const issue = state.resident ? selectionIssue(snapshot, false) : null
+    if (issue?.kind === 'resident') {
+      renderSelectionIssue(nodes.roster, issue)
+      return
+    }
     const selectedPlaceIds = state.placeId ? placeScopeSet(state.placeId, snapshot) : null
-    const selectedFocusedResident = state.resident && !selectedResident(snapshot)
+    const selectedFocusedResident = state.resident &&
+      !snapshot.residents.some(resident => resident.handle === state.resident)
       ? focusedResident(state.resident)
       : null
     const availableResidents = selectedFocusedResident
@@ -2174,7 +2282,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       group.append(element('p', 'roster-place', place
         ? place.path
         : placeId
-          ? 'Place #' + String(placeId) + ' · not currently loaded'
+          ? state.focusedPlaces[String(placeId)]?.notFound
+            ? 'Place #' + String(placeId) + ' · no public place was found'
+            : state.focusedPlaces[String(placeId)]?.error
+              ? 'Place #' + String(placeId) + ' · public place could not be loaded'
+              : 'Place #' + String(placeId) + ' · loading public place…'
           : 'Between places'))
       const standing = visible.filter(candidate => candidate.current_place_id === placeId)
       for (const resident of [...standing.filter(r => !r.asleep), ...standing.filter(r => r.asleep)]) {
@@ -2232,12 +2344,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return 'same room · ' + String(Math.round(hours / 24)) + 'd' + direction
   }
 
-  // A handle earns a button only when the roster can resolve it: chooseResident
-  // ignores an unknown handle, and a control that does nothing is worse than
-  // plain text.
+  // A handle earns a button when any public source can resolve it. The complete
+  // directory deliberately knows more names than the bounded presence page.
   function residentNode(handle, className, focusKey) {
-    const known = state.snapshot &&
-      state.snapshot.residents.some(candidate => candidate.handle === handle)
+    const known = state.snapshot && residentReference(state.snapshot, handle)
     if (!known) return element('span', className, handle)
     const follow = element('button', className + ' resident-follow-inline', handle)
     follow.type = 'button'
@@ -2429,6 +2539,42 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
+  function renderHistoryOutcome(target, entry, messages, itemTag) {
+    if (!target || entry.rows.length) return false
+    const waiting = entry.loading || (!entry.initialized && !entry.error)
+    const message = waiting
+      ? messages.loading
+      : entry.error
+        ? messages.failure
+        : messages.empty
+    const className = entry.error ? 'error-row' : waiting ? 'loading-row' : 'empty-row'
+    target.replaceChildren(element(itemTag || 'p', className, message))
+    return true
+  }
+
+  function hideHistoryControl(target) {
+    if (!target) return
+    target.hidden = true
+    target.replaceChildren()
+  }
+
+  function renderOccupants(snapshot, place) {
+    const occupants = residentsAt(snapshot, place.id)
+    const completePresence = snapshot.residents.length >= snapshot.totals.residents
+    if (occupants.length) {
+      renderPeople(nodes.occupants, occupants,
+        placeId => placeReference(snapshot, placeId))
+    } else {
+      renderEmpty(nodes.occupants, 'empty-row', completePresence
+        ? 'No public resident is standing inside this place.'
+        : 'No resident from the bounded presence view is shown inside this place.')
+    }
+    if (!completePresence && nodes.occupants) {
+      nodes.occupants.append(element('p', 'presence-boundary',
+        'Other occupants may be omitted: no narrow place-specific presence read exists yet.'))
+    }
+  }
+
   function renderPlaceOrientation(place) {
     if (nodes.placePurposeLabel) nodes.placePurposeLabel.textContent = 'Owner-written purpose'
     if (nodes.placeFrontMatterLabel) {
@@ -2482,70 +2628,65 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderPlace(snapshot) {
     const followed = selectedResident(snapshot)
     const place = selectedPlace(snapshot) ||
-      (state.placeId ? focusedPlace(state.placeId) : null) ||
       (!state.resident && !state.placeId ? snapshot.flatPlaces[0] || null : null)
     if (!place) {
-      const residentMetadata = followed || focusedResident(state.resident)
-      const focused = focusedPlace(state.placeId)
-      const betweenPlaces = residentMetadata && residentMetadata.current_place_id === null
-      const unloadedPlaceId = state.placeId || residentMetadata?.current_place_id || null
-      const unloadedResident = state.resident && !residentMetadata ? state.resident : null
-      const reference = directoryPlace(unloadedPlaceId)
-      const placeRead = unloadedPlaceId ? state.focusedPlaces[String(unloadedPlaceId)] : null
-      const residentRead = unloadedResident ? state.focusedResidents[unloadedResident] : null
-      if (nodes.placeTitle) nodes.placeTitle.textContent = unloadedPlaceId
-        ? focused?.name || reference?.name || 'Place #' + String(unloadedPlaceId) + ' is not currently loaded'
-        : unloadedResident
-          ? 'Resident ' + unloadedResident + ' is not currently loaded'
-          : residentMetadata?.handle + ' is between places'
-      if (nodes.placeSummary) nodes.placeSummary.textContent = unloadedPlaceId
-        ? (focused?.path || reference?.path || 'Place #' + String(unloadedPlaceId)) +
-          (focused
-            ? ' · focused metadata loaded; contents are not currently loaded.'
-            : placeRead?.loading
-              ? ' · loading focused metadata…'
-              : ' · metadata and content are not currently loaded in this bounded view.')
-        : unloadedResident
-          ? residentRead?.loading
-            ? 'Loading their current public presence…'
-            : 'Their metadata and current place are not currently loaded in this bounded view.'
-          : 'This resident is not currently standing in a public place.'
-      renderPlaceOrientation(focused)
-      if (placeRead?.error && nodes.placePurpose) {
-        const alert = element('div', 'selection-error')
-        alert.setAttribute('role', 'alert')
-        alert.append(element('p', '', 'Could not load focused metadata for this place.'))
-        const retry = element('button', 'selection-retry', 'Retry loading this place')
-        retry.type = 'button'
-        retry.dataset.focusKey = 'focused-place-retry:' + String(unloadedPlaceId)
-        retry.dataset.focusFallbackId = 'place-focus-title'
-        retry.addEventListener('click', () => void loadFocusedPlace(unloadedPlaceId))
-        alert.append(retry)
-        nodes.placePurpose.replaceChildren(alert)
+      const issue = selectionIssue(snapshot, true)
+      if (issue) {
+        const issueTitle = issue.status === 'not-found'
+          ? issue.kind === 'resident' ? 'No public resident was found' : 'No public place was found'
+          : issue.status === 'error'
+            ? issue.kind === 'resident' ? 'Public resident could not be loaded' : 'Public place could not be loaded'
+            : issue.kind === 'resident' ? 'Loading public resident…' : 'Loading public place…'
+        if (nodes.placeTitle) nodes.placeTitle.textContent = issueTitle
+        if (nodes.placeSummary) nodes.placeSummary.textContent = issue.status === 'not-found'
+          ? issueTitle + ' for this selection.'
+          : issue.status === 'error'
+            ? issueTitle + '. Use Retry to try the focused read again.'
+            : issueTitle + ' The requested content will follow that focused read.'
+        if (nodes.placePurpose) {
+          renderSelectionIssue(nodes.placePurpose, issue, null, 'place-focus-title')
+        }
+        renderEmpty(nodes.placeFrontMatter, issue.status === 'error' ? 'error-row' :
+          issue.status === 'not-found' ? 'empty-row' : 'loading-row',
+        issue.status === 'not-found'
+          ? issueTitle + ' for this selection.'
+          : issue.status === 'error'
+            ? 'Front matter is unavailable until the focused read succeeds.'
+            : 'Loading public front matter…')
+        for (const target of [nodes.occupants, nodes.placeThings, nodes.placeConversation]) {
+          renderEmpty(target, issue.status === 'error' ? 'error-row' :
+            issue.status === 'not-found' ? 'empty-row' : 'loading-row',
+          issue.status === 'not-found'
+            ? issueTitle + ' for this selection.'
+            : issue.status === 'error'
+              ? 'This section is unavailable until the focused read succeeds.'
+              : 'Waiting for the focused read…')
+        }
+        hideHistoryControl(nodes.placeThingsPage)
+        hideHistoryControl(nodes.placeNotesPage)
+        return
       }
-      if (residentRead?.error && nodes.placePurpose) {
-        const alert = element('div', 'selection-error')
-        alert.setAttribute('role', 'alert')
-        alert.append(element('p', '', 'Could not load focused presence for this resident.'))
-        const retry = element('button', 'selection-retry', 'Retry loading this resident')
-        retry.type = 'button'
-        retry.dataset.focusKey = 'focused-resident-retry:' + unloadedResident
-        retry.dataset.focusFallbackId = 'place-focus-title'
-        retry.addEventListener('click', () => void loadFocusedResident(unloadedResident))
-        alert.append(retry)
-        nodes.placePurpose.replaceChildren(alert)
+      if (followed?.current_place_id === null) {
+        if (nodes.placeTitle) nodes.placeTitle.textContent = followed.handle + ' is between places'
+        if (nodes.placeSummary) {
+          nodes.placeSummary.textContent = 'This resident is not currently standing in a public place.'
+        }
+        renderPlaceOrientation(null)
+        renderEmpty(nodes.occupants, 'empty-row', 'There is no doorway around this resident right now.')
+        renderEmpty(nodes.placeThings, 'empty-row', 'No current public place is available for visible things.')
+        renderEmpty(nodes.placeConversation, 'empty-row', 'No current public place is available for conversation.')
+        hideHistoryControl(nodes.placeThingsPage)
+        hideHistoryControl(nodes.placeNotesPage)
+        return
       }
-      renderEmpty(nodes.occupants, 'empty-row', betweenPlaces
-        ? 'There is no doorway around this resident right now.'
-        : 'Presence at this unloaded address is not shown.')
-      renderEmpty(nodes.placeThings, 'empty-row', unloadedPlaceId
-        ? 'Things at this address are not currently loaded.'
-        : 'No loaded place is selected for visible things.')
-      renderEmpty(nodes.placeConversation, 'empty-row', unloadedPlaceId || unloadedResident
-        ? 'Conversation content for this selection is not currently loaded.'
-        : 'No loaded place is selected for conversation.')
-      if (nodes.placeThingsPage) nodes.placeThingsPage.hidden = true
-      if (nodes.placeNotesPage) nodes.placeNotesPage.hidden = true
+      if (nodes.placeTitle) nodes.placeTitle.textContent = 'No public place is selected'
+      if (nodes.placeSummary) nodes.placeSummary.textContent = 'Choose a public place to inspect it.'
+      renderPlaceOrientation(null)
+      renderEmpty(nodes.occupants, 'empty-row', 'No public place is selected for occupants.')
+      renderEmpty(nodes.placeThings, 'empty-row', 'No public place is selected for visible things.')
+      renderEmpty(nodes.placeConversation, 'empty-row', 'No public place is selected for conversation.')
+      hideHistoryControl(nodes.placeThingsPage)
+      hideHistoryControl(nodes.placeNotesPage)
       return
     }
     if (nodes.placeTitle) nodes.placeTitle.textContent = place.name
@@ -2554,67 +2695,89 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : ' · nobody owns it · transit only') +
       (state.placeId ? ' · showing this place and everything inside it' : '')
     renderPlaceOrientation(place)
-    renderPeople(
-      nodes.occupants,
-      residentsAt(snapshot, place.id),
-      placeId => placeReference(snapshot, placeId),
-    )
+    renderOccupants(snapshot, place)
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
     autoLoadFilteredHistory('things', filters, historyEntry('things', filters))
     autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
-    renderThings(
-      nodes.placeThings,
-      historyEntry('things', filters).rows,
-      placeId => placeReference(snapshot, placeId),
-    )
-    renderNotes(nodes.placeConversation, historyEntry('notes', filters).rows,
-      'No conversation in the current bounded public view matches here.',
-      placeId => placeReference(snapshot, placeId))
+    const thingsEntry = historyEntry('things', filters)
+    const notesEntry = historyEntry('notes', filters)
+    if (!renderHistoryOutcome(nodes.placeThings, thingsEntry, Object.freeze({
+      loading: 'Fetching things that match this place…',
+      failure: 'Things could not be loaded. Retry below.',
+      empty: 'No public thing matches this selection.',
+    }))) {
+      renderThings(nodes.placeThings, thingsEntry.rows,
+        placeId => placeReference(snapshot, placeId))
+    }
+    if (!renderHistoryOutcome(nodes.placeConversation, notesEntry, Object.freeze({
+      loading: 'Fetching conversation that matches this place…',
+      failure: 'Conversation could not be loaded. Retry below.',
+      empty: 'No public conversation matches this place selection.',
+    }))) {
+      renderNotes(nodes.placeConversation, notesEntry.rows,
+        'No public conversation matches this place selection.',
+        placeId => placeReference(snapshot, placeId))
+    }
     renderHistoryControl(nodes.placeThingsPage, 'things', 'things', filters)
     renderHistoryControl(nodes.placeNotesPage, 'notes', 'notes', filters)
   }
 
+  function renderConversationMode() {
+    if (!nodes.conversationMode) return
+    if (!state.resident) {
+      nodes.conversationMode.hidden = true
+      nodes.conversationMode.replaceChildren()
+      return
+    }
+    const question = element('p', 'conversation-question', state.conversationContext
+      ? 'Question: What was said around ' + state.resident + '?'
+      : 'Question: What did ' + state.resident + ' say?')
+    const choices = element('div', 'conversation-choices')
+    const residentOnly = element('button', 'conversation-mode-button',
+      'What ' + state.resident + ' said')
+    residentOnly.type = 'button'
+    residentOnly.setAttribute('aria-pressed', String(!state.conversationContext))
+    residentOnly.dataset.focusKey = 'conversation-mode:resident'
+    residentOnly.addEventListener('click', () => navigate({ conversationContext: false }))
+    const roomContext = element('button', 'conversation-mode-button',
+      'What was said around ' + state.resident)
+    roomContext.type = 'button'
+    roomContext.setAttribute('aria-pressed', String(state.conversationContext))
+    roomContext.dataset.focusKey = 'conversation-mode:context'
+    roomContext.addEventListener('click', () => navigate({ conversationContext: true }))
+    choices.append(residentOnly, roomContext)
+    nodes.conversationMode.hidden = false
+    nodes.conversationMode.replaceChildren(question, choices)
+  }
+
   function renderConversations(snapshot) {
     if (!nodes.conversations) return
-    // Following one resident fetches their bounded server-side slice plus
-    // same-place context, so an active resident never looks falsely silent
-    // just because the newest city-wide page missed them.
+    renderConversationMode()
+    // Following one resident defaults to only their authored notes. Room
+    // context remains a separate, labelled question with its own cache key.
     const filters = Object.freeze({
       placeId: state.placeId,
       resident: state.resident,
-      context: Boolean(state.resident),
+      context: Boolean(state.resident && state.conversationContext),
     })
-    const followed = selectedResident(snapshot)
+    const issue = selectionIssue(snapshot, false)
+    if (issue) {
+      renderSelectionIssue(nodes.conversations, issue)
+      hideHistoryControl(nodes.conversationPage)
+      return
+    }
     const place = state.placeId
       ? placeReference(snapshot, state.placeId)
       : null
-    if (state.placeId && !place) {
-      const reference = placeReference(snapshot, state.placeId)
-      renderEmpty(nodes.conversations, 'empty-row', (reference?.path || 'Place #' + String(state.placeId)) +
-        ' · metadata and conversation are not currently loaded in this bounded view.')
-      if (nodes.conversationPage) {
-        nodes.conversationPage.hidden = true
-        nodes.conversationPage.replaceChildren()
-      }
-      return
-    }
-    if (state.resident && !followed) {
-      renderEmpty(nodes.conversations, 'empty-row', 'Resident ' + state.resident +
-        ' metadata and conversation are not currently loaded in this bounded view.')
-      if (nodes.conversationPage) {
-        nodes.conversationPage.hidden = true
-        nodes.conversationPage.replaceChildren()
-      }
-      return
-    }
     autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
     const entry = historyEntry('notes', filters)
     const notes = entry.rows
     const placeOf = placeId => placeReference(snapshot, placeId)
-    if (!notes.length || (state.placeId && !place)) {
-      renderEmpty(nodes.conversations, 'empty-row', entry.loading
-        ? 'Fetching this conversation…'
-        : 'No conversation in the current bounded public view matches this selection.')
+    if (renderHistoryOutcome(nodes.conversations, entry, Object.freeze({
+      loading: 'Fetching this conversation…',
+      failure: 'Conversation could not be loaded. Retry below.',
+      empty: 'No public conversation matches this selection.',
+    }))) {
       renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
       return
     }
@@ -2630,10 +2793,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       group.append(heading, list)
       nodes.conversations.replaceChildren(group)
     } else {
-      // Every room at once. The server pages notes newest first, so retain that
-      // order and name each room without regrouping the stream by place. When
-      // following a resident, what others said in the same room stays visible
-      // as marked context — a contextual view, not a reply thread.
+      // The server pages notes newest first, so retain that order and name each
+      // room without regrouping. Only the explicit room-context question marks
+      // neighbours; the resident-only default contains authored notes alone.
       const ownNotes = notes.filter(note => note.author === state.resident)
       const nearestOwn = note => ownNotes.reduce((closest, own) => {
         if (own.place_id !== note.place_id) return closest
@@ -2645,7 +2807,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const list = element('div', 'note-list')
       list.append(...notes.map(note => {
         const card = noteCard(note, placeOf(note.place_id))
-        if (state.resident && note.author !== state.resident) {
+        if (filters.context && note.author !== state.resident) {
           const anchor = nearestOwn(note)
           card.classList.add('context-note')
           card.append(element('span', 'context-mark', anchor
@@ -2674,17 +2836,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderActivity(snapshot) {
     if (!nodes.activity) return
     const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
+    const issue = selectionIssue(snapshot, false)
+    if (issue) {
+      renderSelectionIssue(nodes.activity, issue, 'li')
+      hideHistoryControl(nodes.happeningsPage)
+      return
+    }
     // Kick the auto-load before reading the entry: loadHistory stores
     // loading:true synchronously, so this render already says "fetching"
     // instead of falsely reporting an empty view.
     autoLoadFilteredHistory('events', filters, historyEntry('events', filters))
     const entry = historyEntry('events', filters)
     const events = entry.rows
-    if (!events.length) {
-      nodes.activity.replaceChildren(element('li', 'empty-row',
-        entry.loading
-          ? 'Fetching happenings that match this view…'
-          : 'No happening in the current bounded public view matches this selection.'))
+    if (renderHistoryOutcome(nodes.activity, entry, Object.freeze({
+      loading: 'Fetching happenings that match this view…',
+      failure: 'Happenings could not be loaded. Retry below.',
+      empty: 'No happening in the current bounded public view matches this selection.',
+    }), 'li')) {
       renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
       return
     }
@@ -2709,9 +2877,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderAgreements(snapshot) {
     if (!nodes.agreements) return
     const filters = Object.freeze({ placeId: null, resident: state.resident })
-    const agreements = historyEntry('agreements', filters).rows
-    if (!agreements.length) {
-      renderEmpty(nodes.agreements, 'empty-row', 'No agreement in the current bounded public view matches this resident selection.')
+    const issue = state.resident ? selectionIssue(snapshot, false) : null
+    if (issue?.kind === 'resident') {
+      renderSelectionIssue(nodes.agreements, issue)
+      hideHistoryControl(nodes.agreementsPage)
+      return
+    }
+    autoLoadFilteredHistory('agreements', filters, historyEntry('agreements', filters))
+    const entry = historyEntry('agreements', filters)
+    const agreements = entry.rows
+    if (renderHistoryOutcome(nodes.agreements, entry, Object.freeze({
+      loading: 'Fetching agreements that match this resident…',
+      failure: 'Agreements could not be loaded. Retry below.',
+      empty: 'No agreement in the current bounded public view matches this resident selection.',
+    }))) {
       renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
       return
     }
@@ -2788,7 +2967,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     // While the first filtered slice is being fetched nothing "older" is
     // involved yet; every click-driven state keeps the familiar wording.
-    const older = entry.loading && !entry.initialized ? '' : 'older '
+    const older = entry.initialized ? 'older ' : ''
     const text = entry.loading
       ? 'Loading ' + older + label + '…'
       : entry.error ? 'Retry loading ' + older + label : 'Load ' + older + label
@@ -2798,9 +2977,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
     // loadHistory already ignores clicks while a fetch is in flight.
     button.setAttribute('aria-busy', String(entry.loading))
     button.dataset.focusKey = 'load:' + collection + ':' + historyKey(collection, filters)
+    button.dataset.focusFallbackId = collection === 'events'
+      ? 'activity-list'
+      : collection === 'agreements'
+        ? 'agreement-list'
+        : collection === 'things'
+          ? 'place-things'
+          : label === 'conversations' ? 'conversation-stream' : 'place-conversation'
     button.addEventListener('click', () => void loadHistory(collection, filters))
+    const parts = []
+    if (entry.error && entry.rows.length) {
+      const message = element('p', 'navigation-error',
+        (older ? 'Older ' : '') + label + ' could not be loaded.')
+      message.setAttribute('role', 'alert')
+      parts.push(message)
+    }
+    parts.push(button)
     target.hidden = false
-    target.replaceChildren(button)
+    target.replaceChildren(...parts)
   }
 
   function historyRequestUrl(collection, entry, filters, minimumMarker) {
@@ -2887,11 +3081,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
       void forwardRefreshHistory('events', filters)
     } else if (state.view === 'conversations' && state.resident) {
       const filters = Object.freeze({
-        placeId: state.placeId, resident: state.resident, context: true,
+        placeId: state.placeId,
+        resident: state.resident,
+        context: Boolean(state.conversationContext),
       })
       const entry = historyEntry('notes', filters)
       if (!entry.initialized || entry.loading) return
       void forwardRefreshHistory('notes', filters)
+    } else if (state.view === 'agreements' && state.resident) {
+      const filters = Object.freeze({ placeId: null, resident: state.resident })
+      const entry = historyEntry('agreements', filters)
+      if (!entry.initialized || entry.loading) return
+      void forwardRefreshHistory('agreements', filters)
     }
   }
 
@@ -2976,20 +3177,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ' for things, and ' + snapshot.bodyLimits.agreements.toLocaleString() +
           ' for agreements.'
         : ' Long text may appear as an excerpt.'
-    // Following a resident fetches conversations beyond the initial bounded
-    // view, so its initial counts describe a different set than the list on screen.
-    // Report what the reader is actually looking at rather than leaving the
-    // two numbers to be read as one.
-    const followedRows = state.resident
-      ? historyEntry('notes', Object.freeze({
-        placeId: state.placeId, resident: state.resident, context: true,
-      })).rows
-      : []
+    // Following a resident fetches a separately paged answer beyond the initial
+    // bounded view. Name the exact question instead of asking scope disclosure
+    // to compensate for an ambiguous default.
+    const followedFilters = state.resident ? Object.freeze({
+      placeId: state.placeId,
+      resident: state.resident,
+      context: Boolean(state.conversationContext),
+    }) : null
+    const followedEntry = followedFilters ? historyEntry('notes', followedFilters) : null
+    const followedRows = followedEntry?.rows || []
     const ownRows = followedRows.filter(note => note.author === state.resident).length
-    const followNotice = state.resident && followedRows.length
-      ? ' Conversations below include separately fetched context beyond the initial bounded view: ' +
-        String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
-        ' plus ' + String(followedRows.length - ownRows) + ' from the same rooms.'
+    const followNotice = state.resident
+      ? state.conversationContext
+        ? ' Conversation question: what was said around ' + state.resident + '. Showing ' +
+          String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
+          ' plus ' + String(followedRows.length - ownRows) + ' fetched from the same rooms' +
+          (followedEntry?.hasMore ? '; older pages remain.' : '.')
+        : ' Conversation question: what ' + state.resident + ' said. Showing ' +
+          String(followedRows.length) + ' fetched ' +
+          (followedRows.length === 1 ? 'note' : 'notes') +
+          (followedEntry?.hasMore ? '; older pages remain.' : '.')
       : ''
     const directoryNotice = state.directory.loaded
       ? ' Selectors use the complete city directory; map, presence, and authored content remain currently loaded views.'
@@ -3123,7 +3331,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!resident) return
     if (nodes.directorySearch) nodes.directorySearch.value = ''
     closeDirectorySearchResults()
-    navigate({ resident: handle, directorySearch: '', directorySearchIndex: -1 })
+    navigate({
+      resident: handle,
+      conversationContext: false,
+      directorySearch: '',
+      directorySearchIndex: -1,
+    })
   }
 
   async function loadDirectory(force) {
@@ -3177,6 +3390,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!state.snapshot || state.snapshot.flatPlaces.some(place => place.id === placeId)) return
     const current = state.focusedPlaces[String(placeId)]
     if (current?.loading || (!force && current?.place)) return
+    const selectionAtStart = activeSelectionKey()
     state = {
       ...state,
       focusedPlaces: {
@@ -3184,6 +3398,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         [String(placeId)]: Object.freeze({
           loading: true,
           error: false,
+          notFound: false,
           marker: current?.marker || null,
           place: current?.place || null,
         }),
@@ -3204,6 +3419,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
       })
+      if (response.status === 404) {
+        state = {
+          ...state,
+          focusedPlaces: {
+            ...state.focusedPlaces,
+            [String(placeId)]: Object.freeze({
+              loading: false,
+              error: false,
+              notFound: true,
+              marker: state.changeMarker || current?.marker || null,
+              place: null,
+            }),
+          },
+        }
+        return
+      }
       if (!response.ok) throw new Error('focused place unavailable')
       const payload = await response.json()
       const [normalized] = normalizePlaces([payload?.place], 0, new Set())
@@ -3221,6 +3452,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           [String(placeId)]: Object.freeze({
             loading: false,
             error: false,
+            notFound: false,
             marker: state.changeMarker || null,
             place,
           }),
@@ -3234,6 +3466,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           [String(placeId)]: Object.freeze({
             loading: false,
             error: !current?.place,
+            notFound: false,
             marker: current?.marker || null,
             place: current?.place || null,
           }),
@@ -3241,7 +3474,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     } finally {
       window.clearTimeout(timeout)
-      renderAll()
+      if (activeSelectionKey() === selectionAtStart) {
+        if (state.snapshot) populateFilters(state.snapshot)
+        renderAll()
+      }
     }
   }
 
@@ -3249,6 +3485,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!state.snapshot || state.snapshot.residents.some(resident => resident.handle === handle)) return
     const current = state.focusedResidents[handle]
     if (current?.loading || (!force && current?.resident)) return
+    const selectionAtStart = activeSelectionKey()
     state = {
       ...state,
       focusedResidents: {
@@ -3256,6 +3493,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         [handle]: Object.freeze({
           loading: true,
           error: false,
+          notFound: false,
           marker: current?.marker || null,
           resident: current?.resident || null,
         }),
@@ -3276,6 +3514,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
       })
+      if (response.status === 404) {
+        state = {
+          ...state,
+          focusedResidents: {
+            ...state.focusedResidents,
+            [handle]: Object.freeze({
+              loading: false,
+              error: false,
+              notFound: true,
+              marker: state.changeMarker || current?.marker || null,
+              resident: null,
+            }),
+          },
+        }
+        return
+      }
       if (!response.ok) throw new Error('focused resident unavailable')
       const payload = await response.json()
       const [resident] = normalizeResidents([payload?.resident])
@@ -3287,6 +3541,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           [handle]: Object.freeze({
             loading: false,
             error: false,
+            notFound: false,
             marker: state.changeMarker || null,
             resident,
           }),
@@ -3300,6 +3555,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           [handle]: Object.freeze({
             loading: false,
             error: !current?.resident,
+            notFound: false,
             marker: current?.marker || null,
             resident: current?.resident || null,
           }),
@@ -3307,7 +3563,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     } finally {
       window.clearTimeout(timeout)
-      renderAll()
+      if (activeSelectionKey() === selectionAtStart) {
+        if (state.snapshot) populateFilters(state.snapshot)
+        renderAll()
+      }
     }
   }
 
@@ -3315,13 +3574,38 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const forcePlace = options?.forcePlace === true
     const forceResident = options?.forceResident === true
     if (!state.snapshot) return
-    if (state.placeId && !state.snapshot.flatPlaces.some(place => place.id === state.placeId)) {
-      const entry = state.focusedPlaces[String(state.placeId)]
-      if (!entry || forcePlace) await loadFocusedPlace(state.placeId, forcePlace)
+    const selectionAtStart = activeSelectionKey()
+    const selectedHandle = state.resident
+    const explicitPlaceId = state.placeId
+
+    if (selectedHandle &&
+        !state.snapshot.residents.some(resident => resident.handle === selectedHandle)) {
+      const entry = state.focusedResidents[selectedHandle]
+      if (!entry || forceResident) {
+        await loadFocusedResident(selectedHandle, forceResident)
+      }
+      if (activeSelectionKey() !== selectionAtStart || state.resident !== selectedHandle) return
+      const latest = state.focusedResidents[selectedHandle]
+      if (latest?.error || latest?.notFound || !latest?.resident) return
     }
-    if (state.resident && !state.snapshot.residents.some(resident => resident.handle === state.resident)) {
-      const entry = state.focusedResidents[state.resident]
-      if (!entry || forceResident) await loadFocusedResident(state.resident, forceResident)
+
+    if (explicitPlaceId &&
+        !state.snapshot.flatPlaces.some(place => place.id === explicitPlaceId)) {
+      const entry = state.focusedPlaces[String(explicitPlaceId)]
+      if (!entry || forcePlace) await loadFocusedPlace(explicitPlaceId, forcePlace)
+      return
+    }
+
+    if (!explicitPlaceId && selectedHandle) {
+      const resident = selectedResident(state.snapshot)
+      const currentPlaceId = resident?.current_place_id || null
+      if (currentPlaceId &&
+          !state.snapshot.flatPlaces.some(place => place.id === currentPlaceId)) {
+        const entry = state.focusedPlaces[String(currentPlaceId)]
+        if (!entry || forcePlace) {
+          await loadFocusedPlace(currentPlaceId, forcePlace)
+        }
+      }
     }
   }
 
@@ -3627,6 +3911,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     closeDirectorySearchResults()
     navigate({
       resident: safeHandle(nodes.residentFilter.value),
+      conversationContext: false,
       directorySearch: '',
       directorySearchIndex: -1,
     })

@@ -136,6 +136,7 @@ export const WINDOW_HTML = `<!doctype html>
         <h2>Conversations by place</h2>
         <p>Every visible note stays with the room where it was spoken.</p>
       </header>
+      <div id="conversation-mode" class="conversation-mode" role="group" aria-label="Conversation question" hidden></div>
       <div id="conversation-stream" class="conversation-stream">
         <p class="loading-row">Tuning the city receiver…</p>
       </div>

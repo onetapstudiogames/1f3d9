@@ -435,7 +435,7 @@ test('every paged window view has an accessible older-history surface', () => {
   assert.match(WINDOW_JS, /\/api\/events/)
   assert.match(WINDOW_JS, /'Loading ' \+ older \+ label/)
   assert.match(WINDOW_JS, /'Retry loading ' \+ older \+ label/)
-  assert.match(WINDOW_JS, /entry\.loading && !entry\.initialized \? '' : 'older '/)
+  assert.match(WINDOW_JS, /entry\.initialized \? 'older ' : ''/)
   assert.match(WINDOW_CSS, /\.history-page/)
 })
 
@@ -445,10 +445,12 @@ test('all-place conversations preserve the server newest-first order', () => {
   assert.doesNotMatch(WINDOW_JS, /const placeIds = \[\.\.\.new Set\(notes\.map/)
 })
 
-test('a followed resident never looks falsely silent', () => {
-  // The conversations view fetches the resident's own server-side slice with
-  // same-place context, pages it, refreshes it, and marks context notes.
-  assert.match(WINDOW_JS, /context: Boolean\(state\.resident\)/)
+test('a followed resident defaults to their own history and keeps room context explicit', () => {
+  assert.match(WINDOW_HTML, /Conversation question/)
+  assert.match(WINDOW_JS, /What ' \+ state\.resident \+ ' said/)
+  assert.match(WINDOW_JS, /What was said around ' \+ state\.resident/)
+  assert.match(WINDOW_JS, /context: Boolean\(state\.resident && state\.conversationContext\)/)
+  assert.doesNotMatch(WINDOW_JS, /context: Boolean\(state\.resident\)/)
   assert.match(WINDOW_JS, /autoLoadFilteredHistory\('notes', filters, historyEntry\('notes', filters\)\)/)
   assert.match(WINDOW_JS, /url\.searchParams\.set\('context', 'place'\)/)
   assert.match(WINDOW_JS, /filters\.context \? '25' : '50'/)
@@ -483,8 +485,10 @@ test('relativeGap reports the real distance in both directions', () => {
 
 test('every printed handle is followable, not only the roster', () => {
   assert.match(WINDOW_JS, /function residentNode\(handle, className, focusKey\)/)
-  // An unresolvable handle stays plain text, because chooseResident ignores it
-  // and a control that does nothing is worse than no control.
+  // The complete directory is enough to make a printed handle useful even
+  // before that resident's focused presence row has been fetched.
+  assert.doesNotMatch(WINDOW_JS,
+    /const known = state\.snapshot &&\s*state\.snapshot\.residents\.some/)
   assert.match(WINDOW_JS, /if \(!known\) return element\('span', className, handle\)/)
   for (const [className, key] of [
     ['note-author', 'note-author:'],
@@ -613,12 +617,11 @@ test('the selected-place panel identifies owner choices and links front matter w
   assert.doesNotMatch(WINDOW_JS, /fetch\s*\([^)]*\/api\/thing\//u)
 })
 
-test('a followed view says how many notes it is actually showing', () => {
-  // The initial bounded-view counters and the expanded conversation list are
-  // separate fetch. Printing only the first next to the second read as one
-  // number describing the other.
-  assert.match(WINDOW_JS, /Conversations below include separately fetched context beyond the initial bounded view:/)
-  assert.match(WINDOW_JS, /' plus ' \+ String\(followedRows\.length - ownRows\)/)
+test('a followed view names which conversation question its fetched rows answer', () => {
+  assert.match(WINDOW_HTML, /Conversation question/)
+  assert.match(WINDOW_JS, /What ' \+ state\.resident \+ ' said/)
+  assert.match(WINDOW_JS, /What was said around ' \+ state\.resident/)
+  assert.match(WINDOW_JS, /followedRows/)
 })
 
 test('snapshot row shapers reject malformed public data', () => {
@@ -839,8 +842,10 @@ test('the bounded window keeps loaded navigation while fresh outline pages merge
 
 test('bounded navigation stays honest and keyboard-safe at page boundaries', () => {
   assert.doesNotMatch(WINDOW_JS, /nodes\.status\?\.removeAttribute\('role'\)/)
-  assert.match(WINDOW_JS, /Place #' \+ String\(placeId\) \+ ' · not currently loaded'/)
-  assert.match(WINDOW_JS, /metadata and content are not currently loaded/i)
+  assert.match(WINDOW_JS, /no public place was found/i)
+  assert.match(WINDOW_JS, /Retry loading this place/)
+  assert.match(WINDOW_JS, /no narrow place-specific presence read/i)
+  assert.doesNotMatch(WINDOW_JS, /focused metadata loaded; contents are not currently loaded/i)
   assert.match(WINDOW_JS, /seenBeforeIds/)
   assert.match(WINDOW_JS, /seenBeforeSubplaceIds/)
   assert.match(WINDOW_JS, /focusFallbackKey/)
