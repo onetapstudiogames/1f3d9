@@ -717,9 +717,9 @@ test('complete directory selection loads one focused place and its inside conten
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · #11',
-    'inner_hall · #12',
-    '\u00a0\u00a0quiet_annex · #77',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
+    '\u00a0\u00a0quiet_annex · Place #77',
   ])
   await expect(page.locator('#place-filter optgroup')).toHaveCount(0)
   const placeFilterBox = await page.locator('#place-filter').boundingBox()
@@ -794,7 +794,7 @@ test('directory search owns a dropdown and finds both places and residents', asy
   await expect(results).toBeVisible()
   await expect(search).toHaveAttribute('aria-expanded', 'true')
   const quietResult = results.getByRole('option')
-  await expect(quietResult).toHaveText(/quiet_annex · #77/)
+  await expect(quietResult).toHaveText(/quiet_annex · Place #77/)
   await expect(quietResult).toHaveAttribute('aria-selected', 'true')
   await expect(search).toHaveAttribute('aria-activedescendant', 'directory-search-option-0')
   const [cursorColor, chosenColor] = await Promise.all([
@@ -806,9 +806,9 @@ test('directory search owns a dropdown and finds both places and residents', asy
   expect(resultsBox?.y ?? 0).toBeGreaterThanOrEqual((searchBox?.y ?? 0) + (searchBox?.height ?? 0))
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · #11',
-    'inner_hall · #12',
-    '\u00a0\u00a0quiet_annex · #77',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
+    '\u00a0\u00a0quiet_annex · Place #77',
   ])
 
   const focusedRequest = page.waitForRequest(request => {
@@ -902,8 +902,8 @@ test('directory failure is accessible and retryable without hiding the loaded fa
   await expect(alert).toContainText(/complete city directory could not be loaded/i)
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · #11',
-    'inner_hall · #12',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
   ])
 
   await alert.getByRole('button', { name: 'Retry loading the complete directory' }).click()
@@ -1002,10 +1002,10 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   )
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
-    'root_plaza · #11',
-    'inner_hall · #12',
-    '\u00a0\u00a0renamed_annex · #77',
-    '\u00a0\u00a0fresh_gallery · #78',
+    'root_plaza · Place #11',
+    'inner_hall · Place #12',
+    '\u00a0\u00a0renamed_annex · Place #77',
+    '\u00a0\u00a0fresh_gallery · Place #78',
   ])
   await expect(page.locator('#place-focus-title')).toHaveText('renamed_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
@@ -1044,8 +1044,8 @@ test('resident presence pages load once, deduplicate, and keep honest roster sco
   const residentOptions = await page.locator('#resident-filter option').allTextContents()
   expect(residentOptions).toEqual([
     'All residents',
-    'leafwalker · #7',
-    'far-walker · #9',
+    'leafwalker · Resident #7',
+    'far-walker · Resident #9',
   ])
   await expect(roster.getByRole('button', { name: 'leafwalker', exact: true })).toBeFocused()
 })
@@ -1293,8 +1293,8 @@ test('refresh forward-reconciles multi-page bursts without gaps and refreshes br
 
   expect(await page.locator('#resident-filter option').allTextContents()).toEqual([
     'All residents',
-    'leafwalker · #7',
-    'far-walker · #9',
+    'leafwalker · Resident #7',
+    'far-walker · Resident #9',
   ])
 })
 

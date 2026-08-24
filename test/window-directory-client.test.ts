@@ -55,11 +55,11 @@ test('place selector is a flat numbered hierarchy with one clickable continent r
   ])
 
   assert.deepEqual(options, [
-    { id: 1, depth: 0, label: 'the world · #1' },
-    { id: 2, depth: 0, label: 'the verge · #2' },
-    { id: 3, depth: 1, label: 'lobby · #3' },
-    { id: 4, depth: 2, label: 'coffee-shop — in lobby · #4' },
-    { id: 5, depth: 0, label: 'the harbor · #5' },
+    { id: 1, depth: 0, label: 'the world · Place #1' },
+    { id: 2, depth: 0, label: 'the verge · Place #2' },
+    { id: 3, depth: 1, label: 'lobby · Place #3' },
+    { id: 4, depth: 2, label: 'coffee-shop — in lobby · Place #4' },
+    { id: 5, depth: 0, label: 'the harbor · Place #5' },
   ])
 })
 
@@ -78,18 +78,18 @@ test('directory search returns its own place and resident results', () => {
 
   assert.deepEqual(searchWindowDirectory(places, residents, 'coffee'), [
     {
-      kind: 'place', id: 4, value: '4', label: 'coffee-shop · #4',
+      kind: 'place', id: 4, value: '4', label: 'coffee-shop · Place #4',
       detail: 'the world / the verge / lobby / coffee-shop',
     },
     {
-      kind: 'resident', id: 10, value: 'coffee-keeper', label: 'coffee-keeper · #10',
+      kind: 'resident', id: 10, value: 'coffee-keeper', label: 'coffee-keeper · Resident #10',
       detail: 'Resident',
     },
   ])
   assert.deepEqual(searchWindowDirectory(places, residents, 'THE VERGE').map(row => row.id), [2, 3, 4])
   assert.deepEqual(searchWindowDirectory(places, residents, '#5').map(row => row.id), [5])
   assert.deepEqual(searchWindowDirectory(places, residents, '#9'), [{
-    kind: 'resident', id: 9, value: 'far-walker', label: 'far-walker · #9', detail: 'Resident',
+    kind: 'resident', id: 9, value: 'far-walker', label: 'far-walker · Resident #9', detail: 'Resident',
   }])
   assert.deepEqual(searchWindowDirectory(places, residents, ''), [])
   assert.deepEqual(searchWindowDirectory(places, residents, 'nowhere'), [])
@@ -123,12 +123,12 @@ test('place selector keeps malformed branches honest and duplicate names distinc
   ]))
 
   assert.deepEqual(options, [
-    { id: 1, depth: 0, label: 'the world · #1' },
-    { id: 2, depth: 0, label: 'same branch · #2' },
-    { id: 3, depth: 0, label: 'same branch · #3' },
-    { id: 4, depth: 0, label: 'orphan · #4' },
-    { id: 5, depth: 0, label: 'cycle-a · #5' },
-    { id: 6, depth: 0, label: 'cycle-b · #6' },
+    { id: 1, depth: 0, label: 'the world · Place #1' },
+    { id: 2, depth: 0, label: 'same branch · Place #2' },
+    { id: 3, depth: 0, label: 'same branch · Place #3' },
+    { id: 4, depth: 0, label: 'orphan · Place #4' },
+    { id: 5, depth: 0, label: 'cycle-a · Place #5' },
+    { id: 6, depth: 0, label: 'cycle-b · Place #6' },
   ])
 })
 
@@ -138,6 +138,7 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_HTML, /aria-controls="directory-search-results"/)
   assert.match(WINDOW_HTML, /id="directory-search-results"[^>]*role="listbox"/)
   assert.match(WINDOW_HTML, /type="search"/)
+  assert.match(WINDOW_HTML, /placeholder="Type a name or place #id or resident #id"/i)
   assert.match(WINDOW_HTML, /Search places and residents/i)
   assert.match(WINDOW_HTML, />All places</)
   assert.match(WINDOW_HTML, />All residents</)
@@ -148,6 +149,9 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_JS, /searchParams\.set\('view', 'directory'\)/)
   assert.match(WINDOW_JS, /function loadFocusedPlace\(placeId, force\)/)
   assert.match(WINDOW_JS, /function loadFocusedResident\(handle, force\)/)
+  assert.match(WINDOW_JS, /Place #' \+ String\(selected\.id\)/)
+  assert.match(WINDOW_JS, /Resident #' \+ String\(resident\.id\)/)
+  assert.doesNotMatch(WINDOW_JS, /· #/u)
   assert.match(WINDOW_JS, /searchParams\.set\('handle', handle\)/)
   assert.match(WINDOW_JS, /Retry loading the complete directory/)
   assert.match(WINDOW_JS, /listWindowDirectoryPlaces/)

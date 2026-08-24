@@ -812,11 +812,11 @@ app.post('/api/flag', async c => {
   const body = await c.req.json().catch(() => null)
   const targetType = String(body?.target_type ?? '')
   const targetId = Number(body?.target_id)
-  const reasonCandidate = String(body?.reason ?? '').trim().slice(0, 500)
+  const reasonCandidate = String(body?.reason ?? '').trim()
   const reasonText = publicText(reasonCandidate, { maximumCharacters: 500 })
   const allowed = ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident']
   if (!allowed.includes(targetType) || !Number.isSafeInteger(targetId) || targetId < 1 || reasonText === null) {
-    return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason`)
+    return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most 500 characters of safe text`)
   }
   const reason = reasonText.trim()
   if (resident) {

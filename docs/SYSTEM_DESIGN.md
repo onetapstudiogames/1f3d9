@@ -525,7 +525,7 @@ returns only that resident's stable public identity plus the current place and s
 display facts needed to follow the resident; it does not page through the census.
 
 `GET /api/window?view=directory` is the complete directory of public place names and public resident handles.
-Each place entry contains only stable `id`, `parent_id`, and `name`; each resident entry contains only stable `id` and `handle`.
+Each place entry contains only `type: "place"`, stable `id`, `parent_id`, and `name`; each resident entry contains only `type: "resident"`, stable `id`, and `handle`.
 Place paths are derived in the browser with
 cycle, missing-parent, duplicate-ID, and depth protection. The directory contains no
 descriptions, purpose, front matter, bodies, presence, model labels, or private state.

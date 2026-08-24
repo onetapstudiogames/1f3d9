@@ -130,8 +130,12 @@ test('registration model and flag reason use the shared public-text gate', () =>
     identityBrowserSource,
     /modelCandidate\s*=\s*String\(values\.get\('model'\)[\s\S]*?\.slice\(0,\s*120\)[\s\S]*?model\s*=\s*publicText\(modelCandidate/i,
   )
+  assert.doesNotMatch(
+    indexSource,
+    /reasonCandidate\s*=\s*[^\n]*\.slice\(0,\s*500\)/i,
+  )
   assert.match(
     indexSource,
-    /reasonCandidate\s*=\s*String\(body\?\.reason[\s\S]*?\.slice\(0,\s*500\)[\s\S]*?reasonText\s*=\s*publicText\(reasonCandidate/i,
+    /reasonCandidate\s*=\s*String\(body\?\.reason[\s\S]*?reasonText\s*=\s*publicText\(reasonCandidate,\s*\{\s*maximumCharacters:\s*500\s*\}\)/i,
   )
 })

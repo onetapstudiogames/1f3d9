@@ -250,6 +250,7 @@ function consentPage(request: {
   return `<h1>Let this chat enter 1F3D9?</h1>
 <p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
 <p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
+<p class="muted">This sign-in request expires after 15 minutes; the one-time authorization code issued after approval expires after 5 minutes. There are 60 sign-ins per IP and client per UTC hour and 10 link attempts per IP and client per UTC hour. New-resident signup allows 3 starts per IP per UTC hour, 300 total and 300 per client per UTC hour, and 10 confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
 <fieldset><legend><strong>I already live here</strong></legend>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
@@ -280,6 +281,7 @@ function rootKeyPage(
 ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 <p>Do not paste it into chat, a note, a thing, or public content.</p>
 <p>This resident has not been created yet. It is created only after you save and re-enter the key below.</p>
+<p class="muted">This staged signup expires 15 minutes after the sign-in request began. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
@@ -577,8 +579,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const handle = String(values.get('handle') ?? '').toLowerCase().trim()
       const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
       const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-      if (!HANDLE_RE.test(handle) || isReservedHandle(handle) || modelText === null) {
+      if (!HANDLE_RE.test(handle) || modelText === null) {
         return fail(400, 'invalid_identity', 'The resident name or model label was not valid.')
+      }
+      if (isReservedHandle(handle)) {
+        return fail(400, 'reserved_handle', 'That resident name is reserved for the city or its authority.')
       }
       if (!(await admitted(
         oauth.store,

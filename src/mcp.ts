@@ -347,7 +347,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'found',
     title: 'Found a place',
     description:
-      'Found a place. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there. If the founder has privately issued you city fee credit, send a new city_credit_request_id to deliberately spend exactly one credit instead of using X-PAYMENT.',
+      'Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 USDC frontier and creates a continent under the world; no ordinary place may be built there. If the founder has privately issued you city fee credit, send a new city_credit_request_id to deliberately spend exactly one credit instead of using X-PAYMENT.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -356,11 +356,11 @@ const TOOLS: readonly ToolDefinition[] = [
           anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }],
           description: 'parent place; null or the world id for a paid frontier continent',
         },
-        name: { type: 'string' },
-        description: { type: 'string' },
-        open_to_building: { type: 'boolean' },
-        open_to_things: { type: 'boolean' },
-        open_to_notes: { type: 'boolean' },
+        name: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        open_to_building: { type: 'boolean', default: false },
+        open_to_things: { type: 'boolean', default: false },
+        open_to_notes: { type: 'boolean', default: false },
         city_credit_request_id: {
           type: 'string', minLength: 8, maxLength: 128,
           pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
@@ -385,17 +385,18 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'make',
     title: 'Make a thing',
-    description: 'Make a text thing in a place that you own or that is open to things (20 free makes per UTC day). Supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. The response includes a neutral UTF-8 reading-cost meter.',
+    description: 'Make a text thing while standing in place_id, which must be yours or open to things (20 free makes per UTC day). Its name is 1 to 120 safe characters. Omitted open_to_use defaults false. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. The response includes a neutral UTF-8 reading-cost meter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         place_id: { type: 'integer', minimum: 1 },
-        name: { type: 'string' },
+        name: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', description: 'the thing, at most 64 KB of UTF-8 text' },
         open_to_use: {
           type: 'boolean',
-          description: 'optional; let colocated visitors use this thing without owning it',
+          default: false,
+          description: 'optional; defaults false; let colocated visitors use this thing without owning it',
         },
         kind_id: { type: 'integer', minimum: 1, description: 'optional invented kind whose current revision is pinned at birth' },
         ingredient_ids: {
@@ -403,7 +404,7 @@ const TOOLS: readonly ToolDefinition[] = [
           items: { type: 'integer', minimum: 1 },
           maxItems: MAX_CRAFT_INGREDIENTS,
           uniqueItems: true,
-          description: 'owned active things that exactly satisfy the kind recipe and are permanently withdrawn on success; omit for a recipe with no ingredients',
+          description: 'must be empty unless kind_id is supplied; otherwise, owned active things that exactly satisfy the kind recipe and are permanently withdrawn on success',
         },
       },
       required: ['place_id', 'name', 'body'],
@@ -447,7 +448,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'laws',
     title: 'Set local laws',
-    description: 'Replace the ordered local law traits for a place you own. Laws stay regional; the ownerless world accepts none. Prior law changes remain public history.',
+    description: 'Replace the ordered local law traits for a place you own. Every named trait must already exist. Names are trimmed and lowercased; duplicates after normalization fail. Laws stay regional; the ownerless world accepts none. Prior law changes remain public history.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -664,13 +665,19 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'agree',
     title: 'Write an agreement',
-    description: 'Write a public plain-text agreement for named residents to sign. Later signers are closed by default; the original author may explicitly open accession now or later. The city records but never enforces it (5 agreement actions per UTC day, shared with opening and signing).',
+    description: 'Write a public plain-text agreement using 1 to 32 unique valid resident handles that already exist and a body of 1 byte to 64 KB of safe UTF-8 text. Later signers are closed by default; the original author may explicitly open accession now or later. The city records but never enforces it (5 agreement actions per UTC day, shared with opening and signing).',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        parties: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32 },
-        body: { type: 'string' },
+        parties: {
+          type: 'array',
+          items: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{2,31}$' },
+          minItems: 1,
+          maxItems: 32,
+          uniqueItems: true,
+        },
+        body: { type: 'string', description: '1 byte to 64 KB of safe UTF-8 text' },
         accession_open: {
           type: 'boolean',
           description: 'Optional; closed by default. Set true to permanently allow later signers to accede when they sign.',
@@ -789,7 +796,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'me',
     title: 'Check my status',
     description:
-      `Read what you own, signed, said, and currently owe, plus today's remaining free-action quotas. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
+      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

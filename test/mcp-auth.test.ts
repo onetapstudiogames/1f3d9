@@ -364,7 +364,7 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
   }
 })
 
-test('MCP descriptions state the search, action, transfer, and moderation rules before use', async () => {
+test('MCP descriptions state enforced caller contracts before use', async () => {
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
     [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
@@ -373,8 +373,13 @@ test('MCP descriptions state the search, action, transfer, and moderation rules 
     const { gateway } = createHarness()
     const tools = await listTools(gateway, path, authorization)
     const search = toolByName(tools, 'search')
+    const found = toolByName(tools, 'found')
+    const make = toolByName(tools, 'make')
     const act = toolByName(tools, 'act')
+    const laws = toolByName(tools, 'laws')
     const transfer = toolByName(tools, 'transfer')
+    const agree = toolByName(tools, 'agree')
+    const me = toolByName(tools, 'me')
 
     assert.match(search.description, /defaults are mode=words, type=all, and limit=10/iu, `${path}: search defaults`)
     assert.match(search.description, /256 UTF-8 bytes[\s\S]*16 simple words[\s\S]*burst 12[\s\S]*one search every 5 seconds/iu, `${path}: search limits`)
@@ -382,6 +387,25 @@ test('MCP descriptions state the search, action, transfer, and moderation rules 
       String((search.inputSchema.properties?.q as { description?: string }).description ?? ''),
       /1 to 256 UTF-8 bytes/iu,
       `${path}: q byte limit`,
+    )
+    assert.match(found.description, /name[^.]*1[^.]*120/iu, `${path}: found name limit`)
+    assert.match(found.description, /description[^.]*4,?000/iu, `${path}: found description limit`)
+    assert.match(found.description, /defaults?[^.]*closed[^.]*notes[^.]*things[^.]*building/iu, `${path}: found permission defaults`)
+    for (const key of ['open_to_building', 'open_to_things', 'open_to_notes'] as const) {
+      assert.equal(
+        (found.inputSchema.properties?.[key] as { default?: unknown }).default,
+        false,
+        `${path}: found ${key} default`,
+      )
+    }
+    assert.match(make.description, /standing in place_id/iu, `${path}: make standing requirement`)
+    assert.match(make.description, /name[^.]*1[^.]*120/iu, `${path}: make name limit`)
+    assert.match(make.description, /open_to_use[^.]*defaults? false/iu, `${path}: make open_to_use default`)
+    assert.match(make.description, /ingredient_ids[^.]*empty unless kind_id/iu, `${path}: kindless ingredient rule`)
+    assert.equal(
+      (make.inputSchema.properties?.open_to_use as { default?: unknown }).default,
+      false,
+      `${path}: make schema default`,
     )
     assert.match(act.description, /move accepts only its required to_place_id/iu, `${path}: move shape`)
     assert.match(act.description, /use and consume require thing_id/iu, `${path}: thing action shapes`)
@@ -396,6 +420,21 @@ test('MCP descriptions state the search, action, transfer, and moderation rules 
       type: 'number', exclusiveMinimum: 0, maximum: 10_000,
       description: 'sale price in USDC; rounded to 6 decimal places',
     }, `${path}: price schema`)
+    assert.match(laws.description, /every named trait[^.]*already exist/iu, `${path}: laws trait existence`)
+    assert.match(laws.description, /trimmed[^.]*lowercased/iu, `${path}: laws normalization`)
+    assert.match(laws.description, /duplicates[^.]*fail/iu, `${path}: laws duplicate rule`)
+    assert.match(agree.description, /1[^.]*32 unique valid resident handles/iu, `${path}: agreement parties`)
+    assert.match(agree.description, /already exist/iu, `${path}: agreement party existence`)
+    assert.match(agree.description, /1 byte[^.]*64 KB[^.]*safe/iu, `${path}: agreement body limit`)
+    assert.equal(
+      (agree.inputSchema.properties?.parties as { uniqueItems?: unknown }).uniqueItems,
+      true,
+      `${path}: agreement unique parties`,
+    )
+    assert.match(me.description, /agreements and notes include bodies/iu, `${path}: me full records`)
+    assert.match(me.description, /places omit descriptions/iu, `${path}: me place headings`)
+    assert.match(me.description, /things omit bodies/iu, `${path}: me thing headings`)
+    assert.match(me.description, /kinds omit descriptions/iu, `${path}: me kind headings`)
   }
 
   setHostedChatFlag(false)
