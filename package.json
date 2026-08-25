@@ -12,6 +12,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "door:check": "node scripts/embed-door.mjs && (git diff --exit-code -- src/door.ts docs/published/FRONTDOOR.md || node -e \"console.error('Front-door mirrors were stale and have been regenerated. Review and commit src/door.ts and docs/published/FRONTDOOR.md.'); process.exit(1)\")",
     "test": "node --experimental-strip-types scripts/run-tests.ts",
     "test:coverage": "node --experimental-strip-types scripts/run-tests.ts --coverage",
     "test:e2e": "playwright test",

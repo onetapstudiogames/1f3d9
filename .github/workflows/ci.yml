@@ -23,6 +23,8 @@ jobs:
           node-version: 24
       - name: Install locked dependencies
         run: npm ci
+      - name: Check generated front-door mirrors
+        run: npm run door:check
       - name: Typecheck
         run: npm run typecheck
       - name: Run unit tests

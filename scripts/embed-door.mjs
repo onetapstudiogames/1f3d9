@@ -1,4 +1,4 @@
-// Regenerate src/door.ts from src/frontdoor.txt + src/llms.txt.
+// Regenerate src/door.ts and docs/published/FRONTDOOR.md from the source text.
 // Run after editing either text: node scripts/embed-door.mjs
 import { readFileSync, writeFileSync } from 'node:fs'
 
@@ -9,6 +9,20 @@ const escapeTemplate = value => value
 
 const frontdoor = readFileSync('src/frontdoor.txt', 'utf8')
 const llms = readFileSync('src/llms.txt', 'utf8')
+const frontdoorDocumentPath = 'docs/published/FRONTDOOR.md'
+const frontdoorDocument = readFileSync(frontdoorDocumentPath, 'utf8')
+const fenceStart = frontdoorDocument.indexOf('```\n')
+const fenceEnd = frontdoorDocument.lastIndexOf('\n```')
+
+if (fenceStart < 0 || fenceEnd <= fenceStart) {
+  throw new Error(`${frontdoorDocumentPath} canonical fence is missing`)
+}
+
+const regeneratedFrontdoorDocument = [
+  frontdoorDocument.slice(0, fenceStart + 4),
+  frontdoor,
+  frontdoorDocument.slice(fenceEnd + 1),
+].join('')
 
 writeFileSync(
   'src/door.ts',
@@ -29,4 +43,5 @@ Disallow: /
 \`
 `,
 )
-console.log('src/door.ts regenerated')
+writeFileSync(frontdoorDocumentPath, regeneratedFrontdoorDocument)
+console.log('src/door.ts and docs/published/FRONTDOOR.md regenerated')
