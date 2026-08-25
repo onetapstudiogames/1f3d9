@@ -1,5 +1,5 @@
 import { sql } from './db.ts'
-import { postgresErrorCode } from './core.ts'
+import { postgresErrorCode, postgresErrorConstraint } from './core.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export type IdentityAttemptKind =
@@ -24,6 +24,7 @@ export interface RegistrationStageInput {
 export type RegistrationStageResult =
   | { status: 'staged'; handle: string }
   | { status: 'handle_taken' }
+  | { status: 'request_unavailable' }
 
 export interface IdentityResidentResult {
   residentId: number
@@ -33,6 +34,26 @@ export interface IdentityResidentResult {
 export interface RecoveryGenerationResult extends IdentityResidentResult {
   generation: number
 }
+
+export type RegistrationConfirmationResult =
+  | ({ status: 'confirmed' } & IdentityResidentResult)
+  | { status: 'credential_rejected' }
+  | { status: 'handle_taken' }
+  | { status: 'request_unavailable' }
+
+export type RecoveryStageResult =
+  | { status: 'staged'; handle: string }
+  | { status: 'credential_rejected' }
+
+export type RecoveryConfirmationResult =
+  | ({ status: 'recovered' } & IdentityResidentResult)
+  | { status: 'credential_rejected' }
+  | { status: 'request_unavailable' }
+
+export type RotationStageResult =
+  | ({ status: 'staged' } & IdentityResidentResult)
+  | { status: 'credential_rejected' }
+  | { status: 'request_unavailable' }
 
 const SHA256_HASH = /^[0-9a-f]{64}$/
 
@@ -87,10 +108,9 @@ export async function consumeIdentityRateLimit(input: {
 
 export async function stageResidentRegistration(
   input: RegistrationStageInput,
-): Promise<RegistrationStageResult | null> {
+): Promise<RegistrationStageResult> {
   requireRecoveryCodeHashes(input.recoveryCodeHashes)
-  try {
-    const rows = (await sql`
+  const rows = (await sql`
       WITH cleared_expired AS MATERIALIZED (
         UPDATE pending_resident_registrations
         SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL,
@@ -125,34 +145,37 @@ export async function stageResidentRegistration(
         EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle}) AS handle_taken,
         (SELECT handle FROM staged
           WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle
-    `) as { handle_taken: boolean; handle: string | null }[]
-    const result = rows[0]
-    if (result?.handle) return { status: 'staged', handle: result.handle }
-    if (result?.handle_taken) return { status: 'handle_taken' }
-    return null
-  } catch (error) {
-    if (postgresErrorCode(error) === '23505') return null
-    throw error
-  }
+  `) as { handle_taken: boolean; handle: string | null }[]
+  const result = rows[0]
+  if (result?.handle) return { status: 'staged', handle: result.handle }
+  if (result?.handle_taken) return { status: 'handle_taken' }
+  return { status: 'request_unavailable' }
 }
 
 export async function confirmResidentRegistration(input: {
   sessionHash: string
   csrfHash: string
   residentSecretHash: string
-}): Promise<IdentityResidentResult | null> {
+}): Promise<RegistrationConfirmationResult> {
   try {
     const rows = (await sql`
-      WITH eligible AS MATERIALIZED (
+      WITH active_request AS MATERIALIZED (
         SELECT session_hash, ip_hash, handle, model, secret_hash
         FROM pending_resident_registrations
         WHERE session_hash = ${input.sessionHash}
           AND csrf_hash = ${input.csrfHash}
-          AND secret_hash = ${input.residentSecretHash}
           AND confirmed_at IS NULL
           AND canceled_at IS NULL
           AND expires_at > now()
         FOR UPDATE
+      ), eligible AS MATERIALIZED (
+        SELECT session_hash, ip_hash, handle, model, secret_hash
+        FROM active_request
+        WHERE secret_hash = ${input.residentSecretHash}
+      ), handle_conflict AS MATERIALIZED (
+        SELECT resident.handle
+        FROM residents resident
+        JOIN eligible ON eligible.handle = resident.handle
       ), pending_codes AS MATERIALIZED (
         SELECT code.code_hash
         FROM pending_resident_registration_recovery_codes code
@@ -175,6 +198,7 @@ export async function confirmResidentRegistration(input: {
           AND EXISTS (SELECT 1 FROM eligible)
           AND EXISTS (SELECT 1 FROM valid_code_set)
           AND EXISTS (SELECT 1 FROM world_root)
+          AND NOT EXISTS (SELECT 1 FROM handle_conflict)
         RETURNING last_id AS id
       ), new_resident AS (
         INSERT INTO residents (id, handle, model, secret_hash, recovery_generation)
@@ -219,19 +243,47 @@ export async function confirmResidentRegistration(input: {
           jsonb_build_object('resident_id', id, 'model', model)
         FROM consumed
         RETURNING actor
+      ), completed AS MATERIALIZED (
+        SELECT consumed.id AS resident_id, consumed.handle
+        FROM consumed
+        WHERE EXISTS (SELECT 1 FROM new_presence)
+          AND (SELECT count(*) FROM inserted_recovery_codes) = 8
+          AND (SELECT count(*) FROM scrubbed_pending_codes) = 8
+          AND EXISTS (SELECT 1 FROM registration_log)
+          AND EXISTS (SELECT 1 FROM new_event)
       )
-      SELECT consumed.id AS resident_id, consumed.handle
-      FROM consumed
-      WHERE EXISTS (SELECT 1 FROM new_presence)
-        AND (SELECT count(*) FROM inserted_recovery_codes) = 8
-        AND (SELECT count(*) FROM scrubbed_pending_codes) = 8
-        AND EXISTS (SELECT 1 FROM registration_log)
-        AND EXISTS (SELECT 1 FROM new_event)
-    `) as { resident_id: number; handle: string }[]
-    const resident = rows[0]
-    return resident ? { residentId: resident.resident_id, handle: resident.handle } : null
+      SELECT 'confirmed'::text AS status, completed.resident_id, completed.handle
+      FROM completed
+      UNION ALL
+      SELECT 'request_unavailable'::text, NULL::integer, NULL::text
+      WHERE NOT EXISTS (SELECT 1 FROM active_request)
+      UNION ALL
+      SELECT 'credential_rejected'::text, NULL::integer, NULL::text
+      WHERE EXISTS (SELECT 1 FROM active_request)
+        AND NOT EXISTS (SELECT 1 FROM eligible)
+      UNION ALL
+      SELECT 'handle_taken'::text, NULL::integer, NULL::text
+      WHERE EXISTS (SELECT 1 FROM eligible)
+        AND EXISTS (SELECT 1 FROM handle_conflict)
+    `) as {
+      status: 'confirmed' | 'credential_rejected' | 'handle_taken' | 'request_unavailable'
+      resident_id: number | null
+      handle: string | null
+    }[]
+    const result = rows[0]
+    if (!result) throw new Error('resident registration confirmation produced no outcome')
+    if (result.status !== 'confirmed') return { status: result.status }
+    if (result.resident_id === null || result.handle === null) {
+      throw new Error('resident registration confirmation returned an incomplete resident')
+    }
+    return {
+      status: 'confirmed', residentId: result.resident_id, handle: result.handle,
+    }
   } catch (error) {
-    if (postgresErrorCode(error) === '23505') return null
+    if (
+      postgresErrorCode(error) === '23505' &&
+      postgresErrorConstraint(error) === 'residents_handle_key'
+    ) return { status: 'handle_taken' }
     throw error
   }
 }
@@ -329,7 +381,7 @@ export async function stageRootRecovery(input: {
   csrfHash: string
   recoveryCodeHash: string
   replacementSecretHash: string
-}): Promise<{ handle: string } | null> {
+}): Promise<RecoveryStageResult> {
   const rows = (await sql`
     WITH cleared_expired AS (
       UPDATE resident_recovery_codes
@@ -364,29 +416,36 @@ export async function stageRootRecovery(input: {
     )
     SELECT handle FROM staged
   `) as { handle: string }[]
-  return rows[0] ?? null
+  const staged = rows[0]
+  return staged ? { status: 'staged', handle: staged.handle } : { status: 'credential_rejected' }
 }
 
 async function confirmRootRecoveryOnce(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
-}): Promise<IdentityResidentResult | null> {
-  try {
-    const rows = (await sql`
-      WITH eligible AS MATERIALIZED (
+}): Promise<RecoveryConfirmationResult> {
+  const rows = (await sql`
+      WITH active_request AS MATERIALIZED (
         SELECT code.id AS code_id, code.resident_id, code.generation,
-          code.replacement_secret_hash, resident.handle
+          code.replacement_secret_hash, resident.handle,
+          resident.recovery_generation AS current_generation
         FROM resident_recovery_codes code
         JOIN residents resident ON resident.id = code.resident_id
         WHERE code.recovery_session_hash = ${input.sessionHash}
           AND code.recovery_csrf_hash = ${input.csrfHash}
-          AND code.replacement_secret_hash = ${input.replacementSecretHash}
           AND code.recovery_expires_at > now()
           AND code.used_at IS NULL
           AND code.invalidated_at IS NULL
-          AND code.generation = resident.recovery_generation
         FOR UPDATE OF code, resident
+      ), available_request AS MATERIALIZED (
+        SELECT *
+        FROM active_request
+        WHERE generation = current_generation
+      ), eligible AS MATERIALIZED (
+        SELECT *
+        FROM available_request
+        WHERE replacement_secret_hash = ${input.replacementSecretHash}
       ), changed AS (
         UPDATE residents resident
         SET secret_hash = eligible.replacement_secret_hash,
@@ -459,25 +518,41 @@ async function confirmRootRecoveryOnce(input: {
         INSERT INTO events (kind, actor, detail)
         SELECT 'rotate', handle, '{}'::jsonb FROM changed
         RETURNING actor
+      ), completed AS MATERIALIZED (
+        SELECT changed.id AS resident_id, changed.handle
+        FROM changed
+        JOIN used ON used.resident_id = changed.id
+        WHERE EXISTS (SELECT 1 FROM new_event)
       )
-      SELECT changed.id AS resident_id, changed.handle
-      FROM changed
-      JOIN used ON used.resident_id = changed.id
-      WHERE EXISTS (SELECT 1 FROM new_event)
-    `) as { resident_id: number; handle: string }[]
-    const resident = rows[0]
-    return resident ? { residentId: resident.resident_id, handle: resident.handle } : null
-  } catch (error) {
-    if (postgresErrorCode(error) === '23505') return null
-    throw error
+      SELECT 'recovered'::text AS status, completed.resident_id, completed.handle
+      FROM completed
+      UNION ALL
+      SELECT 'request_unavailable'::text, NULL::integer, NULL::text
+      WHERE NOT EXISTS (SELECT 1 FROM active_request)
+         OR NOT EXISTS (SELECT 1 FROM available_request)
+      UNION ALL
+      SELECT 'credential_rejected'::text, NULL::integer, NULL::text
+      WHERE EXISTS (SELECT 1 FROM available_request)
+        AND NOT EXISTS (SELECT 1 FROM eligible)
+    `) as {
+      status: 'recovered' | 'credential_rejected' | 'request_unavailable'
+      resident_id: number | null
+      handle: string | null
+    }[]
+  const result = rows[0]
+  if (!result) throw new Error('root recovery confirmation produced no outcome')
+  if (result.status !== 'recovered') return { status: result.status }
+  if (result.resident_id === null || result.handle === null) {
+    throw new Error('root recovery confirmation returned an incomplete resident')
   }
+  return { status: 'recovered', residentId: result.resident_id, handle: result.handle }
 }
 
 export async function confirmRootRecovery(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
-}): Promise<IdentityResidentResult | null> {
+}): Promise<RecoveryConfirmationResult> {
   return retryIdentityDeadlockOnce(() => confirmRootRecoveryOnce(input))
 }
 
@@ -507,9 +582,8 @@ export async function stageRootRotation(input: {
   csrfHash: string
   residentSecretHash: string
   replacementSecretHash: string
-}): Promise<IdentityResidentResult | null> {
-  try {
-    const rows = (await sql`
+}): Promise<RotationStageResult> {
+  const rows = (await sql`
       WITH cleared_expired AS (
         UPDATE resident_key_rotations
         SET canceled_at = now(),
@@ -526,7 +600,6 @@ export async function stageRootRotation(input: {
           resident.recovery_generation
         FROM residents resident
         WHERE resident.secret_hash = ${input.residentSecretHash}
-          AND resident.secret_hash <> ${input.replacementSecretHash}
         FOR UPDATE
       ), staged AS (
         INSERT INTO resident_key_rotations (
@@ -537,32 +610,46 @@ export async function stageRootRotation(input: {
           ${input.csrfHash}, proven.secret_hash, ${input.replacementSecretHash},
           now() + interval '15 minutes'
         FROM proven
+        WHERE proven.secret_hash <> ${input.replacementSecretHash}
         ON CONFLICT DO NOTHING
         RETURNING resident_id
       )
-      SELECT proven.id AS resident_id, proven.handle
+      SELECT 'staged'::text AS status, proven.id AS resident_id, proven.handle
       FROM proven
       JOIN staged ON staged.resident_id = proven.id
-    `) as { resident_id: number; handle: string }[]
-    const resident = rows[0]
-    return resident ? { residentId: resident.resident_id, handle: resident.handle } : null
-  } catch (error) {
-    if (postgresErrorCode(error) === '23505') return null
-    throw error
+      UNION ALL
+      SELECT 'credential_rejected'::text, NULL::integer, NULL::text
+      WHERE NOT EXISTS (SELECT 1 FROM proven)
+      UNION ALL
+      SELECT 'request_unavailable'::text, NULL::integer, NULL::text
+      WHERE EXISTS (SELECT 1 FROM proven)
+        AND NOT EXISTS (SELECT 1 FROM staged)
+    `) as {
+      status: 'staged' | 'credential_rejected' | 'request_unavailable'
+      resident_id: number | null
+      handle: string | null
+    }[]
+  const result = rows[0]
+  if (!result) throw new Error('root rotation staging produced no outcome')
+  if (result.status !== 'staged') return { status: result.status }
+  if (result.resident_id === null || result.handle === null) {
+    throw new Error('root rotation staging returned an incomplete resident')
   }
+  return { status: 'staged', residentId: result.resident_id, handle: result.handle }
 }
 
 export type RootRotationResult =
   | ({ status: 'rotated' } & IdentityResidentResult)
+  | { status: 'credential_rejected' }
   | { status: 'rate_limited' }
+  | { status: 'request_unavailable' }
 
 async function confirmRootRotationOnce(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
-}): Promise<RootRotationResult | null> {
-  try {
-    const rows = (await sql`
+}): Promise<RootRotationResult> {
+  const rows = (await sql`
       WITH cleared_expired AS (
         UPDATE resident_key_rotations
         SET canceled_at = now(),
@@ -574,22 +661,30 @@ async function confirmRootRotationOnce(input: {
           AND confirmed_at IS NULL
           AND canceled_at IS NULL
           AND invalidated_at IS NULL
-      ), eligible AS MATERIALIZED (
+      ), active_rotation AS MATERIALIZED (
         SELECT rotation.id AS rotation_id, rotation.resident_id,
           rotation.recovery_generation, rotation.resident_secret_hash,
-          rotation.replacement_secret_hash, resident.handle
+          rotation.replacement_secret_hash, resident.handle,
+          resident.secret_hash AS current_secret_hash,
+          resident.recovery_generation AS current_generation
         FROM resident_key_rotations rotation
         JOIN residents resident ON resident.id = rotation.resident_id
         WHERE rotation.session_hash = ${input.sessionHash}
           AND rotation.csrf_hash = ${input.csrfHash}
-          AND rotation.replacement_secret_hash = ${input.replacementSecretHash}
           AND rotation.expires_at > now()
           AND rotation.confirmed_at IS NULL
           AND rotation.canceled_at IS NULL
           AND rotation.invalidated_at IS NULL
-          AND rotation.resident_secret_hash = resident.secret_hash
-          AND rotation.recovery_generation = resident.recovery_generation
         FOR UPDATE OF rotation, resident
+      ), available_rotation AS MATERIALIZED (
+        SELECT *
+        FROM active_rotation
+        WHERE resident_secret_hash = current_secret_hash
+          AND recovery_generation = current_generation
+      ), eligible AS MATERIALIZED (
+        SELECT *
+        FROM available_rotation
+        WHERE replacement_secret_hash = ${input.replacementSecretHash}
       ), admission AS MATERIALIZED (
         SELECT eligible.*,
           (
@@ -690,23 +785,31 @@ async function confirmRootRotationOnce(input: {
       UNION ALL
       SELECT 'rate_limited'::text AS status, NULL::integer AS resident_id, NULL::text AS handle
       FROM rate_limited
+      UNION ALL
+      SELECT 'request_unavailable'::text AS status, NULL::integer AS resident_id, NULL::text AS handle
+      WHERE NOT EXISTS (SELECT 1 FROM active_rotation)
+         OR NOT EXISTS (SELECT 1 FROM available_rotation)
+      UNION ALL
+      SELECT 'credential_rejected'::text AS status, NULL::integer AS resident_id, NULL::text AS handle
+      WHERE EXISTS (SELECT 1 FROM available_rotation)
+        AND NOT EXISTS (SELECT 1 FROM eligible)
     `) as {
-      status: 'rotated' | 'rate_limited'
+      status: 'rotated' | 'rate_limited' | 'credential_rejected' | 'request_unavailable'
       resident_id: number | null
       handle: string | null
     }[]
-    const result = rows[0]
-    if (!result) return null
-    if (result.status === 'rate_limited') return { status: 'rate_limited' }
-    if (result.resident_id === null || result.handle === null) return null
-    return {
-      status: 'rotated',
-      residentId: result.resident_id,
-      handle: result.handle,
-    }
-  } catch (error) {
-    if (postgresErrorCode(error) === '23505') return null
-    throw error
+  const result = rows[0]
+  if (!result) throw new Error('root rotation confirmation produced no outcome')
+  if (result.status === 'rate_limited') return { status: 'rate_limited' }
+  if (result.status === 'credential_rejected') return { status: 'credential_rejected' }
+  if (result.status === 'request_unavailable') return { status: 'request_unavailable' }
+  if (result.resident_id === null || result.handle === null) {
+    throw new Error('root rotation confirmation returned an incomplete resident')
+  }
+  return {
+    status: 'rotated',
+    residentId: result.resident_id,
+    handle: result.handle,
   }
 }
 
@@ -714,7 +817,7 @@ export async function confirmRootRotation(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
-}): Promise<RootRotationResult | null> {
+}): Promise<RootRotationResult> {
   return retryIdentityDeadlockOnce(() => confirmRootRotationOnce(input))
 }
 

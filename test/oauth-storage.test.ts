@@ -65,6 +65,10 @@ test('new resident registration is hash-only and stays out of the city until con
   assert.match(confirmationSql, /INSERT INTO oauth_authorization_codes/i)
   assert.match(confirmationSql, /new_secret_hash\s*=\s*NULL/i)
   assert.match(confirmationSql, /postgresErrorCode\(error\)\s*===\s*'23505'/i)
+  assert.match(
+    confirmationSql,
+    /postgresErrorConstraint\(error\)\s*===\s*'residents_handle_key'/i,
+  )
 
   const createStart = oauthStore.indexOf('export async function createAuthorizationRequest')
   assert.ok(createStart >= 0 && createStart < stageStart)

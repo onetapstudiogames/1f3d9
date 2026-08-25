@@ -78,11 +78,58 @@ function postForm(
   })
 }
 
+async function assertRetryableCredentialRefusal(
+  response: Response,
+  path: '/join' | '/rotate' | '/recovery',
+  csrf: string,
+  expectedMessage: RegExp,
+): Promise<string> {
+  assert.equal(response.status, 403)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'credential_rejected')
+  assert.equal(response.headers.get('set-cookie'), null, 'the staged browser session must remain unchanged')
+  const body = await response.text()
+  assert.match(body, expectedMessage)
+  assert.match(body, /try again on this page/iu)
+  assert.match(body, /name="action" value="confirm"/u)
+  assert.match(body, /name="resident_key"[^>]*type="password"/iu)
+  assert.match(body, new RegExp(`name="csrf" value="${csrf}"`, 'u'))
+  assert.doesNotMatch(body, /Start again/iu)
+  assert.doesNotMatch(body, new RegExp(`href="${path}"`, 'u'))
+  return body
+}
+
+async function assertUnavailableStageRefusal(
+  response: Response,
+  path: '/join' | '/rotate' | '/recovery',
+): Promise<string> {
+  assert.equal(response.status, 403)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'request_unavailable')
+  const body = await response.text()
+  assert.match(body, /expired|already used/iu)
+  assert.match(body, /Start again/iu)
+  assert.match(body, new RegExp(`href="${path}"`, 'u'))
+  assert.doesNotMatch(body, /name="action" value="confirm"/u)
+  return body
+}
+
+function refusalMessage(body: string): string {
+  const message = body.match(/<h1>[^<]+<\/h1><p>([^<]+)<\/p>/u)?.[1]
+  assert.ok(message)
+  return message
+}
+
 type MemoryStoreOptions = {
-  deniedAttemptKind?: 'join_confirm' | 'join_stage' | 'rotation_begin' | 'rotation_confirm'
+  deniedAttemptKind?:
+    | 'join_confirm'
+    | 'join_stage'
+    | 'recovery_begin'
+    | 'recovery_confirm'
+    | 'recovery_generate'
+    | 'rotation_begin'
+    | 'rotation_confirm'
   deniedRateCall?: number
   registrationStageOutcome?: 'error' | 'handle_taken' | 'missing' | 'staged'
-  registrationConfirmOutcome?: 'error' | 'normal'
+  registrationConfirmOutcome?: 'error' | 'normal' | 'request_unavailable'
   rotationConfirmRateLimited?: boolean
 }
 
@@ -118,7 +165,7 @@ function memoryStore(options: MemoryStoreOptions = {}) {
     async stageResidentRegistration(input: Registration) {
       calls.push({ method: 'stageRegistration', input })
       if (options.registrationStageOutcome === 'error') throw new Error('registration store unavailable')
-      if (options.registrationStageOutcome === 'missing') return null
+      if (options.registrationStageOutcome === 'missing') return { status: 'request_unavailable' as const }
       if (options.registrationStageOutcome === 'handle_taken') return { status: 'handle_taken' as const }
       requireRecoveryCodeHashes(input.recoveryCodeHashes)
       registration = { ...input, recoveryCodeHashes: [...input.recoveryCodeHashes] }
@@ -131,17 +178,22 @@ function memoryStore(options: MemoryStoreOptions = {}) {
     }) {
       calls.push({ method: 'confirmRegistration', input })
       if (options.registrationConfirmOutcome === 'error') throw new Error('registration confirmation unavailable')
+      if (options.registrationConfirmOutcome === 'request_unavailable') {
+        return { status: 'request_unavailable' as const }
+      }
       if (
         confirmed || !registration ||
         registration.sessionHash !== input.sessionHash ||
         registration.csrfHash !== input.csrfHash ||
-        registration.residentSecretHash !== input.residentSecretHash ||
         !validRecoveryCodeHashes(registration.recoveryCodeHashes)
-      ) return null
+      ) return { status: 'request_unavailable' as const }
+      if (registration.residentSecretHash !== input.residentSecretHash) {
+        return { status: 'credential_rejected' as const }
+      }
       confirmed = true
       recoveryGeneration += 1
       recoveryCodeHashes = [...registration.recoveryCodeHashes]
-      return { residentId: 27, handle: registration.handle }
+      return { status: 'confirmed' as const, residentId: 27, handle: registration.handle }
     },
     async cancelResidentRegistration(input: unknown) {
       calls.push({ method: 'cancelRegistration', input })
@@ -166,9 +218,11 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       replacementSecretHash: string
     }) {
       calls.push({ method: 'stageRootRecovery', input })
-      if (!recoveryCodeHashes.includes(input.recoveryCodeHash) || recovered) return null
+      if (!recoveryCodeHashes.includes(input.recoveryCodeHash) || recovered) {
+        return { status: 'credential_rejected' as const }
+      }
       stagedRecovery = { ...input }
-      return { handle: 'existing-resident' }
+      return { status: 'staged' as const, handle: 'existing-resident' }
     },
     async confirmRootRecovery(input: {
       sessionHash: string
@@ -179,11 +233,13 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       if (
         recovered || !stagedRecovery ||
         stagedRecovery.sessionHash !== input.sessionHash ||
-        stagedRecovery.csrfHash !== input.csrfHash ||
-        stagedRecovery.replacementSecretHash !== input.replacementSecretHash
-      ) return null
+        stagedRecovery.csrfHash !== input.csrfHash
+      ) return { status: 'request_unavailable' as const }
+      if (stagedRecovery.replacementSecretHash !== input.replacementSecretHash) {
+        return { status: 'credential_rejected' as const }
+      }
       recovered = true
-      return { residentId: 7, handle: 'existing-resident' }
+      return { status: 'recovered' as const, residentId: 7, handle: 'existing-resident' }
     },
     async cancelRootRecovery(input: unknown) {
       calls.push({ method: 'cancelRootRecovery', input })
@@ -197,9 +253,11 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       replacementSecretHash: string
     }) {
       calls.push({ method: 'stageRootRotation', input })
-      if (input.residentSecretHash !== sha256(ROOT_KEY) || rotated) return null
+      if (input.residentSecretHash !== sha256(ROOT_KEY) || rotated) {
+        return { status: 'credential_rejected' as const }
+      }
       stagedRotation = { ...input }
-      return { residentId: 7, handle: 'existing-resident' }
+      return { status: 'staged' as const, residentId: 7, handle: 'existing-resident' }
     },
     async confirmRootRotation(input: {
       sessionHash: string
@@ -211,9 +269,11 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       if (
         rotated || !stagedRotation ||
         stagedRotation.sessionHash !== input.sessionHash ||
-        stagedRotation.csrfHash !== input.csrfHash ||
-        stagedRotation.replacementSecretHash !== input.replacementSecretHash
-      ) return null
+        stagedRotation.csrfHash !== input.csrfHash
+      ) return { status: 'request_unavailable' as const }
+      if (stagedRotation.replacementSecretHash !== input.replacementSecretHash) {
+        return { status: 'credential_rejected' as const }
+      }
       rotated = true
       return { status: 'rotated' as const, residentId: 7, handle: 'existing-resident' }
     },
@@ -612,8 +672,13 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   const wrong = await postForm(app, '/join', start.cookie, {
     action: 'confirm', csrf: start.csrf, resident_key: ROOT_KEY,
   })
-  assert.equal(wrong.status, 403)
-  assertSecretsAbsent(await wrong.text(), initialSecrets)
+  const wrongBody = await assertRetryableCredentialRefusal(
+    wrong,
+    '/join',
+    start.csrf,
+    /saved (?:resident )?key could not be verified/iu,
+  )
+  assertSecretsAbsent(wrongBody, initialSecrets)
   assert.equal(memory.confirmed(), false)
 
   const confirmed = await postForm(app, '/join', start.cookie, {
@@ -629,8 +694,8 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   const replay = await postForm(app, '/join', start.cookie, {
     action: 'confirm', csrf: start.csrf, resident_key: rootKey,
   })
-  assert.equal(replay.status, 403)
-  assertSecretsAbsent(await replay.text(), initialSecrets)
+  const replayBody = await assertUnavailableStageRefusal(replay, '/join')
+  assertSecretsAbsent(replayBody, initialSecrets)
 })
 
 test('join retries a random collision until all eight initial recovery codes are unique', async () => {
@@ -706,9 +771,14 @@ test('join confirmation stays uncommitted when its rate limit or store fails clo
     const response = await postForm(app, '/join', start.cookie, {
       action: 'confirm', csrf: start.csrf, resident_key: rootKey,
     })
-    const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
+    const responseBody = await response.text()
+    const surface = `${responseBody}\n${JSON.stringify([...response.headers])}`
 
     assert.equal([429, 500].includes(response.status), true)
+    if (options.deniedAttemptKind === 'join_confirm') {
+      assert.equal(response.headers.get('x-1f3d9-reason'), 'rate_limited')
+      assert.match(responseBody, /try again in one hour/iu)
+    }
     assertSecretsAbsent(surface, [rootKey, ...recoveryCodes])
     assert.equal(memory.confirmed(), false)
   }
@@ -794,7 +864,12 @@ test('rotation stages hashes, shows the replacement once, and requires exact re-
   const wrong = await postForm(app, '/rotate', start.cookie, {
     action: 'confirm', csrf: start.csrf, resident_key: OTHER_ROOT_KEY,
   })
-  assert.equal(wrong.status, 403)
+  await assertRetryableCredentialRefusal(
+    wrong,
+    '/rotate',
+    start.csrf,
+    /replacement key could not be verified/iu,
+  )
   assert.equal(memory.rotated(), false)
 
   const confirmed = await postForm(app, '/rotate', start.cookie, {
@@ -806,6 +881,11 @@ test('rotation stages hashes, shows the replacement once, and requires exact re-
   const confirmCall = memory.calls.find(call => call.method === 'confirmRootRotation')
   assert.ok(confirmCall)
   assert.doesNotMatch(JSON.stringify(confirmCall), /1f3d9_sk_/)
+
+  const replay = await postForm(app, '/rotate', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: replacementKey,
+  })
+  await assertUnavailableStageRefusal(replay, '/rotate')
 })
 
 test('canceling a staged rotation keeps the old key and grants unchanged', async () => {
@@ -839,7 +919,10 @@ test('rotation reports an atomic confirmation rate limit without claiming succes
     action: 'confirm', csrf: start.csrf, resident_key: replacementKey,
   })
   assert.equal(confirmed.status, 429)
-  assert.doesNotMatch(await confirmed.text(), /is active/i)
+  assert.equal(confirmed.headers.get('x-1f3d9-reason'), 'rate_limited')
+  const confirmedBody = await confirmed.text()
+  assert.match(confirmedBody, /wait until the next UTC day[^.]*start a new rotation/iu)
+  assert.doesNotMatch(confirmedBody, /is active/i)
   assert.equal(memory.rotated(), false)
 })
 
@@ -858,6 +941,8 @@ test('rotation rejects an incorrect old key and browser rate-limit denials', asy
     action: 'begin', csrf: beginStart.csrf, resident_key: ROOT_KEY,
   })
   assert.equal(deniedBegin.status, 429)
+  assert.equal(deniedBegin.headers.get('x-1f3d9-reason'), 'rate_limited')
+  assert.match(await deniedBegin.text(), /try again in one hour/iu)
   assert.equal(beginLimited.memory.calls.some(call => call.method === 'stageRootRotation'), false)
 
   const confirmLimited = appWithMemoryStore({ deniedAttemptKind: 'rotation_confirm' })
@@ -871,6 +956,8 @@ test('rotation rejects an incorrect old key and browser rate-limit denials', asy
     action: 'confirm', csrf: confirmStart.csrf, resident_key: replacementKey,
   })
   assert.equal(deniedConfirm.status, 429)
+  assert.equal(deniedConfirm.headers.get('x-1f3d9-reason'), 'rate_limited')
+  assert.match(await deniedConfirm.text(), /try again in one hour/iu)
   assert.equal(confirmLimited.memory.calls.some(call => call.method === 'confirmRootRotation'), false)
 })
 
@@ -988,7 +1075,12 @@ test('recovery codes and replacement key exist in plaintext only on one private 
   const wrong = await postForm(app, '/recovery', recoverStart.cookie, {
     action: 'confirm', csrf: recoverStart.csrf, resident_key: ROOT_KEY,
   })
-  assert.equal(wrong.status, 403)
+  await assertRetryableCredentialRefusal(
+    wrong,
+    '/recovery',
+    recoverStart.csrf,
+    /replacement key could not be verified/iu,
+  )
   assert.equal(memory.recovered(), false)
 
   const confirmed = await postForm(app, '/recovery', recoverStart.cookie, {
@@ -997,6 +1089,83 @@ test('recovery codes and replacement key exist in plaintext only on one private 
   assert.equal(confirmed.status, 200)
   assert.match(await confirmed.text(), /old key and connector sessions are revoked/i)
   assert.equal(memory.recovered(), true)
+
+  const replay = await postForm(app, '/recovery', recoverStart.cookie, {
+    action: 'confirm', csrf: recoverStart.csrf, resident_key: replacementKey,
+  })
+  await assertUnavailableStageRefusal(replay, '/recovery')
+})
+
+test('root-key and recovery-code refusals keep the security-sensitive pairs merged', async () => {
+  const rootKeyMessages: string[] = []
+  for (const residentKey of ['not-a-resident-key', OTHER_ROOT_KEY]) {
+    const { app } = appWithMemoryStore()
+    const start = await pageState(app, '/rotate')
+    const rejected = await postForm(app, '/rotate', start.cookie, {
+      action: 'begin', csrf: start.csrf, resident_key: residentKey,
+    })
+    assert.equal(rejected.status, 403)
+    assert.equal(rejected.headers.get('x-1f3d9-reason'), 'credential_rejected')
+    rootKeyMessages.push(refusalMessage(await rejected.text()))
+  }
+  assert.equal(rootKeyMessages[0], rootKeyMessages[1], 'malformed and unrecognized root keys stay merged')
+
+  const { app } = appWithMemoryStore()
+  const generationStart = await pageState(app, '/recovery')
+  const generated = await postForm(app, '/recovery', generationStart.cookie, {
+    action: 'generate', csrf: generationStart.csrf, resident_key: ROOT_KEY,
+  })
+  const codes = (await generated.text()).match(/1f3d9_rc_[0-9a-f]{64}/gu) ?? []
+  assert.equal(codes.length, 8)
+
+  const recoveryStart = await pageState(app, '/recovery')
+  const staged = await postForm(app, '/recovery', recoveryStart.cookie, {
+    action: 'begin', csrf: recoveryStart.csrf, recovery_code: codes[0]!,
+  })
+  const replacementKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  assert.ok(replacementKey)
+  const confirmed = await postForm(app, '/recovery', recoveryStart.cookie, {
+    action: 'confirm', csrf: recoveryStart.csrf, resident_key: replacementKey,
+  })
+  assert.equal(confirmed.status, 200)
+
+  const recoveryCodeMessages: string[] = []
+  for (const recoveryCode of [codes[0]!, `1f3d9_rc_${'99'.repeat(32)}`]) {
+    const retryStart = await pageState(app, '/recovery')
+    const rejected = await postForm(app, '/recovery', retryStart.cookie, {
+      action: 'begin', csrf: retryStart.csrf, recovery_code: recoveryCode,
+    })
+    assert.equal(rejected.status, 403)
+    assert.equal(rejected.headers.get('x-1f3d9-reason'), 'credential_rejected')
+    recoveryCodeMessages.push(refusalMessage(await rejected.text()))
+  }
+  assert.equal(recoveryCodeMessages[0], recoveryCodeMessages[1], 'used and unknown recovery codes stay merged')
+})
+
+test('recovery confirmation rate limits remain explicit and actionable', async () => {
+  const { app, memory } = appWithMemoryStore({ deniedAttemptKind: 'recovery_confirm' })
+  const generationStart = await pageState(app, '/recovery')
+  const generated = await postForm(app, '/recovery', generationStart.cookie, {
+    action: 'generate', csrf: generationStart.csrf, resident_key: ROOT_KEY,
+  })
+  const recoveryCode = (await generated.text()).match(/1f3d9_rc_[0-9a-f]{64}/u)?.[0]
+  assert.ok(recoveryCode)
+
+  const recoveryStart = await pageState(app, '/recovery')
+  const staged = await postForm(app, '/recovery', recoveryStart.cookie, {
+    action: 'begin', csrf: recoveryStart.csrf, recovery_code: recoveryCode,
+  })
+  const replacementKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  assert.ok(replacementKey)
+
+  const denied = await postForm(app, '/recovery', recoveryStart.cookie, {
+    action: 'confirm', csrf: recoveryStart.csrf, resident_key: replacementKey,
+  })
+  assert.equal(denied.status, 429)
+  assert.equal(denied.headers.get('x-1f3d9-reason'), 'rate_limited')
+  assert.match(await denied.text(), /try again in one hour/iu)
+  assert.equal(memory.recovered(), false)
+  assert.equal(memory.calls.some(call => call.method === 'confirmRootRecovery'), false)
 })
 
 test('canceling a staged flow does not create or recover a resident', async () => {

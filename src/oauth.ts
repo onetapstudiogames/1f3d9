@@ -182,18 +182,42 @@ function browserError(
   status: 400 | 403 | 409 | 429 | 503,
   reason: BrowserRefusalReason,
   message: string,
-  retryHref?: string,
+  nextStepHtml?: string,
+  callbackOrigin?: string,
 ) {
   const reference = markBrowserRefusal(c, status, reason)
-  const nextStep = retryHref
-    ? `<p><a href="${escapeHtml(retryHref)}">Start again</a></p>`
-    : '<p class="muted">You can close this page safely. Nothing was linked.</p>'
+  const nextStep = nextStepHtml ?? '<p class="muted">You can close this page safely. Nothing was linked.</p>'
   return html(
     c,
     status,
     'Sign-in stopped',
     `<h1>Sign-in stopped</h1><p>${escapeHtml(message)}</p><p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p>${nextStep}`,
+    callbackOrigin,
   )
+}
+
+function returnToChatApp(): string {
+  return '<p>Return to the chat app and start sign-in again.</p>'
+}
+
+function oauthResidentKeyRetryForm(
+  action: 'confirm' | 'link',
+  csrf: string,
+  label: string,
+  button: string,
+): string {
+  return `<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="${action}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
+<button type="submit">${escapeHtml(button)}</button></form>`
+}
+
+function oauthRegistrationRetryForm(csrf: string): string {
+  return `<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
+<label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
+<button type="submit">Try this name</button></form>`
 }
 
 function clearSessionCookie(c: Context): void {
@@ -513,13 +537,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (isStagedAuthorizationRequest(existing)) {
         return renderStagedConfirmation(existing, sessionCookie)
       }
-      recordFailure(oauth, trace, 'authorization_request', 'request_expired', 403)
+      recordFailure(oauth, trace, 'authorization_request', 'request_unavailable', 403)
       return browserError(
         c,
         403,
-        'request_expired',
+        'request_unavailable',
         'This sign-in request has already advanced and cannot be reopened. Start again from the chat app.',
-        `${requestUrl.pathname}${requestUrl.search}`,
+        returnToChatApp(),
       )
     }
     let isAdmitted
@@ -604,9 +628,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       status: 400 | 403 | 409 | 429 | 503,
       errorClass: BrowserRefusalReason,
       message: string,
+      nextStepHtml?: string,
+      callbackOrigin?: string,
     ) => {
       recordFailure(oauth, trace, 'browser_approval', errorClass, status)
-      return browserError(c, status, errorClass, message)
+      return browserError(c, status, errorClass, message, nextStepHtml, callbackOrigin)
     }
 
     try {
@@ -627,13 +653,15 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           403,
           'browser_cookie_missing',
           'This sign-in form was submitted without its private browser cookie. Start again from the chat app.',
+          returnToChatApp(),
         )
       }
       if (cookieState.kind === 'invalid' || cookieState.cookie.csrf !== csrf) {
         return fail(
           403,
           'browser_cookie_mismatch',
-          'This sign-in form and its private browser cookie did not match.',
+          'This sign-in form and its private browser cookie did not match. Start again from the chat app.',
+          returnToChatApp(),
         )
       }
       const sessionCookie = cookieState.cookie
@@ -649,30 +677,67 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const sessionHash = sha256(sessionCookie.session)
       const csrfHash = sha256(csrf)
       const request = await oauth.store.getAuthorizationRequest(sessionHash)
-      if (!request) return fail(403, 'request_expired', 'This sign-in request expired or was already used.')
+      if (!request) {
+        return fail(
+          403,
+          'request_unavailable',
+          'This sign-in request expired, was canceled, or was already used.',
+          returnToChatApp(),
+        )
+      }
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
+      const callbackOrigin = registeredCallbackOrigin(request.redirect_uri)
 
       if (action === 'cancel') {
         const redirect = await oauth.store.cancelAuthorizationRequest({ sessionHash, csrfHash })
-        if (!redirect) return fail(403, 'request_expired', 'This sign-in request expired or was already used.')
+        if (!redirect) {
+          return fail(
+            403,
+            'request_unavailable',
+            'This sign-in request expired, was canceled, or was already used.',
+            returnToChatApp(),
+          )
+        }
         return redirectWithDenial(c, redirect)
       }
 
       if (action === 'confirm') {
         const residentKey = one(values, 'resident_key', 80)
         if (
-          !residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey) || request.intent !== 'new' ||
+          request.intent !== 'new' ||
           request.resident_id !== null || request.new_handle === null ||
           request.new_model === null || request.root_key_confirmed_at !== null
         ) {
-          return fail(403, 'confirmation_not_ready', 'This resident is not waiting for key confirmation.')
+          return fail(
+            403,
+            'confirmation_not_ready',
+            'This resident is not waiting for key confirmation.',
+            returnToChatApp(),
+          )
+        }
+        if (!residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)) {
+          return fail(
+            403,
+            'confirmation_rejected',
+            'That saved resident key could not be verified. Check it and try again on this page.',
+            oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            callbackOrigin,
+          )
         }
         if (!(await admitted(
           oauth.store,
           [`signup-confirm-ip:${clientAddress(c, oauth.environment)}`, `signup-confirm-session:${sessionHash}`],
           'resident_key',
           10,
-        ))) return fail(429, 'rate_limited', 'Too many key attempts. Try again in one hour.')
+        ))) {
+          return fail(
+            429,
+            'rate_limited',
+            'Too many key attempts. Try again in one hour on this page.',
+            oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            callbackOrigin,
+          )
+        }
         const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
         const redirect = await oauth.store.confirmNewResidentAndIssueAuthorizationCode({
           sessionHash,
@@ -680,8 +745,38 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           residentSecretHash: sha256(residentKey),
           authorizationCodeHash: sha256(authorizationCode),
         })
-        if (!redirect) {
-          return fail(403, 'confirmation_rejected', 'This sign-in request expired or was already used.')
+        if (redirect.status === 'request_unavailable') {
+          return fail(
+            403,
+            'request_unavailable',
+            'This sign-in request expired, was canceled, or was already used.',
+            returnToChatApp(),
+          )
+        }
+        if (redirect.status === 'confirmation_not_ready') {
+          return fail(
+            403,
+            'confirmation_not_ready',
+            'This resident is not waiting for key confirmation.',
+            returnToChatApp(),
+          )
+        }
+        if (redirect.status === 'confirmation_rejected') {
+          return fail(
+            403,
+            'confirmation_rejected',
+            'That saved resident key could not be verified. Check it and try again on this page.',
+            oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            callbackOrigin,
+          )
+        }
+        if (redirect.status === 'handle_taken') {
+          return fail(
+            409,
+            'handle_taken',
+            'That resident name was taken before this sign-in was confirmed. Start sign-in again from the chat app with a different name.',
+            returnToChatApp(),
+          )
         }
         return redirectWithCode(c, redirect, authorizationCode)
       }
@@ -689,14 +784,28 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (action === 'link') {
         const residentKey = one(values, 'resident_key', 80)
         if (!residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)) {
-          return fail(403, 'resident_key_rejected', 'That resident key could not be verified.')
+          return fail(
+            403,
+            'resident_key_rejected',
+            'That resident key could not be verified. Check it and try again on this page.',
+            oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
+          )
         }
         if (!(await admitted(
           oauth.store,
           [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
           'resident_key',
           10,
-        ))) return fail(429, 'rate_limited', 'Too many key attempts. Try again in one hour.')
+        ))) {
+          return fail(
+            429,
+            'rate_limited',
+            'Too many key attempts. Try again in one hour on this page.',
+            oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
+          )
+        }
         const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
         const redirect = await oauth.store.approveExistingResidentAndIssueAuthorizationCode({
           sessionHash,
@@ -704,7 +813,23 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           residentSecretHash: sha256(residentKey),
           authorizationCodeHash: sha256(authorizationCode),
         })
-        if (!redirect) return fail(403, 'resident_key_rejected', 'That resident key could not be verified.')
+        if (redirect.status === 'request_unavailable') {
+          return fail(
+            403,
+            'request_unavailable',
+            'This sign-in request expired, was canceled, or was already used.',
+            returnToChatApp(),
+          )
+        }
+        if (redirect.status === 'resident_key_rejected') {
+          return fail(
+            403,
+            'resident_key_rejected',
+            'That resident key could not be verified. Check it and try again on this page.',
+            oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
+          )
+        }
         return redirectWithCode(c, redirect, authorizationCode)
       }
 
@@ -712,29 +837,54 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
       const modelText = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
       if (!HANDLE_RE.test(handle) || modelText === null) {
-        return fail(400, 'invalid_identity', 'The resident name or model label was not valid.')
+        return fail(
+          400,
+          'invalid_identity',
+          'The resident name or model label was not valid. Correct it and try again on this page.',
+          oauthRegistrationRetryForm(csrf),
+        )
       }
       if (isReservedHandle(handle)) {
-        return fail(400, 'reserved_handle', 'That resident name is reserved for the city or its authority.')
+        return fail(
+          400,
+          'reserved_handle',
+          'That resident name is reserved for the city or its authority. Choose a different name.',
+          oauthRegistrationRetryForm(csrf),
+        )
       }
       if (!(await admitted(
         oauth.store,
         [`signup-ip:${clientAddress(c, oauth.environment)}`],
         'authorize',
         3,
-      ))) return fail(429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+      ))) {
+        return fail(
+          429, 'rate_limited', 'The registrar is busy. Try again in one hour on this page.',
+          oauthRegistrationRetryForm(csrf),
+        )
+      }
       if (!(await admitted(
         oauth.store,
         ['signup-global'],
         'authorize',
         300,
-      ))) return fail(429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+      ))) {
+        return fail(
+          429, 'rate_limited', 'The registrar is busy. Try again in one hour on this page.',
+          oauthRegistrationRetryForm(csrf),
+        )
+      }
       if (!(await admitted(
         oauth.store,
         [`signup-client:${request.client_id}`],
         'authorize',
         300,
-      ))) return fail(429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+      ))) {
+        return fail(
+          429, 'rate_limited', 'The registrar is busy. Try again in one hour on this page.',
+          oauthRegistrationRetryForm(csrf),
+        )
+      }
 
       const residentSecret = newSecret()
       const recoveryCodes = newRecoveryCodeSet()
@@ -746,9 +896,21 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         residentSecretHash: sha256(residentSecret),
         recoveryCodeHashes: recoveryCodes.map(sha256),
       })
-      if (!pending) return fail(403, 'request_expired', 'This sign-in request expired or was already used.')
+      if (pending.status === 'request_unavailable') {
+        return fail(
+          403,
+          'request_unavailable',
+          'This sign-in request expired, was canceled, or was already used.',
+          returnToChatApp(),
+        )
+      }
       if (pending.status === 'handle_taken') {
-        return fail(409, 'handle_taken', 'That resident name is already taken.')
+        return fail(
+          409,
+          'handle_taken',
+          'That resident name is already taken. Choose a different name and try again on this page.',
+          oauthRegistrationRetryForm(csrf),
+        )
       }
       return html(
         c,
@@ -757,12 +919,14 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         rootKeyPage(pending.handle, residentSecret, recoveryCodes, csrf),
         registeredCallbackOrigin(request.redirect_uri),
       )
-    } catch (error) {
-      if (postgresErrorCode(error) === '23505') {
-        return fail(409, 'handle_taken', 'That resident name is already taken.')
-      }
+    } catch {
       c.header('Retry-After', '1')
-      return fail(503, 'storage_unavailable', '1F3D9 could not complete sign-in. Try again in a moment.')
+      return fail(
+        503,
+        'storage_unavailable',
+        '1F3D9 could not complete sign-in. Wait a moment, then start sign-in again from the chat app.',
+        returnToChatApp(),
+      )
     }
   })
 

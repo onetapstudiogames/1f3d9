@@ -216,11 +216,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         ],
       )
 
-      assert.equal(await store.confirmResidentRegistration({
-        sessionHash: legacy.sessionHash,
-        csrfHash: legacy.csrfHash,
-        residentSecretHash: legacy.residentSecretHash,
-      }), null)
+      await assert.rejects(
+        store.confirmResidentRegistration({
+          sessionHash: legacy.sessionHash,
+          csrfHash: legacy.csrfHash,
+          residentSecretHash: legacy.residentSecretHash,
+        }),
+        /registration confirmation produced no outcome/i,
+      )
       const state = await database!.query(
         `SELECT
            (SELECT count(*) FROM residents WHERE handle = $1) AS residents,
@@ -330,21 +333,34 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       assert.equal((await database!.query("SELECT count(*) FROM residents WHERE handle = 'new-resident'")).rows[0]!.count, '0')
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE actor = 'new-resident'")).rows[0]!.count, '0')
 
-      assert.equal(await store.confirmResidentRegistration({
+      assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: sha256('wrong-key'),
-      }), null)
+      }), { status: 'credential_rejected' })
+      const afterWrongKey = await database!.query(
+        `SELECT confirmed_at, canceled_at, secret_hash,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+            WHERE registration_session_hash = $1) AS pending_codes
+         FROM pending_resident_registrations WHERE session_hash = $1`,
+        [pending.sessionHash],
+      )
+      assert.deepEqual(afterWrongKey.rows, [{
+        confirmed_at: null,
+        canceled_at: null,
+        secret_hash: pending.residentSecretHash,
+        pending_codes: '8',
+      }])
       assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-      }), { residentId: 2, handle: 'new-resident' })
-      assert.equal(await store.confirmResidentRegistration({
+      }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
+      assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-      }), null)
+      }), { status: 'request_unavailable' })
 
       const after = await database!.query(
         `SELECT handle, model, secret_hash, ip_hash, resident_id, confirmed_at IS NOT NULL AS confirmed
@@ -383,11 +399,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       const pending = registration('missing-world', 'unplaced-resident')
       assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
 
-      assert.equal(await store.confirmResidentRegistration({
-        sessionHash: pending.sessionHash,
-        csrfHash: pending.csrfHash,
-        residentSecretHash: pending.residentSecretHash,
-      }), null)
+      await assert.rejects(
+        store.confirmResidentRegistration({
+          sessionHash: pending.sessionHash,
+          csrfHash: pending.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+        }),
+        /registration confirmation produced no outcome/i,
+      )
 
       const state = await database!.query(
         `SELECT
@@ -467,6 +486,16 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           pending_codes: '0',
         })
       }
+      assert.deepEqual(await store.confirmResidentRegistration({
+        sessionHash: canceled.sessionHash,
+        csrfHash: canceled.csrfHash,
+        residentSecretHash: canceled.residentSecretHash,
+      }), { status: 'request_unavailable' })
+      assert.deepEqual(await store.confirmResidentRegistration({
+        sessionHash: expired.sessionHash,
+        csrfHash: expired.csrfHash,
+        residentSecretHash: expired.residentSecretHash,
+      }), { status: 'request_unavailable' })
     })
 
     await t.test('an active-code collision rolls back resident creation and keeps the pending set retryable', async () => {
@@ -480,11 +509,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       )
       assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
 
-      assert.equal(await store.confirmResidentRegistration({
-        sessionHash: pending.sessionHash,
-        csrfHash: pending.csrfHash,
-        residentSecretHash: pending.residentSecretHash,
-      }), null)
+      await assert.rejects(
+        store.confirmResidentRegistration({
+          sessionHash: pending.sessionHash,
+          csrfHash: pending.csrfHash,
+          residentSecretHash: pending.residentSecretHash,
+        }),
+        { code: '23505', constraint: 'resident_recovery_codes_code_hash_key' },
+      )
       const state = await database!.query(
         `SELECT
            (SELECT last_id FROM resident_id_allocator WHERE singleton) AS last_id,
@@ -552,7 +584,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       }])
     })
 
-    await t.test('two pending claims for one handle have one winner and no leaked ID', async () => {
+    await t.test('two pending claims for one handle have one confirmed and one handle-taken outcome', async () => {
       await resetDatabase()
       const first = registration('race-first', 'raced-name')
       const second = registration('race-second', 'raced-name')
@@ -568,12 +600,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           residentSecretHash: second.residentSecretHash,
         }),
       ])
-      assert.equal(results.filter(Boolean).length, 1)
+      assert.equal(results.filter(result => result.status === 'confirmed').length, 1)
+      assert.equal(results.filter(result => result.status === 'handle_taken').length, 1)
       assert.equal((await database!.query("SELECT count(*) FROM residents WHERE handle = 'raced-name'")).rows[0]!.count, '1')
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE actor = 'raced-name'")).rows[0]!.count, '1')
       assert.equal((await database!.query('SELECT last_id FROM resident_id_allocator WHERE singleton')).rows[0]!.last_id, 2)
-      const winner = results[0] ? first : second
-      const loser = results[0] ? second : first
+      const winner = results[0].status === 'confirmed' ? first : second
+      const loser = results[0].status === 'confirmed' ? second : first
       const codes = await database!.query(
         `SELECT
            (SELECT count(*) FROM resident_recovery_codes code
@@ -610,12 +643,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         recoveryCodeHash: sha256(codes[0]!),
         replacementSecretHash: sha256('replacement-root-key'),
       }
-      assert.deepEqual(await store.stageRootRecovery(stage), { handle: 'existing-agent' })
-      assert.equal(await store.confirmRootRecovery({
+      assert.deepEqual(await store.stageRootRecovery(stage), {
+        status: 'staged', handle: 'existing-agent',
+      })
+      assert.deepEqual(await store.confirmRootRecovery({
         sessionHash: stage.sessionHash,
         csrfHash: stage.csrfHash,
         replacementSecretHash: sha256('wrong-replacement'),
-      }), null)
+      }), { status: 'credential_rejected' })
       assert.equal(await store.cancelRootRecovery(stage), true)
       const state = await database!.query(
         `SELECT
@@ -658,8 +693,8 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: sha256('winner:second-session'), csrfHash: sha256('winner:second-csrf'),
         recoveryCodeHash: sha256(codes[1]!), replacementSecretHash: sha256('replacement-two'),
       }
-      assert.ok(await store.stageRootRecovery(first))
-      assert.ok(await store.stageRootRecovery(second))
+      assert.equal((await store.stageRootRecovery(first)).status, 'staged')
+      assert.equal((await store.stageRootRecovery(second)).status, 'staged')
       const results = await Promise.all([
         store.confirmRootRecovery({
           sessionHash: first.sessionHash, csrfHash: first.csrfHash,
@@ -670,8 +705,9 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           replacementSecretHash: second.replacementSecretHash,
         }),
       ])
-      assert.equal(results.filter(Boolean).length, 1)
-      const winner = results[0] ? first : second
+      assert.equal(results.filter(result => result.status === 'recovered').length, 1)
+      assert.equal(results.filter(result => result.status === 'request_unavailable').length, 1)
+      const winner = results[0].status === 'recovered' ? first : second
       const state = await database!.query(
         `SELECT
            (SELECT secret_hash FROM residents WHERE id = 1) AS secret_hash,
@@ -687,13 +723,28 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         generation: '2', used: '1', invalidated: '7',
         revoked_families: '2', revoked_tokens: '2', rotate_events: '1',
       })
+
+      const usedCode = await store.stageRootRecovery({
+        sessionHash: sha256('used-code:session'),
+        csrfHash: sha256('used-code:csrf'),
+        recoveryCodeHash: winner.recoveryCodeHash,
+        replacementSecretHash: sha256('used-code:replacement'),
+      })
+      const unknownCode = await store.stageRootRecovery({
+        sessionHash: sha256('unknown-code:session'),
+        csrfHash: sha256('unknown-code:csrf'),
+        recoveryCodeHash: sha256('unknown-code'),
+        replacementSecretHash: sha256('unknown-code:replacement'),
+      })
+      assert.deepEqual(usedCode, { status: 'credential_rejected' })
+      assert.deepEqual(unknownCode, usedCode)
     })
 
     await t.test('root rotation stages hashes only and cancel or expiry preserves the old key', async () => {
       await resetDatabase()
       const canceled = rotation('rotation-cancel')
       assert.deepEqual(await store.stageRootRotation(canceled), {
-        residentId: 1, handle: 'existing-agent',
+        status: 'staged', residentId: 1, handle: 'existing-agent',
       })
       const staged = await database!.query(
         `SELECT resident_id, session_hash, csrf_hash, resident_secret_hash,
@@ -711,15 +762,15 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         confirmed_at: null,
         canceled_at: null,
       }])
-      assert.equal(await store.confirmRootRotation({
+      assert.deepEqual(await store.confirmRootRotation({
         sessionHash: canceled.sessionHash,
         csrfHash: canceled.csrfHash,
         replacementSecretHash: sha256('wrong-replacement'),
-      }), null)
+      }), { status: 'credential_rejected' })
       assert.equal(await store.cancelRootRotation(canceled), true)
 
       const expired = rotation('rotation-expired')
-      assert.ok(await store.stageRootRotation(expired))
+      assert.equal((await store.stageRootRotation(expired)).status, 'staged')
       await database!.query(
         `UPDATE resident_key_rotations
          SET created_at = now() - interval '20 minutes',
@@ -727,7 +778,12 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
          WHERE session_hash = $1`,
         [expired.sessionHash],
       )
-      assert.ok(await store.stageRootRotation(rotation('rotation-cleanup')))
+      assert.deepEqual(await store.confirmRootRotation({
+        sessionHash: expired.sessionHash,
+        csrfHash: expired.csrfHash,
+        replacementSecretHash: expired.replacementSecretHash,
+      }), { status: 'request_unavailable' })
+      assert.equal((await store.stageRootRotation(rotation('rotation-cleanup'))).status, 'staged')
 
       const state = await database!.query(
         `SELECT
@@ -817,8 +873,8 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
 
       const first = rotation('rotation-first')
       const second = rotation('rotation-second')
-      assert.ok(await store.stageRootRotation(first))
-      assert.ok(await store.stageRootRotation(second))
+      assert.equal((await store.stageRootRotation(first)).status, 'staged')
+      assert.equal((await store.stageRootRotation(second)).status, 'staged')
       const rotationResults = await Promise.all([
         store.confirmRootRotation({
           sessionHash: first.sessionHash,
@@ -832,11 +888,19 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         }),
       ])
       assert.equal(rotationResults.filter(result => result?.status === 'rotated').length, 1)
-      assert.equal(rotationResults.filter(result => result === null).length, 1)
+      assert.equal(
+        rotationResults.filter(result => result.status === 'request_unavailable').length,
+        1,
+      )
       const rotationWinner = rotationResults[0]?.status === 'rotated' ? first : second
-      assert.equal(await store.stageRootRotation(rotation(
+      const oldKey = await store.stageRootRotation(rotation(
         'old-key-rejected', 'existing-root-key', 'unused-replacement',
-      )), null)
+      ))
+      const unknownKey = await store.stageRootRotation(rotation(
+        'unknown-key-rejected', 'never-issued-root-key', 'other-unused-replacement',
+      ))
+      assert.deepEqual(oldKey, { status: 'credential_rejected' })
+      assert.deepEqual(unknownKey, oldKey)
 
       const state = await database!.query(
         `SELECT
@@ -899,8 +963,8 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         replacementSecretHash: sha256('recovery-race-replacement'),
       }
       const rootRotation = rotation('rotation-recovery:rotation')
-      assert.ok(await store.stageRootRecovery(recovery))
-      assert.ok(await store.stageRootRotation(rootRotation))
+      assert.equal((await store.stageRootRecovery(recovery)).status, 'staged')
+      assert.equal((await store.stageRootRotation(rootRotation)).status, 'staged')
       const recoveryRace = await Promise.all([
         store.confirmRootRecovery({
           sessionHash: recovery.sessionHash,
@@ -913,9 +977,10 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           replacementSecretHash: rootRotation.replacementSecretHash,
         }),
       ])
-      assert.equal(recoveryRace.filter(Boolean).length, 1)
-      assert.deepEqual(recoveryRace[0], { residentId: 1, handle: 'existing-agent' })
-      assert.equal(recoveryRace[1], null)
+      assert.deepEqual(recoveryRace[0], {
+        status: 'recovered', residentId: 1, handle: 'existing-agent',
+      })
+      assert.deepEqual(recoveryRace[1], { status: 'request_unavailable' })
       const recoveryWon = await database!.query(
         `SELECT secret_hash, recovery_generation,
            (SELECT count(*) FROM resident_key_rotations
@@ -939,18 +1004,18 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         replacementSecretHash: sha256('other-recovery-replacement'),
       }
       const otherRotation = rotation('rotation-other:rotation')
-      assert.ok(await store.stageRootRecovery(otherRecovery))
-      assert.ok(await store.stageRootRotation(otherRotation))
+      assert.equal((await store.stageRootRecovery(otherRecovery)).status, 'staged')
+      assert.equal((await store.stageRootRotation(otherRotation)).status, 'staged')
       assert.equal((await store.confirmRootRotation({
         sessionHash: otherRotation.sessionHash,
         csrfHash: otherRotation.csrfHash,
         replacementSecretHash: otherRotation.replacementSecretHash,
       }))?.status, 'rotated')
-      assert.equal(await store.confirmRootRecovery({
+      assert.deepEqual(await store.confirmRootRecovery({
         sessionHash: otherRecovery.sessionHash,
         csrfHash: otherRecovery.csrfHash,
         replacementSecretHash: otherRecovery.replacementSecretHash,
-      }), null)
+      }), { status: 'request_unavailable' })
       const rotationWon = await database!.query(
         `SELECT secret_hash, recovery_generation,
            (SELECT count(*) FROM resident_recovery_codes
@@ -970,7 +1035,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       for (let index = 0; index < 5; index += 1) {
         const nextSecret = `daily-rotation-${index}`
         const intent = rotation(`daily-${index}`, currentSecret, nextSecret)
-        assert.ok(await store.stageRootRotation(intent))
+        assert.equal((await store.stageRootRotation(intent)).status, 'staged')
         assert.equal((await store.confirmRootRotation({
           sessionHash: intent.sessionHash,
           csrfHash: intent.csrfHash,
@@ -979,7 +1044,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         currentSecret = nextSecret
       }
       const limited = rotation('daily-limited', currentSecret, 'daily-rejected')
-      assert.ok(await store.stageRootRotation(limited))
+      assert.equal((await store.stageRootRotation(limited)).status, 'staged')
       assert.deepEqual(await store.confirmRootRotation({
         sessionHash: limited.sessionHash,
         csrfHash: limited.csrfHash,

@@ -147,6 +147,13 @@ export function postgresErrorCode(error: unknown, depth = 0): string | null {
   return postgresErrorCode(candidate.sourceError, depth + 1)
 }
 
+export function postgresErrorConstraint(error: unknown, depth = 0): string | null {
+  if (!error || typeof error !== 'object' || depth > 3) return null
+  const candidate = error as { constraint?: unknown; sourceError?: unknown }
+  if (typeof candidate.constraint === 'string') return candidate.constraint
+  return postgresErrorConstraint(candidate.sourceError, depth + 1)
+}
+
 export function postgresErrorMessage(error: unknown, depth = 0): string | null {
   if (!error || typeof error !== 'object' || depth > 3) return null
   const candidate = error as { message?: unknown; sourceError?: unknown }

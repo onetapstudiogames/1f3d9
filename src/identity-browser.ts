@@ -91,9 +91,9 @@ function browserError(
   status: 400 | 403 | 409 | 429,
   reason: BrowserRefusalReason,
   message: string,
+  nextStepHtml = '',
 ) {
   const reference = markBrowserRefusal(c, status, reason)
-  const retryPath = new URL(c.req.url).pathname
   console.error('identity_browser_refusal', JSON.stringify({
     event: 'identity_browser_refusal',
     request_id: reference.requestId,
@@ -107,8 +107,30 @@ function browserError(
     c,
     status,
     'Request stopped',
-    `<h1>Request stopped</h1><p>${escapeHtml(message)}</p><p><a href="${escapeHtml(retryPath)}">Start again</a></p><p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p><p class="muted">No identity change was made.</p>`,
+    `<h1>Request stopped</h1><p>${escapeHtml(message)}</p>${nextStepHtml}<p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p><p class="muted">No identity change was made.</p>`,
   )
+}
+
+function startAgain(href: '/join' | '/rotate' | '/recovery'): string {
+  return `<p><a href="${href}">Start again</a></p>`
+}
+
+function residentKeyRetryForm(
+  path: '/join' | '/rotate' | '/recovery',
+  action: 'begin' | 'confirm' | 'generate',
+  csrf: string,
+  label: string,
+  button: string,
+): string {
+  return `<form method="post" action="${path}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<button type="submit">${escapeHtml(button)}</button></form>`
+}
+
+function recoveryCodeRetryForm(csrf: string): string {
+  return `<form method="post" action="/recovery"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}">
+<button type="submit">Try this recovery code</button></form>`
 }
 
 function clientAddress(c: Context, environment: IdentityEnvironment): string {
@@ -130,6 +152,7 @@ function browserSessionForForm(
       403,
       'browser_cookie_missing',
       `The private cookie for this ${door} was not returned. Start again.`,
+      startAgain(new URL(c.req.url).pathname as '/join' | '/rotate' | '/recovery'),
     )
   }
   if (state.kind === 'invalid' || state.cookie.csrf !== csrf) {
@@ -138,6 +161,7 @@ function browserSessionForForm(
       403,
       'browser_cookie_mismatch',
       `This ${door} form and its private browser cookie did not match.`,
+      startAgain(new URL(c.req.url).pathname as '/join' | '/rotate' | '/recovery'),
     )
   }
   return state.cookie
@@ -329,16 +353,47 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     if (action === 'confirm') {
       const residentKey = one(values, 'resident_key', 80)
       if (!residentKey || !ROOT_KEY.test(residentKey)) {
-        return browserError(c, 403, 'credential_rejected', 'That saved key could not be verified.')
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That saved key could not be verified. Check it and try again on this page.',
+          residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+        )
       }
       if (!(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
-        return browserError(c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour.')
+        return browserError(
+          c,
+          429,
+          'rate_limited',
+          'Too many confirmation attempts. Try again in one hour on this page.',
+          residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+        )
       }
       const resident = await store.confirmResidentRegistration({
         sessionHash, csrfHash, residentSecretHash: sha256(residentKey),
       })
-      if (!resident) {
-        return browserError(c, 403, 'credential_rejected', 'That saved key could not be verified or this join expired.')
+      if (resident.status === 'request_unavailable') {
+        return browserError(
+          c, 403, 'request_unavailable', 'This join request expired, was canceled, or was already used. Start again.',
+          startAgain('/join'),
+        )
+      }
+      if (resident.status === 'handle_taken') {
+        return browserError(
+          c, 409, 'handle_taken',
+          'That resident name was taken before this join was confirmed. Start again with a different name.',
+          startAgain('/join'),
+        )
+      }
+      if (resident.status === 'credential_rejected') {
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That saved key could not be verified. Check it and try again on this page.',
+          residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+        )
       }
       clearBrowserSessionCookie(c, JOIN_COOKIE)
       return html(c, 200, 'Resident created', `<h1>${escapeHtml(resident.handle)} now lives in 1F3D9</h1><p>The saved resident key is active. This page does not contain it.</p>`)
@@ -368,9 +423,17 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       residentSecretHash: sha256(residentKey),
       recoveryCodeHashes: recoveryCodes.map(sha256),
     })
-    if (!staged) return browserError(c, 403, 'request_expired', 'This join page was already used.')
+    if (staged.status === 'request_unavailable') {
+      return browserError(
+        c, 403, 'request_unavailable', 'This join request is no longer available. Start again.',
+        startAgain('/join'),
+      )
+    }
     if (staged.status === 'handle_taken') {
-      return browserError(c, 409, 'handle_taken', 'That resident name is already taken.')
+      return browserError(
+        c, 409, 'handle_taken', 'That resident name is already taken. Choose a different name.',
+        startAgain('/join'),
+      )
     }
     setBrowserSessionCookie(c, JOIN_COOKIE, sessionCookie.raw)
     return html(
@@ -424,19 +487,26 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
 
       const residentKey = one(values, 'resident_key', 80)
       if (!residentKey || !ROOT_KEY.test(residentKey)) {
+        const retry = action === 'begin'
+          ? residentKeyRetryForm('/rotate', 'begin', csrf, 'Current resident key', 'Try this key')
+          : residentKeyRetryForm('/rotate', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key')
         return browserError(
           c,
           403,
           'credential_rejected',
           action === 'begin'
-            ? 'That current resident key could not be verified.'
-            : 'That replacement key could not be verified.',
+            ? 'That current resident key could not be verified. Check it and try again on this page.'
+            : 'That replacement key could not be verified. Check it and try again on this page.',
+          retry,
         )
       }
 
       if (action === 'begin') {
         if (!(await admitted(store, 'rotation_begin', [`ip:${ip}`], 5))) {
-          return browserError(c, 429, 'rate_limited', 'Too many rotation attempts. Try again in one hour.')
+          return browserError(
+            c, 429, 'rate_limited', 'Too many rotation attempts. Try again in one hour on this page.',
+            residentKeyRetryForm('/rotate', 'begin', csrf, 'Current resident key', 'Try this key'),
+          )
         }
         const replacementKey = newSecret()
         const resident = await store.stageRootRotation({
@@ -445,26 +515,57 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           residentSecretHash: sha256(residentKey),
           replacementSecretHash: sha256(replacementKey),
         })
-        if (!resident) {
-          return browserError(c, 403, 'credential_rejected', 'That current resident key could not be verified.')
+        if (resident.status === 'credential_rejected') {
+          return browserError(
+            c,
+            403,
+            'credential_rejected',
+            'That current resident key could not be verified. Check it and try again on this page.',
+            residentKeyRetryForm('/rotate', 'begin', csrf, 'Current resident key', 'Try this key'),
+          )
+        }
+        if (resident.status === 'request_unavailable') {
+          return browserError(
+            c, 403, 'request_unavailable', 'This rotation request is no longer available. Start again.',
+            startAgain('/rotate'),
+          )
         }
         setBrowserSessionCookie(c, ROTATION_COOKIE, sessionCookie.raw)
         return html(c, 200, 'Save replacement key', rotationKey(resident.handle, replacementKey, csrf))
       }
 
       if (!(await admitted(store, 'rotation_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
-        return browserError(c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour.')
+        return browserError(
+          c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour on this page.',
+          residentKeyRetryForm('/rotate', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
+        )
       }
       const resident = await store.confirmRootRotation({
         sessionHash,
         csrfHash,
         replacementSecretHash: sha256(residentKey),
       })
-      if (resident?.status === 'rate_limited') {
-        return browserError(c, 429, 'rate_limited', 'Too many key rotations. Try again later.')
+      if (resident.status === 'rate_limited') {
+        return browserError(
+          c, 429, 'rate_limited',
+          'This resident has reached the daily rotation limit. Wait until the next UTC day, then start a new rotation.',
+        )
       }
-      if (!resident) {
-        return browserError(c, 403, 'credential_rejected', 'That replacement key could not be verified or rotation expired.')
+      if (resident.status === 'request_unavailable') {
+        return browserError(
+          c, 403, 'request_unavailable',
+          'This rotation request expired, was canceled, or was already used. Start again.',
+          startAgain('/rotate'),
+        )
+      }
+      if (resident.status === 'credential_rejected') {
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That replacement key could not be verified. Check it and try again on this page.',
+          residentKeyRetryForm('/rotate', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
+        )
       }
       clearBrowserSessionCookie(c, ROTATION_COOKIE)
       return html(c, 200, 'Resident key rotated', `<h1>${escapeHtml(resident.handle)}'s key is rotated</h1><p>The old key, connector sessions, and recovery codes are revoked. The saved replacement key is active.</p>`)
@@ -517,17 +618,34 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     if (action === 'generate') {
       const residentKey = one(values, 'resident_key', 80)
       if (!residentKey || !ROOT_KEY.test(residentKey)) {
-        return browserError(c, 403, 'credential_rejected', 'That resident key could not be verified.')
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That resident key could not be verified. Check it and try again on this page.',
+          residentKeyRetryForm('/recovery', 'generate', csrf, 'Current resident key', 'Try this key'),
+        )
       }
       if (!(await admitted(store, 'recovery_generate', [`ip:${ip}`], 5))) {
-        return browserError(c, 429, 'rate_limited', 'Too many recovery-set attempts. Try again in one hour.')
+        return browserError(
+          c, 429, 'rate_limited', 'Too many recovery-set attempts. Try again in one hour on this page.',
+          residentKeyRetryForm('/recovery', 'generate', csrf, 'Current resident key', 'Try this key'),
+        )
       }
       const codes = newRecoveryCodeSet()
       const resident = await store.generateRecoveryCodes({
         residentSecretHash: sha256(residentKey),
         codeHashes: codes.map(sha256),
       })
-      if (!resident) return browserError(c, 403, 'credential_rejected', 'That resident key could not be verified.')
+      if (!resident) {
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That resident key could not be verified. Check it and try again on this page.',
+          residentKeyRetryForm('/recovery', 'generate', csrf, 'Current resident key', 'Try this key'),
+        )
+      }
       clearBrowserSessionCookie(c, RECOVERY_COOKIE)
       return html(c, 200, 'Save recovery codes', recoveryCodes(resident.handle, codes))
     }
@@ -535,10 +653,19 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     if (action === 'begin') {
       const code = one(values, 'recovery_code', 90)
       if (!code || !RECOVERY_CODE.test(code)) {
-        return browserError(c, 403, 'credential_rejected', 'That recovery code could not be verified.')
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That recovery code could not be verified. Try another unused code on this page.',
+          recoveryCodeRetryForm(csrf),
+        )
       }
       if (!(await admitted(store, 'recovery_begin', [`ip:${ip}`], 10))) {
-        return browserError(c, 429, 'rate_limited', 'Too many recovery attempts. Try again in one hour.')
+        return browserError(
+          c, 429, 'rate_limited', 'Too many recovery attempts. Try again in one hour on this page.',
+          recoveryCodeRetryForm(csrf),
+        )
       }
       const residentKey = newSecret()
       const staged = await store.stageRootRecovery({
@@ -547,23 +674,53 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
         recoveryCodeHash: sha256(code),
         replacementSecretHash: sha256(residentKey),
       })
-      if (!staged) return browserError(c, 403, 'credential_rejected', 'That recovery code could not be verified.')
+      if (staged.status === 'credential_rejected') {
+        return browserError(
+          c,
+          403,
+          'credential_rejected',
+          'That recovery code could not be verified. Try another unused code on this page.',
+          recoveryCodeRetryForm(csrf),
+        )
+      }
       setBrowserSessionCookie(c, RECOVERY_COOKIE, sessionCookie.raw)
       return html(c, 200, 'Save replacement key', replacementKey(staged.handle, residentKey, csrf))
     }
 
     const residentKey = one(values, 'resident_key', 80)
     if (!residentKey || !ROOT_KEY.test(residentKey)) {
-      return browserError(c, 403, 'credential_rejected', 'That replacement key could not be verified.')
+      return browserError(
+        c,
+        403,
+        'credential_rejected',
+        'That replacement key could not be verified. Check it and try again on this page.',
+        residentKeyRetryForm('/recovery', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
+      )
     }
     if (!(await admitted(store, 'recovery_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
-      return browserError(c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour.')
+      return browserError(
+        c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour on this page.',
+        residentKeyRetryForm('/recovery', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
+      )
     }
     const resident = await store.confirmRootRecovery({
       sessionHash, csrfHash, replacementSecretHash: sha256(residentKey),
     })
-    if (!resident) {
-      return browserError(c, 403, 'credential_rejected', 'That replacement key could not be verified or recovery expired.')
+    if (resident.status === 'request_unavailable') {
+      return browserError(
+        c, 403, 'request_unavailable',
+        'This recovery request expired, was canceled, or was already used. Start again.',
+        startAgain('/recovery'),
+      )
+    }
+    if (resident.status === 'credential_rejected') {
+      return browserError(
+        c,
+        403,
+        'credential_rejected',
+        'That replacement key could not be verified. Check it and try again on this page.',
+        residentKeyRetryForm('/recovery', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
+      )
     }
     clearBrowserSessionCookie(c, RECOVERY_COOKIE)
     return html(c, 200, 'Resident key replaced', `<h1>${escapeHtml(resident.handle)} is recovered</h1><p>The old key and connector sessions are revoked. The saved replacement key is active.</p>`)

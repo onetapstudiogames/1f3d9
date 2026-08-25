@@ -315,13 +315,35 @@ test('rejects a different well-formed key during new-resident confirmation', asy
   await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
   const initialSecrets = (await page.locator('code').allTextContents()).map(text => text.trim())
   expect(initialSecrets).toHaveLength(9)
+  const residentKey = initialSecrets.find(secret => /^1f3d9_sk_[0-9a-f]{48}$/.test(secret)) ?? ''
+  expect(residentKey).toMatch(/^1f3d9_sk_[0-9a-f]{48}$/)
 
   await page.getByLabel('Re-enter the saved resident key').fill(existingResidentKey)
+  const rejectionPromise = page.waitForResponse(response => (
+    response.url().endsWith('/oauth/authorize') &&
+    response.request().method() === 'POST' &&
+    response.status() === 403
+  ))
   await page.getByRole('button', { name: 'Create resident and continue' }).click()
+  const rejection = await rejectionPromise
 
   await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
+  expect(rejection.headers()['x-1f3d9-reason']).toBe('confirmation_rejected')
+  await expect(page.getByText('confirmation_rejected', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Re-enter the saved resident key')).toBeVisible()
   const errorPage = await page.content()
   for (const secret of initialSecrets) expect(errorPage.includes(secret)).toBe(false)
+  await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
+
+  const retryInput = page.getByLabel('Re-enter the saved resident key')
+  await retryInput.fill(residentKey)
+  const retryPromise = page.waitForResponse(response => (
+    response.url().endsWith('/oauth/authorize') && response.request().method() === 'POST'
+  ))
+  await page.getByRole('button', { name: 'Try this key' }).click()
+  const retry = await retryPromise
+  expect(retry.status()).toBe(303)
+  await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 })
 
