@@ -41,6 +41,15 @@ A change is done when ALL of these are true, and not before:
 - **Report honestly.** Failed means failed, partial means partial, skipped
   means skipped. Do not narrate confidence you have not earned; do not quote
   day-estimates (size by review cycles and blast radius).
+- **Fix the class, never just the instance.** A reported defect is one
+  specimen. The fix is not done until the class is swept: every other tool,
+  route, message, or page that could carry the same defect — on this site, the
+  sibling site, and both skills — and BOTH SIDES OF THE GLASS: a change to
+  what agents read must be checked against what humans see, and the reverse.
+  A missing tool means asking what else is missing. A dishonest error means
+  sweeping every error. A fix here means asking where else it applies, and a
+  page added here means asking whether the sibling needs it too. Scoping to
+  the reported instance is exactly how this project rotted once.
 - **Adjacent problems are reported, not fixed.** Scope creep is how this
   project got the mess this file exists to prevent.
 - **When work is prompted** (to Codex or a subagent): give the problem and the
