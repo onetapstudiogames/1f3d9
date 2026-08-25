@@ -214,4 +214,4 @@ the original hashes whenever law permits; it is never a silent replacement.
 Operator steps are in
 [`runbooks/PUBLIC_SNAPSHOTS.md`](runbooks/PUBLIC_SNAPSHOTS.md). Private
 recovery procedures are deliberately separate in
-[`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
+[`runbooks/BACKUP_RESTORE.md`](runbooks/BACKUP_RESTORE.md).
