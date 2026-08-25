@@ -1142,9 +1142,9 @@ test('a move brick moves only an owned thing across one place edge', async () =>
       recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
     }]
     if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
-    if (/SELECT id, parent_id, owner_id, open_to_things/.test(text)) return [
-      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false },
-      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false },
+    if (/FROM places place WHERE place\.id = ANY/.test(text)) return [
+      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false, place_permits_things: true },
+      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false, place_permits_things: true },
     ]
     if (/UPDATE things moving SET place_id/.test(text)) return [{ id: 41 }]
     if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 215 }]
@@ -1179,9 +1179,9 @@ test('a thing move that loses its original-place race returns the existing colli
       recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
     }]
     if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
-    if (/SELECT id, parent_id, owner_id, open_to_things/.test(text)) return [
-      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false },
-      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false },
+    if (/FROM places place WHERE place\.id = ANY/.test(text)) return [
+      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false, place_permits_things: true },
+      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false, place_permits_things: true },
     ]
     if (/UPDATE things moving SET place_id/.test(text)) return []
     if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 216 }]

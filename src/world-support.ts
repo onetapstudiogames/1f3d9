@@ -320,10 +320,6 @@ function treasuryFeeFromPayment(
   }
 }
 
-export function setPaymentHeader(c: Context, fee: FeePayment): void {
-  if (fee.rail === 'x402') c.header('X-PAYMENT-RESPONSE', fee.responseHeader)
-}
-
 export function completedTreasuryFeeResponse(
   responseBody: string,
   status: number,

@@ -7,6 +7,7 @@ import {
   withEngineTransaction,
   type TaggedSql,
 } from './engine.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 
 export const NOTE_IDEMPOTENCY_WINDOW_SECONDS = 5 * 60
 const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
@@ -106,29 +107,30 @@ async function createTalkNote(
   input: TalkNoteActionInput,
 ): Promise<TalkNote> {
   if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
-  const rows = await transaction.query(`
+  const rows = await withPlacePermission(transaction)`
     /* note-action:create */
     WITH permitted_place AS (
-      SELECT id FROM places
-      WHERE id = $1 AND (owner_id = $2 OR open_to_notes)
-        AND owner_id IS NOT NULL
+      SELECT place.id FROM places place
+      WHERE place.id = ${input.placeId}
+        AND ${placePermission('place', 'open_to_notes', input.residentId)}
+        AND place.owner_id IS NOT NULL
     ), spent_quota AS (
       UPDATE residents SET notes_today = notes_today + 1
-      WHERE id = $2 AND notes_today < $3
+      WHERE id = ${input.residentId} AND notes_today < ${QUOTAS.notes}
         AND EXISTS (SELECT 1 FROM permitted_place)
       RETURNING id
     ), new_note AS (
       INSERT INTO notes (place_id, author_id, body)
-      SELECT p.id, q.id, $4 FROM permitted_place p CROSS JOIN spent_quota q
+      SELECT p.id, q.id, ${input.text} FROM permitted_place p CROSS JOIN spent_quota q
       RETURNING id, place_id, author_id, body, created_at
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
-      SELECT 'note', $5, jsonb_build_object('note_id', id, 'place_id', place_id)
+      SELECT 'note', ${input.residentHandle}, jsonb_build_object('note_id', id, 'place_id', place_id)
       FROM new_note
     )
-    SELECT n.id, n.place_id, $5::text AS author, n.body, n.created_at
+    SELECT n.id, n.place_id, ${input.residentHandle}::text AS author, n.body, n.created_at
     FROM new_note n
-  `, [input.placeId, input.residentId, QUOTAS.notes, input.text, input.residentHandle]) as TalkNote[]
+  ` as TalkNote[]
   const note = rows[0]
   if (!note) throw new EngineError(429, `${QUOTAS.notes} notes per UTC day`)
   return note

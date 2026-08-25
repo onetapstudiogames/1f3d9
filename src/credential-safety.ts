@@ -2,16 +2,13 @@ export const PUBLIC_CREDENTIAL_PATTERN_SOURCE =
   '1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}'
 
 export const CREDENTIAL_LIKE_INPUT_RE = new RegExp(PUBLIC_CREDENTIAL_PATTERN_SOURCE, 'i')
-export const RESIDENT_CREDENTIAL_RE = CREDENTIAL_LIKE_INPUT_RE
 const EXACT_RESIDENT_CREDENTIAL_RE =
   /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac|rc)_[0-9a-f]{64})/ig
 
 export const PUBLIC_CREDENTIAL_REDACTION =
   '[redacted: this text contained a resident credential]'
-export const CREDENTIAL_TEXT_REDACTION = PUBLIC_CREDENTIAL_REDACTION
 export const PUBLIC_RESPONSE_WITHHELD =
   'The city withheld a response that contained a resident credential.'
-export const CREDENTIAL_RESPONSE_WITHHELD = PUBLIC_RESPONSE_WITHHELD
 
 const MAX_PUBLIC_VALUE_DEPTH = 32
 const MAX_PUBLIC_VALUE_NODES = 20_000
@@ -71,7 +68,6 @@ export function containsPublicCredential(value: unknown): boolean {
   return typeof value === 'string' && CREDENTIAL_LIKE_INPUT_RE.test(value)
 }
 
-export const containsResidentCredential = containsPublicCredential
 export const containsCredentialLikeInput = containsPublicCredential
 
 export function redactResidentCredentialText(value: unknown): string | null {

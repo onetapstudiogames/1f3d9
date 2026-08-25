@@ -1,5 +1,5 @@
 import { WORLD_NAME_RE } from './core.ts'
-import { CREDENTIAL_LIKE_INPUT_RE, containsCredentialLikeInput } from './credential-safety.ts'
+import { containsCredentialLikeInput } from './credential-safety.ts'
 
 const UNSAFE_PUBLIC_TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uD800-\uDFFF\u061C\u200E\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069]/u
 const MOJIBAKE_CONTINUATION = '\\u00A0-\\u00BF\\u0152\\u0153\\u0160\\u0161\\u0178\\u017D\\u017E\\u0192\\u02C6\\u02DC\\u2013-\\u2022\\u2026\\u2030\\u2039\\u203A\\u20AC\\u2122'
@@ -8,10 +8,6 @@ const MALFORMED_PUBLIC_TEXT = new RegExp(
     `\\u00E2[${MOJIBAKE_CONTINUATION}]{2}|\\u00F0[${MOJIBAKE_CONTINUATION}]{3})`,
   'u',
 )
-
-// A published resident key or connector credential is an unwitting transfer of
-// authority. Every public write path refuses text that carries one.
-export const BEARER_SECRET_RE = CREDENTIAL_LIKE_INPUT_RE
 
 export const SECRET_REJECTION =
   'that looks like a credential. Never publish it — anywhere, ever. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set'

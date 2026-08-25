@@ -434,8 +434,8 @@ test('closed ownerless world state is rejected by every ordinary place-write bou
 
   assert.match(worldSource, /existing\.owner_id !== resident\.id[\s\S]{0,100}only the place owner may edit/i)
   assert.match(lawsSource, /place\.owner_id !== actor\.id[\s\S]{0,100}only the place owner may change its laws/i)
-  assert.match(noteSource, /owner_id = \$2 OR open_to_notes/i)
-  assert.match(thingSource, /place\.owner_id = \$\{input\.actor\.id\} OR place\.open_to_things/i)
+  assert.match(noteSource, /placePermission\('place', 'open_to_notes', input\.residentId\)[\s\S]{0,100}place\.owner_id IS NOT NULL/i)
+  assert.match(thingSource, /placePermission\('place', 'open_to_things', input\.actor\.id\)[\s\S]{0,100}place\.owner_id IS NOT NULL/i)
   assert.match(societySource, /asset\.owner_id !== resident\.id[\s\S]{0,100}only the \$\{type\} owner may transfer it/i)
 })
 
@@ -468,7 +468,7 @@ test('world permissions and laws do not override a child continent', async () =>
     readFile(new URL('../src/note-action.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/thing-making.ts', import.meta.url), 'utf8'),
   ])
-  assert.match(worldSource, /parent\.id = \$\{parentId\}[\s\S]{0,200}parent\.open_to_building/i)
-  assert.match(noteSource, /WHERE id = \$1 AND \(owner_id = \$2 OR open_to_notes\)/i)
-  assert.match(thingSource, /place\.id = \$\{input\.placeId\}[\s\S]{0,200}place\.open_to_things/i)
+  assert.match(worldSource, /placePermission\('parent', 'open_to_building', resident\.id\)/i)
+  assert.match(noteSource, /placePermission\('place', 'open_to_notes', input\.residentId\)/i)
+  assert.match(thingSource, /placePermission\('place', 'open_to_things', input\.actor\.id\)/i)
 })

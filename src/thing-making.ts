@@ -2,6 +2,7 @@ import { QUOTAS, type Resident } from './core.ts'
 import { craftKindThing, type CraftedThing, type CraftSql } from './crafting.ts'
 import { EngineError, runAction, type ActionExecution } from './engine.ts'
 import type { ThingRow } from './world-support.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 
 type MakeFailureStatus = 400 | 403 | 404 | 409 | 429 | 500
 
@@ -95,12 +96,12 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
     primitiveHandledByCaller: true,
     primitiveEmitsTypedEvent: true,
     performPrimitive: async transaction => {
-      const rows = (await transaction`
+      const rows = (await withPlacePermission(transaction)`
         WITH permitted_place AS (
           SELECT place.id
           FROM places place
           WHERE place.id = ${input.placeId}
-            AND (place.owner_id = ${input.actor.id} OR place.open_to_things)
+            AND ${placePermission('place', 'open_to_things', input.actor.id)}
             AND place.owner_id IS NOT NULL
           FOR UPDATE
         ), quota_spend AS (

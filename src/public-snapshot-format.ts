@@ -8,11 +8,9 @@ import {
 } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { containsPublicCredential } from './credential-safety.ts'
-import { PUBLIC_SNAPSHOT_RELEASES } from './public-snapshot-discovery.ts'
 
 export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 1 as const
 export const PUBLIC_SNAPSHOT_FORMAT_NAME = '1f3d9-public-snapshot' as const
-export const PUBLIC_SNAPSHOT_RELEASE_QUERY = PUBLIC_SNAPSHOT_RELEASES
 
 export type SnapshotClassDisposition =
   | 'exported'

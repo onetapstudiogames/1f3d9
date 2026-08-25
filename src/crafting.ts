@@ -6,6 +6,7 @@ import {
   type KindRecipe,
 } from './physics.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 
 export type CraftSqlRow = Readonly<Record<string, unknown>>
 
@@ -92,6 +93,7 @@ interface PlaceRow {
   readonly place_kind: string
   readonly owner_id: number | null
   readonly open_to_things: boolean
+  readonly place_permits_things: boolean
 }
 
 interface IngredientRow {
@@ -236,16 +238,17 @@ export async function craftKindThing(
   const kind = kindRows[0] as KindRow | undefined
   if (!kind) return failure(404, 'kind not found')
 
-  const placeRows = await sql`
+  const placeRows = await withPlacePermission(sql)`
     /* crafting:place */
-    SELECT id, parent_id, place_kind, owner_id, open_to_things
-    FROM places
-    WHERE id = ${input.placeId}
+    SELECT place.id, place.parent_id, place.place_kind, place.owner_id, place.open_to_things,
+      ${placePermission('place', 'open_to_things', input.actorId)} AS place_permits_things
+    FROM places place
+    WHERE place.id = ${input.placeId}
   `
   const place = placeRows[0] as PlaceRow | undefined
   if (!place) return failure(404, 'place not found')
   if (isWorldRootRow(place)) return failure(403, WORLD_TRANSIT_ONLY_ERROR)
-  if (place.owner_id !== input.actorId && place.open_to_things !== true) {
+  if (place.place_permits_things !== true) {
     return failure(409, 'target place does not accept things')
   }
 
@@ -298,7 +301,7 @@ export async function craftKindThing(
   }
 
   const recipeJson = JSON.stringify(recipe)
-  const outputRows = await sql`
+  const outputRows = await withPlacePermission(sql)`
     /* crafting:commit */
     WITH utc_day AS (
       SELECT (now() AT TIME ZONE 'utc')::date AS day
@@ -315,7 +318,7 @@ export async function craftKindThing(
       SELECT place.id
       FROM places AS place
       WHERE place.id = ${input.placeId}
-        AND (place.owner_id = ${input.actorId} OR place.open_to_things)
+        AND ${placePermission('place', 'open_to_things', input.actorId)}
         AND place.owner_id IS NOT NULL
       FOR UPDATE OF place
     ), required AS MATERIALIZED (
