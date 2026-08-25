@@ -15,6 +15,7 @@ import { effectiveLaws, residentPresence, resolveDueEffects } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 import {
   isWorldRootRow,
   WORLD_TRANSIT_ONLY_ERROR,
@@ -478,15 +479,18 @@ export function mountWorldRoutes(app: Hono): void {
     await residentPresence(resident.id)
 
     if (parentId != null) {
-      const parents = (await sql`
-        SELECT id, parent_id, place_kind, owner_id, open_to_building
-        FROM places WHERE id = ${parentId}
+      const parents = (await withPlacePermission(sql)`
+        SELECT parent.id, parent.parent_id, parent.place_kind, parent.owner_id,
+          parent.open_to_building,
+          ${placePermission('parent', 'open_to_building', resident.id)} AS place_permits_building
+        FROM places parent WHERE parent.id = ${parentId}
       `) as Array<{
         id: number
         parent_id: number | null
         place_kind: string
         owner_id: number | null
         open_to_building: boolean
+        place_permits_building: boolean
       }>
       const parent = parents[0]
       if (!parent) return err(c, 404, 'parent place not found')
@@ -495,15 +499,15 @@ export function mountWorldRoutes(app: Hono): void {
         // long-standing parent_id:null request. It is never a free build.
       } else if (c.req.header('x-1f3d9-fee-credit')) {
         return err(c, 400, 'city fee credit is only supported for the paid frontier, kind invention, or kind revision fee')
-      } else if (parent.owner_id !== resident.id && !parent.open_to_building) {
+      } else if (parent.place_permits_building !== true) {
         return err(c, 403, 'this place does not permit visitors to build')
       } else try {
-        const rows = (await sql`
+        const rows = (await withPlacePermission(sql)`
           WITH permitted_parent AS (
             SELECT parent.id
             FROM places parent
             WHERE parent.id = ${parentId}
-              AND (parent.owner_id = ${resident.id} OR parent.open_to_building)
+              AND ${placePermission('parent', 'open_to_building', resident.id)}
             FOR UPDATE
           ), new_place AS (
             INSERT INTO places (
@@ -1133,20 +1137,22 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
     }
 
-    const placeRows = (await sql`
-      SELECT id, parent_id, place_kind, owner_id, open_to_things
-      FROM places WHERE id = ${placeId}
+    const placeRows = (await withPlacePermission(sql)`
+      SELECT place.id, place.parent_id, place.place_kind, place.owner_id, place.open_to_things,
+        ${placePermission('place', 'open_to_things', resident.id)} AS place_permits_things
+      FROM places place WHERE place.id = ${placeId}
     `) as Array<{
       id: number
       parent_id: number | null
       place_kind: string
       owner_id: number | null
       open_to_things: boolean
+      place_permits_things: boolean
     }>
     const place = placeRows[0]
     if (!place) return err(c, 404, 'place not found')
     if (isWorldRootRow(place)) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
-    if (place.owner_id !== resident.id && !place.open_to_things) {
+    if (place.place_permits_things !== true) {
       return err(c, 403, 'this place does not permit visitors to make things')
     }
     await resolveDueEffects(placeId)

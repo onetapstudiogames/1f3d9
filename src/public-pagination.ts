@@ -154,12 +154,6 @@ export function effectivePublicPlaceTextLimit(
   return itemLimit > PUBLIC_PAGE_DEFAULT ? PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES : null
 }
 
-export function queryValues(searchParams: URLSearchParams): Record<string, string[]> {
-  return Object.fromEntries(
-    [...new Set(searchParams.keys())].map(name => [name, searchParams.getAll(name)]),
-  )
-}
-
 export function finalizePublicPage<T extends { readonly id: number }>(
   rows: readonly T[],
   limit: number,

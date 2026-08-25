@@ -94,7 +94,13 @@ function makeSql(options: FakeOptions = {}): {
     const query = strings.join('?').replace(/\s+/gu, ' ').trim()
     const marker = query.match(/\/\* crafting:([a-z-]+) \*\//u)?.[1] ?? 'unknown'
     calls.push({ marker, query, values })
-    return [...(rowsByMarker[marker] ?? [])]
+    const rows = rowsByMarker[marker] ?? []
+    return marker === 'place'
+      ? rows.map(row => ({
+          ...row,
+          place_permits_things: row.owner_id === values[0] || row.open_to_things === true,
+        }))
+      : [...rows]
   }
   return { sql, calls }
 }
@@ -405,7 +411,7 @@ test('kindless thing creation and quota spend share the make action transaction'
   const kindlessStart = making.indexOf('async function makeKindlessThing')
   const kindless = making.slice(kindlessStart)
   assert.match(kindless, /primitiveHandledByCaller:\s*true/u)
-  assert.match(kindless, /performPrimitive:\s*async\s+transaction\s*=>[\s\S]*await transaction`[\s\S]*WITH permitted_place AS/u)
+  assert.match(kindless, /performPrimitive:\s*async\s+transaction\s*=>[\s\S]*await withPlacePermission\(transaction\)`[\s\S]*WITH permitted_place AS/u)
   assert.match(kindless, /INSERT INTO things \(place_id, name, body, owner_id, maker_id, open_to_use\)/u)
   assert.match(kindless, /SELECT permitted_place\.id,[\s\S]*quota_spend\.id[\s\S]*quota_spend\.id/u)
   assert.match(kindless, /'thing_created',\s*quota_spend\.handle/u)

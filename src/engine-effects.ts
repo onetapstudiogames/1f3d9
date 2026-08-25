@@ -27,6 +27,7 @@ import {
   insertPendingEffect,
 } from './engine-timer-store.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 export const MAX_DUE_EFFECTS_PER_OBSERVATION = MAX_PENDING_EFFECTS_PER_PLACE
@@ -499,20 +500,22 @@ async function moveThing(
     throw new EngineError(409, 'thing has an open sale offer')
   }
   if (thing.placeId === destinationId) return false
-  const places = await queryRows<Record<string, unknown>>(db`
-    SELECT id, parent_id, owner_id, open_to_things
-    FROM places WHERE id = ANY (${[thing.placeId, destinationId]}::int[])
+  const places = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
+    SELECT place.id, place.parent_id, place.owner_id, place.open_to_things,
+      ${placePermission('place', 'open_to_things', actorId)} AS place_permits_things
+    FROM places place WHERE place.id = ANY (${[thing.placeId, destinationId]}::int[])
   `)
   const oldPlace = places.find(row => integer(row.id) === thing.placeId)
   const destination = places.find(row => integer(row.id) === destinationId)
   if (!destination) throw new EngineError(404, 'destination place not found')
-  if (integer(destination.owner_id) !== actorId && destination.open_to_things !== true) {
+  integer(destination.owner_id)
+  if (destination.place_permits_things !== true) {
     throw new EngineError(403, 'destination does not allow visitor things')
   }
   const adjacent = nullableRowId(destination.parent_id, 'destination parent id') === thing.placeId
     || (oldPlace !== undefined && nullableRowId(oldPlace.parent_id, 'current parent id') === destinationId)
   if (!adjacent) throw new EngineError(403, 'thing move must cross one parent-child edge')
-  const rows = await queryRows(db`
+  const rows = await queryRows(withPlacePermission(db)`
     WITH moved AS (
       UPDATE things moving SET place_id = destination.id
     FROM places destination
@@ -525,7 +528,7 @@ async function moveThing(
           AND offer.status = 'open'
       )
       AND destination.id = ${destinationId}
-      AND (destination.owner_id = ${actorId} OR destination.open_to_things)
+      AND ${placePermission('destination', 'open_to_things', actorId)}
       RETURNING moving.id, moving.place_id
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)

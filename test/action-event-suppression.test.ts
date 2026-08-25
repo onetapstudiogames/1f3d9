@@ -304,10 +304,10 @@ test('thing move reports an event only when the thing actually changes places', 
       return [{ exists: true }]
     }
     if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
-    if (/WHERE id = ANY/u.test(call.text)) {
+    if (/WHERE place\.id = ANY/u.test(call.text)) {
       return [
-        { id: 2, parent_id: 1, owner_id: 7, open_to_things: false },
-        { id: 3, parent_id: 2, owner_id: 7, open_to_things: false },
+        { id: 2, parent_id: 1, owner_id: 7, open_to_things: false, place_permits_things: true },
+        { id: 3, parent_id: 2, owner_id: 7, open_to_things: false, place_permits_things: true },
       ]
     }
     if (/WITH moved AS/u.test(call.text)) return [{ id: 41 }]

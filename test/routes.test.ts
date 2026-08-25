@@ -343,6 +343,24 @@ const placeRow = (id = 2, parentId: number | null = 1) => ({
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
+function selectedPlacePermission(
+  row: ReturnType<typeof placeRow>,
+  query: string,
+): Record<string, unknown> {
+  return {
+    ...row,
+    ...(query.includes('as place_permits_building') ? {
+      place_permits_building: row.owner_id === state.actorId || row.open_to_building,
+    } : {}),
+    ...(query.includes('as place_permits_things') ? {
+      place_permits_things: row.owner_id === state.actorId || row.open_to_things,
+    } : {}),
+    ...(query.includes('as place_permits_notes') ? {
+      place_permits_notes: row.owner_id === state.actorId || row.open_to_notes,
+    } : {}),
+  }
+}
+
 const kindRow = () => ({
   id: 3,
   name: 'lantern',
@@ -1802,6 +1820,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     q.includes('from residents') || q.includes('from places')
       || q.includes('from kinds') || q.includes('from things')
   )) return [{ exists: true }]
+  if (q.includes('from places place') && q.includes('place.id = any')) {
+    return [
+      selectedPlacePermission(placeRow(2, 1), q),
+      selectedPlacePermission(placeRow(3, 2), q),
+    ]
+  }
   if (q.includes('select id, parent_id from places') && q.includes('any')) {
     return [placeRow(2, 1), placeRow(3, 2)]
   }
@@ -2019,8 +2043,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       id: state.nextNoteId,
       place_id: Number(params[0] ?? 2),
       author_id: Number(params[1] ?? state.actorId),
-      author: String(params[4] ?? state.actorHandle),
-      body: String(params[3] ?? 'hello from the square'),
+      author: String(params[5] ?? state.actorHandle),
+      body: String(params[4] ?? 'hello from the square'),
       created_at: '2026-08-11T00:00:00.000Z',
     }
     state = { ...state, recentNote: note, nextNoteId: state.nextNoteId + 1 }
@@ -2518,9 +2542,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('update places set'))
     return state.actorId === state.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
-    return [placeRow(2, 1)]
+    return [selectedPlacePermission(placeRow(2, 1), q)]
   }
-  if (q.includes('from places') && (q.includes('where p.id') || q.includes('where id'))) return [placeRow(2, 1)]
+  if (q.includes('from places') && (q.includes('where p.id') || q.includes('where id'))) {
+    return [selectedPlacePermission(placeRow(2, 1), q)]
+  }
 
   if (q.includes('insert into kinds') || q.includes('insert into kind_revisions') || q.includes('update kinds')) {
     if (state.failPaidWriteOnce) {
@@ -2657,13 +2683,16 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       ? [{ ...note }]
       : []
   }
-  if (q.includes('insert into notes')) return [{
-    id: 51,
-    place_id: Number(params[0] ?? 2),
-    author: String(params[4] ?? state.actorHandle),
-    body: String(params[3] ?? 'hello from the square'),
-    created_at: '2026-08-11T00:00:00.000Z',
-  }]
+  if (q.includes('insert into notes')) {
+    const taggedNoteAction = q.includes('/* note-action:create */')
+    return [{
+      id: 51,
+      place_id: Number(params[0] ?? 2),
+      author: String(params[taggedNoteAction ? 5 : 4] ?? state.actorHandle),
+      body: String(params[taggedNoteAction ? 4 : 3] ?? 'hello from the square'),
+      created_at: '2026-08-11T00:00:00.000Z',
+    }]
+  }
   // Event reads name things and notes inside their EXISTS place guards, so
   // they must dispatch on their distinctive SELECT list before the generic
   // notes/things branches can swallow them.

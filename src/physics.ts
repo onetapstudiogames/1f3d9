@@ -54,14 +54,6 @@ export const MAX_TIMER_SECONDS = 24 * 60 * 60
 export const MAX_EFFECT_GENERATIONS = 8
 export const MAX_KIND_INGREDIENTS = 64
 export const MAX_CRAFT_INGREDIENTS = 1_024
-export const MAX_KIND_QUANTITY = MAX_CRAFT_INGREDIENTS
-
-// Descriptive aliases make the limits harder to misuse at call sites.
-export const MAX_RECIPE_EFFECTS = MAX_EFFECT_COUNT
-export const MAX_RECIPE_DEPTH = MAX_EFFECT_DEPTH
-export const MIN_WAIT_SECONDS = MIN_TIMER_SECONDS
-export const MAX_WAIT_SECONDS = MAX_TIMER_SECONDS
-export const MAX_GENERATIONS = MAX_EFFECT_GENERATIONS
 
 export type BasicAction = typeof BASIC_ACTIONS[number]
 export type BlockableAction = typeof BLOCKABLE_ACTIONS[number]
@@ -368,7 +360,7 @@ export function parseKindRecipe(value: unknown): KindRecipe | null {
     for (const candidate of value) {
       if (!isRecord(candidate) || !hasExactKeys(candidate, ['kind', 'quantity'])) return null
       const kind = canonicalName(candidate.kind)
-      const quantity = boundedInteger(candidate.quantity, 1, MAX_KIND_QUANTITY)
+      const quantity = boundedInteger(candidate.quantity, 1, MAX_CRAFT_INGREDIENTS)
       if (
         !kind
         || quantity === null
@@ -397,7 +389,3 @@ export function isBlockableAction(value: unknown): value is BlockableAction {
 export function isEffectBrick(value: unknown): value is EffectBrick {
   return typeof value === 'string' && EFFECT_BRICK_SET.has(value)
 }
-
-export const canonicalTraitRecipe = parseTraitRecipe
-export const safeTraitRecipe = loadTraitRecipe
-export const canonicalKindRecipe = parseKindRecipe

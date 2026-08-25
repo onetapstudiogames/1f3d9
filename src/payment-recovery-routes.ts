@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { err } from './core.ts'
 import type {
   PaymentRecoveryAttempt,
   PaymentRecoveryBatchResult,
@@ -26,10 +27,6 @@ function privateHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Vary', 'Authorization')
-}
-
-function error(c: Context, status: 400 | 401 | 404 | 503, message: string): Response {
-  return c.json({ error: message }, status)
 }
 
 function noQueryOptions(c: Context): boolean {
@@ -88,42 +85,42 @@ export function mountPaymentRecoveryRoutes<Attempt>(
 ): void {
   app.get('/api/payment-attempt/:id', async c => {
     privateHeaders(c)
-    if (!noQueryOptions(c)) return error(c, 400, 'payment attempt inspection accepts no query options')
+    if (!noQueryOptions(c)) return err(c, 400, 'payment attempt inspection accepts no query options')
     const publicId = safeAttemptId(c.req.param('id'))
-    if (!publicId) return error(c, 400, 'invalid payment attempt id')
+    if (!publicId) return err(c, 400, 'invalid payment attempt id')
     const resident = await deps.authenticate(c)
-    if (!resident) return error(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, 'bad or missing bearer secret')
     const attempt = await deps.getOwnedAttempt(publicId, resident.id)
-    if (!attempt) return error(c, 404, 'payment attempt not found')
+    if (!attempt) return err(c, 404, 'payment attempt not found')
     return c.json({ payment_attempt: deps.privateView(attempt) })
   })
 
   app.post('/api/payment-attempt/:id/recheck', async c => {
     privateHeaders(c)
-    if (!noQueryOptions(c)) return error(c, 400, 'payment attempt recheck accepts no query options')
+    if (!noQueryOptions(c)) return err(c, 400, 'payment attempt recheck accepts no query options')
     const publicId = safeAttemptId(c.req.param('id'))
-    if (!publicId) return error(c, 400, 'invalid payment attempt id')
+    if (!publicId) return err(c, 400, 'invalid payment attempt id')
     const resident = await deps.authenticate(c)
-    if (!resident) return error(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, 'bad or missing bearer secret')
     if (!await hasEmptyObjectBody(c)) {
-      return error(c, 400, 'payment attempt recheck accepts only an empty JSON object')
+      return err(c, 400, 'payment attempt recheck accepts only an empty JSON object')
     }
     const attempt = await deps.getOwnedAttempt(publicId, resident.id)
-    if (!attempt) return error(c, 404, 'payment attempt not found')
+    if (!attempt) return err(c, 404, 'payment attempt not found')
     const recovered = await deps.recheck(attempt)
     const latest = await deps.getOwnedAttempt(publicId, resident.id)
-    if (!latest) return error(c, 404, 'payment attempt not found')
+    if (!latest) return err(c, 404, 'payment attempt not found')
     return c.json({ payment_attempt: deps.privateView(latest) }, recheckStatus(recovered))
   })
 
   app.get('/api/internal/payment-recovery', async c => {
     privateHeaders(c)
-    if (!noQueryOptions(c)) return error(c, 400, 'payment recovery accepts no query options')
+    if (!noQueryOptions(c)) return err(c, 400, 'payment recovery accepts no query options')
     const expected = configuredCronSecret(deps.environment)
-    if (!expected) return error(c, 503, 'payment recovery is unavailable')
+    if (!expected) return err(c, 503, 'payment recovery is unavailable')
     const supplied = bearerValue(c)
     if (!supplied || !constantTimeEqual(supplied, expected)) {
-      return error(c, 401, 'payment recovery authorization failed')
+      return err(c, 401, 'payment recovery authorization failed')
     }
     const result = await deps.runBatch(RECOVERY_BATCH_LIMIT)
     return c.json({ ok: true, ...result })

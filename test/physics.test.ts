@@ -11,7 +11,6 @@ import {
   MAX_EFFECT_GENERATIONS,
   MAX_CRAFT_INGREDIENTS,
   MAX_KIND_INGREDIENTS,
-  MAX_KIND_QUANTITY,
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
@@ -249,17 +248,16 @@ test('strict parsing rejects accessors and toJSON hooks without invoking applica
 test('kind recipes accept future kind names and canonicalize quantities', () => {
   const parsed = parseKindRecipe([
     { kind: ' Uninvented_Glass ', quantity: 2 },
-    { kind: 'future-rope', quantity: MAX_KIND_QUANTITY - 2 },
+    { kind: 'future-rope', quantity: MAX_CRAFT_INGREDIENTS - 2 },
   ])
 
   assert.deepEqual(parsed, [
     { kind: 'uninvented_glass', quantity: 2 },
-    { kind: 'future-rope', quantity: MAX_KIND_QUANTITY - 2 },
+    { kind: 'future-rope', quantity: MAX_CRAFT_INGREDIENTS - 2 },
   ])
   assert.equal(Object.isFrozen(parsed), true)
   assert.equal(Object.isFrozen(parsed?.[0]), true)
   assert.equal(MAX_CRAFT_INGREDIENTS, 1_024)
-  assert.equal(MAX_KIND_QUANTITY, MAX_CRAFT_INGREDIENTS)
 })
 
 test('kind recipes reject duplicates, invalid shapes, unsafe counts, and excess ingredients', () => {
@@ -268,7 +266,7 @@ test('kind recipes reject duplicates, invalid shapes, unsafe counts, and excess 
     {},
     [{ kind: 'glass' }],
     [{ kind: 'glass', quantity: 0 }],
-    [{ kind: 'glass', quantity: MAX_KIND_QUANTITY + 1 }],
+    [{ kind: 'glass', quantity: MAX_CRAFT_INGREDIENTS + 1 }],
     [{ kind: 'bad kind', quantity: 1 }],
     [{ kind: 'glass', quantity: 1, id: 4 }],
     [{ kind: 'Glass', quantity: 1 }, { kind: 'glass', quantity: 1 }],
