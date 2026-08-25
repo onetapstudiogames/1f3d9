@@ -32,7 +32,10 @@ Operations:
   sign-in record type lives, how pruning rides ordinary OAuth traffic, and how
   backup rotation bounds what deletion leaves behind.
 - [runbooks/ENVIRONMENT.md](runbooks/ENVIRONMENT.md) records which ignored environment
-  files are active, duplicated, or temporary without exposing their values.
+  files are active and names every environment variable the code reads, runtime and
+  operator, without exposing values.
+- [INVARIANTS.md](INVARIANTS.md) is the checklist of properties no change may bend
+  without a locked decision row first — check every change against it.
 
 [audits/](audits/) receives incoming audit findings. Superseded plans and resolved
 question history stay under [archive/](archive/) so current guidance remains short
