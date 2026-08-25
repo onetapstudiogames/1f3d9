@@ -1,49 +1,67 @@
-# Environment files
+# Environment
 
 The repository is public. Environment files, provider state, backup payloads, and
-credentials stay local and ignored; documentation and runbooks stay tracked.
+credentials stay local and ignored; documentation and runbooks stay tracked. This
+runbook records which ignored files exist, and names every environment variable the
+code reads, so nothing about configuration has to be learned by rejection.
 
-## The six root environment files
+## Root environment files
 
-| File | Current use | Duplicate status |
-|---|---|---|
-| `.env.local` | Active local operator configuration. It contains the working database settings and the project-scoped Neon CLI key added on 2026-08-15. | Unique among the six. |
-| `.env.deploy` | Active fallback for local database operator scripts when `DATABASE_URL` is not already in the process. | Unique among the six; byte-identical to the old `.rollout-world-root/env.txt` copy. |
-| `env.txt` | Legacy manual provider credentials. The current `scripts/deploy.sh --prepare` does not load or deploy from it, and it has no database URL. | Unique among the six. |
-| `.tmp-preview.env` | Inactive preview export artifact. | Not an exact duplicate. It has the same key shape and size as `.vercel/.env.preview.local`, but different values. |
-| `.tmp-prod-env` | Inactive production export artifact. | Near-duplicate of `.tmp-production.env`: same key set and size, different bytes. |
-| `.tmp-production.env` | Inactive production export artifact. | Near-duplicate of `.tmp-prod-env`: same key set and size, different bytes. |
+| File | Current use |
+|---|---|
+| `.env.local` | Active local operator configuration: working database settings and a project-scoped Neon CLI key. The key can administer the Neon project, so it is never printed or committed. |
+| `.env.deploy` | Fallback for local database operator scripts when `DATABASE_URL` is not already in the process. |
+| `env.txt` | Local operator secrets, hand-maintained. Never loaded by deploy tooling; scripts that need one of its values receive it through the shell. |
 
-There are no byte-for-byte duplicates within the six root files. Similar key names do
-not prove that values are current, so none of the temporary files should be used as a
-source of truth.
+Three inactive `.tmp-*` export artifacts from 2026-08-14 were retired from the repo
+root on 2026-08-25 during the cleanup; the operator holds copies privately pending the
+credential consolidation described at the end of this runbook. Local database tools
+prefer a `DATABASE_URL` already set in the process, then read `.env.local`, then
+`.env.deploy`.
 
-## What production uses
+Production and preview deployments read environment values stored in Vercel, never
+files from this folder.
 
-Vercel production and preview deployments use environment values stored in Vercel, not
-files committed from this folder. Local database tools prefer a `DATABASE_URL` already
-set in the process, then read `.env.local`, then `.env.deploy`, then `env.txt`.
+## Runtime variables (set in Vercel; read by the deployed application)
 
-The Neon key in `.env.local` is scoped only to project `bold-union-44728141`; it was
-authenticated successfully after creation. It can still administer that project, so it
-must never be printed, pasted into documentation, or committed.
+| Name | Purpose |
+|---|---|
+| `DATABASE_URL` | Pooled Postgres connection for the running site. |
+| `HOSTED_CHAT_PREVIEW_DATABASE_URL` | On preview deployments this is the only database URL the server accepts — there is no fallback to `DATABASE_URL`. A preview without it does not work. |
+| `PUBLIC_ORIGIN` | The site's own canonical origin. |
+| `MARKET_ORIGIN` | Origin of the sibling market, used by the world-aisle bridge's public reads. |
+| `BASE_RPC_URL` | Base chain RPC endpoint. Defaults to `https://mainnet.base.org`. |
+| `FACILITATOR_URL` | x402 payment facilitator. Defaults to `https://facilitator.payai.network`. |
+| `TREASURY_ADDRESS` | Treasury recipient for city fees. |
+| `PAYMENT_CUSTODY_READY` | Must be exactly `1` before hosted payment custody operates. This gates money movement. |
+| `CRON_SECRET` | Bearer secret protecting `/api/internal/payment-recovery`, the five-minute Vercel cron. 32–512 printable characters. |
+| `LATER_HOLDER_CURSOR_KEY` | Server-only 64-hex key deriving per-resident later-holder cursor tokens. Absent or malformed, that index answers 503. Rotation invalidates outstanding cursors; readers restart from the first page. Preview and production may differ; keep each stable. |
+| `HOSTED_CHAT_SIGNIN_ENABLED` | Staged rollout gate for hosted-chat sign-in. |
+| `IDENTITY_ROTATION_ENABLED` | Staged rollout gate for the rotation door. |
+| `IDENTITY_RECOVERY_ENABLED` | Staged rollout gate for the recovery door. |
+| `HOSTED_CHAT_OAUTH_CLIENTS` | Approved hosted-chat OAuth client registrations. |
+| `HOSTED_CHAT_CIMD_ORIGINS` | Allowed client-ID-metadata-document origins. |
+| `VERCEL`, `VERCEL_ENV`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` is what selects the preview database path above. |
 
-## Later-holder cursor key
+## Operator variables (never in Vercel; set in the shell when running scripts)
 
-`LATER_HOLDER_CURSOR_KEY` is a server-only 32-byte random key encoded as exactly 64
-lowercase hexadecimal characters. Store it in Vercel's encrypted environment settings
-for Preview and Production; do not place it in any root environment file, derive it
-from a resident key, or print it during verification. Preview and Production may use
-different values. Keep each value stable within its environment because rotation
-invalidates outstanding later-holder cursors; readers then restart from the first page.
+| Name | Purpose |
+|---|---|
+| `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PREVIEW_BRANCH_ID`, `NEON_PRODUCTION_BRANCH_ID` | Identity proofs: remote backup and migration scripts verify the named Neon endpoint before connecting. |
+| `LOCAL_DATABASE_URL_UNPOOLED`, `PREVIEW_DATABASE_URL_UNPOOLED`, `PRODUCTION_DATABASE_URL_UNPOOLED` | Direct port-5432 URLs for `pg_dump` and migrations. Pooled URLs are refused. |
+| `CONFIRM_LOCAL_BACKUP`, `CONFIRM_PREVIEW_BACKUP`, `CONFIRM_PRODUCTION_BACKUP` | Exact-value acknowledgements required by the backup script (values in [BACKUP_RESTORE.md](BACKUP_RESTORE.md)). |
+| `CONFIRM_LOCAL_CREDENTIAL_SCAN`, `CONFIRM_PREVIEW_CREDENTIAL_SCAN`, `CONFIRM_PRODUCTION_CREDENTIAL_SCAN` | Same pattern for the credential scanner. |
+| `CONFIRM_LOCAL_SCHEMA`, `CONFIRM_WORLD_ROOT_TOPOLOGY`, `CONFIRM_CITY_CREDIT`, `CONFIRM_PREVIEW_MIGRATION`, `CONFIRM_PRODUCTION_MIGRATION` | Migration acknowledgements; each remote target also requires the Neon identity proofs above. |
+| `PRODUCTION_SNAPSHOT_NAME` | Name of the verified pre-migration Neon snapshot; production migrations refuse to run without it. |
+| `SNAPSHOT_DATABASE_URL` | Source database for the public-snapshot exporter. |
+| `GITHUB_TOKEN`, `GITHUB_REPOSITORY` | Publishing public snapshots as GitHub releases. |
+| `CONFIRM_LATER_HOLDER_PROVIDER_KEY`, `CONFIRM_THING_MAKER_MIGRATION`, `CONFIRM_LATER_HOLDER_MIGRATION` | Acknowledgements `scripts/deploy.sh --prepare` requires (exact values in [DEPLOYMENT.md](DEPLOYMENT.md)). |
 
-Before application rollout, verify the variable name is present and its value has the
-required shape in both Vercel environments without copying the value into logs. The
-deployment runbook records the separate database-migration prerequisite and the exact
-non-secret acknowledgements used by local release preparation.
+Names constructed dynamically in code (for example `${TARGET}_DATABASE_URL_UNPOOLED`)
+will not appear in a plain grep for the literal name; this table is the authority.
 
 ## Cleanup rule
 
-Do not delete any of these six files during repository cleanup. A later credential
-consolidation should first prove which provider values are current, move them to an
-approved secret store, verify access, and receive explicit deletion approval.
+A later credential consolidation should first prove which provider values are
+current, move them to an approved secret store, verify access, and receive explicit
+deletion approval before any local secret file is destroyed.
