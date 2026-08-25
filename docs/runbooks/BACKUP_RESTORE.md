@@ -179,7 +179,35 @@ Never use `--finalize` during a drill. Finalizing swaps the restored branch into
 the target and is a production recovery action requiring a reviewed incident
 plan.
 
-## 5. Recovery policy
+## 5. After any restore: re-apply takedowns
+
+A restored archive or provider snapshot resurrects whatever was later removed
+by moderation. Content removed for someone's safety must never come back
+through a recovery, so after ANY restore into a serving database:
+
+1. List every takedown recorded after the restored moment. Three sources,
+   cross-checked: the takedown ledger below, the public moderation log
+   (`GET /api/moderation` on the pre-incident record if reachable), and the
+   withdrawal notices on public snapshot releases.
+2. Re-apply each removal through `POST /api/moderation` (founder resident #1),
+   with the original reason wording.
+3. Verify each target is tombstoned before the restored database serves the
+   public.
+
+This step is part of the restore, not an afterthought; a restore is incomplete
+until it runs.
+
+### Takedown ledger
+
+Append-only. One line per removal, oldest first. The facts here are already
+public (moderation log, release notices) — this table exists so a recovery
+can never miss one.
+
+| Date (UTC) | Target | Scope beyond the live record |
+|---|---|---|
+| 2026-08-25 | note 6282 | notes.ndjson withdrawn from snapshot releases 20260824T090642Z and 20260825T090155Z (visible notices; manifest hashes preserved) |
+
+## 6. Recovery policy
 
 Provider snapshots and point-in-time recovery remain the production-first recovery
 path until a production custom archive has completed this local drill. A real
