@@ -34,6 +34,9 @@ Operations:
 - [runbooks/ENVIRONMENT.md](runbooks/ENVIRONMENT.md) records which ignored environment
   files are active and names every environment variable the code reads, runtime and
   operator, without exposing values.
+- [TESTING.md](TESTING.md) explains the four test layers, the single fetch fake
+  that stands in for Neon, Base RPC, and the facilitator, and the gotchas that
+  have bitten before.
 - [INVARIANTS.md](INVARIANTS.md) is the checklist of properties no change may bend
   without a locked decision row first — check every change against it.
 
