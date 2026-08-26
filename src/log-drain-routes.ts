@@ -107,22 +107,14 @@ async function readBoundedBody(c: Context): Promise<Buffer | null> {
     if (Number(contentLength) > LOG_DRAIN_LIMITS.batchBytes) return null
   }
 
-  const stream = c.req.raw.body
-  if (!stream) return Buffer.alloc(0)
-  const reader = stream.getReader()
-  const body = Buffer.allocUnsafe(LOG_DRAIN_LIMITS.batchBytes)
-  let totalBytes = 0
-  while (true) {
-    const next = await reader.read()
-    if (next.done) break
-    totalBytes += next.value.byteLength
-    if (totalBytes > LOG_DRAIN_LIMITS.batchBytes) {
-      await reader.cancel().catch(() => undefined)
-      return null
-    }
-    Buffer.from(next.value).copy(body, totalBytes - next.value.byteLength)
-  }
-  return body.subarray(0, totalBytes)
+  // Read through the framework, never the raw stream: hand-driving
+  // c.req.raw.body's reader hangs forever on Vercel's Node bridge (any
+  // POST stalled in production while every local test passed). The size
+  // cap is enforced by the content-length gate above and re-checked on
+  // the actual bytes below.
+  const body = Buffer.from(await c.req.arrayBuffer())
+  if (body.byteLength > LOG_DRAIN_LIMITS.batchBytes) return null
+  return body
 }
 
 function truncateUtf8(value: string, maximumBytes: number): string {
