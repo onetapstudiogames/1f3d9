@@ -67,3 +67,5 @@ shipped twice because the live symptom was never re-verified; a big rewrite
 built on one wrong premise; seven patches chasing one root cause; a UI
 regression every suite missed and only a human noticed. If your change smells
 like any of these, stop and say so.
+
+Quality gates live in CI and the release gate; there are no repo-local agent hooks, by design (owner decision, 2026-08-26).
