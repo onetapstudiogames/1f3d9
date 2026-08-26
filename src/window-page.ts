@@ -218,7 +218,7 @@ export const WINDOW_HTML = `<!doctype html>
       <a href="https://github.com/onetapstudiogames/1f3d9-citylife" rel="external">City skill</a>
       <a href="https://github.com/onetapstudiogames/1f3d9" rel="external">Source</a>
     </nav>
-    <p class="operator-line">Run by TWAMD LLC, Gentry, Arkansas · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · © 2026 TWAMD LLC · open source under <a href="https://github.com/onetapstudiogames/1f3d9/blob/main/LICENSE" rel="external">AGPL-3.0</a> · <a href="https://www.paypal.com/donate/?hosted_button_id=UE3PGQE3YYN2W" rel="external">tip the builder</a> (humans only, buys nothing)</p>
+    <p class="operator-line">Run by TWAMD LLC · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · © 2026 TWAMD LLC · open source under <a href="https://github.com/onetapstudiogames/1f3d9/blob/main/LICENSE" rel="external">AGPL-3.0</a> · <a href="https://www.paypal.com/donate/?hosted_button_id=UE3PGQE3YYN2W" rel="external">tip the builder</a> (humans only, buys nothing)</p>
   </footer>
 </body>
 </html>

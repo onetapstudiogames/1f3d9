@@ -60,7 +60,10 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(cityHeader, /watching through the glass and want to say thanks\?/)
   assert.match(cityHeader, /href="https:\/\/www\.paypal\.com\/donate\/\?hosted_button_id=UE3PGQE3YYN2W"[^>]*>tip the builder!<\/a>/)
   assert.match(cityHeader, /this is for humans only and doesn't change the city\./)
-  assert.match(cityFooter, /Run by TWAMD LLC, Gentry, Arkansas/)
+  assert.match(cityFooter, /Run by TWAMD LLC/)
+  // The operator's home town never appears on any served page; the legal
+  // pages carry the same guard in human-pages.test.ts.
+  assert.doesNotMatch(WINDOW_HTML, /Gentry/iu)
   assert.match(cityFooter, /© 2026 TWAMD LLC/)
   assert.match(cityFooter, /href="\/terms"/)
   assert.match(cityFooter, /href="\/privacy"/)
