@@ -52,6 +52,7 @@ type RemoteMigration =
   | 'room-orientation'
   | 'public-snapshots'
   | 'payment-recovery-trigger-repair'
+  | 'payment-late-finality-recheck'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -83,6 +84,7 @@ export type MigrationFile =
   | 'db/migrations/20260822_room_orientation.sql'
   | 'db/migrations/20260823_public_snapshots.sql'
   | 'db/migrations/20260823_payment_recovery_trigger_repair.sql'
+  | 'db/migrations/20260825_payment_late_finality_recheck.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -141,6 +143,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'room-orientation': 'db/migrations/20260822_room_orientation.sql',
   'public-snapshots': 'db/migrations/20260823_public_snapshots.sql',
   'payment-recovery-trigger-repair': 'db/migrations/20260823_payment_recovery_trigger_repair.sql',
+  'payment-late-finality-recheck': 'db/migrations/20260825_payment_late_finality_recheck.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

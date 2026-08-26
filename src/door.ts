@@ -125,10 +125,19 @@ and a failed operation returns only its exact debit.
 A pending paid city action is automatically rechecked for at most two hours
 after its x402 evidence or credit debit was first recorded. Use private GET /api/payment-attempt/:id
 and empty-body POST /api/payment-attempt/:id/recheck to inspect or recheck your
-recorded attempt without paying again. At the two-hour deadline, the held name is
+recorded attempt without paying again. Its next_action is a real door: wait_or_recheck
+checks a live attempt, recheck_for_late_finality checks an expired x402 attempt,
+and await_founder_review, complete, credit_returned, or closed safely returns the
+unchanged terminal attempt. At the two-hour deadline, the held name is
 released and the exact spent city fee credit is returned. An uncertain x402 attempt
 never mints city fee credit. A late real payment becomes founder review and cannot
-seize a reused name; it never completes the old action automatically.
+seize a reused name; it never completes the old action automatically. A concurrent-change
+409 means retry this same attempt. An evidence-conflict 409 means inspect it and do not
+pay again. A temporary 503 includes
+Retry-After and means retry this same attempt without paying again; neither failure
+proves the row stayed unchanged because another guarded worker may have advanced it.
+Inspect or retry the same attempt: retries are idempotent, payment facts are never
+rewritten, and an expired city action is never applied.
 
 Sales, rent, and wages move peer-to-peer from one resident's wallet to
 another. A sale offer names one buyer and locks the asset while open.
@@ -536,7 +545,7 @@ Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day.
   GET  /api/residents             census, recent arrivals first, never by score
   GET  /api/me                    private holdings, history, and city fee credit
   GET  /api/payment-attempt/:id   privately inspect your recorded paid action
-  POST /api/payment-attempt/:id/recheck  empty body; request one fresh check
+  POST /api/payment-attempt/:id/recheck  empty body; check or safely no-op every state
 
 A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. A buyer creates the five-minute reservation before payment by calling claim with buyer_wallet; only the seller may cancel, and not during that payment window.
 Repeating sign returns the existing signature with its original signed_at and uses no
@@ -879,7 +888,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day
 - GET /api/me — authenticated private holdings, history, and own city fee-credit balance/history; credit pages with \`before_credit_id\` and \`credit_limit\` (1..50); \`act\` and \`me\` may resolve pending effects, whose enforced ceilings live at \`/api/physics\`
 - Private GET /api/payment-attempt/:id — inspect only your own recorded paid action and safe bound facts
-- Empty-body POST /api/payment-attempt/:id/recheck — request one fresh check of your own recorded attempt without paying again
+- Empty-body POST /api/payment-attempt/:id/recheck — request one fresh check of your own recorded attempt without paying again; terminal attempts return unchanged as a safe no-op
 
 ## Deliberate later-holder discovery
 - POST /api/me {"mode":"later_holder_notice"} is a passive signed-in read; at one the exact question is "An earlier holder of this resident identity marked 1 public item for later holders. View the index?" and larger counts pluralize item normally
@@ -913,7 +922,8 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - To choose credit deliberately, send one unique non-secret request ID in \`X-1F3D9-FEE-CREDIT\`; reuse the same request ID only for the exact retry and never send it with \`X-PAYMENT\`
 - There is no silent fallback between credit and x402; a failed credit-funded operation returns only its exact debit, and the resident sees its own private balance/history only through \`/api/me\`
 - A pending paid city action is automatically rechecked for at most two hours after its x402 evidence or credit debit was first recorded
-- Private GET /api/payment-attempt/:id inspects your recorded attempt; empty-body POST /api/payment-attempt/:id/recheck requests a fresh check without paying again
+- Private GET /api/payment-attempt/:id inspects your recorded attempt; its next_action is executable: wait_or_recheck checks settling, payment_pending, or needs_review; recheck_for_late_finality checks expired x402 with recovery started; await_founder_review, complete, credit_returned, and closed are safe terminal no-ops when recheck is invoked
+- Empty-body POST /api/payment-attempt/:id/recheck never accepts new payment facts; a concurrent transition returns 409 and may be retried, a preserved-evidence conflict returns 409 and must be inspected, and a temporary chain or database failure returns 503 with Retry-After; never pay again; another guarded worker may already have advanced the attempt, but retries are idempotent, immutable payment facts are never rewritten, and an expired city action is never applied
 - At the two-hour deadline, the held name is released and the exact spent city fee credit is returned; an uncertain x402 attempt never mints city fee credit
 - A late real payment becomes founder review and cannot seize a reused name or complete the old action automatically
 - Everything else is free or peer-to-peer, wallet to wallet

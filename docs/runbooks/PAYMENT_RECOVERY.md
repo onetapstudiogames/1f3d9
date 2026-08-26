@@ -6,6 +6,21 @@ The command is dry-run-first. It reads fresh production facts and Base finality,
 then prints an exact plan or aborts. Its live mode is separately locked behind
 an exact acknowledgement and one all-or-nothing database transaction.
 
+## Current late-finality guard repair
+
+Before deploying the matching application code, run the separately selected
+`payment-late-finality-recheck` migration against the isolated preview database,
+then against production only after the migration runner verifies the exact Neon
+target and creates its required production snapshot. The package entry points are
+`migrate:preview:payment-late-finality-recheck` and
+`migrate:production:payment-late-finality-recheck`.
+
+This idempotent function repair permits only the existing expired-x402 transition
+to `founder_review`: finality must either be absent or exactly match the stable
+transaction, block number, block hash, and block time already stored. Matching
+evidence keeps the original `finalized_at`; partial or conflicting evidence still
+stops. Verify the Sputnik-shaped PostgreSQL integration case before promotion.
+
 ## 1. Preconditions — about 2 minutes
 
 1. Confirm the recorded user approval for both the Wave 15 release and Bob's

@@ -1,5 +1,5 @@
--- Restore the unified payment history guard if an independently rerun older
--- migration replaced it. This is identical to the final recovery guard.
+-- Let an expired x402 attempt whose matching finality was already preserved
+-- enter founder review without rewriting that immutable evidence.
 CREATE OR REPLACE FUNCTION protect_payment_attempt_history() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN

@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono, type Context } from 'hono'
 import { mcp } from '../src/mcp.ts'
+import { PaymentAttemptEvidenceConflictError } from '../src/payment-attempts.ts'
 import {
   mountPaymentRecoveryRoutes,
   type PaymentRecoveryRouteDependencies,
 } from '../src/payment-recovery-routes.ts'
-import type { PaymentRecoveryAttempt } from '../src/payment-recovery.ts'
+import {
+  reportPaymentRecoveryRecheckFailure,
+  type PaymentRecoveryAttempt,
+} from '../src/payment-recovery.ts'
 
 const ATTEMPT_ID = `pay_${'ab'.repeat(32)}`
 const CRON_SECRET = `cron_${'cd'.repeat(32)}`
@@ -116,6 +120,16 @@ test('explicit recheck accepts exactly an empty object and uses stored terms onl
     'content-type': 'application/json',
   }
 
+  const unauthenticatedMalformed = await app.request(
+    `/api/payment-attempt/${ATTEMPT_ID}/recheck`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ transaction: 'must-not-be-read-before-auth' }),
+    },
+  )
+  assert.equal(unauthenticatedMalformed.status, 401)
+
   for (const body of [
     JSON.stringify({ name: 'changed' }),
     JSON.stringify({ transaction: `0x${'ef'.repeat(32)}` }),
@@ -138,6 +152,161 @@ test('explicit recheck accepts exactly an empty object and uses stored terms onl
   assert.equal(response.status, 202)
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal(calls, 1)
+})
+
+test('explicit recheck contains transient chain and database failures in caller words', async () => {
+  const failures = [
+    {
+      name: 'authentication database',
+      dependencies: () => routeDependencies({
+        authenticate: async () => {
+          throw new Error('simulated auth outage Bearer private-token 1f3d9_sk_private')
+        },
+      }),
+    },
+    {
+      name: 'chain',
+      dependencies: () => routeDependencies({
+        recheck: async () => { throw new Error('simulated Base RPC failure') },
+      }),
+    },
+    {
+      name: 'database',
+      dependencies: () => {
+        let reads = 0
+        return routeDependencies({
+          getOwnedAttempt: async () => {
+            reads += 1
+            if (reads === 2) throw Object.assign(new Error('simulated database outage'), { code: '57P01' })
+            return storedAttempt()
+          },
+          recheck: async value => ({ state: 'payment_pending', attemptId: value.publicId }),
+        })
+      },
+    },
+    {
+      name: 'reported unavailable',
+      dependencies: () => routeDependencies({
+        recheck: async value => ({ state: 'unavailable', attemptId: value.publicId }),
+      }),
+    },
+  ]
+
+  const logged: unknown[][] = []
+  const originalError = console.error
+  console.error = (...values: unknown[]) => { logged.push(values) }
+  try {
+    for (const failure of failures) {
+      const app = createHttpApp({
+        ...failure.dependencies(),
+        reportFailure: reportPaymentRecoveryRecheckFailure,
+      })
+      const response = await app.request(`/api/payment-attempt/${ATTEMPT_ID}/recheck`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer resident', 'content-type': 'application/json' },
+        body: '{}',
+      })
+
+      assert.equal(response.status, 503, failure.name)
+      assert.equal(response.headers.get('retry-after'), '1', failure.name)
+      assert.equal(response.headers.get('cache-control'), 'no-store', failure.name)
+      assert.deepEqual(await response.json(), {
+        error: 'payment attempt recheck is temporarily unavailable; retry this same attempt without paying again',
+        do_not_pay_again: true,
+      }, failure.name)
+    }
+  } finally {
+    console.error = originalError
+  }
+  const recoveryLogs = logged.filter(values => values[0] === 'payment recovery recheck failed')
+  assert.equal(recoveryLogs.length, failures.length)
+  assert.doesNotMatch(JSON.stringify(recoveryLogs), /private-token|1f3d9_sk_private/iu)
+})
+
+test('explicit recheck preserves the ordinary retryable database-collision response', async () => {
+  const app = createHttpApp(routeDependencies({
+    recheck: async () => {
+      throw Object.assign(new Error('simulated serialization collision'), { code: '40001' })
+    },
+  }))
+
+  const response = await app.request(`/api/payment-attempt/${ATTEMPT_ID}/recheck`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer resident', 'content-type': 'application/json' },
+    body: '{}',
+  })
+
+  assert.equal(response.status, 409)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await response.json(), {
+    error: 'another action changed the same records; retry this payment attempt without paying again',
+    do_not_pay_again: true,
+  })
+})
+
+test('preserved-evidence conflicts stop honestly instead of asking for an endless retry', async () => {
+  const app = createHttpApp(routeDependencies({
+    recheck: async () => {
+      throw new PaymentAttemptEvidenceConflictError('simulated immutable evidence mismatch')
+    },
+    reportFailure: () => undefined,
+  }))
+
+  const response = await app.request(`/api/payment-attempt/${ATTEMPT_ID}/recheck`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer resident', 'content-type': 'application/json' },
+    body: '{}',
+  })
+
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'payment evidence conflicts with this attempt\'s preserved record; inspect this attempt and do not pay again',
+    do_not_pay_again: true,
+  })
+})
+
+test('retry converges when a guarded transition commits before the final read fails', async () => {
+  let current = storedAttempt()
+  let completedEffects = 0
+  let failFinalRead = true
+  const app = createHttpApp(routeDependencies({
+    getOwnedAttempt: async (publicId, actorId) => {
+      if (publicId !== current.publicId || actorId !== current.actorId) return null
+      if (failFinalRead && current.status === 'completed') {
+        failFinalRead = false
+        throw Object.assign(new Error('simulated post-commit read outage'), { code: '57P01' })
+      }
+      return current
+    },
+    recheck: async value => {
+      if (current.status === 'payment_pending') {
+        completedEffects += 1
+        current = storedAttempt({ ...value, status: 'completed' })
+      }
+      return {
+        state: current.status === 'completed' ? 'completed' : 'payment_pending',
+        attemptId: value.publicId,
+      }
+    },
+    reportFailure: () => undefined,
+  }))
+  const request = () => app.request(`/api/payment-attempt/${ATTEMPT_ID}/recheck`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer resident', 'content-type': 'application/json' },
+    body: '{}',
+  })
+
+  const uncertain = await request()
+  assert.equal(uncertain.status, 503)
+  assert.equal(current.status, 'completed')
+  assert.equal(completedEffects, 1)
+
+  const converged = await request()
+  assert.equal(converged.status, 200)
+  assert.equal((await converged.json() as {
+    payment_attempt: { state: string }
+  }).payment_attempt.state, 'completed')
+  assert.equal(completedEffects, 1)
 })
 
 test('cron recovery fails closed and returns aggregate counts without attempt identifiers', async () => {

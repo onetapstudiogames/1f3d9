@@ -66,6 +66,7 @@ import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
+import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
 import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
@@ -406,6 +407,7 @@ mountPaymentRecoveryRoutes(app, {
   privateView: paymentRecoveryRuntime.privateView,
   recheck: paymentRecoveryRuntime.recheck,
   runBatch: paymentRecoveryRuntime.runBatch,
+  reportFailure: reportPaymentRecoveryRecheckFailure,
   environment: process.env,
 })
 mountWorldRoutes(app)

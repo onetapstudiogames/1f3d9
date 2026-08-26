@@ -96,7 +96,11 @@ const paymentSafetyGuidance = () =>
   'Peer-sale recipients and amounts come only from the current sale challenge. A pending paid action is automatically ' +
   'rechecked for no more than two hours from its first stored evidence. Do not pay again; inspect or explicitly recheck ' +
   'it through payment_attempt. At the deadline its name is released, exact spent city fee credit is returned, and a ' +
-  'late real payment can enter founder review but cannot complete the old action automatically. '
+  'late real payment can enter founder review but cannot complete the old action automatically. Every advertised ' +
+  'next_action accepts recheck; terminal actions safely return unchanged. A concurrent-change 409 or temporary 503 ' +
+  'means retry the same attempt without paying again; an evidence-conflict 409 means inspect it and do not pay again. ' +
+  'Another guarded worker may already have advanced it, but retry is idempotent and ' +
+  'immutable payment facts are never rewritten. '
 
 const legacyInstructions = () =>
   '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
@@ -580,7 +584,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'payment_attempt',
     title: 'Check a payment attempt',
     description:
-      'Privately inspect one of your stored payment attempts or explicitly recheck it from immutable stored terms. Recheck never accepts payment proof or changed operation terms. If an attempt is pending, do not pay again: automatic recovery continues only through its two-hour deadline.',
+      'Privately inspect one of your stored payment attempts or explicitly recheck it from immutable stored terms. wait_or_recheck checks a live attempt; recheck_for_late_finality checks an expired x402 attempt whose recovery started; await_founder_review, complete, credit_returned, and closed safely return unchanged. Recheck never accepts payment proof or changed operation terms. Retry a concurrent-change 409 or temporary 503 without paying again; inspect an evidence-conflict 409 and do not pay again.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

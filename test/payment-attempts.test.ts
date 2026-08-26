@@ -802,6 +802,51 @@ test('expired recovered x402 custody says not to repay and remains explicitly re
   assert.equal(legacyUnused.next_action, 'closed')
 })
 
+test('every stored payment state advertises one exact next action', () => {
+  const recovery = {
+    recoveryStartedAt: '2026-08-16T12:00:00.000Z',
+    recoveryDeadlineAt: '2026-08-16T14:00:00.000Z',
+  }
+  const cases: Array<{
+    name: string
+    attempt: PaymentAttemptRecord
+    nextAction: ReturnType<typeof toPrivatePaymentAttempt>['next_action']
+  }> = [
+    { name: 'settling', attempt: row({ status: 'settling' }), nextAction: 'wait_or_recheck' },
+    { name: 'payment pending', attempt: row({ status: 'payment_pending' }), nextAction: 'wait_or_recheck' },
+    { name: 'needs review', attempt: row({ status: 'needs_review' }), nextAction: 'wait_or_recheck' },
+    {
+      name: 'expired recoverable x402',
+      attempt: row({ status: 'expired', ...recovery }),
+      nextAction: 'recheck_for_late_finality',
+    },
+    { name: 'founder review', attempt: row({ status: 'founder_review' }), nextAction: 'await_founder_review' },
+    { name: 'completed', attempt: row({ status: 'completed' }), nextAction: 'complete' },
+    { name: 'legacy completed', attempt: row({ status: 'legacy_completed' }), nextAction: 'complete' },
+    {
+      name: 'credit returned',
+      attempt: row({ status: 'credit_returned', method: 'credit', network: null }),
+      nextAction: 'credit_returned',
+    },
+    { name: 'invalid', attempt: row({ status: 'invalid' }), nextAction: 'closed' },
+    { name: 'expired x402 without recovery', attempt: row({ status: 'expired' }), nextAction: 'closed' },
+    {
+      name: 'expired credit',
+      attempt: row({ status: 'expired', method: 'credit', network: null, ...recovery }),
+      nextAction: 'closed',
+    },
+    {
+      name: 'expired legacy claim',
+      attempt: row({ status: 'expired', method: 'claim', network: null }),
+      nextAction: 'closed',
+    },
+  ]
+
+  for (const current of cases) {
+    assert.equal(toPrivatePaymentAttempt(current.attempt).next_action, current.nextAction, current.name)
+  }
+})
+
 test('private attempt serialization exposes only allowlisted recovery and bound-request facts', () => {
   const storedRequest = {
     offer_id: 91,

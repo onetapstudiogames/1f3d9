@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { splitSqlStatements } from '../scripts/migrate.ts'
 
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
@@ -8,8 +8,15 @@ const migrationDdl = readFileSync(
   new URL('../db/migrations/20260822_city_credit.sql', import.meta.url),
   'utf8',
 )
-const paymentRecoveryMigrationDdl = readFileSync(
-  new URL('../db/migrations/20260822_payment_recovery.sql', import.meta.url),
+const migrationDirectory = new URL('../db/migrations/', import.meta.url)
+const paymentHistoryMigrationDdls = readdirSync(migrationDirectory)
+  .filter(name => name.endsWith('.sql'))
+  .map(name => [name, readFileSync(new URL(name, migrationDirectory), 'utf8')] as const)
+  .filter(([, ddl]) => (
+    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu.test(ddl)
+  ))
+const paymentLateFinalityRecheckDdl = readFileSync(
+  new URL('../db/migrations/20260825_payment_late_finality_recheck.sql', import.meta.url),
   'utf8',
 )
 const migrateSource = readFileSync(new URL('../scripts/migrate.ts', import.meta.url), 'utf8')
@@ -31,13 +38,20 @@ function table(ddl: string, name: string): string {
   )
 }
 
-test('rerunning city credit cannot replace the newer payment recovery rules', () => {
-  const guard = (ddl: string): string => normalizedStatement(
-    ddl,
-    /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu,
-    'missing payment history guard',
-  )
-  assert.equal(guard(migrationDdl), guard(paymentRecoveryMigrationDdl))
+test('rerunning any payment-history-defining SQL cannot replace the newest recovery rules', () => {
+  const guard = (ddl: string): string => {
+    const statements = splitSqlStatements(ddl).filter(statement => (
+      /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu.test(statement)
+    ))
+    const statement = statements.at(-1)
+    assert.ok(statement, 'missing payment history guard')
+    return statement.replace(/^\s*--.*$/gmu, '').replace(/\s+/gu, ' ').trim()
+  }
+  const expected = guard(paymentLateFinalityRecheckDdl)
+  for (const [name, ddl] of [
+    ['db/schema.sql', schemaDdl] as const,
+    ...paymentHistoryMigrationDdls,
+  ]) assert.equal(guard(ddl), expected, name)
 })
 
 test('fresh and upgraded schemas install the same private credit tables', () => {

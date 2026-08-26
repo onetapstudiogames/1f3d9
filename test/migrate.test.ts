@@ -23,6 +23,8 @@ const worldRootDescriptionMigrationFile =
   'db/migrations/20260823_world_root_description.sql' as const
 const paymentRecoveryTriggerRepairMigrationFile =
   'db/migrations/20260823_payment_recovery_trigger_repair.sql' as const
+const paymentLateFinalityRecheckMigrationFile =
+  'db/migrations/20260825_payment_late_finality_recheck.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -406,6 +408,46 @@ test('payment recovery trigger repair is selected as one explicit transactional 
     },
   )
   assert.equal(production.migrationFile, paymentRecoveryTriggerRepairMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+})
+
+test('late-finality recheck guard is one explicit transactional preview or production migration', () => {
+  const migration = migrationDdl(paymentLateFinalityRecheckMigrationFile)
+  assert.equal(splitSqlStatements(migration).length, 1)
+  assert.match(migration, /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history/iu)
+  assert.match(migration, /OLD\.status\s*=\s*'expired'[\s\S]*NEW\.status\s*=\s*'founder_review'/iu)
+  assert.match(migration, /OLD\.finalized_block_number\s+IS\s+NULL[\s\S]*OR\s+ROW\(/iu)
+  assert.equal(
+    prepareMigrationExecution(paymentLateFinalityRecheckMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-late-finality-recheck'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, paymentLateFinalityRecheckMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-late-finality-recheck'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-late-finality-recheck-release',
+    },
+  )
+  assert.equal(production.migrationFile, paymentLateFinalityRecheckMigrationFile)
   assert.equal(production.executionMode, 'transactional')
 })
 

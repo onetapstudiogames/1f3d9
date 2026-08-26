@@ -18,6 +18,7 @@ import {
   getPaymentAttemptRecord,
   listRecoverablePaymentAttempts,
   markPaymentAttemptFounderReview,
+  paymentAttemptCanRecheckLateFinality,
   toPrivatePaymentAttempt,
   type PaymentAttemptDatabase,
   type PaymentAttemptRecord,
@@ -32,6 +33,7 @@ import {
 } from './payment-sale-operations.ts'
 import { resumeDurableX402 } from './payment-flow.ts'
 import {
+  paymentRecoveryErrorFields,
   recoverPaymentAttempt,
   runPaymentRecoveryBatch,
   type LateX402Inspection,
@@ -103,6 +105,7 @@ function recoveryAttempt(record: PaymentAttemptRecord): PaymentRecoveryAttempt |
   if (
     !RECOVERY_OPERATIONS.has(record.operation as PaymentRecoveryAttempt['operation'])
     || (record.method !== 'x402' && record.method !== 'credit')
+    || (record.status === 'expired' && !paymentAttemptCanRecheckLateFinality(record))
   ) return null
   return {
     publicId: record.publicId,
@@ -266,17 +269,6 @@ function mergedServices(
 }
 
 function logRecoveryFailure(attempt: PaymentRecoveryAttempt, error: unknown): void {
-  const rawDetail = error instanceof Error
-    ? `${error.name}: ${error.message}`
-    : String(error)
-  const detail = rawDetail
-    .replace(/postgres(?:ql)?:\/\/[^\s"']+/giu, '[redacted database URL]')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
-    .replace(/1f3d9_sk_[A-Za-z0-9_-]+/giu, '[redacted resident key]')
-    .slice(0, 400)
-  const code = error && typeof error === 'object' && 'code' in error
-    ? String((error as { code?: unknown }).code ?? '').slice(0, 32)
-    : ''
   console.error('payment recovery attempt failed', {
     attemptId: attempt.publicId,
     actorId: attempt.actorId,
@@ -284,8 +276,7 @@ function logRecoveryFailure(attempt: PaymentRecoveryAttempt, error: unknown): vo
     method: attempt.method,
     status: attempt.status,
     recoveryDeadlineAt: attempt.recoveryDeadlineAt,
-    errorCode: code || null,
-    error: detail,
+    ...paymentRecoveryErrorFields(error),
   })
 }
 
@@ -451,6 +442,7 @@ export function createPaymentRecoveryRuntime(
           record.payerWallet,
           record.x402Nonce,
           record.startBlock,
+          { throwOnUnavailable: true },
         )
         if (!txHash) return { state: 'ambiguous' }
       }
@@ -459,7 +451,11 @@ export function createPaymentRecoveryRuntime(
         txHash,
         record.payeeWallet!,
         record.amountUnits!,
-        { expectedFrom: record.payerWallet!, exactAmount: true },
+        {
+          expectedFrom: record.payerWallet!,
+          exactAmount: true,
+          throwOnUnavailable: true,
+        },
       )
       return lateInspection(record, txHash, checked)
     },
