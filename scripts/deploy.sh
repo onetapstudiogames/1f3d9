@@ -21,6 +21,14 @@ if [ "$#" -ne 1 ] || [ "$1" != "--prepare" ]; then
   exit 2
 fi
 
+emit_gate_exit() {
+  local status=$?
+  trap - EXIT
+  printf '\nGATE_EXIT=%d\n' "$status"
+  exit "$status"
+}
+trap emit_gate_exit EXIT
+
 verify_pushed_candidate() {
   local branch commit upstream remote_commit worktree_state origin_url
 
