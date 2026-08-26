@@ -7,8 +7,10 @@ import test from 'node:test'
 
 import {
   assertPrivateBackupDirectory,
+  dockerDatabaseRoutePlan,
   parseBackupArgs,
   runBackup,
+  selectDockerDatabaseRoute,
 } from '../scripts/backup.ts'
 import {
   combineRestoreCleanupErrors,
@@ -51,6 +53,93 @@ test('backup arguments require an explicit target and expected database', () => 
   ]) {
     assert.throws(() => parseBackupArgs(args), /target|database|argument|duplicate/i)
   }
+})
+
+test('Docker plans gateway-first loopback access without negotiating remote databases', async () => {
+  const linux = dockerDatabaseRoutePlan(
+    'postgres://role:password@127.0.0.1:5432/city',
+    'linux',
+  )
+  assert.deepEqual(
+    linux,
+    {
+      candidates: [
+        {
+          hostname: 'host.docker.internal',
+          runArguments: ['--add-host', 'host.docker.internal:host-gateway'],
+        },
+        { hostname: '127.0.0.1', runArguments: ['--network', 'host'] },
+      ],
+      defaultSslMode: 'disable',
+      loopback: true,
+    },
+  )
+  const windows = dockerDatabaseRoutePlan(
+    'postgres://role:password@127.0.0.1:5432/city',
+    'win32',
+  )
+  assert.deepEqual(windows.candidates, [linux.candidates[0]])
+
+  let remoteProbes = 0
+  const remote = dockerDatabaseRoutePlan(
+    'postgres://role:password@ep-preview.us-east-2.aws.neon.tech/city',
+    'linux',
+  )
+  const selectedRemote = await selectDockerDatabaseRoute(remote, async () => {
+    remoteProbes += 1
+    return false
+  })
+  assert.deepEqual(
+    selectedRemote,
+    {
+      hostname: 'ep-preview.us-east-2.aws.neon.tech',
+      runArguments: ['--add-host', 'host.docker.internal:host-gateway'],
+    },
+  )
+  assert.equal(remote.defaultSslMode, 'require')
+  assert.equal(remote.loopback, false)
+  assert.equal(remoteProbes, 0)
+})
+
+test('Docker selects only an authenticated reachable loopback route', async () => {
+  const linux = dockerDatabaseRoutePlan(
+    'postgres://role:password@[::1]:5432/city',
+    'linux',
+  )
+  const gatewayCalls: string[] = []
+  const gateway = await selectDockerDatabaseRoute(linux, async candidate => {
+    gatewayCalls.push(candidate.hostname)
+    return true
+  })
+  assert.equal(gateway.hostname, 'host.docker.internal')
+  assert.deepEqual(gatewayCalls, ['host.docker.internal'])
+
+  const fallbackCalls: string[] = []
+  const fallback = await selectDockerDatabaseRoute(linux, async candidate => {
+    fallbackCalls.push(candidate.hostname)
+    return candidate.hostname === '::1'
+  })
+  assert.equal(fallback.hostname, '::1')
+  assert.deepEqual(fallbackCalls, ['host.docker.internal', '::1'])
+
+  await assert.rejects(
+    selectDockerDatabaseRoute(linux, async () => false),
+    /could not reach the validated local PostgreSQL endpoint/,
+  )
+
+  const windows = dockerDatabaseRoutePlan(
+    'postgres://role:password@localhost:5432/city',
+    'win32',
+  )
+  let windowsProbes = 0
+  await assert.rejects(
+    selectDockerDatabaseRoute(windows, async () => {
+      windowsProbes += 1
+      return false
+    }),
+    /could not reach the validated local PostgreSQL endpoint/,
+  )
+  assert.equal(windowsProbes, 1)
 })
 
 test('backup requires a proven source target before starting pg_dump', async t => {

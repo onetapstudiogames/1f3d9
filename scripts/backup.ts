@@ -414,17 +414,64 @@ function decodedUrlPart(value: string, label: string): string {
   return decoded
 }
 
-function connectionEnvironment(databaseUrl: string): Readonly<{
+export function dockerDatabaseRoutePlan(
+  databaseUrl: string,
+  platform: NodeJS.Platform = process.platform,
+): Readonly<{
+  candidates: readonly Readonly<{
+    hostname: string
+    runArguments: readonly string[]
+  }>[]
+  defaultSslMode: 'disable' | 'require'
+  loopback: boolean
+}> {
+  const hostname = new URL(databaseUrl).hostname.toLowerCase()
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(hostname)
+  const defaultSslMode = loopback || hostname === 'host.docker.internal'
+    ? 'disable'
+    : 'require'
+  const gatewayRoute = Object.freeze({
+    hostname: loopback ? 'host.docker.internal' : hostname,
+    runArguments: Object.freeze(['--add-host', 'host.docker.internal:host-gateway']),
+  })
+  const candidates = platform === 'linux' && loopback
+    ? Object.freeze([
+        gatewayRoute,
+        Object.freeze({
+          hostname: hostname === '[::1]' ? '::1' : hostname,
+          runArguments: Object.freeze(['--network', 'host']),
+        }),
+      ])
+    : Object.freeze([gatewayRoute])
+  return Object.freeze({
+    candidates,
+    defaultSslMode,
+    loopback,
+  })
+}
+
+export async function selectDockerDatabaseRoute(
+  plan: ReturnType<typeof dockerDatabaseRoutePlan>,
+  probe: (candidate: (typeof plan.candidates)[number]) => Promise<boolean>,
+): Promise<(typeof plan.candidates)[number]> {
+  if (!plan.loopback) return plan.candidates[0]!
+  for (const candidate of plan.candidates) {
+    if (await probe(candidate)) return candidate
+  }
+  throw new Error('Docker could not reach the validated local PostgreSQL endpoint')
+}
+
+function connectionEnvironment(
+  databaseUrl: string,
+  defaultSslMode: 'disable' | 'require',
+  route: Readonly<{ hostname: string; runArguments: readonly string[] }>,
+): Readonly<{
   environment: NodeJS.ProcessEnv
   keys: readonly string[]
+  runArguments: readonly string[]
 }> {
   const parsed = new URL(databaseUrl)
-  const hostname = parsed.hostname.toLowerCase()
-  const dockerHost = ['localhost', '127.0.0.1', '[::1]'].includes(hostname)
-    ? 'host.docker.internal'
-    : hostname
-  const sslMode = parsed.searchParams.get('sslmode') ??
-    (dockerHost === 'host.docker.internal' ? 'disable' : 'require')
+  const sslMode = parsed.searchParams.get('sslmode') ?? defaultSslMode
   if (!['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].includes(sslMode)) {
     throw new Error('database URL contains an unsupported sslmode')
   }
@@ -434,7 +481,7 @@ function connectionEnvironment(databaseUrl: string): Readonly<{
   }
 
   const variables: NodeJS.ProcessEnv = {
-    PGHOST: dockerHost,
+    PGHOST: route.hostname,
     PGPORT: parsed.port || '5432',
     PGDATABASE: decodedUrlPart(parsed.pathname.slice(1), 'database name'),
     PGUSER: decodedUrlPart(parsed.username, 'role'),
@@ -448,6 +495,7 @@ function connectionEnvironment(databaseUrl: string): Readonly<{
   return Object.freeze({
     environment: Object.freeze({ ...process.env, ...variables }),
     keys: Object.freeze(Object.keys(variables)),
+    runArguments: route.runArguments,
   })
 }
 
@@ -461,17 +509,43 @@ async function dumpWithDocker(options: Readonly<{
   outputPath: string
   toolImage: string
 }>): Promise<DumpResult> {
-  const connection = connectionEnvironment(options.databaseUrl)
+  const plan = dockerDatabaseRoutePlan(options.databaseUrl)
   const containerName = `1f3d9-pg-dump-${process.pid}-${randomBytes(6).toString('hex')}`
   const outputDirectory = dirname(options.outputPath)
   const outputName = basename(options.outputPath)
   try {
     const version = await runCommand('docker', ['run', '--rm', options.toolImage, 'pg_dump', '--version'])
+    const route = await selectDockerDatabaseRoute(plan, async candidate => {
+      const candidateConnection = connectionEnvironment(
+        options.databaseUrl,
+        plan.defaultSslMode,
+        candidate,
+      )
+      try {
+        const probe = await runCommand('docker', [
+          'run', '--rm',
+          ...candidate.runArguments,
+          ...candidateConnection.keys.flatMap(key => ['--env', key]),
+          options.toolImage,
+          'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-Atqc', 'SELECT current_database()',
+        ], {
+          allowFailure: true,
+          maxOutput: 64 * 1024,
+          environment: candidateConnection.environment,
+          sensitiveOutput: true,
+        })
+        return probe.code === 0 &&
+          probe.stdout.trim() === candidateConnection.environment.PGDATABASE
+      } catch {
+        return false
+      }
+    })
+    const connection = connectionEnvironment(options.databaseUrl, plan.defaultSslMode, route)
     await runCommand('docker', [
       'run', '--rm', '--name', containerName,
       '--label', 'com.1f3d9.role=backup',
       '--label', `com.1f3d9.expires=${new Date(Date.now() + 60 * 60_000).toISOString()}`,
-      '--add-host', 'host.docker.internal:host-gateway',
+      ...connection.runArguments,
       ...connection.keys.flatMap(key => ['--env', key]),
       '--mount', dockerBindMount(outputDirectory, '/backup'),
       options.toolImage,
