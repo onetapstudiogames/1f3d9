@@ -48,6 +48,11 @@ stops. Verify the Sputnik-shaped PostgreSQL integration case before promotion.
 5. Keep the recovery function at its reviewed 300-second maximum duration and
    batch size of 10. Base reconciliation can require several bounded RPC calls.
 
+After a successful recovery batch, the cron also opens a runtime-log retention
+slot during UTC minutes 00–04. That maintenance deletes at most 1,000 rows older
+than 30 days. Its failure is reported with safe metadata and does not change the
+payment-recovery response; the next hourly slot retries another bounded page.
+
 Wave 5 does not deploy the schedule, configure the secret, or invoke the live
 route. Those production actions require the separately approved release wave.
 

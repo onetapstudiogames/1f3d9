@@ -365,6 +365,35 @@ test('cron recovery stays disabled when CRON_SECRET is missing or malformed', as
   }
 })
 
+test('cron log retention runs after recovery and cannot turn successful recovery into a 500', async () => {
+  let maintenanceRuns = 0
+  const reported: unknown[] = []
+  const app = createHttpApp(routeDependencies({
+    runMaintenance: async () => {
+      maintenanceRuns += 1
+      throw new Error('simulated runtime-log retention outage')
+    },
+    reportMaintenanceFailure: error => { reported.push(error) },
+  }))
+
+  const response = await app.request('/api/internal/payment-recovery', {
+    headers: { authorization: `Bearer ${CRON_SECRET}` },
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(maintenanceRuns, 1)
+  assert.equal(reported.length, 1)
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    scanned: 10,
+    completed: 1,
+    pending: 1,
+    busy: 0,
+    terminalized: 0,
+    failed: 0,
+  })
+})
+
 async function callTool(app: Hono, argumentsValue: Record<string, unknown>) {
   return await app.request('/mcp', {
     method: 'POST',

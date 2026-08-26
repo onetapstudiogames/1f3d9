@@ -32,6 +32,8 @@ export interface PaymentRecoveryRouteDependencies<Attempt = PaymentRecoveryAttem
   privateView(attempt: Attempt): Record<string, unknown>
   recheck(attempt: Attempt): Promise<PaymentRecoveryOutcome>
   runBatch(limit: number): Promise<PaymentRecoveryBatchResult>
+  runMaintenance?(): Promise<void>
+  reportMaintenanceFailure?(error: unknown): void
   reportFailure?(
     input: Readonly<{ publicId: string; actorId: number | null }>,
     error: unknown,
@@ -115,6 +117,17 @@ function recheckUnavailable(c: Context): Response {
   return c.json({ error: RECHECK_UNAVAILABLE, do_not_pay_again: true }, 503)
 }
 
+function reportMaintenanceFailure<Attempt>(
+  deps: PaymentRecoveryRouteDependencies<Attempt>,
+  error: unknown,
+): void {
+  try {
+    deps.reportMaintenanceFailure?.(error)
+  } catch {
+    console.error('payment recovery maintenance reporter failed')
+  }
+}
+
 function recheckFailure<Attempt>(
   c: Context,
   deps: PaymentRecoveryRouteDependencies<Attempt>,
@@ -186,6 +199,11 @@ export function mountPaymentRecoveryRoutes<Attempt>(
       return err(c, 401, 'payment recovery authorization failed')
     }
     const result = await deps.runBatch(RECOVERY_BATCH_LIMIT)
+    try {
+      await deps.runMaintenance?.()
+    } catch (error) {
+      reportMaintenanceFailure(deps, error)
+    }
     return c.json({ ok: true, ...result })
   })
 }

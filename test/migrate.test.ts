@@ -25,6 +25,8 @@ const paymentRecoveryTriggerRepairMigrationFile =
   'db/migrations/20260823_payment_recovery_trigger_repair.sql' as const
 const paymentLateFinalityRecheckMigrationFile =
   'db/migrations/20260825_payment_late_finality_recheck.sql' as const
+const runtimeLogsMigrationFile =
+  'db/migrations/20260826_runtime_logs.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -449,6 +451,68 @@ test('late-finality recheck guard is one explicit transactional preview or produ
   )
   assert.equal(production.migrationFile, paymentLateFinalityRecheckMigrationFile)
   assert.equal(production.executionMode, 'transactional')
+})
+
+test('runtime logs are one explicit guarded transactional preview or production migration', () => {
+  const migration = migrationDdl(runtimeLogsMigrationFile)
+  assert.match(migration, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+runtime_logs/iu)
+  assert.match(
+    migration,
+    /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+runtime_log_retention_state/iu,
+  )
+  assert.match(migration, /runtime log table conflicts with the reviewed columns/iu)
+  assert.match(migration, /runtime log table conflicts with the reviewed received_at default/iu)
+  assert.match(migration, /pg_get_constraintdef/iu)
+  assert.match(migration, /runtime log retention state conflicts with the reviewed columns/iu)
+  assert.match(migration, /runtime log retention state conflicts with the reviewed singleton default/iu)
+  assert.match(migration, /runtime log retention state conflicts with the reviewed constraints/iu)
+  assert.match(migration, /runtime_logs_project_timestamp/iu)
+  assert.match(migration, /runtime_logs_retention/iu)
+  assert.match(migration, /runtime log table conflicts with the reviewed project timestamp index/iu)
+  assert.match(migration, /runtime log table conflicts with the reviewed retention index/iu)
+  assert.match(
+    schemaDdl,
+    /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+runtime_log_retention_state/iu,
+  )
+  assert.equal(
+    prepareMigrationExecution(runtimeLogsMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'runtime-logs'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, runtimeLogsMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'runtime-logs'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'runtime-logs-release',
+    },
+  )
+  assert.equal(production.migrationFile, runtimeLogsMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(packageJson.scripts?.['migrate:preview:runtime-logs'] ?? '', /--migration runtime-logs/u)
+  assert.match(packageJson.scripts?.['migrate:production:runtime-logs'] ?? '', /--migration runtime-logs/u)
+  assert.match(packageJson.scripts?.['test:postgres'] ?? '', /runtime-logs-postgres\.test\.ts/u)
 })
 
 test('round-two records are append-only rather than deleted after resolution', () => {

@@ -35,6 +35,7 @@ files from this folder.
 | `TREASURY_ADDRESS` | Treasury recipient for city fees. |
 | `PAYMENT_CUSTODY_READY` | Must be exactly `1` before hosted payment custody operates. This gates money movement. |
 | `CRON_SECRET` | Bearer secret protecting `/api/internal/payment-recovery`, the five-minute Vercel cron. 32–512 printable characters. |
+| `LOG_DRAIN_SECRET` | HMAC secret protecting `POST /api/internal/log-drain`. It must exactly match the Vercel drain delivery secret and be 64 lowercase hexadecimal characters (32 random bytes). Until this is set and the drain is created, the receiver is dormant. |
 | `LATER_HOLDER_CURSOR_KEY` | Server-only 64-hex key deriving per-resident later-holder cursor tokens. Absent or malformed, that index answers 503. Rotation invalidates outstanding cursors; readers restart from the first page. Preview and production may differ; keep each stable. |
 | `HOSTED_CHAT_SIGNIN_ENABLED` | Staged rollout gate for hosted-chat sign-in. |
 | `IDENTITY_ROTATION_ENABLED` | Staged rollout gate for the rotation door. |
@@ -42,6 +43,140 @@ files from this folder.
 | `HOSTED_CHAT_OAUTH_CLIENTS` | Approved hosted-chat OAuth client registrations. |
 | `HOSTED_CHAT_CIMD_ORIGINS` | Allowed client-ID-metadata-document origins. |
 | `VERCEL`, `VERCEL_ENV`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` is what selects the preview database path above. |
+
+## Runtime log drain (dormant until the operator creates it)
+
+`POST /api/internal/log-drain` is the operator-only receiving half of a Vercel
+NDJSON log drain. It accepts at most 4 MiB and 10,000 nonblank lines per
+delivery, writes valid rows in chunks of 500, stores only the reviewed
+runtime-log fields, strips request query strings, and truncates text before
+writing it to `runtime_logs`. The required Vercel `projectId` is the stable
+value stored in `project`; optional project names cannot split the index.
+Vercel delivery retries are deduplicated by log ID. A durable database claim
+lets only one of the first five-minute cron ticks in each UTC hour delete at
+most 1,000 rows received more than 30 days ago; a purge failure cannot turn a
+successful payment-recovery cron run into a failure. The additive migration is
+a pre-deploy prerequisite; until the drain is created, retention sees an empty
+table and has nothing to delete.
+
+The route fails closed with 503 when `LOG_DRAIN_SECRET` is absent or malformed.
+Normal deliveries require Vercel's lowercase hexadecimal HMAC-SHA1 of the exact
+raw body in `x-vercel-signature`. During drain creation, the endpoint URL carries
+the team's bounded fixed verification code as `?verification=...`; the route
+echoes it in `x-vercel-verify`. It also supports an incoming bounded
+`x-vercel-verify` challenge defensively. A supplied signature must always pass,
+and signed deliveries that retain the fixed verification query are still
+ingested. The route never stores headers, cookies, IP addresses, query strings,
+or unreviewed payload fields.
+
+After this change is reviewed, activate it in this order:
+
+1. Set the same new `LOG_DRAIN_SECRET` in both Vercel projects (or their shared
+   team environment). Generate 32 random bytes as exactly 64 lowercase hex
+   characters in a secret manager; do not reuse `CRON_SECRET`. This fixed shape
+   is safe to place in Vercel's JSON request without hand-escaping. Vercel
+   environment changes apply only to new deployments, so setting it does not
+   activate the currently deployed receiver.
+2. Run `npm run migrate:production:runtime-logs` with the normal production
+   migration identity proofs, acknowledgement, and snapshot settings.
+3. Merge the reviewed PR, or redeploy the city production deployment if the PR
+   was already merged. The city production deployment must be newer than the
+   environment change and must not start until the migration in step 2 passed.
+4. Load the same secret and a Vercel access token into local shell variables
+   through a password manager or the hidden prompts below. Never paste either
+   value into a command or shell history. Replace the three non-secret ID
+   placeholders when prompted:
+
+```bash
+read -rsp 'Vercel access credential> ' VERCEL_ACCESS_TOKEN; printf '\n'
+read -rsp 'Drain HMAC credential> ' LOG_DRAIN_SECRET; printf '\n'
+read -rp 'Vercel team ID (<VERCEL_TEAM_ID>): ' VERCEL_TEAM_ID
+read -rp '1f3d9 project ID (<1F3D9_PROJECT_ID>): ' ONEF3D9_PROJECT_ID
+read -rp '1f3ea project ID (<1F3EA_PROJECT_ID>): ' ONEF3EA_PROJECT_ID
+
+curl --silent --show-error --fail-with-body \
+  --request GET \
+  --config <(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\n' \
+    "https://api.vercel.com/v1/verify-endpoint?teamId=${VERCEL_TEAM_ID}" \
+    "${VERCEL_ACCESS_TOKEN}")
+
+read -rsp 'verificationCode from that response: ' VERCEL_ENDPOINT_VERIFICATION_CODE
+printf '\n'
+```
+
+Then make exactly this one drain-creation `POST`. Bash expands the secrets into
+standard input and a private header pipe, not the command line or shell history:
+
+```bash
+curl --silent --show-error --fail-with-body \
+  --request POST \
+  --config <(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\n' \
+    "https://api.vercel.com/v1/drains?teamId=${VERCEL_TEAM_ID}" \
+    "${VERCEL_ACCESS_TOKEN}") \
+  --header "Content-Type: application/json" \
+  --data-binary @- <<JSON
+  {
+    "name": "1f3d9-and-1f3ea-runtime-logs",
+    "projects": "some",
+    "projectIds": [
+      "${ONEF3D9_PROJECT_ID}",
+      "${ONEF3EA_PROJECT_ID}"
+    ],
+    "filter": {
+      "version": "v2",
+      "filter": {
+        "type": "basic",
+        "log": {
+          "sources": ["lambda", "edge"]
+        },
+        "deployment": {
+          "environments": ["production"]
+        }
+      }
+    },
+    "sampling": [
+      {
+        "type": "head_sampling",
+        "rate": 0,
+        "env": "production",
+        "requestPath": "/api/internal/log-drain"
+      },
+      {
+        "type": "head_sampling",
+        "rate": 1,
+        "env": "production"
+      }
+    ],
+    "schemas": {
+      "log": {
+        "version": "v1"
+      }
+    },
+    "delivery": {
+      "type": "http",
+      "endpoint": "https://1f3d9.com/api/internal/log-drain?verification=${VERCEL_ENDPOINT_VERIFICATION_CODE}",
+      "encoding": "ndjson",
+      "compression": "none",
+      "headers": {},
+      "secret": "${LOG_DRAIN_SECRET}"
+    },
+    "source": {
+      "kind": "self-served"
+    }
+  }
+JSON
+unset VERCEL_ACCESS_TOKEN LOG_DRAIN_SECRET VERCEL_ENDPOINT_VERIFICATION_CODE
+```
+
+This request assumes both projects belong to the same Vercel team. It selects
+production Lambda and Edge runtime logs from both projects. The first ordered
+sampling rule drops the receiver's own invocation logs before the full-rate
+catch-all. The drain must not be created without this exclusion: otherwise each
+delivery can generate another eligible delivery and feed itself. Do not create
+the drain before the migration, environment value, and newer city deployment
+are live; Vercel tests the endpoint during creation and may disable a repeatedly
+failing delivery target. The receiver rejects compressed deliveries, so keep
+`compression` pinned to `none`.
 
 ## Operator variables (never in Vercel; set in the shell when running scripts)
 
