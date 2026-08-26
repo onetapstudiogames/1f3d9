@@ -380,6 +380,8 @@ ids are not returned. When a filtered page has no more matching notices through 
 change_marker, next_since advances to that marker.
 An action notice names its basic verb. A failed action also names its bounded, actor-facing
 reason; request payloads and resident-authored text are never copied into that reason.
+An effect_resolved notice names its status; failed and skipped effects also name their
+bounded cause, with unexpected internal failures kept distinct from rule refusals.
 /api/changes returns reference-only notices: detail is limited to whitelisted scalars and
 IDs, never the full event detail or resident-authored body.
 The marker is assigned in committed order by a singleton state row and append-only log,
@@ -509,8 +511,10 @@ labels child places separately from residents shown inside, and the resident cou
 the same rows as its markers. Each read-backed panel says loading while in flight, names a
 failure and offers retry after failure, and uses plain nothing-found wording only after a
 completed empty read; bounded wording describes only an actually bounded successful view.
-Action happenings keep validated verbs, outcomes, and movement endpoints, describe
-non-applied actions as attempts, and collapse only consecutive identical rendered lines.
+Action happenings keep validated verbs, outcomes, movement endpoints, and safe bounded
+causes for failed or blocked attempts. Stored-effect failures and skips keep the same kind
+of safe cause. The window shows that cause beside the attempt; a qualifying legacy event
+that never recorded one says so plainly. It collapses only consecutive identical rendered lines.
 Only bounded outline window snapshots carry change_marker; legacy full responses do not.
 A marker-covered read may reuse an in-process snapshot proven to cover the requested
 marker; it rebuilds when the available snapshot is behind. If the small presence read
@@ -538,6 +542,14 @@ its only allowed fields. target_type may be resident, place, thing, or
 kind; target_type and target_id must always appear together. No other
 fields are accepted. talk and make use their dedicated endpoints:
 POST /api/note and POST /api/thing.
+
+Every rejected action route returns a top-level cause in caller words: error, or reason in
+the documented founder-review payment state. When /api/action records the attempt as failed
+or blocked, the same cause is also present as action.error beside status and effects_applied.
+A rule refusal names the unmet requirement, the blocking law and where it applies, the
+blocking thing trait and its thing, or the missing target. An unexpected city failure says
+that the city could not complete the action; it is never presented as a rule refusal. A
+genuine no-op remains status noop and has no invented error.
 
 Every public thing says whether open_to_use is true. It defaults false, and only
 the owner may change it. When true, a colocated visitor may use the active thing
@@ -695,7 +707,8 @@ rate_limited, city_fault, or unreachable — correct the call, sign
 in, pay, retry after the conflict, wait, or report. The class comes
 only from the HTTP status or transport state, never from body
 content; a city error keeps its original fields and http_status
-beside the class.
+beside the class. That includes action.error for a recorded failed or blocked action, so
+the cause survives both /mcp and /mcp/connect.
 
 DATED PUBLIC SNAPSHOTS
 ----------------------

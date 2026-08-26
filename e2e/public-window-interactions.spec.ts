@@ -52,7 +52,14 @@ const FAR_WALKER_ACTION_EVENTS = Object.freeze([{
   at: '2026-08-15T12:00:00.000Z',
   kind: 'action',
   actor: 'far-walker',
-  detail: { action_id: 200, action: 'move', status: 'blocked', from_place_id: 12, to_place_id: 77 },
+  detail: {
+    action_id: 200,
+    action: 'move',
+    status: 'blocked',
+    from_place_id: 12,
+    to_place_id: 77,
+    error: 'local law quiet-hours blocks movement into this place',
+  },
 }, {
   id: 99,
   at: '2026-08-15T11:59:00.000Z',
@@ -64,7 +71,61 @@ const FAR_WALKER_ACTION_EVENTS = Object.freeze([{
   at: '2026-08-15T11:58:00.000Z',
   kind: 'action',
   actor: 'far-walker',
-  detail: { action_id: 198, action: 'use', status: 'failed', place_id: 77 },
+  detail: {
+    action_id: 198,
+    action: 'use',
+    status: 'failed',
+    place_id: 77,
+    error: 'this recipe needs a lit trait in this place',
+  },
+}, {
+  id: 97,
+  at: '2026-08-15T11:57:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: {
+    action_id: 197,
+    action: 'use',
+    status: 'failed',
+    place_id: 77,
+    error: 'the target thing is missing from this place',
+  },
+}, {
+  id: 96,
+  at: '2026-08-15T11:56:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 196, action: 'use', status: 'failed', place_id: 77 },
+}, {
+  id: 95,
+  at: '2026-08-15T11:55:00.000Z',
+  kind: 'effect_resolved',
+  actor: 'far-walker',
+  detail: {
+    effect_id: 195,
+    status: 'failed',
+    error: 'the stored target thing no longer exists',
+  },
+}, {
+  id: 94,
+  at: '2026-08-15T11:54:00.000Z',
+  kind: 'effect_resolved',
+  actor: 'far-walker',
+  detail: {
+    effect_id: 194,
+    status: 'skipped',
+    error: 'the stored source thing no longer exists',
+  },
+}, {
+  id: 93,
+  at: '2026-08-15T11:53:00.000Z',
+  kind: 'effect_resolved',
+  actor: 'far-walker',
+  detail: {
+    effect_id: 193,
+    status: 'applied',
+    error: 'must not appear for an applied stored effect',
+  },
 }])
 
 const SNAPSHOT = Object.freeze({
@@ -1158,7 +1219,7 @@ for (const environment of WINDOW_BEHAVIOR_MATRIX) {
     await expect(activity).toContainText(
       /far-walker.*\bmove(?:d)?\b.*from .*inner_hall.*to .*quiet_annex/i,
     )
-    await expect(activity.locator('.activity-row')).toHaveCount(6)
+    await expect(activity.locator('.activity-row')).toHaveCount(11)
     const repeatCount = activity.locator('.activity-count')
     await expect(repeatCount).toHaveCount(1)
     await expect(repeatCount).toHaveText('· 3 times')
@@ -2377,15 +2438,91 @@ test('action happenings keep their verb and movement and collapse only consecuti
     /far-walker.*\bmove(?:d)?\b.*from .*inner_hall.*to .*quiet_annex/i,
   )
   await expect.soft(activity).toContainText(
-    /far-walker.*tried to move from .*inner_hall.*to .*quiet_annex.*blocked/i,
+    /far-walker.*tried to move from .*inner_hall.*to .*quiet_annex.*blocked.*local law quiet-hours blocks movement into this place/i,
   )
   await expect.soft(activity).toContainText(
     /far-walker.*tried to go home from .*quiet_annex.*to .*root_plaza.*no change/i,
   )
-  await expect.soft(activity).toContainText(/far-walker.*tried to use.*failed/i)
+  await expect.soft(activity).toContainText(
+    /far-walker.*tried to use.*failed.*this recipe needs a lit trait in this place/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*tried to use.*failed.*the target thing is missing from this place/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*tried to use.*failed.*no cause was recorded/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*resolved a stored effect.*failed.*the stored target thing no longer exists/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*resolved a stored effect.*skipped.*the stored source thing no longer exists/i,
+  )
+  await expect.soft(activity).not.toContainText('must not appear for an applied stored effect')
   await expect.soft(activity).not.toContainText('acted in the city')
-  await expect.soft(activity.locator('.activity-row')).toHaveCount(6)
+  await expect.soft(activity.locator('.activity-row')).toHaveCount(11)
   await expect.soft(activity.locator('.activity-count')).toHaveText('· 3 times')
+})
+
+test('unsafe and overlong recorded causes stay distinct and honest in the window', async ({ page }) => {
+  const overlongCause = `${'x'.repeat(500)}hidden cause tail`
+  await page.route('**/api/events**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+    return route.fulfill({
+      json: {
+        events: [{
+          id: 302,
+          at: '2026-08-15T12:12:00.000Z',
+          kind: 'action',
+          actor: 'far-walker',
+          detail: {
+            action_id: 402, action: 'use', status: 'failed', place_id: 77,
+            error: overlongCause,
+          },
+        }, {
+          id: 301,
+          at: '2026-08-15T12:11:00.000Z',
+          kind: 'action',
+          actor: 'far-walker',
+          detail: {
+            action_id: 401, action: 'use', status: 'failed', place_id: 77,
+            error: 'unsafe\u0007cause',
+          },
+        }, {
+          id: 300,
+          at: '2026-08-15T12:10:00.000Z',
+          kind: 'action',
+          actor: 'far-walker',
+          detail: { action_id: 400, action: 'use', status: 'failed', place_id: 77 },
+        }],
+        has_more: false,
+        next_before_id: null,
+        change_marker: '20',
+      },
+    })
+  })
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  const happeningsRequest = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
+      response.status() === 200
+  })
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+  await happeningsRequest
+
+  const activity = page.locator('#activity-list')
+  await expect(activity.locator('.activity-row')).toHaveCount(3)
+  await expect(activity).toContainText('the recorded cause could not be shown safely')
+  await expect(activity).toContainText('no cause was recorded')
+  const truncatedRow = activity.locator('.activity-row').filter({ hasText: 'x'.repeat(40) })
+  await expect(truncatedRow).toHaveCount(1)
+  const copy = await truncatedRow.locator('.activity-copy').textContent()
+  const cause = copy?.match(/ — (.*)\.$/u)?.[1]
+  expect(cause).toHaveLength(500)
+  expect(cause?.endsWith('…')).toBe(true)
+  expect(cause).not.toContain('hidden cause tail')
 })
 
 test('Decision 46 separates loading, retryable failure, and completed empty reads', async ({ page }) => {
