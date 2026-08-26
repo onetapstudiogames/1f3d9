@@ -94,6 +94,13 @@ function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Pr
   return { ...environment, ...overrides }
 }
 
+function finalNonEmptyLine(output: string): string | undefined {
+  return output
+    .split(/\r?\n/u)
+    .filter(line => line.trim().length > 0)
+    .at(-1)
+}
+
 function waitMilliseconds(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
@@ -428,6 +435,11 @@ test('preparation proves a clean GitHub branch and runs every local gate without
   const result = fixture.run()
 
   assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.equal(
+    finalNonEmptyLine(result.stdout),
+    `GATE_EXIT=${result.status}`,
+    'the final non-empty stdout line must report the captured process status',
+  )
   assert.match(result.stdout, /did not deploy/i)
   assert.match(result.stdout, /merge[^\n]*main/i)
   const commands = readFileSync(fixture.commandLog, 'utf8')
@@ -442,6 +454,11 @@ test('dirty or not-pushed work stops before any preparation gate', t => {
   writeFileSync(join(dirty.root, 'untracked.txt'), 'not reviewed\n')
   const dirtyResult = dirty.run()
   assert.notEqual(dirtyResult.status, 0)
+  assert.equal(
+    finalNonEmptyLine(dirtyResult.stdout),
+    `GATE_EXIT=${dirtyResult.status}`,
+    'the final non-empty stdout line must report the captured dirty-worktree status',
+  )
   assert.match(`${dirtyResult.stdout}\n${dirtyResult.stderr}`, /worktree.*clean/i)
   assert.equal(existsSync(dirty.commandLog), false)
 
@@ -452,6 +469,11 @@ test('dirty or not-pushed work stops before any preparation gate', t => {
   unpushed.git('commit', '-q', '-m', 'unpushed')
   const unpushedResult = unpushed.run()
   assert.notEqual(unpushedResult.status, 0)
+  assert.equal(
+    finalNonEmptyLine(unpushedResult.stdout),
+    `GATE_EXIT=${unpushedResult.status}`,
+    'the final non-empty stdout line must report the captured unpushed-branch status',
+  )
   assert.match(`${unpushedResult.stdout}\n${unpushedResult.stderr}`, /pushed.*origin/i)
   assert.equal(existsSync(unpushed.commandLog), false)
 })
@@ -1025,6 +1047,7 @@ test('payment attempts are an explicitly selected additive release', () => {
   assert.match(uncommented, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+payment_attempts/i)
   assert.match(uncommented, /public_id\s+TEXT\s+PRIMARY\s+KEY/i)
   assert.match(uncommented, /status\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(status\s+IN\s*\(\s*'settling',\s*'payment_pending',\s*'completed',\s*'invalid',\s*'expired',\s*'needs_review',\s*'legacy_completed'\s*\)\)/i)
+  assert.match(uncommented, /ADD\s+CONSTRAINT\s+payment_attempts_status_check\s+CHECK\s*\(status\s+IN\s*\(\s*'settling',\s*'payment_pending',\s*'completed',\s*'invalid',\s*'expired',\s*'needs_review',\s*'founder_review',\s*'legacy_completed',\s*'credit_returned'\s*\)\)/i)
   assert.match(uncommented, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_x402_nonce/i)
   assert.match(uncommented, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_one_live_target/i)
   assert.match(uncommented, /INSERT\s+INTO\s+payment_attempts/i)

@@ -163,7 +163,7 @@ ALTER TABLE payment_attempts
 ALTER TABLE payment_attempts
   ADD CONSTRAINT payment_attempts_status_check CHECK (status IN (
     'settling', 'payment_pending', 'completed', 'invalid', 'expired',
-    'needs_review', 'legacy_completed'
+    'needs_review', 'founder_review', 'legacy_completed', 'credit_returned'
   ));
 
 DO $$
