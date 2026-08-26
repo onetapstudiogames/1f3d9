@@ -532,7 +532,7 @@ function publicWindowEvent(value: unknown) {
   const rawDetail = row.detail && typeof row.detail === 'object'
     ? row.detail as Record<string, unknown>
     : {}
-  const detail: Record<string, number | string> = Object.fromEntries(SAFE_DETAIL_IDS.flatMap(key => {
+  const detail: Record<string, number | string | boolean> = Object.fromEntries(SAFE_DETAIL_IDS.flatMap(key => {
     const safe = positiveInteger(rawDetail[key])
     return safe ? [[key, safe] as const] : []
   }))
@@ -555,11 +555,15 @@ function publicWindowEvent(value: unknown) {
   }
   if (carriesFailureCause && Object.hasOwn(rawDetail, 'error')) {
     const error = safePublicText(rawDetail.error, WINDOW_EVENT_ERROR_LIMIT + 1)
-    detail.error = error
-      ? error.truncated || error.text.length > WINDOW_EVENT_ERROR_LIMIT
+    if (error) {
+      const truncated = error.truncated || error.text.length > WINDOW_EVENT_ERROR_LIMIT
+      detail.error = truncated
         ? `${error.text.slice(0, WINDOW_EVENT_ERROR_LIMIT - 1)}…`
         : error.text
-      : WINDOW_UNSAFE_EVENT_ERROR
+      if (truncated) detail.error_truncated = true
+    } else {
+      detail.error = WINDOW_UNSAFE_EVENT_ERROR
+    }
   }
   return { id, at, kind, actor, detail }
 }

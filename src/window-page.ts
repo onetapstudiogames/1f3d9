@@ -72,10 +72,11 @@ export const WINDOW_HTML = `<!doctype html>
   </section>
 
   <main id="city-main" class="window-frame" tabindex="-1">
+    <h1 class="window-title">The City Window</h1>
     <section id="map-panel" class="view-panel" role="tabpanel" aria-labelledby="map-tab">
       <header class="panel-heading map-heading">
         <p class="eyebrow">Live civic atlas</p>
-        <h1>Who is standing where</h1>
+        <h2>Who is standing where</h2>
         <p>Places nest inside places. Loaded resident markers show the current bounded public view.</p>
       </header>
       <div class="map-layout">

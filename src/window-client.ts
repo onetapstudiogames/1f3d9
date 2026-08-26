@@ -9,6 +9,25 @@ import {
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
+export function parseWindowSleeperPlaceIds(
+  value: string | null,
+  maximumLength = 8_192,
+): number[] {
+  if (typeof value !== 'string' || !value || value.length > maximumLength) return []
+  const ids: number[] = []
+  const seen = new Set<number>()
+  for (const token of value.split(',')) {
+    if (!/^[1-9]\d*$/u.test(token)) return []
+    const id = Number(token)
+    if (!Number.isSafeInteger(id)) return []
+    if (!seen.has(id)) {
+      seen.add(id)
+      ids.push(id)
+    }
+  }
+  return ids
+}
+
 export function mergeWindowRows<T extends Readonly<{ id: number }>>(
   current: readonly T[],
   incoming: readonly T[],
@@ -67,6 +86,14 @@ export type WindowDirectorySearchResult = Readonly<{
   value: string
   label: string
   detail: string
+}>
+
+export type WindowDirectorySearchPage = Readonly<{
+  results: readonly WindowDirectorySearchResult[]
+  total: number
+  placeCount: number
+  residentCount: number
+  hasMore: boolean
 }>
 
 export function windowDirectoryPlaceScopeIds(
@@ -260,6 +287,24 @@ export function searchWindowDirectory(
     .map(candidate => candidate.result)
 }
 
+export function pageWindowDirectorySearch(
+  places: readonly WindowDirectoryPlaceWithPath[],
+  residents: readonly WindowDirectoryResident[],
+  query: string,
+  limit = 20,
+): WindowDirectorySearchPage {
+  const matches = searchWindowDirectory(places, residents, query, Number.MAX_SAFE_INTEGER)
+  const safeLimit = Math.max(0, Math.floor(limit))
+  const placeCount = matches.filter(result => result.kind === 'place').length
+  return Object.freeze({
+    results: Object.freeze(matches.slice(0, safeLimit)),
+    total: matches.length,
+    placeCount,
+    residentCount: matches.length - placeCount,
+    hasMore: matches.length > safeLimit,
+  })
+}
+
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const BASIC_ACTIONS_JSON = JSON.stringify(BASIC_ACTIONS)
@@ -270,7 +315,9 @@ const WINDOW_PLACE_LABEL_JS = windowPlaceLabel.toString()
 const DERIVE_WINDOW_DIRECTORY_PLACES_JS = deriveWindowDirectoryPlaces.toString()
 const LIST_WINDOW_DIRECTORY_PLACES_JS = listWindowDirectoryPlaces.toString()
 const SEARCH_WINDOW_DIRECTORY_JS = searchWindowDirectory.toString()
+const PAGE_WINDOW_DIRECTORY_SEARCH_JS = pageWindowDirectorySearch.toString()
 const WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS = windowDirectoryPlaceScopeIds.toString()
+const PARSE_WINDOW_SLEEPER_PLACE_IDS_JS = parseWindowSleeperPlaceIds.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -297,7 +344,9 @@ export const WINDOW_JS = `(() => {
   const deriveWindowDirectoryPlaces = ${DERIVE_WINDOW_DIRECTORY_PLACES_JS}
   const listWindowDirectoryPlaces = ${LIST_WINDOW_DIRECTORY_PLACES_JS}
   const searchWindowDirectory = ${SEARCH_WINDOW_DIRECTORY_JS}
+  const pageWindowDirectorySearch = ${PAGE_WINDOW_DIRECTORY_SEARCH_JS}
   const windowDirectoryPlaceScopeIds = ${WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS}
+  const parseWindowSleeperPlaceIds = ${PARSE_WINDOW_SLEEPER_PLACE_IDS_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -345,6 +394,7 @@ export const WINDOW_JS = `(() => {
   let branchRefreshOffset = 0
   let navigationRevision = 0
   let authoredRevision = 0
+  let archiveRequestRevision = 0
   let state = {
     failures: 0,
     refreshing: false,
@@ -438,17 +488,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function setStatus(message, tone) {
     if (!nodes.status) return
-    nodes.status.textContent = message
-    nodes.status.dataset.tone = tone
+    if (nodes.status.textContent !== message) nodes.status.textContent = message
+    if (nodes.status.dataset.tone !== tone) nodes.status.dataset.tone = tone
+    if (nodes.status.dataset.statusMessage) delete nodes.status.dataset.statusMessage
   }
 
   function renderGlobalReadRetry(message, tone) {
     if (nodes.status) {
+      if (
+        nodes.status.dataset.statusMessage === message &&
+        nodes.status.dataset.tone === tone &&
+        nodes.status.querySelector('.global-read-retry')
+      ) return
       const retry = element('button', 'global-read-retry', 'Retry reading the public city view')
       retry.type = 'button'
       retry.dataset.focusKey = 'global-read-retry'
       retry.addEventListener('click', () => void refreshCity())
       nodes.status.dataset.tone = tone
+      nodes.status.dataset.statusMessage = message
       nodes.status.replaceChildren(document.createTextNode(message + ' '), retry)
     }
   }
@@ -558,16 +615,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const rawResults = Array.isArray(payload.results)
       ? payload.results
       : Array.isArray(payload.items) ? payload.items : []
-    const results = rawResults.map(normalizeArchiveResult).filter(Boolean).slice(0, 25)
+    if (rawResults.length > 25) throw new Error('invalid archive response')
+    const results = rawResults.map(normalizeArchiveResult)
+    if (results.some(result => !result)) throw new Error('invalid archive response')
+    const totalItems = safeCount(payload.total_items ?? payload.totalItems)
+    if (payload.returned_items !== results.length || totalItems < results.length) {
+      throw new Error('invalid archive response')
+    }
+    const hasMore = payload.has_more === true || payload.hasMore === true
     const nextBefore = safeArchiveCursor(payload.next_before ?? payload.nextBefore)
+    if (hasMore !== Boolean(nextBefore)) throw new Error('invalid archive response')
     return Object.freeze({
       results,
-      totalItems: safeCount(payload.total_items ?? payload.totalItems),
+      totalItems,
       totalTextBytes: safeCount(
         payload.total_text_bytes ?? payload.total_body_bytes ??
           payload.totalTextBytes ?? payload.totalBodyBytes,
       ),
-      hasMore: payload.has_more === true || payload.hasMore === true,
+      hasMore,
       nextBefore,
     })
   }
@@ -671,7 +736,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderArchivePage(archive)
   }
 
-  async function loadArchive(reset) {
+  async function loadArchive(reset, fromLocation = false) {
     if (state.archive.loading) return
     const requestAuthoredRevision = authoredRevision
     const formQuery = reset
@@ -693,6 +758,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.archiveQuery?.focus()
       return
     }
+    const requestArchiveRevision = ++archiveRequestRevision
     const previous = state.archive
     state = {
       ...state,
@@ -707,6 +773,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         error: null,
       },
     }
+    if (reset) writeHash(!fromLocation)
     renderArchive()
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -731,7 +798,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         throw error
       }
       const page = normalizeArchivePayload(await response.json())
-      if (authoredRevision !== requestAuthoredRevision) return
+      if (
+        authoredRevision !== requestAuthoredRevision ||
+        archiveRequestRevision !== requestArchiveRevision
+      ) return
       const combined = new Map()
       for (const result of reset ? [] : previous.results) {
         combined.set(result.type + ':' + String(result.id), result)
@@ -753,7 +823,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         },
       }
     } catch (error) {
-      if (authoredRevision !== requestAuthoredRevision) return
+      if (
+        authoredRevision !== requestAuthoredRevision ||
+        archiveRequestRevision !== requestArchiveRevision
+      ) return
       state = {
         ...state,
         archive: {
@@ -960,11 +1033,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       if (carriesFailureCause && Object.hasOwn(source, 'error')) {
         const error = safeText(source.error, null, EVENT_ERROR_LIMIT + 1, false)
-        detail.error = error
-          ? error.length > EVENT_ERROR_LIMIT
+        if (error) {
+          const truncated = source.error_truncated === true || error.length > EVENT_ERROR_LIMIT
+          detail.error = error.length > EVENT_ERROR_LIMIT
             ? error.slice(0, EVENT_ERROR_LIMIT - 1) + '…'
             : error
-          : UNSAFE_EVENT_ERROR
+          if (truncated) detail.error_truncated = true
+        } else {
+          detail.error = UNSAFE_EVENT_ERROR
+        }
       }
       return [{ id, actor, kind: raw.kind, verb, at, detail }]
     })
@@ -1613,11 +1690,37 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const params = new URLSearchParams(window.location.hash.slice(1))
     const view = params.get('view')
     const resident = safeHandle(params.get('resident'))
+    const query = safeText(params.get('q'), '', 256, false)
+    const mode = safeArchiveChoice(params.get('mode'), ['words', 'phrase'], 'words')
+    const type = safeArchiveChoice(params.get('type'), ['all', 'note', 'thing'], 'all')
+    const directorySearch = safeText(params.get('find'), '', 100, false)
+    const sleeperPlaceIds = parseWindowSleeperPlaceIds(params.get('sleepers'))
+    const archiveChanged = query !== state.archive.query || mode !== state.archive.mode ||
+      type !== state.archive.type
     return {
       view: VIEWS.includes(view) ? view : 'map',
       placeId: safeId(params.get('place')),
       resident,
       conversationContext: Boolean(resident && params.get('context') === 'place'),
+      directorySearch,
+      directorySearchIndex: directorySearch ? 0 : -1,
+      sleeperPlaceIds,
+      archive: archiveChanged
+        ? {
+            ...state.archive,
+            query,
+            mode,
+            type,
+            results: [],
+            totalItems: 0,
+            totalTextBytes: 0,
+            nextBefore: null,
+            hasMore: false,
+            loading: false,
+            initialized: false,
+            error: null,
+          }
+        : state.archive,
     }
   }
 
@@ -1627,6 +1730,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.placeId) params.set('place', String(state.placeId))
     if (state.resident) params.set('resident', state.resident)
     if (state.resident && state.conversationContext) params.set('context', 'place')
+    if (state.directorySearch) params.set('find', state.directorySearch)
+    const sleeperPlaceIds = [...new Set(state.sleeperPlaceIds)].sort((left, right) => left - right)
+    if (sleeperPlaceIds.length) params.set('sleepers', sleeperPlaceIds.join(','))
+    if (state.archive.query) {
+      params.set('q', state.archive.query)
+      params.set('mode', state.archive.mode)
+      params.set('type', state.archive.type)
+    }
     return '#' + params.toString()
   }
 
@@ -1649,6 +1760,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
     writeHash(!rovingTabActivation)
     renderAll()
     void ensureFocusedSelection()
+  }
+
+  function syncArchiveControls() {
+    if (nodes.archiveQuery) nodes.archiveQuery.value = state.archive.query
+    if (nodes.archiveMode) nodes.archiveMode.value = state.archive.mode
+    if (nodes.archiveType) nodes.archiveType.value = state.archive.type
+  }
+
+  function loadSharedArchiveQuestion() {
+    if (
+      state.view === 'archive' && state.archive.query &&
+      !state.archive.initialized && !state.archive.loading
+    ) void loadArchive(true, true)
   }
 
   function activeSelectionKey() {
@@ -1676,16 +1800,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return {
       places: displayedDirectoryPlaces(snapshot),
       residents: state.directory.loaded ? state.directory.residents : snapshot.residents,
+      complete: state.directory.loaded,
     }
   }
 
-  function directorySearchRows(snapshot) {
+  function directorySearchPage(snapshot) {
     const sources = directorySearchSources(snapshot)
-    return searchWindowDirectory(
+    return pageWindowDirectorySearch(
       sources.places,
       sources.residents,
       state.directorySearch,
     )
+  }
+
+  function directorySearchRows(snapshot) {
+    return directorySearchPage(snapshot).results
   }
 
   function closeDirectorySearchResults() {
@@ -1714,25 +1843,48 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const sources = directorySearchSources(snapshot)
     const query = state.directorySearch.trim()
-    const results = directorySearchRows(snapshot)
-    const placeCount = results.filter(result => result.kind === 'place').length
-    const residentCount = results.length - placeCount
+    const page = directorySearchPage(snapshot)
+    const results = page.results
+    const fallbackNotice = state.directory.error
+      ? ' The complete city directory is unavailable, so more citywide matches may exist.'
+      : ' The complete city directory is still loading, so more citywide matches may exist.'
     if (!query) {
-      nodes.directorySearchStatus.textContent = String(sources.places.length) +
+      nodes.directorySearchStatus.textContent = (sources.complete ? '' : 'Currently loaded fallback: ') +
+        String(sources.places.length) +
         (sources.places.length === 1 ? ' place and ' : ' places and ') +
         String(sources.residents.length) +
-        (sources.residents.length === 1 ? ' resident available.' : ' residents available.')
+        (sources.residents.length === 1 ? ' resident available.' : ' residents available.') +
+        (sources.complete ? '' : fallbackNotice)
       nodes.directorySearchResults.replaceChildren()
       closeDirectorySearchResults()
       return
     }
 
-    nodes.directorySearchStatus.textContent = String(results.length) +
-      (results.length === 1 ? ' result: ' : ' results: ') +
-      String(placeCount) + (placeCount === 1 ? ' place and ' : ' places and ') +
-      String(residentCount) + (residentCount === 1 ? ' resident.' : ' residents.')
+    nodes.directorySearchStatus.textContent = sources.complete
+      ? page.hasMore
+        ? 'Showing the first ' + String(results.length) + ' of ' + String(page.total) +
+          ' exact matches: ' + String(page.placeCount) +
+          (page.placeCount === 1 ? ' place and ' : ' places and ') +
+          String(page.residentCount) +
+          (page.residentCount === 1 ? ' resident. ' : ' residents. ') +
+          'Narrow this search or use the complete selectors to reach every match.'
+        : String(page.total) + (page.total === 1 ? ' result: ' : ' results: ') +
+          String(page.placeCount) + (page.placeCount === 1 ? ' place and ' : ' places and ') +
+          String(page.residentCount) +
+          (page.residentCount === 1 ? ' resident.' : ' residents.')
+      : (page.hasMore
+          ? 'Showing the first ' + String(results.length) + ' of ' + String(page.total) +
+            ' matches in the currently loaded fallback: '
+          : String(page.total) + (page.total === 1
+              ? ' result in the currently loaded fallback: '
+              : ' results in the currently loaded fallback: ')) +
+        String(page.placeCount) + (page.placeCount === 1 ? ' place and ' : ' places and ') +
+        String(page.residentCount) +
+        (page.residentCount === 1 ? ' resident.' : ' residents.') + fallbackNotice
     if (!results.length) {
-      const empty = element('div', 'directory-search-empty', 'No places or residents match this search.')
+      const empty = element('div', 'directory-search-empty', sources.complete
+        ? 'No places or residents match this search.'
+        : 'No places or residents in the currently loaded fallback match this search.' + fallbackNotice)
       empty.setAttribute('role', 'option')
       empty.setAttribute('aria-disabled', 'true')
       nodes.directorySearchResults.replaceChildren(empty)
@@ -1828,6 +1980,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? focusedResident(state.resident) ||
         snapshot.residents.find(resident => resident.handle === state.resident)
       : null
+  }
+
+  function residentPresentationKey(snapshot) {
+    return JSON.stringify(snapshot?.residents || [])
   }
 
   function directoryResident(handle) {
@@ -1986,6 +2142,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? state.sleeperPlaceIds.filter(id => id !== placeId)
       : [...state.sleeperPlaceIds, placeId]
     state = { ...state, sleeperPlaceIds }
+    writeHash(true)
     if (state.snapshot) renderAll()
   }
 
@@ -3105,12 +3262,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
           : event.detail.status)
       }
       if (event.detail.status === 'blocked' || event.detail.status === 'failed') {
-        description += ' — ' + (event.detail.error || 'no cause was recorded')
+        description += ' — ' + eventCause(event.detail)
       }
     } else if (event.kind === 'effect_resolved' && event.detail.status) {
       description += ' · ' + event.detail.status
       if (event.detail.status === 'skipped' || event.detail.status === 'failed') {
-        description += ' — ' + (event.detail.error || 'no cause was recorded')
+        description += ' — ' + eventCause(event.detail)
       }
     }
     return Object.freeze({
@@ -3118,6 +3275,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       location,
       key: event.actor + '|' + description + '|' + String(location || ''),
     })
+  }
+
+  function eventCause(detail) {
+    const cause = detail.error || 'no cause was recorded'
+    return detail.error_truncated
+      ? cause + ' (cause excerpt; the rest is not shown in this window)'
+      : cause
   }
 
   function collapseActivity(events, snapshot) {
@@ -4178,9 +4342,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const hadSnapshot = state.hasSnapshot
     const navigationRevisionAtStart = navigationRevision
     state = { ...state, refreshing: true }
-    setStatus(state.hasSnapshot
-      ? 'Loading an updated public city view…'
-      : 'Loading the current public city view…', 'working')
+    if (!state.hasSnapshot) setStatus('Loading the current public city view…', 'working')
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     let nextDelay = BASE_REFRESH_MS
@@ -4201,6 +4363,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
             setStatus('Watching the public streets', 'live')
             return
           }
+          const residentPresentationChanged =
+            residentPresentationKey({ residents }) !== residentPresentationKey(state.snapshot)
+          if (!residentPresentationChanged) {
+            state = {
+              ...state,
+              changeMarker: changeState.marker,
+              failures: 0,
+            }
+            setStatus('Watching the public streets', 'live')
+            return
+          }
           const snapshot = Object.freeze({
             ...state.snapshot,
             residents,
@@ -4216,7 +4389,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           populateFilters(snapshot)
           renderAll()
           void ensureFocusedSelection({ forceResident: true })
-          setStatus('Watching · no persisted changes', 'live')
+          setStatus('Watching the public streets', 'live')
           return
         } catch {
           // Presence is time-derived. If its small read fails, continue into a
@@ -4265,15 +4438,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       populateFilters(snapshot)
       renderAll()
+      loadSharedArchiveQuestion()
       if (hadSnapshot && replaceAuthored &&
           (state.directory.loaded || state.directory.error) && !state.directory.loading) {
         void loadDirectory(true)
       }
       void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
       refreshFilteredViews()
-      setStatus(snapshot.refreshedAt ? 'Watching · checked ' + snapshot.refreshedAt.toLocaleTimeString([], {
-        hour: 'numeric', minute: '2-digit',
-      }) : 'Watching the public streets', 'live')
+      setStatus('Watching the public streets', 'live')
     } catch {
       const failures = state.failures + 1
       state = { ...state, failures }
@@ -4326,6 +4498,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       directorySearch: String(nodes.directorySearch.value || '').slice(0, 100),
       directorySearchIndex: 0,
     }
+    writeHash(false)
     if (state.snapshot) renderDirectorySearch(state.snapshot, true)
   })
   nodes.directorySearch?.addEventListener('focus', () => {
@@ -4341,6 +4514,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       event.preventDefault()
       nodes.directorySearch.value = ''
       state = { ...state, directorySearch: '', directorySearchIndex: -1 }
+      writeHash(false)
       if (state.snapshot) renderDirectorySearch(state.snapshot, false)
       return
     }
@@ -4387,9 +4561,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     void loadArchive(true)
   })
   function syncStateFromLocation() {
-    state = { ...state, ...readHashState() }
+    const nextLocationState = readHashState()
+    if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
+    state = { ...state, ...nextLocationState }
+    syncArchiveControls()
     renderAll()
     void ensureFocusedSelection()
+    loadSharedArchiveQuestion()
   }
   window.addEventListener('hashchange', syncStateFromLocation)
   window.addEventListener('popstate', syncStateFromLocation)
@@ -4400,6 +4578,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   })
 
   state = { ...state, ...readHashState() }
+  syncArchiveControls()
   renderView()
   writeHash()
   void loadDirectory(false)

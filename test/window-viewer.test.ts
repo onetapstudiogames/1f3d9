@@ -8,6 +8,37 @@ import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
 import { PUBLIC_CREDENTIAL_REDACTION } from '../src/credential-safety.ts'
 
+function hexRgb(value: string): [number, number, number] {
+  const match = /^#([0-9a-f]{6})$/iu.exec(value)
+  assert.ok(match, `expected a six-digit hex color, received ${value}`)
+  const hex = match[1]!
+  return [0, 2, 4].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16)) as
+    [number, number, number]
+}
+
+function colorContrast(left: string, right: string): number {
+  const luminance = (value: string) => {
+    const channels = hexRgb(value).map(channel => {
+      const normalized = channel / 255
+      return normalized <= 0.04045
+        ? normalized / 12.92
+        : ((normalized + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!
+  }
+  const leftLuminance = luminance(left)
+  const rightLuminance = luminance(right)
+  const bright = Math.max(leftLuminance, rightLuminance)
+  const dark = Math.min(leftLuminance, rightLuminance)
+  return (bright + 0.05) / (dark + 0.05)
+}
+
+function cssVariable(name: string): string {
+  const match = new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'iu').exec(WINDOW_CSS)
+  assert.ok(match, `expected --${name} in the window stylesheet`)
+  return match[1]!
+}
+
 test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /role="tablist"/)
   for (const view of ['map', 'place', 'conversations', 'happenings', 'agreements']) {
@@ -46,6 +77,77 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_JS, /fetch\(url\.pathname/)
   assert.doesNotMatch(WINDOW_JS, /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i)
   assert.doesNotThrow(() => new Function(WINDOW_JS))
+})
+
+test('the share link round-trips every reproducible window question', () => {
+  for (const parameter of [
+    'view', 'place', 'resident', 'context', 'q', 'mode', 'type', 'find', 'sleepers',
+  ]) {
+    assert.match(WINDOW_JS, new RegExp(`params\\.(?:get|set)\\('${parameter}'`))
+  }
+  assert.match(WINDOW_JS, /nodes\.archiveQuery\.value = state\.archive\.query/)
+  assert.match(WINDOW_JS, /nodes\.archiveMode\.value = state\.archive\.mode/)
+  assert.match(WINDOW_JS, /nodes\.archiveType\.value = state\.archive\.type/)
+  assert.match(WINDOW_JS, /state\.view === 'archive'[\s\S]{0,240}loadArchive\(true, true\)/)
+  assert.match(WINDOW_JS, /loadArchive\(true, true\)/)
+  assert.match(WINDOW_JS, /directorySearch[^\n]*params\.set\('find'/)
+  assert.doesNotMatch(
+    WINDOW_JS,
+    /params\.get\('sleepers'\)[\s\S]{0,160}\.slice\(/,
+    'sleeper expansions must not be silently capped while restoring a share link',
+  )
+})
+
+test('shared sleeper expansions reject malformed or oversized state without a silent row cap', () => {
+  const exports = windowClientModule as unknown as Record<string, unknown>
+  assert.equal(typeof exports.parseWindowSleeperPlaceIds, 'function')
+  const parse = exports.parseWindowSleeperPlaceIds as (value: string | null) => number[]
+  const currentPlaceIds = Array.from({ length: 405 }, (_, index) => index + 1)
+
+  assert.deepEqual(parse(currentPlaceIds.join(',')), currentPlaceIds)
+  assert.deepEqual(parse('1,2,2,3'), [1, 2, 3])
+  assert.deepEqual(parse('1,,3'), [])
+  assert.deepEqual(parse('1,not-an-id,3'), [])
+  assert.deepEqual(parse('9'.repeat(8_193)), [])
+})
+
+test('every active panel has one shared page heading and compliant window primitives', () => {
+  const main = WINDOW_HTML.match(/<main id="city-main"[\s\S]*?<\/main>/u)?.[0] ?? ''
+  assert.match(main, /<h1 class="window-title">The City Window<\/h1>/)
+  assert.equal((main.match(/<h1\b/gu) ?? []).length, 1)
+  for (const panel of ['map', 'place', 'conversations', 'happenings', 'agreements', 'archive']) {
+    const content = main.match(new RegExp(`<section id="${panel}-panel"[\\s\\S]*?<\\/section>`))?.[0] ?? ''
+    assert.match(content, /<h2\b/)
+    assert.doesNotMatch(content, /<h1\b/)
+  }
+
+  assert.ok(colorContrast(cssVariable('muted'), cssVariable('paper')) >= 4.5)
+  const focusBands = [cssVariable('focus'), cssVariable('focus-dark')]
+  const palette = new Set(
+    [...WINDOW_CSS.matchAll(/#[0-9a-f]{3}(?:[0-9a-f]{3})?\b/giu)].map(match => {
+      const color = match[0].toLowerCase()
+      return color.length === 4
+        ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+        : color
+    }),
+  )
+  for (const surface of palette) {
+    assert.ok(
+      Math.max(...focusBands.map(indicator => colorContrast(indicator, surface))) >= 3,
+      `one focus band must meet 3:1 against ${surface}`,
+    )
+  }
+  assert.match(WINDOW_CSS, /:focus-visible\s*\{[\s\S]*?outline:[\s\S]*?box-shadow:/)
+  assert.match(WINDOW_CSS, /\.place-watch, \.resident-follow\s*\{[\s\S]*?min-width:\s*24px;[\s\S]*?min-height:\s*24px;/)
+  assert.match(WINDOW_CSS, /\.window-title\s*\{[\s\S]*?clip-path:\s*inset\(50%\)/)
+})
+
+test('the status live region changes only when its state changes', () => {
+  assert.match(WINDOW_JS, /if \(nodes\.status\.textContent !== message\) nodes\.status\.textContent = message/)
+  assert.match(WINDOW_JS, /if \(nodes\.status\.dataset\.tone !== tone\) nodes\.status\.dataset\.tone = tone/)
+  assert.match(WINDOW_JS, /Watching the public streets/)
+  assert.doesNotMatch(WINDOW_JS, /Watching · (?:checked|no persisted changes)/)
+  assert.doesNotMatch(WINDOW_JS, /setStatus\([^)]*Loading an updated public city view/)
 })
 
 test('the live window distinguishes its current bounded view from dated public snapshots', () => {
@@ -219,6 +321,9 @@ test('public action happenings preserve meaning and collapse only consecutive re
 test('the /api/window route carries honest bounded causes without exporting its private shaper', () => {
   assert.equal(Object.hasOwn(windowModule, 'publicWindowEvent'), false)
   const rows = [
+    { id: 12, kind: 'action', detail: {
+      action_id: 112, action: 'use', status: 'failed', error: 'y'.repeat(500),
+    } },
     { id: 11, kind: 'effect_resolved', detail: {
       effect_id: 111, status: 'skipped', error: 'the stored source thing no longer exists',
     } },
@@ -305,6 +410,9 @@ test('the /api/window route carries honest bounded causes without exporting its 
   assert.equal(String(detail(7).error).length, 500)
   assert.equal(String(detail(7).error).endsWith('…'), true)
   assert.equal(detail(7).error, `${'x'.repeat(499)}…`)
+  assert.equal(detail(7).error_truncated, true)
+  assert.equal(detail(12).error, 'y'.repeat(500))
+  assert.equal(detail(12).error_truncated, undefined)
   assert.equal(detail(6).error, 'the recorded cause could not be shown safely')
   assert.equal(detail(5).error, undefined)
   for (const id of [4, 3, 2, 1]) assert.equal(detail(id).error, undefined)
@@ -629,6 +737,49 @@ test('every printed handle is followable, not only the roster', () => {
   }
   assert.match(WINDOW_CSS, /\.resident-follow-inline/)
   assert.match(WINDOW_CSS, /\.resident-follow-inline:focus-visible/)
+})
+
+test('directory search keeps a bounded menu and reports its exact total', () => {
+  const exports = windowClientModule as unknown as Record<string, unknown>
+  assert.equal(typeof exports.pageWindowDirectorySearch, 'function')
+  const pageSearch = exports.pageWindowDirectorySearch as (
+    places: Array<{ id: number, name: string, path: string }>,
+    residents: Array<{ id: number, handle: string }>,
+    query: string,
+    limit?: number,
+  ) => {
+    results: Array<{ kind: string }>
+    total: number
+    placeCount: number
+    residentCount: number
+    hasMore: boolean
+  }
+  const places = Array.from({ length: 21 }, (_, index) => ({
+    id: index + 1,
+    name: `room-${index + 1}`,
+    path: `world / room-${index + 1}`,
+  }))
+
+  const atBound = pageSearch(places.slice(0, 20), [], 'room', 20)
+  assert.deepEqual({
+    shown: atBound.results.length,
+    total: atBound.total,
+    places: atBound.placeCount,
+    residents: atBound.residentCount,
+    hasMore: atBound.hasMore,
+  }, { shown: 20, total: 20, places: 20, residents: 0, hasMore: false })
+
+  const pastBound = pageSearch(places, [], 'room', 20)
+  assert.deepEqual({
+    shown: pastBound.results.length,
+    total: pastBound.total,
+    places: pastBound.placeCount,
+    residents: pastBound.residentCount,
+    hasMore: pastBound.hasMore,
+  }, { shown: 20, total: 21, places: 21, residents: 0, hasMore: true })
+  assert.match(WINDOW_JS, /Showing the first /)
+  assert.match(WINDOW_JS, /currently loaded fallback/)
+  assert.match(WINDOW_JS, /more citywide matches may exist/)
 })
 
 test('thing cards and Archive results name maker and current owner separately', () => {
