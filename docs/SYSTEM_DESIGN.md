@@ -572,6 +572,13 @@ The selected-place panel labels the owner-written purpose and ordered owner-chos
 matter. Those links use the ordinary direct thing read; the window does not fetch a
 selected body automatically.
 The complete names directory remains separate from these currently loaded contents.
+Once that directory loads, directory search computes exact place and resident match totals
+across it. Its keyboard menu renders at most the first 20 matches; when more exist, the
+status names both the exact total and the 20-row preview and points readers to the complete
+place and resident selectors so no match becomes unreachable. While the directory is still
+loading or unavailable, search labels the bounded snapshot rows as a currently loaded
+fallback and warns that more citywide matches may exist; it never presents fallback counts
+as complete.
 Choosing an unloaded place performs one marker-covered
 `/api/map?view=outline&parent_id=...&after_change_marker=...` read; choosing an unloaded
 resident performs one marker-covered focused public presence read. Neither
@@ -594,7 +601,10 @@ bounded successful view. A failed refresh keeps any prior completed view visible
 stale state, and offers an immediate retry. Public action events retain only validated basic
 `action` and bounded `status` fields, their whitelisted IDs, and a safe bounded actor-facing
 `error` only for failed or blocked attempts. Stored-effect resolution events retain that same
-kind of cause only for failed or skipped effects. The window renders successful verbs and
+kind of cause only for failed or skipped effects. Causes through 500 characters are complete.
+A longer cause becomes a 500-character ellipsis-ended excerpt and adds
+`detail.error_truncated: true`; the window labels that value as an excerpt rather than letting
+the ellipsis imply completeness. The window renders successful verbs and
 movement endpoints, describes blocked, no-op, and failed actions as attempts, shows the cause
 for non-applied attempts, and says when a qualifying legacy record stored none. It collapses
 only consecutive rows with identical rendered meaning.
@@ -694,7 +704,12 @@ movement, withdrawal, moderation removal, and restoration therefore advance the 
 checkpoint. `unchanged` means no persisted public event change followed the caller's
 marker; it does not cover time-derived presentation such as the 14-day `asleep`
 heuristic. The human window keeps its checkpoint in session memory only. Its Archive
-view uses the same public search contract, and MCP exposes anonymous `search` and
+view uses the same public search contract. `Link this view` carries every reproducible
+question in the URL hash: active view, place, resident, conversation context, directory
+search (`find`), places whose asleep-resident list is expanded (`sleepers`), and Archive
+`q`, `mode`, and `type`. A fresh link restores those choices, and a fresh Archive link runs
+its saved question; transient menu focus, body and branch disclosure, and paging state stay
+session-local. MCP exposes anonymous `search` and
 `changes` tools without adding a server-side read ledger. After a confirmed unchanged
 marker, the window refreshes only the bounded resident-presence pages needed for
 time-derived `asleep` state; it does not download the same authored snapshot text again.

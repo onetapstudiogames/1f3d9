@@ -7,7 +7,7 @@ export const WINDOW_CSS = `:root {
   --paper: #e9e0c5;
   --paper-light: #fff9e8;
   --ink: #15231d;
-  --muted: #5f695f;
+  --muted: #555e55;
   --brick: #ad3f25;
   --brick-deep: #712413;
   --signal: #f0c95f;
@@ -15,6 +15,7 @@ export const WINDOW_CSS = `:root {
   --line: #20382f;
   --paper-line: #9d9276;
   --focus: #fff19b;
+  --focus-dark: #092d22;
   --cursor-tint: #d7e5dc;
   --content: 82rem;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -130,7 +131,7 @@ button { color: inherit; }
   text-underline-offset: 0.2em;
 }
 .global-read-retry:hover { color: var(--forest-deep); }
-.global-read-retry:focus-visible { outline: 3px solid var(--forest-deep); outline-offset: 2px; }
+.global-read-retry:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .window-guide-links {
   grid-column: 1 / -1;
   display: flex;
@@ -338,7 +339,18 @@ button { color: inherit; }
   box-shadow: 11px 11px 0 rgba(0, 0, 0, 0.46);
   animation: instrument-on 340ms 60ms ease-out both;
 }
-.window-frame:focus { outline: none; }
+.window-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .view-panel { animation: panel-in 170ms ease-out both; }
 .panel-heading {
   position: relative;
@@ -376,6 +388,7 @@ button { color: inherit; }
   z-index: 1;
   max-width: 50rem;
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: clamp(2.15rem, 5vw, 4.6rem);
   line-height: 0.9;
 }
@@ -415,6 +428,10 @@ button { color: inherit; }
   overflow-wrap: anywhere;
 }
 .place-watch, .resident-follow {
+  display: inline-flex;
+  align-items: center;
+  min-width: 24px;
+  min-height: 24px;
   width: fit-content;
   padding: 0;
   color: var(--forest-deep);
@@ -439,7 +456,7 @@ button { color: inherit; }
   font-size: 0.65rem;
   font-weight: 850;
 }
-.place-disclosure:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.place-disclosure:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .branch-page {
   display: grid;
   justify-items: start;
@@ -465,7 +482,7 @@ button { color: inherit; }
   opacity: 0.72;
 }
 .branch-page button:focus-visible, .navigation-page button:focus-visible {
-  outline: 3px solid var(--signal);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .place-owner { color: var(--forest); font-size: 0.75rem; font-weight: 750; }
@@ -515,7 +532,7 @@ button { color: inherit; }
   border: 1px dashed var(--forest);
   cursor: pointer;
 }
-.sleeper-toggle:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.sleeper-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 .roster-board {
   min-width: 0;
@@ -603,7 +620,7 @@ button { color: inherit; }
   font-size: 0.68rem;
   font-weight: 850;
 }
-.body-disclosure:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.body-disclosure:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .body-availability { margin: 0; color: var(--muted); font-size: 0.66rem; line-height: 1.45; }
 .body-full-link { color: var(--forest-deep); font-weight: 850; }
 /* A followable handle wherever one is printed, not only in the roster. */
@@ -620,7 +637,7 @@ button { color: inherit; }
   cursor: pointer;
 }
 .resident-follow-inline:hover { color: var(--brick-deep); }
-.resident-follow-inline:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.resident-follow-inline:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .trait-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .trait-chip { color: var(--paper-light); background: var(--brick-deep); }
 .trait-chip[data-moderated="true"] { color: var(--ink); background: var(--signal); }
@@ -662,6 +679,9 @@ button { color: inherit; }
   box-shadow: inset 0 -3px 0 var(--forest-deep);
 }
 .conversation-mode-button:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
+.conversation-mode-button[aria-pressed="true"]:focus-visible {
+  box-shadow: inset 0 -3px 0 var(--forest-deep), 0 0 0 3px var(--focus-dark);
+}
 .conversation-stream { padding: clamp(0.8rem, 2.5vw, 1.4rem); }
 .conversation-group { display: grid; grid-template-columns: minmax(11rem, 0.3fr) minmax(0, 1fr); gap: 1rem; padding: 1.15rem 0; border-bottom: 3px solid var(--line); }
 .conversation-group:first-child { padding-block-start: 0; }
@@ -794,7 +814,7 @@ button { color: inherit; }
   opacity: 0.65;
   cursor: wait;
 }
-.history-page button:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.history-page button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 .loading-row, .empty-row, .error-row { padding: 1rem; color: var(--muted); font-size: 0.72rem; line-height: 1.55; }
 .history-page { padding: 0.2rem clamp(0.8rem, 2.5vw, 1.4rem) 1.25rem; }
@@ -827,7 +847,11 @@ button { color: inherit; }
 .window-footer p { margin: 0; }
 .window-footer nav { display: flex; flex-wrap: wrap; justify-content: end; gap: 0.75rem 1rem; }
 
-:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
+:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--focus-dark);
+}
 @keyframes instrument-on {
   from { opacity: 0; transform: translateY(0.45rem); }
   to { opacity: 1; transform: translateY(0); }

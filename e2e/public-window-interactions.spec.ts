@@ -7,6 +7,7 @@ const LONG_NOTE = `Opening note. ${'The square keeps a careful public record for
 const LONG_THING = `Opening inscription. ${'The lantern carries a line that should remain readable. '.repeat(14)}Closing thing marker.`
 const LONG_AGREEMENT = `Opening agreement. ${'Every signer can inspect this shared promise in the window. '.repeat(22)}Closing agreement marker.`
 const FITTING_DOCTORS_NOTE = 'Doctors Note — Dr. Glass Pacific Hospital (303, under 81/country after necessity) — rounds check-in: reviewed 6 newest notes (latest 5915 prior Doctors Note 2026-08-22T23:00Z, 5505 prior Doctors Note, 5260 2026-08-21T22:18Z ferro binary “gears turn in ones and zeros” — last seen). No new resident notes since prior rounds. No care need observed. Rounds continue. — Dr. Glass'
+const LONG_PLACE_NAME = 'n'.repeat(64)
 
 const WINDOW_BEHAVIOR_MATRIX = Object.freeze([
   { name: 'phone light', width: 390, height: 844, colorScheme: 'light' as const },
@@ -16,6 +17,32 @@ const WINDOW_BEHAVIOR_MATRIX = Object.freeze([
   { name: 'desktop light', width: 1_440, height: 900, colorScheme: 'light' as const },
   { name: 'desktop dark', width: 1_440, height: 900, colorScheme: 'dark' as const },
 ])
+
+function cssColorChannels(value: string): [number, number, number, number] {
+  const color = value.match(/rgba?\(([^)]*)\)/u)?.[1] ?? value
+  const channels = color.match(/[\d.]+/gu)?.map(Number) ?? []
+  expect(channels.length).toBeGreaterThanOrEqual(3)
+  return [channels[0]!, channels[1]!, channels[2]!, channels[3] ?? 1]
+}
+
+function contrastRatio(left: string, right: string): number {
+  const rightChannels = cssColorChannels(right)
+  const leftChannels = cssColorChannels(left)
+  const composite = leftChannels.slice(0, 3).map((channel, index) =>
+    channel * leftChannels[3] + rightChannels[index]! * (1 - leftChannels[3]))
+  const luminance = (channels: number[]) => {
+    const linear = channels.map(channel => {
+      const normalized = channel / 255
+      return normalized <= 0.04045
+        ? normalized / 12.92
+        : ((normalized + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!
+  }
+  const [bright, dark] = [luminance(composite), luminance(rightChannels.slice(0, 3))]
+    .sort((a, b) => b - a)
+  return (bright + 0.05) / (dark + 0.05)
+}
 
 const FAR_WALKER_ACTION_EVENTS = Object.freeze([{
   id: 105,
@@ -291,6 +318,14 @@ const DIRECTORY_REFRESHED = Object.freeze({
   ],
 })
 
+const FALLBACK_SEARCH_RESIDENTS = Object.freeze(Array.from({ length: 21 }, (_, index) => ({
+  id: 100 + index,
+  handle: `fallback-${String(index + 1).padStart(2, '0')}`,
+  current_place_id: null,
+  asleep: false,
+  joined_at: '2026-08-14T12:00:00.000Z',
+})))
+
 const FOCUSED_PLACE = Object.freeze({
   view: 'outline',
   change_marker: '20',
@@ -555,9 +590,26 @@ test.beforeEach(async ({ page }, testInfo) => {
     }
     const collection = url.searchParams.get('collection')
     if (!collection) {
-      const snapshot = testInfo.title.includes('focused resident completes presence')
+      const snapshot = testInfo.title.includes('fallback search as incomplete')
+        ? {
+            ...SNAPSHOT,
+            residents: FALLBACK_SEARCH_RESIDENTS,
+            totals: { ...SNAPSHOT.totals, residents: 30 },
+            shown: { ...SNAPSHOT.shown, residents: FALLBACK_SEARCH_RESIDENTS.length },
+            pages: {
+              ...SNAPSHOT.pages,
+              residents: { has_more: true, next_before_id: FALLBACK_SEARCH_RESIDENTS.at(-1)?.id },
+            },
+          }
+        : testInfo.title.includes('focused resident completes presence')
         ? { ...SNAPSHOT, totals: { ...SNAPSHOT.totals, residents: 2 } }
-        : SNAPSHOT
+        : testInfo.title.includes('directory filter and sleeper visibility')
+          ? {
+              ...SNAPSHOT,
+              residents: [...SNAPSHOT.residents, RESIDENT_PAGE.residents[1]],
+              shown: { ...SNAPSHOT.shown, residents: 2 },
+            }
+          : SNAPSHOT
       return route.fulfill({ json: snapshot })
     }
     if (collection === 'notes') {
@@ -599,6 +651,14 @@ test.beforeEach(async ({ page }, testInfo) => {
           json: {
             ...FOCUSED_PLACE,
             place: { ...FOCUSED_PLACE.place, name: 'focus_fresh_annex' },
+          },
+        })
+      }
+      if (testInfo.title.includes('long selected place heading')) {
+        return route.fulfill({
+          json: {
+            ...FOCUSED_PLACE,
+            place: { ...FOCUSED_PLACE.place, name: LONG_PLACE_NAME },
           },
         })
       }
@@ -1024,6 +1084,25 @@ test('complete directory selection loads one focused place and its inside conten
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
 })
 
+test('long selected place heading wraps inside its existing panel', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator('#place-filter').selectOption('77')
+  await page.getByRole('tab', { name: 'Place' }).click()
+
+  const title = page.locator('#place-focus-title')
+  await expect(title).toHaveText(LONG_PLACE_NAME)
+  const dimensions = await title.evaluate(node => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+    title: node.getBoundingClientRect().toJSON(),
+    panel: node.closest('.panel-heading')?.getBoundingClientRect().toJSON(),
+  }))
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth)
+  expect(dimensions.panel).toBeTruthy()
+  expect(dimensions.title.left).toBeGreaterThanOrEqual(dimensions.panel!.left)
+  expect(dimensions.title.right).toBeLessThanOrEqual(dimensions.panel!.right)
+})
+
 test('focused place occupants name the missing narrow presence read without widening it', async ({ page }) => {
   await page.locator('#place-filter').selectOption('77')
   await page.getByRole('tab', { name: 'Place' }).click()
@@ -1161,10 +1240,77 @@ test('complete resident selection uses one focused presence read and a directory
     .toHaveLength(1)
 })
 
+test('Link this view restores the directory filter and sleeper visibility', async ({ page }) => {
+  const sleeper = page.locator('.sleeper-toggle').first()
+  await expect(sleeper).toBeVisible()
+  await sleeper.click()
+  await expect(sleeper).toHaveAttribute('aria-expanded', 'true')
+
+  const directorySearch = page.locator('#directory-search')
+  await directorySearch.fill('quiet annex')
+  const shareHash = await page.locator('#share-view').getAttribute('href')
+  expect(shareHash).toContain('find=quiet+annex')
+  expect(shareHash).toMatch(/(?:^|&)sleepers=\d+/u)
+
+  await page.goto(`/window${shareHash}`)
+  await expect(directorySearch).toHaveValue('quiet annex')
+  await expect(page.locator('.sleeper-toggle[aria-expanded="true"]').first()).toBeVisible()
+})
+
 for (const environment of WINDOW_BEHAVIOR_MATRIX) {
   test(`all four observation fixes hold in the window behavior matrix: ${environment.name}`, async ({ page }) => {
     await page.setViewportSize({ width: environment.width, height: environment.height })
     await page.emulateMedia({ colorScheme: environment.colorScheme })
+
+    await expect(page.getByRole('heading', { level: 1, name: 'The City Window' })).toHaveCount(1)
+    await expect(page.getByRole('heading', { level: 2, name: 'Who is standing where' })).toBeVisible()
+
+    const placeWatch = page.locator('.place-watch').first()
+    const residentFollow = page.locator('#resident-roster .resident-follow').first()
+    for (const target of [placeWatch, residentFollow]) {
+      const box = await target.boundingBox()
+      expect.soft(Math.round((box?.width ?? 0) * 100) / 100).toBeGreaterThanOrEqual(24)
+      expect.soft(Math.round((box?.height ?? 0) * 100) / 100).toBeGreaterThanOrEqual(24)
+    }
+    await placeWatch.focus()
+    const lightFocusColors = await placeWatch.evaluate(element => ({
+      indicator: getComputedStyle(element).outlineColor,
+      innerBand: getComputedStyle(element).boxShadow,
+      surface: getComputedStyle(element.closest('.place-card') as Element).backgroundColor,
+    }))
+    expect.soft(Math.max(
+      contrastRatio(lightFocusColors.indicator, lightFocusColors.surface),
+      contrastRatio(lightFocusColors.innerBand, lightFocusColors.surface),
+    ))
+      .toBeGreaterThanOrEqual(3)
+    await residentFollow.focus()
+    const darkFocusColors = await residentFollow.evaluate(element => ({
+      indicator: getComputedStyle(element).outlineColor,
+      innerBand: getComputedStyle(element).boxShadow,
+      surface: getComputedStyle(element.closest('.roster-board') as Element).backgroundColor,
+    }))
+    expect.soft(Math.max(
+      contrastRatio(darkFocusColors.indicator, darkFocusColors.surface),
+      contrastRatio(darkFocusColors.innerBand, darkFocusColors.surface),
+    ))
+      .toBeGreaterThanOrEqual(3)
+    const mutedColors = await page.evaluate(() => {
+      const target = document.querySelector('.place-map')
+      if (!target) throw new Error('place map is missing')
+      const textProbe = document.createElement('p')
+      textProbe.className = 'empty-row'
+      const surfaceProbe = document.createElement('span')
+      surfaceProbe.style.color = 'var(--paper)'
+      target.append(textProbe, surfaceProbe)
+      const colors = {
+        text: getComputedStyle(textProbe).color,
+        surface: getComputedStyle(surfaceProbe).color,
+      }
+      textProbe.remove()
+      surfaceProbe.remove()
+      return colors
+    })
+    expect.soft(contrastRatio(mutedColors.text, mutedColors.surface)).toBeGreaterThanOrEqual(4.5)
 
     let releaseAgreements!: () => void
     const heldAgreements = new Promise<void>(resolve => { releaseAgreements = resolve })
@@ -1213,7 +1359,39 @@ for (const environment of WINDOW_BEHAVIOR_MATRIX) {
     await expect.soft(quietAnnexFacts).toContainText(/\b0 places inside\b/u)
     await expect.soft(quietAnnexFacts).toContainText(/\b1 resident shown inside\b/u)
 
+    await page.getByRole('tab', { name: 'Conversations' }).click()
+    const pressedConversationMode = page.locator(
+      '.conversation-mode-button[aria-pressed="true"]',
+    )
+    await expect(pressedConversationMode).toBeVisible()
+    const unfocusedConversationBands = await page.locator('#conversation-mode').evaluate(surface => {
+      const element = surface.querySelector('.conversation-mode-button[aria-pressed="true"]')
+      if (!element) throw new Error('pressed conversation mode is missing')
+      return getComputedStyle(element).boxShadow.match(/rgba?\([^)]*\)/gu) ?? []
+    })
+    await page.keyboard.press('Tab')
+    const conversationFocusColors = await page.locator('#conversation-mode').evaluate(surface => {
+      const element = surface.querySelector('.conversation-mode-button[aria-pressed="true"]')
+      if (!element) throw new Error('pressed conversation mode is missing')
+      ;(element as HTMLElement).focus()
+      const style = getComputedStyle(element)
+      return {
+        indicator: style.outlineColor,
+        shadowBands: style.boxShadow.match(/rgba?\([^)]*\)/gu) ?? [],
+        surface: getComputedStyle(surface).backgroundColor,
+      }
+    })
+    expect.soft(conversationFocusColors.shadowBands.length)
+      .toBeGreaterThan(unfocusedConversationBands.length)
+    expect.soft(Math.max(
+      contrastRatio(conversationFocusColors.indicator, conversationFocusColors.surface),
+      ...conversationFocusColors.shadowBands.slice(unfocusedConversationBands.length).map(color =>
+        contrastRatio(color, conversationFocusColors.surface)),
+    )).toBeGreaterThanOrEqual(3)
+
     await page.getByRole('tab', { name: 'Happenings' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: 'The City Window' })).toHaveCount(1)
+    await expect(page.getByRole('heading', { level: 2, name: 'Recent happenings' })).toBeVisible()
     const activity = page.locator('#activity-list')
     await expect(activity).toContainText(/far-walker.*\buse(?:d)?\b.*(?:3\s+times|×\s*3)/i)
     await expect(activity).toContainText(
@@ -1684,6 +1862,19 @@ test('directory failure is accessible and retryable without hiding the loaded fa
     'Complete city directory: 3 places and 2 residents',
   )
   await expect(page.locator('#place-filter')).toContainText('quiet_annex')
+})
+
+test('directory failure labels bounded fallback search as incomplete', async ({ page }) => {
+  await expect(page.locator('#directory-status[role="alert"]')).toContainText(
+    /complete city directory could not be loaded/i,
+  )
+  await page.locator('#directory-search').fill('fallback')
+
+  const status = page.locator('#directory-search-status')
+  await expect(status).toContainText('Showing the first 20 of 21')
+  await expect(status).toContainText('currently loaded fallback')
+  await expect(status).toContainText('more citywide matches may exist')
+  await expect(status).not.toContainText(/exact|complete selectors/i)
 })
 
 test('refresh reloads the complete directory and a focused unloaded place after authored changes', async ({ page }) => {
@@ -2466,12 +2657,22 @@ test('action happenings keep their verb and movement and collapse only consecuti
 
 test('unsafe and overlong recorded causes stay distinct and honest in the window', async ({ page }) => {
   const overlongCause = `${'x'.repeat(500)}hidden cause tail`
+  const exactCause = 'y'.repeat(500)
   await page.route('**/api/events**', route => {
     const url = new URL(route.request().url())
     if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
     return route.fulfill({
       json: {
         events: [{
+          id: 303,
+          at: '2026-08-15T12:13:00.000Z',
+          kind: 'action',
+          actor: 'far-walker',
+          detail: {
+            action_id: 403, action: 'use', status: 'failed', place_id: 77,
+            error: exactCause,
+          },
+        }, {
           id: 302,
           at: '2026-08-15T12:12:00.000Z',
           kind: 'action',
@@ -2513,16 +2714,18 @@ test('unsafe and overlong recorded causes stay distinct and honest in the window
   await happeningsRequest
 
   const activity = page.locator('#activity-list')
-  await expect(activity.locator('.activity-row')).toHaveCount(3)
+  await expect(activity.locator('.activity-row')).toHaveCount(4)
   await expect(activity).toContainText('the recorded cause could not be shown safely')
   await expect(activity).toContainText('no cause was recorded')
   const truncatedRow = activity.locator('.activity-row').filter({ hasText: 'x'.repeat(40) })
   await expect(truncatedRow).toHaveCount(1)
-  const copy = await truncatedRow.locator('.activity-copy').textContent()
-  const cause = copy?.match(/ — (.*)\.$/u)?.[1]
-  expect(cause).toHaveLength(500)
-  expect(cause?.endsWith('…')).toBe(true)
-  expect(cause).not.toContain('hidden cause tail')
+  await expect(truncatedRow).toContainText('cause excerpt; the rest is not shown in this window')
+  await expect(truncatedRow).toContainText(`${'x'.repeat(499)}…`)
+  await expect(truncatedRow).not.toContainText('hidden cause tail')
+  const exactRow = activity.locator('.activity-row').filter({ hasText: 'y'.repeat(40) })
+  await expect(exactRow).toHaveCount(1)
+  await expect(exactRow).toContainText(exactCause)
+  await expect(exactRow).not.toContainText('cause excerpt')
 })
 
 test('Decision 46 separates loading, retryable failure, and completed empty reads', async ({ page }) => {
@@ -2930,6 +3133,149 @@ test('Archive finds an old body-free result and follows its opaque continuation'
     .toHaveCount(2)
 })
 
+test('Archive rejects an incomplete page without its promised continuation', async ({ page }) => {
+  await page.route('**/api/search**', route => route.fulfill({
+    json: {
+      results: [{
+        type: 'note', id: 41, place_id: 11, author: 'leafwalker',
+        body_text_bytes: 21, created_at: '2026-08-14T10:00:00.000000Z',
+      }],
+      total_items: 2,
+      total_text_bytes: 42,
+      returned_items: 1,
+      returned_text_bytes: 0,
+      has_more: true,
+      next_before: null,
+      change_marker: '20',
+    },
+  }))
+
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('missing cursor')
+  await page.locator('#archive-search').click()
+
+  await expect(page.locator('#archive-results')).toContainText('Search could not be loaded')
+  await expect(page.locator('#archive-results').getByRole('button', { name: 'Retry search' }))
+    .toBeVisible()
+  await expect(page.locator('#archive-results')).not.toContainText('Public note #41')
+})
+
+test('Link this view restores and automatically runs the Archive question', async ({ page }) => {
+  const requests: URL[] = []
+  await page.route('**/api/search**', route => {
+    const url = new URL(route.request().url())
+    requests.push(url)
+    return route.fulfill({
+      json: {
+        query: url.searchParams.get('q'),
+        mode: url.searchParams.get('mode'),
+        type: url.searchParams.get('type'),
+        results: [{
+          type: 'thing', id: 31, place_id: 11, name: 'shared_hush_lantern',
+          owner_id: 7, owner: 'leafwalker', open_to_use: true,
+          body_text_bytes: 52, created_at: '2026-08-14T10:00:00.000000Z',
+          href: '/api/thing/31',
+        }],
+        total_items: 1,
+        total_text_bytes: 52,
+        returned_items: 1,
+        returned_text_bytes: 0,
+        has_more: false,
+        next_before: null,
+        change_marker: '20',
+      },
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('hush lantern')
+  await page.locator('#archive-mode').selectOption('phrase')
+  await page.locator('#archive-type').selectOption('thing')
+  await page.locator('#archive-search').click()
+  await expect(page.locator('#archive-results')).toContainText('shared_hush_lantern')
+
+  const shareHash = await page.locator('#share-view').getAttribute('href')
+  expect(shareHash).toBe('#view=archive&q=hush+lantern&mode=phrase&type=thing')
+  expect(page.url()).toContain(shareHash)
+
+  const restoredSearch = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'hush lantern'
+  })
+  await page.goto(`/window${shareHash}`)
+  await restoredSearch
+
+  await expect(page.locator('#archive-query')).toHaveValue('hush lantern')
+  await expect(page.locator('#archive-mode')).toHaveValue('phrase')
+  await expect(page.locator('#archive-type')).toHaveValue('thing')
+  await expect(page.locator('#archive-results')).toContainText('shared_hush_lantern')
+  await expect(page.locator('#share-view')).toHaveAttribute('href', shareHash ?? '')
+  expect(requests).toHaveLength(2)
+})
+
+test('Archive hash navigation cannot be overwritten by an older search response', async ({ page }) => {
+  let releaseFirst!: () => void
+  let markFirstStarted!: () => void
+  const heldFirst = new Promise<void>(resolve => { releaseFirst = resolve })
+  const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve })
+  await page.route('**/api/search**', async route => {
+    const url = new URL(route.request().url())
+    const query = url.searchParams.get('q') ?? ''
+    if (query === 'first question') {
+      markFirstStarted()
+      await heldFirst
+    }
+    return route.fulfill({
+      json: {
+        query,
+        mode: url.searchParams.get('mode'),
+        type: url.searchParams.get('type'),
+        results: [{
+          type: 'note', id: query === 'first question' ? 41 : 42, place_id: 11,
+          author_id: 7, author: 'leafwalker',
+          body: query === 'first question' ? 'STALE FIRST RESULT' : 'CURRENT SECOND RESULT',
+          body_text_bytes: 21, created_at: '2026-08-14T10:00:00.000000Z',
+          href: query === 'first question' ? '/api/note/41' : '/api/note/42',
+        }],
+        total_items: 1,
+        total_text_bytes: 21,
+        returned_items: 1,
+        returned_text_bytes: 21,
+        has_more: false,
+        next_before: null,
+        change_marker: '20',
+      },
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('first question')
+  await page.locator('#archive-search').click()
+  await firstStarted
+
+  const secondRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'second question'
+  })
+  await page.evaluate(() => {
+    window.location.hash = '#view=archive&q=second+question&mode=words&type=note'
+  })
+  await secondRequest
+  await expect(page.locator('#archive-results')).toContainText('Public note #42')
+
+  const firstResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'first question'
+  })
+  releaseFirst()
+  await firstResponse
+  await page.evaluate(() => new Promise<void>(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  await expect(page.locator('#archive-results')).toContainText('Public note #42')
+  await expect(page.locator('#archive-results')).not.toContainText('Public note #41')
+})
+
 test('a confirmed unchanged return refreshes presence without reloading authored text', async ({ page }) => {
   await page.getByRole('tab', { name: 'Place' }).click()
   await expect(page.locator('#place-conversation')).toContainText('Opening note.')
@@ -2947,17 +3293,39 @@ test('a confirmed unchanged return refreshes presence without reloading authored
 
   const windowReadsBeforeUnchanged = (API_REQUESTS.get(page) ?? [])
     .filter(value => new URL(value).pathname === '/api/window').length
-  const unchangedRequest = page.waitForRequest(request => {
-    const url = new URL(request.url())
+  const unchangedResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
     return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
   })
-  const presenceRequest = page.waitForRequest(request => {
-    const url = new URL(request.url())
+  const presenceResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
     return url.pathname === '/api/residents' && url.searchParams.get('view') === 'presence'
   })
+  await page.evaluate(() => {
+    const liveRegions = [...document.querySelectorAll('[aria-live], [role="status"]')]
+    if (!liveRegions.length) throw new Error('window live regions are missing')
+    const tracked = window as typeof window & { __windowLiveMutations?: Record<string, number> }
+    tracked.__windowLiveMutations = Object.fromEntries(liveRegions.map((region, index) => [
+      region.id || `live-region-${index}`,
+      0,
+    ]))
+    for (const [index, region] of liveRegions.entries()) {
+      const key = region.id || `live-region-${index}`
+      new MutationObserver(records => {
+        const counts = tracked.__windowLiveMutations ?? {}
+        counts[key] = (counts[key] ?? 0) + records.length
+      }).observe(region, { attributes: true, childList: true, characterData: true, subtree: true })
+    }
+  })
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-  await Promise.all([unchangedRequest, presenceRequest])
-  await expect(page.locator('#window-status')).toContainText('no persisted changes')
+  await Promise.all([unchangedResponse, presenceResponse])
+  await page.evaluate(() => new Promise<void>(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  await expect(page.locator('#window-status')).toHaveText('Watching the public streets')
+  expect(await page.evaluate(() => Object.entries((
+    window as typeof window & { __windowLiveMutations?: Record<string, number> }
+  ).__windowLiveMutations ?? {}).filter(([, count]) => count !== 0))).toEqual([])
 
   const windowReadsAfterUnchanged = (API_REQUESTS.get(page) ?? [])
     .filter(value => new URL(value).pathname === '/api/window').length

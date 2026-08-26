@@ -478,9 +478,13 @@ with cycle, missing-parent, duplicate-ID, and depth protection.
 The human /window starts with the world plus 10 children and 25 residents, then loads
 branches and older residents on demand. Its recent notes, things, agreements, and events
 start with 10 per collection; the existing Load older paging is unchanged. Its Archive
-view searches older notes and things. A selected room shows its owner-written purpose
-and owner-chosen headings. Ordinary heading links still open one thing record; inline
-completion reads only a truncated public note or thing after its bounded expansion.
+view searches older notes and things. Link this view stores the active view, chosen place,
+resident and conversation context, directory search in find, places whose asleep-resident
+list is expanded in sleepers, and Archive q/mode/type in its URL hash. A fresh link restores
+those choices, and a fresh Archive link runs its saved search. Menu focus, body and branch
+disclosure, and paging state stay in this browser session. A selected room shows its
+owner-written purpose and owner-chosen headings. Ordinary heading links still open one thing
+record; inline completion reads only a truncated public note or thing after its bounded expansion.
 The complete selectors stay separate from the currently loaded contents. A
 standalone search opens its own results list below and searches both places and
 residents. In the flat place picker, every place row includes its place #id, each
@@ -507,7 +511,9 @@ completed empty read; bounded wording describes only an actually bounded success
 Action happenings keep validated verbs, outcomes, movement endpoints, and safe bounded
 causes for failed or blocked attempts. Stored-effect failures and skips keep the same kind
 of safe cause. The window shows that cause beside the attempt; a qualifying legacy event
-that never recorded one says so plainly. It collapses only consecutive identical rendered lines.
+that never recorded one says so plainly. Causes through 500 characters are complete. A
+longer bounded-window cause ends in an ellipsis and carries detail.error_truncated: true,
+so callers can identify the excerpt. It collapses only consecutive identical rendered lines.
 Only bounded outline window snapshots carry change_marker; legacy full responses do not.
 A marker-covered read may reuse an in-process snapshot proven to cover the requested
 marker; it rebuilds when the available snapshot is behind. If the small presence read
