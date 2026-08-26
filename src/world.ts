@@ -59,9 +59,10 @@ import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { cachedPublicMapOutline, readPublicMapOutline } from './public-map.ts'
 import {
-  loadPublicChangeCheckpoint,
   parsePublicChangeMarker,
   PublicChangeFutureError,
+  PublicChangeReadConflictError,
+  readAtStablePublicChangeCheckpoint,
 } from './public-changes.ts'
 import {
   loadPublicPlaceFrontMatter,
@@ -194,17 +195,32 @@ export function mountWorldRoutes(app: Hono): void {
       if (afterMarkerValue.value !== null && minimumMarker === null) {
         return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
       }
+      let outline: Awaited<ReturnType<typeof readPublicMapOutline>>
       let changeMarker: string | null = null
-      if (minimumMarker !== null) {
-        changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
-        if (BigInt(minimumMarker) > BigInt(changeMarker)) {
-          return err(c, 409, new PublicChangeFutureError(minimumMarker, changeMarker).message)
+      try {
+        if (minimumMarker === null) {
+          outline = await cachedPublicMapOutline(parentId, page.cursor, page.limit)
+        } else {
+          const stable = await readAtStablePublicChangeCheckpoint(
+            executePublicQuery,
+            minimumMarker,
+            () => readPublicMapOutline(parentId, page.cursor, page.limit),
+          )
+          outline = stable.value
+          changeMarker = stable.changeMarker
         }
+      } catch (error) {
+        if (error instanceof PublicChangeFutureError ||
+            error instanceof PublicChangeReadConflictError) {
+          return err(c, 409, error.message)
+        }
+        throw error
       }
-      const outline = minimumMarker === null
-        ? await cachedPublicMapOutline(parentId, page.cursor, page.limit)
-        : await readPublicMapOutline(parentId, page.cursor, page.limit)
-      if (!outline) return err(c, 404, 'place not found')
+      if (!outline) {
+        return changeMarker === null
+          ? err(c, 404, 'place not found')
+          : c.json({ error: 'place not found', change_marker: changeMarker }, 404)
+      }
       c.header(
         'Cache-Control',
         minimumMarker === null

@@ -26,6 +26,7 @@ import {
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
+import { isBasicAction } from './physics.ts'
 import {
   PUBLIC_CREDENTIAL_REDACTION,
   containsPublicCredential,
@@ -38,8 +39,10 @@ import {
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import {
   PublicChangeFutureError,
+  PublicChangeReadConflictError,
   loadPublicChangeCheckpoint,
   parsePublicChangeMarker,
+  readAtStablePublicChangeCheckpoint,
 } from './public-changes.ts'
 import {
   loadPublicPlaceFrontMatter,
@@ -110,6 +113,12 @@ const AGREEMENT_PARTY_PREVIEW_LIMIT = 32
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
 const SAFE_DETAIL_IDS = PUBLIC_EVENT_DETAIL_ID_FIELDS
+const SAFE_ACTION_STATUSES: ReadonlySet<string> = new Set([
+  'applied',
+  'blocked',
+  'noop',
+  'failed',
+])
 
 interface PublicPlace {
   id: number
@@ -520,7 +529,12 @@ function publicWindowEvent(value: unknown) {
     const safe = positiveInteger(rawDetail[key])
     return safe ? [[key, safe] as const] : []
   }))
-  if (kind === 'moderation' && ['remove', 'restore'].includes(String(rawDetail.action))) {
+  if (kind === 'action' && isBasicAction(rawDetail.action)) {
+    detail.action = rawDetail.action
+    if (typeof rawDetail.status === 'string' && SAFE_ACTION_STATUSES.has(rawDetail.status)) {
+      detail.status = rawDetail.status
+    }
+  } else if (kind === 'moderation' && ['remove', 'restore'].includes(String(rawDetail.action))) {
     detail.action = String(rawDetail.action)
   }
   return { id, at, kind, actor, detail }
@@ -1041,14 +1055,10 @@ async function readFullWindowSnapshot() {
   }
 }
 
-async function readOutlineWindowSnapshot(minimumMarker: string | null = null) {
-  // Capture the lower-bound marker before every component read. Every commit
-  // represented by this marker is therefore visible to the statements below.
-  // Do not use nested data caches here: they could predate this checkpoint.
-  const changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
-  if (minimumMarker !== null && BigInt(minimumMarker) > BigInt(changeMarker)) {
-    throw new PublicChangeFutureError(minimumMarker, changeMarker)
-  }
+async function readOutlineWindowSnapshotBody() {
+  // Do not use nested data caches here. The stable-checkpoint wrapper below
+  // must be able to discard and reread every component after an interleaved
+  // public commit.
   const residentRequest = Object.freeze({
     ok: true as const,
     cursor: null,
@@ -1097,7 +1107,6 @@ async function readOutlineWindowSnapshot(minimumMarker: string | null = null) {
   }
   return {
     view: 'outline' as const,
-    change_marker: changeMarker,
     places,
     residents,
     notes,
@@ -1129,6 +1138,15 @@ async function readOutlineWindowSnapshot(minimumMarker: string | null = null) {
     roster_complete: !residentPage.hasMore,
     refreshed_at: new Date().toISOString(),
   }
+}
+
+async function readOutlineWindowSnapshot(minimumMarker: string | null = null) {
+  const stable = await readAtStablePublicChangeCheckpoint(
+    executePublicQuery,
+    minimumMarker,
+    readOutlineWindowSnapshotBody,
+  )
+  return Object.freeze({ ...stable.value, change_marker: stable.changeMarker })
 }
 
 type FullWindowSnapshot = Awaited<ReturnType<typeof readFullWindowSnapshot>>
@@ -1248,7 +1266,8 @@ export async function windowSnapshot(c: Context) {
       try {
         snapshot = await cachedOutlineWindowSnapshot(minimumMarker)
       } catch (error) {
-        if (error instanceof PublicChangeFutureError) {
+        if (error instanceof PublicChangeFutureError ||
+            error instanceof PublicChangeReadConflictError) {
           return c.json({ error: error.message }, 409)
         }
         throw error
@@ -1278,16 +1297,27 @@ export async function windowSnapshot(c: Context) {
     if (afterMarkerValue.value !== null && minimumMarker === null) {
       return c.json({ error: 'invalid public window history query' }, 400)
     }
+    let page: WindowCollectionPage
     let changeMarker: string | null = null
-    if (minimumMarker !== null) {
-      changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
-      if (BigInt(minimumMarker) > BigInt(changeMarker)) {
-        return c.json({
-          error: new PublicChangeFutureError(minimumMarker, changeMarker).message,
-        }, 409)
+    try {
+      if (minimumMarker === null) {
+        page = await readWindowCollectionPage(request)
+      } else {
+        const stable = await readAtStablePublicChangeCheckpoint(
+          executePublicQuery,
+          minimumMarker,
+          () => readWindowCollectionPage(request),
+        )
+        page = stable.value
+        changeMarker = stable.changeMarker
       }
+    } catch (error) {
+      if (error instanceof PublicChangeFutureError ||
+          error instanceof PublicChangeReadConflictError) {
+        return c.json({ error: error.message }, 409)
+      }
+      throw error
     }
-    const page = await readWindowCollectionPage(request)
     c.header(
       'Cache-Control',
       minimumMarker === null

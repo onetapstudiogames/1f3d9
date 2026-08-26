@@ -225,6 +225,7 @@ interface FakeState {
   exactTotalsBusyAfter: number | null
   exactTotalsSuccessfulReads: number
   publicChangeMarker: string
+  publicReadMarkerRaces: number
   laterHolderItems: FakeLaterHolderItem[]
   recentNote: FakeRecentNote | null
   nextNoteId: number
@@ -301,6 +302,7 @@ const initialState = (): FakeState => ({
   exactTotalsBusyAfter: null,
   exactTotalsSuccessfulReads: 0,
   publicChangeMarker: '9',
+  publicReadMarkerRaces: 0,
   laterHolderItems: [{
     mark_id: '2', id: 41, title: 'porch lantern', place_id: 2,
     place_title: 'Lantern Town', date: '2026-08-11T00:00:00.000000Z',
@@ -1067,6 +1069,22 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
   if (q.includes('/* public:changes-checkpoint */')) {
     return [{ checkpoint: state.publicChangeMarker }]
+  }
+  if (state.publicReadMarkerRaces > 0 && [
+    '/* public:map-outline */',
+    '/* public:residents */',
+    '/* public:resident-presence */',
+    '/* public:events */',
+    'from notes note',
+    'from things thing',
+    'from agreements agreement',
+    '/* public:window-outline-totals */',
+  ].some(marker => q.includes(marker))) {
+    state = {
+      ...state,
+      publicChangeMarker: (BigInt(state.publicChangeMarker) + 1n).toString(),
+      publicReadMarkerRaces: state.publicReadMarkerRaces - 1,
+    }
   }
   if (q.includes('/* public:changes */')) {
     return [{
@@ -2437,10 +2455,22 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (state.scenario === 'window outline' && (
     q.includes('select id, at, kind, actor, detail') || q.includes('/* public:events */')
   )) {
-    const events = paginationEvents().map((event, index) => ({
-      ...event,
-      kind: index % 2 === 0 ? 'note' : 'thing_created',
-    }))
+    const events = paginationEvents().map((event, index) => index === 0
+      ? {
+          ...event,
+          kind: 'action',
+          detail: {
+            action_id: 170,
+            action: 'move',
+            status: 'applied',
+            from_place_id: 1,
+            to_place_id: 2,
+          },
+        }
+      : {
+          ...event,
+          kind: index % 2 === 0 ? 'note' : 'thing_created',
+        })
     return descendingPage(events, null, params.at(-1))
   }
 
@@ -3761,6 +3791,8 @@ test('lazy map and history pages prove they cover the caller-held change marker'
     '/api/map?view=outline&parent_id=1&after_change_marker=10',
     '/api/window?collection=things&after_change_marker=10',
     '/api/events?after_change_marker=10',
+    '/api/residents?view=presence&after_change_marker=10',
+    '/api/residents?view=presence&handle=tiny-lantern&after_change_marker=10',
   ]) {
     reset({ scenario: 'public pagination', publicChangeMarker: '9' })
     const response = await app.request(path)
@@ -3774,6 +3806,98 @@ test('lazy map and history pages prove they cover the caller-held change marker'
       `${path} stops before its page read`,
     )
   }
+})
+
+test('window reads retry an interleaved public commit instead of labeling newer rows with an older marker', async () => {
+  const originalNow = Date.now
+  const frozenNow = originalNow() - 120_000
+  Date.now = () => frozenNow
+  const cases = [
+    {
+      name: 'outline snapshot',
+      scenario: 'window outline',
+      path: '/api/window?view=outline&after_change_marker=20',
+      dataPattern: /\/\* public:residents \*\//iu,
+    },
+    {
+      name: 'focused or paged map',
+      scenario: 'map outline',
+      path: '/api/map?view=outline&parent_id=1&subplace_limit=3&after_change_marker=20',
+      dataPattern: /\/\* public:map-outline \*\//iu,
+    },
+    {
+      name: 'window history',
+      scenario: 'public pagination',
+      path: '/api/window?collection=things&limit=2&after_change_marker=20',
+      dataPattern: /from things thing/iu,
+    },
+    {
+      name: 'happenings',
+      scenario: 'public pagination',
+      path: '/api/events?limit=2&after_change_marker=20',
+      dataPattern: /\/\* public:events \*\//iu,
+    },
+    {
+      name: 'paged resident presence',
+      scenario: 'remaining pagination',
+      path: '/api/residents?view=presence&limit=2&after_change_marker=20',
+      dataPattern: /\/\* public:residents \*\//iu,
+    },
+    {
+      name: 'focused resident presence',
+      scenario: '',
+      path: '/api/residents?view=presence&handle=tiny-lantern&after_change_marker=20',
+      dataPattern: /\/\* public:resident-presence \*\//iu,
+    },
+  ] as const
+
+  try {
+    for (const entry of cases) {
+      reset({
+        scenario: entry.scenario,
+        publicChangeMarker: '20',
+        publicReadMarkerRaces: 1,
+      })
+      const response = await app.request(entry.path)
+      assert.equal(response.status, 200, entry.name)
+      assert.equal(
+        (await response.json() as { change_marker?: string }).change_marker,
+        '21',
+        `${entry.name} returns the checkpoint proven around its accepted rows`,
+      )
+      assert.ok(
+        sqlCalls().filter(call => entry.dataPattern.test(call.query ?? '')).length >= 2,
+        `${entry.name} discards and rereads the page crossed by the commit`,
+      )
+    }
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('a window read that crosses both attempts returns one explicit retryable conflict', async () => {
+  reset({
+    scenario: 'public pagination',
+    publicChangeMarker: '20',
+    publicReadMarkerRaces: 2,
+  })
+
+  const response = await app.request('/api/events?limit=2&after_change_marker=20')
+
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'public view changed from marker 21 to 22 while it was being read; retry',
+  })
+  assert.equal(
+    sqlCalls().filter(call => /\/\* public:events \*\//iu.test(call.query ?? '')).length,
+    2,
+    'both crossed event reads are discarded',
+  )
+  assert.equal(
+    sqlCalls().filter(call => /\/\* public:changes-checkpoint \*\//iu.test(call.query ?? '')).length,
+    4,
+    'each attempt checks the checkpoint before and after its event rows',
+  )
 })
 
 test('a large, deep, credential-free map is served instead of withheld', async () => {
@@ -3879,7 +4003,11 @@ test('the outline window bounds its map and presence pages without changing rece
       notes: Array<{ id: number }>
       things: Array<{ id: number }>
       agreements: Array<{ id: number }>
-      events: Array<{ id: number }>
+      events: Array<{
+        id: number
+        kind: string
+        detail: Record<string, number | string>
+      }>
       pages: {
         places: { has_more: boolean; next_before_subplace_id: number | null }
         residents: { has_more: boolean; next_before_id: number | null }
@@ -3905,6 +4033,13 @@ test('the outline window bounds its map and presence pages without changing rece
       [10, 10, 10, 10],
       'the four already-bounded histories stay at ten rows',
     )
+    assert.deepEqual(body.events[0]?.detail, {
+      from_place_id: 1,
+      to_place_id: 2,
+      action_id: 170,
+      action: 'move',
+      status: 'applied',
+    })
     assert.deepEqual(body.totals, {
       places: 61,
       residents: 60,
@@ -7070,6 +7205,9 @@ test('resident views reject invalid, duplicate, and unknown options before Postg
   for (const path of [
     '/api/residents?view=full',
     '/api/residents?view=presence&view=presence',
+    '/api/residents?view=presence&after_change_marker=-1',
+    '/api/residents?view=presence&after_change_marker=01',
+    '/api/residents?view=presence&after_change_marker=9&after_change_marker=10',
     '/api/residents?view=presence&unknown=1',
   ]) {
     reset({ scenario: 'remaining pagination' })

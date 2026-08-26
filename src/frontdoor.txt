@@ -388,6 +388,9 @@ and returns map_complete: false; the human window uses view=outline instead. Win
 thing, and agreement body excerpts cap at
 2,000, 1,000, and 4,000 characters and set truncated when text was cut. GET /api/note/:id
 and GET /api/thing/:id return full bodies; no fuller public agreement-body read exists.
+In the human window, Show more first expands the bounded excerpt; the next action reads the
+complete note or thing and caches it for that browser session, with explicit loading,
+failure, and retry states. An agreement excerpt says that it is terminal.
 Window history reads still report has_more and a next cursor, but not the common byte fields.
 Authenticated /api/me also keeps its existing personal page metadata rather than the
 anonymous common total/byte fields.
@@ -404,8 +407,8 @@ anonymous common total/byte fields.
                     &before_note_id=&note_limit=
                     &subplace_text_limit_bytes=
                     &thing_text_limit_bytes=&note_text_limit_bytes=
-  GET /api/residents?view=presence&before_id=&limit=
-  GET /api/residents?view=presence&handle=<public-handle>
+  GET /api/residents?view=presence&before_id=&limit=&after_change_marker=
+  GET /api/residents?view=presence&handle=<public-handle>&after_change_marker=
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
   GET /api/window?collection=notes|things|agreements&before_id=&limit=
@@ -415,7 +418,8 @@ anonymous common total/byte fields.
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
               &before_offer_id=&offer_limit=&before_credit_id=&credit_limit=
 
-after_change_marker is accepted by the map outline, window outline/history, and events.
+after_change_marker is accepted by the map outline, window outline/history, events, and
+paged or focused resident presence reads.
 
 The resident census defaults to page_size 200. Every census page returns exact
 whole-city count and total plus returned, page_size, has_more, and next_before_id.
@@ -473,7 +477,8 @@ The human /window starts with the world plus 10 children and 25 residents, then 
 branches and older residents on demand. Its recent notes, things, agreements, and events
 start with 10 per collection; the existing Load older paging is unchanged. Its Archive
 view searches older notes and things. A selected room shows its owner-written purpose
-and owner-chosen headings; opening one ordinary thing link is the only body read.
+and owner-chosen headings. Ordinary heading links still open one thing record; inline
+completion reads only a truncated public note or thing after its bounded expansion.
 The complete selectors stay separate from the currently loaded contents. A
 standalone search opens its own results list below and searches both places and
 residents. In the flat place picker, every place row includes its place #id, each
@@ -485,6 +490,20 @@ map-outline read; choosing an unloaded resident makes one focused public presenc
 Neither choice walks paging to find a name. If the directory fails, loaded names remain usable and an
 unloaded location keeps its honest numbered fallback. When its caller-held marker confirms no persisted
 change, the window avoids reloading authored text and refreshes time-derived presence alone.
+When a focused read covers the current selection, its place or resident record supersedes the
+bounded copy in every neighboring picker label, search result, fact, scope count, roster row,
+and marker. Loaded-scope counts use the active focused records, never cached earlier selections;
+an active filtered collection is not compared to a citywide total. Every marker-covered
+snapshot, map, history, event, and resident read checks its checkpoint before and after the
+rows, discards and retries once after an interleaved commit, and fails retryably if it still
+cannot get one stable read. A page whose marker differs from the neighboring snapshot totals
+is not merged; the window exposes retry and requests a matching snapshot refresh. A map card
+labels child places separately from residents shown inside, and the resident count comes from
+the same rows as its markers. Each read-backed panel says loading while in flight, names a
+failure and offers retry after failure, and uses plain nothing-found wording only after a
+completed empty read; bounded wording describes only an actually bounded successful view.
+Action happenings keep validated verbs, outcomes, and movement endpoints, describe
+non-applied actions as attempts, and collapse only consecutive identical rendered lines.
 Only bounded outline window snapshots carry change_marker; legacy full responses do not.
 A marker-covered read may reuse an in-process snapshot proven to cover the requested
 marker; it rebuilds when the available snapshot is behind. If the small presence read

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import {
   loadPublicChanges,
   parsePublicChangeQuery,
+  PublicChangeReadConflictError,
+  readAtStablePublicChangeCheckpoint,
 } from '../src/public-changes.ts'
 import { PUBLIC_EVENT_KINDS } from '../src/public-events.ts'
 
@@ -124,6 +126,31 @@ test('public change query rejects duplicate, malformed, future-sized, and unknow
     if (parsed.ok) assert.fail(`expected ${JSON.stringify(query)} to be rejected`)
     assert.match(parsed.error, message)
   }
+})
+
+test('a public read that crosses two checkpoints fails explicitly after discarding both reads', async () => {
+  const database = new FakeExecutor(
+    [{ checkpoint: '20' }],
+    [{ checkpoint: '21' }],
+    [{ checkpoint: '21' }],
+    [{ checkpoint: '22' }],
+  )
+  let reads = 0
+
+  await assert.rejects(
+    readAtStablePublicChangeCheckpoint(database.query, '20', async () => {
+      reads += 1
+      return reads
+    }),
+    error => {
+      assert.ok(error instanceof PublicChangeReadConflictError)
+      assert.match(error.message, /changed from marker 21 to 22.*retry/iu)
+      return true
+    },
+  )
+
+  assert.equal(reads, 2)
+  assert.equal(database.calls.length, 4)
 })
 
 test('a request without since returns only a caller-held checkpoint', async () => {

@@ -1,6 +1,11 @@
 import { WINDOW_CLIENT_SAFETY_JS } from './window-client-safety.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
-import { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS } from './public-events.ts'
+import { BASIC_ACTIONS } from './physics.ts'
+import {
+  PUBLIC_EVENT_DETAIL_ID_FIELDS,
+  PUBLIC_EVENT_KINDS,
+  PUBLIC_EVENT_LABELS,
+} from './public-events.ts'
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
@@ -256,6 +261,8 @@ export function searchWindowDirectory(
 }
 
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
+const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
+const BASIC_ACTIONS_JSON = JSON.stringify(BASIC_ACTIONS)
 const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
 const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
 const MERGE_RESIDENT_ROWS_JS = mergeResidentRows.toString()
@@ -278,6 +285,9 @@ export const WINDOW_JS = `(() => {
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
   const VIEWS = Object.freeze(['map', 'place', 'conversations', 'happenings', 'agreements', 'archive'])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
+  const SAFE_EVENT_DETAIL_IDS = Object.freeze(${PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON})
+  const SAFE_ACTIONS = new Set(${BASIC_ACTIONS_JSON})
+  const SAFE_ACTION_STATUSES = new Set(['applied', 'blocked', 'noop', 'failed'])
   const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
@@ -353,6 +363,7 @@ export const WINDOW_JS = `(() => {
     collapsedPlaceIds: [],
     sleeperPlaceIds: [],
     expandedBodies: [],
+    fullBodies: {},
     archive: {
       query: '', mode: 'words', type: 'all', results: [], totalItems: 0,
       totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
@@ -428,6 +439,32 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.status.dataset.tone = tone
   }
 
+  function renderGlobalReadRetry(message) {
+    if (nodes.status) {
+      const retry = element('button', 'global-read-retry', 'Retry reading the public city view')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'global-read-retry'
+      retry.addEventListener('click', () => void refreshCity())
+      nodes.status.dataset.tone = 'error'
+      nodes.status.replaceChildren(document.createTextNode(message + ' '), retry)
+    }
+  }
+
+  function renderGlobalReadFailure() {
+    const message = 'The current public city view could not be read.'
+    renderGlobalReadRetry(message)
+    if (nodes.counts) nodes.counts.textContent = message
+    if (nodes.scope) nodes.scope.textContent = message
+    for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
+      nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,
+      nodes.agreements]) {
+      renderEmpty(target, 'error-row', message)
+    }
+    if (nodes.activity) {
+      nodes.activity.replaceChildren(element('li', 'error-row', message))
+    }
+  }
+
   function renderEmpty(target, className, message) {
     if (!target) return
     target.replaceChildren(element('p', className, message))
@@ -454,6 +491,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const safeActual = safeChangeMarker(actual)
     const safeMinimum = safeChangeMarker(minimum)
     return Boolean(safeActual && safeMinimum && BigInt(safeActual) >= BigInt(safeMinimum))
+  }
+
+  function requireExactReadMarker(actual, requested) {
+    if (!requested) return
+    const responseMarker = safeChangeMarker(actual)
+    if (responseMarker === requested) return
+    throw new Error('public read marker does not match its accepted rows')
+  }
+
+  function requireCurrentReadMarker(actual, requested) {
+    if (!requested) return
+    const responseMarker = safeChangeMarker(actual)
+    if (responseMarker === requested && state.changeMarker === requested) return
+    if (responseMarker && state.changeMarker &&
+        BigInt(responseMarker) > BigInt(state.changeMarker)) void refreshCity()
+    throw new Error('public read marker does not match the neighboring snapshot totals')
   }
 
   function normalizeArchiveResult(rawResult) {
@@ -887,13 +940,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const at = safeDate(raw.at)
       if (!id || !actor || !verb || !at) return []
       const source = raw.detail && typeof raw.detail === 'object' ? raw.detail : {}
-      const detail = Object.fromEntries([
-        'resident_id', 'place_id', 'thing_id', 'kind_id', 'trait_id', 'agreement_id',
-        'note_id', 'transfer_id', 'offer_id', 'target_id', 'asset_id', 'parent_id',
-      ].flatMap(key => {
+      const detail = Object.fromEntries(SAFE_EVENT_DETAIL_IDS.flatMap(key => {
         const value = safeId(source[key])
         return value ? [[key, value]] : []
       }))
+      if (raw.kind === 'action' && SAFE_ACTIONS.has(source.action)) {
+        detail.action = source.action
+        if (SAFE_ACTION_STATUSES.has(source.status)) detail.status = source.status
+      }
       return [{ id, actor, kind: raw.kind, verb, at, detail }]
     })
   }
@@ -1080,10 +1134,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return requested !== next && Boolean(boundary && residentComesBefore(nextResident, boundary))
   }
 
-  async function fetchBranchForwardPage(placeId, beforeId, signal) {
+  async function fetchBranchForwardPage(placeId, beforeId, minimumMarker, signal) {
     const url = branchRequestUrl(placeId, {
       initialized: Boolean(beforeId), nextBeforeSubplaceId: beforeId,
-    })
+    }, minimumMarker)
     const response = await fetch(url.pathname + url.search, {
       credentials: 'omit',
       headers: { Accept: 'application/json' },
@@ -1093,10 +1147,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       signal,
     })
     if (!response.ok) throw new Error('public map branch unavailable')
-    return branchPageFromPayload(await response.json(), placeId)
+    const payload = await response.json()
+    requireExactReadMarker(payload?.change_marker, minimumMarker)
+    return branchPageFromPayload(payload, placeId)
   }
 
-  async function forwardReconcileBranch(placeId, current, firstPage, signal, takeBudget) {
+  async function forwardReconcileBranch(
+    placeId, current, firstPage, minimumMarker, signal, takeBudget,
+  ) {
     const oldIds = new Set(current.rows.map(row => row.id))
     let seen = []
     let beforeId = null
@@ -1105,7 +1163,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     let lastParent = firstPage?.parent || null
     for (let pageCount = 0; pageCount < MAX_FORWARD_RECONCILE_PAGES; pageCount += 1) {
       if (!pageResult && !takeBudget()) break
-      const result = pageResult || await fetchBranchForwardPage(placeId, beforeId, signal)
+      const result = pageResult || await fetchBranchForwardPage(
+        placeId, beforeId, minimumMarker, signal)
       pageResult = null
       lastParent = result.parent
       const next = result.page.nextBeforeSubplaceId
@@ -1138,8 +1197,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     throw new Error('public map reconciliation limit reached')
   }
 
-  async function fetchResidentForwardPage(beforeId, signal) {
-    const url = residentRequestUrl({ initialized: Boolean(beforeId), nextBeforeId: beforeId })
+  async function fetchResidentForwardPage(beforeId, minimumMarker, signal) {
+    const url = residentRequestUrl(
+      { initialized: Boolean(beforeId), nextBeforeId: beforeId },
+      minimumMarker,
+    )
     const response = await fetch(url.pathname + url.search, {
       credentials: 'omit',
       headers: { Accept: 'application/json' },
@@ -1151,6 +1213,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!response.ok) throw new Error('public resident page unavailable')
     const payload = await response.json()
     if (!payload || typeof payload !== 'object') throw new Error('invalid public resident page')
+    requireExactReadMarker(payload.change_marker, minimumMarker)
     const rows = normalizeResidents(payload.residents)
     const page = Object.freeze({
       hasMore: payload.has_more === true,
@@ -1180,7 +1243,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       seen = [...seen, page.nextBeforeId]
       beforeId = page.nextBeforeId
       if (!takeBudget()) break
-      const next = await fetchResidentForwardPage(beforeId, signal)
+      const next = await fetchResidentForwardPage(beforeId, snapshot.changeMarker, signal)
       rows = next.rows
       page = next.page
       collected = mergeResidentRows(collected, rows)
@@ -1232,9 +1295,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       if (current.loading || (current.deferredRows || []).length) continue
       try {
-        const reconciled = await forwardReconcileBranch(root.id, current, Object.freeze({
-          parent: root, rows: root.children, page,
-        }), signal, takeReconcileBudget)
+        const reconciled = await forwardReconcileBranch(
+          root.id,
+          current,
+          Object.freeze({ parent: root, rows: root.children, page }),
+          snapshot.changeMarker,
+          signal,
+          takeReconcileBudget,
+        )
         branches = {
           ...branches,
           [String(root.id)]: Object.freeze({
@@ -1271,7 +1339,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (!placeId) continue
       try {
         const reconciled = await forwardReconcileBranch(
-          placeId, current, null, signal, takeReconcileBudget)
+          placeId, current, null, snapshot.changeMarker, signal, takeReconcileBudget)
         branches = mergeParentIntoBranches(branches, reconciled.parent)
         branches = {
           ...branches,
@@ -1444,6 +1512,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       initialized: false,
       loading: false,
       error: false,
+      refreshing: false,
+      refreshError: false,
     })
   }
 
@@ -1482,6 +1552,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
             initialized: true,
             loading: false,
             error: false,
+            refreshing: false,
+            refreshError: false,
           }),
         },
       }
@@ -1565,10 +1637,28 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return String(state.placeId || '') + '|resident:' + String(state.resident || '')
   }
 
+  function activeFocusedPlaceIds(snapshot) {
+    const followed = selectedResident(snapshot)
+    const placeId = state.placeId || followed?.current_place_id || null
+    return placeId ? [placeId] : []
+  }
+
+  function displayedDirectoryPlaces(snapshot) {
+    const base = state.directory.loaded ? state.directory.places : snapshot.flatPlaces
+    const replaced = base.map(place => focusedPlace(place.id) || place)
+    const known = new Set(replaced.map(place => place.id))
+    const additions = activeFocusedPlaceIds(snapshot).flatMap(placeId => {
+      const place = known.has(placeId) ? null : focusedPlace(placeId)
+      return place ? [place] : []
+    })
+    return [...replaced, ...additions]
+  }
+
   function directorySearchSources(snapshot) {
-    return state.directory.loaded
-      ? { places: state.directory.places, residents: state.directory.residents }
-      : { places: snapshot.flatPlaces, residents: snapshot.residents }
+    return {
+      places: displayedDirectoryPlaces(snapshot),
+      residents: state.directory.loaded ? state.directory.residents : snapshot.residents,
+    }
   }
 
   function directorySearchRows(snapshot) {
@@ -1664,7 +1754,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function populateFilters(snapshot) {
-    const places = state.directory.loaded ? state.directory.places : snapshot.flatPlaces
+    const places = displayedDirectoryPlaces(snapshot)
     if (nodes.placeFilter) {
       const choices = listWindowDirectoryPlaces(places)
       const visiblePlaceIds = new Set(choices.map(option => option.id))
@@ -1676,7 +1766,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         return option
       })]
       if (state.placeId && !visiblePlaceIds.has(state.placeId)) {
-        const selected = places.find(place => place.id === state.placeId)
+        const selected = focusedPlace(state.placeId) ||
+          places.find(place => place.id === state.placeId)
         const focusedRead = state.focusedPlaces[String(state.placeId)]
         const option = element('option', '', selected
           ? selected.name + ' · Place #' + String(selected.id)
@@ -1716,8 +1807,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function selectedResident(snapshot) {
     return state.resident
-      ? snapshot.residents.find(resident => resident.handle === state.resident) ||
-        focusedResident(state.resident)
+      ? focusedResident(state.resident) ||
+        snapshot.residents.find(resident => resident.handle === state.resident)
       : null
   }
 
@@ -1729,8 +1820,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function residentReference(snapshot, handle) {
     if (!handle) return null
-    return snapshot.residents.find(resident => resident.handle === handle) ||
-      focusedResident(handle) || directoryResident(handle)
+    return focusedResident(handle) ||
+      snapshot.residents.find(resident => resident.handle === handle) || directoryResident(handle)
   }
 
   function directoryPlace(placeId) {
@@ -1748,39 +1839,58 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function placeReference(snapshot, placeId) {
     if (!placeId) return null
-    return directoryPlace(placeId) ||
-      focusedPlace(placeId) ||
-      snapshot.flatPlaces.find(place => place.id === placeId) || null
+    return focusedPlace(placeId) ||
+      snapshot.flatPlaces.find(place => place.id === placeId) || directoryPlace(placeId)
+  }
+
+  function focusedPlacePath(reference, place) {
+    if (!reference) return place.name + ' · Place #' + String(place.id)
+    const fallbackSuffix = ' · Place #' + String(place.id)
+    if (reference.path.endsWith(fallbackSuffix)) return place.name + fallbackSuffix
+    const names = reference.path.split(' / ')
+    return [...names.slice(0, -1), place.name].join(' / ')
   }
 
   function focusedPlace(placeId) {
     if (!placeId) return null
-    const place = state.focusedPlaces[String(placeId)]?.place || null
+    const entry = state.focusedPlaces[String(placeId)]
+    const place = entry?.place || null
+    if (place && state.changeMarker && !markerCovers(entry?.marker, state.changeMarker)) return null
     const reference = directoryPlace(placeId)
-    return place && reference
-      ? Object.freeze({ ...place, path: reference.path })
-      : place
+    return place
+      ? Object.freeze({ ...place, path: focusedPlacePath(reference, place) })
+      : null
   }
 
   function focusedResident(handle) {
-    return handle ? state.focusedResidents[handle]?.resident || null : null
+    if (!handle) return null
+    const entry = state.focusedResidents[handle]
+    if (entry?.resident && state.changeMarker && !markerCovers(entry.marker, state.changeMarker)) {
+      return null
+    }
+    return entry?.resident || null
   }
 
   function selectedPlace(snapshot) {
     const followed = selectedResident(snapshot)
     const id = state.placeId || (followed && followed.current_place_id) || null
     return id
-      ? snapshot.flatPlaces.find(place => place.id === id) || focusedPlace(id)
+      ? focusedPlace(id) || snapshot.flatPlaces.find(place => place.id === id)
       : null
+  }
+
+  function displayedResidents(snapshot) {
+    const residents = snapshot.residents.map(resident =>
+      focusedResident(resident.handle) || resident)
+    const followed = selectedResident(snapshot)
+    return followed && !residents.some(resident => resident.handle === followed.handle)
+      ? [...residents, followed]
+      : residents
   }
 
   function residentsAt(snapshot, placeId) {
     const placeIds = placeScopeSet(placeId, snapshot)
-    const followed = selectedResident(snapshot)
-    const available = followed && !snapshot.residents.some(resident => resident.handle === followed.handle)
-      ? [...snapshot.residents, followed]
-      : snapshot.residents
-    return available.filter(resident => placeIds.has(resident.current_place_id) &&
+    return displayedResidents(snapshot).filter(resident => placeIds.has(resident.current_place_id) &&
       (!state.resident || resident.handle === state.resident))
   }
 
@@ -1955,9 +2065,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (!response.ok) throw new Error('public map branch unavailable')
       const payload = await response.json()
       if (authoredRevision !== requestAuthoredRevision) return
-      if (requestMarker && !markerCovers(payload?.change_marker, requestMarker)) {
-        throw new Error('public map branch does not cover the current change marker')
-      }
+      requireCurrentReadMarker(payload?.change_marker, requestMarker)
       const result = branchPageFromPayload(payload, placeId)
       const requestedCursor = requestEntry.initialized
         ? requestEntry.nextBeforeSubplaceId
@@ -2035,7 +2143,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (entry.loaded && !entry.rows.length) {
       item.setAttribute('role', 'status')
-      item.append(element('p', '', 'No more places are currently loaded inside ' + place.name + '.'))
+      item.append(element('p', '', 'No more public places were found inside ' + place.name + '.'))
     }
     return item
   }
@@ -2055,12 +2163,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       watch.type = 'button'
       watch.dataset.focusKey = 'watch:' + String(place.id)
       watch.addEventListener('click', () => choosePlace(place.id, true))
+      const occupants = residentsAt(snapshot, place.id)
       card.append(
         watch,
         element('span', 'place-owner', place.owner
           ? 'kept by ' + place.owner
           : 'unowned · transit only'),
-        element('span', 'place-facts', String(place.places) + ' inside · ' +
+        element('span', 'place-facts', String(place.places) +
+          (place.places === 1 ? ' place inside · ' : ' places inside · ') +
+          String(occupants.length) +
+          (occupants.length === 1 ? ' resident shown inside · ' : ' residents shown inside · ') +
           String(place.things) + ' things · ' + String(place.notes) + ' notes'),
       )
       if (hasChildren) {
@@ -2075,7 +2187,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
         disclosure.addEventListener('click', () => togglePlaceBranch(place.id))
         card.append(disclosure)
       }
-      const occupants = residentsAt(snapshot, place.id)
       if (occupants.length) card.append(occupantLine(place, occupants))
       node.append(card)
       if (hasChildren) {
@@ -2119,13 +2230,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.map.replaceChildren(placeList(roots, snapshot, 0))
   }
 
-  function residentRequestUrl(entry) {
+  function residentRequestUrl(entry, minimumMarker) {
     const url = new URL('/api/residents', window.location.origin)
     url.searchParams.set('view', 'presence')
     url.searchParams.set('limit', '25')
     if (entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
     }
+    if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     return url
   }
 
@@ -2133,6 +2245,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const current = state.residentPaging
     if (!state.snapshot || current.loading || (!current.hasMore && !current.error)) return
     const requestAuthoredRevision = authoredRevision
+    const requestMarker = state.changeMarker
     navigationRevision += 1
     state = {
       ...state,
@@ -2144,7 +2257,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
       const requestEntry = state.residentPaging
-      const url = residentRequestUrl(requestEntry)
+      const url = residentRequestUrl(requestEntry, requestMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -2157,6 +2270,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const payload = await response.json()
       if (authoredRevision !== requestAuthoredRevision) return
       if (!payload || typeof payload !== 'object') throw new Error('invalid public resident page')
+      requireCurrentReadMarker(payload.change_marker, requestMarker)
       const incoming = normalizeResidents(payload.residents)
       const hasMore = payload.has_more === true
       const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
@@ -2256,13 +2370,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return
     }
     const selectedPlaceIds = state.placeId ? placeScopeSet(state.placeId, snapshot) : null
-    const selectedFocusedResident = state.resident &&
-      !snapshot.residents.some(resident => resident.handle === state.resident)
-      ? focusedResident(state.resident)
-      : null
-    const availableResidents = selectedFocusedResident
-      ? [...snapshot.residents, selectedFocusedResident]
-      : snapshot.residents
+    const availableResidents = displayedResidents(snapshot)
     const visible = availableResidents.filter(resident =>
       (!state.resident || resident.handle === state.resident) &&
       (!selectedPlaceIds || selectedPlaceIds.has(resident.current_place_id)))
@@ -2357,34 +2465,108 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return follow
   }
 
+  async function loadFullBody(kind, id) {
+    if (kind !== 'note' && kind !== 'thing') return
+    const bodyKey = kind + ':' + String(id)
+    const current = state.fullBodies[bodyKey] || Object.freeze({
+      body: null, loading: false, error: false,
+    })
+    if (current.loading || current.body !== null) return
+    const requestAuthoredRevision = authoredRevision
+    state = {
+      ...state,
+      fullBodies: {
+        ...state.fullBodies,
+        [bodyKey]: Object.freeze({ ...current, loading: true, error: false }),
+      },
+    }
+    renderAll()
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/' + kind + '/' + String(id), window.location.origin)
+      const response = await fetch(url.pathname, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('complete public body unavailable')
+      const payload = await response.json()
+      const record = payload && typeof payload === 'object' ? payload[kind] : null
+      const recordId = record && typeof record === 'object' ? safeId(record.id) : null
+      const fullBody = record && typeof record === 'object'
+        ? safeText(record.body, null, kind === 'note' ? 4000 : 65536, kind === 'thing')
+        : null
+      if (recordId !== id || fullBody === null) throw new Error('invalid complete public body')
+      if (authoredRevision !== requestAuthoredRevision) return
+      state = {
+        ...state,
+        expandedBodies: state.expandedBodies.includes(bodyKey)
+          ? state.expandedBodies
+          : [...state.expandedBodies, bodyKey],
+        fullBodies: {
+          ...state.fullBodies,
+          [bodyKey]: Object.freeze({ body: fullBody, loading: false, error: false }),
+        },
+      }
+    } catch {
+      if (authoredRevision !== requestAuthoredRevision) return
+      state = {
+        ...state,
+        fullBodies: {
+          ...state.fullBodies,
+          [bodyKey]: Object.freeze({ body: null, loading: false, error: true }),
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      renderAll()
+    }
+  }
+
+  function bodyDisclosureLabel(kind, truncated, expanded, hasFullBody, fullEntry) {
+    const canComplete = truncated && !hasFullBody && (kind === 'note' || kind === 'thing')
+    if (canComplete && expanded) {
+      if (fullEntry?.loading) return 'Loading the whole ' + kind + '…'
+      if (fullEntry?.error) return 'Retry reading the whole ' + kind
+      return 'Read the whole ' + kind
+    }
+    return expanded ? 'Show less' : 'Show more'
+  }
+
   function renderExpandableBody(kind, id, body, truncated) {
     const block = element('div', 'body-block')
-    const bodyNode = element('p', kind + '-body public-body', body + (truncated ? '…' : ''))
-    const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)
     const bodyKey = kind + ':' + String(id)
+    const fullEntry = state.fullBodies[bodyKey] || null
+    const hasFullBody = typeof fullEntry?.body === 'string'
+    const bodyNode = element('p', kind + '-body public-body',
+      hasFullBody ? fullEntry.body : body + (truncated ? '…' : ''))
+    const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)
     const startExpanded = state.expandedBodies.includes(bodyKey)
     bodyNode.id = bodyId
     bodyNode.dataset.expanded = String(startExpanded)
     bodyNode.dataset.bodyKey = bodyKey
+    bodyNode.dataset.bodyKind = kind
+    bodyNode.dataset.truncated = String(truncated)
     block.append(bodyNode)
 
     let availability = null
-    if (truncated) {
+    if (truncated && !hasFullBody) {
       // The bounded view caps every body: Excerpt only — this bounded view carries only the first part.
-      // "Show more" can only reveal the excerpt it was handed. Point at the endpoint that serves the whole
-      // text instead of inflating every default read to carry it.
-      const fullPath = kind === 'note' || kind === 'thing'
-        ? '/api/' + kind + '/' + String(id)
-        : null
+      // "Show more" first reveals that excerpt. The existing single-record endpoint is then one deliberate,
+      // anonymous read whose result survives re-rendering in this browser session.
       availability = element('p', 'body-availability')
-      availability.append(document.createTextNode(
-        'Excerpt only — the full text is not included in this bounded view. '))
-      if (fullPath) {
-        const link = element('a', 'body-full-link', 'Read the whole ' + kind + ' →')
-        link.href = fullPath
-        link.rel = 'nofollow'
-        availability.append(link)
-      } else {
+      const availabilityText = fullEntry?.loading
+        ? 'Loading the complete public ' + kind + '… '
+        : fullEntry?.error
+          ? 'The complete public ' + kind + ' could not be read. '
+          : 'Excerpt only — the full text is not included in this bounded view. '
+      availability.append(document.createTextNode(availabilityText))
+      if (kind === 'agreement') {
         availability.append(document.createTextNode(
           'The full text is not served through the glass.'))
       }
@@ -2394,25 +2576,36 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
     // The browser decides whether the five-line clamp actually hides text.
     // Keep the control hidden until the connected element can be measured.
-    const disclosure = element('button', 'body-disclosure',
-      startExpanded ? 'Show less' : 'Show more')
+    const disclosure = element('button', truncated && (kind === 'note' || kind === 'thing')
+      ? 'body-disclosure body-full-link'
+      : 'body-disclosure',
+      bodyDisclosureLabel(kind, truncated, startExpanded, hasFullBody, fullEntry))
     disclosure.type = 'button'
     disclosure.hidden = true
     disclosure.setAttribute('aria-expanded', String(startExpanded))
+    disclosure.setAttribute('aria-busy', String(fullEntry?.loading === true))
     disclosure.setAttribute('aria-controls', bodyId)
     disclosure.dataset.focusKey = 'body:' + bodyKey
     if (availability) disclosure.setAttribute('aria-describedby', availability.id)
     disclosure.addEventListener('click', () => {
-      const expanded = !state.expandedBodies.includes(bodyKey)
+      const expanded = state.expandedBodies.includes(bodyKey)
+      const canComplete = truncated && !hasFullBody &&
+        (kind === 'note' || kind === 'thing') && expanded
+      if (canComplete) {
+        void loadFullBody(kind, id)
+        return
+      }
+      const nextExpanded = !expanded
       state = {
         ...state,
-        expandedBodies: expanded
+        expandedBodies: nextExpanded
           ? [...state.expandedBodies, bodyKey]
           : state.expandedBodies.filter(key => key !== bodyKey),
       }
-      bodyNode.dataset.expanded = String(expanded)
-      disclosure.setAttribute('aria-expanded', String(expanded))
-      disclosure.textContent = expanded ? 'Show less' : 'Show more'
+      bodyNode.dataset.expanded = String(nextExpanded)
+      disclosure.setAttribute('aria-expanded', String(nextExpanded))
+      disclosure.textContent = bodyDisclosureLabel(
+        kind, truncated, nextExpanded, hasFullBody, fullEntry)
     })
     block.append(disclosure)
     return block
@@ -2425,9 +2618,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const bodyNode = block.querySelector('.public-body')
       const disclosure = block.querySelector('.body-disclosure')
       const bodyKey = bodyNode?.dataset.bodyKey
-      if (!bodyNode || !disclosure || !bodyKey) continue
+      const kind = bodyNode?.dataset.bodyKind
+      if (!bodyNode || !disclosure || !bodyKey || !kind) continue
       bodyNode.dataset.expanded = 'false'
-      entries.push({ bodyNode, disclosure, bodyKey })
+      entries.push({
+        bodyNode,
+        disclosure,
+        bodyKey,
+        kind,
+        truncated: bodyNode.dataset.truncated === 'true',
+      })
     }
 
     const collapsedHeights = entries.map(entry => entry.bodyNode.getBoundingClientRect().height)
@@ -2436,11 +2636,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
     entries.forEach((entry, index) => {
       const collapsible = expandedHeights[index] > collapsedHeights[index] + 1
-      const expanded = collapsible && state.expandedBodies.includes(entry.bodyKey)
+      const fullEntry = state.fullBodies[entry.bodyKey] || null
+      const hasFullBody = typeof fullEntry?.body === 'string'
+      const requiresCompletion = entry.truncated && !hasFullBody &&
+        (entry.kind === 'note' || entry.kind === 'thing')
+      const expanded = (collapsible || requiresCompletion) &&
+        state.expandedBodies.includes(entry.bodyKey)
       entry.bodyNode.dataset.expanded = String(!collapsible || expanded)
-      entry.disclosure.hidden = !collapsible
+      entry.disclosure.hidden = !collapsible && !requiresCompletion
       entry.disclosure.setAttribute('aria-expanded', String(expanded))
-      entry.disclosure.textContent = expanded ? 'Show less' : 'Show more'
+      entry.disclosure.setAttribute('aria-busy', String(fullEntry?.loading === true))
+      entry.disclosure.textContent = bodyDisclosureLabel(
+        entry.kind, entry.truncated, expanded, hasFullBody, fullEntry)
     })
   }
 
@@ -2456,7 +2663,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderThings(target, things, placeOf) {
     if (!target) return
     if (!things.length) {
-      renderEmpty(target, 'empty-row', 'No visible thing in the current bounded public view matches this selection.')
+      renderEmpty(target, 'empty-row', 'No public thing matches this selection.')
       return
     }
     const list = element('ul', 'thing-list')
@@ -2541,13 +2748,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderHistoryOutcome(target, entry, messages, itemTag) {
     if (!target || entry.rows.length) return false
-    const waiting = entry.loading || (!entry.initialized && !entry.error)
+    const waiting = entry.loading || entry.refreshing ||
+      (!entry.initialized && !entry.error && !entry.refreshError)
+    const failed = entry.error || entry.refreshError
     const message = waiting
       ? messages.loading
-      : entry.error
+      : failed
         ? messages.failure
         : messages.empty
-    const className = entry.error ? 'error-row' : waiting ? 'loading-row' : 'empty-row'
+    const className = failed ? 'error-row' : waiting ? 'loading-row' : 'empty-row'
     target.replaceChildren(element(itemTag || 'p', className, message))
     return true
   }
@@ -2560,7 +2769,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderOccupants(snapshot, place) {
     const occupants = residentsAt(snapshot, place.id)
-    const completePresence = snapshot.residents.length >= snapshot.totals.residents
+    const completePresence = displayedResidents(snapshot).length >= snapshot.totals.residents
     if (occupants.length) {
       renderPeople(nodes.occupants, occupants,
         placeId => placeReference(snapshot, placeId))
@@ -2597,7 +2806,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       renderEmpty(
         nodes.placeFrontMatter,
         'empty-row',
-        'No owner-chosen front matter is currently available.',
+        'No owner-chosen front matter is available.',
       )
       return
     }
@@ -2822,6 +3031,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function eventPlaceId(event, snapshot) {
+    if (event.detail.to_place_id) return event.detail.to_place_id
     if (event.detail.place_id) return event.detail.place_id
     if (!snapshot) return null
     if (event.detail.thing_id) {
@@ -2831,6 +3041,71 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return snapshot.notes.find(note => note.id === event.detail.note_id)?.place_id || null
     }
     return null
+  }
+
+  function actionVerb(action) {
+    return {
+      talk: 'talked',
+      move: 'moved',
+      use: 'used',
+      give: 'gave',
+      consume: 'consumed',
+      make: 'made',
+      go_home: 'went home',
+    }[action] || action
+  }
+
+  function actionAttempt(action) {
+    return action === 'go_home' ? 'go home' : action
+  }
+
+  function activitySemantics(event, snapshot) {
+    const placeId = eventPlaceId(event, snapshot)
+    const place = placeReference(snapshot, placeId)
+    const location = windowPlaceLabel(placeId, place)
+    let description = event.verb
+    if (event.kind === 'action' && event.detail.action) {
+      const applied = !event.detail.status || event.detail.status === 'applied'
+      description = applied
+        ? actionVerb(event.detail.action)
+        : 'tried to ' + actionAttempt(event.detail.action)
+      if ((event.detail.action === 'move' || event.detail.action === 'go_home') &&
+          event.detail.from_place_id && event.detail.to_place_id) {
+        const from = windowPlaceLabel(
+          event.detail.from_place_id,
+          placeReference(snapshot, event.detail.from_place_id),
+        )
+        const to = windowPlaceLabel(
+          event.detail.to_place_id,
+          placeReference(snapshot, event.detail.to_place_id),
+        )
+        if (from && to) description += ' from ' + from + ' to ' + to
+      }
+      if (event.detail.status) {
+        description += ' · ' + (event.detail.status === 'noop'
+          ? 'no change'
+          : event.detail.status)
+      }
+    }
+    return Object.freeze({
+      description,
+      location,
+      key: event.actor + '|' + description + '|' + String(location || ''),
+    })
+  }
+
+  function collapseActivity(events, snapshot) {
+    return events.reduce((groups, event) => {
+      const semantics = activitySemantics(event, snapshot)
+      const previous = groups.at(-1)
+      if (previous?.semantics.key === semantics.key) {
+        return [
+          ...groups.slice(0, -1),
+          Object.freeze({ ...previous, count: previous.count + 1 }),
+        ]
+      }
+      return [...groups, Object.freeze({ event, semantics, count: 1 })]
+    }, [])
   }
 
   function renderActivity(snapshot) {
@@ -2851,23 +3126,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (renderHistoryOutcome(nodes.activity, entry, Object.freeze({
       loading: 'Fetching happenings that match this view…',
       failure: 'Happenings could not be loaded. Retry below.',
-      empty: 'No happening in the current bounded public view matches this selection.',
+      empty: 'No public happening matches this selection.',
     }), 'li')) {
       renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
       return
     }
-    const rows = events.map(event => {
+    const rows = collapseActivity(events, snapshot).map(group => {
+      const event = group.event
       const row = element('li', 'activity-row')
       const copy = element('p', 'activity-copy')
       copy.append(
         residentNode(event.actor, 'activity-actor', 'activity-actor:' + String(event.id)),
-        element('span', '', ' ' + event.verb + '.'),
+        element('span', '', ' ' + group.semantics.description +
+          (group.count > 1 ? ' · ' + String(group.count) + ' times' : '') + '.'),
       )
       row.append(copy, timeNode(event.at, 'activity-time'))
-      const placeId = eventPlaceId(event, snapshot)
-      const place = placeReference(snapshot, placeId)
-      const location = windowPlaceLabel(placeId, place)
-      if (location) row.append(element('span', 'activity-context', 'Observed at ' + location))
+      if (group.semantics.location) {
+        row.append(element('span', 'activity-context',
+          'Observed at ' + group.semantics.location))
+      }
       return row
     })
     nodes.activity.replaceChildren(...rows)
@@ -2889,7 +3166,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (renderHistoryOutcome(nodes.agreements, entry, Object.freeze({
       loading: 'Fetching agreements that match this resident…',
       failure: 'Agreements could not be loaded. Retry below.',
-      empty: 'No agreement in the current bounded public view matches this resident selection.',
+      empty: 'No public agreement matches this resident selection.',
     }))) {
       renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
       return
@@ -2960,9 +3237,29 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderHistoryControl(target, collection, label, filters) {
     if (!target) return
     const entry = historyEntry(collection, filters)
-    if (!entry.hasMore && !entry.loading && !entry.error) {
+    const hasRefreshState = entry.refreshing || entry.refreshError
+    const hasPagingState = entry.hasMore || entry.loading || entry.error
+    if (!hasRefreshState && !hasPagingState) {
       target.hidden = true
       target.replaceChildren()
+      return
+    }
+    const parts = []
+    if (entry.refreshing) {
+      parts.push(element('p', 'loading-row', 'Loading updated ' + label + '…'))
+    } else if (entry.refreshError) {
+      const message = element('p', 'navigation-error',
+        'Updated ' + label + ' could not be loaded. Showing the previous completed results.')
+      message.setAttribute('role', 'alert')
+      const retry = element('button', 'history-load', 'Retry refreshing ' + label)
+      retry.type = 'button'
+      retry.dataset.focusKey = 'refresh:' + collection + ':' + historyKey(collection, filters)
+      retry.addEventListener('click', () => void forwardRefreshHistory(collection, filters))
+      parts.push(message, retry)
+    }
+    if (!hasPagingState) {
+      target.hidden = false
+      target.replaceChildren(...parts)
       return
     }
     // While the first filtered slice is being fetched nothing "older" is
@@ -2985,7 +3282,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ? 'place-things'
           : label === 'conversations' ? 'conversation-stream' : 'place-conversation'
     button.addEventListener('click', () => void loadHistory(collection, filters))
-    const parts = []
     if (entry.error && entry.rows.length) {
       const message = element('p', 'navigation-error',
         (older ? 'Older ' : '') + label + ' could not be loaded.')
@@ -3040,6 +3336,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     forwardRefreshKeys.add(key)
     const requestAuthoredRevision = authoredRevision
     const requestMarker = state.changeMarker
+    const current = historyEntry(collection, filters)
+    setHistoryEntry(collection, filters, {
+      ...current,
+      refreshing: true,
+      refreshError: false,
+    })
+    renderAll()
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
@@ -3053,19 +3356,29 @@ ${WINDOW_CLIENT_SAFETY_JS}
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
       })
-      if (!response.ok) return
+      if (!response.ok) throw new Error('updated public history unavailable')
       const payload = await response.json()
       if (authoredRevision !== requestAuthoredRevision) return
-      if (requestMarker && !markerCovers(payload?.change_marker, requestMarker)) return
+      requireCurrentReadMarker(payload?.change_marker, requestMarker)
       const incoming = normalizeHistoryRows(collection, payload)
       const latest = historyEntry(collection, filters)
       setHistoryEntry(collection, filters, {
         ...latest,
         rows: mergeWindowRows(latest.rows, incoming),
+        refreshing: false,
+        refreshError: false,
       })
       renderAll()
     } catch {
-      // A failed silent refresh loses nothing; the next snapshot tries again.
+      if (authoredRevision === requestAuthoredRevision) {
+        const latest = historyEntry(collection, filters)
+        setHistoryEntry(collection, filters, {
+          ...latest,
+          refreshing: false,
+          refreshError: true,
+        })
+        renderAll()
+      }
     } finally {
       window.clearTimeout(timeout)
       forwardRefreshKeys.delete(key)
@@ -3101,7 +3414,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (current.loading || (current.initialized && !current.hasMore && !current.error)) return
     const requestAuthoredRevision = authoredRevision
     const requestMarker = state.changeMarker
-    setHistoryEntry(collection, filters, { ...current, loading: true, error: false })
+    setHistoryEntry(collection, filters, {
+      ...current,
+      loading: true,
+      error: false,
+      refreshing: false,
+      refreshError: false,
+    })
     renderAll()
 
     const controller = new AbortController()
@@ -3120,9 +3439,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (!response.ok) throw new Error('public history unavailable')
       const payload = await response.json()
       if (authoredRevision !== requestAuthoredRevision) return
-      if (requestMarker && !markerCovers(payload?.change_marker, requestMarker)) {
-        throw new Error('public history does not cover the current change marker')
-      }
+      requireCurrentReadMarker(payload?.change_marker, requestMarker)
       const incoming = normalizeHistoryRows(collection, payload)
       const hasMore = payload.has_more === true
       const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
@@ -3146,6 +3463,52 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  function loadedHistoryRows(collection, snapshot) {
+    if (state.view === 'place' && (collection === 'notes' || collection === 'things')) {
+      const place = selectedPlace(snapshot) ||
+        (!state.resident && !state.placeId ? snapshot.flatPlaces[0] || null : null)
+      if (!place || selectionIssue(snapshot, true)) return []
+      return historyEntry(collection, { placeId: place.id, resident: state.resident }).rows
+    }
+    if (state.view === 'conversations' && collection === 'notes') {
+      if (selectionIssue(snapshot, false)) return []
+      return historyEntry('notes', {
+        placeId: state.placeId,
+        resident: state.resident,
+        context: Boolean(state.resident && state.conversationContext),
+      }).rows
+    }
+    if (state.view === 'happenings' && collection === 'events') {
+      if (selectionIssue(snapshot, false)) return []
+      return historyEntry('events', {
+        placeId: state.placeId,
+        resident: state.resident,
+      }).rows
+    }
+    if (state.view === 'agreements' && collection === 'agreements') {
+      if (state.resident && selectionIssue(snapshot, false)?.kind === 'resident') return []
+      return historyEntry('agreements', { placeId: null, resident: state.resident }).rows
+    }
+    return snapshot[collection]
+  }
+
+  function loadedShown(snapshot) {
+    const places = new Map(snapshot.flatPlaces.map(place => [place.id, place]))
+    for (const placeId of activeFocusedPlaceIds(snapshot)) {
+      const place = focusedPlace(placeId)
+      if (place) places.set(place.id, place)
+    }
+    const residents = new Map(displayedResidents(snapshot).map(resident => [resident.id, resident]))
+    return Object.freeze({
+      places: places.size,
+      residents: residents.size,
+      conversations: loadedHistoryRows('notes', snapshot).length,
+      things: loadedHistoryRows('things', snapshot).length,
+      agreements: loadedHistoryRows('agreements', snapshot).length,
+      events: loadedHistoryRows('events', snapshot).length,
+    })
+  }
+
   function renderCounts(snapshot) {
     if (!nodes.counts) return
     nodes.counts.textContent = String(snapshot.totals.places) + ' places · ' +
@@ -3153,15 +3516,34 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ' things · ' + String(snapshot.totals.conversations) + ' notes · public and read only'
   }
 
+  function activeFilteredScopeKeys(snapshot) {
+    const keys = new Set()
+    if (state.view === 'place' && selectedPlace(snapshot)) {
+      keys.add('conversations')
+      keys.add('things')
+    }
+    if (state.view === 'conversations' && (state.placeId || state.resident)) {
+      keys.add('conversations')
+    }
+    if (state.view === 'happenings' && (state.placeId || state.resident)) {
+      keys.add('events')
+    }
+    if (state.view === 'agreements' && state.resident) keys.add('agreements')
+    return keys
+  }
+
   function renderScope(snapshot) {
     if (!nodes.scope) return
+    const shown = loadedShown(snapshot)
     const labels = {
       places: 'places', residents: 'residents', conversations: 'conversations',
       things: 'things', agreements: 'agreements', events: 'happenings',
     }
-    const partial = Object.keys(labels).filter(key => snapshot.totals[key] > snapshot.shown[key])
+    const filteredKeys = activeFilteredScopeKeys(snapshot)
+    const partial = Object.keys(labels).filter(key =>
+      !filteredKeys.has(key) && snapshot.totals[key] > shown[key])
       .map(key => (key === 'places' || key === 'residents' ? 'currently loaded ' : '') +
-        String(snapshot.shown[key]) + ' of ' + String(snapshot.totals[key]) + ' ' + labels[key])
+        String(shown[key]) + ' of ' + String(snapshot.totals[key]) + ' ' + labels[key])
     const filters = [
       state.placeId ? 'place #' + String(state.placeId) : '',
       state.resident ? 'resident ' + state.resident : '',
@@ -3180,7 +3562,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     // Following a resident fetches a separately paged answer beyond the initial
     // bounded view. Name the exact question instead of asking scope disclosure
     // to compensate for an ambiguous default.
-    const followedFilters = state.resident ? Object.freeze({
+    const followedFilters = state.resident && state.view === 'conversations' ? Object.freeze({
       placeId: state.placeId,
       resident: state.resident,
       context: Boolean(state.conversationContext),
@@ -3188,23 +3570,42 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const followedEntry = followedFilters ? historyEntry('notes', followedFilters) : null
     const followedRows = followedEntry?.rows || []
     const ownRows = followedRows.filter(note => note.author === state.resident).length
-    const followNotice = state.resident
+    const followedQuestion = followedFilters
       ? state.conversationContext
-        ? ' Conversation question: what was said around ' + state.resident + '. Showing ' +
-          String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
-          ' plus ' + String(followedRows.length - ownRows) + ' fetched from the same rooms' +
-          (followedEntry?.hasMore ? '; older pages remain.' : '.')
-        : ' Conversation question: what ' + state.resident + ' said. Showing ' +
-          String(followedRows.length) + ' fetched ' +
-          (followedRows.length === 1 ? 'note' : 'notes') +
-          (followedEntry?.hasMore ? '; older pages remain.' : '.')
+        ? 'what was said around ' + state.resident
+        : 'what ' + state.resident + ' said'
       : ''
+    const followedWaiting = followedEntry && (
+      followedEntry.loading || followedEntry.refreshing ||
+      (!followedEntry.initialized && !followedEntry.error && !followedEntry.refreshError)
+    )
+    const followedFailed = followedEntry && (followedEntry.error || followedEntry.refreshError)
+    const followNotice = !followedFilters
+      ? ''
+      : followedWaiting
+        ? ' Conversation question: ' + followedQuestion + '. Loading that public read.'
+        : followedFailed
+          ? ' Conversation question: ' + followedQuestion +
+            '. That public read failed; retry is available in the conversation panel.'
+          : followedRows.length === 0
+            ? ' Conversation question: ' + followedQuestion + '. Nothing was found.'
+            : state.conversationContext
+              ? ' Conversation question: ' + followedQuestion + '. Showing ' +
+                String(ownRows) + (ownRows === 1 ? ' note' : ' notes') + ' by ' + state.resident +
+                ' plus ' + String(followedRows.length - ownRows) + ' fetched from the same rooms' +
+                (followedEntry?.hasMore ? '; older pages remain.' : '.')
+              : ' Conversation question: ' + followedQuestion + '. Showing ' +
+                String(followedRows.length) + ' fetched ' +
+                (followedRows.length === 1 ? 'note' : 'notes') +
+                (followedEntry?.hasMore ? '; older pages remain.' : '.')
     const directoryNotice = state.directory.loaded
       ? ' Selectors use the complete city directory; map, presence, and authored content remain currently loaded views.'
       : ' Selectors currently use the loaded fallback while the complete city directory is unavailable.'
     nodes.scope.textContent = (partial.length
       ? 'Current bounded public view shows ' + partial.join(' · ') + '.'
-      : 'The currently loaded public view is within every display limit.') +
+      : filteredKeys.size
+        ? 'The other currently loaded public rows are within their display limits.'
+        : 'The currently loaded public view is within every display limit.') +
       directoryNotice +
       excerptNotice +
       (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '') +
@@ -3391,6 +3792,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const current = state.focusedPlaces[String(placeId)]
     if (current?.loading || (!force && current?.place)) return
     const selectionAtStart = activeSelectionKey()
+    const requestMarker = state.changeMarker
+    const requestAuthoredRevision = authoredRevision
     state = {
       ...state,
       focusedPlaces: {
@@ -3411,6 +3814,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const url = new URL('/api/map', window.location.origin)
       url.searchParams.set('view', 'outline')
       url.searchParams.set('parent_id', String(placeId))
+      if (requestMarker) url.searchParams.set('after_change_marker', requestMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -3420,6 +3824,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         signal: controller.signal,
       })
       if (response.status === 404) {
+        const payload = await response.json().catch(() => null)
+        requireCurrentReadMarker(payload?.change_marker, requestMarker)
+        if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
+          throw new Error('focused place reply was overtaken by a newer public snapshot')
+        }
         state = {
           ...state,
           focusedPlaces: {
@@ -3428,7 +3837,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
               loading: false,
               error: false,
               notFound: true,
-              marker: state.changeMarker || current?.marker || null,
+              marker: requestMarker || current?.marker || null,
               place: null,
             }),
           },
@@ -3437,13 +3846,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       if (!response.ok) throw new Error('focused place unavailable')
       const payload = await response.json()
+      const responseMarker = safeChangeMarker(payload?.change_marker)
+      requireCurrentReadMarker(responseMarker, requestMarker)
       const [normalized] = normalizePlaces([payload?.place], 0, new Set())
       if (!normalized || normalized.id !== placeId) throw new Error('wrong focused place')
       const reference = directoryPlace(placeId)
       const place = Object.freeze({
         ...normalized,
         children: [],
-        path: reference?.path || normalized.name + ' · Place #' + String(placeId),
+        path: focusedPlacePath(reference, normalized),
       })
       state = {
         ...state,
@@ -3453,19 +3864,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
             loading: false,
             error: false,
             notFound: false,
-            marker: state.changeMarker || null,
+            marker: responseMarker || requestMarker || null,
             place,
           }),
         },
       }
     } catch {
+      const retainedCovers = Boolean(current?.place) &&
+        (!state.changeMarker || markerCovers(current?.marker, state.changeMarker))
       state = {
         ...state,
         focusedPlaces: {
           ...state.focusedPlaces,
           [String(placeId)]: Object.freeze({
             loading: false,
-            error: !current?.place,
+            error: !retainedCovers,
             notFound: false,
             marker: current?.marker || null,
             place: current?.place || null,
@@ -3486,6 +3899,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const current = state.focusedResidents[handle]
     if (current?.loading || (!force && current?.resident)) return
     const selectionAtStart = activeSelectionKey()
+    const requestMarker = state.changeMarker
+    const requestAuthoredRevision = authoredRevision
     state = {
       ...state,
       focusedResidents: {
@@ -3506,6 +3921,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const url = new URL('/api/residents', window.location.origin)
       url.searchParams.set('view', 'presence')
       url.searchParams.set('handle', handle)
+      if (requestMarker) url.searchParams.set('after_change_marker', requestMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -3515,6 +3931,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         signal: controller.signal,
       })
       if (response.status === 404) {
+        const payload = await response.json().catch(() => null)
+        requireCurrentReadMarker(payload?.change_marker, requestMarker)
+        if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
+          throw new Error('focused resident reply was overtaken by a newer public snapshot')
+        }
         state = {
           ...state,
           focusedResidents: {
@@ -3523,7 +3944,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
               loading: false,
               error: false,
               notFound: true,
-              marker: state.changeMarker || current?.marker || null,
+              marker: requestMarker || current?.marker || null,
               resident: null,
             }),
           },
@@ -3534,6 +3955,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const payload = await response.json()
       const [resident] = normalizeResidents([payload?.resident])
       if (!resident || resident.handle !== handle) throw new Error('wrong focused resident')
+      requireCurrentReadMarker(payload?.change_marker, requestMarker)
+      if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
+        throw new Error('focused resident reply was overtaken by a newer public snapshot')
+      }
       state = {
         ...state,
         focusedResidents: {
@@ -3542,19 +3967,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
             loading: false,
             error: false,
             notFound: false,
-            marker: state.changeMarker || null,
+            marker: safeChangeMarker(payload?.change_marker) || requestMarker || null,
             resident,
           }),
         },
       }
     } catch {
+      const retainedCovers = Boolean(current?.resident) &&
+        (!state.changeMarker || markerCovers(current?.marker, state.changeMarker))
       state = {
         ...state,
         focusedResidents: {
           ...state.focusedResidents,
           [handle]: Object.freeze({
             loading: false,
-            error: !current?.resident,
+            error: !retainedCovers,
             notFound: false,
             marker: current?.marker || null,
             resident: current?.resident || null,
@@ -3660,7 +4087,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
-  async function refreshUnchangedPresence(signal) {
+  async function refreshUnchangedPresence(signal, minimumMarker) {
     const targetCount = state.snapshot?.residents.length || 0
     if (!targetCount) return []
     let residents = []
@@ -3671,6 +4098,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       url.searchParams.set('view', 'presence')
       url.searchParams.set('limit', String(Math.min(200, targetCount - residents.length)))
       if (beforeId) url.searchParams.set('before_id', String(beforeId))
+      if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -3682,6 +4110,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (!response.ok) throw new Error('public presence unavailable')
       const payload = await response.json()
       if (!payload || typeof payload !== 'object') throw new Error('invalid public presence')
+      requireExactReadMarker(payload.change_marker, minimumMarker)
       const incoming = normalizeResidents(payload.residents)
       const merged = mergeResidentRows(residents, incoming)
       if (merged.length === residents.length && residents.length < targetCount) {
@@ -3717,7 +4146,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const hadSnapshot = state.hasSnapshot
     const navigationRevisionAtStart = navigationRevision
     state = { ...state, refreshing: true }
-    setStatus(state.hasSnapshot ? 'Checking the streets…' : 'Opening the shutters…', 'working')
+    setStatus(state.hasSnapshot
+      ? 'Loading an updated public city view…'
+      : 'Loading the current public city view…', 'working')
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     let nextDelay = BASE_REFRESH_MS
@@ -3730,7 +4161,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const changeState = await checkPublicChanges()
       if (state.hasSnapshot && changeState.status === 'unchanged') {
         try {
-          const residents = await refreshUnchangedPresence(controller.signal)
+          const residents = await refreshUnchangedPresence(
+            controller.signal,
+            changeState.marker,
+          )
           if (navigationRevision !== navigationRevisionAtStart) {
             setStatus('Watching the public streets', 'live')
             return
@@ -3792,6 +4226,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         residentPaging: navigation.residentPaging,
         histories,
         archive,
+        fullBodies: replaceAuthored ? {} : state.fullBodies,
         changeMarker: freshSnapshot.changeMarker || requiredMarker,
         hasSnapshot: true,
         failures: 0,
@@ -3812,15 +4247,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state = { ...state, failures }
       nextDelay = Math.min(BASE_REFRESH_MS * Math.pow(2, failures), MAX_REFRESH_MS)
       if (state.hasSnapshot) {
-        setStatus('Watching an older view · trying again soon', 'stale')
+        renderGlobalReadRetry(
+          'The updated public city view could not be read. Showing the previous completed view.',
+        )
       } else {
-        setStatus('The glass fogged up', 'error')
-        for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
-          nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,
-          nodes.agreements]) {
-          renderEmpty(target, 'error-row', 'The current public city view could not be read. Try again in one minute.')
-        }
-        if (nodes.activity) nodes.activity.replaceChildren(element('li', 'error-row', 'The public ledger could not be read.'))
+        renderGlobalReadFailure()
       }
     } finally {
       window.clearTimeout(timeout)

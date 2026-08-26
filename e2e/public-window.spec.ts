@@ -2,6 +2,8 @@ import { expect, test, type Request } from '@playwright/test'
 
 const NOTE_EXCERPT = 'The public note begins here'
 const THING_EXCERPT = 'A lantern with an abbreviated inscription'
+const NOTE_FULL = `${NOTE_EXCERPT}, then continues beyond the snapshot excerpt.`
+const THING_FULL = `${THING_EXCERPT}; the complete inscription is readable without signing in.`
 
 interface PublicWindowTestState {
   readonly write_requests?: Array<{ readonly method?: unknown; readonly path?: unknown }>
@@ -30,7 +32,7 @@ test('public window links to the dated public snapshot archive', async ({ page }
   )
 })
 
-test('public window keeps excerpts bounded and loads older happenings without writing', async ({ page }) => {
+test('public window completes deliberate excerpts and loads older happenings without writing', async ({ page }) => {
   const browserWrites: Array<{ method: string; url: string }> = []
   page.on('request', request => {
     if (isWrite(request)) browserWrites.push({ method: request.method(), url: request.url() })
@@ -53,12 +55,24 @@ test('public window keeps excerpts bounded and loads older happenings without wr
   const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)
   await expect(thingCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
-  await expect(thingCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
+  await thingCard.getByRole('button', { name: 'Show more' }).click()
+  const thingDetail = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/thing/401' && response.status() === 200
+  })
+  await thingCard.getByRole('button', { name: 'Read the whole thing' }).click()
+  await thingDetail
+  await expect(thingCard.locator('.thing-body')).toHaveText(THING_FULL)
 
   const noteCard = page.locator('#place-conversation .note-card').filter({ hasText: NOTE_EXCERPT })
   await expect(noteCard.locator('.note-body')).toHaveText(`${NOTE_EXCERPT}…`)
   await expect(noteCard).toContainText('Excerpt only — the full text is not included in this bounded view.')
-  await expect(noteCard.getByRole('button', { name: 'Read full' })).toHaveCount(0)
+  await noteCard.getByRole('button', { name: 'Show more' }).click()
+  const noteDetail = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/note/301' && response.status() === 200
+  })
+  await noteCard.getByRole('button', { name: 'Read the whole note' }).click()
+  await noteDetail
+  await expect(noteCard.locator('.note-body')).toHaveText(NOTE_FULL)
 
   // Watching one place: opening Happenings fetches the place-filtered slice
   // from the server by itself instead of leaving the view falsely quiet.
@@ -92,7 +106,10 @@ test('public window keeps excerpts bounded and loads older happenings without wr
     { before_id: null, limit: 50, within_place_id: 11 },
     { before_id: 502, limit: 50, within_place_id: 11 },
   ])
-  expect((state.detail_requests ?? []).slice(baselineDetailCount)).toEqual([])
+  expect((state.detail_requests ?? []).slice(baselineDetailCount)).toEqual([
+    { path: '/api/thing/401', has_authorization: false, has_cookie: false },
+    { path: '/api/note/301', has_authorization: false, has_cookie: false },
+  ])
   expect((state.write_requests ?? []).slice(baselineWriteCount)).toEqual([])
   expect(browserWrites).toEqual([])
 })
