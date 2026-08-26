@@ -231,13 +231,21 @@ function normalizeRecord(value: unknown, secret: string): RuntimeLogRecord | nul
     secret,
   )
 
+  // The drain must never store logs of its own deliveries: each delivery
+  // request produces request logs that Vercel drains back here, and relying
+  // on drain-side sampling to exclude them proved wrong live (a feedback
+  // loop grew the table thousands of rows in a minute). Dropping the
+  // receiver's own path here is deterministic and ours.
+  const path = requestPath(proxy?.path ?? input.path, secret)
+  if (path === '/api/internal/log-drain') return null
+
   return Object.freeze({
     id,
     timestamp,
     project,
     source,
     level,
-    requestPath: requestPath(proxy?.path ?? input.path, secret),
+    requestPath: path,
     requestMethod: method,
     statusCode: normalizedStatusCode(proxy?.statusCode ?? input.statusCode),
     durationMs: null,
