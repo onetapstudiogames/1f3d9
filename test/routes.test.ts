@@ -176,6 +176,9 @@ interface FakeState {
   thingOpenToUse: boolean
   thingWithdrawn: boolean
   targetThingOwnerId: number
+  targetThingPlaceId: number
+  targetThingKindId: number | null
+  targetThingOpenToUse: boolean
   targetThingWithdrawn: boolean
   kindOwnerId: number
   kindRevision: number
@@ -254,6 +257,9 @@ const initialState = (): FakeState => ({
   thingOpenToUse: false,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
+  targetThingPlaceId: 2,
+  targetThingKindId: 3,
+  targetThingOpenToUse: false,
   targetThingWithdrawn: false,
   kindOwnerId: 7,
   kindRevision: 1,
@@ -380,27 +386,32 @@ const residentHandleForFakeId = (id: number) => id === 7
   ? 'tiny-lantern'
   : id === 8 ? 'neighbor' : 'founder'
 
-const thingRow = (id = 41) => ({
-  id,
-  place_id: 2,
-  name: id === 41 ? 'porch lantern' : 'neighbor chest',
-  body: id === 41 ? 'warm light' : 'locked shut',
-  maker_id: id === 41 ? 7 : 8,
-  made_by: id === 41 ? 'tiny-lantern' : 'neighbor',
-  current_owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
-  current_owner: residentHandleForFakeId(id === 41 ? state.thingOwnerId : state.targetThingOwnerId),
-  owner_id: id === 41 ? state.thingOwnerId : state.targetThingOwnerId,
-  owner: residentHandleForFakeId(id === 41 ? state.thingOwnerId : state.targetThingOwnerId),
-  open_to_use: id === 41 ? state.thingOpenToUse : false,
-  kind_id: 3,
-  kind: 'lantern',
-  birth_revision: 1,
-  current_revision: state.kindRevision,
-  withdrawn_at: id === 41
-    ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
-    : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
-  created_at: '2026-08-11T00:00:00.000Z',
-})
+const thingRow = (id = 41) => {
+  const source = id === 41
+  const kindId = source ? 3 : state.targetThingKindId
+  const ownerId = source ? state.thingOwnerId : state.targetThingOwnerId
+  return {
+    id,
+    place_id: source ? 2 : state.targetThingPlaceId,
+    name: source ? 'porch lantern' : 'neighbor chest',
+    body: source ? 'warm light' : 'locked shut',
+    maker_id: source ? 7 : 8,
+    made_by: source ? 'tiny-lantern' : 'neighbor',
+    current_owner_id: ownerId,
+    current_owner: residentHandleForFakeId(ownerId),
+    owner_id: ownerId,
+    owner: residentHandleForFakeId(ownerId),
+    open_to_use: source ? state.thingOpenToUse : state.targetThingOpenToUse,
+    kind_id: kindId,
+    kind: kindId === null ? null : 'lantern',
+    birth_revision: kindId === null ? null : 1,
+    current_revision: kindId === null ? null : state.kindRevision,
+    withdrawn_at: source
+      ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
+      : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
+    created_at: '2026-08-11T00:00:00.000Z',
+  }
+}
 
 const roomOrientationThingRow = (id: number) => {
   const fixtures = {
@@ -1759,7 +1770,14 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('insert into action_runs')) return [{ id: 101 }]
   if (q.includes('as place_pending')) return [{ place_pending: 0, actor_pending: 0 }]
   if (q.includes('pg_advisory_xact_lock')) return []
-  if (q.includes('from active_blocks')) return [{ blocked: state.actionBlocked }]
+  if (q.includes('from active_blocks')) return state.actionBlocked ? [{
+    blocked: true,
+    source_trait_id: 4,
+    trait_name: state.lawTraitName,
+    source_place_id: 2,
+    source_thing_id: null,
+    law_source_matches_trait: true,
+  }] : []
   if (q.includes('insert into action_resolutions')) {
     state = { ...state, actionResolved: true }
     return [{ id: 201 }]
@@ -3096,14 +3114,14 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return [{
       id: target,
       owner_id: targetIsSource ? state.thingOwnerId : state.targetThingOwnerId,
-      place_id: 2,
-      kind_id: 3,
+      place_id: targetIsSource ? 2 : state.targetThingPlaceId,
+      kind_id: targetIsSource ? 3 : state.targetThingKindId,
       withdrawn_at: targetIsSource
         ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
         : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
       active_offer_id: null,
       has_open_offer: false,
-      open_to_use: targetIsSource ? state.thingOpenToUse : false,
+      open_to_use: targetIsSource ? state.thingOpenToUse : state.targetThingOpenToUse,
       traits: state.kindTraitNames,
     }]
   }
@@ -4844,6 +4862,7 @@ test('note and agreement quotas fail atomically without a partial public record'
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ place_id: 2, body: 'too many' }),
   })
   assert.equal(note.status, 429)
+  assert.deepEqual(await note.json(), { error: '50 notes per UTC day' })
   assert.equal(inserted('notes'), 0)
 
   const agreement = await app.request('/api/agreement', {
@@ -4851,6 +4870,7 @@ test('note and agreement quotas fail atomically without a partial public record'
     body: JSON.stringify({ parties: ['tiny-lantern', 'neighbor'], body: 'we keep the square open' }),
   })
   assert.equal(agreement.status, 429)
+  assert.deepEqual(await agreement.json(), { error: '5 agreement actions per UTC day' })
   assert.equal(inserted('agreements'), 0)
 })
 
@@ -4912,6 +4932,7 @@ test('a later arrival cannot accede until the author explicitly opens the agreem
 
   const blocked = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
   assert.equal(blocked.status, 403)
+  assert.deepEqual(await blocked.json(), { error: 'this agreement is closed to later signers' })
   assert.equal(inserted('agreement_parties'), 0)
   assert.equal(inserted('agreement_signatures'), 0)
 })
@@ -4978,6 +4999,9 @@ test('only the original author may permanently open an existing agreement to acc
     method: 'POST', headers: authHeaders(OTHER_SECRET),
   })
   assert.equal(denied.status, 403)
+  assert.deepEqual(await denied.json(), {
+    error: 'only the original author may open this agreement to later signers',
+  })
   assert.equal(inserted('agreement_accession_openings'), 0)
 
   setActor(7, 'tiny-lantern')
@@ -5006,12 +5030,14 @@ test('opening accession distinguishes missing agreements and exhausted quota', a
     method: 'POST', headers: authHeaders(),
   })
   assert.equal(missing.status, 404)
+  assert.deepEqual(await missing.json(), { error: 'no such agreement' })
 
   reset({ scenario: 'agreements', quota: { things: true, notes: true, agreements: false } })
   const capped = await app.request('/api/agreement/61/open-accession', {
     method: 'POST', headers: authHeaders(),
   })
   assert.equal(capped.status, 429)
+  assert.deepEqual(await capped.json(), { error: '5 agreement actions per UTC day' })
   assert.equal(inserted('agreement_accession_openings'), 0)
 })
 
@@ -5057,6 +5083,9 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
     body: JSON.stringify({ type: 'thing', id: 41, to_handle: 'someone-else' }),
   })
   assert.equal(lockedGift.status, 409)
+  assert.deepEqual(await lockedGift.json(), {
+    error: 'this asset already has an open transfer offer',
+  })
 })
 
 test('a withdrawn thing cannot be gifted or offered for sale', async () => {
@@ -5066,6 +5095,7 @@ test('a withdrawn thing cannot be gifted or offered for sale', async () => {
     body: JSON.stringify({ type: 'thing', id: 41, to_handle: 'neighbor' }),
   })
   assert.equal(gift.status, 404)
+  assert.deepEqual(await gift.json(), { error: 'no such thing' })
 
   const offer = await app.request('/api/transfer/offer', {
     method: 'POST', headers: authHeaders(),
@@ -5074,6 +5104,7 @@ test('a withdrawn thing cannot be gifted or offered for sale', async () => {
     }),
   })
   assert.equal(offer.status, 404)
+  assert.deepEqual(await offer.json(), { error: 'no such thing' })
   assert.equal(inserted('transfers'), 0)
   assert.equal(inserted('transfer_offers'), 0)
 })
@@ -7828,6 +7859,7 @@ test('a place owner replaces local laws while a visitor cannot legislate there',
     method: 'PUT', headers: authHeaders(OTHER_SECRET), body: JSON.stringify({ traits: [] }),
   })
   assert.equal(rejected.status, 403)
+  assert.deepEqual(await rejected.json(), { error: 'only the place owner may change its laws' })
 })
 
 test('go_home remains available when ordinary movement is actively blocked', async () => {
@@ -7836,7 +7868,19 @@ test('go_home remains available when ordinary movement is actively blocked', asy
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'move', to_place_id: 3 }),
   })
   assert.equal(moved.status, 403)
-  assert.match(JSON.stringify(await moved.json()), /blocked/i)
+  const movedBody = await moved.json() as {
+    error: string
+    action: { status: string; effects_applied: number; error?: string }
+  }
+  assert.equal(movedBody.error, 'move is temporarily blocked by law "quiet-hours" from place_id 2')
+  assert.deepEqual(movedBody.action, {
+    id: 101,
+    action: 'move',
+    status: 'blocked',
+    place_id: 2,
+    effects_applied: 0,
+    error: movedBody.error,
+  })
 
   const home = await app.request('/api/action', {
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ action: 'go_home' }),
@@ -8291,6 +8335,78 @@ test('a visitor may use an open thing but not consume it', async () => {
     body: JSON.stringify({ action: 'consume', thing_id: 41 }),
   })
   assert.equal(consumed.status, 403)
+  const consumedBody = await consumed.json() as {
+    error: string
+    action: { status: string; effects_applied: number; error?: string }
+  }
+  assert.equal(consumedBody.error, 'thing_id is not yours')
+  assert.equal(consumedBody.action.status, 'failed')
+  assert.equal(consumedBody.action.effects_applied, 0)
+  assert.equal(consumedBody.action.error, consumedBody.error)
+})
+
+for (const [thingId, placeId] of [
+  [1183, 303],
+  [1485, 314],
+] as const) {
+  test(`reported miss-cache use of thing #${thingId} in place #${placeId} keeps its cause inside the failed action`, async () => {
+    reset({
+      scenario: `reported miss-cache thing ${thingId}`,
+      actorId: 8,
+      actorHandle: 'neighbor',
+      currentPlaceId: placeId,
+      targetThingOwnerId: 7,
+      targetThingPlaceId: placeId,
+      targetThingKindId: null,
+      targetThingOpenToUse: false,
+    })
+
+    const response = await app.request(`/api/thing/${thingId}/use`, {
+      method: 'POST',
+      headers: { ...authHeaders(OTHER_SECRET), 'Content-Length': '0' },
+    })
+
+    assert.equal(response.status, 403)
+    const body = await response.json() as {
+      error: string
+      action: {
+        status: string
+        effects_applied: number
+        error?: string
+      }
+    }
+    assert.equal(body.error, 'thing_id is not yours')
+    assert.equal(body.action.status, 'failed')
+    assert.equal(body.action.effects_applied, 0)
+    assert.equal(body.action.error, 'thing_id is not yours')
+  })
+}
+
+test('an owned open kindless thing honestly noops without an invented failure cause', async () => {
+  const thingId = 1600
+  const placeId = 321
+  reset({
+    scenario: 'owned open kindless use',
+    currentPlaceId: placeId,
+    targetThingOwnerId: 7,
+    targetThingPlaceId: placeId,
+    targetThingKindId: null,
+    targetThingOpenToUse: true,
+  })
+
+  const response = await app.request(`/api/thing/${thingId}/use`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Length': '0' },
+  })
+
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    action: Record<string, unknown> & { status: string; effects_applied: number }
+  }
+  assert.equal(body.action.status, 'noop')
+  assert.equal(body.action.effects_applied, 0)
+  assert.equal(Object.hasOwn(body, 'error'), false)
+  assert.equal(Object.hasOwn(body.action, 'error'), false)
 })
 
 for (const [label, recipe] of [

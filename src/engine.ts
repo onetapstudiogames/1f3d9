@@ -363,21 +363,134 @@ export async function effectiveLaws(
   ))
 }
 
+interface ActiveActionBlock {
+  readonly sourceTraitId: number | null
+  readonly traitName: string | null
+  readonly sourcePlaceId: number | null
+  readonly sourceThingId: number | null
+}
+
+async function activeActionBlock(
+  residentId: number,
+  action: BasicAction,
+  db: TaggedSql = engineSql,
+): Promise<ActiveActionBlock | null> {
+  const actorId = positiveId(residentId, 'resident id')
+  if (!isBasicAction(action)) throw new EngineError(400, 'action is invalid')
+  if (action === 'go_home') return null
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT block.id IS NOT NULL AS blocked, block.source_trait_id,
+      CASE WHEN moderation.action = 'remove' THEN NULL ELSE trait.name END AS trait_name,
+      block.source_place_id, block.source_thing_id,
+      COALESCE((
+        SELECT provenance.change_type = 'add'
+        FROM place_law_changes provenance
+        WHERE provenance.place_id = block.source_place_id
+          AND provenance.trait_id = block.source_trait_id
+          AND provenance.created_at <= block.created_at
+        ORDER BY provenance.created_at DESC, provenance.id DESC
+        LIMIT 1
+      ), false) AS law_source_matches_trait
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN LATERAL (
+      SELECT active.id, active.source_trait_id, active.created_at,
+        active.source_place_id, active.source_thing_id
+      FROM active_blocks active
+      WHERE active.resident_id = ${actorId} AND active.action_name = ${action}
+        AND active.expires_at > now()
+      ORDER BY active.expires_at ASC, active.id DESC
+      LIMIT 1
+    ) block ON true
+    LEFT JOIN traits trait ON trait.id = block.source_trait_id
+    LEFT JOIN LATERAL (
+      SELECT action.action
+      FROM moderation_actions action
+      WHERE action.target_type = 'trait' AND action.target_id = block.source_trait_id
+      ORDER BY action.created_at DESC, action.id DESC
+      LIMIT 1
+    ) moderation ON true
+  `)
+  const row = rows[0]
+  if (!row || row.blocked !== true) return null
+  const sourceTraitId = nullableRowId(row.source_trait_id, 'block source trait id')
+  const sourceThingId = nullableRowId(row.source_thing_id, 'block source thing id')
+  const storedSourcePlaceId = nullableRowId(row.source_place_id, 'block source place id')
+  const sourcePlaceId = sourceThingId !== null
+    || (sourceTraitId !== null && row.law_source_matches_trait !== true)
+    ? null
+    : storedSourcePlaceId
+  return Object.freeze({
+    sourceTraitId,
+    traitName: typeof row.trait_name === 'string' && row.trait_name.length > 0
+      ? row.trait_name
+      : null,
+    sourcePlaceId,
+    sourceThingId,
+  })
+}
+
 export async function isActionBlocked(
   residentId: number,
   action: BasicAction,
   db: TaggedSql = engineSql,
 ): Promise<boolean> {
-  const actorId = positiveId(residentId, 'resident id')
-  if (!isBasicAction(action)) throw new EngineError(400, 'action is invalid')
-  if (action === 'go_home') return false
-  const rows = await queryRows<{ blocked?: unknown }>(db`
-    SELECT EXISTS (
-      SELECT 1 FROM active_blocks
-      WHERE resident_id = ${actorId} AND action_name = ${action} AND expires_at > now()
-    ) AS blocked
-  `)
-  return rows[0]?.blocked === true
+  return await activeActionBlock(residentId, action, db) !== null
+}
+
+interface ActiveBlockCause {
+  readonly callerError: string
+  readonly resolutionDetail: Readonly<Record<string, unknown>>
+}
+
+function activeBlockCause(action: BasicAction, block: ActiveActionBlock): ActiveBlockCause {
+  let callerSource: string
+  let stableSource: string
+  if (block.sourceThingId !== null) {
+    if (block.traitName !== null) {
+      callerSource = `by thing trait "${block.traitName}" from thing_id ${block.sourceThingId}`
+    } else if (block.sourceTraitId === null) {
+      callerSource = `by a thing trait from thing_id ${block.sourceThingId}; its trait identity is unavailable`
+    } else {
+      callerSource = `by thing trait_id ${block.sourceTraitId} from thing_id ${block.sourceThingId}; its name is unavailable`
+    }
+    stableSource = block.sourceTraitId === null
+      ? `${action} is temporarily blocked by a thing trait from thing_id ${block.sourceThingId}; its trait identity is unavailable`
+      : `${action} is temporarily blocked by thing trait_id ${block.sourceTraitId} from thing_id ${block.sourceThingId}`
+  } else if (block.sourcePlaceId !== null) {
+    if (block.traitName !== null) {
+      callerSource = `by law "${block.traitName}" from place_id ${block.sourcePlaceId}`
+    } else if (block.sourceTraitId === null) {
+      callerSource = `by a law from place_id ${block.sourcePlaceId}; its trait identity is unavailable`
+    } else {
+      callerSource = `by law trait_id ${block.sourceTraitId} from place_id ${block.sourcePlaceId}; its name is unavailable`
+    }
+    stableSource = block.sourceTraitId === null
+      ? `${action} is temporarily blocked by a law from place_id ${block.sourcePlaceId}; its trait identity is unavailable`
+      : `${action} is temporarily blocked by law trait_id ${block.sourceTraitId} from place_id ${block.sourcePlaceId}`
+  } else if (block.sourceTraitId !== null) {
+    callerSource = block.traitName === null
+      ? `by trait_id ${block.sourceTraitId}; its name and source are unavailable`
+      : `by trait "${block.traitName}"; its source is unavailable`
+    stableSource = `${action} is temporarily blocked by trait_id ${block.sourceTraitId}; its source is unavailable`
+  } else {
+    callerSource = block.traitName === null
+      ? 'this block has no stored law or thing-trait source'
+      : `by trait "${block.traitName}"; its source is unavailable`
+    stableSource = `${action} is temporarily blocked; this block has no stored law or thing-trait source`
+  }
+  const callerError = callerSource.startsWith('by ')
+    ? `${action} is temporarily blocked ${callerSource}`
+    : `${action} is temporarily blocked; ${callerSource}`
+  return Object.freeze({
+    callerError,
+    resolutionDetail: Object.freeze({
+      error: stableSource,
+      ...(block.sourceTraitId === null ? {} : { trait_id: block.sourceTraitId }),
+      ...(block.traitName === null ? {} : { trait: block.traitName }),
+      ...(block.sourcePlaceId === null ? {} : { source_place_id: block.sourcePlaceId }),
+      ...(block.sourceThingId === null ? {} : { source_thing_id: block.sourceThingId }),
+    }),
+  })
 }
 
 export async function ensurePresence(
@@ -605,6 +718,12 @@ function publicActionEventDetail(
   const error = typeof detail.error === 'string' ? detail.error : null
   const fromPlaceId = integer(detail.from_place_id)
   const toPlaceId = integer(detail.to_place_id)
+  const traitId = integer(detail.trait_id)
+  const trait = typeof detail.trait === 'string' && detail.trait.length > 0
+    ? detail.trait
+    : null
+  const sourcePlaceId = integer(detail.source_place_id)
+  const sourceThingId = integer(detail.source_thing_id)
   return Object.freeze({
     action_id: actionId,
     action,
@@ -613,6 +732,10 @@ function publicActionEventDetail(
     ...(fromPlaceId === null || fromPlaceId <= 0 ? {} : { from_place_id: fromPlaceId }),
     ...(toPlaceId === null || toPlaceId <= 0 ? {} : { to_place_id: toPlaceId }),
     ...(error === null ? {} : { error }),
+    ...(traitId === null || traitId <= 0 ? {} : { trait_id: traitId }),
+    ...(trait === null ? {} : { trait }),
+    ...(sourcePlaceId === null || sourcePlaceId <= 0 ? {} : { source_place_id: sourcePlaceId }),
+    ...(sourceThingId === null || sourceThingId <= 0 ? {} : { source_thing_id: sourceThingId }),
   })
 }
 
@@ -690,8 +813,14 @@ async function committedResolution(
   return null
 }
 
-function logUnrecognizedActionFailure(actionId: number, error: unknown): void {
-  const fields: Record<string, unknown> = { action_id: actionId }
+export function logUnrecognizedExecutionFailure(
+  subject: 'action' | 'stored effect',
+  executionId: number,
+  error: unknown,
+): void {
+  const fields: Record<string, unknown> = subject === 'action'
+    ? { action_id: executionId }
+    : { effect_id: executionId }
   if (error instanceof Error) {
     fields.error_name = error.name.slice(0, 120)
     fields.error_message = error.message.slice(0, 1_000)
@@ -703,19 +832,19 @@ function logUnrecognizedActionFailure(actionId: number, error: unknown): void {
     typeof stored?.code === 'string'
     && /^[a-z0-9]{1,16}$/iu.test(stored.code)
   ) fields.error_code = stored.code
-  // Deliberately do not log the action payload, SQL text, parameters, or
+  // Deliberately do not log the action/effect payload, SQL text, parameters, or
   // database detail: any of those may contain resident-authored text.
   try {
-    console.error('unrecognized action execution failure', fields)
+    console.error(`unrecognized ${subject} execution failure`, fields)
   } catch {
     // Observability cannot be allowed to replace the canonical action outcome.
   }
 }
 
 function failureFromError(error: unknown, actionId: number): EngineError {
-  if (error instanceof EngineError) return error
+  if (error instanceof EngineError && error.status < 500) return error
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
-  logUnrecognizedActionFailure(actionId, error)
+  logUnrecognizedExecutionFailure('action', actionId, error)
   return new EngineError(500, 'the city could not complete this action')
 }
 
@@ -935,12 +1064,24 @@ export async function runAction(
           throw new EngineError(409, message)
         }
       }
-      if (await isActionBlocked(input.actorId, input.action, transaction)) {
-        const error = 'action is temporarily blocked'
+      const block = await activeActionBlock(input.actorId, input.action, transaction)
+      if (block) {
+        const cause = activeBlockCause(input.action, block)
         await recordActionResolution(
-          actionId, input.actorHandle, input.action, 'blocked', { error }, transaction,
+          actionId,
+          input.actorHandle,
+          input.action,
+          'blocked',
+          cause.resolutionDetail,
+          transaction,
         )
-        return { actionId, status: 'blocked', httpStatus: 403, error, effectsApplied: 0 }
+        return {
+          actionId,
+          status: 'blocked',
+          httpStatus: 403,
+          error: cause.callerError,
+          effectsApplied: 0,
+        }
       }
       if (input.action === 'go_home') {
         await goHome(input.actorId, transaction)
@@ -977,6 +1118,8 @@ export async function runAction(
           ...base,
           sourceTraitId: program.sourceTraitId,
           sourceThingId: program.sourceThingId ?? base.sourceThingId,
+          originThingId: program.sourceThingId,
+          originPlaceId: program.lawSourcePlaceId,
           lawAuthority: program.lawSourcePlaceId === null || program.sourceTraitId === null ? null : {
             traitId: program.sourceTraitId,
             sourcePlaceId: program.lawSourcePlaceId,

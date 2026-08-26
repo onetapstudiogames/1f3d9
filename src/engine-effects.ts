@@ -4,6 +4,7 @@ import {
   engineSql,
   ensurePresence,
   goHome,
+  logUnrecognizedExecutionFailure,
   moveResident,
   resolveSymbolicTarget,
   withEngineTransaction,
@@ -30,6 +31,7 @@ import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
+const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
 export const MAX_DUE_EFFECTS_PER_OBSERVATION = MAX_PENDING_EFFECTS_PER_PLACE
 export const SHARED_SOURCE_MUTATION_ERROR =
   'shared use cannot change its source thing; only the owner may destroy, move, or transfer it'
@@ -49,6 +51,9 @@ export interface EffectExecutionContext {
   readonly recipientId: number | null
   readonly sourceTraitId: number | null
   readonly lawAuthority: LawAuthority | null
+  /** Stable recipe origin; unlike lawAuthority, check_label never replaces it. */
+  readonly originThingId?: number | null
+  readonly originPlaceId?: number | null
   readonly parentEffectId: number | null
   readonly generation: number
   readonly logicalAt: Date
@@ -81,6 +86,8 @@ interface PendingRow {
   readonly repeatRemaining: number
   readonly repeatSeconds: number | null
   readonly lawAuthority: LawAuthority | null
+  readonly originThingId: number | null | undefined
+  readonly originPlaceId: number | null | undefined
   readonly dueAt: Date
   readonly logicalDueAt: Date
   readonly generation: number
@@ -234,6 +241,26 @@ function effectExecutionOutcome(
   return Object.freeze({ effectsApplied, emittedTypedPublicEvent })
 }
 
+function effectOrigin(context: EffectExecutionContext): Readonly<{
+  thingId: number | null
+  placeId: number | null
+}> {
+  if (context.originThingId !== undefined || context.originPlaceId !== undefined) {
+    const thingId = context.originThingId ?? null
+    return Object.freeze({
+      thingId,
+      placeId: thingId === null ? (context.originPlaceId ?? null) : null,
+    })
+  }
+  if (context.lawAuthority?.traitId === context.sourceTraitId) {
+    return Object.freeze({ thingId: null, placeId: context.lawAuthority.sourcePlaceId })
+  }
+  if (context.lawAuthority !== null) {
+    return Object.freeze({ thingId: null, placeId: null })
+  }
+  return Object.freeze({ thingId: context.sourceThingId, placeId: null })
+}
+
 export async function executeEffectsWithOutcome(
   effects: readonly Effect[],
   context: EffectExecutionContext,
@@ -264,6 +291,7 @@ async function executeEffectWithOutcome(
 ): Promise<EffectExecutionOutcome> {
   if (effect.effect === 'label') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
+    const origin = effectOrigin(context)
     if (target.type === 'place') {
       const places = await queryRows<Record<string, unknown>>(db`
         SELECT id, parent_id, place_kind, owner_id FROM places WHERE id = ${target.id}
@@ -276,8 +304,7 @@ async function executeEffectWithOutcome(
         source_trait_id, source_place_id, source_thing_id
       ) VALUES (
         ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
-        ${context.sourceTraitId}, ${context.lawAuthority?.sourcePlaceId ?? null},
-        ${context.sourceThingId}
+        ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId}
       ) RETURNING id
     `)
     return effectExecutionOutcome(1, false)
@@ -285,13 +312,14 @@ async function executeEffectWithOutcome(
   if (effect.effect === 'block') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
     if (target.type !== 'resident') throw new EngineError(400, 'block target must be a resident')
+    const origin = effectOrigin(context)
     await queryRows(db`
       INSERT INTO active_blocks (
         resident_id, action_name, actor_id, source_trait_id,
         source_place_id, source_thing_id, expires_at
       ) VALUES (
         ${target.id}, ${effect.action}, ${context.actorId}, ${context.sourceTraitId},
-        ${context.lawAuthority?.sourcePlaceId ?? null}, ${context.sourceThingId},
+        ${origin.placeId}, ${origin.thingId},
         now() + make_interval(secs => ${effect.seconds})
       ) RETURNING id
     `)
@@ -337,8 +365,11 @@ async function executeEffectWithOutcome(
   const law = await matchingLaw(target, effect.label, db)
   const matched = law !== null || await activeLabel(target, effect.label, db)
   const branch = matched ? effect.then : (effect.else ?? [])
+  const origin = effectOrigin(context)
   const branchContext: EffectExecutionContext = law === null ? context : {
     ...context,
+    originThingId: origin.thingId,
+    originPlaceId: origin.placeId,
     lawAuthority: { traitId: law.traitId, sourcePlaceId: law.sourcePlaceId },
   }
   return executeEffectsWithOutcome(branch, branchContext, db)
@@ -678,6 +709,7 @@ async function scheduleEffect(
   if (generation > MAX_EFFECT_GENERATIONS) return false
   if (context.placeId === null) throw new EngineError(400, 'wait effect needs a place')
   const logicalDueAt = new Date(context.logicalAt.getTime() + effect.seconds * 1_000)
+  const origin = effectOrigin(context)
   const payload = {
     effects: effect.then,
     repeat_remaining: effect.repeat ?? 0,
@@ -688,6 +720,10 @@ async function scheduleEffect(
       source_place_id: context.lawAuthority.sourcePlaceId,
     },
     shared_source_thing_id: context.sharedSourceThingId,
+    effect_origin: {
+      source_thing_id: origin.thingId,
+      source_place_id: origin.placeId,
+    },
   }
   await insertPendingEffect({
     actionId: context.actionId,
@@ -726,6 +762,31 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
   const lawAuthority = authorityTrait && authorityPlace
     ? { traitId: authorityTrait, sourcePlaceId: authorityPlace }
     : null
+  const hasOrigin = Object.hasOwn(payload, 'effect_origin')
+  const rawOrigin = hasOrigin ? objectRecord(payload.effect_origin) : null
+  if (
+    hasOrigin
+    && (
+      rawOrigin === null
+      || !Object.hasOwn(rawOrigin, 'source_thing_id')
+      || !Object.hasOwn(rawOrigin, 'source_place_id')
+    )
+  ) return null
+  const rawOriginThingId = rawOrigin?.source_thing_id
+  const rawOriginPlaceId = rawOrigin?.source_place_id
+  const originThingId = !hasOrigin || rawOriginThingId == null
+    ? null
+    : integer(rawOriginThingId)
+  const originPlaceId = !hasOrigin || rawOriginPlaceId == null
+    ? null
+    : integer(rawOriginPlaceId)
+  if (
+    (rawOriginThingId != null && originThingId === null)
+    || (rawOriginPlaceId != null && originPlaceId === null)
+    || (originThingId !== null && originThingId <= 0)
+    || (originPlaceId !== null && originPlaceId <= 0)
+    || (originThingId !== null && originPlaceId !== null)
+  ) return null
   const dueAt = new Date(String(row.due_at))
   const logicalDueAt = new Date(String(payload.logical_due_at ?? row.due_at))
   const generation = integer(row.generation)
@@ -759,6 +820,8 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     repeatRemaining,
     repeatSeconds,
     lawAuthority,
+    originThingId: hasOrigin ? originThingId : undefined,
+    originPlaceId: hasOrigin ? originPlaceId : undefined,
     dueAt,
     logicalDueAt,
     generation,
@@ -804,6 +867,12 @@ async function recordEffectResolution(
   detail: Readonly<Record<string, unknown>>,
   db: TaggedSql,
 ) {
+  const error = typeof detail.error === 'string' ? detail.error : null
+  const publicDetail = Object.freeze({
+    effect_id: pendingId,
+    status,
+    ...(error === null ? {} : { error }),
+  })
   await queryRows(db`
     WITH resolution AS (
       INSERT INTO effect_resolutions (pending_effect_id, status, detail)
@@ -812,7 +881,7 @@ async function recordEffectResolution(
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'effect_resolved', resident.handle,
-        jsonb_build_object('effect_id', resolution.pending_effect_id, 'status', ${status}::text)
+        ${json(publicDetail)}::jsonb
       FROM resolution
       JOIN pending_effects pending ON pending.id = resolution.pending_effect_id
       JOIN residents resident ON resident.id = pending.actor_id
@@ -855,6 +924,8 @@ async function resolveOne(
     recipientId: row.recipientId,
     sourceTraitId: row.sourceTraitId,
     lawAuthority: row.lawAuthority,
+    ...(row.originThingId === undefined ? {} : { originThingId: row.originThingId }),
+    ...(row.originPlaceId === undefined ? {} : { originPlaceId: row.originPlaceId }),
     parentEffectId: row.id,
     generation: row.generation,
     logicalAt: row.logicalDueAt,
@@ -897,7 +968,12 @@ export async function resolveDueEffects(
         ))
       } catch (error) {
         const pendingId = rowId(raw.id, 'pending effect id')
-        const message = error instanceof Error ? error.message : 'the city could not complete this action'
+        if (!(error instanceof EngineError) || error.status >= 500) {
+          logUnrecognizedExecutionFailure('stored effect', pendingId, error)
+        }
+        const message = error instanceof EngineError && error.status < 500
+          ? error.message
+          : UNKNOWN_STORED_EFFECT_ERROR
         const recorded = await withEngineTransaction(db, (transaction, atomic) => (
           recordFailedEffect(pendingId, placeId, message, transaction, atomic)
         ))

@@ -166,6 +166,29 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
       label_applied: true,
     }])
 
+    const invalidPendingId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO pending_effects (place_id, actor_id, payload, due_at)
+      VALUES ($1, 1, '{}'::jsonb, now())
+      RETURNING id
+    `, [placeId])).rows[0]!.id
+    assert.deepEqual(
+      await resolveDueEffects(placeId, db),
+      { resolved: 0, failed: 1, capped: false },
+    )
+    const skipped = await postgres.client.query(`
+      SELECT resolution.status, resolution.detail->>'error' AS stored_error,
+        resolved.detail->>'error' AS published_error
+      FROM effect_resolutions resolution
+      JOIN events resolved ON resolved.kind = 'effect_resolved'
+        AND (resolved.detail->>'effect_id')::bigint = resolution.pending_effect_id
+      WHERE resolution.pending_effect_id = $1
+    `, [invalidPendingId])
+    assert.deepEqual(skipped.rows, [{
+      status: 'skipped',
+      stored_error: 'invalid stored effect payload',
+      published_error: 'invalid stored effect payload',
+    }])
+
     await postgres.client.query(`
       INSERT INTO residents (id, handle, model, secret_hash)
       VALUES (2, 'timer-visitor', 'integration-test', repeat('2', 64))
@@ -209,6 +232,103 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
       ) AS present
     `)
     assert.deepEqual(welcomed.rows, [{ present: true }])
+
+    await postgres.client.query(`
+      UPDATE traits SET recipe = '{
+        "use":[{
+          "effect":"block",
+          "target":"actor",
+          "action":"move",
+          "seconds":60
+        }]
+      }'::jsonb
+      WHERE id = 1
+    `)
+    const blockedByThing = await runAction({
+      actorId: 2,
+      actorHandle: 'timer-visitor',
+      action: 'use',
+      placeId,
+      sourceThingId: 1,
+    }, db)
+    assert.equal(blockedByThing.status, 'applied')
+
+    const blockedMove = await runAction({
+      actorId: 2,
+      actorHandle: 'timer-visitor',
+      action: 'move',
+      placeId,
+      destinationPlaceId: placeId,
+    }, db)
+    assert.equal(blockedMove.status, 'blocked')
+    assert.equal(
+      blockedMove.error,
+      'move is temporarily blocked by thing trait "welcoming" from thing_id 1',
+    )
+
+    await postgres.client.query(`
+      INSERT INTO moderation_actions (
+        target_type, target_id, action, actor_id, reason
+      ) VALUES ('trait', 1, 'remove', 1, 'integration moderation check')
+    `)
+    const blockedAfterRemoval = await runAction({
+      actorId: 2,
+      actorHandle: 'timer-visitor',
+      action: 'move',
+      placeId,
+      destinationPlaceId: placeId,
+    }, db)
+    assert.equal(blockedAfterRemoval.status, 'blocked')
+    assert.equal(
+      blockedAfterRemoval.error,
+      'move is temporarily blocked by thing trait_id 1 from thing_id 1; its name is unavailable',
+    )
+    assert.doesNotMatch(blockedAfterRemoval.error ?? '', /welcoming/u)
+
+    await postgres.client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES
+        (2, 'late-law', 'adopted after its block was created', NULL, 1),
+        (3, 'retired-law', 'removed before its block was created', NULL, 1);
+
+      INSERT INTO active_blocks (
+        resident_id, action_name, actor_id, source_trait_id, source_place_id,
+        expires_at, created_at
+      ) VALUES
+        (1, 'talk', 1, 2, ${placeId}, now() + interval '1 hour', now() - interval '4 hours'),
+        (1, 'make', 1, 3, ${placeId}, now() + interval '1 hour', now() - interval '2 hours');
+
+      INSERT INTO place_law_changes (
+        place_id, trait_id, actor_id, change_type, position, created_at
+      ) VALUES
+        (${placeId}, 2, 1, 'add', 0, now() - interval '3 hours'),
+        (${placeId}, 3, 1, 'add', 1, now() - interval '4 hours'),
+        (${placeId}, 3, 1, 'remove', NULL, now() - interval '3 hours');
+    `)
+
+    const lateLawBlock = await runAction({
+      actorId: 1,
+      actorHandle: 'timer-tester',
+      action: 'talk',
+      placeId,
+    }, db)
+    assert.equal(lateLawBlock.status, 'blocked')
+    assert.equal(
+      lateLawBlock.error,
+      'talk is temporarily blocked by trait "late-law"; its source is unavailable',
+    )
+
+    const retiredLawBlock = await runAction({
+      actorId: 1,
+      actorHandle: 'timer-tester',
+      action: 'make',
+      placeId,
+    }, db)
+    assert.equal(retiredLawBlock.status, 'blocked')
+    assert.equal(
+      retiredLawBlock.error,
+      'make is temporarily blocked by trait "retired-law"; its source is unavailable',
+    )
 
     await postgres.client.query(`
       UPDATE traits SET recipe = '{

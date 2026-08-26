@@ -104,6 +104,8 @@ const WINDOW_BODY_LIMITS = Object.freeze({
   things: 1_000,
   agreements: 4_000,
 })
+const WINDOW_EVENT_ERROR_LIMIT = 500
+const WINDOW_UNSAFE_EVENT_ERROR = 'the recorded cause could not be shown safely'
 
 // An agreement may collect an unbounded number of later signers. The glass
 // keeps a small, safe preview and says explicitly when the public API holds
@@ -117,6 +119,11 @@ const SAFE_ACTION_STATUSES: ReadonlySet<string> = new Set([
   'applied',
   'blocked',
   'noop',
+  'failed',
+])
+const SAFE_EFFECT_STATUSES: ReadonlySet<string> = new Set([
+  'applied',
+  'skipped',
   'failed',
 ])
 
@@ -529,13 +536,30 @@ function publicWindowEvent(value: unknown) {
     const safe = positiveInteger(rawDetail[key])
     return safe ? [[key, safe] as const] : []
   }))
+  let carriesFailureCause = false
   if (kind === 'action' && isBasicAction(rawDetail.action)) {
     detail.action = rawDetail.action
     if (typeof rawDetail.status === 'string' && SAFE_ACTION_STATUSES.has(rawDetail.status)) {
       detail.status = rawDetail.status
+      carriesFailureCause = rawDetail.status === 'blocked' || rawDetail.status === 'failed'
     }
+  } else if (
+    kind === 'effect_resolved' &&
+    typeof rawDetail.status === 'string' &&
+    SAFE_EFFECT_STATUSES.has(rawDetail.status)
+  ) {
+    detail.status = rawDetail.status
+    carriesFailureCause = rawDetail.status === 'skipped' || rawDetail.status === 'failed'
   } else if (kind === 'moderation' && ['remove', 'restore'].includes(String(rawDetail.action))) {
     detail.action = String(rawDetail.action)
+  }
+  if (carriesFailureCause && Object.hasOwn(rawDetail, 'error')) {
+    const error = safePublicText(rawDetail.error, WINDOW_EVENT_ERROR_LIMIT + 1)
+    detail.error = error
+      ? error.truncated || error.text.length > WINDOW_EVENT_ERROR_LIMIT
+        ? `${error.text.slice(0, WINDOW_EVENT_ERROR_LIMIT - 1)}…`
+        : error.text
+      : WINDOW_UNSAFE_EVENT_ERROR
   }
   return { id, at, kind, actor, detail }
 }

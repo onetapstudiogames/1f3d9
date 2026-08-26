@@ -21,6 +21,11 @@ import {
   type TaggedSql,
 } from '../src/engine.ts'
 import { COLLISION_CONFLICT_MESSAGE } from '../src/core.ts'
+import {
+  executeEffects,
+  type EffectExecutionContext,
+} from '../src/engine-effects.ts'
+import { BLOCKABLE_ACTIONS } from '../src/physics.ts'
 
 interface Call {
   text: string
@@ -77,7 +82,13 @@ test('go_home can never be blocked and does not touch the block table', async ()
 })
 
 test('a live basic-action block is enforced', async () => {
-  const { db } = fakeSql(() => [{ blocked: true }])
+  const { db } = fakeSql(() => [{
+    blocked: true,
+    source_trait_id: 12,
+    trait_name: 'heavy-air',
+    source_place_id: 2,
+    source_thing_id: null,
+  }])
   assert.equal(await isActionBlocked(7, 'move', db), true)
 })
 
@@ -161,7 +172,13 @@ test('a blocked action is durably recorded without running effects', async () =>
       return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
     }
     if (/INSERT INTO action_runs/.test(text)) return [{ id: 101 }]
-    if (/FROM active_blocks/.test(text)) return [{ blocked: true }]
+    if (/FROM active_blocks/.test(text)) return [{
+      blocked: true,
+      source_trait_id: 12,
+      trait_name: 'heavy-air',
+      source_place_id: null,
+      source_thing_id: 41,
+    }]
     if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 201 }]
     return []
   })
@@ -176,8 +193,134 @@ test('a blocked action is durably recorded without running effects', async () =>
 
   assert.equal(result.status, 'blocked')
   assert.equal(result.httpStatus, 403)
+  assert.equal(
+    result.error,
+    'use is temporarily blocked by thing trait "heavy-air" from thing_id 41',
+  )
   assert.equal(calls.some(call => /INSERT INTO active_labels/.test(call.text)), false)
   assert.equal(calls.some(call => /INSERT INTO action_resolutions/.test(call.text)), true)
+})
+
+test('a removed blocking trait uses an unavailable-name fallback without leaking its name', async () => {
+  const removedName = 'removed-law-name'
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 403 }]
+    if (/FROM active_blocks/.test(text)) {
+      assert.match(text, /FROM moderation_actions/u)
+      return [{
+        blocked: true,
+        source_trait_id: 14,
+        trait_name: null,
+        source_place_id: 2,
+        source_thing_id: null,
+        law_source_matches_trait: true,
+      }]
+    }
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 503 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 2,
+  }, db)
+
+  assert.equal(result.status, 'blocked')
+  assert.equal(
+    result.error,
+    'talk is temporarily blocked by law trait_id 14 from place_id 2; its name is unavailable',
+  )
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.doesNotMatch(JSON.stringify(resolution.values), new RegExp(removedName, 'u'))
+})
+
+for (const action of BLOCKABLE_ACTIONS) {
+  test(`${action} names the law and source place that block it`, async () => {
+    const { db, calls } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 401 }]
+      if (/FROM active_blocks/.test(text)) return [{
+        blocked: true,
+        source_trait_id: 13,
+        trait_name: 'quiet-hours',
+        source_place_id: 2,
+        source_thing_id: null,
+        law_source_matches_trait: true,
+      }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 501 }]
+      return []
+    })
+
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'tiny-lantern',
+      action,
+      placeId: 2,
+    }, db)
+
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.httpStatus, 403)
+    assert.equal(
+      result.error,
+      `${action} is temporarily blocked by law "quiet-hours" from place_id 2`,
+    )
+    const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+    assert.ok(resolution)
+    assert.equal(
+      String(resolution.values[2]),
+      JSON.stringify({
+        error: `${action} is temporarily blocked by law trait_id 13 from place_id 2`,
+        trait_id: 13,
+        trait: 'quiet-hours',
+        source_place_id: 2,
+      }),
+    )
+    assert.equal(
+      String(resolution.values.at(-2)),
+      JSON.stringify({
+        action_id: 401,
+        action,
+        status: 'blocked',
+        error: `${action} is temporarily blocked by law trait_id 13 from place_id 2`,
+        trait_id: 13,
+        trait: 'quiet-hours',
+        source_place_id: 2,
+      }),
+    )
+  })
+}
+
+test('go_home failure names the missing usable home', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 402 }]
+    if (/WITH first_owned/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: null, updated_at: 'now' }]
+    }
+    if (/UPDATE resident_presence presence/.test(text)) return []
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 502 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'go_home',
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 409)
+  assert.equal(result.error, 'home is unset or no longer owned')
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.match(String(resolution.values.at(-2)), /home is unset or no longer owned/u)
 })
 
 test('label and check_label bricks compose in order', async () => {
@@ -221,6 +364,246 @@ test('label and check_label bricks compose in order', async () => {
 
   assert.equal(result.status, 'applied')
   assert.equal(calls.some(call => /INSERT INTO active_blocks/.test(call.text)), true)
+})
+
+test('check_label freezes a thing origin before adopting a matched law authority', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/WITH RECURSIVE ancestry/.test(text)) return [{
+      trait_id: 22,
+      name: 'gate-law',
+      recipe: null,
+      source_place_id: 2,
+      position: 0,
+    }]
+    if (/SELECT EXISTS/.test(text) && /FROM (?:residents|places)/.test(text)) {
+      return [{ exists: true }]
+    }
+    if (/INSERT INTO active_blocks/.test(text)) return [{ id: 900 }]
+    return []
+  })
+  const context: EffectExecutionContext = {
+    actionId: 600,
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    placeId: 2,
+    sourceThingId: 41,
+    sharedSourceThingId: null,
+    target: null,
+    destinationPlaceId: null,
+    recipientId: null,
+    sourceTraitId: 21,
+    lawAuthority: null,
+    parentEffectId: null,
+    generation: 0,
+    logicalAt: new Date('2026-08-11T00:00:00.000Z'),
+  }
+
+  assert.equal(await executeEffects([{
+    effect: 'check_label',
+    target: 'place',
+    label: 'gate-law',
+    then: [{ effect: 'block', target: 'actor', action: 'move', seconds: 60 }],
+  }], context, db), 1)
+
+  const inserted = calls.find(call => /INSERT INTO active_blocks/.test(call.text))
+  assert.ok(inserted)
+  assert.deepEqual(inserted.values.slice(3, 6), [21, null, 41])
+})
+
+test('a delayed check_label law branch preserves its frozen thing origin in the payload', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/WITH RECURSIVE ancestry/.test(text)) return [{
+      trait_id: 22,
+      name: 'gate-law',
+      recipe: null,
+      source_place_id: 2,
+      position: 0,
+    }]
+    if (/SELECT EXISTS/.test(text) && /FROM places/.test(text)) return [{ exists: true }]
+    if (/pg_advisory_xact_lock/.test(text)) return []
+    if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
+    if (/INSERT INTO pending_effects/.test(text)) return [{ id: 901 }]
+    return []
+  })
+  const context: EffectExecutionContext = {
+    actionId: 601,
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    placeId: 2,
+    sourceThingId: 41,
+    sharedSourceThingId: null,
+    target: null,
+    destinationPlaceId: null,
+    recipientId: null,
+    sourceTraitId: 21,
+    lawAuthority: null,
+    parentEffectId: null,
+    generation: 0,
+    logicalAt: new Date('2026-08-11T00:00:00.000Z'),
+  }
+
+  assert.equal(await executeEffects([{
+    effect: 'check_label',
+    target: 'place',
+    label: 'gate-law',
+    then: [{
+      effect: 'wait',
+      seconds: 60,
+      then: [{ effect: 'block', target: 'actor', action: 'move', seconds: 60 }],
+    }],
+  }], context, db), 1)
+
+  const pending = calls.find(call => /INSERT INTO pending_effects/.test(call.text))
+  assert.ok(pending)
+  assert.deepEqual(
+    JSON.parse(String(pending.values[10])).effect_origin,
+    { source_thing_id: 41, source_place_id: null },
+  )
+})
+
+test('a thing-trait block gated by a different law keeps only the thing provenance', async () => {
+  let actionId = 600
+  let block: Record<string, unknown> | null = null
+  const { db, calls } = fakeSql(({ text, values }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: ++actionId }]
+    if (/FROM active_blocks/.test(text)) return block === null ? [{ blocked: false }] : [{
+      ...block,
+      // Existing rows may carry the unrelated check_label law place.
+      source_place_id: 2,
+      law_source_matches_trait: false,
+    }]
+    if (/SELECT thing\.id/.test(text)) {
+      return [{
+        id: 41,
+        owner_id: 7,
+        place_id: 2,
+        withdrawn_at: null,
+        active_offer_id: null,
+        has_open_offer: false,
+        open_to_use: false,
+      }]
+    }
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 21,
+      recipe: {
+        use: [{
+          effect: 'check_label',
+          target: 'place',
+          label: 'gate-law',
+          then: [{ effect: 'block', target: 'actor', action: 'move', seconds: 60 }],
+        }],
+      },
+    }]
+    if (/WITH RECURSIVE ancestry/.test(text)) return [{
+      trait_id: 22,
+      name: 'gate-law',
+      recipe: null,
+      source_place_id: 2,
+      position: 0,
+    }]
+    if (/SELECT EXISTS/.test(text) && /FROM (?:residents|places)/.test(text)) {
+      return [{ exists: true }]
+    }
+    if (/INSERT INTO active_blocks/.test(text)) {
+      block = {
+        blocked: true,
+        source_trait_id: values[3],
+        trait_name: 'origin-thing-trait',
+        source_place_id: values[4],
+        source_thing_id: values[5],
+        law_source_matches_trait: false,
+      }
+      return [{ id: 901 }]
+    }
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 902 }]
+    return []
+  })
+
+  const created = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+  }, db)
+  assert.equal(created.status, 'applied')
+
+  const consumed = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'move',
+    placeId: 2,
+  }, db)
+  assert.equal(consumed.status, 'blocked')
+  assert.equal(
+    consumed.error,
+    'move is temporarily blocked by thing trait "origin-thing-trait" from thing_id 41',
+  )
+  assert.deepEqual(block, {
+    blocked: true,
+    source_trait_id: 21,
+    trait_name: 'origin-thing-trait',
+    source_place_id: null,
+    source_thing_id: 41,
+    law_source_matches_trait: false,
+  })
+  const inserted = calls.find(call => /INSERT INTO active_blocks/.test(call.text))
+  assert.ok(inserted)
+  assert.deepEqual(inserted.values.slice(3, 6), [21, null, 41])
+})
+
+test('a legacy mixed law block never names an unproven trait and place as one law', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 603 }]
+    if (/FROM active_blocks/.test(text)) return [{
+      blocked: true,
+      source_trait_id: 31,
+      trait_name: 'origin-law',
+      source_place_id: 99,
+      source_thing_id: null,
+      law_source_matches_trait: false,
+    }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 903 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 2,
+  }, db)
+
+  assert.equal(result.status, 'blocked')
+  assert.equal(
+    result.error,
+    'talk is temporarily blocked by trait "origin-law"; its source is unavailable',
+  )
+  assert.match(
+    calls.find(call => /FROM active_blocks/.test(call.text))?.text ?? '',
+    /FROM place_law_changes/u,
+  )
+  const blockLookup = calls.find(call => /FROM active_blocks/.test(call.text))?.text ?? ''
+  assert.match(blockLookup, /active\.created_at/u)
+  assert.match(blockLookup, /provenance\.created_at <= block\.created_at/u)
+  assert.match(blockLookup, /ORDER BY provenance\.created_at DESC, provenance\.id DESC/u)
+  assert.match(blockLookup, /provenance\.change_type = 'add'/u)
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.equal(
+    String(resolution.values[2]),
+    JSON.stringify({
+      error: 'talk is temporarily blocked by trait_id 31; its source is unavailable',
+      trait_id: 31,
+      trait: 'origin-law',
+    }),
+  )
 })
 
 test('foreign property damage fails closed without a currently effective local law', async () => {
@@ -401,6 +784,15 @@ test('stored shared-use provenance blocks a destructive source timer at executio
   const resolution = calls.find(call => /INSERT INTO effect_resolutions/.test(call.text))
   assert.ok(resolution)
   assert.match(String(resolution.values[2]), /shared.*source.*owner/i)
+  const storedFailure = JSON.parse(String(resolution.values[2])) as { error: string }
+  assert.equal(
+    String(resolution.values.at(-1)),
+    JSON.stringify({
+      effect_id: 502,
+      status: 'failed',
+      error: storedFailure.error,
+    }),
+  )
 })
 
 test('invalid stored shared-use provenance is skipped closed', async () => {
@@ -440,6 +832,85 @@ test('invalid stored shared-use provenance is skipped closed', async () => {
   const resolution = calls.find(call => /INSERT INTO effect_resolutions/.test(call.text))
   assert.ok(resolution)
   assert.match(String(resolution.values[2]), /invalid stored effect payload/i)
+  assert.equal(
+    String(resolution.values.at(-1)),
+    JSON.stringify({
+      effect_id: 503,
+      status: 'skipped',
+      error: 'invalid stored effect payload',
+    }),
+  )
+})
+
+test('an unknown stored-effect failure publishes a safe cause and keeps safe operator diagnostics', async t => {
+  let dueRead = 0
+  const privateMessage = 'private database detail must not reach a resident'
+  const logged: unknown[][] = []
+  t.mock.method(console, 'error', (...values: unknown[]) => {
+    logged.push(values)
+  })
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM pending_effects pending/.test(text)) {
+      dueRead += 1
+      return dueRead === 1 ? [{
+        id: 504,
+        action_id: 130,
+        parent_effect_id: null,
+        place_id: 2,
+        actor_id: 8,
+        source_trait_id: 8,
+        source_thing_id: 41,
+        target_type: 'resident',
+        target_id: 8,
+        destination_place_id: null,
+        recipient_id: null,
+        payload: {
+          effects: [{ effect: 'label', target: 'actor', label: 'late-label' }],
+          repeat_remaining: 0,
+        },
+        due_at: '2026-08-11T00:00:00.000Z',
+        generation: 0,
+      }] : []
+    }
+    if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) {
+      throw Object.assign(new Error(privateMessage), {
+        code: '57P01',
+        detail: 'private authored text must not be copied to logs',
+        query: 'private SQL parameters must not be copied to logs',
+      })
+    }
+    if (/INSERT INTO effect_resolutions/.test(text)) return [{ id: 704 }]
+    return []
+  })
+
+  const result = await resolveDueEffects(2, db)
+
+  assert.deepEqual(result, { resolved: 0, failed: 1, capped: false })
+  const resolution = calls.find(call => /INSERT INTO effect_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.equal(
+    String(resolution.values[2]),
+    JSON.stringify({ error: 'the city could not complete this stored effect' }),
+  )
+  assert.equal(
+    String(resolution.values.at(-1)),
+    JSON.stringify({
+      effect_id: 504,
+      status: 'failed',
+      error: 'the city could not complete this stored effect',
+    }),
+  )
+  assert.doesNotMatch(JSON.stringify(calls), /private database detail/u)
+  assert.deepEqual(logged, [[
+    'unrecognized stored effect execution failure',
+    {
+      effect_id: 504,
+      error_name: 'Error',
+      error_message: privateMessage,
+      error_code: '57P01',
+    },
+  ]])
+  assert.doesNotMatch(JSON.stringify(logged), /private authored text|private SQL parameters/u)
 })
 
 test('go_home ignores supplied source traps and bypasses every block query', async () => {
@@ -1350,6 +1821,51 @@ test('a caller quota failure preserves HTTP 429 and never records applied', asyn
   })
 })
 
+test('a recognized internal engine failure is generic in the public record', async t => {
+  const logged: unknown[][] = []
+  t.mock.method(console, 'error', (...values: unknown[]) => {
+    logged.push(values)
+  })
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 112 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 212 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'make',
+    placeId: 2,
+    primitiveHandledByCaller: true,
+    performPrimitive: async () => {
+      throw new EngineError(500, 'database returned an invalid private result')
+    },
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 500)
+  assert.equal(result.error, 'the city could not complete this action')
+  assert.equal(logged.length, 1)
+  assert.deepEqual(logged[0]?.[1], {
+    action_id: 112,
+    error_name: 'EngineError',
+    error_message: 'database returned an invalid private result',
+  })
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.deepEqual(JSON.parse(String(resolution.values.at(-2))), {
+    action_id: 112,
+    action: 'make',
+    status: 'failed',
+    error: 'the city could not complete this action',
+  })
+})
+
 test('an unknown action failure is generic in the public record but useful in server logs', async t => {
   const logged: unknown[][] = []
   t.mock.method(console, 'error', (...values: unknown[]) => {
@@ -1437,6 +1953,10 @@ test('extra caller JSON cannot inject a forged law program', async () => {
   } as unknown as ActionInput
   const result = await runAction(forged, db)
   assert.equal(result.status, 'noop')
+  assert.equal(result.error, null)
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.equal(Object.hasOwn(JSON.parse(String(resolution.values.at(-2))), 'error'), false)
   assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
 })
 

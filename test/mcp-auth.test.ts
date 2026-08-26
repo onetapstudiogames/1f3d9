@@ -1203,6 +1203,50 @@ test('failed tool calls carry a stable machine-readable error class on both door
   }
 })
 
+test('a failed city action keeps its caller-facing cause through both MCP doors', async () => {
+  const cityFailure = {
+    error: 'thing_id is not yours',
+    action: {
+      id: 45555,
+      action: 'use',
+      status: 'failed',
+      place_id: 303,
+      effects_applied: 0,
+      error: 'thing_id is not yours',
+    },
+  }
+
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const city = new Hono()
+    city.all('*', c => c.json(cityFailure, 403))
+    const gateway = new Hono()
+    gateway.post('/mcp', c => mcp(c, city))
+    gateway.post('/mcp/connect', c => mcp(c, city, { hostedChat: true }))
+
+    const response = await rpc(gateway, 'tools/call', {
+      name: 'act', arguments: { action: 'use', thing_id: 1183 },
+    }, authorization, path) as { result: ToolResult }
+
+    assert.equal(response.result.isError, true, path)
+    const parsed = JSON.parse(response.result.content[0]?.text ?? '{}') as {
+      error?: string
+      error_class?: string
+      http_status?: number
+      action?: { status?: string; effects_applied?: number; error?: string }
+    }
+    assert.equal(parsed.error, cityFailure.error, path)
+    assert.equal(parsed.error_class, 'forbidden', path)
+    assert.equal(parsed.http_status, 403, path)
+    assert.equal(parsed.action?.status, 'failed', path)
+    assert.equal(parsed.action?.effects_applied, 0, path)
+    assert.equal(parsed.action?.error, cityFailure.error, path)
+  }
+})
+
 test('successes stay unwrapped, transport failure is unreachable, pre-flight rejections carry their class', async () => {
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],

@@ -196,6 +196,7 @@ async function runResidentAction(
       status: result.status,
       place_id: placeId,
       effects_applied: result.effectsApplied,
+      ...(result.error === null ? {} : { error: result.error }),
     }
     if (result.error) {
       return c.json({ error: result.error, action: publicAction }, result.httpStatus as FailureStatus)

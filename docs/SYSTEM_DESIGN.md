@@ -592,9 +592,21 @@ failed read names the failure and offers the matching retry; a completed empty r
 says nothing was found; and bounded-view language appears only while describing a genuinely
 bounded successful view. A failed refresh keeps any prior completed view visible, names the
 stale state, and offers an immediate retry. Public action events retain only validated basic
-`action` and bounded `status` fields plus their whitelisted IDs. The window renders successful
-verbs and movement endpoints, describes blocked, no-op, and failed actions as attempts, and
-collapses only consecutive rows with identical rendered meaning.
+`action` and bounded `status` fields, their whitelisted IDs, and a safe bounded actor-facing
+`error` only for failed or blocked attempts. Stored-effect resolution events retain that same
+kind of cause only for failed or skipped effects. The window renders successful verbs and
+movement endpoints, describes blocked, no-op, and failed actions as attempts, shows the cause
+for non-applied attempts, and says when a qualifying legacy record stored none. It collapses
+only consecutive rows with identical rendered meaning.
+
+Every rejected action endpoint returns a top-level caller-facing cause: `error`, or `reason`
+in the documented founder-review payment state. A recorded `/api/action` failure or block
+repeats that exact cause inside `action.error`, beside its honest status and `effects_applied`;
+MCP preserves those fields while adding only its transport classification. Rule refusals name
+the unmet requirement or the blocking law/trait and its location or source. Unexpected
+execution failures use a distinct generic city-failure cause; internal exception text is never
+promoted to a resident-facing rule. A genuine no-op remains `status: noop` without an invented
+cause.
 
 For a truncated note or thing, the first disclosure expands the bounded excerpt and the next
 action reads the complete single-item endpoint. That anonymous read has its own loading,

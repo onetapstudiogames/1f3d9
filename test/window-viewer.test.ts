@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import * as windowModule from '../src/window.ts'
 import * as windowClientModule from '../src/window-client.ts'
 import { WINDOW_JS, PUBLIC_EVENT_KINDS } from '../src/window-client.ts'
@@ -213,6 +214,100 @@ test('public action happenings preserve meaning and collapse only consecutive re
   assert.match(WINDOW_JS, /String\(group\.count\) \+ ' times'/)
   assert.match(WINDOW_JS, /element\('span', 'activity-count'/)
   assert.match(WINDOW_CSS, /\.activity-count\s*\{/)
+})
+
+test('the /api/window route carries honest bounded causes without exporting its private shaper', () => {
+  assert.equal(Object.hasOwn(windowModule, 'publicWindowEvent'), false)
+  const rows = [
+    { id: 11, kind: 'effect_resolved', detail: {
+      effect_id: 111, status: 'skipped', error: 'the stored source thing no longer exists',
+    } },
+    { id: 10, kind: 'action', detail: {
+      action_id: 110, action: 'use', status: 'failed',
+      error: '  the recipe needs a lit trait here  ',
+    } },
+    { id: 9, kind: 'action', detail: {
+      action_id: 109, action: 'move', status: 'blocked',
+      error: 'a local law blocks entry into this place',
+    } },
+    { id: 8, kind: 'effect_resolved', detail: {
+      effect_id: 108, status: 'failed', error: 'the stored target thing no longer exists',
+    } },
+    { id: 7, kind: 'action', detail: {
+      action_id: 107, action: 'use', status: 'failed', error: 'x'.repeat(700),
+    } },
+    { id: 6, kind: 'action', detail: {
+      action_id: 106, action: 'use', status: 'failed', error: 'unsafe\u0007cause',
+    } },
+    { id: 5, kind: 'action', detail: {
+      action_id: 105, action: 'use', status: 'failed',
+    } },
+    { id: 4, kind: 'action', detail: {
+      action_id: 104, action: 'use', status: 'applied', error: 'successful action leak',
+    } },
+    { id: 3, kind: 'action', detail: {
+      action_id: 103, action: 'use', status: 'noop', error: 'no-op leak',
+    } },
+    { id: 2, kind: 'effect_resolved', detail: {
+      effect_id: 102, status: 'applied', error: 'resolved effect leak',
+    } },
+    { id: 1, kind: 'note', detail: { error: 'unrelated event leak' } },
+  ].map(row => ({
+    ...row,
+    at: `2026-08-26T12:00:${String(row.id).padStart(2, '0')}.000Z`,
+    actor: 'tiny-lantern',
+  }))
+  const databaseUrl = new URL('../src/db.ts', import.meta.url).href
+  const windowUrl = new URL('../src/window.ts', import.meta.url).href
+  const script = `
+    import { mock } from 'node:test'
+    import { Hono } from 'hono'
+    const eventRows = ${JSON.stringify(rows)}
+    const query = async text => {
+      const source = String(text)
+      if (/FROM events\\s+WHERE kind = ANY/u.test(source)) return eventRows
+      if (source.includes('AS conversations') && source.includes('AS events')) {
+        return [{ places: 0, residents: 0, conversations: 0, things: 0,
+          agreements: 0, events: eventRows.length }]
+      }
+      return []
+    }
+    const tagged = async (strings, ...values) => query(Array.from(strings).join(' '), values)
+    const sql = Object.assign(tagged, { query })
+    mock.module(${JSON.stringify(databaseUrl)}, {
+      namedExports: { sql, runtimeDatabaseUrl: () => 'postgresql://window.test/fixture' },
+    })
+    const { windowSnapshot } = await import(${JSON.stringify(windowUrl)})
+    const app = new Hono()
+    app.get('/api/window', windowSnapshot)
+    const response = await app.request('http://city.test/api/window')
+    if (response.status !== 200) throw new Error('window route returned ' + response.status)
+    const body = await response.json()
+    process.stdout.write(JSON.stringify(body.events))
+  `
+  const events = JSON.parse(execFileSync(process.execPath, [
+    '--no-warnings',
+    '--experimental-strip-types',
+    '--experimental-test-module-mocks',
+    '--input-type=module',
+    '--eval',
+    script,
+  ], { cwd: new URL('..', import.meta.url), encoding: 'utf8' })) as Array<{
+    id: number
+    detail: Record<string, unknown>
+  }>
+  const detail = (id: number) => events.find(event => event.id === id)?.detail ?? {}
+
+  assert.equal(detail(10).error, 'the recipe needs a lit trait here')
+  assert.equal(detail(11).error, 'the stored source thing no longer exists')
+  assert.equal(detail(9).error, 'a local law blocks entry into this place')
+  assert.equal(detail(8).error, 'the stored target thing no longer exists')
+  assert.equal(String(detail(7).error).length, 500)
+  assert.equal(String(detail(7).error).endsWith('…'), true)
+  assert.equal(detail(7).error, `${'x'.repeat(499)}…`)
+  assert.equal(detail(6).error, 'the recorded cause could not be shown safely')
+  assert.equal(detail(5).error, undefined)
+  for (const id of [4, 3, 2, 1]) assert.equal(detail(id).error, undefined)
 })
 
 test('map branches expose accessible lazy-load and collapse controls', () => {

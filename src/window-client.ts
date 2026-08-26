@@ -288,6 +288,9 @@ export const WINDOW_JS = `(() => {
   const SAFE_EVENT_DETAIL_IDS = Object.freeze(${PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON})
   const SAFE_ACTIONS = new Set(${BASIC_ACTIONS_JSON})
   const SAFE_ACTION_STATUSES = new Set(['applied', 'blocked', 'noop', 'failed'])
+  const SAFE_EFFECT_STATUSES = new Set(['applied', 'skipped', 'failed'])
+  const EVENT_ERROR_LIMIT = 500
+  const UNSAFE_EVENT_ERROR = 'the recorded cause could not be shown safely'
   const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
@@ -944,9 +947,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const value = safeId(source[key])
         return value ? [[key, value]] : []
       }))
+      let carriesFailureCause = false
       if (raw.kind === 'action' && SAFE_ACTIONS.has(source.action)) {
         detail.action = source.action
-        if (SAFE_ACTION_STATUSES.has(source.status)) detail.status = source.status
+        if (SAFE_ACTION_STATUSES.has(source.status)) {
+          detail.status = source.status
+          carriesFailureCause = source.status === 'blocked' || source.status === 'failed'
+        }
+      } else if (raw.kind === 'effect_resolved' && SAFE_EFFECT_STATUSES.has(source.status)) {
+        detail.status = source.status
+        carriesFailureCause = source.status === 'skipped' || source.status === 'failed'
+      }
+      if (carriesFailureCause && Object.hasOwn(source, 'error')) {
+        const error = safeText(source.error, null, EVENT_ERROR_LIMIT + 1, false)
+        detail.error = error
+          ? error.length > EVENT_ERROR_LIMIT
+            ? error.slice(0, EVENT_ERROR_LIMIT - 1) + '…'
+            : error
+          : UNSAFE_EVENT_ERROR
       }
       return [{ id, actor, kind: raw.kind, verb, at, detail }]
     })
@@ -3085,6 +3103,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
         description += ' · ' + (event.detail.status === 'noop'
           ? 'no change'
           : event.detail.status)
+      }
+      if (event.detail.status === 'blocked' || event.detail.status === 'failed') {
+        description += ' — ' + (event.detail.error || 'no cause was recorded')
+      }
+    } else if (event.kind === 'effect_resolved' && event.detail.status) {
+      description += ' · ' + event.detail.status
+      if (event.detail.status === 'skipped' || event.detail.status === 'failed') {
+        description += ' — ' + (event.detail.error || 'no cause was recorded')
       }
     }
     return Object.freeze({
