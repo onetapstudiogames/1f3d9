@@ -81,6 +81,10 @@ const paymentRecoveryTriggerRepairMigrationUrl = new URL(
   '../db/migrations/20260823_payment_recovery_trigger_repair.sql',
   import.meta.url,
 )
+const paymentLateFinalityRecheckMigrationUrl = new URL(
+  '../db/migrations/20260825_payment_late_finality_recheck.sql',
+  import.meta.url,
+)
 
 function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const environment = { ...process.env }
@@ -1246,6 +1250,49 @@ test('payment recovery trigger repair is an explicitly selected function correct
   assert.match(
     packageJson.scripts['migrate:production:payment-recovery-trigger-repair'] ?? '',
     /--target production --migration payment-recovery-trigger-repair$/,
+  )
+})
+
+test('late-finality recheck guard is an explicitly selected immutable-history correction', () => {
+  const migration = readFileSync(paymentLateFinalityRecheckMigrationUrl, 'utf8')
+  const uncommented = migration.replace(/^\s*--.*$/gm, '')
+  assert.equal(splitSqlStatements(migration).length, 1)
+  assert.match(uncommented, /OLD\.status\s*=\s*'expired'[\s\S]*NEW\.status\s*=\s*'founder_review'/i)
+  assert.match(uncommented, /OLD\.finalized_block_number\s+IS\s+NULL[\s\S]*OR\s+ROW\(/i)
+  assert.doesNotMatch(uncommented, /^\s*(?:DROP\s+TABLE|DELETE|TRUNCATE)\b/im)
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'payment-late-finality-recheck'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, 'db/migrations/20260825_payment_late_finality_recheck.sql')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'payment-late-finality-recheck'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'payment-late-finality-recheck-release',
+    },
+  )
+  assert.equal(production.migrationFile, 'db/migrations/20260825_payment_late_finality_recheck.sql')
+  assert.match(
+    packageJson.scripts['migrate:preview:payment-late-finality-recheck'] ?? '',
+    /--target preview --migration payment-late-finality-recheck$/,
+  )
+  assert.match(
+    packageJson.scripts['migrate:production:payment-late-finality-recheck'] ?? '',
+    /--target production --migration payment-late-finality-recheck$/,
   )
 })
 

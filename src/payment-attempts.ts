@@ -143,6 +143,13 @@ export class PaymentAttemptConflictError extends Error {
   }
 }
 
+export class PaymentAttemptEvidenceConflictError extends PaymentAttemptConflictError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PaymentAttemptEvidenceConflictError'
+  }
+}
+
 type CanonicalJson = null | boolean | string | number | CanonicalJson[] | { [key: string]: CanonicalJson }
 
 function sha256Hex(value: string): string {
@@ -582,6 +589,10 @@ function canReplayExistingAttempt(
 
 function conflict(message = 'payment attempt is already bound to different immutable terms'): never {
   throw new PaymentAttemptConflictError(message)
+}
+
+function evidenceConflict(message: string): never {
+  throw new PaymentAttemptEvidenceConflictError(message)
 }
 
 function requiredHash(value: string, label: string): string {
@@ -1236,10 +1247,10 @@ export async function appendLateFinalityEvidence(
     UPDATE payment_attempts
     SET status = 'founder_review',
       tx_hash = coalesce(tx_hash, lower($2)),
-      finalized_block_number = $3,
-      finalized_block_hash = lower($4),
-      finalized_block_time = $5::timestamptz,
-      finalized_at = $6::timestamptz,
+      finalized_block_number = coalesce(finalized_block_number, $3),
+      finalized_block_hash = coalesce(finalized_block_hash, lower($4)),
+      finalized_block_time = coalesce(finalized_block_time, $5::timestamptz),
+      finalized_at = coalesce(finalized_at, $6::timestamptz),
       invalid_reason = coalesce(invalid_reason, $7),
       lease_owner = NULL,
       lease_expires_at = NULL,
@@ -1250,10 +1261,20 @@ export async function appendLateFinalityEvidence(
       AND status = 'expired'
       AND recovery_deadline_at IS NOT NULL
       AND recovery_deadline_at <= clock_timestamp()
-      AND finalized_block_number IS NULL
-      AND finalized_block_hash IS NULL
-      AND finalized_block_time IS NULL
-      AND finalized_at IS NULL
+      AND (
+        (
+          finalized_block_number IS NULL
+          AND finalized_block_hash IS NULL
+          AND finalized_block_time IS NULL
+          AND finalized_at IS NULL
+        )
+        OR (
+          finalized_block_number = $3
+          AND finalized_block_hash = lower($4)
+          AND finalized_block_time = $5::timestamptz
+          AND finalized_at IS NOT NULL
+        )
+      )
     RETURNING *
   `, [
     input.publicId,
@@ -1276,8 +1297,8 @@ export async function appendLateFinalityEvidence(
     || current.finalizedBlockNumber !== finality.blockNumber
     || current.finalizedBlockHash !== finality.blockHash
     || current.finalizedBlockTime !== finality.blockTime
-    || current.finalizedAt !== finality.finalizedAt
-  ) conflict('late payment evidence conflicts with the preserved payment attempt')
+    || current.finalizedAt == null
+  ) evidenceConflict('late payment evidence conflicts with the preserved payment attempt')
   return current
 }
 
@@ -1313,15 +1334,19 @@ function safePaymentResult(value: Record<string, unknown> | null): Record<string
   return allowlistedJsonObject(value, ['kind', 'id', 'revision'])
 }
 
+export function paymentAttemptCanRecheckLateFinality(
+  attempt: Pick<PaymentAttemptRecord, 'status' | 'method' | 'recoveryStartedAt'>,
+): boolean {
+  return attempt.status === 'expired'
+    && attempt.method === 'x402'
+    && attempt.recoveryStartedAt != null
+}
+
 function paymentAttemptNextAction(attempt: PaymentAttemptRecord): PrivatePaymentAttempt['next_action'] {
   if (['settling', 'payment_pending', 'needs_review'].includes(attempt.status)) {
     return 'wait_or_recheck'
   }
-  if (
-    attempt.status === 'expired'
-    && attempt.method === 'x402'
-    && attempt.recoveryStartedAt != null
-  ) return 'recheck_for_late_finality'
+  if (paymentAttemptCanRecheckLateFinality(attempt)) return 'recheck_for_late_finality'
   if (attempt.status === 'founder_review') return 'await_founder_review'
   if (attempt.status === 'completed' || attempt.status === 'legacy_completed') return 'complete'
   if (attempt.status === 'credit_returned') return 'credit_returned'

@@ -54,6 +54,7 @@
     "migrate:preview:room-orientation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration room-orientation",
     "migrate:preview:public-snapshots": "node --experimental-strip-types scripts/migrate.ts --target preview --migration public-snapshots",
     "migrate:preview:payment-recovery-trigger-repair": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-recovery-trigger-repair",
+    "migrate:preview:payment-late-finality-recheck": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-late-finality-recheck",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:world-root-description": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-description",
@@ -80,7 +81,8 @@
     "migrate:production:payment-recovery": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-recovery",
     "migrate:production:room-orientation": "node --experimental-strip-types scripts/migrate.ts --target production --migration room-orientation",
     "migrate:production:public-snapshots": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-snapshots",
-    "migrate:production:payment-recovery-trigger-repair": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-recovery-trigger-repair"
+    "migrate:production:payment-recovery-trigger-repair": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-recovery-trigger-repair",
+    "migrate:production:payment-late-finality-recheck": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-late-finality-recheck"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

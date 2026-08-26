@@ -32,6 +32,7 @@ globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
 }) as typeof fetch
 
 const {
+  BaseRpcUnavailableError,
   classifyUsdcTransfer,
   currentBaseBlockNumber,
   findFinalizedAuthorizationTransaction,
@@ -91,6 +92,80 @@ test('chain helpers fail closed on transport, response, and result failures', as
   answer = () => ({ result: '0x10' })
   assert.equal(await currentBaseBlockNumber(), 16n)
   assert.equal(toUnits(1.2345674), 1_234_567n)
+})
+
+test('strict late recovery distinguishes an RPC outage from a healthy missing transaction', async () => {
+  answer = () => ({ reject: true })
+  await assert.rejects(
+    classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+    BaseRpcUnavailableError,
+  )
+  await assert.rejects(
+    findFinalizedAuthorizationTransaction(PAYER, NONCE, 1n, { throwOnUnavailable: true }),
+    BaseRpcUnavailableError,
+  )
+
+  answer = () => ({ result: null })
+  assert.deepEqual(
+    await classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+    { state: 'pending' },
+  )
+
+  answer = () => ({ result: {} })
+  await assert.rejects(
+    classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+    BaseRpcUnavailableError,
+  )
+
+  for (const malformedReceipt of [false, 0, '']) {
+    answer = () => ({ result: malformedReceipt })
+    await assert.rejects(
+      classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+      BaseRpcUnavailableError,
+    )
+  }
+
+  finalizedRpc(validReceipt({ logs: [transferLog()] }), {
+    'eth_getBlockByNumber:0x100': {},
+  })
+  await assert.rejects(
+    classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+    BaseRpcUnavailableError,
+  )
+
+  for (const malformedBlock of [false, 0, '']) {
+    finalizedRpc(validReceipt({ logs: [transferLog()] }), {
+      'eth_getBlockByNumber:0x100': malformedBlock,
+    })
+    await assert.rejects(
+      classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+      BaseRpcUnavailableError,
+    )
+
+    finalizedRpc(validReceipt({ logs: [transferLog()] }), {
+      'eth_getBlockByNumber:finalized': malformedBlock,
+    })
+    await assert.rejects(
+      classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+      BaseRpcUnavailableError,
+    )
+  }
+
+  finalizedRpc(validReceipt({ logs: [transferLog()] }), {
+    [`eth_getBlockByHash:${BLOCK_HASH}`]: {},
+  })
+  await assert.rejects(
+    classifyUsdcTransfer(TX, PAYEE, 1n, { throwOnUnavailable: true }),
+    BaseRpcUnavailableError,
+  )
+
+  answer = method => method === 'eth_getBlockByNumber'
+    ? { result: { number: '0x100' } }
+    : { result: {} }
+  await assert.rejects(
+    findFinalizedAuthorizationTransaction(PAYER, NONCE, 1n, { throwOnUnavailable: true }),
+    BaseRpcUnavailableError,
+  )
 })
 
 test('receipt validation rejects every malformed public-RPC shape', async () => {

@@ -107,6 +107,35 @@ export type PaymentRecoveryBatchResult = Readonly<{
   failed: number
 }>
 
+export function paymentRecoveryErrorFields(error: unknown): Readonly<{
+  errorCode: string | null
+  error: string
+}> {
+  const rawDetail = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : String(error)
+  const detail = rawDetail
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/giu, '[redacted database URL]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
+    .replace(/1f3d9_sk_[A-Za-z0-9_-]+/giu, '[redacted resident key]')
+    .slice(0, 400)
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '').slice(0, 32)
+    : ''
+  return Object.freeze({ errorCode: code || null, error: detail })
+}
+
+export function reportPaymentRecoveryRecheckFailure(
+  input: Readonly<{ publicId: string; actorId: number | null }>,
+  error: unknown,
+): void {
+  console.error('payment recovery recheck failed', {
+    attemptId: input.publicId,
+    actorId: input.actorId,
+    ...paymentRecoveryErrorFields(error),
+  })
+}
+
 function outcome(
   state: PaymentRecoveryOutcome['state'],
   attemptId: string,

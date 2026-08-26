@@ -1,16 +1,28 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { Context, Hono } from 'hono'
-import { err } from './core.ts'
+import {
+  COLLISION_CONFLICT_MESSAGE,
+  err,
+  isRetryableCollision,
+} from './core.ts'
+import {
+  PaymentAttemptConflictError,
+  PaymentAttemptEvidenceConflictError,
+} from './payment-attempts.ts'
 import type {
   PaymentRecoveryAttempt,
   PaymentRecoveryBatchResult,
   PaymentRecoveryOutcome,
 } from './payment-recovery.ts'
+import { paymentRecoveryErrorFields } from './payment-recovery.ts'
 
 const PAYMENT_ATTEMPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/u
 const CRON_SECRET = /^[\x21-\x7e]{32,512}$/u
 const MAX_EMPTY_BODY_BYTES = 1_024
 const RECOVERY_BATCH_LIMIT = 10
+const RECHECK_UNAVAILABLE = 'payment attempt recheck is temporarily unavailable; retry this same attempt without paying again'
+const RECHECK_COLLISION = `${COLLISION_CONFLICT_MESSAGE.replace(/; retry$/u, '')}; retry this payment attempt without paying again`
+const RECHECK_EVIDENCE_CONFLICT = 'payment evidence conflicts with this attempt\'s preserved record; inspect this attempt and do not pay again'
 
 type AuthenticatedResident = Readonly<{ id: number }>
 
@@ -20,6 +32,10 @@ export interface PaymentRecoveryRouteDependencies<Attempt = PaymentRecoveryAttem
   privateView(attempt: Attempt): Record<string, unknown>
   recheck(attempt: Attempt): Promise<PaymentRecoveryOutcome>
   runBatch(limit: number): Promise<PaymentRecoveryBatchResult>
+  reportFailure?(
+    input: Readonly<{ publicId: string; actorId: number | null }>,
+    error: unknown,
+  ): void
   environment: Readonly<Record<string, string | undefined>>
 }
 
@@ -75,7 +91,44 @@ function constantTimeEqual(left: string, right: string): boolean {
 }
 
 function recheckStatus(outcome: PaymentRecoveryOutcome): 200 | 202 {
-  return ['payment_pending', 'busy', 'unavailable'].includes(outcome.state) ? 202 : 200
+  return ['payment_pending', 'busy'].includes(outcome.state) ? 202 : 200
+}
+
+function reportRecheckFailure<Attempt>(
+  deps: PaymentRecoveryRouteDependencies<Attempt>,
+  input: Readonly<{ publicId: string; actorId: number | null }>,
+  error: unknown,
+): void {
+  try {
+    deps.reportFailure?.(input, error)
+  } catch (reportingError) {
+    console.error('payment recovery recheck reporter failed', {
+      attemptId: input.publicId,
+      actorId: input.actorId,
+      ...paymentRecoveryErrorFields(reportingError),
+    })
+  }
+}
+
+function recheckUnavailable(c: Context): Response {
+  c.header('Retry-After', '1')
+  return c.json({ error: RECHECK_UNAVAILABLE, do_not_pay_again: true }, 503)
+}
+
+function recheckFailure<Attempt>(
+  c: Context,
+  deps: PaymentRecoveryRouteDependencies<Attempt>,
+  input: Readonly<{ publicId: string; actorId: number | null }>,
+  error: unknown,
+): Response {
+  reportRecheckFailure(deps, input, error)
+  if (error instanceof PaymentAttemptEvidenceConflictError) {
+    return c.json({ error: RECHECK_EVIDENCE_CONFLICT, do_not_pay_again: true }, 409)
+  }
+  if (error instanceof PaymentAttemptConflictError || isRetryableCollision(error)) {
+    return c.json({ error: RECHECK_COLLISION, do_not_pay_again: true }, 409)
+  }
+  return recheckUnavailable(c)
 }
 
 /** Mount actor-private inspection/recheck plus the Vercel cron entry point. */
@@ -100,17 +153,27 @@ export function mountPaymentRecoveryRoutes<Attempt>(
     if (!noQueryOptions(c)) return err(c, 400, 'payment attempt recheck accepts no query options')
     const publicId = safeAttemptId(c.req.param('id'))
     if (!publicId) return err(c, 400, 'invalid payment attempt id')
-    const resident = await deps.authenticate(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
-    if (!await hasEmptyObjectBody(c)) {
-      return err(c, 400, 'payment attempt recheck accepts only an empty JSON object')
+    let resident: AuthenticatedResident | null = null
+    try {
+      resident = await deps.authenticate(c)
+      if (!resident) return err(c, 401, 'bad or missing bearer secret')
+      if (!await hasEmptyObjectBody(c)) {
+        return err(c, 400, 'payment attempt recheck accepts only an empty JSON object')
+      }
+      const attempt = await deps.getOwnedAttempt(publicId, resident.id)
+      if (!attempt) return err(c, 404, 'payment attempt not found')
+      const recovered = await deps.recheck(attempt)
+      if (recovered.state === 'unavailable') {
+        const error = new Error('payment recovery reported temporarily unavailable')
+        reportRecheckFailure(deps, { publicId, actorId: resident.id }, error)
+        return recheckUnavailable(c)
+      }
+      const latest = await deps.getOwnedAttempt(publicId, resident.id)
+      if (!latest) return err(c, 404, 'payment attempt not found')
+      return c.json({ payment_attempt: deps.privateView(latest) }, recheckStatus(recovered))
+    } catch (error) {
+      return recheckFailure(c, deps, { publicId, actorId: resident?.id ?? null }, error)
     }
-    const attempt = await deps.getOwnedAttempt(publicId, resident.id)
-    if (!attempt) return err(c, 404, 'payment attempt not found')
-    const recovered = await deps.recheck(attempt)
-    const latest = await deps.getOwnedAttempt(publicId, resident.id)
-    if (!latest) return err(c, 404, 'payment attempt not found')
-    return c.json({ payment_attempt: deps.privateView(latest) }, recheckStatus(recovered))
   })
 
   app.get('/api/internal/payment-recovery', async c => {

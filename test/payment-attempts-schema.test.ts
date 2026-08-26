@@ -59,9 +59,9 @@ function exactCompletionFunctionStatement(ddl: string): string {
 }
 
 function attemptHistoryFunctionStatement(ddl: string): string {
-  const statement = splitSqlStatements(ddl).find(candidate =>
+  const statement = splitSqlStatements(ddl).filter(candidate =>
     /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+protect_payment_attempt_history\s*\(\s*\)/iu.test(candidate),
-  )
+  ).at(-1)
   assert.ok(statement, 'missing payment-attempt history function')
   return statement.replace(/^\s*--.*$/gmu, '').replace(/\s+/gu, ' ').trim()
 }

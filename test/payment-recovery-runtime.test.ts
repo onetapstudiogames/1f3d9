@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { Hono, type Context } from 'hono'
 import type { TransferCheck } from '../src/chain.ts'
 import {
   canonicalPaymentRequest,
+  toPrivatePaymentAttempt,
   type PaymentAttemptRecord,
 } from '../src/payment-attempts.ts'
+import { mountPaymentRecoveryRoutes } from '../src/payment-recovery-routes.ts'
 import {
   createPaymentRecoveryRuntime,
   type PaymentRecoveryRuntimeServices,
@@ -372,4 +375,128 @@ test('private runtime view is allowlisted and owner lookup never crosses residen
   assert.equal(view.id, ATTEMPT_ID)
   assert.equal(view.do_not_pay_again, true)
   assert.doesNotMatch(JSON.stringify(view), /secret|must-not-leak|request_hash|lease_owner/iu)
+})
+
+test('every wait_or_recheck state can be explicitly invoked without changing its stored terms', async () => {
+  for (const status of ['settling', 'payment_pending', 'needs_review'] as const) {
+    const stored = attempt({ status })
+    let chainChecks = 0
+    const runtime = createPaymentRecoveryRuntime(database, serviceDefaults({
+      getAttempt: async () => stored,
+      resumeX402: async () => {
+        chainChecks += 1
+        return {
+          state: 'payment_pending',
+          status: 202,
+          attemptId: stored.publicId,
+          payerWallet: stored.payerWallet,
+          txHash: stored.txHash,
+          body: {
+            error: 'payment is still pending finality; retry this same attempt without paying again',
+            do_not_pay_again: true,
+          },
+        }
+      },
+    }), { now: () => new Date('2026-08-22T00:15:00.000Z') })
+    const app = new Hono()
+    mountPaymentRecoveryRoutes(app, {
+      authenticate: async (c: Context) => c.req.header('authorization') === 'Bearer resident'
+        ? { id: stored.actorId }
+        : null,
+      getOwnedAttempt: runtime.getOwnedAttempt,
+      privateView: runtime.privateView,
+      recheck: runtime.recheck,
+      runBatch: runtime.runBatch,
+      environment: {},
+    })
+
+    const response = await app.request(`/api/payment-attempt/${ATTEMPT_ID}/recheck`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer resident', 'content-type': 'application/json' },
+      body: '{}',
+    })
+
+    assert.equal(response.status, 202, status)
+    const body = await response.json() as { payment_attempt: Record<string, unknown> }
+    assert.equal(body.payment_attempt.state, status)
+    assert.equal(body.payment_attempt.next_action, 'wait_or_recheck')
+    assert.equal(body.payment_attempt.target, stored.targetKey)
+    assert.equal(chainChecks, 1)
+  }
+})
+
+test('every terminal next_action accepts an explicit recheck as an unchanged no-op', async () => {
+  const cases: Array<{
+    name: string
+    stored: PaymentAttemptRecord
+    nextAction: ReturnType<typeof toPrivatePaymentAttempt>['next_action']
+  }> = [
+    { name: 'founder review', stored: attempt({ status: 'founder_review' }), nextAction: 'await_founder_review' },
+    { name: 'completed', stored: attempt({ status: 'completed' }), nextAction: 'complete' },
+    { name: 'legacy completed', stored: attempt({ status: 'legacy_completed' }), nextAction: 'complete' },
+    {
+      name: 'credit returned',
+      stored: attempt({ status: 'credit_returned', method: 'credit', network: null, token: null, payerWallet: null }),
+      nextAction: 'credit_returned',
+    },
+    { name: 'invalid', stored: attempt({ status: 'invalid' }), nextAction: 'closed' },
+    {
+      name: 'expired x402 without a recovery start',
+      stored: attempt({
+        status: 'expired', recoveryStartedAt: null, recoveryDeadlineAt: null,
+        txHash: null, finalizedBlockNumber: null, finalizedBlockHash: null,
+        finalizedBlockTime: null, finalizedAt: null,
+      }),
+      nextAction: 'closed',
+    },
+    {
+      name: 'expired credit',
+      stored: attempt({ status: 'expired', method: 'credit', network: null, token: null, payerWallet: null }),
+      nextAction: 'closed',
+    },
+    {
+      name: 'expired legacy claim',
+      stored: attempt({ status: 'expired', method: 'claim', network: null, token: null, payerWallet: null }),
+      nextAction: 'closed',
+    },
+  ]
+
+  for (const current of cases) {
+    let recoverySideEffects = 0
+    const unexpectedSideEffect = async (): Promise<never> => {
+      recoverySideEffects += 1
+      throw new Error(`terminal recheck performed recovery work for ${current.name}`)
+    }
+    const runtime = createPaymentRecoveryRuntime(database, serviceDefaults({
+      getAttempt: async () => current.stored,
+      resumeX402: unexpectedSideEffect,
+      acquireLease: unexpectedSideEffect,
+      acquireDueLease: unexpectedSideEffect,
+      recoverTransaction: unexpectedSideEffect,
+      classifyTransfer: unexpectedSideEffect,
+      appendLateFinality: unexpectedSideEffect,
+    }))
+    const app = new Hono()
+    mountPaymentRecoveryRoutes(app, {
+      authenticate: async () => ({ id: current.stored.actorId }),
+      getOwnedAttempt: runtime.getOwnedAttempt,
+      privateView: runtime.privateView,
+      recheck: runtime.recheck,
+      runBatch: runtime.runBatch,
+      environment: {},
+    })
+
+    const before = runtime.privateView(current.stored)
+    assert.equal(before.next_action, current.nextAction, current.name)
+    const response = await app.request(`/api/payment-attempt/${ATTEMPT_ID}/recheck`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+
+    assert.equal(response.status, 200, current.name)
+    const body = await response.json() as { payment_attempt: Record<string, unknown> }
+    assert.deepEqual(body.payment_attempt, before, current.name)
+    assert.equal(recoverySideEffects, 0, current.name)
+  }
 })

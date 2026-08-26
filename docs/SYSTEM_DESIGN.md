@@ -312,13 +312,32 @@ of the commons; everything you do with what is already yours is free.
   stable attempt facts. Empty-body POST /api/payment-attempt/:id/recheck requests one
   fresh check of that recorded attempt without paying again. Neither route accepts a
   replacement request or exposes payment headers, nonces, digests, leases, or credentials.
+- The private `next_action` is an executable contract. `settling`, `payment_pending`, and
+  `needs_review` advertise `wait_or_recheck`. An expired x402 attempt with a recorded
+  recovery start advertises `recheck_for_late_finality`. `founder_review` advertises
+  `await_founder_review`; `completed` and `legacy_completed` advertise `complete`;
+  `credit_returned` advertises `credit_returned`; every other terminal shape advertises
+  `closed`. Recheck is accepted for every shape: actionable states are checked from their
+  immutable stored terms, while terminal actions are idempotent no-ops that return the
+  unchanged private view.
 - A finalized match before the deadline completes its exact bound operation once. A
   conclusive failure or mismatch becomes terminal and releases its processing claim.
 - At the two-hour deadline, the held name is released and the exact spent city fee credit
   is returned once. An uncertain x402 attempt never mints city fee credit.
 - A late real payment becomes terminal founder review (`founder_review`) and cannot seize
-  a reused name or complete the old action automatically. The append-only attempt and transaction evidence
-  remain available for a separate founder decision.
+  a reused name or complete the old action automatically. A recheck may append newly found
+  finality or confirm exact finality already stored on the expired attempt; it never rewrites
+  an earlier finality observation or accepts conflicting evidence. The append-only attempt
+  and transaction evidence remain available for a separate founder decision.
+- A concurrent transition returns `409` and tells the resident to retry the same attempt
+  without paying again. A preserved-evidence conflict returns `409` with
+  `payment evidence conflicts with this attempt's preserved record; inspect this attempt and do not pay again`.
+  A transient chain or database failure returns
+  `503`, `Retry-After: 1`, `do_not_pay_again: true`, and the caller-facing instruction
+  `payment attempt recheck is temporarily unavailable; retry this same attempt without paying again`.
+  A concurrent worker or a guarded transition may already have advanced the recorded state;
+  inspect or retry the same attempt. Retry is idempotent, immutable payment terms and finality
+  are never rewritten, and an expired business action is never applied.
 
 ## Scarcity (see DECISIONS #10)
 

@@ -3969,14 +3969,25 @@ BEGIN
       AND OLD.method = 'x402'
       AND NEW.tx_hash IS NOT NULL
       AND (OLD.tx_hash IS NULL OR NEW.tx_hash = OLD.tx_hash)
-      AND OLD.finalized_block_number IS NULL
-      AND OLD.finalized_block_hash IS NULL
-      AND OLD.finalized_block_time IS NULL
-      AND OLD.finalized_at IS NULL
       AND NEW.finalized_block_number IS NOT NULL
       AND NEW.finalized_block_hash IS NOT NULL
       AND NEW.finalized_block_time IS NOT NULL
       AND NEW.finalized_at IS NOT NULL
+      AND (
+        (
+          OLD.finalized_block_number IS NULL
+          AND OLD.finalized_block_hash IS NULL
+          AND OLD.finalized_block_time IS NULL
+          AND OLD.finalized_at IS NULL
+        )
+        OR ROW(
+          NEW.finalized_block_number, NEW.finalized_block_hash,
+          NEW.finalized_block_time, NEW.finalized_at
+        ) IS NOT DISTINCT FROM ROW(
+          OLD.finalized_block_number, OLD.finalized_block_hash,
+          OLD.finalized_block_time, OLD.finalized_at
+        )
+      )
       AND (
         (OLD.invalid_reason IS NOT NULL AND NEW.invalid_reason = OLD.invalid_reason)
         OR (OLD.invalid_reason IS NULL AND NEW.invalid_reason IS NOT NULL)

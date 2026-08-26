@@ -9,7 +9,24 @@ const RPC_TIMEOUT_MS = 4_000
 
 let rpcId = 0
 
-async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
+type RpcOptions = Readonly<{ throwOnUnavailable?: boolean }>
+
+export class BaseRpcUnavailableError extends Error {
+  constructor(method: string, options: ErrorOptions = {}) {
+    super(`Base RPC ${method} is temporarily unavailable`, options)
+    this.name = 'BaseRpcUnavailableError'
+  }
+}
+
+function rejectMalformedRpcResult(method: string, options: RpcOptions): void {
+  if (options.throwOnUnavailable) throw new BaseRpcUnavailableError(method)
+}
+
+async function rpc<T>(
+  method: string,
+  params: unknown[],
+  options: RpcOptions = {},
+): Promise<T | null> {
   try {
     const response = await fetch(RPC, {
       method: 'POST',
@@ -17,10 +34,17 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
       body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
       signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
     })
-    if (!response.ok) return null
-    const body = (await response.json()) as { result?: T }
-    return body.result ?? null
-  } catch {
+    if (!response.ok) throw new BaseRpcUnavailableError(method)
+    const body: unknown = await response.json()
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !('result' in body)) {
+      throw new BaseRpcUnavailableError(method)
+    }
+    return ((body as { result?: T | null }).result ?? null)
+  } catch (error) {
+    if (options.throwOnUnavailable) {
+      if (error instanceof BaseRpcUnavailableError) throw error
+      throw new BaseRpcUnavailableError(method, { cause: error })
+    }
     return null
   }
 }
@@ -94,23 +118,38 @@ function completeReceipt(value: unknown): Receipt | null {
 
 async function finalizedReceipt(
   receipt: Receipt,
+  options: RpcOptions = {},
 ): Promise<'finalized' | 'pending'> {
   const canonical = await rpc<{ hash?: unknown; number?: unknown }>(
     'eth_getBlockByNumber',
     [receipt.blockNumber, false],
+    options,
   )
+  if (canonical == null) return 'pending'
   if (
-    !canonical || typeof canonical.hash !== 'string' || typeof canonical.number !== 'string' ||
-    canonical.hash.toLowerCase() !== receipt.blockHash.toLowerCase() ||
-    canonical.number.toLowerCase() !== receipt.blockNumber.toLowerCase()
+    typeof canonical.hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(canonical.hash)
+    || typeof canonical.number !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(canonical.number)
+  ) {
+    rejectMalformedRpcResult('eth_getBlockByNumber', options)
+    return 'pending'
+  }
+  if (
+    canonical.hash.toLowerCase() !== receipt.blockHash.toLowerCase()
+    || canonical.number.toLowerCase() !== receipt.blockNumber.toLowerCase()
   ) return 'pending'
-  const finalized = await rpc<{ number?: unknown }>('eth_getBlockByNumber', ['finalized', false])
-  if (!finalized || typeof finalized.number !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(finalized.number)) {
+  const finalized = await rpc<{ number?: unknown }>(
+    'eth_getBlockByNumber',
+    ['finalized', false],
+    options,
+  )
+  if (finalized == null || typeof finalized.number !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(finalized.number)) {
+    rejectMalformedRpcResult('eth_getBlockByNumber', options)
     return 'pending'
   }
   try {
     return BigInt(finalized.number) >= BigInt(receipt.blockNumber) ? 'finalized' : 'pending'
   } catch {
+    rejectMalformedRpcResult('eth_getBlockByNumber', options)
     return 'pending'
   }
 }
@@ -119,14 +158,21 @@ export async function classifyUsdcTransfer(
   txHash: string,
   to: string,
   minimum: bigint,
-  options: { expectedFrom?: string; exactAmount?: boolean } = {},
+  options: {
+    expectedFrom?: string
+    exactAmount?: boolean
+    throwOnUnavailable?: boolean
+  } = {},
 ): Promise<TransferCheck> {
-  const rawReceipt = await rpc<unknown>('eth_getTransactionReceipt', [txHash])
-  if (!rawReceipt) return { state: 'pending' }
+  const rawReceipt = await rpc<unknown>('eth_getTransactionReceipt', [txHash], options)
+  if (rawReceipt == null) return { state: 'pending' }
   const receipt = completeReceipt(rawReceipt)
-  if (!receipt) return { state: 'pending' }
+  if (!receipt) {
+    rejectMalformedRpcResult('eth_getTransactionReceipt', options)
+    return { state: 'pending' }
+  }
   if (receipt.status === '0x0') {
-    return await finalizedReceipt(receipt) === 'finalized'
+    return await finalizedReceipt(receipt, options) === 'finalized'
       ? { state: 'invalid_final', reason: 'failed_transaction' }
       : { state: 'pending' }
   }
@@ -150,20 +196,28 @@ export async function classifyUsdcTransfer(
     }
   }
   if (!transfer) {
-    return await finalizedReceipt(receipt) === 'finalized'
+    return await finalizedReceipt(receipt, options) === 'finalized'
       ? { state: 'invalid_final', reason: 'confirmed_mismatch' }
       : { state: 'pending' }
   }
   const fromTopic = transfer.log.topics[1]
   if (!fromTopic || !/^0x[0-9a-fA-F]{64}$/u.test(fromTopic)) return { state: 'pending' }
-  if (await finalizedReceipt(receipt) !== 'finalized') return { state: 'pending' }
+  if (await finalizedReceipt(receipt, options) !== 'finalized') return { state: 'pending' }
 
-  const block = await rpc<{ timestamp?: unknown }>('eth_getBlockByHash', [receipt.blockHash, false])
-  if (!block || typeof block.timestamp !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(block.timestamp)) {
+  const block = await rpc<{ timestamp?: unknown }>(
+    'eth_getBlockByHash',
+    [receipt.blockHash, false],
+    options,
+  )
+  if (block == null || typeof block.timestamp !== 'string' || !/^0x[0-9a-fA-F]+$/u.test(block.timestamp)) {
+    rejectMalformedRpcResult('eth_getBlockByHash', options)
     return { state: 'pending' }
   }
   const blockTime = new Date(Number(BigInt(block.timestamp)) * 1000)
-  if (Number.isNaN(blockTime.getTime())) return { state: 'pending' }
+  if (Number.isNaN(blockTime.getTime())) {
+    rejectMalformedRpcResult('eth_getBlockByHash', options)
+    return { state: 'pending' }
+  }
   return {
     state: 'matched',
     from: addressFromTopic(fromTopic),
@@ -204,24 +258,42 @@ export async function findFinalizedAuthorizationTransaction(
   payerWallet: string,
   nonce: string,
   startBlock: bigint,
+  options: RpcOptions = {},
 ): Promise<string | null> {
   if (!/^0x[0-9a-fA-F]{40}$/u.test(payerWallet) || !/^0x[0-9a-fA-F]{64}$/u.test(nonce)) {
     return null
   }
-  const finalized = await rpc<{ number?: unknown }>('eth_getBlockByNumber', ['finalized', false])
-  if (!finalized || typeof finalized.number !== 'string') return null
+  const finalized = await rpc<{ number?: unknown }>(
+    'eth_getBlockByNumber',
+    ['finalized', false],
+    options,
+  )
+  if (finalized == null || typeof finalized.number !== 'string') {
+    rejectMalformedRpcResult('eth_getBlockByNumber', options)
+    return null
+  }
   const finalizedNumber = parseHexBigInt(finalized.number)
-  if (finalizedNumber == null || finalizedNumber < startBlock) return null
+  if (finalizedNumber == null) {
+    rejectMalformedRpcResult('eth_getBlockByNumber', options)
+    return null
+  }
+  if (finalizedNumber < startBlock) return null
   const result = await rpc<unknown>('eth_getLogs', [{
     address: USDC,
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: finalized.number,
     topics: [AUTHORIZATION_USED_TOPIC, pad32(payerWallet), nonce.toLowerCase()],
-  }])
-  if (!Array.isArray(result)) return null
+  }], options)
+  if (!Array.isArray(result)) {
+    rejectMalformedRpcResult('eth_getLogs', options)
+    return null
+  }
   const transactions = new Set<string>()
   for (const candidate of result) {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      rejectMalformedRpcResult('eth_getLogs', options)
+      return null
+    }
     const log = candidate as Partial<Log>
     const transactionHash = typeof log.transactionHash === 'string'
       ? log.transactionHash.toLowerCase()
@@ -237,7 +309,10 @@ export async function findFinalizedAuthorizationTransaction(
       || !/^0x[0-9a-f]{64}$/u.test(transactionHash)
       || blockNumber == null
       || blockNumber > finalizedNumber
-    ) return null
+    ) {
+      rejectMalformedRpcResult('eth_getLogs', options)
+      return null
+    }
     transactions.add(transactionHash)
   }
   return transactions.size === 1 ? [...transactions][0]! : null
