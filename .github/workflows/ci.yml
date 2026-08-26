@@ -29,6 +29,8 @@ jobs:
         run: npm run typecheck
       - name: Run unit tests
         run: npm test
+      - name: Run PostgreSQL integration tests
+        run: npm run test:postgres
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Run end-to-end tests

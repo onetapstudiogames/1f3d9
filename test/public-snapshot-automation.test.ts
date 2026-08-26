@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { resolveMigrationRun } from '../scripts/migrate.ts'
 
@@ -67,7 +67,11 @@ test('package scripts expose migration, snapshot, and PostgreSQL proof commands'
   )
   assert.match(
     packageJson.scripts['test:postgres'] ?? '',
-    /(?:^|\s)test\/integration\/public-snapshot-postgres\.test\.ts(?:\s|$)/u,
+    /test\/integration\/\*\.test\.ts/u,
+  )
+  assert.equal(
+    existsSync(new URL('test/integration/public-snapshot-postgres.test.ts', root)),
+    true,
   )
 })
 

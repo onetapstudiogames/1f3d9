@@ -221,16 +221,7 @@ async function insertAttempt(database: Pool, options: AttemptOptions): Promise<v
 }
 
 test('payment recovery migration and primitives preserve exact deadline and terminal history', async t => {
-  let postgres: Awaited<ReturnType<typeof startPostgres>> | null = null
-  try {
-    postgres = await startPostgres()
-  } catch (error) {
-    if (/docker .*not recognized|docker .*not found|cannot connect|daemon/iu.test(String(error))) {
-      t.skip(`Docker unavailable: ${String(error)}`)
-      return
-    }
-    throw error
-  }
+  const postgres = await startPostgres()
   const { database, containerName } = postgres
   t.after(async () => {
     await database.end().catch(() => undefined)
@@ -302,7 +293,7 @@ test('payment recovery migration and primitives preserve exact deadline and term
     assert.equal(windows.rows[0]?.exact, true)
   })
 
-  await t.test('due-only leases refuse one millisecond before, acquire at equality, and overlap safely', async () => {
+  await t.test('due-only leases refuse one millisecond before, acquire at and after equality, and overlap safely', async () => {
     await reset(database)
     await insertAttempt(database, {
       publicId: 'pay_recovery_due_lease_boundary', targetKey: 'frontier:root:due-lease-boundary',
@@ -337,6 +328,23 @@ test('payment recovery migration and primitives preserve exact deadline and term
     }, () => 'due_lease_exact')
     assert.equal(acquired.acquired, true)
     assert.equal(acquired.leaseOwner, 'due_lease_exact')
+
+    await insertAttempt(database, {
+      publicId: 'pay_recovery_due_lease_after', targetKey: 'frontier:root:due-lease-after',
+      status: 'payment_pending', leaseOwner: null, recovery: 'due',
+    })
+    const afterBoundary = await database.query<{ recovery_deadline_at: Date }>(`
+      SELECT recovery_deadline_at FROM payment_attempts
+      WHERE public_id = 'pay_recovery_due_lease_after'
+    `)
+    const afterDeadline = afterBoundary.rows[0]?.recovery_deadline_at
+    assert.ok(afterDeadline instanceof Date)
+    const oneMillisecondAfter = new Date(afterDeadline.getTime() + 1)
+    const acquiredAfter = await acquireDueSettlementLease(databaseAt(oneMillisecondAfter), {
+      publicId: 'pay_recovery_due_lease_after', actorId: 2, leaseMilliseconds: 30_000,
+    }, () => 'due_lease_after')
+    assert.equal(acquiredAfter.acquired, true)
+    assert.equal(acquiredAfter.leaseOwner, 'due_lease_after')
 
     await insertAttempt(database, {
       publicId: 'pay_recovery_due_lease_race', targetKey: 'frontier:root:due-lease-race',
@@ -532,6 +540,66 @@ test('payment recovery migration and primitives preserve exact deadline and term
         WHERE public_id = 'pay_recovery_immutable'`),
       (error: unknown) => postgresCode(error) === '55000',
     )
+  })
+
+  await t.test('finality arriving after a pending observation completes inside the recovery window', async () => {
+    await reset(database)
+    await insertAttempt(database, {
+      publicId: 'pay_recovery_finality_inside_window',
+      targetKey: 'frontier:root:finality-inside-window',
+      status: 'settling', leaseOwner: 'lease-finality-inside', txHash: null, recovery: 'none',
+    })
+    const paymentDatabase = { query: async (text: string, params: readonly unknown[] = []) => (
+      await database.query(text, [...params])
+    ).rows }
+
+    const pending = await bindPaymentEvidence(paymentDatabase, {
+      publicId: 'pay_recovery_finality_inside_window',
+      leaseOwner: 'lease-finality-inside',
+      txHash: TX,
+      finality: null,
+    })
+    assert.equal(pending.status, 'payment_pending')
+    assert.equal(pending.finalizedAt, null)
+    assert.ok(pending.recoveryStartedAt)
+    assert.ok(pending.recoveryDeadlineAt)
+
+    await delay(20)
+    const finalizedAt = new Date().toISOString()
+    const finalized = await bindPaymentEvidence(paymentDatabase, {
+      publicId: 'pay_recovery_finality_inside_window',
+      leaseOwner: 'lease-finality-inside',
+      txHash: TX,
+      finality: {
+        blockNumber: 50_000_001n,
+        blockHash: BLOCK_HASH,
+        blockTime: new Date(Date.now() - 30_000).toISOString(),
+        finalizedAt,
+      },
+    })
+    assert.equal(finalized.status, 'payment_pending')
+    assert.equal(finalized.finalizedAt, finalizedAt)
+    assert.equal(finalized.recoveryStartedAt, pending.recoveryStartedAt)
+    assert.equal(finalized.recoveryDeadlineAt, pending.recoveryDeadlineAt)
+    const timing = await database.query<{
+      finality_inside_window: boolean
+      window_still_open: boolean
+    }>(`
+      SELECT finalized_at < recovery_deadline_at AS finality_inside_window,
+             clock_timestamp() < recovery_deadline_at AS window_still_open
+      FROM payment_attempts WHERE public_id = 'pay_recovery_finality_inside_window'
+    `)
+    assert.deepEqual(timing.rows, [{ finality_inside_window: true, window_still_open: true }])
+
+    const completed = await completePaymentAttempt(paymentDatabase, {
+      publicId: 'pay_recovery_finality_inside_window',
+      leaseOwner: 'lease-finality-inside',
+      result: { place_id: 94 },
+      responseStatus: 201,
+      response: RESPONSE,
+      responseBody: RESPONSE_BODY,
+    })
+    assert.equal(completed.status, 'completed')
   })
 
   await t.test('expired late finality appends founder review without deleting or rewriting history', async () => {

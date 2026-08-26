@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
   MIGRATION_LOCK_TIMEOUT,
   MIGRATION_STATEMENT_TIMEOUT,
@@ -512,7 +512,11 @@ test('runtime logs are one explicit guarded transactional preview or production 
   ) as { scripts?: Record<string, string> }
   assert.match(packageJson.scripts?.['migrate:preview:runtime-logs'] ?? '', /--migration runtime-logs/u)
   assert.match(packageJson.scripts?.['migrate:production:runtime-logs'] ?? '', /--migration runtime-logs/u)
-  assert.match(packageJson.scripts?.['test:postgres'] ?? '', /runtime-logs-postgres\.test\.ts/u)
+  assert.match(packageJson.scripts?.['test:postgres'] ?? '', /test\/integration\/\*\.test\.ts/u)
+  assert.equal(
+    existsSync(new URL('../test/integration/runtime-logs-postgres.test.ts', import.meta.url)),
+    true,
+  )
 })
 
 test('round-two records are append-only rather than deleted after resolution', () => {
