@@ -64,9 +64,11 @@ import {
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
+import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
 import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
+import { insertRuntimeLogs, runRuntimeLogRetention } from './runtime-logs.ts'
 import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
@@ -129,9 +131,22 @@ const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
 const executeLaterHolderQuery: LaterHolderQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
-const paymentRecoveryDatabase = {
+const runtimeDatabase = {
   query: async (text: string, params: readonly unknown[] = []) =>
     await sql.query(text, [...params]) as Record<string, unknown>[],
+}
+
+function reportRuntimeLogRetentionFailure(error: unknown): void {
+  const errorName = error instanceof Error
+    && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/u.test(error.name)
+    ? error.name
+    : 'Error'
+  const errorCode = postgresErrorCode(error)
+  console.error('runtime_log_retention_failure', JSON.stringify({
+    event: 'runtime_log_retention_failure',
+    error_name: errorName,
+    ...(errorCode && /^[0-9A-Z]{5}$/u.test(errorCode) ? { error_code: errorCode } : {}),
+  }))
 }
 
 function privateResidentHeaders(c: Context): void {
@@ -401,13 +416,21 @@ app.post('/api/rotate', async c => {
 })
 
 mountActionRoutes(app)
-const paymentRecoveryRuntime = createPaymentRecoveryRuntime(paymentRecoveryDatabase)
+mountLogDrainRoutes(app, {
+  environment: process.env,
+  insert: async records => await insertRuntimeLogs(runtimeDatabase, records),
+})
+const paymentRecoveryRuntime = createPaymentRecoveryRuntime(runtimeDatabase)
 mountPaymentRecoveryRoutes(app, {
   authenticate: authPassive,
   getOwnedAttempt: paymentRecoveryRuntime.getOwnedAttempt,
   privateView: paymentRecoveryRuntime.privateView,
   recheck: paymentRecoveryRuntime.recheck,
   runBatch: paymentRecoveryRuntime.runBatch,
+  runMaintenance: async () => {
+    await runRuntimeLogRetention(runtimeDatabase)
+  },
+  reportMaintenanceFailure: reportRuntimeLogRetentionFailure,
   reportFailure: reportPaymentRecoveryRecheckFailure,
   environment: process.env,
 })

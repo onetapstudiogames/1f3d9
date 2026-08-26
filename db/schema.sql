@@ -387,6 +387,65 @@ CREATE TABLE IF NOT EXISTS anonymous_flag_limits (
   PRIMARY KEY (ip_hash, hour)
 );
 
+-- Authenticated Vercel drain records are bounded here as a database backstop.
+-- Vercel's log id deduplicates retries; received_at drives 30-day retention.
+CREATE TABLE IF NOT EXISTS runtime_logs (
+  id             TEXT PRIMARY KEY
+                 CONSTRAINT runtime_logs_id_bounded
+                 CHECK (octet_length(id) BETWEEN 1 AND 128),
+  received_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  project        TEXT NOT NULL
+                 CONSTRAINT runtime_logs_project_bounded
+                 CHECK (octet_length(project) BETWEEN 1 AND 128),
+  timestamp      TIMESTAMPTZ NOT NULL,
+  source         TEXT NOT NULL
+                 CONSTRAINT runtime_logs_source_bounded
+                 CHECK (octet_length(source) BETWEEN 1 AND 64),
+  level          TEXT NOT NULL
+                 CONSTRAINT runtime_logs_level_bounded
+                 CHECK (octet_length(level) BETWEEN 1 AND 32),
+  request_path   TEXT
+                 CONSTRAINT runtime_logs_request_path_bounded
+                 CHECK (request_path IS NULL OR octet_length(request_path) <= 2048),
+  request_method TEXT
+                 CONSTRAINT runtime_logs_request_method_bounded
+                 CHECK (request_method IS NULL OR octet_length(request_method) <= 16),
+  status_code    INTEGER
+                 CONSTRAINT runtime_logs_status_code_valid
+                 CHECK (status_code IS NULL OR status_code BETWEEN -1 AND 599),
+  duration_ms    BIGINT
+                 CONSTRAINT runtime_logs_duration_ms_valid
+                 CHECK (duration_ms IS NULL OR duration_ms BETWEEN 0 AND 86400000),
+  user_agent     TEXT
+                 CONSTRAINT runtime_logs_user_agent_bounded
+                 CHECK (user_agent IS NULL OR octet_length(user_agent) <= 1024),
+  message        TEXT
+                 CONSTRAINT runtime_logs_message_bounded
+                 CHECK (message IS NULL OR octet_length(message) <= 4096),
+  deployment_id  TEXT NOT NULL
+                 CONSTRAINT runtime_logs_deployment_id_bounded
+                 CHECK (octet_length(deployment_id) BETWEEN 1 AND 128)
+);
+CREATE INDEX IF NOT EXISTS runtime_logs_project_timestamp
+  ON runtime_logs (project, timestamp DESC, id DESC);
+CREATE INDEX IF NOT EXISTS runtime_logs_retention
+  ON runtime_logs (received_at, id);
+
+-- One UTC-hour marker makes the five-minute cron retention step run at most
+-- once per hour across concurrent invocations and retries.
+CREATE TABLE IF NOT EXISTS runtime_log_retention_state (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE
+            CONSTRAINT runtime_log_retention_state_singleton_true
+            CHECK (singleton),
+  last_hour TIMESTAMPTZ NOT NULL
+            CONSTRAINT runtime_log_retention_state_last_hour_aligned
+            CHECK (
+              last_hour = (
+                date_trunc('hour', last_hour AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+              )
+            )
+);
+
 CREATE TABLE IF NOT EXISTS places (
   id                SERIAL PRIMARY KEY,
   parent_id         INTEGER REFERENCES places(id) ON DELETE RESTRICT,
