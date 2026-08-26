@@ -46,7 +46,9 @@ npm run backup -- --target local --database city
 Keep local PostgreSQL bound to loopback. The backup first proves the exact
 authenticated database through `host.docker.internal`; on Linux it tries host
 networking only when that route is unavailable. A public database bind is not
-needed.
+needed. The host reserves the private temporary archive before `pg_dump` fills
+it, so verified publication keeps host ownership and never overwrites an
+existing archive.
 
 Preview and production also require `NEON_API_KEY`, `NEON_PROJECT_ID`,
 `NEON_PRODUCTION_BRANCH_ID`, and the matching branch ID. They require an explicit
@@ -79,11 +81,14 @@ branch equal to production, a database-name mismatch, an unproven private output
 directory, and ambient `DATABASE_URL` fallback. On Linux and macOS, the remote
 directory must be owned by the current user with mode `0700`.
 
-Local default output is under ignored `backups/`. A successful run publishes two
-files together:
+Local default output is under ignored `backups/`. A successful run leaves two
+files; the manifest is the completion marker:
 
 - `*.dump` — sensitive schema and data.
 - `*.dump.manifest.json` — safe target identity, byte size, SHA-256, and tool evidence.
+
+After a hard stop, an archive without its manifest is incomplete and must not be
+used as a recovery backup.
 
 Do not sync the archive to a public service. On Windows, use a folder accessible
 only to the owner account.

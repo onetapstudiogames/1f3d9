@@ -600,11 +600,17 @@ export async function sha256File(path: string): Promise<string> {
 
 async function writePrivateFile(path: string, text: string): Promise<void> {
   const handle = await open(path, 'wx', 0o600)
+  let completed = false
   try {
     await handle.writeFile(text, 'utf8')
     await handle.sync()
-  } finally {
     await handle.close()
+    completed = true
+  } finally {
+    if (!completed) {
+      await handle.close().catch(() => {})
+      await unlink(path).catch(() => {})
+    }
   }
 }
 
@@ -715,8 +721,12 @@ export async function runBackup(options: Readonly<{
   const inspectArchive = options.inspectArchive ?? inspectWithDocker
   let archivePublished = false
   let manifestPublished = false
+  let tempArchiveCreated = false
+  let tempManifestCreated = false
 
   try {
+    await writePrivateFile(tempArchive, '')
+    tempArchiveCreated = true
     const dumped = await dumpArchive({
       databaseUrl: target.identity.databaseUrl,
       outputPath: tempArchive,
@@ -764,6 +774,7 @@ export async function runBackup(options: Readonly<{
       },
     }
     await writePrivateFile(tempManifest, `${JSON.stringify(manifest, null, 2)}\n`)
+    tempManifestCreated = true
     await publishExclusive(tempArchive, archivePath)
     archivePublished = true
     await publishExclusive(tempManifest, manifestPath)
@@ -808,8 +819,8 @@ export async function runBackup(options: Readonly<{
     }
     throw error
   } finally {
-    await unlink(tempArchive).catch(() => {})
-    await unlink(tempManifest).catch(() => {})
+    if (tempArchiveCreated) await unlink(tempArchive).catch(() => {})
+    if (tempManifestCreated) await unlink(tempManifest).catch(() => {})
   }
 }
 

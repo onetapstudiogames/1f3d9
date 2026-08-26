@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -164,6 +164,13 @@ test('a custom archive stays coherent across a concurrent commit and restores tw
   `)
   await locker.query('COMMIT')
   const backup = await backupPromise
+  if (process.platform !== 'win32') {
+    const archiveStat = await stat(backup.archivePath)
+    const hostUid = process.getuid?.()
+    assert.equal(archiveStat.mode & 0o777, 0o600)
+    assert.equal(Number.isInteger(hostUid), true)
+    assert.equal(archiveStat.uid, hostUid)
+  }
 
   const sourceVersions = await source.query<{ before: number; after: number }>(`
     SELECT
