@@ -8,6 +8,65 @@ const LONG_THING = `Opening inscription. ${'The lantern carries a line that shou
 const LONG_AGREEMENT = `Opening agreement. ${'Every signer can inspect this shared promise in the window. '.repeat(22)}Closing agreement marker.`
 const FITTING_DOCTORS_NOTE = 'Doctors Note — Dr. Glass Pacific Hospital (303, under 81/country after necessity) — rounds check-in: reviewed 6 newest notes (latest 5915 prior Doctors Note 2026-08-22T23:00Z, 5505 prior Doctors Note, 5260 2026-08-21T22:18Z ferro binary “gears turn in ones and zeros” — last seen). No new resident notes since prior rounds. No care need observed. Rounds continue. — Dr. Glass'
 
+const WINDOW_BEHAVIOR_MATRIX = Object.freeze([
+  { name: 'phone light', width: 390, height: 844, colorScheme: 'light' as const },
+  { name: 'phone dark', width: 390, height: 844, colorScheme: 'dark' as const },
+  { name: 'tablet light', width: 768, height: 1_024, colorScheme: 'light' as const },
+  { name: 'tablet dark', width: 768, height: 1_024, colorScheme: 'dark' as const },
+  { name: 'desktop light', width: 1_440, height: 900, colorScheme: 'light' as const },
+  { name: 'desktop dark', width: 1_440, height: 900, colorScheme: 'dark' as const },
+])
+
+const FAR_WALKER_ACTION_EVENTS = Object.freeze([{
+  id: 105,
+  at: '2026-08-15T12:05:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 205, action: 'use', status: 'applied', place_id: 77 },
+}, {
+  id: 104,
+  at: '2026-08-15T12:04:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 204, action: 'use', status: 'applied', place_id: 77 },
+}, {
+  id: 103,
+  at: '2026-08-15T12:03:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 203, action: 'use', status: 'applied', place_id: 77 },
+}, {
+  id: 102,
+  at: '2026-08-15T12:02:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 202, action: 'move', status: 'applied', from_place_id: 12, to_place_id: 77 },
+}, {
+  id: 101,
+  at: '2026-08-15T12:01:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 201, action: 'use', status: 'applied', place_id: 77 },
+}, {
+  id: 100,
+  at: '2026-08-15T12:00:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 200, action: 'move', status: 'blocked', from_place_id: 12, to_place_id: 77 },
+}, {
+  id: 99,
+  at: '2026-08-15T11:59:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 199, action: 'go_home', status: 'noop', from_place_id: 77, to_place_id: 11 },
+}, {
+  id: 98,
+  at: '2026-08-15T11:58:00.000Z',
+  kind: 'action',
+  actor: 'far-walker',
+  detail: { action_id: 198, action: 'use', status: 'failed', place_id: 77 },
+}])
+
 const SNAPSHOT = Object.freeze({
   view: 'outline',
   change_marker: '20',
@@ -89,6 +148,7 @@ const SNAPSHOT = Object.freeze({
     open_to_use: true,
     kind: 'lantern',
     traits: ['steady'],
+    truncated: true,
     created_at: '2026-08-14T12:02:00.000Z',
   }],
   agreements: [{
@@ -172,6 +232,7 @@ const DIRECTORY_REFRESHED = Object.freeze({
 
 const FOCUSED_PLACE = Object.freeze({
   view: 'outline',
+  change_marker: '20',
   place: {
     id: 77,
     parent_id: 12,
@@ -193,6 +254,7 @@ const FOCUSED_PLACE = Object.freeze({
 
 const FOCUSED_PLACE_REFRESHED = Object.freeze({
   view: 'outline',
+  change_marker: '21',
   place: {
     id: 77,
     parent_id: 12,
@@ -213,6 +275,7 @@ const FOCUSED_PLACE_REFRESHED = Object.freeze({
 })
 
 const FOCUSED_RESIDENT = Object.freeze({
+  change_marker: '20',
   resident: {
     id: 9,
     handle: 'far-walker',
@@ -293,6 +356,7 @@ const SECOND_BRANCH_PAGE = Object.freeze({
 })
 
 const RESIDENT_PAGE = Object.freeze({
+  change_marker: '20',
   residents: [SNAPSHOT.residents[0], {
     id: 6,
     handle: 'nightwatcher',
@@ -429,7 +493,12 @@ test.beforeEach(async ({ page }, testInfo) => {
       return route.fulfill({ json: DIRECTORY })
     }
     const collection = url.searchParams.get('collection')
-    if (!collection) return route.fulfill({ json: SNAPSHOT })
+    if (!collection) {
+      const snapshot = testInfo.title.includes('focused resident completes presence')
+        ? { ...SNAPSHOT, totals: { ...SNAPSHOT.totals, residents: 2 } }
+        : SNAPSHOT
+      return route.fulfill({ json: snapshot })
+    }
     if (collection === 'notes') {
       const note = url.searchParams.has('within_place_id') ? OLDER_NOTE : OLDER_GLOBAL_NOTE
       return route.fulfill({
@@ -455,6 +524,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   let focusedPlaceAttempts = 0
   await page.route('**/api/map**', route => {
     const url = new URL(route.request().url())
+    const changeMarker = url.searchParams.get('after_change_marker') ?? '20'
     if (url.searchParams.get('parent_id') === '998') {
       return route.fulfill({ status: 503, json: { error: 'test focused place failure' } })
     }
@@ -463,10 +533,21 @@ test.beforeEach(async ({ page }, testInfo) => {
       if (testInfo.title.includes('focused selection retry') && focusedPlaceAttempts === 1) {
         return route.fulfill({ status: 503, json: { error: 'test focused place failure' } })
       }
+      if (testInfo.title.includes('focused name source')) {
+        return route.fulfill({
+          json: {
+            ...FOCUSED_PLACE,
+            place: { ...FOCUSED_PLACE.place, name: 'focus_fresh_annex' },
+          },
+        })
+      }
       return route.fulfill({ json: FOCUSED_PLACE })
     }
     if (url.searchParams.get('parent_id') !== '12') {
-      return route.fulfill({ status: 404, json: { error: 'unknown test branch' } })
+      return route.fulfill({
+        status: 404,
+        json: { error: 'unknown test branch', change_marker: changeMarker },
+      })
     }
     return route.fulfill({
       json: url.searchParams.get('before_subplace_id') === '14'
@@ -476,16 +557,20 @@ test.beforeEach(async ({ page }, testInfo) => {
   })
   await page.route('**/api/residents**', route => {
     const url = new URL(route.request().url())
+    const changeMarker = url.searchParams.get('after_change_marker') ?? '20'
     if (url.searchParams.get('handle') === 'missing-reader') {
-      return route.fulfill({ status: 404, json: { error: 'unknown resident' } })
+      return route.fulfill({
+        status: 404,
+        json: { error: 'unknown resident', change_marker: changeMarker },
+      })
     }
     if (url.searchParams.get('handle') === 'failing-reader') {
       return route.fulfill({ status: 503, json: { error: 'test focused resident failure' } })
     }
     if (url.searchParams.get('handle') === 'far-walker') {
-      return route.fulfill({ json: FOCUSED_RESIDENT })
+      return route.fulfill({ json: { ...FOCUSED_RESIDENT, change_marker: changeMarker } })
     }
-    return route.fulfill({ json: RESIDENT_PAGE })
+    return route.fulfill({ json: { ...RESIDENT_PAGE, change_marker: changeMarker } })
   })
   await page.route('**/api/events**', route => {
     const url = new URL(route.request().url())
@@ -586,7 +671,7 @@ test('selected Place labels and preserves owner-chosen body-free front matter wi
   expect(automaticThingReads).toEqual([])
 })
 
-test('long notes, things, and agreements can be expanded and collapsed', async ({ page }) => {
+test('bounded note and thing excerpts offer completion while agreements remain collapsible', async ({ page }) => {
 
   await page.getByRole('tab', { name: 'Place' }).click()
 
@@ -598,8 +683,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(thingToggle).toHaveAttribute('aria-controls', await thingBody.getAttribute('id') ?? '')
   await thingToggle.click()
   await expect(thingBody).toHaveAttribute('data-expanded', 'true')
-  await thingCard.getByRole('button', { name: 'Show less' }).click()
-  await expect(thingBody).toHaveAttribute('data-expanded', 'false')
+  await expect(thingCard.getByRole('button', { name: 'Read the whole thing' })).toBeVisible()
 
   const placeNote = page.locator('#place-conversation .note-card')
     .filter({ hasText: 'Opening note.' })
@@ -614,10 +698,7 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   const conversationNote = page.locator('#conversation-stream .note-card')
     .filter({ hasText: 'Opening note.' })
   await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
-  await conversationNote.getByRole('button', { name: 'Show less' }).click()
-  await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'false')
-  await conversationNote.getByRole('button', { name: 'Show more' }).click()
-  await expect(conversationNote.locator('.note-body')).toHaveAttribute('data-expanded', 'true')
+  await expect(conversationNote.getByRole('button', { name: 'Read the whole note' })).toBeVisible()
 
   await page.getByRole('tab', { name: 'Agreements' }).click()
   const agreement = page.locator('.agreement-card')
@@ -626,6 +707,81 @@ test('long notes, things, and agreements can be expanded and collapsed', async (
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'true')
   await agreement.getByRole('button', { name: 'Show less' }).click()
   await expect(agreement.locator('.agreement-body')).toHaveAttribute('data-expanded', 'false')
+  await expect(agreement.getByRole('button', { name: /Read the whole agreement/u })).toHaveCount(0)
+})
+
+test('the second note expansion completes the bounded excerpt in place', async ({ page }) => {
+  const completeNote = `${LONG_NOTE} Complete note remainder marker.`
+  let releaseFailedRead!: () => void
+  const heldFailedRead = new Promise<void>(resolve => { releaseFailedRead = resolve })
+  let detailAttempts = 0
+  await page.route('**/api/note/21', async route => {
+    detailAttempts += 1
+    if (detailAttempts === 1) {
+      await heldFailedRead
+      return route.fulfill({ status: 503, json: { error: 'test complete note failure' } })
+    }
+    return route.fulfill({ json: { note: { id: 21, body: completeNote } } })
+  })
+
+  await page.getByRole('tab', { name: 'Place' }).click()
+  const noteCard = page.locator('#place-conversation .note-card')
+    .filter({ hasText: 'Opening note.' })
+  await noteCard.getByRole('button', { name: 'Show more' }).click()
+  await expect(noteCard.getByRole('button', { name: 'Read the whole note' })).toBeVisible()
+
+  const failedDetail = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/note/21' && response.status() === 503
+  })
+  await noteCard.getByRole('button', { name: 'Read the whole note' }).click()
+  await expect(noteCard).toContainText('Loading the complete public note…')
+  releaseFailedRead()
+  await failedDetail
+  await expect(noteCard).toContainText('The complete public note could not be read.')
+
+  const successfulDetail = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/note/21' && response.status() === 200
+  })
+  await noteCard.getByRole('button', { name: 'Retry reading the whole note' }).click()
+  await successfulDetail
+
+  await expect(noteCard.locator('.note-body')).toHaveText(completeNote)
+  await expect(noteCard).not.toContainText(/Excerpt only/u)
+  expect((API_REQUESTS.get(page) ?? []).filter(value => {
+    return new URL(value).pathname === '/api/note/21'
+  })).toHaveLength(2)
+
+  await page.getByRole('tab', { name: 'Conversations' }).click()
+  const repeatedNote = page.locator('#conversation-stream .note-card')
+    .filter({ hasText: 'Opening note.' })
+  await expect(repeatedNote.locator('.note-body')).toHaveText(completeNote)
+  expect((API_REQUESTS.get(page) ?? []).filter(value => {
+    return new URL(value).pathname === '/api/note/21'
+  })).toHaveLength(2)
+})
+
+test('the second thing expansion completes the bounded excerpt in place', async ({ page }) => {
+  const completeThing = `${LONG_THING} Complete thing remainder marker.`
+  await page.route('**/api/thing/31', route => route.fulfill({
+    json: { thing: { id: 31, body: completeThing } },
+  }))
+
+  await page.getByRole('tab', { name: 'Place' }).click()
+  const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'record_lantern' })
+  await thingCard.getByRole('button', { name: 'Show more' }).click()
+  await expect(thingCard.getByRole('button', { name: 'Read the whole thing' })).toBeVisible()
+
+  const detailRequest = page.waitForRequest(request => {
+    return new URL(request.url()).pathname === '/api/thing/31'
+  })
+  await thingCard.getByRole('button', { name: 'Read the whole thing' }).click()
+  await detailRequest
+
+  await expect(thingCard.locator('.thing-body')).toHaveText(completeThing)
+  await expect(thingCard).not.toContainText(/Excerpt only/u)
+  expect((API_REQUESTS.get(page) ?? []).filter(value => {
+    return new URL(value).pathname === '/api/thing/31'
+  })).toHaveLength(1)
 })
 
 test('a fully visible long note does not offer a useless Show more button', async ({ page }) => {
@@ -768,6 +924,7 @@ test('complete directory selection loads one focused place and its inside conten
   expect(Object.fromEntries(focusedUrl.searchParams)).toEqual({
     view: 'outline',
     parent_id: '77',
+    after_change_marker: '20',
   })
 
   const insideThings = page.waitForRequest(request => {
@@ -911,16 +1068,29 @@ test('complete resident selection uses one focused presence read and a directory
   expect(Object.fromEntries(focusedUrl.searchParams)).toEqual({
     view: 'presence',
     handle: 'far-walker',
+    after_change_marker: '20',
   })
   const currentPlaceUrl = new URL((await currentPlaceRequest).url())
   expect(Object.fromEntries(currentPlaceUrl.searchParams)).toEqual({
     view: 'outline',
     parent_id: '77',
+    after_change_marker: '20',
   })
 
   const roster = page.locator('#resident-roster')
   await expect(roster.getByRole('button', { name: 'far-walker', exact: true })).toBeVisible()
   await expect(roster).toContainText('root_plaza / inner_hall / quiet_annex')
+  const quietAnnex = page.locator('.place-card').filter({
+    has: page.getByRole('button', { name: 'quiet_annex', exact: true }),
+  })
+  const shownResidents = quietAnnex.locator('.occupant-chip')
+  await expect(shownResidents).toHaveCount(1)
+  await expect(shownResidents).toContainText('far-walker')
+  const quietAnnexFacts = quietAnnex.locator('.place-facts')
+  await expect.soft(quietAnnexFacts).toContainText(/\b0 places inside\b/u)
+  await expect.soft(quietAnnexFacts).toContainText(/\b1 resident shown inside\b/u)
+  await expect.soft(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+  await expect.soft(page.locator('#view-scope')).toContainText('currently loaded 2 of 3 residents')
   const requests = (API_REQUESTS.get(page) ?? []).map(value => new URL(value))
   expect(requests.filter(url =>
     url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'))
@@ -929,6 +1099,113 @@ test('complete resident selection uses one focused presence read and a directory
     url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'))
     .toHaveLength(1)
 })
+
+for (const environment of WINDOW_BEHAVIOR_MATRIX) {
+  test(`all four observation fixes hold in the window behavior matrix: ${environment.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: environment.width, height: environment.height })
+    await page.emulateMedia({ colorScheme: environment.colorScheme })
+
+    let releaseAgreements!: () => void
+    const heldAgreements = new Promise<void>(resolve => { releaseAgreements = resolve })
+    let agreementAttempts = 0
+    await page.route('**/api/window**', async route => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get('collection') !== 'agreements' ||
+          url.searchParams.get('resident') !== 'far-walker') {
+        return route.fallback()
+      }
+      agreementAttempts += 1
+      if (agreementAttempts === 1) {
+        await heldAgreements
+        return route.fulfill({ status: 503, json: { error: 'matrix agreement failure' } })
+      }
+      return route.fulfill({
+        json: { agreements: [], has_more: false, next_before_id: null, change_marker: '20' },
+      })
+    })
+    await page.route('**/api/events**', route => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+      return route.fulfill({
+        json: {
+          events: FAR_WALKER_ACTION_EVENTS,
+          has_more: false,
+          next_before_id: null,
+          change_marker: '20',
+        },
+      })
+    })
+    const completeNote = `${LONG_NOTE} Matrix complete note remainder.`
+    await page.route('**/api/note/21', route => route.fulfill({
+      json: { note: { id: 21, body: completeNote } },
+    }))
+
+    await page.locator('#resident-filter').selectOption('far-walker')
+    const quietAnnex = page.locator('.place-card').filter({
+      has: page.getByRole('button', { name: 'quiet_annex', exact: true }),
+    })
+    await expect(quietAnnex).toBeVisible()
+    const shownResidents = quietAnnex.locator('.occupant-chip')
+    await expect(shownResidents).toHaveCount(1)
+    await expect(shownResidents).toContainText('far-walker')
+    const quietAnnexFacts = quietAnnex.locator('.place-facts')
+    await expect.soft(quietAnnexFacts).toContainText(/\b0 places inside\b/u)
+    await expect.soft(quietAnnexFacts).toContainText(/\b1 resident shown inside\b/u)
+
+    await page.getByRole('tab', { name: 'Happenings' }).click()
+    const activity = page.locator('#activity-list')
+    await expect(activity).toContainText(/far-walker.*\buse(?:d)?\b.*(?:3\s+times|×\s*3)/i)
+    await expect(activity).toContainText(
+      /far-walker.*\bmove(?:d)?\b.*from .*inner_hall.*to .*quiet_annex/i,
+    )
+    await expect(activity.locator('.activity-row')).toHaveCount(6)
+    const repeatCount = activity.locator('.activity-count')
+    await expect(repeatCount).toHaveCount(1)
+    await expect(repeatCount).toHaveText('· 3 times')
+    expect(await repeatCount.evaluate(element => {
+      const style = getComputedStyle(element)
+      return { fontFamily: style.fontFamily, whiteSpace: style.whiteSpace }
+    })).toEqual(expect.objectContaining({
+      fontFamily: expect.stringContaining('ui-monospace'),
+      whiteSpace: 'nowrap',
+    }))
+
+    const agreementRequest = page.waitForRequest(request => {
+      const url = new URL(request.url())
+      return url.pathname === '/api/window' && url.searchParams.get('collection') === 'agreements' &&
+        url.searchParams.get('resident') === 'far-walker'
+    })
+    await page.getByRole('tab', { name: 'Agreements' }).click()
+    await agreementRequest
+    await expect(page.locator('#agreement-list')).toHaveText(
+      'Fetching agreements that match this resident…',
+    )
+    releaseAgreements()
+    await expect(page.locator('#agreement-list')).toHaveText(
+      'Agreements could not be loaded. Retry below.',
+    )
+    const agreementRetry = page.getByRole('button', {
+      name: 'Retry loading agreements', exact: true,
+    })
+    await agreementRetry.click()
+    await expect(page.locator('#agreement-list')).toHaveText(
+      'No public agreement matches this resident selection.',
+    )
+
+    await page.locator('#resident-filter').selectOption('')
+    await page.locator('#place-filter').selectOption('11')
+    await page.getByRole('tab', { name: 'Place' }).click()
+    const note = page.locator('#place-conversation .note-card').filter({ hasText: 'Opening note.' })
+    await note.getByRole('button', { name: 'Show more' }).click()
+    await expect(note.getByRole('button', { name: 'Read the whole note' })).toBeVisible()
+    await note.getByRole('button', { name: 'Read the whole note' }).click()
+    await expect(note).toContainText('Matrix complete note remainder.')
+
+    expect(await page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true)
+  })
+}
 
 test('out-of-snapshot resident history defaults to what they said and pages to exhaustion', async ({ page }) => {
   await page.route('**/api/window**', route => {
@@ -1119,11 +1396,174 @@ test('a directory-known note author is followable before their presence has been
 })
 
 test('cold deep link replaces its numbered fallback when the directory arrives later', async ({ page }) => {
+  const focusedRead = (API_REQUESTS.get(page) ?? []).map(value => new URL(value)).find(url => {
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+  })
+  expect(focusedRead?.searchParams.get('after_change_marker')).toBe('20')
   await expect(page.locator('#directory-status')).toContainText('Complete city directory')
   await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(
     'root_plaza / inner_hall / quiet_annex · kept by far-walker · showing this place and everything inside it',
   )
+})
+
+test('focused name source keeps fresh card and path wording together', async ({ page }) => {
+  await page.locator('#place-filter').selectOption('77')
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page.locator('#place-focus-title')).toHaveText('focus_fresh_annex')
+  await expect(page.locator('#place-focus-summary')).toContainText(
+    'root_plaza / inner_hall / focus_fresh_annex · kept by far-walker',
+  )
+  await expect(page.locator('#place-focus-summary')).not.toContainText('quiet_annex')
+
+  const selectedOption = page.locator('#place-filter option[value="77"]')
+  await expect(selectedOption).toContainText('focus_fresh_annex')
+  await expect(selectedOption).not.toContainText('quiet_annex')
+
+  const search = page.locator('#directory-search')
+  await search.fill('focus_fresh_annex')
+  await expect(page.locator('#directory-search-results').getByRole('option', {
+    name: /focus_fresh_annex/,
+  })).toBeVisible()
+  await search.fill('quiet_annex')
+  await expect(page.locator('#directory-search-results')).toHaveText(
+    'No places or residents match this search.',
+  )
+})
+
+test('scope forgets an older focused place when a new focused place becomes active', async ({ page }) => {
+  await page.locator('#place-filter').selectOption('77')
+  await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '78') return route.fallback()
+    return route.fulfill({
+      json: {
+        ...FOCUSED_PLACE,
+        place: {
+          ...FOCUSED_PLACE.place,
+          id: 78,
+          name: 'active_gallery',
+        },
+      },
+    })
+  })
+  const activeFocus = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '78' &&
+      response.status() === 200
+  })
+  await page.evaluate(() => { window.location.hash = '#view=map&place=78' })
+  await activeFocus
+
+  await expect(page.getByRole('button', { name: 'active_gallery', exact: true })).toBeVisible()
+  await expect(page.locator('#place-filter option[value="78"]')).toContainText('active_gallery')
+  await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+  await expect(page.locator('#view-scope')).not.toContainText('currently loaded 4 of 5 places')
+})
+
+test('explicit place scope excludes the followed resident previous focused place', async ({ page }) => {
+  const residentFocus = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker' &&
+      response.status() === 200
+  })
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await residentFocus
+  await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '78') return route.fallback()
+    return route.fulfill({
+      json: {
+        ...FOCUSED_PLACE,
+        place: {
+          ...FOCUSED_PLACE.place,
+          id: 78,
+          name: 'active_gallery',
+        },
+      },
+    })
+  })
+  const explicitPlaceFocus = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '78' &&
+      response.status() === 200
+  })
+  await page.evaluate(() => {
+    window.location.hash = '#view=map&place=78&resident=far-walker'
+  })
+  await explicitPlaceFocus
+
+  await expect(page.locator('#resident-filter')).toHaveValue('far-walker')
+  await expect(page.getByRole('button', { name: 'active_gallery', exact: true })).toBeVisible()
+  await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+  await expect(page.locator('#view-scope')).not.toContainText('currently loaded 4 of 5 places')
+})
+
+test('scope counts the active filtered history instead of hidden earlier filters', async ({ page }) => {
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'notes' || url.searchParams.has('context')) {
+      return route.fallback()
+    }
+    const resident = url.searchParams.get('resident')
+    if (resident !== 'leafwalker' && resident !== 'far-walker') return route.fallback()
+    const note = resident === 'leafwalker'
+      ? {
+          id: 901,
+          place_id: 12,
+          author: 'leafwalker',
+          body: 'Only the first selected resident said this.',
+          created_at: '2026-08-16T10:01:00.000Z',
+        }
+      : {
+          id: 902,
+          place_id: 77,
+          author: 'far-walker',
+          body: 'Only the active selected resident said this.',
+          created_at: '2026-08-16T10:02:00.000Z',
+        }
+    return route.fulfill({
+      json: { notes: [note], has_more: false, next_before_id: null, change_marker: '20' },
+    })
+  })
+
+  const firstHistory = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'leafwalker' && response.status() === 200
+  })
+  await page.locator('#resident-filter').selectOption('leafwalker')
+  await page.getByRole('tab', { name: 'Conversations' }).click()
+  await firstHistory
+  await expect(page.locator('#conversation-stream')).toContainText(
+    'Only the first selected resident said this.',
+  )
+
+  const activeHistory = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'far-walker' && response.status() === 200
+  })
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await activeHistory
+
+  const stream = page.locator('#conversation-stream')
+  await expect(stream).toContainText('Only the active selected resident said this.')
+  await expect(stream).not.toContainText('Only the first selected resident said this.')
+  await expect(page.locator('#view-scope')).toContainText('Showing 1 fetched note')
+  await expect(page.locator('#view-scope')).not.toContainText(/\b\d+ of 3 conversations\b/)
+})
+
+test('a focused resident completes presence without a false bounded warning', async ({ page }) => {
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await page.getByRole('tab', { name: 'Place' }).click()
+  const occupants = page.locator('#place-occupants')
+  await expect(occupants).toContainText('far-walker')
+  await expect(occupants).not.toContainText('Other occupants may be omitted')
 })
 
 test('missing directory selection stays selected under a confirmed-absence label', async ({ page }) => {
@@ -1239,13 +1679,24 @@ test('refresh reloads the complete directory and a focused unloaded place after 
     return route.fulfill({ json: SNAPSHOT })
   })
   await page.unroute('**/api/map**')
+  let refreshedFocusedAttempts = 0
   await page.route('**/api/map**', route => {
     const url = new URL(route.request().url())
     if (url.searchParams.get('parent_id') === '77') {
+      refreshedFocusedAttempts += 1
+      if (refreshedFocusedAttempts === 1) {
+        return route.fulfill({ status: 503, json: { error: 'test refreshed focus failure' } })
+      }
       return route.fulfill({ json: FOCUSED_PLACE_REFRESHED })
     }
     if (url.searchParams.get('parent_id') !== '12') {
-      return route.fulfill({ status: 404, json: { error: 'unknown test branch' } })
+      return route.fulfill({
+        status: 404,
+        json: {
+          error: 'unknown test branch',
+          change_marker: url.searchParams.get('after_change_marker') ?? '20',
+        },
+      })
     }
     return route.fulfill({
       json: url.searchParams.get('before_subplace_id') === '14'
@@ -1264,10 +1715,22 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   })
   const refreshedFocusedPlace = page.waitForRequest(request => {
     const url = new URL(request.url())
-    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '21'
   })
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await Promise.all([coveredSnapshot, refreshedDirectory, refreshedFocusedPlace])
+
+  const focusRetry = page.getByRole('button', { name: 'Retry loading this place' })
+  await expect(focusRetry).toBeVisible()
+  await expect(page.locator('#place-panel')).not.toContainText('Loading public place…')
+  const focusedSuccess = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  await focusRetry.click()
+  await focusedSuccess
 
   await expect(page.locator('#directory-status')).toContainText(
     'Complete city directory: 4 places and 2 residents',
@@ -1288,6 +1751,144 @@ test('refresh reloads the complete directory and a focused unloaded place after 
   )
 })
 
+test('a focused place reply overtaken by a newer snapshot fails with retry instead of fake loading', async ({ page }) => {
+  let releaseOlderPlace!: () => void
+  const heldOlderPlace = new Promise<void>(resolve => { releaseOlderPlace = resolve })
+  let focusedAttempts = 0
+  await page.route('**/api/map**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+    focusedAttempts += 1
+    if (focusedAttempts === 1) {
+      await heldOlderPlace
+      return route.fulfill({ json: FOCUSED_PLACE })
+    }
+    return route.fulfill({ json: FOCUSED_PLACE_REFRESHED })
+  })
+  await page.route('**/api/changes**', route => route.fulfill({
+    json: {
+      change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+      unchanged: false, has_more: false, next_since: '21',
+    },
+  }))
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+
+  const olderFocus = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '20'
+  })
+  await page.locator('#place-filter').selectOption('77')
+  await olderFocus
+
+  const newerSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await newerSnapshot
+
+  const olderFocusResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '20'
+  })
+  releaseOlderPlace()
+  await olderFocusResponse
+
+  const retry = page.getByRole('button', { name: 'Retry loading this place' })
+  await expect(retry).toBeVisible()
+  await expect(page.locator('#place-panel')).not.toContainText('Loading public place…')
+
+  const recovered = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  await retry.click()
+  await recovered
+  await expect(page.locator('#place-map').getByRole('button', {
+    name: 'renamed_annex', exact: true,
+  })).toBeVisible()
+  await expect(retry).toHaveCount(0)
+})
+
+test('a focused resident reply overtaken by a newer snapshot fails with retry instead of fake loading', async ({ page }) => {
+  let releaseOlderResident!: () => void
+  const heldOlderResident = new Promise<void>(resolve => { releaseOlderResident = resolve })
+  let focusedAttempts = 0
+  await page.route('**/api/residents**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('handle') !== 'far-walker') return route.fallback()
+    focusedAttempts += 1
+    if (focusedAttempts === 1) await heldOlderResident
+    return route.fulfill({
+      json: {
+        ...FOCUSED_RESIDENT,
+        change_marker: url.searchParams.get('after_change_marker') ?? '20',
+      },
+    })
+  })
+  await page.route('**/api/changes**', route => route.fulfill({
+    json: {
+      change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+      unchanged: false, has_more: false, next_since: '21',
+    },
+  }))
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+
+  const olderFocus = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
+  })
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await olderFocus
+
+  const newerSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await newerSnapshot
+
+  const olderFocusResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'
+  })
+  releaseOlderResident()
+  await olderFocusResponse
+
+  const retry = page.locator('#place-map').getByRole('button', {
+    name: 'Retry loading this resident',
+  })
+  await expect(retry).toBeVisible()
+  await expect(page.locator('#place-map')).not.toContainText('Loading public resident…')
+
+  const recovered = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker' &&
+      response.status() === 200
+  })
+  await retry.click()
+  await recovered
+  await expect(page.locator('#resident-roster').getByRole('button', {
+    name: 'far-walker', exact: true,
+  })).toBeVisible()
+  await expect(page.locator('#place-map').getByRole('button', {
+    name: 'Retry loading this resident',
+  })).toHaveCount(0)
+})
+
 test('resident presence pages load once, deduplicate, and keep honest roster scope', async ({ page }) => {
   const loadResidents = page.getByRole('button', { name: 'Load more residents' })
   await expect(loadResidents).toHaveAttribute('aria-busy', 'false')
@@ -1303,6 +1904,7 @@ test('resident presence pages load once, deduplicate, and keep honest roster sco
     view: 'presence',
     limit: '25',
     before_id: '7',
+    after_change_marker: '20',
   })
 
   const roster = page.locator('#resident-roster')
@@ -1528,10 +2130,15 @@ test('refresh forward-reconciles multi-page bursts without gaps and refreshes br
   })
   await page.unroute('**/api/residents**')
   await page.route('**/api/residents**', route => {
-    const before = new URL(route.request().url()).searchParams.get('before_id')
-    if (!refreshed) return route.fulfill({ json: RESIDENT_PAGE })
+    const url = new URL(route.request().url())
+    const before = url.searchParams.get('before_id')
+    const changeMarker = url.searchParams.get('after_change_marker') ?? '20'
+    if (!refreshed) {
+      return route.fulfill({ json: { ...RESIDENT_PAGE, change_marker: changeMarker } })
+    }
     expect(before).toBe('100')
     return route.fulfill({ json: {
+      change_marker: changeMarker,
       residents: [{
         id: 1,
         handle: 'newcomer-one',
@@ -1570,7 +2177,9 @@ test('refresh forward-reconciles multi-page bursts without gaps and refreshes br
   const branchCard = page.locator('.place-card').filter({
     has: page.getByRole('button', { name: 'inner_hall', exact: true }),
   })
-  await expect(branchCard.locator('.place-facts')).toContainText('6 inside · 4 things · 2 notes')
+  await expect(branchCard.locator('.place-facts')).toContainText(
+    '6 places inside · 5 residents shown inside · 4 things · 2 notes',
+  )
 
   expect(await page.locator('#resident-filter option').allTextContents()).toEqual([
     'All residents',
@@ -1673,7 +2282,113 @@ test('a slower refresh cannot overwrite a manual resident page that finishes fir
   await expect(page.getByRole('button', { name: 'wayfarer', exact: true })).toBeVisible()
 })
 
-test('filtered Happenings and Agreements separate loading, retryable failure, and empty', async ({ page }) => {
+test('an initial failed read names the failure and offers an immediate retry', async ({ page }) => {
+  let releaseFirstRead!: () => void
+  const heldFirstRead = new Promise<void>(resolve => { releaseFirstRead = resolve })
+  let outlineAttempts = 0
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('view') !== 'outline' || url.searchParams.has('collection')) {
+      return route.fallback()
+    }
+    outlineAttempts += 1
+    if (outlineAttempts === 1) {
+      await heldFirstRead
+      return route.fulfill({ status: 503, json: { error: 'test initial window failure' } })
+    }
+    return route.fulfill({ json: SNAPSHOT })
+  })
+
+  const firstRead = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+      !url.searchParams.has('collection')
+  })
+  await page.goto('/window')
+  await firstRead
+  await expect(page.locator('#window-status')).toContainText(/loading/i)
+  releaseFirstRead()
+
+  const status = page.locator('#window-status')
+  await expect(status).toContainText(
+    'The current public city view could not be read.',
+  )
+  await expect(status).toHaveAttribute('data-tone', 'error')
+  await expect(page.locator('#city-counts')).toHaveText(
+    'The current public city view could not be read.',
+  )
+  await expect(page.locator('#view-scope')).toHaveText(
+    'The current public city view could not be read.',
+  )
+  const retry = page.getByRole('button', { name: /retry.*(?:public )?city view/i })
+  await expect(retry).toBeVisible()
+  await expect(retry).toHaveClass('global-read-retry')
+  expect(await retry.evaluate(button => {
+    const style = getComputedStyle(button)
+    return {
+      backgroundColor: style.backgroundColor,
+      borderTopStyle: style.borderTopStyle,
+      textDecorationLine: style.textDecorationLine,
+    }
+  })).toEqual({
+    backgroundColor: 'rgba(0, 0, 0, 0)',
+    borderTopStyle: 'none',
+    textDecorationLine: 'underline',
+  })
+
+  const successfulRetry = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+      !url.searchParams.has('collection') && response.status() === 200
+  })
+  await retry.click()
+  await successfulRetry
+  await expect(page.locator('#window-status')).toContainText('Watching')
+})
+
+test('action happenings keep their verb and movement and collapse only consecutive copies', async ({ page }) => {
+  await page.route('**/api/events**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+    return route.fulfill({
+      json: {
+        events: FAR_WALKER_ACTION_EVENTS,
+        has_more: false,
+        next_before_id: null,
+        change_marker: '20',
+      },
+    })
+  })
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  const happeningsRequest = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
+      response.status() === 200
+  })
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+  await happeningsRequest
+
+  const activity = page.locator('#activity-list')
+  await expect.soft(activity).toContainText(
+    /far-walker.*\buse(?:d)?\b.*(?:3\s+times|×\s*3)/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*\bmove(?:d)?\b.*from .*inner_hall.*to .*quiet_annex/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*tried to move from .*inner_hall.*to .*quiet_annex.*blocked/i,
+  )
+  await expect.soft(activity).toContainText(
+    /far-walker.*tried to go home from .*quiet_annex.*to .*root_plaza.*no change/i,
+  )
+  await expect.soft(activity).toContainText(/far-walker.*tried to use.*failed/i)
+  await expect.soft(activity).not.toContainText('acted in the city')
+  await expect.soft(activity.locator('.activity-row')).toHaveCount(6)
+  await expect.soft(activity.locator('.activity-count')).toHaveText('· 3 times')
+})
+
+test('Decision 46 separates loading, retryable failure, and completed empty reads', async ({ page }) => {
   let releaseHappenings!: () => void
   const heldHappenings = new Promise<void>(resolve => { releaseHappenings = resolve })
   let happeningAttempts = 0
@@ -1717,11 +2432,11 @@ test('filtered Happenings and Agreements separate loading, retryable failure, an
   }, { timeout: 5_000 })
   await page.getByRole('tab', { name: 'Happenings' }).click()
   await happeningRequest
-  await expect(page.locator('#activity-list')).toContainText(/fetching happenings/i)
+  await expect(page.locator('#activity-list')).toHaveText('Fetching happenings that match this view…')
   releaseHappenings()
 
   const happeningsPanel = page.locator('#happenings-panel')
-  await expect(happeningsPanel).toContainText(/happenings could not be (?:loaded|read)/i)
+  await expect(page.locator('#activity-list')).toHaveText('Happenings could not be loaded. Retry below.')
   await expect(page.locator('#activity-list')).not.toContainText(/no happening .*matches/i)
   const happeningsRetry = happeningsPanel.getByRole('button', {
     name: 'Retry loading happenings', exact: true,
@@ -1734,7 +2449,8 @@ test('filtered Happenings and Agreements separate loading, retryable failure, an
   }, { timeout: 5_000 })
   await happeningsRetry.click()
   await successfulHappenings
-  await expect(page.locator('#activity-list')).toContainText(/no happening .*matches/i)
+  await expect(page.locator('#activity-list')).toHaveText('No public happening matches this selection.')
+  await expect(page.locator('#activity-list')).not.toContainText(/bounded|currently loaded|may be omitted/i)
 
   const agreementRequest = page.waitForRequest(request => {
     const url = new URL(request.url())
@@ -1743,11 +2459,11 @@ test('filtered Happenings and Agreements separate loading, retryable failure, an
   }, { timeout: 5_000 })
   await page.getByRole('tab', { name: 'Agreements' }).click()
   await agreementRequest
-  await expect(page.locator('#agreement-list')).toContainText(/fetching agreements/i)
+  await expect(page.locator('#agreement-list')).toHaveText('Fetching agreements that match this resident…')
   releaseAgreements()
 
   const agreementsPanel = page.locator('#agreements-panel')
-  await expect(agreementsPanel).toContainText(/agreements could not be (?:loaded|read)/i)
+  await expect(page.locator('#agreement-list')).toHaveText('Agreements could not be loaded. Retry below.')
   await expect(page.locator('#agreement-list')).not.toContainText(/no agreement .*matches/i)
   const agreementsRetry = agreementsPanel.getByRole('button', {
     name: 'Retry loading agreements', exact: true,
@@ -1760,7 +2476,210 @@ test('filtered Happenings and Agreements separate loading, retryable failure, an
   }, { timeout: 5_000 })
   await agreementsRetry.click()
   await successfulAgreements
-  await expect(page.locator('#agreement-list')).toContainText(/no agreement .*matches/i)
+  await expect(page.locator('#agreement-list')).toHaveText(
+    'No public agreement matches this resident selection.',
+  )
+  await expect(page.locator('#agreement-list')).not.toContainText(/bounded|currently loaded|may be omitted/i)
+})
+
+test('conversation scope names loading, failure, and completed empty without inventing zero', async ({ page }) => {
+  let releaseConversation!: () => void
+  const heldConversation = new Promise<void>(resolve => { releaseConversation = resolve })
+  let attempts = 0
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'notes' ||
+        url.searchParams.get('resident') !== 'far-walker') {
+      return route.fallback()
+    }
+    attempts += 1
+    if (attempts === 1) {
+      await heldConversation
+      return route.fulfill({ status: 503, json: { error: 'test conversation failure' } })
+    }
+    return route.fulfill({
+      json: { notes: [], has_more: false, next_before_id: null, change_marker: '20' },
+    })
+  })
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await page.getByRole('tab', { name: 'Conversations' }).click()
+  const scope = page.locator('#view-scope')
+  await expect(scope).toContainText('Loading that public read.')
+  await expect(scope).not.toContainText('Showing 0 fetched notes')
+  await expect(scope).not.toContainText('0 of 3 conversations')
+  releaseConversation()
+  await expect(scope).toContainText('That public read failed')
+  await expect(scope).not.toContainText('Showing 0 fetched notes')
+  await expect(scope).not.toContainText('0 of 3 conversations')
+
+  const successfulRetry = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'far-walker' && response.status() === 200
+  })
+  await page.getByRole('button', { name: 'Retry loading conversations', exact: true }).click()
+  await successfulRetry
+  await expect(scope).toContainText('Nothing was found.')
+  await expect(scope).not.toContainText(
+    /Nothing was found[^.]{0,80}(?:bounded|currently loaded)|Showing 0 fetched notes/i,
+  )
+  await expect(scope).not.toContainText('0 of 3 conversations')
+})
+
+test('a history page newer than its neighboring totals fails instead of mixing markers', async ({ page }) => {
+  let releaseChangeCheck!: () => void
+  const heldChangeCheck = new Promise<void>(resolve => { releaseChangeCheck = resolve })
+  await page.route('**/api/changes**', async route => {
+    await heldChangeCheck
+    return route.fulfill({
+      json: {
+        change_marker: '20', changes: [], returned_items: 0,
+        unchanged: true, has_more: false, next_since: '20',
+      },
+    })
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('collection') !== 'notes' ||
+        url.searchParams.get('resident') !== 'leafwalker') {
+      return route.fallback()
+    }
+    return route.fulfill({
+      json: {
+        notes: [{
+          id: 903,
+          place_id: 12,
+          author: 'leafwalker',
+          body: 'This marker-21 note must not neighbor marker-20 totals.',
+          created_at: '2026-08-16T10:03:00.000Z',
+        }],
+        has_more: false,
+        next_before_id: null,
+        change_marker: '21',
+      },
+    })
+  })
+
+  const historyResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' && url.searchParams.get('collection') === 'notes' &&
+      url.searchParams.get('resident') === 'leafwalker' && response.status() === 200
+  })
+  await page.locator('#resident-filter').selectOption('leafwalker')
+  await page.getByRole('tab', { name: 'Conversations' }).click()
+  await historyResponse
+
+  const stream = page.locator('#conversation-stream')
+  await expect(stream).toHaveText('Conversation could not be loaded. Retry below.')
+  await expect(stream).not.toContainText('This marker-21 note')
+  await expect(page.getByRole('button', {
+    name: 'Retry loading conversations', exact: true,
+  })).toBeVisible()
+  releaseChangeCheck()
+})
+
+test('a filtered forward refresh newer than its neighboring totals keeps the completed rows', async ({ page }) => {
+  let phase: 'initial' | 'ahead' = 'initial'
+  await page.route('**/api/events**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+    return route.fulfill({
+      json: {
+        events: phase === 'initial'
+          ? [FAR_WALKER_ACTION_EVENTS[0]]
+          : FAR_WALKER_ACTION_EVENTS.slice(0, 2),
+        has_more: false,
+        next_before_id: null,
+        change_marker: phase === 'initial' ? '20' : '21',
+      },
+    })
+  })
+  await page.route('**/api/changes**', route => route.fulfill({
+    status: 503,
+    json: { error: 'test change check unavailable' },
+  }))
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+  await expect(page.locator('#activity-list')).toContainText('far-walker used')
+
+  phase = 'ahead'
+  const aheadResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
+      url.searchParams.get('after_change_marker') === '20' && response.status() === 200
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await aheadResponse
+
+  await expect(page.locator('#happenings-page')).toContainText(
+    'Updated happenings could not be loaded. Showing the previous completed results.',
+  )
+  await expect(page.locator('#activity-list')).not.toContainText('2 times')
+  await expect(page.getByRole('button', { name: 'Retry refreshing happenings' })).toBeVisible()
+})
+
+test('a filtered refresh names loading and failure, preserves rows, and retries itself', async ({ page }) => {
+  let phase: 'initial' | 'refresh' = 'initial'
+  let refreshAttempts = 0
+  let releaseRefresh!: () => void
+  const heldRefresh = new Promise<void>(resolve => { releaseRefresh = resolve })
+  await page.route('**/api/events**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+    if (phase === 'initial') {
+      return route.fulfill({
+        json: {
+          events: [FAR_WALKER_ACTION_EVENTS[0]], has_more: false,
+          next_before_id: null, change_marker: '20',
+        },
+      })
+    }
+    refreshAttempts += 1
+    if (refreshAttempts === 1) {
+      await heldRefresh
+      return route.fulfill({ status: 503, json: { error: 'test forward refresh failure' } })
+    }
+    return route.fulfill({
+      json: {
+        events: FAR_WALKER_ACTION_EVENTS.slice(0, 2), has_more: false,
+        next_before_id: null, change_marker: '20',
+      },
+    })
+  })
+  await page.route('**/api/changes**', route => route.fulfill({
+    status: 503,
+    json: { error: 'test change check unavailable' },
+  }))
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+  await expect(page.locator('#activity-list')).toContainText('far-walker')
+  phase = 'refresh'
+  const refreshRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
+      url.searchParams.get('after_change_marker') === '20'
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await refreshRequest
+  await expect(page.locator('#happenings-page')).toContainText('Loading updated happenings…')
+  await expect(page.locator('#activity-list')).toContainText('far-walker')
+  releaseRefresh()
+  await expect(page.locator('#happenings-page')).toContainText(
+    'Updated happenings could not be loaded. Showing the previous completed results.',
+  )
+  const retry = page.getByRole('button', { name: 'Retry refreshing happenings' })
+  await expect(retry).toBeVisible()
+  const success = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
+      response.status() === 200
+  })
+  await retry.click()
+  await success
+  await expect(page.locator('#happenings-page')).not.toContainText('could not be loaded')
 })
 
 test('recent window slices can be extended independently in every public view', async ({ page }) => {
@@ -1983,7 +2902,12 @@ test('a failed changed snapshot keeps the old marker and retries the same change
   })
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await Promise.all([firstChange, firstFailure])
-  await expect(page.locator('#window-status')).toContainText('older view')
+  const staleStatus = page.locator('#window-status')
+  await expect(staleStatus).toContainText('previous completed view')
+  await expect(staleStatus).toHaveAttribute('data-tone', 'stale')
+  const retry = page.getByRole('button', { name: 'Retry reading the public city view' })
+  await expect(retry).toBeVisible()
+  await expect(retry).toHaveClass('global-read-retry')
 
   const retriedOldMarker = page.waitForRequest(request => {
     const url = new URL(request.url())

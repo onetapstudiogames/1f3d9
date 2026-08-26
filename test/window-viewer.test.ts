@@ -53,6 +53,11 @@ test('the live window distinguishes its current bounded view from dated public s
   assert.match(WINDOW_JS, /Excerpt only — the full text is not included in this bounded view\./)
   assert.match(WINDOW_JS, /Current bounded public view shows/)
   assert.match(WINDOW_JS, /The current public city view could not be read\./)
+  assert.match(WINDOW_JS, /Retry reading the public city view/)
+  assert.match(WINDOW_JS, /No public happening matches this selection\./)
+  assert.match(WINDOW_JS, /No public agreement matches this resident selection\./)
+  assert.doesNotMatch(WINDOW_JS, /No agreement in the current bounded public view matches/)
+  assert.doesNotMatch(WINDOW_JS, /No happening in the current bounded public view matches/)
   assert.doesNotMatch(WINDOW_HTML, /Reading the luggage tags/iu)
 
   const oldVisibleCopy = [
@@ -69,6 +74,16 @@ test('the live window distinguishes its current bounded view from dated public s
   const routeSource = windowModule.windowSnapshot.toString()
   assert.match(routeSource, /invalid public window query/iu)
   assert.doesNotMatch(routeSource, /invalid public window snapshot query/iu)
+})
+
+test('global read retry keeps total failure and stale refresh visibly distinct', () => {
+  assert.match(WINDOW_JS, /function renderGlobalReadRetry\(message, tone\)/)
+  assert.match(WINDOW_JS, /nodes\.status\.dataset\.tone = tone/)
+  assert.match(WINDOW_JS, /renderGlobalReadRetry\(message, 'error'\)/)
+  assert.match(WINDOW_JS, /Showing the previous completed view\.',\s*'stale'/)
+  assert.match(WINDOW_CSS, /\.watch-state \[data-tone="error"\]::before\s*\{/)
+  assert.match(WINDOW_CSS, /\.global-read-retry\s*\{/)
+  assert.match(WINDOW_CSS, /\.global-read-retry:focus-visible\s*\{/)
 })
 
 test('deliberate navigation makes real history and refresh keeps reading state', () => {
@@ -171,16 +186,33 @@ test('long public bodies share one honest, accessible disclosure', () => {
   assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)
   assert.match(WINDOW_JS, /Excerpt only — this bounded view carries only the first part\./)
-  // An excerpt is a dead end unless the reader is told where the rest lives.
-  // Notes and things have single-item endpoints; agreements do not, and the
-  // notice must say so rather than offering a link that would 404.
+  // Notes and things complete through the existing anonymous single-item read;
+  // agreements remain terminal because no matching complete read exists.
+  assert.match(WINDOW_JS, /fullBodies:\s*\{\}/)
+  assert.match(WINDOW_JS, /function bodyDisclosureLabel\(/)
+  assert.match(WINDOW_JS, /async function loadFullBody\(/)
   assert.match(WINDOW_JS, /'\/api\/' \+ kind \+ '\/' \+ String\(id\)/)
+  assert.match(WINDOW_JS, /credentials:\s*'omit'/)
+  assert.match(WINDOW_JS, /kind === 'note' \? 4000 : 65536/)
   assert.match(WINDOW_JS, /Read the whole ' \+ kind/)
+  assert.match(WINDOW_JS, /The complete public ' \+ kind \+ ' could not be read\./)
   assert.match(WINDOW_JS, /The full text is not served through the glass\./)
+  assert.doesNotMatch(WINDOW_JS, /element\('a', 'body-full-link'/)
   assert.match(WINDOW_CSS, /\.body-full-link/)
   assert.match(WINDOW_CSS, /\.public-body\[data-expanded="false"\]/)
   assert.match(WINDOW_CSS, /-webkit-line-clamp:/)
   assert.match(WINDOW_CSS, /\.body-disclosure:focus-visible/)
+})
+
+test('public action happenings preserve meaning and collapse only consecutive repeats', () => {
+  assert.match(WINDOW_JS, /SAFE_ACTIONS/)
+  assert.match(WINDOW_JS, /SAFE_ACTION_STATUSES/)
+  assert.match(WINDOW_JS, /tried to ' \+ actionAttempt/)
+  assert.match(WINDOW_JS, /function collapseActivity\(/)
+  assert.match(WINDOW_JS, /group\.count > 1/)
+  assert.match(WINDOW_JS, /String\(group\.count\) \+ ' times'/)
+  assert.match(WINDOW_JS, /element\('span', 'activity-count'/)
+  assert.match(WINDOW_CSS, /\.activity-count\s*\{/)
 })
 
 test('map branches expose accessible lazy-load and collapse controls', () => {

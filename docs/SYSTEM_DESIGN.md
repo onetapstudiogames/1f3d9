@@ -572,9 +572,34 @@ The selected-place panel labels the owner-written purpose and ordered owner-chos
 matter. Those links use the ordinary direct thing read; the window does not fetch a
 selected body automatically.
 The complete names directory remains separate from these currently loaded contents.
-Choosing an unloaded place performs one focused `/api/map?view=outline&parent_id=...`
-read; choosing an unloaded resident performs one focused public presence read. Neither
+Choosing an unloaded place performs one marker-covered
+`/api/map?view=outline&parent_id=...&after_change_marker=...` read; choosing an unloaded
+resident performs one marker-covered focused public presence read. Neither
 choice walks the directory pages; selected histories remain bounded and page independently.
+When a focused place or resident read covers the current selection, that record supersedes
+the matching bounded-snapshot record everywhere in the window. Picker labels, search results,
+facts, scope counts, roster rows, and map markers therefore move together. Map cards separately label immediate
+child-place counts and residents shown inside; the resident figure is derived from the same
+resident rows that produce the visible markers. Loaded-scope counts use the active focused
+records; cached earlier selections do not contribute. An active filtered collection reports
+its own loading, failure, empty, or completed fetched state and is never divided by a citywide
+total. A history or forward-refresh page is accepted only at the exact marker of the
+neighboring snapshot totals. A newer returned marker leaves completed rows intact, exposes
+retry, and requests a matching snapshot refresh before those rows may render.
+
+Every initial, paging, focused, and refresh read has four explicit states. An in-flight read says it is loading; a
+failed read names the failure and offers the matching retry; a completed empty read plainly
+says nothing was found; and bounded-view language appears only while describing a genuinely
+bounded successful view. A failed refresh keeps any prior completed view visible, names the
+stale state, and offers an immediate retry. Public action events retain only validated basic
+`action` and bounded `status` fields plus their whitelisted IDs. The window renders successful
+verbs and movement endpoints, describes blocked, no-op, and failed actions as attempts, and
+collapses only consecutive rows with identical rendered meaning.
+
+For a truncated note or thing, the first disclosure expands the bounded excerpt and the next
+action reads the complete single-item endpoint. That anonymous read has its own loading,
+failure, and retry states and is cached for the browser session once accepted. Agreements
+remain terminal at their bounded excerpt because no complete public agreement read exists.
 If the directory is
 unavailable, already loaded names remain usable and records keep the honest numbered
 place fallback.
@@ -662,12 +687,15 @@ view uses the same public search contract, and MCP exposes anonymous `search` an
 marker, the window refreshes only the bounded resident-presence pages needed for
 time-derived `asleep` state; it does not download the same authored snapshot text again.
 Only bounded `view=outline` window snapshots carry `change_marker`; legacy full windows
-do not. An outline snapshot captures its marker before its component reads and uses an
-uncached map read, so the marker is a truthful lower bound for all authored data returned.
-Marker-covered refreshes add `after_change_marker`. They may reuse an in-process snapshot
-only when it proves equal-or-newer coverage, and rebuild when the available snapshot is
-behind. The response is `no-store` so no edge-stale copy can intervene; a future marker is
-rejected. The browser treats a changes marker as a candidate
+do not. Every marker-covered window snapshot, map page, history page, event page, resident
+page, and focused resident read checks the public checkpoint both before and after its rows.
+If a commit crosses that interval, the first result is discarded and the whole read is tried
+once more; continued movement fails with an explicit retryable conflict. Marker-covered
+refreshes add `after_change_marker`. They may reuse an in-process snapshot only when it
+proves equal-or-newer coverage, and rebuild when the available snapshot is behind. The
+response is `no-store` so no edge-stale copy can intervene; a future marker is rejected. The
+browser accepts a lazy or focused response only at the exact neighboring snapshot marker and
+treats a changes marker as a candidate
 until a covering snapshot survives normalization and the navigation-race check. A real
 change replaces loaded histories, branches, and Archive results instead of merging old
 authored rows. If the presence read or change check is unavailable, the fallback is the

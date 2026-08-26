@@ -85,11 +85,12 @@ import {
 import { takePublicSearchToken } from './public-search-rate-limit.ts'
 import { errorClassForStatus } from './error-class.ts'
 import {
-  loadPublicChangeCheckpoint,
   loadPublicChanges,
   parsePublicChangeMarker,
   parsePublicChangeQuery,
   PublicChangeFutureError,
+  PublicChangeReadConflictError,
+  readAtStablePublicChangeCheckpoint,
 } from './public-changes.ts'
 import {
   createLaterHolderCursorCodec,
@@ -417,34 +418,99 @@ mountWorldMarketRoutes(app)
 app.get('/api/residents', async c => {
   const queries = c.req.queries()
   if (Object.hasOwn(queries, 'handle')) {
-    const allowed = allowedPublicQuery(queries, ['view', 'handle'])
+    const allowed = allowedPublicQuery(queries, ['view', 'handle', 'after_change_marker'])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const viewValue = singlePublicQueryValue(queries, 'view')
     if (!viewValue.ok) return err(c, 400, viewValue.error)
     const handleValue = singlePublicQueryValue(queries, 'handle')
     if (!handleValue.ok) return err(c, 400, handleValue.error)
+    const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
+    if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
+    const minimumMarker = afterMarkerValue.value === null
+      ? null
+      : parsePublicChangeMarker(afterMarkerValue.value)
+    if (afterMarkerValue.value !== null && minimumMarker === null) {
+      return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
+    }
     if (
       viewValue.value !== 'presence'
       || handleValue.value === null
       || !HANDLE_RE.test(handleValue.value)
-      || Object.keys(queries).length !== 2
+      || Object.keys(queries).length !== (minimumMarker === null ? 2 : 3)
     ) {
-      return err(c, 400, 'focused resident presence needs exactly view=presence and one valid handle')
+      return err(c, 400,
+        'focused resident presence needs view=presence, one valid handle, and optional after_change_marker')
     }
-    const resident = await readPublicResidentPresence(handleValue.value)
-    if (!resident) return err(c, 404, 'resident not found')
-    return c.json({ resident })
+    let resident: Awaited<ReturnType<typeof readPublicResidentPresence>>
+    let changeMarker: string | null = null
+    try {
+      if (minimumMarker === null) {
+        resident = await readPublicResidentPresence(handleValue.value)
+      } else {
+        const stable = await readAtStablePublicChangeCheckpoint(
+          executePublicQuery,
+          minimumMarker,
+          () => readPublicResidentPresence(handleValue.value!),
+        )
+        resident = stable.value
+        changeMarker = stable.changeMarker
+      }
+    } catch (error) {
+      if (error instanceof PublicChangeFutureError ||
+          error instanceof PublicChangeReadConflictError) {
+        return err(c, 409, error.message)
+      }
+      throw error
+    }
+    if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
+    if (!resident) {
+      return changeMarker === null
+        ? err(c, 404, 'resident not found')
+        : c.json({ error: 'resident not found', change_marker: changeMarker }, 404)
+    }
+    return c.json({ resident, ...(changeMarker === null ? {} : { change_marker: changeMarker }) })
   }
-  const allowed = allowedPublicQuery(queries, ['view', 'before_id', 'limit'])
+  const allowed = allowedPublicQuery(queries, [
+    'view', 'before_id', 'limit', 'after_change_marker',
+  ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const viewValue = singlePublicQueryValue(queries, 'view')
   if (!viewValue.ok) return err(c, 400, viewValue.error)
   if (viewValue.value != null && viewValue.value !== 'presence') {
     return err(c, 400, 'view must be presence')
   }
+  const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
+  if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
+  const minimumMarker = afterMarkerValue.value === null
+    ? null
+    : parsePublicChangeMarker(afterMarkerValue.value)
+  if (afterMarkerValue.value !== null && minimumMarker === null) {
+    return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
+  }
   const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
   if (!parsed.ok) return err(c, 400, parsed.error)
-  const page = await readPublicResidentPage(parsed, viewValue.value === 'presence')
+  let page: Awaited<ReturnType<typeof readPublicResidentPage>>
+  let changeMarker: string | null = null
+  try {
+    if (minimumMarker === null) {
+      page = await readPublicResidentPage(parsed, viewValue.value === 'presence')
+    } else {
+      const stable = await readAtStablePublicChangeCheckpoint(
+        executePublicQuery,
+        minimumMarker,
+        () => readPublicResidentPage(parsed, viewValue.value === 'presence'),
+      )
+      page = stable.value
+      changeMarker = stable.changeMarker
+    }
+  } catch (error) {
+    if (error instanceof PublicChangeFutureError ||
+        error instanceof PublicChangeReadConflictError) {
+      return err(c, 409, error.message)
+    }
+    throw error
+  }
+  if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
   return c.json({
     residents: page.residents,
     count: page.totalItems,
@@ -457,6 +523,7 @@ app.get('/api/residents', async c => {
     returned_text_bytes: 0,
     has_more: page.hasMore,
     next_before_id: page.nextBeforeId,
+    ...(changeMarker === null ? {} : { change_marker: changeMarker }),
   })
 })
 
@@ -805,36 +872,55 @@ app.get('/api/events', async c => {
   if (afterMarkerValue.value !== null && minimumMarker === null) {
     return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
   }
-  let changeMarker: string | null = null
-  if (minimumMarker !== null) {
-    changeMarker = await loadPublicChangeCheckpoint(executePublicQuery)
-    if (BigInt(minimumMarker) > BigInt(changeMarker)) {
-      return err(c, 409, new PublicChangeFutureError(minimumMarker, changeMarker).message)
-    }
+  const readEvents = async () => {
+    const collection = await loadPublicEventCollectionRows(
+      executeBudgetedExactQuery,
+      {
+        kind: kind ?? null,
+        actor: actorValue.value,
+        placeId,
+        includeDescendants: insidePlaceValue.value !== null,
+      },
+      parsed,
+    )
+    const page = finalizePublicPage(
+      collection.rows as Array<Record<string, unknown> & { id: number }>,
+      parsed.limit,
+    )
+    return Object.freeze({
+      events: await moderatePublicEvents(page.items),
+      total_items: collection.total.items,
+      total_text_bytes: collection.total.textBytes,
+      returned_items: page.items.length,
+      returned_text_bytes: eventDetailTextBytes(page.items),
+      has_more: page.hasMore,
+      next_before_id: page.nextCursor,
+    })
   }
-  const collection = await loadPublicEventCollectionRows(
-    executeBudgetedExactQuery,
-    {
-      kind: kind ?? null,
-      actor: actorValue.value,
-      placeId,
-      includeDescendants: insidePlaceValue.value !== null,
-    },
-    parsed,
-  )
-  const page = finalizePublicPage(
-    collection.rows as Array<Record<string, unknown> & { id: number }>,
-    parsed.limit,
-  )
+  let payload: Awaited<ReturnType<typeof readEvents>>
+  let changeMarker: string | null = null
+  try {
+    if (minimumMarker === null) {
+      payload = await readEvents()
+    } else {
+      const stable = await readAtStablePublicChangeCheckpoint(
+        executePublicQuery,
+        minimumMarker,
+        readEvents,
+      )
+      payload = stable.value
+      changeMarker = stable.changeMarker
+    }
+  } catch (error) {
+    if (error instanceof PublicChangeFutureError ||
+        error instanceof PublicChangeReadConflictError) {
+      return err(c, 409, error.message)
+    }
+    throw error
+  }
   if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
   return c.json({
-    events: await moderatePublicEvents(page.items),
-    total_items: collection.total.items,
-    total_text_bytes: collection.total.textBytes,
-    returned_items: page.items.length,
-    returned_text_bytes: eventDetailTextBytes(page.items),
-    has_more: page.hasMore,
-    next_before_id: page.nextCursor,
+    ...payload,
     ...(changeMarker === null ? {} : { change_marker: changeMarker }),
   })
 })

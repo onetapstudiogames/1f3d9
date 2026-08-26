@@ -13,6 +13,7 @@ import {
 const PUBLIC_CHANGE_PAGE_DEFAULT = 10
 export const PUBLIC_CHANGE_PAGE_MAX = 200
 const MAX_BIGINT = 9_223_372_036_854_775_807n
+const STABLE_PUBLIC_READ_ATTEMPTS = 2
 
 export interface PublicChangeQuery {
   readonly ok: true
@@ -31,6 +32,13 @@ export class PublicChangeFutureError extends Error {
   constructor(since: string, checkpoint: string) {
     super(`since marker ${since} is ahead of checkpoint ${checkpoint}`)
     this.name = 'PublicChangeFutureError'
+  }
+}
+
+export class PublicChangeReadConflictError extends Error {
+  constructor(before: string, after: string) {
+    super(`public view changed from marker ${before} to ${after} while it was being read; retry`)
+    this.name = 'PublicChangeReadConflictError'
   }
 }
 
@@ -205,4 +213,23 @@ export async function loadPublicChangeCheckpoint(
 ): Promise<string> {
   const rows = await execute(CHECKPOINT_SQL, [])
   return checkpointFrom(rows)
+}
+
+export async function readAtStablePublicChangeCheckpoint<T>(
+  execute: PublicQueryExecutor,
+  minimumMarker: string | null,
+  read: () => Promise<T>,
+): Promise<Readonly<{ value: T; changeMarker: string }>> {
+  let crossed: Readonly<{ before: string; after: string }> | null = null
+  for (let attempt = 0; attempt < STABLE_PUBLIC_READ_ATTEMPTS; attempt += 1) {
+    const before = await loadPublicChangeCheckpoint(execute)
+    if (minimumMarker !== null && BigInt(minimumMarker) > BigInt(before)) {
+      throw new PublicChangeFutureError(minimumMarker, before)
+    }
+    const value = await read()
+    const after = await loadPublicChangeCheckpoint(execute)
+    if (before === after) return Object.freeze({ value, changeMarker: after })
+    crossed = Object.freeze({ before, after })
+  }
+  throw new PublicChangeReadConflictError(crossed!.before, crossed!.after)
 }
