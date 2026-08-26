@@ -1159,6 +1159,16 @@ for (const environment of WINDOW_BEHAVIOR_MATRIX) {
       /far-walker.*\bmove(?:d)?\b.*from .*inner_hall.*to .*quiet_annex/i,
     )
     await expect(activity.locator('.activity-row')).toHaveCount(6)
+    const repeatCount = activity.locator('.activity-count')
+    await expect(repeatCount).toHaveCount(1)
+    await expect(repeatCount).toHaveText('· 3 times')
+    expect(await repeatCount.evaluate(element => {
+      const style = getComputedStyle(element)
+      return { fontFamily: style.fontFamily, whiteSpace: style.whiteSpace }
+    })).toEqual(expect.objectContaining({
+      fontFamily: expect.stringContaining('ui-monospace'),
+      whiteSpace: 'nowrap',
+    }))
 
     const agreementRequest = page.waitForRequest(request => {
       const url = new URL(request.url())
@@ -2299,9 +2309,11 @@ test('an initial failed read names the failure and offers an immediate retry', a
   await expect(page.locator('#window-status')).toContainText(/loading/i)
   releaseFirstRead()
 
-  await expect(page.locator('#window-status')).toContainText(
+  const status = page.locator('#window-status')
+  await expect(status).toContainText(
     'The current public city view could not be read.',
   )
+  await expect(status).toHaveAttribute('data-tone', 'error')
   await expect(page.locator('#city-counts')).toHaveText(
     'The current public city view could not be read.',
   )
@@ -2310,6 +2322,19 @@ test('an initial failed read names the failure and offers an immediate retry', a
   )
   const retry = page.getByRole('button', { name: /retry.*(?:public )?city view/i })
   await expect(retry).toBeVisible()
+  await expect(retry).toHaveClass('global-read-retry')
+  expect(await retry.evaluate(button => {
+    const style = getComputedStyle(button)
+    return {
+      backgroundColor: style.backgroundColor,
+      borderTopStyle: style.borderTopStyle,
+      textDecorationLine: style.textDecorationLine,
+    }
+  })).toEqual({
+    backgroundColor: 'rgba(0, 0, 0, 0)',
+    borderTopStyle: 'none',
+    textDecorationLine: 'underline',
+  })
 
   const successfulRetry = page.waitForResponse(response => {
     const url = new URL(response.url())
@@ -2360,6 +2385,7 @@ test('action happenings keep their verb and movement and collapse only consecuti
   await expect.soft(activity).toContainText(/far-walker.*tried to use.*failed/i)
   await expect.soft(activity).not.toContainText('acted in the city')
   await expect.soft(activity.locator('.activity-row')).toHaveCount(6)
+  await expect.soft(activity.locator('.activity-count')).toHaveText('· 3 times')
 })
 
 test('Decision 46 separates loading, retryable failure, and completed empty reads', async ({ page }) => {
@@ -2876,8 +2902,12 @@ test('a failed changed snapshot keeps the old marker and retries the same change
   })
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await Promise.all([firstChange, firstFailure])
-  await expect(page.locator('#window-status')).toContainText('previous completed view')
-  await expect(page.getByRole('button', { name: 'Retry reading the public city view' })).toBeVisible()
+  const staleStatus = page.locator('#window-status')
+  await expect(staleStatus).toContainText('previous completed view')
+  await expect(staleStatus).toHaveAttribute('data-tone', 'stale')
+  const retry = page.getByRole('button', { name: 'Retry reading the public city view' })
+  await expect(retry).toBeVisible()
+  await expect(retry).toHaveClass('global-read-retry')
 
   const retriedOldMarker = page.waitForRequest(request => {
     const url = new URL(request.url())

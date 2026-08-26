@@ -117,6 +117,20 @@ button { color: inherit; }
 .watch-state [data-tone="live"]::before { content: "● "; color: var(--forest); }
 .watch-state [data-tone="stale"]::before,
 .watch-state [data-tone="working"]::before { content: "● "; color: var(--brick); }
+.watch-state [data-tone="error"]::before { content: "● "; color: var(--brick-deep); }
+.global-read-retry {
+  padding: 0;
+  color: var(--brick-deep);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.global-read-retry:hover { color: var(--forest-deep); }
+.global-read-retry:focus-visible { outline: 3px solid var(--forest-deep); outline-offset: 2px; }
 .window-guide-links {
   grid-column: 1 / -1;
   display: flex;
@@ -677,6 +691,11 @@ button { color: inherit; }
 .activity-row:nth-child(even) { background: rgba(23, 77, 60, 0.055); }
 .activity-copy { margin: 0; font-weight: 720; line-height: 1.45; }
 .activity-actor { color: var(--forest-deep); font-weight: 900; }
+.activity-count {
+  color: var(--brick-deep);
+  font: 850 0.65rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: nowrap;
+}
 .activity-context { grid-column: 1 / -1; color: var(--muted); font-size: 0.72rem; }
 .activity-time { color: var(--muted); font-size: 0.65rem; white-space: nowrap; }
 

@@ -76,6 +76,16 @@ test('the live window distinguishes its current bounded view from dated public s
   assert.doesNotMatch(routeSource, /invalid public window snapshot query/iu)
 })
 
+test('global read retry keeps total failure and stale refresh visibly distinct', () => {
+  assert.match(WINDOW_JS, /function renderGlobalReadRetry\(message, tone\)/)
+  assert.match(WINDOW_JS, /nodes\.status\.dataset\.tone = tone/)
+  assert.match(WINDOW_JS, /renderGlobalReadRetry\(message, 'error'\)/)
+  assert.match(WINDOW_JS, /Showing the previous completed view\.',\s*'stale'/)
+  assert.match(WINDOW_CSS, /\.watch-state \[data-tone="error"\]::before\s*\{/)
+  assert.match(WINDOW_CSS, /\.global-read-retry\s*\{/)
+  assert.match(WINDOW_CSS, /\.global-read-retry:focus-visible\s*\{/)
+})
+
 test('deliberate navigation makes real history and refresh keeps reading state', () => {
   // Tabs, place and resident choices, and filter changes push a history
   // entry; only unchanged-hash renders fall through to replaceState.
@@ -201,6 +211,8 @@ test('public action happenings preserve meaning and collapse only consecutive re
   assert.match(WINDOW_JS, /function collapseActivity\(/)
   assert.match(WINDOW_JS, /group\.count > 1/)
   assert.match(WINDOW_JS, /String\(group\.count\) \+ ' times'/)
+  assert.match(WINDOW_JS, /element\('span', 'activity-count'/)
+  assert.match(WINDOW_CSS, /\.activity-count\s*\{/)
 })
 
 test('map branches expose accessible lazy-load and collapse controls', () => {

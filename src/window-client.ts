@@ -439,20 +439,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.status.dataset.tone = tone
   }
 
-  function renderGlobalReadRetry(message) {
+  function renderGlobalReadRetry(message, tone) {
     if (nodes.status) {
       const retry = element('button', 'global-read-retry', 'Retry reading the public city view')
       retry.type = 'button'
       retry.dataset.focusKey = 'global-read-retry'
       retry.addEventListener('click', () => void refreshCity())
-      nodes.status.dataset.tone = 'error'
+      nodes.status.dataset.tone = tone
       nodes.status.replaceChildren(document.createTextNode(message + ' '), retry)
     }
   }
 
   function renderGlobalReadFailure() {
     const message = 'The current public city view could not be read.'
-    renderGlobalReadRetry(message)
+    renderGlobalReadRetry(message, 'error')
     if (nodes.counts) nodes.counts.textContent = message
     if (nodes.scope) nodes.scope.textContent = message
     for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
@@ -3135,10 +3135,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const event = group.event
       const row = element('li', 'activity-row')
       const copy = element('p', 'activity-copy')
+      const description = element('span', '', ' ' + group.semantics.description)
+      if (group.count > 1) {
+        description.append(
+          element('span', 'activity-count', ' · ' + String(group.count) + ' times'),
+        )
+      }
+      description.append('.')
       copy.append(
         residentNode(event.actor, 'activity-actor', 'activity-actor:' + String(event.id)),
-        element('span', '', ' ' + group.semantics.description +
-          (group.count > 1 ? ' · ' + String(group.count) + ' times' : '') + '.'),
+        description,
       )
       row.append(copy, timeNode(event.at, 'activity-time'))
       if (group.semantics.location) {
@@ -4249,6 +4255,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (state.hasSnapshot) {
         renderGlobalReadRetry(
           'The updated public city view could not be read. Showing the previous completed view.',
+          'stale',
         )
       } else {
         renderGlobalReadFailure()
