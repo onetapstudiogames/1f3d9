@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import test from 'node:test'
 
 import {
   assertPrivateBackupDirectory,
+  dockerDatabaseRoutePlan,
   parseBackupArgs,
   runBackup,
+  selectDockerDatabaseRoute,
 } from '../scripts/backup.ts'
 import {
   combineRestoreCleanupErrors,
@@ -51,6 +53,93 @@ test('backup arguments require an explicit target and expected database', () => 
   ]) {
     assert.throws(() => parseBackupArgs(args), /target|database|argument|duplicate/i)
   }
+})
+
+test('Docker plans gateway-first loopback access without negotiating remote databases', async () => {
+  const linux = dockerDatabaseRoutePlan(
+    'postgres://role:password@127.0.0.1:5432/city',
+    'linux',
+  )
+  assert.deepEqual(
+    linux,
+    {
+      candidates: [
+        {
+          hostname: 'host.docker.internal',
+          runArguments: ['--add-host', 'host.docker.internal:host-gateway'],
+        },
+        { hostname: '127.0.0.1', runArguments: ['--network', 'host'] },
+      ],
+      defaultSslMode: 'disable',
+      loopback: true,
+    },
+  )
+  const windows = dockerDatabaseRoutePlan(
+    'postgres://role:password@127.0.0.1:5432/city',
+    'win32',
+  )
+  assert.deepEqual(windows.candidates, [linux.candidates[0]])
+
+  let remoteProbes = 0
+  const remote = dockerDatabaseRoutePlan(
+    'postgres://role:password@ep-preview.us-east-2.aws.neon.tech/city',
+    'linux',
+  )
+  const selectedRemote = await selectDockerDatabaseRoute(remote, async () => {
+    remoteProbes += 1
+    return false
+  })
+  assert.deepEqual(
+    selectedRemote,
+    {
+      hostname: 'ep-preview.us-east-2.aws.neon.tech',
+      runArguments: ['--add-host', 'host.docker.internal:host-gateway'],
+    },
+  )
+  assert.equal(remote.defaultSslMode, 'require')
+  assert.equal(remote.loopback, false)
+  assert.equal(remoteProbes, 0)
+})
+
+test('Docker selects only an authenticated reachable loopback route', async () => {
+  const linux = dockerDatabaseRoutePlan(
+    'postgres://role:password@[::1]:5432/city',
+    'linux',
+  )
+  const gatewayCalls: string[] = []
+  const gateway = await selectDockerDatabaseRoute(linux, async candidate => {
+    gatewayCalls.push(candidate.hostname)
+    return true
+  })
+  assert.equal(gateway.hostname, 'host.docker.internal')
+  assert.deepEqual(gatewayCalls, ['host.docker.internal'])
+
+  const fallbackCalls: string[] = []
+  const fallback = await selectDockerDatabaseRoute(linux, async candidate => {
+    fallbackCalls.push(candidate.hostname)
+    return candidate.hostname === '::1'
+  })
+  assert.equal(fallback.hostname, '::1')
+  assert.deepEqual(fallbackCalls, ['host.docker.internal', '::1'])
+
+  await assert.rejects(
+    selectDockerDatabaseRoute(linux, async () => false),
+    /could not reach the validated local PostgreSQL endpoint/,
+  )
+
+  const windows = dockerDatabaseRoutePlan(
+    'postgres://role:password@localhost:5432/city',
+    'win32',
+  )
+  let windowsProbes = 0
+  await assert.rejects(
+    selectDockerDatabaseRoute(windows, async () => {
+      windowsProbes += 1
+      return false
+    }),
+    /could not reach the validated local PostgreSQL endpoint/,
+  )
+  assert.equal(windowsProbes, 1)
 })
 
 test('backup requires a proven source target before starting pg_dump', async t => {
@@ -341,7 +430,11 @@ test('backup publishes a target-named custom archive with matching SHA-256 evide
     log: () => {},
     dumpArchive: async ({ databaseUrl, outputPath }) => {
       assert.equal(databaseUrl, secretUrl)
-      await writeFile(outputPath, archiveBytes, { flag: 'wx', mode: 0o600 })
+      const reserved = await stat(outputPath)
+      assert.equal(reserved.isFile(), true)
+      assert.equal(reserved.size, 0)
+      if (process.platform !== 'win32') assert.equal(reserved.mode & 0o777, 0o600)
+      await writeFile(outputPath, archiveBytes, { flag: 'w' })
       return { pgDumpVersion: 'pg_dump (PostgreSQL) 17.6' }
     },
     inspectArchive: async ({ archivePath }) => {
@@ -401,6 +494,98 @@ test('backup publishes a target-named custom archive with matching SHA-256 evide
     basename(result.archivePath),
     basename(result.manifestPath),
   ].sort())
+})
+
+test('backup never replaces an existing archive or manifest', async t => {
+  const now = new Date('2026-08-16T14:15:16.789Z')
+  const archiveName = '1f3d9-local-city-2026-08-16T14-15-16-789Z.dump'
+
+  for (const occupied of ['archive', 'manifest'] as const) {
+    const root = await temporaryRoot(t, `1f3d9-backup-${occupied}-collision-red-`)
+    const backupDirectory = join(root, 'backups')
+    const archivePath = join(backupDirectory, archiveName)
+    const manifestPath = `${archivePath}.manifest.json`
+    const occupiedPath = occupied === 'archive' ? archivePath : manifestPath
+    const original = Buffer.from(`existing ${occupied}`)
+    await mkdir(backupDirectory)
+    await writeFile(occupiedPath, original)
+
+    await assert.rejects(
+      runBackup({
+        argv: ['--target', 'local', '--database', 'city'],
+        root,
+        environment: {
+          CONFIRM_LOCAL_BACKUP: LOCAL_ACKNOWLEDGEMENT,
+          LOCAL_DATABASE_URL_UNPOOLED: 'postgres://role@127.0.0.1/city',
+        },
+        now: () => now,
+        nonce: () => '0011223344556677',
+        log: () => {},
+        dumpArchive: async ({ outputPath }) => {
+          await writeFile(outputPath, 'new archive', { flag: 'w' })
+          return { pgDumpVersion: 'pg_dump (PostgreSQL) 17.6' }
+        },
+        inspectArchive: async () => ({
+          pgRestoreVersion: 'pg_restore (PostgreSQL) 17.6',
+          tocEntries: 42,
+        }),
+      }),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === 'EEXIST',
+    )
+
+    assert.deepEqual(await readFile(occupiedPath), original)
+    assert.deepEqual(await readdir(backupDirectory), [basename(occupiedPath)])
+  }
+})
+
+test('backup cleanup never deletes a temporary file it did not create', async t => {
+  const now = new Date('2026-08-16T14:15:16.789Z')
+  const archiveName = '1f3d9-local-city-2026-08-16T14-15-16-789Z.dump'
+  const nonce = '0011223344556677'
+
+  for (const occupied of ['archive-temp', 'manifest-temp'] as const) {
+    const root = await temporaryRoot(t, `1f3d9-backup-${occupied}-collision-red-`)
+    const backupDirectory = join(root, 'backups')
+    const archivePath = join(backupDirectory, archiveName)
+    const tempArchive = join(backupDirectory, `.${archiveName}.${nonce}.tmp`)
+    const tempManifest = join(backupDirectory, `.${archiveName}.manifest.json.${nonce}.tmp`)
+    const occupiedPath = occupied === 'archive-temp' ? tempArchive : tempManifest
+    const original = Buffer.from(`existing ${occupied}`)
+    let dumpCalls = 0
+    let inspectCalls = 0
+    await mkdir(backupDirectory)
+    await writeFile(occupiedPath, original)
+
+    await assert.rejects(
+      runBackup({
+        argv: ['--target', 'local', '--database', 'city'],
+        root,
+        environment: {
+          CONFIRM_LOCAL_BACKUP: LOCAL_ACKNOWLEDGEMENT,
+          LOCAL_DATABASE_URL_UNPOOLED: 'postgres://role@127.0.0.1/city',
+        },
+        now: () => now,
+        nonce: () => nonce,
+        log: () => {},
+        dumpArchive: async ({ outputPath }) => {
+          dumpCalls += 1
+          await writeFile(outputPath, 'new archive', { flag: 'w' })
+          return { pgDumpVersion: 'pg_dump (PostgreSQL) 17.6' }
+        },
+        inspectArchive: async () => {
+          inspectCalls += 1
+          return { pgRestoreVersion: 'pg_restore (PostgreSQL) 17.6', tocEntries: 42 }
+        },
+      }),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === 'EEXIST',
+    )
+
+    assert.deepEqual(await readFile(occupiedPath), original)
+    assert.deepEqual(await readdir(backupDirectory), [basename(occupiedPath)])
+    assert.equal(dumpCalls, occupied === 'archive-temp' ? 0 : 1)
+    assert.equal(inspectCalls, occupied === 'archive-temp' ? 0 : 1)
+    await assert.rejects(readFile(archivePath), { code: 'ENOENT' })
+  }
 })
 
 test('retention cleanup cannot discard a newly verified backup', async t => {

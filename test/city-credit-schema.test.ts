@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { splitSqlStatements } from '../scripts/migrate.ts'
 
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
@@ -146,5 +146,9 @@ test('credit is an explicit additive migration target', () => {
   assert.doesNotMatch(migrationDdl, /DROP\s+TABLE[\s\S]{0,100}city_credit/iu)
   assert.match(packageJson.scripts['migrate:preview:city-credit'] ?? '', /--target preview --migration city-credit$/u)
   assert.match(packageJson.scripts['migrate:production:city-credit'] ?? '', /--target production --migration city-credit$/u)
-  assert.match(packageJson.scripts['test:postgres'] ?? '', /city-credit-postgres\.test\.ts/u)
+  assert.match(packageJson.scripts['test:postgres'] ?? '', /test\/integration\/\*\.test\.ts/u)
+  assert.equal(
+    existsSync(new URL('../test/integration/city-credit-postgres.test.ts', import.meta.url)),
+    true,
+  )
 })

@@ -25,6 +25,24 @@ import {
 } from '../scripts/migrate.ts'
 
 const deployScript = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'utf8')
+const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const testingGuide = readFileSync(new URL('../docs/TESTING.md', import.meta.url), 'utf8')
+const workingStandard = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8')
+const PAYMENT_RELIABILITY_STANDARD = [
+  '## Payment reliability',
+  '',
+  'Every payment-path change requires:',
+  '',
+  '- real-timing tests against real PostgreSQL, including chain finality later than',
+  '  the intent or operation window;',
+  '- adversarial refuter review before merge; and',
+  '- a read-only or self-cleaning post-deploy production probe of the changed',
+  '  surface.',
+  '',
+  'Use city PR #107 as the test model. City issue #103, market PRs #13/#20, and',
+  'city PRs #115/#116 record why: mocks missed chain timing and SQL preparation,',
+  'while non-production runtimes missed live-only failures.',
+].join('\n')
 const deploymentRunbook = readFileSync(
   new URL('../docs/runbooks/DEPLOYMENT.md', import.meta.url),
   'utf8',
@@ -32,6 +50,16 @@ const deploymentRunbook = readFileSync(
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { scripts: Record<string, string> }
+
+function assertPostgresTestDiscovered(fileName: string): void {
+  assert.match(packageJson.scripts['test:postgres'] ?? '', /test\/integration\/\*\.test\.ts/u)
+  assert.equal(
+    existsSync(new URL(`../test/integration/${fileName}`, import.meta.url)),
+    true,
+    `missing glob-discovered PostgreSQL test: ${fileName}`,
+  )
+}
+
 const fullSchema = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
 const oauthMigration = readFileSync(
   new URL('../db/migrations/20260813_hosted_chat_signin.sql', import.meta.url),
@@ -164,6 +192,27 @@ test('every release test gate remains part of explicit branch preparation', () =
   }
   assert.match(deployScript, /--prepare/)
   assert.match(deployScript, /merge[^\n]*\bmain\b/i)
+})
+
+test('payment reliability is fail-hard in required checks and documented where it binds', () => {
+  assert.ok(workingStandard.includes(PAYMENT_RELIABILITY_STANDARD))
+  assert.match(ciWorkflow, /^jobs:\r?\n  checks:\r?\n    runs-on:/mu)
+  assert.match(
+    ciWorkflow,
+    /- name: Run PostgreSQL integration tests\r?\n\s+run: npm run test:postgres/u,
+  )
+  assert.doesNotMatch(ciWorkflow, /continue-on-error:\s*true/iu)
+
+  const postgresCommand = packageJson.scripts['test:postgres'] ?? ''
+  assert.match(postgresCommand, /--test-concurrency=1/u)
+  assert.match(postgresCommand, /test\/integration\/\*\.test\.ts/u)
+  assert.doesNotMatch(postgresCommand, /test\/integration\/[\w-]+-postgres\.test\.ts/u)
+
+  assert.match(
+    testingGuide,
+    /CI \(`\.github\/workflows\/ci\.yml`\)[\s\S]{0,300}PostgreSQL/iu,
+  )
+  assert.doesNotMatch(testingGuide, /postgres suites run locally/iu)
 })
 
 test('preview migration requires exact acknowledgement and named isolated Neon targets', () => {
@@ -946,7 +995,7 @@ test('identity recovery is an explicitly selected additive release with a Postgr
     },
   )
   assert.equal(production.migrationFile, 'db/migrations/20260816_identity_recovery.sql')
-  assert.match(packageJson.scripts['test:postgres'] ?? '', /identity-recovery-postgres\.test\.ts/)
+  assertPostgresTestDiscovered('identity-recovery-postgres.test.ts')
 })
 
 test('identity rotation is additive, schema-complete, and covered by the existing identity PostgreSQL gate', () => {
@@ -979,9 +1028,12 @@ test('identity rotation is additive, schema-complete, and covered by the existin
     )
   }
 
-  const postgresCommand = packageJson.scripts['test:postgres'] ?? ''
-  assert.match(postgresCommand, /identity-recovery-postgres\.test\.ts/)
-  assert.doesNotMatch(postgresCommand, /identity-rotation-postgres\.test\.ts/)
+  assertPostgresTestDiscovered('identity-recovery-postgres.test.ts')
+  assert.equal(
+    existsSync(new URL('../test/integration/identity-rotation-postgres.test.ts', import.meta.url)),
+    false,
+    'identity rotation should stay covered by the existing identity integration suite',
+  )
 })
 
 test('initial recovery codes use two additive normalized pending tables', () => {
@@ -1032,9 +1084,8 @@ test('initial recovery codes are selected as one separate preview or production 
   )
   assert.equal(production.migrationFile, 'db/migrations/20260817_initial_recovery_codes.sql')
 
-  const postgresCommand = packageJson.scripts['test:postgres'] ?? ''
-  assert.match(postgresCommand, /identity-recovery-postgres\.test\.ts/)
-  assert.match(postgresCommand, /oauth-postgres\.test\.ts/)
+  assertPostgresTestDiscovered('identity-recovery-postgres.test.ts')
+  assertPostgresTestDiscovered('oauth-postgres.test.ts')
 })
 
 test('payment attempts are an explicitly selected additive release', () => {

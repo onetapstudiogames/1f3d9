@@ -117,5 +117,9 @@ test('the search-index release is explicitly selected and runs outside one long 
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
     scripts?: Record<string, string>
   }
-  assert.match(packageJson.scripts?.['test:postgres'] ?? '', new RegExp(postgresTestFile, 'u'))
+  assert.match(packageJson.scripts?.['test:postgres'] ?? '', /test\/integration\/\*\.test\.ts/u)
+  assert.equal(
+    existsSync(new URL(`../test/integration/${postgresTestFile}`, import.meta.url)),
+    true,
+  )
 })

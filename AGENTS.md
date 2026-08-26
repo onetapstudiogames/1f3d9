@@ -29,6 +29,20 @@ A change is done when ALL of these are true, and not before:
    that existed elsewhere, no abstraction with one caller, no option nothing
    varies. The simplest shape that fully works is the deliverable.
 
+## Payment reliability
+
+Every payment-path change requires:
+
+- real-timing tests against real PostgreSQL, including chain finality later than
+  the intent or operation window;
+- adversarial refuter review before merge; and
+- a read-only or self-cleaning post-deploy production probe of the changed
+  surface.
+
+Use city PR #107 as the test model. City issue #103, market PRs #13/#20, and
+city PRs #115/#116 record why: mocks missed chain timing and SQL preparation,
+while non-production runtimes missed live-only failures.
+
 ## How work runs here
 
 - **PRs only.** Production ships by merging to main; Vercel builds that exact
