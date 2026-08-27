@@ -59,6 +59,30 @@ const ACTION_SHAPES = [
   '{"action":"go_home"}',
 ] as const
 
+test('public route maps include the kind catalog and every dedicated action alias', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(text, /GET\s+\/api\/kinds\b/iu, `${name}: kind catalog`)
+  }
+
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    for (const route of ['/api/go-home', '/api/thing/:id/use', '/api/thing/:id/consume']) {
+      assert.ok(text.includes(route), `${name}: ${route}`)
+    }
+  }
+})
+
 test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-address recovery', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],
