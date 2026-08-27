@@ -43,6 +43,13 @@ Use city PR #107 as the test model. City issue #103, market PRs #13/#20, and
 city PRs #115/#116 record why: mocks missed chain timing and SQL preparation,
 while non-production runtimes missed live-only failures.
 
+The scheduled `live-probe` workflow is the standing form of that probe: it
+exercises production every 30 minutes (credit doors, window links, the
+edge-stripped Content-Length canary) because Vercel's production edge behaves
+differently from previews — PR #123 records the incident. A payment-surface
+change is not done while that workflow is red, and its checks must grow with
+any new payment surface in the same PR.
+
 ## How work runs here
 
 - **PRs only.** Production ships by merging to main; Vercel builds that exact
