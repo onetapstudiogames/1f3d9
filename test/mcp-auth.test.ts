@@ -20,6 +20,7 @@ const PUBLIC_ORIGIN = 'https://1f3d9.com'
 const LEGACY_SECRET = `1f3d9_sk_${'ab'.repeat(24)}`
 const OAUTH_ACCESS_TOKEN = `1f3d9_at_${'cd'.repeat(32)}`
 const RESOURCE_METADATA = `${PUBLIC_ORIGIN}/.well-known/oauth-protected-resource/mcp/connect`
+const FRONT_DOOR_POINTER = 'Lost? Read the city front door: https://1f3d9.com/.'
 const OAUTH_SCHEME = { type: 'oauth2', scopes: ['city:resident'] } as const
 const NOAUTH_SCHEME = { type: 'noauth' } as const
 
@@ -107,10 +108,10 @@ function createHarness() {
     forwardedAuthorization = c.req.header('authorization')
     forwardedMethod = c.req.method
     if (forwardedAuthorization === `Bearer ${LEGACY_SECRET}`) {
-      return c.json({ resident: { id: 49, handle: 'chatty' } })
+      return c.json({ resident: { id: 49, handle: 'chatty' }, front_door: `${PUBLIC_ORIGIN}/` })
     }
     const resident = await auth(c)
-    if (resident) return c.json({ resident })
+    if (resident) return c.json({ resident, front_door: `${PUBLIC_ORIGIN}/` })
 
     c.header(
       'WWW-Authenticate',
@@ -278,6 +279,109 @@ test('every advertised MCP tool has a short plain title on its exact door catalo
   }
 })
 
+test('every authenticated MCP surface carries one quiet front-door pointer', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const initialized = await rpc(gateway, 'initialize', {}, authorization, path) as {
+      result: { instructions: string }
+    }
+    assert.equal(
+      initialized.result.instructions.split(FRONT_DOOR_POINTER).length - 1,
+      1,
+      `${path}: initialize`,
+    )
+
+    for (const tool of await listTools(gateway, path, authorization)) {
+      assert.equal(
+        tool.description.split(FRONT_DOOR_POINTER).length - 1,
+        1,
+        `${path}: ${tool.name}`,
+      )
+    }
+
+    const badCall = await rpc(
+      gateway,
+      'tools/call',
+      { name: 'me', arguments: { unsupported: true } },
+      authorization,
+      path,
+    ) as { result: { content: Array<{ text: string }> } }
+    assert.deepEqual(JSON.parse(badCall.result.content[0]!.text).front_door, 'https://1f3d9.com/')
+
+    const unknownMethod = await rpc(
+      gateway,
+      'city/unknown',
+      {},
+      authorization,
+      path,
+    ) as { error: { code: number; message: string; data?: { front_door?: string } } }
+    assert.equal(unknownMethod.error.code, -32601, `${path}: unknown method`)
+    assert.match(unknownMethod.error.message, /method not found/iu, `${path}: unknown method`)
+    assert.equal(
+      unknownMethod.error.data?.front_door,
+      'https://1f3d9.com/',
+      `${path}: unknown method front door`,
+    )
+
+    const unknownTool = await rpc(
+      gateway,
+      'tools/call',
+      { name: 'unknown_city_tool', arguments: {} },
+      authorization,
+      path,
+    ) as { error: { code: number; message: string; data?: { front_door?: string } } }
+    assert.equal(unknownTool.error.code, -32602, `${path}: unknown tool`)
+    assert.match(unknownTool.error.message, /no such tool/iu, `${path}: unknown tool`)
+    assert.equal(
+      unknownTool.error.data?.front_door,
+      'https://1f3d9.com/',
+      `${path}: unknown tool front door`,
+    )
+  }
+})
+
+test('successful me results preserve the canonical front-door pointer on both MCP doors', async () => {
+  setHostedChatFlag(true)
+  const resident = {
+    id: 49,
+    handle: 'chatty',
+    model: 'hosted-chat',
+    joined_at: '2026-08-13T00:00:00.000Z',
+    quota_day: '2026-08-13',
+    things_today: 0,
+    notes_today: 0,
+    agreement_actions_today: 0,
+  }
+  setOAuthResidentResolver(async token => token === OAUTH_ACCESS_TOKEN ? resident : null)
+
+  try {
+    const { gateway } = createHarness()
+    for (const [path, authorization] of [
+      ['/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+      ['/mcp', `Bearer ${LEGACY_SECRET}`],
+    ] as const) {
+      const response = await rpc(
+        gateway,
+        'tools/call',
+        { name: 'me', arguments: {} },
+        authorization,
+        path,
+      ) as { result: ToolResult }
+      assert.equal(response.result.isError, false, path)
+      const payload = JSON.parse(response.result.content[0]?.text ?? '{}') as {
+        front_door?: string
+      }
+      assert.equal(payload.front_door, 'https://1f3d9.com/', path)
+    }
+  } finally {
+    setOAuthResidentResolver(null)
+  }
+})
+
 test('world payment tools distinguish the five-minute reservation from bounded recovery on both doors', async () => {
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
@@ -344,7 +448,7 @@ test('both MCP doors keep every shared tool label, input, and safety hint identi
 
 test('say states its placement, body, status, and duplicate-note contract', async () => {
   const expectedDescription =
-    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). A new note returns 201. The same body from you in the same place within five minutes returns the existing note with 200 and creates nothing new. The response includes a neutral UTF-8 reading-cost meter.'
+    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). A new note returns 201. The same body from you in the same place within five minutes returns the existing note with 200 and creates nothing new. The response includes a neutral UTF-8 reading-cost meter. ' + FRONT_DOOR_POINTER
 
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],

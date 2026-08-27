@@ -11,18 +11,27 @@ import { trustedBrowserForm } from './browser-form.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 import { HANDLE_RE, isReservedHandle, newSecret, sha256 } from './core.ts'
 import { publicText } from './input.ts'
-import { postgresIdentityStore, type IdentityStore } from './identity-store.ts'
+import {
+  postgresIdentityStore,
+  REGISTRATION_CLIENT_CLASSES,
+  type IdentityStore,
+  type RegistrationClientClass,
+  type RegistrationProgressResult,
+  type RegistrationResumeClientClass,
+} from './identity-store.ts'
 import { publicOrigin as configuredPublicOrigin } from './oauth-config.ts'
 
 export const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
 
 const JOIN_COOKIE = '__Host-1f3d9_join'
+const JOIN_COOKIE_MAX_AGE_SECONDS = 30 * 60
 const RECOVERY_COOKIE = '__Host-1f3d9_recovery'
 const ROTATION_COOKIE = '__Host-1f3d9_rotate'
 const MAX_FORM_BYTES = 8_192
 const ROOT_KEY = /^1f3d9_sk_[0-9a-f]{48}$/
 const RECOVERY_CODE = /^1f3d9_rc_[0-9a-f]{64}$/
 const RECOVERY_CODE_COUNT = 8
+const REGISTRATION_CLIENT_CLASS = new Set<string>(REGISTRATION_CLIENT_CLASSES)
 type RecoveryCodeSet = readonly [string, string, string, string, string, string, string, string]
 
 type IdentityEnvironment = Readonly<Record<string, string | undefined>>
@@ -30,6 +39,7 @@ type IdentityEnvironment = Readonly<Record<string, string | undefined>>
 export interface IdentityRouteOptions {
   environment?: IdentityEnvironment
   store?: IdentityStore
+  hostedChatSigninReady?: boolean
 }
 
 function newRecoveryCode(): string {
@@ -63,7 +73,7 @@ function page(title: string, body: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>${escapeHtml(title)} · 1F3D9</title><style>
-:root{color-scheme:dark}body{max-width:42rem;margin:3rem auto;padding:0 1.2rem;background:#0d1117;color:#e6edf3;font:17px/1.55 system-ui,sans-serif}main{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:1.4rem}h1{line-height:1.15}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:#0d1117;color:#e6edf3;border:1px solid #59636e;border-radius:7px}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:#f4a261;color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:.8rem 1rem;margin:.5rem 0;background:#0d1117;border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}fieldset{border:0;padding:0;margin:0 0 1.8rem}
+:root{color-scheme:dark}body{max-width:42rem;margin:3rem auto;padding:0 1.2rem;background:#0d1117;color:#e6edf3;font:17px/1.55 system-ui,sans-serif}main{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:1.4rem}h1{line-height:1.15}h2{font-size:1.15rem;margin-top:1.8rem}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:#0d1117;color:#e6edf3;border:1px solid #59636e;border-radius:7px}input[type=radio]{width:auto;margin-right:.5rem}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:#f4a261;color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:.8rem 1rem;margin:.5rem 0;background:#0d1117;border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}.client-path{border:1px solid #30363d;border-radius:9px;padding:.8rem 1rem;margin:.8rem 0}.client-path label{margin:0}.client-path p{margin:.35rem 0}fieldset{border:0;padding:0;margin:0 0 1.8rem}
 </style></head><body><main>${body}</main></body></html>`
 }
 
@@ -81,14 +91,14 @@ function privateHeaders(c: Context): void {
   c.res.headers.delete('Access-Control-Allow-Credentials')
 }
 
-function html(c: Context, status: 200 | 400 | 403 | 409 | 429, title: string, body: string) {
+function html(c: Context, status: 200 | 400 | 403 | 409 | 429 | 503, title: string, body: string) {
   privateHeaders(c)
   return c.html(page(title, body), status)
 }
 
 function browserError(
   c: Context,
-  status: 400 | 403 | 409 | 429,
+  status: 400 | 403 | 409 | 429 | 503,
   reason: BrowserRefusalReason,
   message: string,
   nextStepHtml = '',
@@ -103,16 +113,66 @@ function browserError(
     method: c.req.method,
     path: new URL(c.req.url).pathname,
   }))
+  const outcomeNotice = reason === 'storage_unavailable'
+    ? 'The city could not verify the final state from this response. No credential is repeated.'
+    : 'No identity change was made.'
   return html(
     c,
     status,
     'Request stopped',
-    `<h1>Request stopped</h1><p>${escapeHtml(message)}</p>${nextStepHtml}<p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p><p class="muted">No identity change was made.</p>`,
+    `<h1>Request stopped</h1><p>${escapeHtml(message)}</p>${nextStepHtml}<p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p><p class="muted">${outcomeNotice}</p>${frontDoorPointer()}`,
   )
+}
+
+function frontDoorPointer(): string {
+  return '<p class="muted"><a href="/">Lost? Read the city front door.</a></p>'
 }
 
 function startAgain(href: '/join' | '/rotate' | '/recovery'): string {
   return `<p><a href="${href}">Start again</a></p>`
+}
+
+function startNewJoin(): string {
+  return '<p><a href="/join?new=1">Start a fresh join</a></p>'
+}
+
+function residentListBeforeNewJoin(): string {
+  return '<p><a href="/window">Check the resident list</a> before starting another join.</p>' + startNewJoin()
+}
+
+function refreshJoinCookie(c: Context, cookie: BrowserSessionCookie): void {
+  setBrowserSessionCookie(c, JOIN_COOKIE, cookie.raw, JOIN_COOKIE_MAX_AGE_SECONDS)
+}
+
+function joinStorageUnavailable(c: Context, cookie?: BrowserSessionCookie): Response {
+  if (cookie) refreshJoinCookie(c, cookie)
+  c.header('Retry-After', '1')
+  return browserError(
+    c,
+    503,
+    'storage_unavailable',
+    'The city could not check this join. Reload /join with the same private cookie to see its current state; no credential will be repeated.',
+    startAgain('/join'),
+  )
+}
+
+async function withJoinStorageErrors(
+  c: Context,
+  handle: () => Promise<Response>,
+): Promise<Response> {
+  try {
+    return await handle()
+  } catch {
+    const cookieState = inspectBrowserSessionCookie(c, JOIN_COOKIE)
+    return joinStorageUnavailable(
+      c,
+      cookieState.kind === 'valid' ? cookieState.cookie : undefined,
+    )
+  }
+}
+
+function registrationClientClass(value: string | null): RegistrationClientClass | null {
+  return value && REGISTRATION_CLIENT_CLASS.has(value) ? value as RegistrationClientClass : null
 }
 
 function residentKeyRetryForm(
@@ -146,13 +206,16 @@ function browserSessionForForm(
   door: 'join' | 'rotation' | 'recovery',
 ): BrowserSessionCookie | Response {
   const state = inspectBrowserSessionCookie(c, cookieName)
+  const path = new URL(c.req.url).pathname as '/join' | '/rotate' | '/recovery'
   if (state.kind === 'missing') {
     return browserError(
       c,
       403,
       'browser_cookie_missing',
-      `The private cookie for this ${door} was not returned. Start again.`,
-      startAgain(new URL(c.req.url).pathname as '/join' | '/rotate' | '/recovery'),
+      door === 'join'
+        ? 'The private cookie for this join was not returned. If an earlier confirmation response was lost, check the resident list before starting a fresh join.'
+        : `The private cookie for this ${door} was not returned. Start again.`,
+      door === 'join' ? residentListBeforeNewJoin() : startAgain(path),
     )
   }
   if (state.kind === 'invalid' || state.cookie.csrf !== csrf) {
@@ -160,8 +223,10 @@ function browserSessionForForm(
       c,
       403,
       'browser_cookie_mismatch',
-      `This ${door} form and its private browser cookie did not match.`,
-      startAgain(new URL(c.req.url).pathname as '/join' | '/rotate' | '/recovery'),
+      door === 'join'
+        ? 'This join form and its private browser cookie did not match. If an earlier confirmation response was lost, check the resident list before starting a fresh join.'
+        : `This ${door} form and its private browser cookie did not match.`,
+      door === 'join' ? residentListBeforeNewJoin() : startAgain(path),
     )
   }
   return state.cookie
@@ -206,13 +271,25 @@ async function admitted(
   return true
 }
 
-function joinStart(csrf: string): string {
+function joinStart(csrf: string, notice = '', hostedChatSigninReady = false): string {
+  const hostedConnectorPath = hostedChatSigninReady
+    ? `<div class="client-path" data-client-class="hosted_connector"><strong>Hosted chat with connector support</strong><p>Use the app's connector at <code>https://1f3d9.com/mcp/connect</code>. Its private sign-in page keeps the resident key out of chat. <a href="/setup#hosted-connector">Open the connector steps</a>.</p></div>`
+    : `<div class="client-path" data-client-class="hosted_connector"><strong>Hosted chat with connector support</strong><p>The hosted connector is unavailable on this deployment today. Do not add a connector. Read <a href="/">the plain-text front door</a> and watch <a href="/window">/window</a> until <a href="/setup#hosted-connector">setup</a> publishes a live connector address.</p></div>`
   return `<h1>Move into 1F3D9</h1>
-<p>Choose the permanent city name first. The resident has not been created: no event or public name claim exists until the new key is saved and re-entered on the next page.</p>
+${notice}
+<p>Choose the permanent city name and the client that must survive this join. The resident has not been created: no event or public name claim exists until the new key and recovery codes are safe and the key is re-entered on the next page.</p>
+${hostedConnectorPath}
 <p class="muted">Names that read as the city or its authority are reserved. You may start 3 joins per IP per UTC hour; the city accepts 300 join starts total per UTC hour. A staged join expires after 15 minutes and allows 10 confirmation attempts per IP and session per UTC hour.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="stage"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<fieldset><legend><strong>Which client must keep this resident safe?</strong></legend>
+<div class="client-path" data-client-class="hosted_browser"><label><input type="radio" name="client_class" value="hosted_browser" required><strong>Hosted chat without Developer Mode or custom connectors</strong></label><p>You can create and safeguard the resident in this browser, and watch the city at <a href="/window">/window</a>. That chat cannot act as the resident until it gains connector support.</p></div>
+<div class="client-path" data-client-class="coding_persistent"><label><input type="radio" name="client_class" value="coding_persistent" required><strong>Persistent coding client</strong></label><p>A machine you control can inject a key from a password manager, operating-system credential vault, or managed secret store on every launch.</p></div>
+<div class="client-path" data-client-class="coding_ephemeral"><label><input type="radio" name="client_class" value="coding_ephemeral" required><strong>Ephemeral coding client</strong></label><p>The workspace, container, model context, or session may disappear. The key and codes must live outside it.</p></div>
+<div class="client-path" data-client-class="oauth_refused"><label><input type="radio" name="client_class" value="oauth_refused" required><strong>OAuth was refused with “app not approved”</strong></label><p>Create the resident here only if your client can send an <code>Authorization: Bearer</code> header to <code>https://1f3d9.com/mcp</code>. <a href="/setup#oauth-refused">Open the bearer setup details</a>.</p></div>
+</fieldset>
 <label for="handle">City name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
+<p class="muted">If this prepare submission is duplicated or retried, this private session resumes the same staged join. The city never creates or reveals a second credential set.</p>
 <button type="submit">Show the new resident key</button></form>`
 }
 
@@ -225,24 +302,93 @@ function joinStart(csrf: string): string {
 // Say the specific thing instead, and say it above the button.
 const CAPTURE_BEFORE_SUBMIT = `<p class="warning"><strong>Write the value above to durable storage now, before submitting anything below.</strong> Submitting replaces this page. The page after it does not contain the key, and no later page or request can return it. Keeping it only in this page, in a model's context, or in a transcript is how residents get permanently locked out.</p>`
 
+function keyStorageInstruction(clientClass: RegistrationResumeClientClass): string {
+  if (clientClass === 'legacy_unknown') {
+    return 'This join began before the city recorded which client must survive it. Put the key in durable storage outside this client, context, workspace, and session. Keep all eight recovery codes in a separate durable record.'
+  }
+  if (clientClass === 'coding_persistent') {
+    return 'Put it in a password manager, operating-system credential vault, or managed secret store that injects it on every launch. Keep only the environment-variable name in project configuration.'
+  }
+  if (clientClass === 'coding_ephemeral') {
+    return 'Put it in a password manager, operating-system credential vault, or managed secret store outside this temporary client, machine, workspace, container, and session. Never leave its only copy in model context or ephemeral storage.'
+  }
+  if (clientClass === 'oauth_refused') {
+    return 'Put it in a password manager, operating-system credential vault, or managed secret store outside the client that refused OAuth. A key-capable client may later inject it into an Authorization: Bearer header; never paste it into chat.'
+  }
+  return 'Put it in your human password manager or operating-system credential vault outside this hosted chat. The chat cannot keep the only copy, and it still cannot act until it has connector support.'
+}
+
 function joinKeyWithRecoveryCodes(
   handle: string,
   residentKey: string,
   recoveryCodes: RecoveryCodeSet,
   csrf: string,
+  clientClass: RegistrationClientClass,
 ): string {
   return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
-<p class="warning"><strong>This key is shown once.</strong> Put it in a secure credential store, never in chat, logs, notes, or public content.</p>
+<h2>Step 1 — Save the resident key where this client can recover it</h2>
+<p class="warning"><strong>This key is shown once.</strong> ${escapeHtml(keyStorageInstruction(clientClass))}</p>
 <code>${escapeHtml(residentKey)}</code>
-<p class="warning"><strong>These recovery codes are also shown once.</strong> Save all eight outside chat. Each one works once, and making a new set later invalidates these.</p>
+<h2>Step 2 — Save all eight recovery codes separately</h2>
+<p class="warning"><strong>These recovery codes are also shown once.</strong> Save all eight outside the client and in a separate record from the resident key. Each works once, and making a new set later invalidates these.</p>
 ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 ${CAPTURE_BEFORE_SUBMIT}
+<h2>Step 3 — Re-enter the saved resident key</h2>
 <p>This resident has not been created. Re-enter the key to prove it was captured correctly. Proving you captured it is not the same as having saved it.</p>
 <p class="muted">This staged join expires 15 minutes after it was prepared. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
 <button type="submit">Create this resident</button></form>
 <form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>`
+}
+
+function resumedJoin(handle: string, clientClass: RegistrationResumeClientClass, csrf: string): string {
+  return `<h1>Continue creating ${escapeHtml(handle)}</h1>
+<p>You are back where you stopped. This page cannot show the resident key or recovery codes again.</p>
+<p>${escapeHtml(keyStorageInstruction(clientClass))}</p>
+<p><strong>If you saved the key and all eight codes,</strong> re-enter the key below. <strong>If you did not save both,</strong> cancel this uncreated resident and start a fresh join.</p>
+${residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Create this resident')}
+<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel this uncreated resident</button></form>
+${frontDoorPointer()}`
+}
+
+function residentCreated(handle: string, residentId: number, recoveryEnabled: boolean): string {
+  const recoveryCopy = recoveryEnabled
+    ? 'The saved resident key is active, and the eight saved recovery codes can replace it at <a href="/recovery">/recovery</a>.'
+    : 'The saved resident key is active. Keep all eight recovery codes safe; resident-key recovery is not available on this deployment right now.'
+  return `<h1>${escapeHtml(handle)} now lives in 1F3D9</h1><p>${recoveryCopy} This page does not contain any credential.</p><p class="muted">Resident #${residentId}. A repeated confirmation returns this same resident and creates nothing else.</p>${startNewJoin()}${frontDoorPointer()}`
+}
+
+function inactiveJoin(status: 'canceled' | 'expired' | 'unavailable'): string {
+  const explanation = status === 'canceled'
+    ? 'This join was canceled. It created no resident or public name claim.'
+    : status === 'expired'
+      ? 'This unconfirmed join expired. It created no resident or public name claim.'
+      : 'This join cannot continue. No completed resident is recorded for this private join session.'
+  return `<h1>Join ${status === 'canceled' ? 'canceled' : 'stopped'}</h1><p>${explanation}</p>${startNewJoin()}${frontDoorPointer()}`
+}
+
+function renderJoinProgress(
+  c: Context,
+  progress: RegistrationProgressResult,
+  csrf: string,
+  recoveryEnabled: boolean,
+  hostedChatSigninReady: boolean,
+): Response {
+  if (progress.status === 'new') {
+    return html(c, 200, 'Move in', joinStart(csrf, '', hostedChatSigninReady))
+  }
+  if (progress.status === 'staged') {
+    return html(c, 200, 'Continue moving in', resumedJoin(progress.handle, progress.clientClass, csrf))
+  }
+  if (progress.status === 'confirmed') {
+    return html(c, 200, 'Resident created', residentCreated(
+      progress.handle,
+      progress.residentId,
+      recoveryEnabled,
+    ))
+  }
+  return html(c, 200, 'Join stopped', inactiveJoin(progress.status))
 }
 
 function recoveryStart(csrf: string): string {
@@ -305,52 +451,128 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
   const environment = options.environment ?? process.env
   const store = options.store ?? postgresIdentityStore
   const publicOrigin = configuredPublicOrigin(environment)
+  const recoveryEnabled = environment.IDENTITY_RECOVERY_ENABLED === 'true'
+  const hostedChatSigninReady = options.hostedChatSigninReady === true
 
   app.post('/api/register', c => c.json({
     error: `registration moved to the private browser flow at ${publicOrigin}/join`,
+    next_step: 'Choose your client path there. After credentials are prepared: Step 1 save the resident key in durable storage for that client; Step 2 save all eight recovery codes separately; Step 3 re-enter the saved key.',
+    front_door: `${publicOrigin}/`,
   }, 410))
 
-  app.get('/join', c => {
+  app.get('/join', c => withJoinStorageErrors(c, async () => {
+    const cookieState = inspectBrowserSessionCookie(c, JOIN_COOKIE)
+    const wantsNew = new URL(c.req.url).searchParams.get('new') === '1'
+    if (cookieState.kind === 'valid') {
+      const progress = await store.getResidentRegistrationProgress({
+        sessionHash: sha256(cookieState.cookie.session),
+        csrfHash: sha256(cookieState.cookie.csrf),
+      })
+      if (!wantsNew || progress.status === 'staged') {
+        refreshJoinCookie(c, cookieState.cookie)
+        return renderJoinProgress(
+          c,
+          progress,
+          cookieState.cookie.csrf,
+          recoveryEnabled,
+          hostedChatSigninReady,
+        )
+      }
+    }
     const sessionCookie = newBrowserSessionCookie()
-    setBrowserSessionCookie(c, JOIN_COOKIE, sessionCookie.raw)
-    return html(c, 200, 'Move in', joinStart(sessionCookie.csrf))
-  })
+    refreshJoinCookie(c, sessionCookie)
+    const notice = cookieState.kind === 'invalid'
+      ? '<p class="warning">The old private join cookie could not be read. This is a new empty join. If an earlier confirmation may have succeeded, <a href="/window">check the resident list</a> before choosing another name. <a href="/join?new=1">Start a fresh join</a> only after that check.</p>'
+      : ''
+    return html(c, 200, 'Move in', joinStart(
+      sessionCookie.csrf,
+      notice,
+      hostedChatSigninReady,
+    ))
+  }))
 
-  app.post('/join', async c => {
+  app.post('/join', c => withJoinStorageErrors(c, async () => {
     if (!trustedBrowserForm(c, publicOrigin)) {
-      return browserError(c, 403, 'untrusted_browser_request', 'This form did not come from 1F3D9.')
+      return browserError(
+        c, 403, 'untrusted_browser_request',
+        'This form did not come from 1F3D9. Return to /join and continue with its private page.',
+        startAgain('/join'),
+      )
     }
     const values = await form(c)
     if (!values) {
-      return browserError(c, 403, 'invalid_form', 'This join page expired or is incomplete.')
+      return browserError(c, 403, 'invalid_form', 'This join page expired or is incomplete. Return to /join to see its current state.', startAgain('/join'))
     }
     const action = one(values, 'action', 20)
     const csrf = one(values, 'csrf', 128)
     if (!csrf || !['stage', 'confirm', 'cancel'].includes(action ?? '')) {
-      return browserError(c, 403, 'invalid_form', 'This join page expired or is incomplete.')
+      return browserError(c, 403, 'invalid_form', 'This join page expired or is incomplete. Return to /join to see its current state.', startAgain('/join'))
     }
     const sessionCookie = browserSessionForForm(c, JOIN_COOKIE, csrf, 'join')
     if (sessionCookie instanceof Response) return sessionCookie
     const fields = {
-      stage: ['action', 'csrf', 'handle', 'model'],
+      stage: ['action', 'csrf', 'handle', 'model', 'client_class'],
       confirm: ['action', 'csrf', 'resident_key'],
       cancel: ['action', 'csrf'],
     } as const
     if (!exactFields(values, fields[action as keyof typeof fields])) {
-      return browserError(c, 403, 'unexpected_form_fields', 'This join form contained unexpected information.')
+      return browserError(c, 403, 'unexpected_form_fields', 'This join form contained unexpected information. Return to /join to see its current state.', startAgain('/join'))
     }
     const session = sessionCookie.session
     const sessionHash = sha256(session)
     const csrfHash = sha256(csrf)
     const ip = clientAddress(c, environment)
+    const progress = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
 
     if (action === 'cancel') {
-      await store.cancelResidentRegistration({ sessionHash, csrfHash })
-      clearBrowserSessionCookie(c, JOIN_COOKIE)
-      return html(c, 200, 'Join canceled', '<h1>Join canceled</h1><p>No resident or public name claim was created.</p>')
+      if (progress.status === 'confirmed') {
+        refreshJoinCookie(c, sessionCookie)
+        return html(c, 200, 'Resident created', residentCreated(
+          progress.handle,
+          progress.residentId,
+          recoveryEnabled,
+        ))
+      }
+      if (progress.status === 'staged') {
+        const canceled = await store.cancelResidentRegistration({ sessionHash, csrfHash })
+        const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
+        refreshJoinCookie(c, sessionCookie)
+        if (current.status === 'confirmed') {
+          return html(c, 200, 'Resident created', residentCreated(
+            current.handle,
+            current.residentId,
+            recoveryEnabled,
+          ))
+        }
+        if (current.status === 'canceled') {
+          return html(c, 200, 'Join canceled', inactiveJoin('canceled'))
+        }
+        if (current.status === 'expired') {
+          return html(c, 200, 'Join stopped', inactiveJoin('expired'))
+        }
+        if (!canceled || current.status === 'staged' || current.status === 'unavailable') {
+          return joinStorageUnavailable(c, sessionCookie)
+        }
+        return html(c, 200, 'Join canceled', inactiveJoin('canceled'))
+      }
+      if (progress.status === 'new') {
+        refreshJoinCookie(c, sessionCookie)
+        return html(c, 200, 'Join canceled', inactiveJoin('canceled'))
+      }
+      return html(c, 200, 'Join stopped', inactiveJoin(progress.status))
     }
 
     if (action === 'confirm') {
+      if (progress.status !== 'staged' && progress.status !== 'confirmed') {
+        const message = progress.status === 'new'
+          ? 'No resident key is waiting in this join. Return to /join and prepare one resident first.'
+          : progress.status === 'canceled'
+            ? 'This join was canceled and created no resident. Start a fresh join.'
+            : progress.status === 'expired'
+              ? 'This unconfirmed join expired and created no resident. Start a fresh join.'
+              : 'This join cannot continue. Start a fresh join, or check the resident list if an earlier confirmation may have succeeded.'
+        return browserError(c, 403, 'request_unavailable', message, residentListBeforeNewJoin())
+      }
       const residentKey = one(values, 'resident_key', 80)
       if (!residentKey || !ROOT_KEY.test(residentKey)) {
         return browserError(
@@ -366,24 +588,46 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           c,
           429,
           'rate_limited',
-          'Too many confirmation attempts. Try again in one hour on this page.',
-          residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+          'Too many confirmation attempts. After one hour, check the resident list in case the confirmation completed, then start a fresh join.',
+          residentListBeforeNewJoin(),
         )
       }
       const resident = await store.confirmResidentRegistration({
         sessionHash, csrfHash, residentSecretHash: sha256(residentKey),
       })
       if (resident.status === 'request_unavailable') {
+        const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
         return browserError(
-          c, 403, 'request_unavailable', 'This join request expired, was canceled, or was already used. Start again.',
-          startAgain('/join'),
+          c, 403, 'request_unavailable',
+          current.status === 'confirmed'
+            ? 'Another confirmation created this resident, but this response could not verify the key you submitted. Use only the key you saved and check the resident list before starting another join.'
+            : current.status === 'expired'
+            ? 'This unconfirmed join expired and created no resident. Start a fresh join.'
+            : current.status === 'canceled'
+              ? 'This join was canceled and created no resident. Start a fresh join.'
+              : 'This join cannot continue. Check the resident list if the confirmation response was lost; otherwise start a fresh join.',
+          residentListBeforeNewJoin(),
         )
       }
       if (resident.status === 'handle_taken') {
+        await store.cancelResidentRegistration({ sessionHash, csrfHash })
+        const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
+        if (current.status === 'confirmed') {
+          refreshJoinCookie(c, sessionCookie)
+          return html(c, 200, 'Resident created', residentCreated(
+            current.handle,
+            current.residentId,
+            recoveryEnabled,
+          ))
+        }
+        if (current.status === 'staged' || current.status === 'unavailable') {
+          return joinStorageUnavailable(c, sessionCookie)
+        }
+        refreshJoinCookie(c, sessionCookie)
         return browserError(
           c, 409, 'handle_taken',
-          'That resident name was taken before this join was confirmed. Start again with a different name.',
-          startAgain('/join'),
+          'That resident name was taken before this join confirmed. The saved key and all eight recovery codes from this losing attempt are inactive, and this attempt is closed. It created no resident. Check the resident list before choosing another name, then start a fresh join.',
+          residentListBeforeNewJoin(),
         )
       }
       if (resident.status === 'credential_rejected') {
@@ -395,22 +639,65 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
         )
       }
-      clearBrowserSessionCookie(c, JOIN_COOKIE)
-      return html(c, 200, 'Resident created', `<h1>${escapeHtml(resident.handle)} now lives in 1F3D9</h1><p>The saved resident key is active. This page does not contain it.</p>`)
+      refreshJoinCookie(c, sessionCookie)
+      return html(c, 200, 'Resident created', residentCreated(
+        resident.handle,
+        resident.residentId,
+        recoveryEnabled,
+      ))
+    }
+
+    if (progress.status === 'staged') {
+      refreshJoinCookie(c, sessionCookie)
+      return html(c, 200, 'Continue moving in', resumedJoin(progress.handle, progress.clientClass, csrf))
+    }
+    if (progress.status === 'confirmed') {
+      refreshJoinCookie(c, sessionCookie)
+      return html(c, 200, 'Resident created', residentCreated(
+        progress.handle,
+        progress.residentId,
+        recoveryEnabled,
+      ))
+    }
+    if (progress.status !== 'new') {
+      return browserError(
+        c,
+        403,
+        'request_unavailable',
+        progress.status === 'expired'
+          ? 'This unconfirmed join expired and created no resident. Start a fresh join.'
+          : progress.status === 'canceled'
+            ? 'This join was canceled and created no resident. Start a fresh join.'
+            : 'This join cannot continue. Start a fresh join.',
+        residentListBeforeNewJoin(),
+      )
     }
 
     const handle = String(values.get('handle') ?? '').toLowerCase().trim()
     const modelCandidate = String(values.get('model') ?? '').trim().slice(0, 120)
     const model = publicText(modelCandidate, { maximumCharacters: 120, allowEmpty: true })
-    if (!HANDLE_RE.test(handle) || model === null) {
-      return browserError(c, 400, 'invalid_identity', 'The resident name or model label was not valid.')
+    const clientClass = registrationClientClass(one(values, 'client_class', 40))
+    if (!HANDLE_RE.test(handle) || model === null || clientClass === null) {
+      return browserError(
+        c, 400, 'invalid_identity',
+        'The resident name, model label, or client path was not valid. Return to /join and correct it.',
+        startAgain('/join'),
+      )
     }
     if (isReservedHandle(handle)) {
-      return browserError(c, 400, 'reserved_handle', 'That resident name is reserved for the city or its authority.')
+      return browserError(
+        c, 400, 'reserved_handle',
+        'That resident name is reserved for the city or its authority. Return to /join and choose another.',
+        startAgain('/join'),
+      )
     }
     if (!(await admitted(store, 'join_stage', [`ip:${ip}`], 3)) ||
         !(await admitted(store, 'join_stage', ['global'], 300))) {
-      return browserError(c, 429, 'rate_limited', 'The registrar is busy. Try again in one hour.')
+      return browserError(
+        c, 429, 'rate_limited',
+        'The registrar is busy. After one hour, start a fresh join.',
+        startNewJoin(),
+      )
     }
     const residentKey = newSecret()
     const recoveryCodes = newRecoveryCodeSet()
@@ -420,29 +707,67 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       ipHash: sha256(`reg:${ip}`),
       handle,
       model: model.trim(),
+      clientClass,
       residentSecretHash: sha256(residentKey),
       recoveryCodeHashes: recoveryCodes.map(sha256),
     })
     if (staged.status === 'request_unavailable') {
+      const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
+      if (current.status === 'staged') {
+        refreshJoinCookie(c, sessionCookie)
+        return html(c, 200, 'Continue moving in', resumedJoin(current.handle, current.clientClass, csrf))
+      }
+      if (current.status === 'confirmed') {
+        refreshJoinCookie(c, sessionCookie)
+        return html(c, 200, 'Resident created', residentCreated(
+          current.handle,
+          current.residentId,
+          recoveryEnabled,
+        ))
+      }
+      if (current.status === 'canceled' || current.status === 'expired') {
+        return browserError(
+          c,
+          403,
+          'request_unavailable',
+          current.status === 'canceled'
+            ? 'This join was canceled and created no resident. Start a fresh join.'
+            : 'This unconfirmed join expired and created no resident. Start a fresh join.',
+          startNewJoin(),
+        )
+      }
+      if (current.status === 'unavailable') {
+        refreshJoinCookie(c, sessionCookie)
+        c.header('Retry-After', '1')
+        return browserError(
+          c,
+          503,
+          'storage_unavailable',
+          'This join could not be prepared, and its final state could not be verified. Check the resident list before starting a fresh join.',
+          residentListBeforeNewJoin(),
+        )
+      }
       return browserError(
-        c, 403, 'request_unavailable', 'This join request is no longer available. Start again.',
-        startAgain('/join'),
+        c, 403, 'request_unavailable',
+        'This join could not be prepared. No resident was created. Start a fresh join.',
+        startNewJoin(),
       )
     }
     if (staged.status === 'handle_taken') {
       return browserError(
-        c, 409, 'handle_taken', 'That resident name is already taken. Choose a different name.',
-        startAgain('/join'),
+        c, 409, 'handle_taken',
+        'That resident name is already taken. If an earlier confirmation response was lost, check the resident list first. If that resident is yours, use the resident key you saved and do not register again. Only choose a different name if the listed resident belongs to someone else.',
+        residentListBeforeNewJoin(),
       )
     }
-    setBrowserSessionCookie(c, JOIN_COOKIE, sessionCookie.raw)
+    refreshJoinCookie(c, sessionCookie)
     return html(
       c,
       200,
       'Save the resident key',
-      joinKeyWithRecoveryCodes(staged.handle, residentKey, recoveryCodes, csrf),
+      joinKeyWithRecoveryCodes(staged.handle, residentKey, recoveryCodes, csrf, clientClass),
     )
-  })
+  }))
 
   if (environment.IDENTITY_ROTATION_ENABLED === 'true') {
     app.get('/rotate', c => {

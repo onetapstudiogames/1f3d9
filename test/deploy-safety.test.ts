@@ -105,6 +105,10 @@ const initialRecoveryCodesMigrationUrl = new URL(
   '../db/migrations/20260817_initial_recovery_codes.sql',
   import.meta.url,
 )
+const resumableRegistrationMigrationUrl = new URL(
+  '../db/migrations/20260826_resumable_registration.sql',
+  import.meta.url,
+)
 const paymentRecoveryTriggerRepairMigrationUrl = new URL(
   '../db/migrations/20260823_payment_recovery_trigger_repair.sql',
   import.meta.url,
@@ -321,6 +325,7 @@ type PreparationFixture = Readonly<{
 const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
 })
 
@@ -395,6 +400,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_LATER_HOLDER_MIGRATION',
     'CONFIRM_THING_MAKER_MIGRATION="${3-}"',
     'export CONFIRM_THING_MAKER_MIGRATION',
+    'CONFIRM_RESUMABLE_REGISTRATION_MIGRATION="${4-}"',
+    'export CONFIRM_RESUMABLE_REGISTRATION_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -412,6 +419,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_LATER_HOLDER_PROVIDER_KEY ?? '',
         readiness.CONFIRM_LATER_HOLDER_MIGRATION ?? '',
         readiness.CONFIRM_THING_MAKER_MIGRATION ?? '',
+        readiness.CONFIRM_RESUMABLE_REGISTRATION_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -462,6 +470,14 @@ test('preparation requires provider-key and migration readiness before any relea
     /thing-maker.*migration.*before.*later-holder/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingResumableRegistration = fixture.run({ CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: '' })
+  assert.notEqual(missingResumableRegistration.status, 0)
+  assert.match(
+    `${missingResumableRegistration.stdout}\n${missingResumableRegistration.stderr}`,
+    /resumable-registration.*migration.*Preview and Production.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
 })
 
 test('release instructions require maker provenance before later-holder marks in each database', () => {
@@ -475,6 +491,15 @@ test('release instructions require maker provenance before later-holder marks in
   assert.match(
     deploymentRunbook,
     /CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
+})
+
+test('release preparation requires the resumable-registration schema in Preview and Production', () => {
+  assert.match(deploymentRunbook, /npm run migrate:preview:resumable-registration/u)
+  assert.match(deploymentRunbook, /npm run migrate:production:resumable-registration/u)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
 })
 
@@ -889,6 +914,7 @@ test('fresh installs contain every reviewed release migration statement', () => 
     [readFileSync(identityRecoveryMigrationUrl, 'utf8'), 'identity-recovery'],
     [readFileSync(identityRotationMigrationUrl, 'utf8'), 'identity-rotation'],
     [readFileSync(initialRecoveryCodesMigrationUrl, 'utf8'), 'initial-recovery-codes'],
+    [readFileSync(resumableRegistrationMigrationUrl, 'utf8'), 'resumable-registration'],
   ] as const) {
     const statements = label === 'payment-attempts'
       ? splitSqlStatements(migration).filter(statement => {
@@ -917,6 +943,11 @@ test('fresh installs contain every reviewed release migration statement', () => 
 
             return true
           })
+          : label === 'resumable-registration'
+            ? splitSqlStatements(migration).filter(statement => {
+              const trimmed = statement.trim()
+              return !/^(?:BEGIN|COMMIT|SET\s+LOCAL)\b/i.test(trimmed)
+            })
         : splitSqlStatements(migration)
     for (const statement of statements) {
       assert.ok(

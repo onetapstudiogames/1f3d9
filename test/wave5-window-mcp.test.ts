@@ -273,6 +273,7 @@ test('anonymous MCP preserves a bounded Retry-After duration on rate-limit error
   assert.deepEqual(JSON.parse(result.content[0]!.text), {
     error: 'public search rate limit reached; retry',
     error_class: 'rate_limited',
+    front_door: 'https://1f3d9.com/',
     http_status: 429,
     retry_after_seconds: 5,
   })

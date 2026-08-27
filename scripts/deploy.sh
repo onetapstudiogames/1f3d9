@@ -82,7 +82,7 @@ verify_pushed_candidate() {
   echo "   clean branch verified at its exact pushed origin commit"
 }
 
-verify_later_holder_release_readiness() {
+verify_release_readiness() {
   [ "${CONFIRM_LATER_HOLDER_PROVIDER_KEY:-}" = "VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION" ] || {
     echo "!! LATER_HOLDER_CURSOR_KEY must be verified in Vercel Preview and Production before preparation"
     return 1
@@ -95,15 +95,19 @@ verify_later_holder_release_readiness() {
     echo "!! the later-holder migration must be applied to Preview and Production before application rollout"
     return 1
   }
+  [ "${CONFIRM_RESUMABLE_REGISTRATION_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION" ] || {
+    echo "!! the resumable-registration migration must be applied to Preview and Production before application rollout"
+    return 1
+  }
 
-  echo "   later-holder provider key and ordered maker/later-holder schema readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration schema readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"
 verify_pushed_candidate
 
-echo "== 2. verify later-holder release prerequisites"
-verify_later_holder_release_readiness
+echo "== 2. verify release prerequisites"
+verify_release_readiness
 
 echo "== 3. run local release gates"
 [ -d node_modules ] || npm ci --no-audit --no-fund

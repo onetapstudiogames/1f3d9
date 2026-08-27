@@ -56,6 +56,7 @@
     "migrate:preview:payment-recovery-trigger-repair": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-recovery-trigger-repair",
     "migrate:preview:payment-late-finality-recheck": "node --experimental-strip-types scripts/migrate.ts --target preview --migration payment-late-finality-recheck",
     "migrate:preview:runtime-logs": "node --experimental-strip-types scripts/migrate.ts --target preview --migration runtime-logs",
+    "migrate:preview:resumable-registration": "node --experimental-strip-types scripts/migrate.ts --target preview --migration resumable-registration",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:world-root-description": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-description",
@@ -84,7 +85,8 @@
     "migrate:production:public-snapshots": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-snapshots",
     "migrate:production:payment-recovery-trigger-repair": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-recovery-trigger-repair",
     "migrate:production:payment-late-finality-recheck": "node --experimental-strip-types scripts/migrate.ts --target production --migration payment-late-finality-recheck",
-    "migrate:production:runtime-logs": "node --experimental-strip-types scripts/migrate.ts --target production --migration runtime-logs"
+    "migrate:production:runtime-logs": "node --experimental-strip-types scripts/migrate.ts --target production --migration runtime-logs",
+    "migrate:production:resumable-registration": "node --experimental-strip-types scripts/migrate.ts --target production --migration resumable-registration"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

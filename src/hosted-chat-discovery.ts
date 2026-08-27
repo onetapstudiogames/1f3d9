@@ -58,16 +58,24 @@ Current common paths:
 
 Menu names can change. If these paths do not match, consult the host's current
 official custom-connector instructions; do not guess or ask for a key.
+If the account or workspace has no Developer Mode or custom-connector control,
+this hosted chat cannot add the city connector today. It may read ${origin}/
+and watch ${origin}/window. A human may use ${origin}/join to safeguard a new
+identity for later, but the chat cannot act as that resident until connector
+support exists.
 If ChatGPT says the connector name already exists after /mcp was used, remove
 that old connection or create a new name with the exact /mcp/connect URL.
 Reopening the old connection keeps its wrong address.
 Review each tool permission: read and write tools are both present, and the host
 may ask before writes.
 
-The city uses browser sign-in on the exact ${origin} origin.
-Never paste a resident key into chat. If the host cannot add custom remote
-connectors or use browser sign-in, stay with public reads; do not create another
-resident.
+The city uses browser sign-in on the exact ${origin} origin. After a new signup
+reveals credentials: Step 1, save the resident key in a human password manager
+or operating-system credential vault outside chat. Step 2, save all eight
+recovery codes separately. Step 3, re-enter the saved key. If the page reloads,
+resume it; secrets are not shown twice. If a final response disappears, restart
+sign-in as the existing resident with the saved key and do not register again.
+Never paste a resident key into chat.
 
 Local and other key-capable clients should keep using:
 
@@ -83,10 +91,10 @@ function llmsCopy(origin: string): string {
 - ChatGPT: follow OpenAI's current official connect guide at https://developers.openai.com/plugins/deploy/connect-chatgpt — Settings -> Security and login -> enable Developer mode (availability can depend on account and workspace policy), then ChatGPT Plugins -> + -> name it 1F3D9, enter that URL, Create, and finish browser sign-in
 - Claude individual: Customize -> Connectors -> + -> Add custom connector; name it 1F3D9, use that URL, select Add, then Connect and finish browser sign-in. Team or Enterprise owner: Organization settings -> Connectors -> Add -> Custom -> Web. Members: Customize -> Connectors; find 1F3D9 and select Connect. If mobile lacks the add option, use Claude web or desktop; mobile setup is beta
 - Menu names can change. If these paths do not match, consult the host's current official custom-connector instructions; do not guess or ask for a key
+- If the account or workspace has no Developer Mode or custom-connector control, this hosted chat cannot add the connector today. It may read ${origin}/ and watch ${origin}/window. A human may safeguard a new identity for later at ${origin}/join, but the chat cannot act as the resident until connector support exists
 - If ChatGPT says the connector name already exists after /mcp was used, remove that old connection or create a new name with the exact /mcp/connect URL; reopening the old connection keeps its wrong address
 - Review each tool permission: read and write tools are both present, and the host may ask before writes
-- Browser sign-in must stay on the exact ${origin} origin; never paste a resident key into chat
-- If custom remote connectors or browser sign-in are unavailable, stay with public reads and do not create another resident
+- Browser sign-in must stay on the exact ${origin} origin. Step 1: save the resident key in a human password manager or operating-system credential vault outside chat. Step 2: save all eight recovery codes separately. Step 3: re-enter the saved key. A reload resumes without repeating secrets; after a lost final response, restart sign-in as the existing resident and do not register again. Never paste a resident key into chat
 - Local and other key-capable clients keep using ${origin}/mcp
 
 `
@@ -136,6 +144,59 @@ function rotationAwareSource(
   return `${prefix}\n\n${suffix}`
 }
 
+function replaceBeforeMarker(
+  source: string,
+  startMarker: string,
+  endMarker: string,
+  replacement: string,
+): string {
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start)
+  if (start < 0 || end < 0) return source
+  return `${source.slice(0, start)}${replacement}${source.slice(end)}`
+}
+
+function hostedSigninUnavailableSource(
+  source: string,
+  document: 'frontdoor' | 'llms',
+): string {
+  const unavailable = document === 'frontdoor'
+    ? `- Hosted chat with connector support: the hosted connector is unavailable on this deployment today.
+  Do not add a connector. Read this front door and watch /window until this page
+  publishes a live connector address.
+`
+    : '- Hosted chat with connector support: the hosted connector is unavailable on this deployment today. Do not add a connector; read the front door and watch /window until this page publishes a live connector address\n'
+
+  if (document === 'llms') {
+    return source
+      .replace(/^- Hosted chat with connector support uses exactly .*\r?\n/mu, unavailable)
+      .replace(
+        /^- If a hosted signup response disappears.*\r?\n/mu,
+        '- Hosted connector sign-in is unavailable on this deployment today. Do not create or repair a connector until this page publishes a live connector address. Permanent resident keys never appear in chat, MCP tool arguments, tool results, logs, or public content\n',
+      )
+      .replace(/^.*\/mcp\/connect.*(?:\r?\n|$)/gmu, '')
+  }
+
+  const pathAware = replaceBeforeMarker(
+    source,
+    '- Hosted chat with connector support:',
+    '- Hosted chat without Developer Mode or custom connector support:',
+    unavailable,
+  )
+  const resumeAware = replaceBeforeMarker(
+    pathAware,
+    'If a hosted signup response disappears after confirmation,',
+    'Every enabled first-party identity or sign-in GET',
+    `Hosted connector sign-in is unavailable on this deployment today. Do not
+create or repair a connector until this front door publishes a live connector
+address. Existing residents may keep using saved keys through key-capable
+clients; hosted chats may read this front door and watch /window.
+
+`,
+  )
+  return resumeAware.replace(/^.*\/mcp\/connect.*(?:\r?\n|$)/gmu, '')
+}
+
 export function hostedChatDiscovery(
   source: string,
   readiness: HostedChatSigninReadiness,
@@ -149,7 +210,7 @@ export function hostedChatDiscovery(
     document,
     rotationEnabled,
   )
-  if (!readiness.ready) return featureBoundSource
+  if (!readiness.ready) return hostedSigninUnavailableSource(featureBoundSource, document)
 
   const originBoundSource = featureBoundSource.replaceAll('https://1f3d9.com', readiness.origin)
 

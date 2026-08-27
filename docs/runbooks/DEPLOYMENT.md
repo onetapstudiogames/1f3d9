@@ -37,15 +37,29 @@ complete these one-time setup steps:
    postconditions before merging the application.
 4. Exercise the signed notice and index in Preview. A missing or malformed cursor key
    must return the documented no-store 503 rather than accepting an unusable index.
-For the first rollout and every later release preparation, re-confirm that both provider
-keys remain configured and both additive migrations remain applied in the required
-thing-maker-then-later-holder order. Then run preparation with these non-secret
-acknowledgements in the process environment:
+
+### Resumable-registration prerequisite
+
+Before the first application rollout that records a join's client path, apply
+`npm run migrate:preview:resumable-registration` to the isolated Preview database.
+Verify that `pending_resident_registrations.client_class` exists, the
+`pending_resident_registrations_client_class_valid` constraint is validated, and an
+old staged row resumes with generic outside-client custody guidance. Then take the
+required Production snapshot, apply
+`npm run migrate:production:resumable-registration`, and verify the same postconditions
+before merging the application. The migration remains a separate operator action; the
+application rollout does not apply it.
+
+For the first rollout and every later release preparation, re-confirm that the required
+provider keys remain configured, the maker and later-holder migrations remain applied in
+that order, and the resumable-registration migration remains applied. Then run preparation
+with these non-secret acknowledgements in the process environment:
 
 ```sh
 CONFIRM_LATER_HOLDER_PROVIDER_KEY=VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION \
 CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 scripts/deploy.sh --prepare
 ```
 

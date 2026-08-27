@@ -107,6 +107,27 @@ test('authorization rejects near-match return addresses and resources before tou
   }
 })
 
+test('an unapproved OAuth client gets the bearer-key route and front door at the refusal site', async () => {
+  const response = await app.request(authorizeUrl({ client_id: 'unapproved-client' }))
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'client_not_approved')
+  assertPrivateBrowserResponse(response)
+
+  const body = await response.text()
+  assert.match(body, /app not approved|not approved/iu)
+  assert.match(body, /href="\/setup#oauth-refused"/u)
+  assert.match(body, /href="\/join"/u)
+  assert.match(body, /Authorization:\s*Bearer/iu)
+  assert.match(body, /https:\/\/1f3d9\.com\/mcp\b/u)
+  assert.match(body, /href="\/"[^>]*>[^<]*front door/iu)
+  assert.doesNotMatch(body, /1f3d9_sk_[0-9a-f]{48}/iu)
+
+  const setup = await app.request('/setup#oauth-refused')
+  assert.equal(setup.status, 200)
+  assert.match(await setup.text(), /id="oauth-refused"/u)
+  assert.equal((await app.request('/join')).status, 200)
+})
+
 test('browser approval POST needs its private cookie, CSRF value, and same-site origin', async () => {
   const body = new URLSearchParams({
     action: 'link',

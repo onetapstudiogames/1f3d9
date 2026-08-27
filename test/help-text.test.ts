@@ -24,10 +24,11 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 46)
-  assert.match(contributorGuide, /\(46 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 47)
+  assert.match(contributorGuide, /\(47 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -248,6 +249,51 @@ test('the truth release keeps every public surface honest', () => {
     assert.match(text, /public record, readable/iu, `${name}: notes readable from anywhere`)
     // join reveals the key and the first recovery codes together
     assert.match(text, /eight[\s\S]{0,60}recovery codes\s+are shown once/iu, `${name}: join reveals codes`)
+  }
+})
+
+test('served onboarding contracts are key-first, resumable, and honest for every client class', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['hosted sign-in guide', hostedSignin],
+  ] as const) {
+    assert.match(text, /step 1[^\n.]{0,160}(?:save|store)[^\n.]{0,100}resident key/iu, `${name}: key first`)
+    assert.match(text, /step 2[^\n.]{0,160}(?:save|store)[^\n.]{0,100}eight recovery codes/iu, `${name}: codes second`)
+    assert.match(text, /step 3[^\n.]{0,160}re-enter[^\n.]{0,100}(?:saved )?(?:resident )?key/iu, `${name}: confirmation third`)
+    assert.match(text, /reload[^\n.]{0,180}(?:same private cookie|same join)[^\n.]{0,180}(?:resume|continue)/iu, `${name}: staged resume`)
+    assert.match(text, /confirmation[^\n.]{0,180}(?:retry|lost response)[^\n.]{0,180}(?:same resident|does not create|without creating)/iu, `${name}: confirmation replay`)
+    assert.match(
+      text,
+      /(?:handle-conflict loser|another join[^.]{0,100}(?:takes|claims)[^.]{0,100}handle)[\s\S]{0,220}(?:cancel(?:ed|led)|terminal)[\s\S]{0,160}(?:scrub|clear)/iu,
+      `${name}: handle-conflict restart`,
+    )
+    assert.match(
+      text,
+      /(?:legacy|pre-migration)[\s\S]{0,180}(?:(?:no|without|not recorded)[\s\S]{0,100}client (?:class|path)|without a class)[\s\S]{0,220}resume/iu,
+      `${name}: legacy staged resume`,
+    )
+    assert.match(
+      text,
+      /OAuth[\s\S]{0,180}surviv(?:ing|es)[\s\S]{0,180}(?:another|different)[^\n.]{0,60}authorize URL[\s\S]{0,180}(?:stored request|stored client's request)/iu,
+      `${name}: active OAuth request survives`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['setup page', SETUP_HTML],
+    ['front door source', frontdoor],
+    ['compact machine map', llms],
+  ] as const) {
+    assert.match(text, /hosted (?:chat )?(?:with|that has)[^\n.]{0,100}connector/iu, `${name}: hosted connector`)
+    assert.match(text, /hosted (?:chat )?(?:without|that has no)[^\n.]{0,120}Developer Mode/iu, `${name}: hosted browser`)
+    assert.match(text, /persistent coding/iu, `${name}: persistent coding`)
+    assert.match(text, /ephemeral coding/iu, `${name}: ephemeral coding`)
+    assert.match(text, /OAuth[^\n.]{0,100}(?:refused|app not approved|client_not_approved)/iu, `${name}: OAuth refusal`)
   }
 })
 

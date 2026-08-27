@@ -34,6 +34,7 @@ type Registration = {
   csrfHash: string
   handle: string
   model: string
+  clientClass: 'coding_ephemeral' | 'coding_persistent' | 'hosted_browser' | 'oauth_refused'
   residentSecretHash: string
   recoveryCodeHashes: string[]
 }
@@ -41,10 +42,11 @@ type Registration = {
 async function pageState(
   app: Hono,
   path: '/join' | '/rotate' | '/recovery',
-): Promise<{ cookie: string; csrf: string; html: string }> {
+): Promise<{ cookie: string; csrf: string; html: string; setCookie: string }> {
   const response = await app.request(path)
   const html = await response.text()
-  const cookie = (response.headers.get('set-cookie') ?? '').split(';', 1)[0]!
+  const setCookie = response.headers.get('set-cookie') ?? ''
+  const cookie = setCookie.split(';', 1)[0]!
   const csrf = html.match(/name="csrf" value="([^"]+)"/)?.[1]
   assert.equal(response.status, 200)
   assert.ok(csrf)
@@ -52,7 +54,7 @@ async function pageState(
   assert.match(html, /<form/iu)
   assert.doesNotMatch(html, /name="session_cookie"/iu)
   assert.equal(response.headers.get('location'), null)
-  return { cookie, csrf, html }
+  return { cookie, csrf, html, setCookie }
 }
 
 function postForm(
@@ -128,14 +130,21 @@ type MemoryStoreOptions = {
     | 'rotation_begin'
     | 'rotation_confirm'
   deniedRateCall?: number
+  registrationProgressOutcome?: 'error' | 'normal' | 'unavailable'
+  registrationProgressAfterFailedStage?: 'canceled' | 'expired' | 'unavailable'
+  registrationResumeClientClass?: 'legacy_unknown'
+  registrationStageBarrier?: () => Promise<void>
   registrationStageOutcome?: 'error' | 'handle_taken' | 'missing' | 'staged'
-  registrationConfirmOutcome?: 'error' | 'normal' | 'request_unavailable'
+  registrationConfirmOutcome?: 'error' | 'handle_taken' | 'normal' | 'request_unavailable'
+  registrationCancelOutcome?: 'confirmation_won' | 'error' | 'normal'
+  confirmationRaceCompleted?: boolean
   rotationConfirmRateLimited?: boolean
 }
 
 function memoryStore(options: MemoryStoreOptions = {}) {
   let registration: Registration | null = null
   let confirmed = false
+  let canceledRegistration: { sessionHash: string; csrfHash: string } | null = null
   let recoveryGeneration = 0
   let recoveryCodeHashes: string[] = []
   let stagedRecovery: {
@@ -153,6 +162,7 @@ function memoryStore(options: MemoryStoreOptions = {}) {
   } | null = null
   let rotated = false
   let rateCalls = 0
+  let registrationStageFailed = false
   const calls: Array<{ method: string; input: unknown }> = []
 
   const store = {
@@ -162,11 +172,45 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       return input.attemptKind !== options.deniedAttemptKind &&
         rateCalls !== options.deniedRateCall
     },
+    async getResidentRegistrationProgress(input: { sessionHash: string; csrfHash: string }) {
+      calls.push({ method: 'registrationProgress', input })
+      if (options.registrationProgressOutcome === 'error') {
+        throw new Error('registration progress unavailable')
+      }
+      if (options.registrationProgressOutcome === 'unavailable') {
+        return { status: 'unavailable' as const }
+      }
+      if (registrationStageFailed && options.registrationProgressAfterFailedStage) {
+        return { status: options.registrationProgressAfterFailedStage }
+      }
+      if (
+        canceledRegistration?.sessionHash === input.sessionHash &&
+        canceledRegistration.csrfHash === input.csrfHash
+      ) return { status: 'canceled' as const }
+      if (registration?.sessionHash !== input.sessionHash || registration.csrfHash !== input.csrfHash) {
+        return { status: 'new' as const }
+      }
+      if (confirmed) {
+        return { status: 'confirmed' as const, residentId: 27, handle: registration.handle }
+      }
+      return {
+        status: 'staged' as const,
+        handle: registration.handle,
+        clientClass: options.registrationResumeClientClass ?? registration.clientClass,
+      }
+    },
     async stageResidentRegistration(input: Registration) {
       calls.push({ method: 'stageRegistration', input })
       if (options.registrationStageOutcome === 'error') throw new Error('registration store unavailable')
-      if (options.registrationStageOutcome === 'missing') return { status: 'request_unavailable' as const }
+      if (options.registrationStageOutcome === 'missing') {
+        registrationStageFailed = true
+        return { status: 'request_unavailable' as const }
+      }
       if (options.registrationStageOutcome === 'handle_taken') return { status: 'handle_taken' as const }
+      await options.registrationStageBarrier?.()
+      if (registration?.sessionHash === input.sessionHash && registration.csrfHash === input.csrfHash) {
+        return { status: 'request_unavailable' as const }
+      }
       requireRecoveryCodeHashes(input.recoveryCodeHashes)
       registration = { ...input, recoveryCodeHashes: [...input.recoveryCodeHashes] }
       return { status: 'staged' as const, handle: input.handle }
@@ -178,15 +222,24 @@ function memoryStore(options: MemoryStoreOptions = {}) {
     }) {
       calls.push({ method: 'confirmRegistration', input })
       if (options.registrationConfirmOutcome === 'error') throw new Error('registration confirmation unavailable')
+      if (options.registrationConfirmOutcome === 'handle_taken') {
+        return { status: 'handle_taken' as const }
+      }
       if (options.registrationConfirmOutcome === 'request_unavailable') {
+        if (options.confirmationRaceCompleted) confirmed = true
         return { status: 'request_unavailable' as const }
       }
       if (
-        confirmed || !registration ||
+        !registration ||
         registration.sessionHash !== input.sessionHash ||
         registration.csrfHash !== input.csrfHash ||
         !validRecoveryCodeHashes(registration.recoveryCodeHashes)
       ) return { status: 'request_unavailable' as const }
+      if (confirmed) {
+        return registration.residentSecretHash === input.residentSecretHash
+          ? { status: 'confirmed' as const, residentId: 27, handle: registration.handle }
+          : { status: 'credential_rejected' as const }
+      }
       if (registration.residentSecretHash !== input.residentSecretHash) {
         return { status: 'credential_rejected' as const }
       }
@@ -197,6 +250,18 @@ function memoryStore(options: MemoryStoreOptions = {}) {
     },
     async cancelResidentRegistration(input: unknown) {
       calls.push({ method: 'cancelRegistration', input })
+      if (options.registrationCancelOutcome === 'error') {
+        throw new Error('registration cancellation unavailable')
+      }
+      if (options.registrationCancelOutcome === 'confirmation_won') {
+        confirmed = true
+        return false
+      }
+      if (!registration || confirmed) return false
+      canceledRegistration = {
+        sessionHash: registration.sessionHash,
+        csrfHash: registration.csrfHash,
+      }
       registration = null
       return true
     },
@@ -352,6 +417,30 @@ test('the recovery surface is absent unless its deployment switch is explicitly 
   }
 })
 
+test('a completed join never advertises the disabled recovery surface', async () => {
+  const app = new Hono()
+  const memory = memoryStore()
+  mountIdentityRoutes(app, {
+    environment: { PUBLIC_ORIGIN: ORIGIN, IDENTITY_RECOVERY_ENABLED: 'false' },
+    store: memory.store,
+  })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'recovery-off', model: '', client_class: 'coding_persistent',
+  })
+  const rootKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  assert.ok(rootKey)
+
+  const completed = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: rootKey,
+  })
+  assert.equal(completed.status, 200)
+  const body = await completed.text()
+  assert.doesNotMatch(body, /href="\/recovery"/u)
+  assert.match(body, /recovery[^.]*not available|keep[^.]*recovery codes[^.]*safe/iu)
+  assert.equal((await app.request('/recovery')).status, 404)
+})
+
 test('rotation is absent unless explicitly enabled and its switch is independent of recovery', async () => {
   for (const environment of [
     { PUBLIC_ORIGIN: ORIGIN },
@@ -405,6 +494,7 @@ test('identity doors set one base cookie and show the form immediately', async (
     const { app, memory } = appWithMemoryStore()
     const state = await pageState(app, path)
     assert.match(state.cookie, new RegExp(`^__Host-1f3d9_${path.slice(1)}=`), path)
+    assert.match(state.setCookie, new RegExp(`Max-Age=${path === '/join' ? 1800 : 900}`), path)
     assert.equal(memory.calls.length, 0, path)
   }
 })
@@ -421,7 +511,12 @@ test('identity POST distinguishes a missing cookie from a present cookie that do
     assert.equal(missing.status, 403, path)
     assert.equal(missing.headers.get('x-1f3d9-reason'), 'browser_cookie_missing', path)
     assert.match(missing.headers.get('x-request-id') ?? '', requestId, path)
-    assert.match(await missing.text(), /cookie[^.]*not returned/iu, path)
+    const missingBody = await missing.text()
+    assert.match(missingBody, /cookie[^.]*not returned/iu, path)
+    if (path === '/join') {
+      assert.match(missingBody, /confirmation response[^.]*lost/iu, path)
+      assert.ok(missingBody.indexOf('href="/window"') < missingBody.indexOf('href="/join?new=1"'), path)
+    }
 
     const malformed = await postForm(
       app,
@@ -431,13 +526,18 @@ test('identity POST distinguishes a missing cookie from a present cookie that do
     )
     assert.equal(malformed.status, 403, path)
     assert.equal(malformed.headers.get('x-1f3d9-reason'), 'browser_cookie_mismatch', path)
-    assert.match(await malformed.text(), /form[^.]*private browser cookie[^.]*did not match/iu, path)
+    const malformedBody = await malformed.text()
+    assert.match(malformedBody, /form[^.]*private browser cookie[^.]*did not match/iu, path)
+    if (path === '/join') {
+      assert.match(malformedBody, /confirmation response[^.]*lost/iu, path)
+      assert.ok(malformedBody.indexOf('href="/window"') < malformedBody.indexOf('href="/join?new=1"'), path)
+    }
     assert.equal(memory.calls.length, 0, path)
   }
 })
 
 test('a second tab replacing the route cookie gives the first tab an honest mismatch', async () => {
-  for (const path of ['/join', '/rotate', '/recovery'] as const) {
+  for (const path of ['/rotate', '/recovery'] as const) {
     const { app, memory } = appWithMemoryStore()
     const first = await pageState(app, path)
     const second = await pageState(app, path)
@@ -454,6 +554,31 @@ test('a second tab replacing the route cookie gives the first tab an honest mism
     assert.match(await refused.text(), /form[^.]*private browser cookie[^.]*did not match/iu, path)
     assert.equal(memory.calls.length, 0, path)
   }
+})
+
+test('reloading /join preserves its private session and returns the exact ceremony step', async () => {
+  const { app, memory } = appWithMemoryStore()
+  const first = await pageState(app, '/join')
+  const reload = await app.request('/join', { headers: { cookie: first.cookie } })
+  const reloadHtml = await reload.text()
+
+  assert.equal(reload.status, 200)
+  assert.equal((reload.headers.get('set-cookie') ?? '').split(';', 1)[0], first.cookie)
+  assert.match(reload.headers.get('set-cookie') ?? '', /Max-Age=1800/u)
+  assert.match(reloadHtml, new RegExp(`name="csrf" value="${first.csrf}"`, 'u'))
+  assert.equal(memory.calls.filter(call => call.method === 'registrationProgress').length, 1)
+})
+
+test('an invalid join cookie links the resident check before a fresh ceremony', async () => {
+  const { app } = appWithMemoryStore()
+  const response = await app.request('/join', {
+    headers: { cookie: '__Host-1f3d9_join=not-a-valid-private-session' },
+  })
+  assert.equal(response.status, 200)
+  const body = await response.text()
+  assert.match(body, /old private join cookie could not be read/iu)
+  assert.match(body, /href="\/window"/u)
+  assert.match(body, /href="\/join\?new=1"/u)
 })
 
 test('identity refusal request IDs resolve to safe method, route, and reason diagnostics', async () => {
@@ -493,7 +618,7 @@ test('real browser form posts can use a same-origin referrer when Origin is with
   const join = appWithMemoryStore()
   const joinStart = await pageState(join.app, '/join')
   const joined = await postForm(join.app, '/join', joinStart.cookie, {
-    action: 'stage', csrf: joinStart.csrf, handle: 'mobile-join', model: '',
+    action: 'stage', csrf: joinStart.csrf, handle: 'mobile-join', model: '', client_class: 'coding_persistent',
   }, null, `${ORIGIN}/join`)
   assert.equal(joined.status, 200)
   assert.equal(join.memory.registration()?.handle, 'mobile-join')
@@ -526,7 +651,7 @@ test('identity forms accept same-origin fetch metadata when privacy browsers omi
   const join = appWithMemoryStore()
   const joinStart = await pageState(join.app, '/join')
   const joined = await postForm(join.app, '/join', joinStart.cookie, {
-    action: 'stage', csrf: joinStart.csrf, handle: 'metadata-join', model: '',
+    action: 'stage', csrf: joinStart.csrf, handle: 'metadata-join', model: '', client_class: 'coding_persistent',
   }, null, undefined, fetchMetadata)
   assert.equal(joined.status, 200)
   assert.equal(join.memory.registration()?.handle, 'metadata-join')
@@ -553,7 +678,7 @@ test('identity forms still reject absent or conflicting same-site evidence', asy
   const absent = appWithMemoryStore()
   const absentStart = await pageState(absent.app, '/join')
   const noEvidence = await postForm(absent.app, '/join', absentStart.cookie, {
-    action: 'stage', csrf: absentStart.csrf, handle: 'no-evidence', model: '',
+    action: 'stage', csrf: absentStart.csrf, handle: 'no-evidence', model: '', client_class: 'coding_persistent',
   }, null)
   assert.equal(noEvidence.status, 403)
   assert.equal(noEvidence.headers.get('x-1f3d9-error-class'), 'forbidden')
@@ -574,7 +699,7 @@ test('identity forms still reject absent or conflicting same-site evidence', asy
   const hostileMetadata = appWithMemoryStore()
   const hostileMetadataStart = await pageState(hostileMetadata.app, '/join')
   const crossSiteFetch = await postForm(hostileMetadata.app, '/join', hostileMetadataStart.cookie, {
-    action: 'stage', csrf: hostileMetadataStart.csrf, handle: 'hostile-metadata', model: '',
+    action: 'stage', csrf: hostileMetadataStart.csrf, handle: 'hostile-metadata', model: '', client_class: 'coding_persistent',
   }, null, undefined, {
     'sec-fetch-site': 'cross-site',
     'sec-fetch-mode': 'navigate',
@@ -610,6 +735,8 @@ test('legacy registration is retired before it can return a resident key', async
   assert.equal(response.status, 410)
   assert.deepEqual(await response.json(), {
     error: 'registration moved to the private browser flow at https://city.test/join',
+    next_step: 'Choose your client path there. After credentials are prepared: Step 1 save the resident key in durable storage for that client; Step 2 save all eight recovery codes separately; Step 3 re-enter the saved key.',
+    front_door: 'https://city.test/',
   })
   assert.equal(memory.calls.length, 0)
 })
@@ -624,7 +751,7 @@ test('identity forms state their expiry, attempt caps, and reserved-name rule be
   assert.match(join.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
 
   const reserved = await postForm(joinHarness.app, '/join', join.cookie, {
-    action: 'stage', csrf: join.csrf, handle: 'founder', model: 'test-model',
+    action: 'stage', csrf: join.csrf, handle: 'founder', model: 'test-model', client_class: 'coding_persistent',
   })
   assert.equal(reserved.status, 400)
   assert.match(await reserved.text(), /resident name[^.]*reserved/iu)
@@ -642,6 +769,100 @@ test('identity forms state their expiry, attempt caps, and reserved-name rule be
   assert.match(recovery.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
 })
 
+test('/join states every client path before registration and requires one explicit choice', async () => {
+  const { app } = appWithMemoryStore()
+  const start = await pageState(app, '/join')
+
+  for (const clientClass of [
+    'hosted_connector',
+    'hosted_browser',
+    'coding_persistent',
+    'coding_ephemeral',
+    'oauth_refused',
+  ]) {
+    assert.match(start.html, new RegExp(`data-client-class="${clientClass}"`, 'u'), clientClass)
+  }
+  assert.match(start.html, /without Developer Mode/iu)
+  assert.match(start.html, /temporary|ephemeral/iu)
+  assert.match(start.html, /app not approved/iu)
+  assert.match(
+    start.html,
+    /duplicated or retried[\s\S]*same staged join[\s\S]*never creates or reveals a second credential set/iu,
+  )
+
+  const missingChoice = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'no-client', model: '',
+  })
+  assert.equal(missingChoice.status, 400)
+  assert.equal(missingChoice.headers.get('x-1f3d9-reason'), 'invalid_identity')
+})
+
+test('/join advertises the hosted connector only when that door is ready', async () => {
+  for (const ready of [false, true]) {
+    const app = new Hono()
+    mountIdentityRoutes(app, {
+      environment: { PUBLIC_ORIGIN: ORIGIN },
+      store: memoryStore().store,
+      hostedChatSigninReady: ready,
+    })
+    const { html } = await pageState(app, '/join')
+    const hostedPath = html.match(
+      /<div class="client-path" data-client-class="hosted_connector">([\s\S]*?)<\/div>/u,
+    )?.[1]
+    assert.ok(hostedPath)
+
+    if (ready) {
+      assert.match(hostedPath, /https:\/\/1f3d9\.com\/mcp\/connect/u)
+      assert.doesNotMatch(hostedPath, /unavailable on this deployment/iu)
+    } else {
+      assert.doesNotMatch(hostedPath, /\/mcp\/connect/u)
+      assert.match(hostedPath, /unavailable on this deployment/iu)
+      assert.match(hostedPath, /href="\/"[\s\S]*href="\/window"/u)
+      assert.match(hostedPath, /do not add a connector/iu)
+    }
+  }
+})
+
+test('the first post-registration instruction names durable custody for every direct client path', async () => {
+  const paths = [
+    {
+      clientClass: 'hosted_browser',
+      handle: 'hosted-custody',
+      instruction: /human password manager[\s\S]*outside this hosted chat[\s\S]*cannot keep the only copy[\s\S]*connector support/iu,
+    },
+    {
+      clientClass: 'coding_persistent',
+      handle: 'persistent-custody',
+      instruction: /password manager[\s\S]*managed secret store[\s\S]*every launch[\s\S]*environment-variable name/iu,
+    },
+    {
+      clientClass: 'coding_ephemeral',
+      handle: 'ephemeral-custody',
+      instruction: /outside this temporary client[\s\S]*workspace[\s\S]*container[\s\S]*Never leave its only copy in model context or ephemeral storage/iu,
+    },
+    {
+      clientClass: 'oauth_refused',
+      handle: 'oauth-custody',
+      instruction: /outside the client that refused OAuth[\s\S]*Authorization: Bearer[\s\S]*never paste it into chat/iu,
+    },
+  ] as const
+
+  for (const path of paths) {
+    const { app } = appWithMemoryStore()
+    const start = await pageState(app, '/join')
+    const response = await postForm(app, '/join', start.cookie, {
+      action: 'stage', csrf: start.csrf, handle: path.handle, model: '', client_class: path.clientClass,
+    })
+    const body = await response.text()
+    const residentKey = body.match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+    assert.equal(response.status, 200, path.clientClass)
+    assert.ok(residentKey, path.clientClass)
+    const firstInstruction = body.slice(body.indexOf('Step 1'), body.indexOf(residentKey))
+    assert.match(firstInstruction, path.instruction, path.clientClass)
+    assert.doesNotMatch(firstInstruction, /Step 2|recovery code value|Step 3/iu, path.clientClass)
+  }
+})
+
 test('join stages only a hash and creates a resident only after exact key re-entry', async () => {
   const { app, memory } = appWithMemoryStore()
   const start = await pageState(app, '/join')
@@ -649,9 +870,11 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   assert.equal(memory.registration(), null)
 
   const stagedResponse = await postForm(app, '/join', start.cookie, {
-    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: 'test-model',
+    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: 'test-model', client_class: 'coding_ephemeral',
   })
   assert.equal(stagedResponse.status, 200)
+  assert.equal((stagedResponse.headers.get('set-cookie') ?? '').split(';', 1)[0], start.cookie)
+  assert.match(stagedResponse.headers.get('set-cookie') ?? '', /Max-Age=1800/u)
   assert.equal(stagedResponse.headers.get('cache-control'), 'no-store')
   assert.match(stagedResponse.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
   const stagedHtml = await stagedResponse.text()
@@ -660,6 +883,17 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   assert.ok(rootKey)
   assert.equal(recoveryCodes.length, 8)
   assert.equal(new Set(recoveryCodes).size, 8)
+  const keyInstruction = stagedHtml.indexOf('Step 1')
+  const keyValue = stagedHtml.indexOf(rootKey)
+  const codeInstruction = stagedHtml.indexOf('Step 2')
+  const firstCode = stagedHtml.indexOf(recoveryCodes[0]!)
+  const confirmation = stagedHtml.indexOf('Step 3')
+  assert.ok(keyInstruction >= 0 && keyInstruction < keyValue)
+  assert.ok(keyValue < codeInstruction && codeInstruction < firstCode)
+  assert.ok(firstCode < confirmation)
+  assert.match(stagedHtml, /password manager|operating-system credential vault/iu)
+  assert.match(stagedHtml, /outside (?:this|the) temporary (?:client|machine|workspace|session)/iu)
+  assert.match(stagedHtml, /recovery codes[^.]*separate/iu)
   const initialSecrets = [rootKey, ...recoveryCodes]
   assertSecretsAbsent(JSON.stringify([...stagedResponse.headers]), initialSecrets)
   assert.equal(memory.confirmed(), false)
@@ -668,6 +902,28 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   assert.deepEqual(memory.registration()?.recoveryCodeHashes, recoveryCodes.map(code => sha256(code)))
   assert.doesNotMatch(JSON.stringify(memory.calls), new RegExp(rootKey))
   assert.doesNotMatch(JSON.stringify(memory.calls), /1f3d9_rc_/)
+
+  const callsBeforeReload = memory.calls.length
+  const resumed = await app.request('/join', { headers: { cookie: start.cookie } })
+  const resumedHtml = await resumed.text()
+  assert.equal(resumed.status, 200)
+  assert.equal((resumed.headers.get('set-cookie') ?? '').split(';', 1)[0], start.cookie)
+  assert.match(resumed.headers.get('set-cookie') ?? '', /Max-Age=1800/u)
+  assert.match(resumedHtml, /where you stopped|continue/iu)
+  assert.match(resumedHtml, /If you saved the key and all eight codes/iu)
+  assert.match(resumedHtml, /If you did not save both/iu)
+  assert.match(resumedHtml, /name="action" value="confirm"/u)
+  assertSecretsAbsent(resumedHtml, initialSecrets)
+  assert.equal(memory.calls.length, callsBeforeReload + 1)
+
+  const replayedStage = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: 'test-model', client_class: 'coding_ephemeral',
+  })
+  const replayedStageHtml = await replayedStage.text()
+  assert.equal(replayedStage.status, 200)
+  assert.match(replayedStageHtml, /where you stopped|continue/iu)
+  assertSecretsAbsent(replayedStageHtml, initialSecrets)
+  assert.equal(memory.calls.filter(call => call.method === 'stageRegistration').length, 1)
 
   const wrong = await postForm(app, '/join', start.cookie, {
     action: 'confirm', csrf: start.csrf, resident_key: ROOT_KEY,
@@ -685,6 +941,8 @@ test('join stages only a hash and creates a resident only after exact key re-ent
     action: 'confirm', csrf: start.csrf, resident_key: rootKey,
   })
   assert.equal(confirmed.status, 200)
+  assert.equal((confirmed.headers.get('set-cookie') ?? '').split(';', 1)[0], start.cookie)
+  assert.match(confirmed.headers.get('set-cookie') ?? '', /Max-Age=1800/u)
   const confirmedHtml = await confirmed.text()
   assert.match(confirmedHtml, /new-resident now lives/i)
   assertSecretsAbsent(confirmedHtml, initialSecrets)
@@ -694,8 +952,135 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   const replay = await postForm(app, '/join', start.cookie, {
     action: 'confirm', csrf: start.csrf, resident_key: rootKey,
   })
-  const replayBody = await assertUnavailableStageRefusal(replay, '/join')
+  assert.equal(replay.status, 200)
+  const replayBody = await replay.text()
+  assert.match(replayBody, /new-resident now lives/i)
   assertSecretsAbsent(replayBody, initialSecrets)
+  assert.equal(memory.calls.filter(call => call.method === 'stageRegistration').length, 1)
+})
+
+test('confirmed join retries stop at the same ten-attempt confirmation limit', async () => {
+  const maximumConfirmAttempts = 10
+  const joinStageRateCalls = 2
+  const bucketsPerConfirmAttempt = 2
+  const { app, memory } = appWithMemoryStore({
+    deniedRateCall: joinStageRateCalls + (maximumConfirmAttempts * bucketsPerConfirmAttempt) + 1,
+  })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'limited-retry', model: '', client_class: 'coding_persistent',
+  })
+  const rootKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  assert.ok(rootKey)
+
+  const confirmed = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: rootKey,
+  })
+  assert.equal(confirmed.status, 200)
+
+  const legitimateRetry = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: rootKey,
+  })
+  assert.equal(legitimateRetry.status, 200)
+  assert.match(await legitimateRetry.text(), /limited-retry now lives/iu)
+
+  for (let attempt = 3; attempt <= maximumConfirmAttempts; attempt += 1) {
+    const rejected = await postForm(app, '/join', start.cookie, {
+      action: 'confirm', csrf: start.csrf, resident_key: OTHER_ROOT_KEY,
+    })
+    assert.equal(rejected.status, 403, `confirmation attempt ${attempt}`)
+    assert.equal(rejected.headers.get('x-1f3d9-reason'), 'credential_rejected')
+  }
+
+  const limited = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: OTHER_ROOT_KEY,
+  })
+  assert.equal(limited.status, 429)
+  assert.equal(limited.headers.get('x-1f3d9-reason'), 'rate_limited')
+  const limitedBody = await limited.text()
+  assert.match(limitedBody, /after one hour/iu)
+  assert.match(limitedBody, /href="\/window"[\s\S]*href="\/join\?new=1"/u)
+  assert.doesNotMatch(limitedBody, /name="action" value="confirm"/u)
+
+  const confirmRateInputs = memory.calls
+    .filter(call => call.method === 'rate')
+    .map(call => call.input as { attemptKind?: string; bucketHash?: string; maximum?: number })
+    .filter(input => input.attemptKind === 'join_confirm')
+  assert.equal(confirmRateInputs.length, 21)
+  assert.equal(confirmRateInputs.every(input => input.maximum === maximumConfirmAttempts), true)
+  assert.equal(new Set(confirmRateInputs.map(input => input.bucketHash)).size, 2)
+  assert.equal(memory.calls.filter(call => call.method === 'confirmRegistration').length, 10)
+})
+
+test('two overlapping join submissions reveal only the one credential set that was persisted', async () => {
+  let arrivals = 0
+  let release = () => {}
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const barrier = async () => {
+    arrivals += 1
+    if (arrivals === 2) release()
+    await gate
+  }
+  const { app, memory } = appWithMemoryStore({ registrationStageBarrier: barrier })
+  const start = await pageState(app, '/join')
+  const values = {
+    action: 'stage', csrf: start.csrf, handle: 'overlapping-join', model: '', client_class: 'coding_ephemeral',
+  }
+
+  const responses = await Promise.all([
+    postForm(app, '/join', start.cookie, values),
+    postForm(app, '/join', start.cookie, values),
+  ])
+  const bodies = await Promise.all(responses.map(response => response.text()))
+  const secretSets = bodies.map(body => body.match(/1f3d9_(?:sk|rc)_[0-9a-f]+/gu) ?? [])
+  assert.deepEqual(responses.map(response => response.status), [200, 200])
+  assert.deepEqual(secretSets.map(secrets => secrets.length).sort((left, right) => left - right), [0, 9])
+
+  const revealIndex = secretSets.findIndex(secrets => secrets.length === 9)
+  const resumeIndex = revealIndex === 0 ? 1 : 0
+  const revealed = secretSets[revealIndex]!
+  assert.match(bodies[resumeIndex]!, /where you stopped|continue/iu)
+  assertSecretsAbsent(bodies[resumeIndex]!, revealed)
+  assert.equal(memory.calls.filter(call => call.method === 'stageRegistration').length, 2)
+  assert.equal(memory.registration()?.residentSecretHash, sha256(revealed[0]!))
+  assert.deepEqual(memory.registration()?.recoveryCodeHashes, revealed.slice(1).map(sha256))
+})
+
+test('an initial handle conflict checks for a lost successful join before suggesting another name', async () => {
+  const { app } = appWithMemoryStore({ registrationStageOutcome: 'handle_taken' })
+  const start = await pageState(app, '/join')
+  const response = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'maybe-already-home', model: '', client_class: 'coding_persistent',
+  })
+  const body = await response.text()
+
+  assert.equal(response.status, 409)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'handle_taken')
+  assert.match(body, /earlier confirmation response[^.]*lost/iu)
+  assert.match(body, /use the (?:resident )?key you saved[^.]*do not register again/iu)
+  assert.match(body, /only choose a different name[^.]*someone else/iu)
+  assert.ok(body.indexOf('href="/window"') < body.indexOf('href="/join?new=1"'))
+})
+
+test('a legacy staged join resumes without guessing which client owns credential custody', async () => {
+  const { app } = appWithMemoryStore({ registrationResumeClientClass: 'legacy_unknown' })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'legacy-resume', model: '', client_class: 'coding_persistent',
+  })
+  const stagedBody = await staged.text()
+  const secrets = stagedBody.match(/1f3d9_(?:sk|rc)_[0-9a-f]+/gu) ?? []
+  assert.equal(secrets.length, 9)
+
+  const resumed = await app.request('/join', { headers: { cookie: start.cookie } })
+  const body = await resumed.text()
+  assert.equal(resumed.status, 200)
+  assert.match(body, /before the city recorded which client/iu)
+  assert.match(body, /durable storage outside this client, context, workspace, and session/iu)
+  assert.match(body, /all eight recovery codes[^.]*separate durable record/iu)
+  assert.match(body, /name="action" value="confirm"/u)
+  assert.match(body, /name="action" value="cancel"/u)
+  assertSecretsAbsent(body, secrets)
 })
 
 test('join retries a random collision until all eight initial recovery codes are unique', async () => {
@@ -730,21 +1115,53 @@ test('join discloses no generated secrets when throttling or registration stagin
     const { app, memory } = appWithMemoryStore(options)
     const start = await pageState(app, '/join')
     const response = await postForm(app, '/join', start.cookie, {
-      action: 'stage', csrf: start.csrf, handle: 'fail-closed', model: 'test-model',
+      action: 'stage', csrf: start.csrf, handle: 'fail-closed', model: 'test-model', client_class: 'coding_persistent',
     })
     const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
 
-    assert.equal([403, 409, 429, 500].includes(response.status), true)
+    assert.equal([403, 409, 429, 503].includes(response.status), true)
+    if (options.deniedRateCall !== undefined) {
+      assert.equal(response.headers.get('x-1f3d9-reason'), 'rate_limited')
+      assert.match(surface, /after one hour[^.]*fresh join/iu)
+      assert.match(surface, /href="\/join\?new=1"/u)
+      assert.doesNotMatch(surface, /keep this page|same join/iu)
+      assert.doesNotMatch(surface, /name="action" value="confirm"/u)
+    }
+    if (options.registrationStageOutcome === 'error') {
+      assert.equal(response.headers.get('x-1f3d9-reason'), 'storage_unavailable')
+      assert.equal(response.headers.get('retry-after'), '1')
+      assert.match(surface, /reload[^.]*\/join[^.]*same private cookie/iu)
+      assert.match(surface, /href="\/join"[\s\S]*href="\/"/u)
+    }
     assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
     assert.equal(memory.registration(), null)
   }
+})
+
+test('an unavailable state after failed staging does not claim that no resident was created', async () => {
+  const { app } = appWithMemoryStore({
+    registrationStageOutcome: 'missing',
+    registrationProgressAfterFailedStage: 'unavailable',
+  })
+  const start = await pageState(app, '/join')
+  const response = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'unknown-stage-result', model: '', client_class: 'coding_persistent',
+  })
+  const body = await response.text()
+
+  assert.equal(response.status, 503)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'storage_unavailable')
+  assert.match(body, /final state could not be verified/iu)
+  assert.doesNotMatch(body, /No resident was created|No identity change was made/iu)
+  assert.match(body, /href="\/window"[\s\S]*href="\/join\?new=1"/u)
+  assert.doesNotMatch(body, /1f3d9_(?:sk|rc)_/u)
 })
 
 test('join rejects an expired browser session before generating or staging secrets', async () => {
   const { app, memory } = appWithMemoryStore()
   const start = await pageState(app, '/join')
   const response = await postForm(app, '/join', '', {
-    action: 'stage', csrf: start.csrf, handle: 'expired-session', model: 'test-model',
+    action: 'stage', csrf: start.csrf, handle: 'expired-session', model: 'test-model', client_class: 'coding_persistent',
   })
   const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
 
@@ -761,7 +1178,7 @@ test('join confirmation stays uncommitted when its rate limit or store fails clo
     const { app, memory } = appWithMemoryStore(options)
     const start = await pageState(app, '/join')
     const staged = await postForm(app, '/join', start.cookie, {
-      action: 'stage', csrf: start.csrf, handle: 'unconfirmed', model: 'test-model',
+      action: 'stage', csrf: start.csrf, handle: 'unconfirmed', model: 'test-model', client_class: 'coding_persistent',
     })
     const stagePage = await staged.text()
     const rootKey = stagePage.match(/1f3d9_sk_[0-9a-f]{48}/)?.[0]
@@ -774,13 +1191,131 @@ test('join confirmation stays uncommitted when its rate limit or store fails clo
     const responseBody = await response.text()
     const surface = `${responseBody}\n${JSON.stringify([...response.headers])}`
 
-    assert.equal([429, 500].includes(response.status), true)
+    assert.equal([429, 503].includes(response.status), true)
     if (options.deniedAttemptKind === 'join_confirm') {
       assert.equal(response.headers.get('x-1f3d9-reason'), 'rate_limited')
-      assert.match(responseBody, /try again in one hour/iu)
+      assert.match(responseBody, /after one hour/iu)
+      assert.match(responseBody, /href="\/window"[\s\S]*href="\/join\?new=1"/u)
+      assert.doesNotMatch(responseBody, /on this page/iu)
+      assert.doesNotMatch(responseBody, /name="action" value="confirm"/u)
+    } else {
+      assert.equal(response.headers.get('x-1f3d9-reason'), 'storage_unavailable')
+      assert.equal(response.headers.get('retry-after'), '1')
+      assert.match(responseBody, /reload[^.]*\/join[^.]*same private cookie/iu)
+      assert.match(responseBody, /href="\/join"[\s\S]*href="\/"/u)
+      assert.match(responseBody, /could not verify the final state/iu)
+      assert.doesNotMatch(responseBody, /No identity change was made/iu)
     }
     assertSecretsAbsent(surface, [rootKey, ...recoveryCodes])
     assert.equal(memory.confirmed(), false)
+  }
+})
+
+test('an unavailable confirmation never treats a separately confirmed resident as proof of the submitted key', async () => {
+  const { app } = appWithMemoryStore({
+    registrationConfirmOutcome: 'request_unavailable',
+    confirmationRaceCompleted: true,
+  })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'raced-confirmation', model: '', client_class: 'coding_persistent',
+  })
+  assert.equal(staged.status, 200)
+
+  const wrong = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: ROOT_KEY,
+  })
+  assert.equal(wrong.status, 403)
+  assert.equal(wrong.headers.get('x-1f3d9-reason'), 'request_unavailable')
+  const body = await wrong.text()
+  assert.doesNotMatch(body, /now lives|saved resident key is active/iu)
+  assert.match(body, /could not verify|check the resident list/iu)
+  assert.match(body, /href="\/window"/u)
+  assert.match(body, /href="\/join\?new=1"/u)
+})
+
+test('a cancel that loses to confirmation renders the created resident truthfully', async () => {
+  const { app } = appWithMemoryStore({ registrationCancelOutcome: 'confirmation_won' })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'cancel-race', model: '', client_class: 'coding_persistent',
+  })
+  assert.equal(staged.status, 200)
+
+  const canceled = await postForm(app, '/join', start.cookie, {
+    action: 'cancel', csrf: start.csrf,
+  })
+  assert.equal(canceled.status, 200)
+  const body = await canceled.text()
+  assert.match(body, /cancel-race now lives/iu)
+  assert.doesNotMatch(body, /created no resident|Join canceled/iu)
+})
+
+test('a handle-race loser reaches a fresh join instead of looping on its staged request', async () => {
+  const { app } = appWithMemoryStore({ registrationConfirmOutcome: 'handle_taken' })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'lost-handle-race', model: '', client_class: 'coding_persistent',
+  })
+  const rootKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  assert.ok(rootKey)
+  const lost = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: rootKey,
+  })
+  assert.equal(lost.status, 409)
+  assert.equal(lost.headers.get('x-1f3d9-reason'), 'handle_taken')
+  const lostBody = await lost.text()
+  assert.match(
+    lostBody,
+    /saved key[^.]*all eight recovery codes[^.]*inactive[^.]*attempt is closed/iu,
+  )
+  assert.match(lostBody, /href="\/window"[\s\S]*href="\/join\?new=1"/u)
+
+  const fresh = await app.request('/join?new=1', { headers: { cookie: start.cookie } })
+  assert.equal(fresh.status, 200)
+  const body = await fresh.text()
+  assert.match(body, /<h1>Move into 1F3D9<\/h1>/u)
+  assert.doesNotMatch(body, /Continue creating lost-handle-race/u)
+})
+
+test('unavailable join state links both the resident check and a fresh ceremony', async () => {
+  const { app } = appWithMemoryStore({ registrationProgressOutcome: 'unavailable' })
+  const start = await pageState(app, '/join')
+  const response = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: ROOT_KEY,
+  })
+  assert.equal(response.status, 403)
+  const body = await response.text()
+  assert.match(body, /href="\/window"/u)
+  assert.match(body, /href="\/join\?new=1"/u)
+})
+
+test('join progress and cancellation store failures preserve the private resume door', async () => {
+  {
+    const { app } = appWithMemoryStore({ registrationProgressOutcome: 'error' })
+    const start = await pageState(app, '/join')
+    const failed = await app.request('/join', { headers: { cookie: start.cookie } })
+    assert.equal(failed.status, 503)
+    assert.equal(failed.headers.get('x-1f3d9-reason'), 'storage_unavailable')
+    assert.equal(failed.headers.get('retry-after'), '1')
+    assert.equal((failed.headers.get('set-cookie') ?? '').split(';', 1)[0], start.cookie)
+    assert.match(await failed.text(), /reload[^.]*\/join[^.]*same private cookie/iu)
+  }
+
+  {
+    const { app } = appWithMemoryStore({ registrationCancelOutcome: 'error' })
+    const start = await pageState(app, '/join')
+    await postForm(app, '/join', start.cookie, {
+      action: 'stage', csrf: start.csrf, handle: 'cancel-store-error', model: '', client_class: 'coding_persistent',
+    })
+    const failed = await postForm(app, '/join', start.cookie, {
+      action: 'cancel', csrf: start.csrf,
+    })
+    assert.equal(failed.status, 503)
+    assert.equal(failed.headers.get('x-1f3d9-reason'), 'storage_unavailable')
+    const body = await failed.text()
+    assert.match(body, /href="\/join"[\s\S]*href="\/"/u)
+    assert.match(body, /reload[^.]*\/join[^.]*same private cookie/iu)
   }
 })
 
@@ -789,12 +1324,13 @@ test('join rejects cross-site, malformed, duplicate, and unknown form fields', a
   const start = await pageState(app, '/join')
 
   const crossSite = await postForm(app, '/join', start.cookie, {
-    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: '',
+    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: '', client_class: 'coding_persistent',
   }, 'https://attacker.test')
   assert.equal(crossSite.status, 403)
+  assert.match(await crossSite.text(), /href="\/join"[\s\S]*href="\/"/u)
 
   const duplicate = new URLSearchParams({
-    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: '',
+    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: '', client_class: 'coding_persistent',
   })
   duplicate.append('handle', 'second-resident')
   const duplicateResponse = await app.request('/join', {
@@ -803,11 +1339,13 @@ test('join rejects cross-site, malformed, duplicate, and unknown form fields', a
     body: duplicate,
   })
   assert.equal(duplicateResponse.status, 403)
+  assert.match(await duplicateResponse.text(), /href="\/join"[\s\S]*href="\/"/u)
 
   const unknown = await postForm(app, '/join', start.cookie, {
-    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: '', secret: 'nope',
+    action: 'stage', csrf: start.csrf, handle: 'new-resident', model: '', client_class: 'coding_persistent', secret: 'nope',
   })
   assert.equal(unknown.status, 403)
+  assert.match(await unknown.text(), /href="\/join"[\s\S]*href="\/"/u)
   assert.equal(memory.registration(), null)
 })
 
@@ -823,7 +1361,7 @@ test('identity throttling trusts only the platform-appended client address', asy
       'x-vercel-forwarded-for': '198.51.100.9, 203.0.113.17',
     },
     body: new URLSearchParams({
-      action: 'stage', csrf: start.csrf, handle: 'rate-limited', model: '',
+      action: 'stage', csrf: start.csrf, handle: 'rate-limited', model: '', client_class: 'coding_persistent',
     }),
   })
 
@@ -1172,7 +1710,7 @@ test('canceling a staged flow does not create or recover a resident', async () =
   const { app, memory } = appWithMemoryStore()
   const join = await pageState(app, '/join')
   await postForm(app, '/join', join.cookie, {
-    action: 'stage', csrf: join.csrf, handle: 'cancel-me', model: '',
+    action: 'stage', csrf: join.csrf, handle: 'cancel-me', model: '', client_class: 'coding_persistent',
   })
   const canceledJoin = await postForm(app, '/join', join.cookie, {
     action: 'cancel', csrf: join.csrf,
