@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { HANDLE_RE } from './core.ts'
+import { takePayPalCreditRateLimit } from './paypal-credit-store.ts'
 import {
   acceptCreditGift,
   PrepaidCreditConflictError,
@@ -10,12 +12,14 @@ import type { CityCreditDatabase } from './city-credit.ts'
 
 const GIFT_PUBLIC_ID_RE = /^city_gift_[0-9a-f]{32}$/u
 const MAX_ACTION_BODY_BYTES = 1_024
+const GIFT_REDIRECTS_PER_CALLER_HOUR = 30
 
 type AuthenticatedResident = Readonly<{ id: number; handle?: string }>
 
 export interface PrepaidCreditGiftRouteDependencies {
   authenticate(c: Context): Promise<AuthenticatedResident | null>
   database: CityCreditDatabase
+  environment?: Readonly<Record<string, string | undefined>>
 }
 
 function privateHeaders(c: Context): void {
@@ -30,6 +34,37 @@ function hasNoQueryOptions(c: Context): boolean {
 
 function safeGiftId(value: string): string | null {
   return GIFT_PUBLIC_ID_RE.test(value) ? value : null
+}
+
+function callerAddress(
+  c: Context,
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  if (environment.VERCEL !== '1') return 'local-or-unattributed'
+  return c.req.header('x-vercel-forwarded-for')
+    ?.split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .at(-1) ?? 'unattributed'
+}
+
+async function requireGiftRedirectRateSlot(
+  c: Context,
+  dependencies: PrepaidCreditGiftRouteDependencies,
+): Promise<Response | null> {
+  const address = callerAddress(c, dependencies.environment ?? process.env)
+  const callerHash = createHash('sha256')
+    .update(`prepaid-credit:gift-redirect:anonymous:${address}`, 'utf8')
+    .digest('hex')
+  if (await takePayPalCreditRateLimit(
+    dependencies.database,
+    callerHash,
+    GIFT_REDIRECTS_PER_CALLER_HOUR,
+  )) return null
+  c.header('Retry-After', '3600')
+  return c.json({
+    error: 'Too many gift redirect attempts were received. Wait one hour before trying a gift redirect again.',
+  }, 429)
 }
 
 async function boundedBody(c: Context): Promise<string | null> {
@@ -183,6 +218,8 @@ export function mountPrepaidCreditGiftRoutes(
     if (!hasNoQueryOptions(c)) return c.json({ error: 'gift redirect accepts no query options' }, 400)
     const giftId = safeGiftId(c.req.param('giftId'))
     if (!giftId) return c.json({ error: 'gift id is invalid' }, 400)
+    const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
+    if (rateLimitResponse) return rateLimitResponse
     const input = await redirectInput(c)
     if (!input) {
       return c.json({

@@ -376,6 +376,8 @@ test('all resident-facing contract mirrors carry the consultation promises', () 
     assert.match(text, /receipt/iu, `${name}: durable receipts`)
     assert.match(text, /x402|crypto/iu, `${name}: existing crypto rail`)
   }
+  assert.match(llms, /gift redirect[\s\S]{0,240}30[\s\S]{0,120}(?:caller|hour)/iu)
+  assert.match(systemDesign, /gift redirect[\s\S]{0,240}30[\s\S]{0,120}(?:caller|hour)/iu)
 
   assert.match(architecture, /append-only|durable[\s\S]{0,120}receipt/iu)
   assert.match(architecture, /nonnegative/iu)
@@ -392,6 +394,8 @@ test('all resident-facing contract mirrors carry the consultation promises', () 
   ] as const) {
     assert.match(text, /purchase|\/buy/iu, `${name}: actionable prepaid credit`)
     assert.match(text, /gift[\s\S]{0,320}accept/iu, `${name}: gift acceptance`)
+    assert.match(text, /redirect[\s\S]{0,240}30[\s\S]{0,120}(?:caller|hour)/iu,
+      `${name}: redirect rate contract`)
     assert.doesNotMatch(text, /founder-issued city fee credit is one fixed \$1|only the founder (?:creates|can issue)/iu)
   }
 

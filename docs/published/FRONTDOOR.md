@@ -636,6 +636,8 @@ The same token remains bound to that one purchase and may redirect it more than 
 while pending or refused; each new redirect gets one private receipt. Reuse a request_id
 only to replay its exact same target; another redirect needs a new request_id. No
 redirect reveals or needs the purchaser's identity.
+Gift redirect admits 30 attempts per caller per hour. A 429 includes
+Retry-After: 3600; wait for that delay before trying a gift redirect again.
 The human `/gift-redirect` recovery door remains available for an existing gift; it
 keeps the claim token only in that page and clears it after confirmed success.
 

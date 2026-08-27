@@ -165,6 +165,8 @@ test('gift redirect remains a standalone non-PayPal recovery door', () => {
   assert.match(html, /data-gift-redirect-page/u)
   assert.match(html, /data-resident-lookup="\/api\/city-credit\/gifts\/residents"/u)
   assert.match(html, /stays available even when new PayPal purchases are off/iu)
+  assert.match(html, /30 redirect attempts per caller per hour/iu)
+  assert.match(html, /429[\s\S]{0,120}Retry-After: 3600/iu)
   assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /giftRedirectBasePath/iu)
   assert.doesNotMatch(`${html}\n${CREDIT_GIFT_REDIRECT_PAGE_JS}`, /PAYPAL_CLIENT|paypal\/orders/iu)
 })

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  MemoryPayPalDatabase,
   ORDER_ID,
   SUBSCRIPTION_ID,
   WEBHOOK_HEADERS,
@@ -9,6 +10,82 @@ import {
   postJson,
   postRaw,
 } from './paypal-credit-route-fixture.ts'
+
+test('unverified PayPal webhooks cannot create credit, ledger rows, or delivery evidence', async t => {
+  const cases = [
+    {
+      name: 'verification_status FAILURE',
+      verifier: () => Response.json({ verification_status: 'FAILURE' }),
+      status: 401,
+      error: /signature was not verified/iu,
+      retryExactEvent: undefined,
+    },
+    {
+      name: 'malformed verification response',
+      verifier: () => new Response('{', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+      status: 503,
+      error: /temporarily unavailable[\s\S]*retry this exact event/iu,
+      retryExactEvent: true,
+    },
+    {
+      name: 'verification endpoint outage',
+      verifier: () => Response.json(
+        { name: 'SERVICE_UNAVAILABLE' },
+        { status: 503 },
+      ),
+      status: 503,
+      error: /temporarily unavailable[\s\S]*retry this exact event/iu,
+      retryExactEvent: true,
+    },
+  ] as const
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const database = new MemoryPayPalDatabase()
+      const { app, paypal } = configuredApp(database, {
+        verifyWebhook: testCase.verifier,
+      })
+      const order = await app.request('/api/city-credit/paypal/orders', postJson({
+        request_id: `paypal-webhook-rejection-${testCase.status}-${database.calls.length}`,
+        resident_number: 193,
+        resident_handle: 'keeps-the-maybe',
+        amount_dollars: '3',
+        delivery: 'self',
+      }, { authorization: 'Bearer resident-193' }))
+      assert.equal(order.status, 201, await order.clone().text())
+
+      const response = await app.request('/api/city-credit/paypal/webhook',
+        postRaw(completedCaptureWebhook(`WH-REJECT-${testCase.status}-${database.calls.length}`),
+          WEBHOOK_HEADERS))
+      assert.equal(response.status, testCase.status, await response.clone().text())
+      const body = await response.json() as Record<string, unknown>
+      assert.match(String(body.error), testCase.error)
+      assert.equal(body.paypal_should_retry_exact_event, testCase.retryExactEvent)
+
+      assert.equal(database.purchases.size, 0, 'rejected evidence must create no credit ledger row')
+      assert.equal(database.events.size, 0, 'rejected evidence must create no durable delivery')
+      assert.equal(
+        database.calls.filter(call => call.text.includes('paypal-credit:deliver-atomic')).length,
+        0,
+        'rejected evidence must never reach credit delivery',
+      )
+      assert.equal(
+        [...database.intents.values()][0]?.status,
+        'approval_pending',
+        'the matching purchase must remain undelivered',
+      )
+      assert.equal(
+        paypal.calls.filter(call => (
+          call.url.endsWith('/v1/notifications/verify-webhook-signature')
+        )).length,
+        1,
+      )
+    })
+  }
+})
 
 test('a raw verified capture webhook delivers the bound gift once on replay', async () => {
   const { app, database, paypal } = configuredApp()

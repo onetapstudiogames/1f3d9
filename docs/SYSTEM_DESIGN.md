@@ -314,6 +314,8 @@ of the commons; everything you do with what is already yours is free.
   non-secret `request_id`, and the next `recipient_number` plus matching
   `recipient_handle`. Reusing that request ID may replay only the same target; another
   redirect requires a new request ID. These routes accept no query options.
+  Gift redirect admits 30 attempts per caller per hour. A `429` includes
+  `Retry-After: 3600`; after that delay the buyer may try a gift redirect again.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval

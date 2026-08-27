@@ -237,7 +237,11 @@ export class MemoryPayPalDatabase implements PayPalCreditStoreDatabase {
   }
 }
 
-export function paypalFetcher() {
+type PayPalFetcherOptions = Readonly<{
+  verifyWebhook?: () => Response | Promise<Response>
+}>
+
+export function paypalFetcher(options: PayPalFetcherOptions = {}) {
   const calls: Array<Readonly<{ url: string; init: RequestInit | undefined }>> = []
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
@@ -273,7 +277,9 @@ export function paypalFetcher() {
       }, { status: 201 })
     }
     if (url.endsWith('/v1/notifications/verify-webhook-signature')) {
-      return Response.json({ verification_status: 'SUCCESS' })
+      return options.verifyWebhook
+        ? await options.verifyWebhook()
+        : Response.json({ verification_status: 'SUCCESS' })
     }
     if (url.endsWith('/v1/catalogs/products')) {
       return Response.json({ id: 'PROD-6XB24663H4094933M' }, { status: 201 })
@@ -295,8 +301,11 @@ export function paypalFetcher() {
   return { fetcher, calls }
 }
 
-export function configuredApp(database = new MemoryPayPalDatabase()) {
-  const paypal = paypalFetcher()
+export function configuredApp(
+  database = new MemoryPayPalDatabase(),
+  options: PayPalFetcherOptions = {},
+) {
+  const paypal = paypalFetcher(options)
   const app = new Hono()
   mountPayPalCreditRoutes(app, {
     database,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { Hono, type Context } from 'hono'
 import { mountPrepaidCreditGiftRoutes } from '../src/prepaid-credit-routes.ts'
@@ -18,7 +19,12 @@ function postJson(value: unknown): RequestInit {
   }
 }
 
-function appFor(input: { authenticated?: boolean; targetMatches?: boolean } = {}) {
+function appFor(input: {
+  authenticated?: boolean
+  targetMatches?: boolean
+  redirectRateLimited?: boolean
+  vercel?: boolean
+} = {}) {
   const calls: Array<{ text: string; params: readonly unknown[] }> = []
   const app = new Hono()
   mountPrepaidCreditGiftRoutes(app, {
@@ -28,6 +34,9 @@ function appFor(input: { authenticated?: boolean; targetMatches?: boolean } = {}
     database: {
       query: async (text: string, params: readonly unknown[] = []) => {
         calls.push({ text, params })
+        if (text.includes('paypal-credit:rate-limit')) {
+          return input.redirectRateLimited ? [] : [{ used: 1 }]
+        }
         if (text.includes('prepaid-credit-routes:resident-lookup')) {
           return input.targetMatches === false ? [] : [{ id: 8, handle: 'resident-eight' }]
         }
@@ -46,6 +55,7 @@ function appFor(input: { authenticated?: boolean; targetMatches?: boolean } = {}
         return []
       },
     },
+    environment: { VERCEL: input.vercel ? '1' : '0' },
   })
   return { app, calls }
 }
@@ -128,6 +138,41 @@ test('the buyer claim token redirects only after number and handle confirm the s
     8,
     'gift-redirect-browser-0001',
   ])
+})
+
+test('gift redirect rate limits token guesses before resident lookup or redirect work', async () => {
+  const limited = appFor({ redirectRateLimited: true, vercel: true })
+  const request = postJson({
+    claim_token: CLAIM_TOKEN,
+    recipient_number: 8,
+    recipient_handle: 'resident-eight',
+    request_id: 'gift-redirect-browser-0001',
+  })
+  const response = await limited.app.request(
+    `/api/city-credit/gifts/${GIFT_ID}/redirect`,
+    {
+      ...request,
+      headers: {
+        ...request.headers,
+        'x-vercel-forwarded-for': '198.51.100.9, 203.0.113.17',
+      },
+    },
+  )
+
+  assert.equal(response.status, 429)
+  assert.equal(response.headers.get('retry-after'), '3600')
+  assert.deepEqual(await response.json(), {
+    error: 'Too many gift redirect attempts were received. Wait one hour before trying a gift redirect again.',
+  })
+  assert.equal(limited.calls.length, 1)
+  assert.match(limited.calls[0]!.text, /paypal-credit:rate-limit/u)
+  assert.deepEqual(limited.calls[0]!.params, [
+    createHash('sha256')
+      .update('prepaid-credit:gift-redirect:anonymous:203.0.113.17', 'utf8')
+      .digest('hex'),
+    30,
+  ])
+  assert.equal(limited.calls.some(call => /resident-confirmation|gift-redirect/u.test(call.text)), false)
 })
 
 function expectHash(): string {
