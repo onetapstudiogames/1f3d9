@@ -23,6 +23,16 @@ import type {
   AuthorizationRequestRecord,
 } from '../src/oauth-store.ts'
 import { mountHumanPages } from '../src/human-pages.ts'
+import {
+  CREDIT_BUY_CSS,
+  CREDIT_BUY_JS,
+  renderCreditBuyPage,
+} from '../src/credit-buy-page.ts'
+import {
+  CREDIT_GIFT_REDIRECT_PAGE_CSS,
+  CREDIT_GIFT_REDIRECT_PAGE_JS,
+  renderCreditGiftRedirectPage,
+} from '../src/credit-gift-redirect.ts'
 import { windowPage, windowScript, windowStyle } from '../src/window.ts'
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
@@ -47,6 +57,9 @@ const noteExcerpt = 'The public note begins here'
 const noteFull = `${noteExcerpt}, then continues beyond the snapshot excerpt.`
 const thingExcerpt = 'A lantern with an abbreviated inscription'
 const thingFull = `${thingExcerpt}; the complete inscription is readable without signing in.`
+const creditPurchaseId = `city_paypal_${'ef'.repeat(16)}`
+const creditGiftId = `city_gift_${'ab'.repeat(16)}`
+const creditClaimToken = `gift_claim_${'cd'.repeat(32)}`
 
 const publicWindowFixture = Object.freeze({
   places: [{
@@ -824,9 +837,136 @@ const featureOffHumanPages = new Hono()
 mountHumanPages(featureOffHumanPages, { hostedChatSigninReady: () => false })
 app.route('/feature-off', featureOffHumanPages)
 mountHumanPages(app, { hostedChatSigninReady: () => true })
+app.get('/buy', c => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+  return c.html(renderCreditBuyPage({ weeklyAllowanceEnabled: true }))
+})
+app.get('/buy.css', c => {
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_BUY_CSS, 200, { 'Content-Type': 'text/css; charset=utf-8' })
+})
+app.get('/buy.js', c => {
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_BUY_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
+})
+app.get('/gift-redirect', c => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+  return c.html(renderCreditGiftRedirectPage())
+})
+app.get('/gift-redirect.css', c => {
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_GIFT_REDIRECT_PAGE_CSS, 200, { 'Content-Type': 'text/css; charset=utf-8' })
+})
+app.get('/gift-redirect.js', c => {
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_GIFT_REDIRECT_PAGE_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
+})
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
+app.get('/api/city-credit/paypal/residents/:number', c => {
+  c.header('Cache-Control', 'no-store')
+  if (c.req.param('number') !== '193') {
+    return c.json({ error: 'that resident number was not found; no payment was started' }, 404)
+  }
+  return c.json({ resident_number: 193, resident_handle: 'keeps-the-maybe' })
+})
+app.post('/api/city-credit/paypal/orders', async c => {
+  c.header('Cache-Control', 'no-store')
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    body = null
+  }
+  const input = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : null
+  const exactKeys = input
+    ? Object.keys(input).sort().join(',') ===
+      'amount_dollars,delivery,request_id,resident_handle,resident_number'
+    : false
+  if (
+    !input || !exactKeys
+    || typeof input.request_id !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u.test(input.request_id)
+    || input.resident_number !== '193'
+    || input.resident_handle !== 'keeps-the-maybe'
+    || input.amount_dollars !== '3'
+    || input.delivery !== 'gift'
+  ) return c.json({ error: 'unexpected deterministic credit purchase request' }, 400)
+  return c.json({
+    purchase_id: creditPurchaseId,
+    approval_url: 'https://www.sandbox.paypal.com/checkoutnow?token=ORDER-E2E-CREDIT-0001',
+    claim_token: creditClaimToken,
+    claim_token_shown: true,
+    resident_number: 193,
+    resident_handle: 'keeps-the-maybe',
+  }, 201)
+})
+app.post('/api/city-credit/paypal/orders/:purchaseId/capture', async c => {
+  c.header('Cache-Control', 'no-store')
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    body = null
+  }
+  const input = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : null
+  if (
+    c.req.param('purchaseId') !== creditPurchaseId
+    || !input
+    || Object.keys(input).join(',') !== 'paypal_order_id'
+    || typeof input.paypal_order_id !== 'string'
+    || !/^[A-Za-z0-9._:-]{1,128}$/u.test(input.paypal_order_id)
+  ) return c.json({ error: 'unexpected deterministic credit capture request' }, 400)
+  return c.json({
+    purchase_id: creditPurchaseId,
+    resident_handle: 'keeps-the-maybe',
+    amount_dollars: '3',
+    delivery: 'gift',
+    status: 'pending',
+    receipt_id: 'e2e-credit-receipt-1',
+    gift_id: creditGiftId,
+  })
+})
+app.get('/api/city-credit/gifts/residents/:number', c => {
+  c.header('Cache-Control', 'no-store')
+  if (c.req.param('number') !== '194') {
+    return c.json({ error: 'that resident number was not found; nothing was redirected' }, 404)
+  }
+  return c.json({ resident_number: 194, resident_handle: 'devnull' })
+})
+app.post('/api/city-credit/gifts/:giftId/redirect', async c => {
+  c.header('Cache-Control', 'no-store')
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    body = null
+  }
+  const input = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : null
+  const exactKeys = input
+    ? Object.keys(input).sort().join(',') ===
+      'claim_token,recipient_handle,recipient_number,request_id'
+    : false
+  if (
+    c.req.param('giftId') !== creditGiftId
+    || !input || !exactKeys
+    || input.claim_token !== creditClaimToken
+    || input.recipient_number !== '194'
+    || input.recipient_handle !== 'devnull'
+    || typeof input.request_id !== 'string'
+    || !/^gift-redirect-[0-9a-f-]{36}$/u.test(input.request_id)
+  ) return c.json({ error: 'unexpected deterministic gift redirect request' }, 400)
+  return c.json({ gift_id: creditGiftId, status: 'pending' })
+})
 app.get('/api/window', c => {
   const url = new URL(c.req.url)
   const collection = url.searchParams.get('collection')

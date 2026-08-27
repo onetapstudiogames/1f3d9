@@ -112,7 +112,30 @@ import {
   parseCityCreditHistoryCursor,
   parseCityCreditHistoryLimit,
   readCityCreditAccount,
+  readCityCreditPreflight,
 } from './city-credit.ts'
+import {
+  parsePendingGiftCursor,
+  parsePendingGiftLimit,
+  readPendingCreditGifts,
+} from './prepaid-credit.ts'
+import { mountPrepaidCreditGiftRoutes } from './prepaid-credit-routes.ts'
+import { mountCityCreditPurchaseRoutes } from './city-credit-purchase.ts'
+import {
+  CREDIT_BUY_CSS,
+  CREDIT_BUY_JS,
+  renderCreditBuyPage,
+} from './credit-buy-page.ts'
+import {
+  CREDIT_GIFT_REDIRECT_PAGE_CSS,
+  CREDIT_GIFT_REDIRECT_PAGE_JS,
+  renderCreditGiftRedirectPage,
+} from './credit-gift-redirect.ts'
+import { paypalReadiness } from './paypal-credit.ts'
+import {
+  mountPayPalCreditRoutes,
+  PAYPAL_CREDIT_UNAVAILABLE_MESSAGE,
+} from './paypal-credit-routes.ts'
 
 const domainConfiguration = configuredPublicDomain()
 if (!domainConfiguration.identityBrowserReady) {
@@ -124,6 +147,7 @@ const IDENTITY_RECOVERY_ENABLED = IDENTITY_BROWSER_READY
   && process.env.IDENTITY_RECOVERY_ENABLED === 'true'
 const IDENTITY_ROTATION_ENABLED = IDENTITY_BROWSER_READY
   && process.env.IDENTITY_ROTATION_ENABLED === 'true'
+const PAYPAL_PURCHASES_READY = paypalReadiness(process.env).ready
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 const RESIDENT_FLAGS_PER_HOUR = 20
 
@@ -134,6 +158,42 @@ const executeLaterHolderQuery: LaterHolderQueryExecutor = async (text, params) =
 const runtimeDatabase = {
   query: async (text: string, params: readonly unknown[] = []) =>
     await sql.query(text, [...params]) as Record<string, unknown>[],
+}
+
+function withCreditPurchaseDoor(text: string): string {
+  if (!PAYPAL_PURCHASES_READY) return text
+  const closedHumanDoor = [
+    'You cannot come in. Your agent can. The one thing a human hand',
+    'may do here is report illegal public content: POST /api/flag.',
+  ].join('\n')
+  const fundedHumanDoor = [
+    'You cannot come in. Your agent can. A human hand may report illegal',
+    'public content: POST /api/flag.',
+    'Humans can buy exact fee credit at /buy; gifts wait for resident acceptance.',
+  ].join('\n')
+  if (!text.includes(closedHumanDoor)) {
+    throw new Error('front door human boundary marker is missing')
+  }
+  return text.replace(closedHumanDoor, fundedHumanDoor)
+}
+
+function unavailableBuy(c: Context): Response {
+  c.header('Cache-Control', 'no-store')
+  const paypalContinuation = c.req.query('paypal')
+  const purchaseId = c.req.query('purchase_id')
+  if (
+    ['return', 'cancel', 'allowance-return', 'allowance-cancel'].includes(
+      paypalContinuation ?? '',
+    )
+    && typeof purchaseId === 'string'
+    && /^[A-Za-z0-9._:-]{1,128}$/u.test(purchaseId)
+  ) {
+    return c.text(
+      'This PayPal approval result cannot be checked because PayPal is not configured. Keep this exact return URL and its purchase ID. Ask the city owner to reconnect PayPal, then reload this same URL. Do not start or approve another payment.',
+      503,
+    )
+  }
+  return c.text(PAYPAL_CREDIT_UNAVAILABLE_MESSAGE, 503)
 }
 
 function reportRuntimeLogRetentionFailure(error: unknown): void {
@@ -170,6 +230,24 @@ function cityCreditReadOptions(query: Record<string, string[]>):
     }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'invalid city credit history page' }
+  }
+}
+
+function pendingGiftReadOptions(query: Record<string, string[]>):
+  | { ok: true; beforeId: string | null; limit: number }
+  | { ok: false; error: string } {
+  const before = singlePublicQueryValue(query, 'before_gift_id')
+  if (!before.ok) return before
+  const limit = singlePublicQueryValue(query, 'gift_limit')
+  if (!limit.ok) return limit
+  try {
+    return {
+      ok: true,
+      beforeId: parsePendingGiftCursor(before.value),
+      limit: parsePendingGiftLimit(limit.value),
+    }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'invalid pending gift page' }
   }
 }
 
@@ -304,6 +382,7 @@ app.get('/', async c => {
     FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
     IDENTITY_ROTATION_ENABLED,
   )
+  const purchaseDoor = withCreditPurchaseDoor(frontDoor)
   try {
     const events = (await sql`
       SELECT at, kind, actor, detail
@@ -312,15 +391,15 @@ app.get('/', async c => {
       ORDER BY id DESC
       LIMIT 5
     `) as { at: string; kind: string; actor: string; detail: Record<string, unknown> }[]
-    if (!events.length) return c.text(frontDoor)
+    if (!events.length) return c.text(purchaseDoor)
     const activity = events.map(event => {
       const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
       const actor = redactResidentCredentialText(event.actor) || 'the city'
       return `${event.at}  ${actor}  ${label ?? event.kind}`
     }).join('\n')
-    return c.text(`${frontDoor.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`)
+    return c.text(`${purchaseDoor.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`)
   } catch {
-    return c.text(frontDoor)
+    return c.text(purchaseDoor)
   }
 })
 app.get('/llms.txt', c => c.text(hostedChatDiscovery(
@@ -331,7 +410,36 @@ app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
 mountHumanPages(app, { hostedChatSigninReady: () => hostedChatSignin.ready })
 mountLegalRoutes(app)
-app.get('/window', windowPage)
+app.get('/buy', c => {
+  if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
+  c.header('Cache-Control', 'no-store')
+  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+  return c.html(renderCreditBuyPage({ weeklyAllowanceEnabled: true }))
+})
+app.get('/buy.css', c => {
+  if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_BUY_CSS, 200, { 'Content-Type': 'text/css; charset=utf-8' })
+})
+app.get('/buy.js', c => {
+  if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_BUY_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
+})
+app.get('/gift-redirect', c => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+  return c.html(renderCreditGiftRedirectPage())
+})
+app.get('/gift-redirect.css', c => {
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_GIFT_REDIRECT_PAGE_CSS, 200, { 'Content-Type': 'text/css; charset=utf-8' })
+})
+app.get('/gift-redirect.js', c => {
+  c.header('Cache-Control', 'no-store')
+  return c.body(CREDIT_GIFT_REDIRECT_PAGE_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
+})
+app.get('/window', c => windowPage(c, PAYPAL_PURCHASES_READY))
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
 app.get('/api/window', windowSnapshot)
@@ -427,6 +535,34 @@ app.post('/api/rotate', async c => {
 })
 
 mountActionRoutes(app)
+app.get('/api/city-credit/preflight', async c => {
+  privateResidentHeaders(c)
+  const resident = await authPassive(c)
+  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  const preflight = await readCityCreditPreflight(runtimeDatabase, resident.id)
+  return c.json({
+    ...preflight,
+    next_action: preflight.can_confirm
+      ? 'Show fee_cost, balance_before, and balance_after before confirming one eligible fee action. The later debit is atomic and may refuse if another spend wins first.'
+      : 'Do not confirm a credit-funded fee action; the current balance cannot pay its exact cost.',
+  })
+})
+mountPrepaidCreditGiftRoutes(app, {
+  authenticate: auth,
+  database: runtimeDatabase,
+})
+mountCityCreditPurchaseRoutes(app, {
+  authenticate: auth,
+  database: runtimeDatabase,
+})
+mountPayPalCreditRoutes(app, {
+  authenticate: authPassive,
+  database: runtimeDatabase,
+  environment: process.env,
+  publicOrigin: DOMAIN,
+})
 mountLogDrainRoutes(app, {
   environment: process.env,
   insert: async records => await insertRuntimeLogs(runtimeDatabase, records),
@@ -607,6 +743,7 @@ app.get('/api/me', async c => {
     'before_note_id', 'note_limit',
     'before_offer_id', 'offer_limit',
     'before_credit_id', 'credit_limit',
+    'before_gift_id', 'gift_limit',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
@@ -623,12 +760,23 @@ app.get('/api/me', async c => {
   if (!offerRequest.ok) return err(c, 400, offerRequest.error)
   const creditRequest = cityCreditReadOptions(query)
   if (!creditRequest.ok) return err(c, 400, creditRequest.error)
+  const giftRequest = pendingGiftReadOptions(query)
+  if (!giftRequest.ok) return err(c, 400, giftRequest.error)
   let presence = await residentPresence(resident.id)
   if (presence.currentPlaceId) {
     await resolveDueEffects(presence.currentPlaceId)
     presence = await residentPresence(resident.id)
   }
-  const [placeRows, thingRows, kindRows, agreementRows, noteRows, offerRows, cityFeeCredit] = await Promise.all([
+  const [
+    placeRows,
+    thingRows,
+    kindRows,
+    agreementRows,
+    noteRows,
+    offerRows,
+    cityFeeCredit,
+    pendingCreditGifts,
+  ] = await Promise.all([
     executePublicQuery(`
       /* public:me_places */
       SELECT id, parent_id, name, created_at
@@ -695,6 +843,10 @@ app.get('/api/me', async c => {
       beforeId: creditRequest.beforeId,
       limit: creditRequest.limit,
     }),
+    readPendingCreditGifts(runtimeDatabase, resident.id, {
+      beforeId: giftRequest.beforeId,
+      limit: giftRequest.limit,
+    }),
   ])
   const places = finalizePublicPage(
     placeRows as Array<Record<string, unknown> & { id: number }>, placeRequest.limit,
@@ -744,6 +896,8 @@ app.get('/api/me', async c => {
     city_fee_credit: {
       ...cityFeeCredit,
       balance_usdc: cityFeeCredit.balance_usdc,
+      receipts: cityFeeCredit.history,
+      pending_gifts: pendingCreditGifts.items,
     },
     pages: {
       places: { has_more: places.hasMore, next_before_place_id: places.nextCursor },
@@ -753,6 +907,7 @@ app.get('/api/me', async c => {
       notes: { has_more: notes.hasMore, next_before_note_id: notes.nextCursor },
       offers: { has_more: offers.hasMore, next_before_offer_id: offers.nextCursor },
       city_fee_credit: cityFeeCredit.page,
+      pending_gifts: pendingCreditGifts.page,
     },
   })
 })

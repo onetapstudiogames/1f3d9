@@ -42,6 +42,7 @@ type ToolPayload = {
     content?: Array<{ text: string }>
     tools?: Array<{
       name: string
+      description?: string
       inputSchema: { properties?: Record<string, unknown> }
     }>
   }
@@ -264,7 +265,35 @@ test('MCP rejects a credential-like credit request id before calling the city', 
   assert.match(response.result?.content?.[0]?.text ?? '', /credential|secret|request id|safe/iu)
 })
 
-test('MCP me forwards only private credit-history paging options', async () => {
+test('MCP preflight reads exact private fee facts without sending action fields', async () => {
+  let forwarded: Readonly<Record<string, unknown>> | null = null
+  const app = new Hono()
+  app.post('/mcp', c => mcp(c, app))
+  app.get('/api/city-credit/preflight', c => {
+    forwarded = Object.freeze({
+      path: c.req.path,
+      query: { ...c.req.query() },
+      authorization: c.req.header('authorization'),
+    })
+    return c.json({
+      fee_cost: '1.000000',
+      balance_before: '3.000000',
+      balance_after: '2.000000',
+      can_confirm: true,
+    })
+  })
+
+  const response = await callTool(app, 'credit_preflight', {})
+  assert.equal(response.result?.isError, false, response.result?.content?.[0]?.text)
+  assert.deepEqual(forwarded, {
+    path: '/api/city-credit/preflight',
+    query: {},
+    authorization: 'Bearer resident-secret',
+  })
+  assert.match(response.result?.content?.[0]?.text ?? '', /1\.000000[\s\S]*3\.000000[\s\S]*2\.000000/u)
+})
+
+test('MCP me independently forwards private receipt and pending-gift pages', async () => {
   const app = new Hono()
   app.post('/mcp', c => mcp(c, app))
   app.get('/api/me', c => c.json({
@@ -280,6 +309,8 @@ test('MCP me forwards only private credit-history paging options', async () => {
   const response = await callTool(app, 'me', {
     before_credit_id: 77,
     credit_limit: 25,
+    before_gift_id: 31,
+    gift_limit: 10,
   })
   assert.equal(response.result?.isError, false, response.result?.content?.[0]?.text)
   const forwarded = JSON.parse(response.result?.content?.[0]?.text ?? '{}') as {
@@ -289,7 +320,51 @@ test('MCP me forwards only private credit-history paging options', async () => {
     city_fee_credit: { balance_usdc: string }
   }
   assert.equal(forwarded.path, '/api/me')
-  assert.deepEqual(forwarded.query, { before_credit_id: '77', credit_limit: '25' })
+  assert.deepEqual(forwarded.query, {
+    before_credit_id: '77',
+    credit_limit: '25',
+    before_gift_id: '31',
+    gift_limit: '10',
+  })
   assert.equal(forwarded.authorization, 'Bearer resident-secret')
   assert.equal(forwarded.city_fee_credit.balance_usdc, '1.000000')
+})
+
+test('MCP recipients can accept or refuse a pending credit gift without exposing buyer secrets', async () => {
+  const app = new Hono()
+  app.post('/mcp', c => mcp(c, app))
+  app.post('/api/city-credit/gifts/:giftId/:action', async c => c.json({
+    gift_id: c.req.param('giftId'),
+    action: c.req.param('action'),
+    authorization: c.req.header('authorization'),
+    content_length: c.req.header('content-length'),
+    body: await c.req.json(),
+  }))
+
+  const listedResponse = await app.request('/mcp', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer resident-secret',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  })
+  const listed = await listedResponse.json() as ToolPayload
+  const tool = listed.result?.tools?.find(candidate => candidate.name === 'credit_gift')
+  assert.ok(tool)
+  assert.match(String(tool.description), /pending[\s\S]{0,220}accept[\s\S]{0,120}refus/iu)
+  assert.doesNotMatch(JSON.stringify(tool.inputSchema), /token|buyer|payer/iu)
+
+  for (const action of ['accept', 'refuse'] as const) {
+    const validGiftId = `city_gift_${(action === 'accept' ? 'ab' : 'cd').repeat(16)}`
+    const response = await callTool(app, 'credit_gift', { action, gift_id: validGiftId })
+    assert.equal(response.result?.isError, false, response.result?.content?.[0]?.text)
+    assert.deepEqual(JSON.parse(response.result?.content?.[0]?.text ?? '{}'), {
+      gift_id: validGiftId,
+      action,
+      authorization: 'Bearer resident-secret',
+      content_length: '2',
+      body: {},
+    })
+  }
 })

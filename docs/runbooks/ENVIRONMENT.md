@@ -34,6 +34,10 @@ files from this folder.
 | `FACILITATOR_URL` | x402 payment facilitator. Defaults to `https://facilitator.payai.network`. |
 | `TREASURY_ADDRESS` | Treasury recipient for city fees. |
 | `PAYMENT_CUSTODY_READY` | Must be exactly `1` before hosted payment custody operates. This gates money movement. |
+| `PAYPAL_CLIENT_ID` | Server-only client ID for the PayPal REST app in the environment selected by `PAYPAL_ENV`. Required for every PayPal credit route. |
+| `PAYPAL_CLIENT_SECRET` | Server-only secret for that same PayPal REST app. Never expose it to the browser, logs, source, or a command line. |
+| `PAYPAL_ENV` | Exact value `sandbox` or `live`. Activation always starts with `sandbox`; use `live` only after the complete sandbox order, capture, webhook, gift, and allowance checks pass. |
+| `PAYPAL_WEBHOOK_ID` | PayPal's ID for the webhook registered to this deployment and the same sandbox/live app. It is not the webhook URL or secret. |
 | `CRON_SECRET` | Bearer secret protecting `/api/internal/payment-recovery`, the five-minute Vercel cron. 32–512 printable characters. |
 | `LOG_DRAIN_SECRET` | HMAC secret protecting `POST /api/internal/log-drain`. It must exactly match the Vercel drain delivery secret and be 64 lowercase hexadecimal characters (32 random bytes). Until this is set and the drain is created, the receiver is dormant. |
 | `LATER_HOLDER_CURSOR_KEY` | Server-only 64-hex key deriving per-resident later-holder cursor tokens. Absent or malformed, that index answers 503. Rotation invalidates outstanding cursors; readers restart from the first page. Preview and production may differ; keep each stable. |
@@ -43,6 +47,87 @@ files from this folder.
 | `HOSTED_CHAT_OAUTH_CLIENTS` | Approved hosted-chat OAuth client registrations. |
 | `HOSTED_CHAT_CIMD_ORIGINS` | Allowed client-ID-metadata-document origins. |
 | `VERCEL`, `VERCEL_ENV`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` is what selects the preview database path above. |
+
+## PayPal prepaid-credit activation (dormant until all four values are set)
+
+The server-side PayPal integration uses Orders v2 for one-time purchases and
+Subscriptions for the weekly self allowance. PayPal hosts payment approval; the city
+never asks for or stores card data. Missing or invalid PayPal configuration is a valid
+dormant state: `/buy`, its assets, and every PayPal lookup, create, capture, subscription,
+and webhook route answer an operation-specific `503`. The page, lookup, order creation,
+and allowance creation say that no payment was started only for a fresh operation. A valid
+saved return or cancel URL may follow an approval, so dormant mode says to keep that exact
+URL and purchase ID, reconnect PayPal, and reload without starting another approval.
+Capture likewise retries the same purchase and order without paying again. Webhook delivery
+asks PayPal to retry that exact event. Do not advertise the buy door until the complete
+configuration is active. The separate `/gift-redirect` recovery door remains available
+because it starts no PayPal operation.
+
+Activate in this order:
+
+1. In the PayPal Developer Dashboard, create a **Sandbox** REST app for 1F3D9 under a
+   sandbox business account. Keep its client ID and client secret in the approved secret
+   manager. Do not paste either value into source, a prompt, shell history, or a public
+   issue. Leave production untouched.
+2. Add a sandbox webhook for the exact Vercel preview origin plus
+   `/api/city-credit/paypal/webhook`. Subscribe to exactly the implemented credit-delivery
+   events: `PAYMENT.CAPTURE.COMPLETED` for one-time Orders and
+   `PAYMENT.SALE.COMPLETED` for Subscription renewals. Save the PayPal-generated webhook
+   ID separately from the client secret.
+3. Apply `db/migrations/20260826_prepaid_city_credit.sql` to the isolated preview database.
+   Pre-set `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PREVIEW_BRANCH_ID`,
+   `NEON_PRODUCTION_BRANCH_ID`, and `PREVIEW_DATABASE_URL_UNPOOLED`; the migrator proves
+   that the direct database URL belongs to the named non-production branch. Then run:
+
+   ```sh
+   CONFIRM_PREPAID_CITY_CREDIT=INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY \
+   CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+   npm run migrate:preview:prepaid-city-credit
+   ```
+
+   Set the preview-only
+   `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV=sandbox`, and
+   `PAYPAL_WEBHOOK_ID` in Vercel. Redeploy the same reviewed commit; environment changes do
+   not alter an already-running deployment.
+4. In sandbox, complete one self order before testing anything live. Confirm the page
+   echoes the intended resident number and handle before leaving for PayPal, capture adds
+   the exact whole-dollar credit once, `/api/me` shows its private receipt, and a repeated
+   capture plus a replayed verified webhook adds nothing. Then test gift accept, refusal,
+   claim-token redirect (including another redirect while still pending or refused), and
+   one weekly allowance payment. Confirm no purchaser identity appears to either resident
+   or on a public surface. Record the real PayPal sandbox evidence; fake-backed tests are
+   not activation evidence.
+5. Only after step 4 passes, switch Apps & Credentials to **Live** and create or select
+   the production REST app, with its separate live client ID and secret. Register
+   `https://1f3d9.com/api/city-credit/paypal/webhook` with
+   `PAYMENT.CAPTURE.COMPLETED` and `PAYMENT.SALE.COMPLETED`, and copy that live webhook ID.
+   Before enabling routes, pre-set `NEON_API_KEY`, `NEON_PROJECT_ID`,
+   `NEON_PRODUCTION_BRANCH_ID`, `PRODUCTION_DATABASE_URL_UNPOOLED`, and a fresh safe
+   `PRODUCTION_SNAPSHOT_NAME`. The migrator proves the target, creates and verifies that
+   named snapshot, and then applies the production migration only through:
+
+   ```sh
+   CONFIRM_PREPAID_CITY_CREDIT=INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY \
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   npm run migrate:production:prepaid-city-credit
+   ```
+
+   Set the production
+   values from the live app with `PAYPAL_ENV=live`; never reuse a sandbox secret or webhook
+   ID. Redeploy the exact merged commit, verify an unconfigured-to-configured transition,
+   then use the smallest supported real order and a read-only or self-cleaning production
+   probe. Record what PayPal and `/api/me` actually returned.
+
+If any app, environment, webhook URL, webhook ID, event, amount, currency, resident
+number/handle, order ID, capture ID, or subscription ID is uncertain, stop before payment.
+Restore the complete matching configuration or return to the dormant `503` state; never
+mix sandbox and live identifiers. PayPal application approval, live settlement, card
+behavior, and live webhook delivery cannot be verified from repository tests alone.
+
+Provider references: [REST authentication](https://developer.paypal.com/api/rest/authentication/),
+[sandbox-to-production switch](https://developer.paypal.com/api/rest/production/),
+[webhook registration and Webhook ID](https://developer.paypal.com/api/rest/webhooks/rest/),
+and [event names](https://developer.paypal.com/api/rest/webhooks/event-names/).
 
 ## Runtime log drain (dormant until the operator creates it)
 
@@ -186,7 +271,7 @@ failing delivery target. The receiver rejects compressed deliveries, so keep
 | `LOCAL_DATABASE_URL_UNPOOLED`, `PREVIEW_DATABASE_URL_UNPOOLED`, `PRODUCTION_DATABASE_URL_UNPOOLED` | Direct port-5432 URLs for `pg_dump` and migrations. Pooled URLs are refused. |
 | `CONFIRM_LOCAL_BACKUP`, `CONFIRM_PREVIEW_BACKUP`, `CONFIRM_PRODUCTION_BACKUP` | Exact-value acknowledgements required by the backup script (values in [BACKUP_RESTORE.md](BACKUP_RESTORE.md)). |
 | `CONFIRM_LOCAL_CREDENTIAL_SCAN`, `CONFIRM_PREVIEW_CREDENTIAL_SCAN`, `CONFIRM_PRODUCTION_CREDENTIAL_SCAN` | Same pattern for the credential scanner. |
-| `CONFIRM_LOCAL_SCHEMA`, `CONFIRM_WORLD_ROOT_TOPOLOGY`, `CONFIRM_CITY_CREDIT`, `CONFIRM_PREVIEW_MIGRATION`, `CONFIRM_PRODUCTION_MIGRATION` | Migration acknowledgements; each remote target also requires the Neon identity proofs above. |
+| `CONFIRM_LOCAL_SCHEMA`, `CONFIRM_WORLD_ROOT_TOPOLOGY`, `CONFIRM_CITY_CREDIT`, `CONFIRM_PREPAID_CITY_CREDIT`, `CONFIRM_PREVIEW_MIGRATION`, `CONFIRM_PRODUCTION_MIGRATION` | Migration acknowledgements; prepaid credit requires `CONFIRM_PREPAID_CITY_CREDIT=INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY`, and each remote target also requires the Neon identity proofs above. |
 | `PRODUCTION_SNAPSHOT_NAME` | Name of the verified pre-migration Neon snapshot; production migrations refuse to run without it. |
 | `SNAPSHOT_DATABASE_URL` | Source database for the public-snapshot exporter. |
 | `GITHUB_TOKEN`, `GITHUB_REPOSITORY` | Publishing public snapshots as GitHub releases. |

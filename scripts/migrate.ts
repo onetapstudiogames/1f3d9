@@ -54,6 +54,7 @@ type RemoteMigration =
   | 'payment-recovery-trigger-repair'
   | 'payment-late-finality-recheck'
   | 'runtime-logs'
+  | 'prepaid-city-credit'
   | 'resumable-registration'
 
 export type MigrationFile =
@@ -88,6 +89,7 @@ export type MigrationFile =
   | 'db/migrations/20260823_payment_recovery_trigger_repair.sql'
   | 'db/migrations/20260825_payment_late_finality_recheck.sql'
   | 'db/migrations/20260826_runtime_logs.sql'
+  | 'db/migrations/20260826_prepaid_city_credit.sql'
   | 'db/migrations/20260826_resumable_registration.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
@@ -116,6 +118,8 @@ const PREVIEW_ACKNOWLEDGEMENT = 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW'
 const LOCAL_ACKNOWLEDGEMENT = 'APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE'
 const WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT = 'REPARENT_CONTINENTS_UNDER_UNOWNED_WORLD_ROOT'
 const CITY_CREDIT_ACKNOWLEDGEMENT = 'INSTALL_PRIVATE_CITY_CREDIT_LEDGER'
+const PREPAID_CITY_CREDIT_ACKNOWLEDGEMENT =
+  'INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY'
 const CITY_CREDIT = Object.freeze({ 'city-credit': '20260822_city_credit.sql' } as const)
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
 const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
@@ -149,6 +153,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'payment-recovery-trigger-repair': 'db/migrations/20260823_payment_recovery_trigger_repair.sql',
   'payment-late-finality-recheck': 'db/migrations/20260825_payment_late_finality_recheck.sql',
   'runtime-logs': 'db/migrations/20260826_runtime_logs.sql',
+  'prepaid-city-credit': 'db/migrations/20260826_prepaid_city_credit.sql',
   'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
@@ -237,6 +242,15 @@ export function resolveMigrationRun(
   ) {
     throw new Error(
       `city credit requires CONFIRM_CITY_CREDIT=${CITY_CREDIT_ACKNOWLEDGEMENT}`,
+    )
+  }
+  if (
+    migration === 'prepaid-city-credit'
+    && environment.CONFIRM_PREPAID_CITY_CREDIT !== PREPAID_CITY_CREDIT_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      'prepaid city credit requires CONFIRM_PREPAID_CITY_CREDIT=' +
+      PREPAID_CITY_CREDIT_ACKNOWLEDGEMENT,
     )
   }
 

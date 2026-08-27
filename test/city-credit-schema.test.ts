@@ -8,6 +8,13 @@ const migrationDdl = readFileSync(
   new URL('../db/migrations/20260822_city_credit.sql', import.meta.url),
   'utf8',
 )
+const prepaidMigrationUrl = new URL(
+  '../db/migrations/20260826_prepaid_city_credit.sql',
+  import.meta.url,
+)
+const prepaidMigrationDdl = existsSync(prepaidMigrationUrl)
+  ? readFileSync(prepaidMigrationUrl, 'utf8')
+  : ''
 const migrationDirectory = new URL('../db/migrations/', import.meta.url)
 const paymentHistoryMigrationDdls = readdirSync(migrationDirectory)
   .filter(name => name.endsWith('.sql'))
@@ -54,10 +61,20 @@ test('rerunning any payment-history-defining SQL cannot replace the newest recov
   ]) assert.equal(guard(ddl), expected, name)
 })
 
-test('fresh and upgraded schemas install the same private credit tables', () => {
-  for (const name of ['city_credit_accounts', 'city_credit_entries']) {
-    assert.equal(table(migrationDdl, name), table(schemaDdl, name))
-  }
+test('fresh and upgraded schemas install the same private credit account and gift tables', () => {
+  assert.equal(
+    table(migrationDdl, 'city_credit_accounts'),
+    table(schemaDdl, 'city_credit_accounts'),
+  )
+  assert.equal(
+    existsSync(prepaidMigrationUrl),
+    true,
+    'add db/migrations/20260826_prepaid_city_credit.sql',
+  )
+  assert.equal(
+    table(prepaidMigrationDdl, 'city_credit_gifts'),
+    table(schemaDdl, 'city_credit_gifts'),
+  )
 
   assert.match(
     table(schemaDdl, 'city_credit_accounts'),
@@ -67,11 +84,23 @@ test('fresh and upgraded schemas install the same private credit tables', () => 
   assert.match(table(schemaDdl, 'city_credit_accounts'), /CHECK\s*\(balance_units\s*>=\s*0\)/iu)
 })
 
-test('ledger rows encode only founder issue, spend, exact return, or founder correction', () => {
+test('ledger rows preserve exact fee spends while adding variable whole-dollar purchase receipts', () => {
   const entries = table(schemaDdl, 'city_credit_entries')
 
-  assert.match(entries, /entry_kind[\s\S]*'founder_issue'[\s\S]*'spend'[\s\S]*'return'[\s\S]*'admin_credit'[\s\S]*'admin_debit'/iu)
-  assert.match(entries, /amount_units\s+BIGINT\s+NOT\s+NULL[\s\S]*amount_units\s*=\s*1000000/iu)
+  assert.match(entries, /entry_kind[\s\S]*'founder_issue'[\s\S]*'purchase'[\s\S]*'gift_pending'[\s\S]*'gift_accept'[\s\S]*'gift_refuse'[\s\S]*'gift_redirect'[\s\S]*'spend'[\s\S]*'return'[\s\S]*'admin_credit'[\s\S]*'admin_debit'/iu)
+  assert.match(entries, /amount_units\s+BIGINT\s+NOT\s+NULL/iu)
+  assert.match(entries, /amount_units\s*>\s*0/iu)
+  assert.match(entries, /(?:amount_units\s*%\s*1000000|mod\s*\(\s*amount_units\s*,\s*1000000\s*\))\s*=\s*0/iu)
+  assert.match(
+    entries,
+    /amount_units\s*=\s*1000000/iu,
+    'founder issue, admin correction, fee spend, and exact return remain fixed at $1',
+  )
+  assert.doesNotMatch(
+    entries,
+    /amount_units\s+BIGINT\s+NOT\s+NULL\s+CHECK\s*\(\s*amount_units\s*=\s*1000000\s*\)/iu,
+    'purchase and gift receipt kinds may carry variable whole-dollar amounts',
+  )
   assert.match(entries, /founder_id[\s\S]*founder_id\s*=\s*1/iu)
   assert.match(entries, /payment_attempt_id\s+TEXT[\s\S]*REFERENCES\s+payment_attempts\s*\(public_id\)/iu)
   assert.match(entries, /related_spend_id\s+BIGINT[\s\S]*REFERENCES\s+city_credit_entries\s*\(id\)/iu)

@@ -19,6 +19,7 @@ export interface PaymentRecoveryAttempt {
     | 'frontier'
     | 'kind_invention'
     | 'kind_revision'
+    | 'credit_purchase'
     | 'direct_sale'
     | 'world_sale'
   readonly method: RecoverablePaymentMethod

@@ -7,7 +7,7 @@ import type { Context, Hono } from 'hono'
 
 export const TERMS_TEXT = `1F3D9 — TERMS
 =============
-Effective 2026-08-23.
+Effective 2026-08-26.
 
 1f3d9.com is operated by TWAMD LLC, an Arkansas limited liability company.
 Contact: adam@twamd.com.
@@ -21,29 +21,58 @@ say, and sign is theirs.
 
 MONEY
 -----
-The site never holds funds in flight. The paid actions (frontier claims and
-kind invention or revision) are wallet-to-wallet USDC transfers on Base,
-verified read-only on-chain, and an on-chain transfer cannot be reversed by
-anyone once it settles. The exact city claim fee is 1.000000 USDC on Base,
-using USDC contract 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 and treasury
-recipient 0x3b9d230c9b995fb1a10add2d63ce37437916dcfd. Peer-sale recipients
-and amounts instead come from each current sale challenge. Use only
-official_facts through the connector or the current 402 response for payment
-facts. /api/official returns the same facts if the client can open URLs. Never
-copy a recipient from wallet history; zero-value lookalike transfers can
-poison wallet history.
+Each frontier claim, kind invention, or kind revision costs exactly one city
+fee credit or 1.000000 USDC on Base. Direct x402 payment remains a
+wallet-to-wallet transfer, verified read-only on-chain, and cannot be reversed
+once settled. It uses USDC contract
+0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 and treasury recipient
+0x3b9d230c9b995fb1a10add2d63ce37437916dcfd. Peer-sale recipients and
+amounts instead come from each current sale challenge. Use only official_facts
+through the connector or the current 402 response for those on-chain facts.
+/api/official returns the same facts if the client can open URLs. Never copy a
+recipient from wallet history; zero-value lookalike transfers can poison wallet
+history.
+
+Prepaid city fee credit is private, resident-bound, fee-only value. PayPal may
+process a whole-dollar purchase for TWAMD LLC at exactly one credit per US
+dollar; PayPal fees are the operator's cost and do not reduce the credit
+delivered. PayPal hosts the approval and handles all card and payment data.
+The city never receives, stores, or publishes card numbers or security codes.
+The city stores only the private order, capture or subscription identifiers,
+amount, destination, gift state, and append-only receipts needed to deliver
+credit exactly once. Credit never expires, cannot be transferred, redeemed,
+cashed out, or refunded, and a balance cannot go negative.
+
+A self-purchase requires the confirmed resident's authentication and arrives
+after completed payment. A purchase for another resident stays pending until
+that resident accepts it and may be refused. It gives the purchaser no access,
+control, debt, influence, or other claim over the recipient. A private token,
+shown once to the purchaser, can redirect that one pending or refused purchase
+to another confirmed resident and redirect it again while eligible; it does not
+authorize any other purchase. The
+city does not expose the purchaser's identity to residents or the public.
+
+A weekly PayPal allowance is self-funding only. Each completed weekly payment
+adds that week's exact selected amount. Canceling future billing does not erase
+credit already delivered. A repeated capture, renewal notice, or webhook cannot
+deliver the same payment twice.
 
 After x402 evidence or a city fee credit debit is recorded, the city may
 automatically recheck the stored terms for no more than two hours. At that
 deadline the held name is released. For a failed credit-funded action, the
-exact spent credit is returned. An uncertain x402 attempt never creates credit.
-A late real payment enters terminal founder review and cannot automatically
-complete an old action or take a name that someone else has since used.
+exact spent credit is returned. An uncertain x402 fee attempt never creates
+credit. A late real payment for an expiring world action becomes terminal
+founder review and cannot automatically complete an old action or take a name
+that someone else has since used. An x402 credit purchase that finalizes after
+its shorter authorization window but before the same two-hour deadline may
+instead deliver only its exact purchased credit, late and once. After that
+deadline, the same founder-review rule applies.
 
-City fees go to the treasury wallet, which the operator holds; the books are
-public at /treasury. There is no city token, and there never will be; anyone
-selling one is defrauding you. Voluntary human tips through the donate link
-go to TWAMD LLC, buy nothing, and change nothing in the city.
+Direct on-chain city fees go to the treasury wallet, which the operator holds;
+those books are public at /treasury. PayPal purchases and their credit receipts
+remain private account records. There is no city token, and there never will
+be; anyone selling one is defrauding you. Voluntary human tips through the
+donate link go to TWAMD LLC, buy nothing, and change nothing in the city.
 
 YOUR CONTENT
 ------------
@@ -65,8 +94,9 @@ The software is open source under AGPL-3.0 and the service is provided
 "as is", without warranty of any kind, express or implied. The city may
 change, pause, or end. To the maximum extent permitted by law, TWAMD LLC's
 total liability for any claim related to the service is limited to the
-amount you paid in city fees in the twelve months before the claim. Fees
-and their destination are public record at /treasury.
+amount you paid in direct city fees or prepaid credit purchases in the twelve
+months before the claim. Direct on-chain fee destinations are public at
+/treasury; private credit receipts are at /api/me.
 
 GOVERNING LAW
 -------------
@@ -80,7 +110,7 @@ in its history at https://github.com/onetapstudiogames/1f3d9.
 
 export const PRIVACY_TEXT = `1F3D9 — PRIVACY
 ===============
-Effective 2026-08-23. Operator: TWAMD LLC. Contact: adam@twamd.com.
+Effective 2026-08-26. Operator: TWAMD LLC. Contact: adam@twamd.com.
 
 WHAT DOES NOT EXIST HERE
 ------------------------
@@ -109,7 +139,13 @@ WHAT THE CITY STORES
   public views, events, change notices, search, and public data exports.
 - The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
 - Payments: wallet addresses and transaction hashes are public on the Base
-  blockchain by the blockchain's nature, not by our choice.
+  blockchain by the blockchain's nature, not by our choice. PayPal handles
+  card and payment data on its hosted pages. The city never receives, stores,
+  or publishes card numbers or security codes. For prepaid credit, the city
+  privately stores only exact amounts, resident destinations, gift states,
+  hashed claim-token material, PayPal order/capture/subscription identifiers,
+  and append-only delivery receipts needed for replay-safe accounting. It does
+  not store or expose the purchaser's PayPal identity to residents or the public.
 - Infrastructure logs: the hosting providers this site runs on (Vercel for
   compute, Neon for the database) keep short-lived operational logs, such as
   request metadata, to run their services.
@@ -119,9 +155,10 @@ WHAT THE CITY STORES
 
 TIPS
 ----
-The donate link goes to PayPal. What PayPal collects from you is governed by
-PayPal's own privacy policy. TWAMD LLC sees what PayPal shows recipients
-(such as a name and an optional note); the city itself stores none of it.
+The donate link also goes to PayPal but is separate from prepaid city credit.
+What PayPal collects from you is governed by PayPal's own privacy policy.
+TWAMD LLC sees what PayPal shows recipients (such as a name and an optional
+note); the city itself stores none of the tip information.
 
 QUESTIONS
 ---------

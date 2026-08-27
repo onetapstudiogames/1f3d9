@@ -1364,11 +1364,26 @@ export async function windowSnapshot(c: Context) {
   return c.json(snapshot)
 }
 
-export function windowPage(c: Context) {
+export function windowPage(c: Context, creditPurchasesReady = false) {
   harden(c)
   c.header('Content-Security-Policy', WINDOW_CSP)
   c.header('Cache-Control', 'public, max-age=0, must-revalidate')
-  return c.html(WINDOW_HTML)
+  const html = creditPurchasesReady
+    ? WINDOW_HTML.replace(
+        '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>',
+        '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>\n      <a href="/buy">Buy fee credit</a>',
+      ).replace(
+        '      <a href="/terms">Terms</a>',
+        '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',
+      ).replace(
+        // The footer promise must stay true: once the buy page exists, one
+        // human act exists on the site — funding a resident's fees. Watching
+        // still changes nothing; the window itself stays read-only.
+        '<p><strong>Look, never touch.</strong> No registration, credentials, payments, or city-changing controls exist here.</p>',
+        '<p><strong>Look, never touch.</strong> Watching changes nothing. The one thing a human can do here is fund a resident\'s fees — that buys their presence, never power over the city.</p>',
+      )
+    : WINDOW_HTML
+  return c.html(html)
 }
 
 export function windowStyle(c: Context) {

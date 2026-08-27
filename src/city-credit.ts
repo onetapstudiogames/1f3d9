@@ -28,10 +28,17 @@ const LEASE_MILLISECONDS = 30_000
 export type CityFeeCreditOperation = 'frontier' | 'kind_invention' | 'kind_revision'
 export type CityCreditEntryKind =
   | 'founder_issue'
+  | 'purchase'
+  | 'gift_pending'
+  | 'gift_accept'
+  | 'gift_refuse'
+  | 'gift_redirect'
   | 'spend'
   | 'return'
   | 'admin_credit'
   | 'admin_debit'
+export type CityCreditPurchaseKind = 'paypal' | 'allowance' | 'x402'
+export type CityCreditReceiptOperation = CityFeeCreditOperation | 'credit_purchase'
 
 type QueryRow = Record<string, unknown>
 
@@ -44,9 +51,13 @@ export interface CityCreditHistoryEntry {
   kind: CityCreditEntryKind
   amount: string
   amount_units: string
+  credit_amount: string
+  credit_amount_units: string
   source_key: string | null
+  purchase_kind: CityCreditPurchaseKind | null
+  gift_id: string | null
   request_id: string | null
-  operation: CityFeeCreditOperation | null
+  operation: CityCreditReceiptOperation | null
   target_key: string | null
   related_spend_id: string | null
   reason: string | null
@@ -608,19 +619,48 @@ function historyArray(value: unknown): QueryRow[] {
 
 function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
   const kind = String(row.entry_kind ?? row.kind) as CityCreditEntryKind
-  if (!['founder_issue', 'spend', 'return', 'admin_credit', 'admin_debit'].includes(kind)) {
+  if (![
+    'founder_issue', 'purchase', 'gift_pending', 'gift_accept', 'gift_refuse',
+    'gift_redirect', 'spend', 'return', 'admin_credit', 'admin_debit',
+  ].includes(kind)) {
     throw new TypeError('city credit history kind is invalid')
   }
   const unsignedUnits = BigInt(bigintString(row.amount_units, 'city credit history amount'))
-  const signedUnits = ['spend', 'admin_debit'].includes(kind) ? -unsignedUnits : unsignedUnits
-  const operation = row.operation == null ? null : eligibleOperation(row.operation)
+  const giftPublicId = row.gift_public_id == null ? null : String(row.gift_public_id)
+  if (giftPublicId != null && !/^city_gift_[0-9a-f]{32}$/u.test(giftPublicId)) {
+    throw new TypeError('city credit gift receipt id is invalid')
+  }
+  const zeroBalanceEvent = ['gift_pending', 'gift_refuse', 'gift_redirect'].includes(kind)
+    || (kind === 'purchase' && giftPublicId != null)
+  const signedUnits = zeroBalanceEvent
+    ? 0n
+    : ['spend', 'admin_debit'].includes(kind) ? -unsignedUnits : unsignedUnits
+  const purchaseKind = row.purchase_kind == null ? null : String(row.purchase_kind)
+  if (purchaseKind != null && !['paypal', 'allowance', 'x402'].includes(purchaseKind)) {
+    throw new TypeError('city credit purchase receipt kind is invalid')
+  }
+  const operation = row.operation == null
+    ? null
+    : row.operation === 'credit_purchase' ? 'credit_purchase' as const : eligibleOperation(row.operation)
+  const privateFundingEvent = [
+    'purchase', 'gift_pending', 'gift_accept', 'gift_refuse', 'gift_redirect',
+  ].includes(kind)
+  const sourceKey = privateFundingEvent
+    ? null
+    : row.source_key == null ? null : String(row.source_key)
   return {
     id: idString(row.id, 'city credit history id'),
     kind,
     amount: formatUsdcUnits(signedUnits),
     amount_units: signedUnits.toString(),
-    source_key: row.source_key == null ? null : String(row.source_key),
-    request_id: row.request_id == null ? null : String(row.request_id),
+    credit_amount: formatUsdcUnits(unsignedUnits),
+    credit_amount_units: unsignedUnits.toString(),
+    source_key: sourceKey,
+    purchase_kind: purchaseKind as CityCreditPurchaseKind | null,
+    gift_id: giftPublicId,
+    // Gift and funding dedupe identifiers originate outside the recipient's account.
+    // Hiding them prevents a purchaser from smuggling identifying text into /api/me.
+    request_id: privateFundingEvent || row.request_id == null ? null : String(row.request_id),
     operation,
     target_key: row.target_key == null ? null : String(row.target_key),
     related_spend_id: row.related_spend_id == null
@@ -650,11 +690,13 @@ export async function readCityCreditAccount(
     /* city-credit:read-account */
     WITH fetched AS MATERIALIZED (
       SELECT entry.id::text AS id, entry.entry_kind, entry.amount_units::text AS amount_units,
-        entry.source_key, entry.request_id, attempt.operation, attempt.target_key,
+        entry.source_key, entry.purchase_kind, gift.public_id AS gift_public_id,
+        entry.request_id, attempt.operation, attempt.target_key,
         entry.related_spend_id::text AS related_spend_id, entry.reason, entry.created_at,
         row_number() OVER (ORDER BY entry.id DESC) AS position
       FROM city_credit_entries entry
       LEFT JOIN payment_attempts attempt ON attempt.public_id = entry.payment_attempt_id
+      LEFT JOIN city_credit_gifts gift ON gift.id = entry.gift_id
       WHERE entry.resident_id = $1::integer
         AND (${beforeExpression} IS NULL OR entry.id < ${beforeExpression})
       ORDER BY entry.id DESC
@@ -690,4 +732,42 @@ export async function readCityCreditAccount(
     history,
     page: { has_more: hasMore, next_before_credit_id: nextBefore },
   }
+}
+
+export async function readCityCreditPreflight(
+  database: CityCreditDatabase,
+  residentIdInput: number,
+) {
+  const residentId = positiveResidentId(residentIdInput)
+  const rows = await runQuery(database, `
+    /* city-credit:preflight */
+    SELECT coalesce(account.balance_units, 0)::text AS balance_units,
+      statement_timestamp() AS observed_at
+    FROM residents resident
+    LEFT JOIN city_credit_accounts account ON account.resident_id = resident.id
+    WHERE resident.id = $1::integer
+  `, [residentId])
+  const row = rows[0]
+  if (!row) throw new TypeError('city credit preflight resident is unavailable')
+  const balanceBefore = BigInt(bigintString(row.balance_units, 'city credit preflight balance'))
+  if (balanceBefore < 0n) throw new TypeError('city credit preflight balance is invalid')
+  const canConfirm = balanceBefore >= CITY_FEE_CREDIT_UNITS
+  const balanceAfter = canConfirm ? balanceBefore - CITY_FEE_CREDIT_UNITS : null
+  const observed = row.observed_at instanceof Date
+    ? row.observed_at
+    : new Date(String(row.observed_at ?? ''))
+  if (Number.isNaN(observed.getTime())) throw new TypeError('city credit preflight time is invalid')
+  return Object.freeze({
+    resident_id: residentId,
+    fee_cost: formatUsdcUnits(CITY_FEE_CREDIT_UNITS),
+    fee_cost_units: CITY_FEE_CREDIT_UNITS.toString(),
+    balance_before: formatUsdcUnits(balanceBefore),
+    balance_before_units: balanceBefore.toString(),
+    balance_after: balanceAfter === null ? null : formatUsdcUnits(balanceAfter),
+    balance_after_units: balanceAfter === null ? null : balanceAfter.toString(),
+    can_confirm: canConfirm,
+    observed_at: observed.toISOString(),
+    applies_to: Object.freeze(['frontier', 'kind_invention', 'kind_revision'] as const),
+    freshness: 'read_only_snapshot' as const,
+  })
 }

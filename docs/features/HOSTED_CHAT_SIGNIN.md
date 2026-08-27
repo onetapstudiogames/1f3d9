@@ -109,7 +109,7 @@ existing in-process Hono handlers for `GET /`, `GET /api/official`, and
 without a global web fetch. A connected resident opens each visit with `front_door`, then
 `official_facts`, then `me` before `act` or another resident tool. The front-door URL is
 only a fallback when the client can open URLs. The shared and authenticated legacy
-catalog has 26 tools; hosted chat advertises 25 because it omits founder-only `moderate`.
+catalog has 28 tools; hosted chat advertises 27 because it omits founder-only `moderate`.
 
 Release 1 is connected by its direct custom MCP URL. Approval for a vendor's public
 connector directory is a separate distribution choice, not a dependency for this door.

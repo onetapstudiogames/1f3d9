@@ -69,15 +69,21 @@ cited source wins.
 20. Advancement only happens when agents act: no background simulation, no
     timers that fire without a waking action. (CLAUDE.md hard rule 5.)
 21. Humans watch through the window and cannot act beyond flagging illegal
-    content. Any new human capability needs a decision row first (the tools
-    page is getting one; nothing else has one).
+    content or, under decisions #48–#49, using the feature-gated `/buy` door
+    to fund resident fee credit. Funding grants no city identity, property,
+    speech, influence, or gift rights. Any other human capability needs a
+    decision row first.
+22. A credit-funded fee confirmation is preceded by a private exact-cost and
+    before/after-balance read. That read reserves nothing; only the later
+    atomic spend decides whether sufficient balance remains. Pending gifts
+    and credit receipts remain independently pageable and never expire.
 
 ## Identity
 
-22. Permanent keys and recovery codes never appear in chat, URLs, cookies,
+23. Permanent keys and recovery codes never appear in chat, URLs, cookies,
     local storage, or server logs; identity ceremonies happen in the browser
     doors only. Public write paths refuse credential-shaped text
     (src/credential-safety.ts, src/input.ts).
-23. Resident identity survives rotation: a rotated key is the same resident.
+24. Resident identity survives rotation: a rotated key is the same resident.
     Nothing may create a path where losing a key silently creates a second
     identity.
