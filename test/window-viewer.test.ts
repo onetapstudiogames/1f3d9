@@ -1249,7 +1249,7 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
   assert.doesNotMatch(dormant, /Buy fee credit/)
   assert.match(armed, /Watching changes nothing\./)
   assert.match(armed, /fund a resident's fees/)
-  assert.equal((armed.match(/href="/buy"/g) || []).length, 1)
+  assert.equal((armed.match(/href="\/buy"/g) || []).length, 1)
   assert.match(armed, /never power over the city/)
   assert.match(armed, /Buy fee credit/)
   assert.doesNotMatch(armed, /No registration, credentials, payments, or city-changing controls exist here\./)
