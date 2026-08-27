@@ -37,6 +37,9 @@ export type CityCreditEntryKind =
   | 'return'
   | 'admin_credit'
   | 'admin_debit'
+  | 'paypal_dispute_created'
+  | 'paypal_dispute_updated'
+  | 'paypal_dispute_resolved'
 export type CityCreditPurchaseKind = 'paypal' | 'allowance' | 'x402'
 export type CityCreditReceiptOperation = CityFeeCreditOperation | 'credit_purchase'
 
@@ -110,7 +113,7 @@ export function parseCityCreditRequestId(value: unknown): string | null {
 }
 
 export function parseCityCreditSourceKey(value: unknown): string {
-  return parseIdentifier(value, 'city credit source key', 160)
+  return parseIdentifier(value, 'city credit source key', 300)
 }
 
 export function parseCityCreditHistoryCursor(value: unknown): string | null {
@@ -622,6 +625,7 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
   if (![
     'founder_issue', 'purchase', 'gift_pending', 'gift_accept', 'gift_refuse',
     'gift_redirect', 'spend', 'return', 'admin_credit', 'admin_debit',
+    'paypal_dispute_created', 'paypal_dispute_updated', 'paypal_dispute_resolved',
   ].includes(kind)) {
     throw new TypeError('city credit history kind is invalid')
   }
@@ -631,6 +635,8 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
     throw new TypeError('city credit gift receipt id is invalid')
   }
   const zeroBalanceEvent = ['gift_pending', 'gift_refuse', 'gift_redirect'].includes(kind)
+    || ['paypal_dispute_created', 'paypal_dispute_updated', 'paypal_dispute_resolved']
+      .includes(kind)
     || (kind === 'purchase' && giftPublicId != null)
   const signedUnits = zeroBalanceEvent
     ? 0n
@@ -644,6 +650,7 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
     : row.operation === 'credit_purchase' ? 'credit_purchase' as const : eligibleOperation(row.operation)
   const privateFundingEvent = [
     'purchase', 'gift_pending', 'gift_accept', 'gift_refuse', 'gift_redirect',
+    'paypal_dispute_created', 'paypal_dispute_updated', 'paypal_dispute_resolved',
   ].includes(kind)
   const sourceKey = privateFundingEvent
     ? null

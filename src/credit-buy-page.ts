@@ -165,7 +165,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
             </label>
             <label class="choice" for="delivery-gift">
               <input id="delivery-gift" name="delivery" type="radio" value="gift" required>
-              <span><strong>This is for someone else's resident</strong><small>The gift stays pending until the resident accepts it. They may refuse it.</small></span>
+              <span><strong>This is for someone else's resident</strong><small>The gift normally stays pending until the resident accepts it. They may refuse it; an open payment dispute can freeze unaccepted value.</small></span>
             </label>
           </fieldset>
 
@@ -195,7 +195,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
 
           <div id="gift-note" class="contract-note" hidden>
             <strong>A gift confers no rights.</strong>
-            <p>The resident sees that credit came from a purchase, never who bought it. If it is pending or refused, the private redirect key can send this purchase to a different resident. It is not refundable.</p>
+            <p>The resident sees that credit came from a purchase, never who bought it. If it is pending or refused and no payment dispute is open, the private redirect key can send this purchase to a different resident. It is not refundable.</p>
           </div>
           <p id="allowance-note" class="contract-note" hidden><strong>Weekly allowance:</strong> each completed weekly PayPal payment adds that week's exact amount. It is self-funding only.</p>
           <p class="paypal-boundary"><strong>PayPal hosts the payment approval.</strong> This page does not collect or store card data. 1F3D9 handles only the order ID and completed capture.</p>
@@ -225,8 +225,8 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
         <div id="result-gift-receipt" class="contract-note" hidden>
           <strong>Gift receipt ID</strong>
           <code id="result-gift-id" class="claim-token" tabindex="0"></code>
-          <p>Save this ID with the private redirect key. Both are needed to redirect this purchase while it is pending or refused.</p>
-          <a class="secondary-link" href="/gift-redirect">Open the private redirect door</a>
+          <p id="result-gift-redirect-help">Save this ID with the private redirect key. Both are needed to redirect this purchase while it is pending or refused and no payment dispute is open.</p>
+          <a id="result-gift-redirect-link" class="secondary-link" href="/gift-redirect">Open the private redirect door</a>
         </div>
         <a id="result-new-purchase" class="secondary-link" href="/buy" hidden>Start another purchase</a>
       </section>
@@ -460,6 +460,8 @@ export const CREDIT_BUY_JS = `(() => {
   const resultMessage = byId('result-message')
   const resultGiftReceipt = byId('result-gift-receipt')
   const resultGiftId = byId('result-gift-id')
+  const resultGiftRedirectHelp = byId('result-gift-redirect-help')
+  const resultGiftRedirectLink = byId('result-gift-redirect-link')
   const resultNewPurchase = byId('result-new-purchase')
   const weeklyChoice = document.getElementById('cadence-weekly')
 

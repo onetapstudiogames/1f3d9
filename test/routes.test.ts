@@ -799,6 +799,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_more: matching.length > limit,
     }]
   }
+  if (q.includes('/* paypal-credit:founder-dispute-inspection */')) return []
   if (q.includes('/* city-credit:preflight */')) {
     const residentId = Number(params[0])
     if (![1, 7, 8].includes(residentId)) return []
@@ -5882,6 +5883,11 @@ test('only founder resident one issues one private city fee credit and exact ret
   assert.equal(nonFounder.status, 403)
   assert.equal(state.cityCreditEntries.length, 0)
 
+  const nonFounderRead = await app.request('/api/founder/city-credit/tiny-lantern', {
+    headers: authHeaders(),
+  })
+  assert.equal(nonFounderRead.status, 403)
+
   setActor(1, 'founder')
   const issued = await app.request('/api/founder/city-credit', {
     method: 'POST', headers: authHeaders(), body: issuanceBody,
@@ -5933,6 +5939,7 @@ test('only founder resident one issues one private city fee credit and exact ret
   })
   assert.equal(founderRead.status, 200)
   assert.equal(founderRead.headers.get('cache-control'), 'no-store')
+  assert.deepEqual((await founderRead.json() as { paypal_disputes: unknown[] }).paypal_disputes, [])
 
   setActor(7, 'tiny-lantern')
   const me = await app.request('/api/me', { headers: authHeaders() })

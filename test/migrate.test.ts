@@ -576,6 +576,60 @@ test('prepaid city credit is an explicitly selected transactional payment migrat
   )
 })
 
+test('PayPal credit disputes are an explicitly selected guarded payment migration', () => {
+  const migrationFile = 'db/migrations/20260827_paypal_credit_disputes.sql' as const
+  const previewEnvironment = {
+    CONFIRM_PAYPAL_CREDIT_DISPUTES: 'INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY',
+    CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+    PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+  }
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'paypal-credit-disputes'],
+      { ...previewEnvironment, CONFIRM_PAYPAL_CREDIT_DISPUTES: undefined },
+    ),
+    /CONFIRM_PAYPAL_CREDIT_DISPUTES/iu,
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'paypal-credit-disputes'],
+    previewEnvironment,
+  )
+  assert.equal(preview.migrationFile, migrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'paypal-credit-disputes'],
+    {
+      CONFIRM_PAYPAL_CREDIT_DISPUTES: 'INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY',
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'paypal-credit-disputes-release',
+    },
+  )
+  assert.equal(production.migrationFile, migrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:paypal-credit-disputes'] ?? '',
+    /--target preview --migration paypal-credit-disputes$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:paypal-credit-disputes'] ?? '',
+    /--target production --migration paypal-credit-disputes$/u,
+  )
+})
+
 test('resumable registration is one explicit guarded transactional preview or production migration', () => {
   const migration = migrationDdl(resumableRegistrationMigrationFile)
   assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+client_class/iu)

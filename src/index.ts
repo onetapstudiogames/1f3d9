@@ -134,6 +134,7 @@ import {
   renderCreditGiftRedirectPage,
 } from './credit-gift-redirect.ts'
 import { paypalReadiness } from './paypal-credit.ts'
+import { readFounderPayPalCreditDisputes } from './paypal-credit-dispute.ts'
 import {
   mountPayPalCreditRoutes,
   PAYPAL_CREDIT_UNAVAILABLE_MESSAGE,
@@ -1005,11 +1006,18 @@ app.get('/api/founder/city-credit/:handle', async c => {
   ` as Array<{ id: number }>
   const target = residents[0]
   if (!target) return err(c, 404, 'resident not found')
-  const account = await readCityCreditAccount({ query: sql.query }, target.id, {
-    beforeId: creditRequest.beforeId,
-    limit: creditRequest.limit,
+  const [account, paypalDisputes] = await Promise.all([
+    readCityCreditAccount({ query: sql.query }, target.id, {
+      beforeId: creditRequest.beforeId,
+      limit: creditRequest.limit,
+    }),
+    readFounderPayPalCreditDisputes({ query: sql.query }, target.id),
+  ])
+  return c.json({
+    resident_handle: residentHandle,
+    city_fee_credit: account,
+    paypal_disputes: paypalDisputes,
   })
-  return c.json({ resident_handle: residentHandle, city_fee_credit: account })
 })
 
 app.get('/api/official', c => {

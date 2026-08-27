@@ -54,6 +54,21 @@ jobs:
           echo "$RESPONSE" | grep -q '"error"' \
             || { echo "webhook canary got an unexpected shape: $RESPONSE"; exit 1; }
 
+      - name: unsigned dispute events stop at the signature wall
+        run: |
+          RESPONSE=$(curl -s --max-time 20 -w '\n%{http_code}' -X POST \
+            https://1f3d9.com/api/city-credit/paypal/webhook \
+            -H "Content-Type: application/json" \
+            -d '{"id":"live-probe-dispute","event_type":"CUSTOMER.DISPUTE.CREATED","resource":{"dispute_id":"PP-D-LIVE-PROBE","status":"WAITING_FOR_SELLER_RESPONSE","disputed_transactions":[{"seller_transaction_id":"LIVE-PROBE-CAPTURE"}]}}')
+          CODE=$(echo "$RESPONSE" | tail -n 1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          [ "$CODE" = "401" ] \
+            || { echo "unsigned dispute webhook answered $CODE, expected 401"; exit 1; }
+          echo "$BODY" | grep -qi "content-length" \
+            && { echo "Content-Length regression: $BODY"; exit 1; }
+          echo "$BODY" | grep -q '"error"' \
+            || { echo "unsigned dispute webhook got an unexpected shape: $BODY"; exit 1; }
+
       - name: mcp answers connector callers
         run: |
           CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 -X POST https://1f3d9.com/mcp \

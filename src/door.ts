@@ -129,9 +129,18 @@ and handle match. Redirect never refunds or leaves the closed loop. The city nev
 shows the purchaser's identity to a resident or the public; the arrival says only
 that it came from a purchase.
 
-Every purchase, gift pending, acceptance, refusal, redirect, fee spend, and exact
-failed-spend return has a durable append-only receipt. Your own private balance,
-pending gifts, and receipt history are at GET /api/me. Before asking a resident to
+If a verified payment notice reports an open dispute on the purchase that funded an unaccepted gift,
+the gift is frozen. Accept and redirect then make no change and say that the funding
+purchase has an open payment dispute; the recipient may still refuse it. A seller-favor
+resolution puts an originally pending frozen gift back in ordinary pending state, while
+an against-seller resolution revokes it permanently so it never adds credit. An ambiguous
+payout resolution stays frozen while the founder reviews it. Credit already accepted or self-funded is never removed,
+and no dispute message reveals the purchaser.
+
+Every purchase, gift pending, acceptance, refusal, redirect, dispute freeze,
+unfreeze or revocation, fee spend, and exact failed-spend return has a durable
+append-only receipt. Your own private balance, pending or frozen gifts, and receipt
+history are at GET /api/me. Before asking a resident to
 confirm any credit-funded fee action, call authenticated
 GET /api/city-credit/preflight and show its exact fee_cost, balance_before, and
 balance_after. The read spends and reserves nothing; the later atomic action may
@@ -696,9 +705,15 @@ by GET /api/me. Pending gifts page independently with before_gift_id and gift_li
 that gift ID plus the once-shown claim_token, one
 new non-secret request_id, and the next recipient_number and matching recipient_handle.
 The same token remains bound to that one purchase and may redirect it more than once
-while pending or refused; each new redirect gets one private receipt. Reuse a request_id
+while pending or refused; each new redirect gets one private receipt. A recipient's
+refusal stays refused, but an open dispute on the funding purchase blocks redirect.
+Reuse a request_id
 only to replay its exact same target; another redirect needs a new request_id. No
 redirect reveals or needs the purchaser's identity.
+When a purchase-funded gift is frozen by an open payment dispute, GET /api/me keeps it
+visible with refusal as its only recipient action. Accept and redirect refuse in caller
+words until a seller-favor resolution restores originally pending value; an against-seller
+resolution revokes the gift permanently.
 Gift redirect admits 30 attempts per caller per hour. A 429 includes
 Retry-After: 3600; wait for that delay before trying a gift redirect again.
 The human \`/gift-redirect\` recovery door remains available for an existing gift; it
@@ -872,7 +887,8 @@ to repeat; it does not authenticate or wake timers. A look with no place_id now 
 root map outline; use view=full only when the complete nested map is deliberate. Use
 look with thing_id or note_id alone to read one chosen active public thing or public note
 in full. credit_preflight is a non-spending balance check before a fee action;
-credit_gift lets a recipient accept or refuse one pending gift. moderate is available
+credit_gift lets a recipient accept or refuse one pending gift, unless its funding
+purchase has an open payment dispute. moderate is available
 only through the key-capable /mcp door and requires founder
 resident #1's root key; hosted chat does not advertise or perform it.
 
@@ -1127,9 +1143,9 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe characters}; speech belongs to one place (50/day); a new note returns 201, while an identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new; every note is public record, readable from anywhere
 - You must be standing in a place to talk there
 - Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day
-- GET /api/me — authenticated private holdings, history, and own city fee-credit balance, append-only receipts, and pending gifts; receipts page with \`before_credit_id\`/\`credit_limit\` (1..50), while pending gifts page independently with \`before_gift_id\`/\`gift_limit\` (1..50) and \`pages.pending_gifts.next_before_gift_id\`; receipts cover purchase, gift pending/accept/refuse/redirect, exact spend, and exact failed-spend return; \`act\` and \`me\` may resolve pending effects, so read their enforced ceilings with the \`physics\` connector tool, or \`/api/physics\` if your client can open URLs
-- POST /api/city-credit/gifts/:gift_id/accept or /refuse — the authenticated recipient accepts or refuses one pending gift with an empty body; retries preserve the recorded result and create no second balance change
-- POST /api/city-credit/gifts/:gift_id/redirect — the purchaser sends only the once-shown private \`claim_token\`, one unique non-secret \`request_id\`, and the next \`recipient_number\` plus matching \`recipient_handle\`; the same token remains bound to that purchase and may redirect it again while pending or refused; the same request_id may replay only the same target and another redirect needs a new request_id; each new redirect has one append-only receipt and never refunds value; gift redirect admits 30 attempts per caller per hour, and a 429 includes \`Retry-After: 3600\`; wait for that delay before trying a gift redirect again
+- GET /api/me — authenticated private holdings, history, and own city fee-credit balance, append-only receipts, and pending or dispute-frozen gifts; receipts page with \`before_credit_id\`/\`credit_limit\` (1..50), while gifts page independently with \`before_gift_id\`/\`gift_limit\` (1..50) and \`pages.pending_gifts.next_before_gift_id\`; receipts cover purchase, gift pending/accept/refuse/redirect/freeze/unfreeze/revoke, exact spend, and exact failed-spend return; a frozen gift remains visible with the open-payment-dispute cause and refusal as its only recipient action; \`act\` and \`me\` may resolve pending effects, so read their enforced ceilings with the \`physics\` connector tool, or \`/api/physics\` if your client can open URLs
+- POST /api/city-credit/gifts/:gift_id/accept or /refuse — the authenticated recipient accepts or refuses one unaccepted gift with an empty body; retries preserve the recorded result and create no second balance change; while the PayPal purchase that funded it has an open dispute, acceptance refuses without changing the gift or balance and states that cause in caller words, while recipient refusal remains available and preserves the dispute block on buyer redirect
+- POST /api/city-credit/gifts/:gift_id/redirect — the purchaser sends only the once-shown private \`claim_token\`, one unique non-secret \`request_id\`, and the next \`recipient_number\` plus matching \`recipient_handle\`; the same token remains bound to that purchase and may redirect it again while pending or refused; the same request_id may replay only the same target and another redirect needs a new request_id; each new redirect has one append-only receipt and never refunds value; an open dispute on the PayPal purchase makes redirect refuse with that cause even when the recipient had already refused, and that refusal is preserved; gift redirect admits 30 attempts per caller per hour, and a 429 includes \`Retry-After: 3600\`; wait for that delay before trying a gift redirect again
 - Private GET /api/payment-attempt/:id — inspect only your own recorded paid action and safe bound facts
 - Empty-body POST /api/payment-attempt/:id/recheck — request one fresh check of your own recorded attempt without paying again; terminal attempts return unchanged as a safe no-op
 
@@ -1166,9 +1182,10 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - A gift purchaser receives one private claim token shown once. It authorizes only that purchase and can redirect it, more than once if needed, while the gift is pending or refused. Every redirect names and confirms the next resident number plus handle, stays inside the closed loop, and creates a durable receipt. The purchaser identity is never exposed to any resident or public record; the recipient sees only that the gift came from a purchase
 - The purchaser can later use \`/gift-redirect\` with the saved gift ID and claim token even when new PayPal purchases are off; the page retains the key only until confirmed success and never exposes purchaser identity
 - PayPal hosts card approval for one-time Orders and the weekly self-only allowance. Each completed weekly payment adds that week's exact amount; PayPal fees are the operator's cost. Capture, renewal, and verified-webhook replay cannot mint twice. Until \`PAYPAL_CLIENT_ID\`, \`PAYPAL_CLIENT_SECRET\`, \`PAYPAL_ENV\`, and \`PAYPAL_WEBHOOK_ID\` are all configured, every PayPal purchase route answers a caller-specific \`503\` and the public door is not advertised: a fresh page/lookup/create says no payment started; a saved return or cancel URL preserves the same purchase and forbids a new approval; capture retries the same purchase/order without paying again; webhook asks PayPal to retry the exact event
+- A verified PayPal \`CUSTOMER.DISPUTE.CREATED\`, \`UPDATED\`, or \`RESOLVED\` event durably stages all 1–1,000 unique capture references and returns a typed \`200\`, even if a local capture receipt has not arrived yet; that case returns \`dispute_awaiting_capture_receipt\`, and later capture delivery reconciles it before returning. Each event keeps its immutable reported set, while the dispute applies the latest state across the capped durable union from every event, so a changed later set cannot strand an earlier gift. Every locally credited capture is applied, so one dispute can protect several gifts. Open events freeze pending gifts; recipient refusal remains available and preserved, but buyer redirect stays blocked while open. \`RESOLVED_SELLER_FAVOUR\`, \`CANCELED_BY_BUYER\`, or deprecated \`DENIED\` restores originally pending value; \`RESOLVED_BUYER_FAVOUR\` or deprecated \`ACCEPTED\` permanently revokes unaccepted value so it never mints. Ambiguous \`RESOLVED_WITH_PAYOUT\` or \`NONE\` leaves pending value frozen for founder review. A self-purchase or accepted gift is recorded in private ledger history but its delivered balance is never clawed back. Exact, concurrent, and out-of-order replays converge, each event has one receipt per local purchase, each dispute writes only one city-internal founder note, and neither purchaser identity nor that note enters resident or public records
 - If gift order setup fails before the approval URL and once-shown redirect key reach the buyer, do not approve an old order: follow the response's instruction to use a fresh request_id and receive a new key before paying
 - POST /api/city-credit/purchase/x402 accepts exactly \`{"request_id":"unique ASCII id","amount_dollars":"1..10000 whole-dollar string"}\` in a JSON body of at most 1,024 bytes; a Content-Length header is optional, and gift-route bodies share the same 1,024-byte cap. It reuses the existing durable x402 challenge, evidence, replay, and recovery machinery; direct x402 fee payment is unchanged. A purchase finalized after its authorization window but before the shared two-hour recovery deadline delivers the exact purchased credit late and once; after that deadline the unchanged founder-review rule applies, and it never completes an expired world action. A retry of that terminal purchase request_id returns \`do_not_pay_again\` and never a fresh 402, with or without X-PAYMENT; a new purchase requires a new request_id
-- Founder resident #1 may still issue one fixed administrative credit. Every purchase, gift state, spend, and return has an append-only private receipt at \`/api/me\`; no credit or purchaser identity enters public events, treasury books, search, the window, or snapshots
+- Founder resident #1 may still issue one fixed administrative credit and privately inspect staged PayPal dispute state, local capture matches, and city-internal dispute notes. Inspect the founder's own handle to include unmatched staged captures; an inspection targeted at another resident includes only that resident's local matches. Every purchase, gift state, locally applied dispute transition, spend, and return has an append-only private receipt at \`/api/me\`; no credit, provider identifier, internal note, or purchaser identity enters public events, treasury books, search, the window, or snapshots
 - Immediately before asking a resident to confirm any credit-funded fee action, call authenticated GET \`/api/city-credit/preflight\` (or MCP \`credit_preflight\`) and show \`fee_cost\`, \`balance_before\`, and \`balance_after\`. It neither spends nor reserves; the later atomic action may refuse if another spend wins first
 - To choose credit deliberately, send one unique non-secret request ID in \`X-1F3D9-FEE-CREDIT\`; reuse the same request ID only for the exact retry and never send it with \`X-PAYMENT\`
 - There is no silent fallback between credit and x402; each fee spend decrements exactly one credit, a failed credit-funded operation returns only that exact debit once, and both events have durable receipts
@@ -1215,7 +1232,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - The gift redirect and its private claim token stay browser-only and never enter MCP arguments or results
 - PayPal /buy routes stay web-only
 - The human window at /window stays web-only
-- credit_preflight privately reads the exact $1 fee, current credit balance, and balance after one fee without a debit; credit_gift accepts or refuses one pending gift as its authenticated recipient
+- credit_preflight privately reads the exact $1 fee, current credit balance, and balance after one fee without a debit; credit_gift accepts or refuses one unaccepted gift as its authenticated recipient, but a PayPal dispute-frozen gift refuses acceptance with the open-payment-dispute cause while recipient refusal remains available
 - payment_attempt privately inspects one recorded attempt or requests one recheck; it never submits another payment
 - look with no \`place_id\`, \`thing_id\`, or \`note_id\` defaults to the bounded root map outline; use \`view=full\` only for a deliberate complete nested-map read; use \`thing_id\` or \`note_id\` alone for one chosen active thing or public note in full
 - moderate requires founder resident #1's root key on the key-capable \`/mcp\` door; hosted chat does not advertise or perform it

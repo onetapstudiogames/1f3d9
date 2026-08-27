@@ -1,6 +1,12 @@
 import { CITY_FEE_CREDIT_UNITS } from './city-credit.ts'
 import { deliverPayPalCredit } from './paypal-credit-delivery.ts'
 import {
+  PayPalDisputeParseError,
+  applyPayPalCreditDispute,
+  parsePayPalDisputeEvent,
+  type PayPalDisputeApplicationOutcome,
+} from './paypal-credit-dispute.ts'
+import {
   readPayPalIntentByOrder,
   readPayPalIntentBySubscription,
   recordPayPalCreditEvent,
@@ -13,7 +19,8 @@ import {
 } from './paypal-credit.ts'
 import { parseCreditDollars } from './prepaid-credit.ts'
 
-const REMOTE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+const EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/u
 const EVENT_KIND = /^[A-Z][A-Z0-9._-]{2,127}$/u
 
 type JsonRecord = Record<string, unknown>
@@ -55,8 +62,15 @@ function object(value: unknown, label: string): JsonRecord {
   return value as JsonRecord
 }
 
-function webhookIdentifier(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !REMOTE_ID.test(value)) {
+function webhookEventIdentifier(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !EVENT_ID.test(value)) {
+    badEvent(`${label} is invalid.`)
+  }
+  return value
+}
+
+function webhookResourceIdentifier(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !RESOURCE_ID.test(value)) {
     badEvent(`${label} is invalid.`)
   }
   return value
@@ -79,11 +93,11 @@ function parseCaptureEvent(value: unknown): CaptureEvent | null {
     object(resource.supplementary_data, 'PayPal capture supplementary data').related_ids,
     'PayPal capture related ids',
   )
-  const captureId = webhookIdentifier(resource.id, 'PayPal capture id')
+  const captureId = webhookResourceIdentifier(resource.id, 'PayPal capture id')
   return Object.freeze({
-    eventId: webhookIdentifier(event.id, 'PayPal webhook event id'),
+    eventId: webhookEventIdentifier(event.id, 'PayPal webhook event id'),
     captureId,
-    orderId: webhookIdentifier(related.order_id, 'PayPal capture order id'),
+    orderId: webhookResourceIdentifier(related.order_id, 'PayPal capture order id'),
     sourceKey: `paypal:capture:${captureId}`,
     amountUnits: parseCreditDollars(match[1]),
   })
@@ -165,7 +179,7 @@ async function recordIgnoredEvent(
   value: unknown,
 ): Promise<void> {
   const event = object(value, 'PayPal webhook event')
-  const eventId = webhookIdentifier(event.id, 'PayPal webhook event id')
+  const eventId = webhookEventIdentifier(event.id, 'PayPal webhook event id')
   const eventKind = event.event_type
   if (typeof eventKind !== 'string' || !EVENT_KIND.test(eventKind)) {
     badEvent('PayPal webhook event kind is invalid.')
@@ -175,7 +189,7 @@ async function recordIgnoredEvent(
     : null
   const resourceId = resource?.id == null
     ? null
-    : webhookIdentifier(resource.id, 'PayPal webhook resource id')
+    : webhookResourceIdentifier(resource.id, 'PayPal webhook resource id')
   await recordPayPalCreditEvent(dependencies.database, {
     eventId,
     eventKind,
@@ -189,7 +203,7 @@ export async function applyVerifiedPayPalWebhook(
   rawBody: Buffer,
   headers: Headers,
   dependencies: PayPalWebhookApplicationDependencies,
-): Promise<'credited' | 'ignored'> {
+): Promise<'credited' | 'ignored' | PayPalDisputeApplicationOutcome> {
   const verified = await verifyPayPalWebhook(
     dependencies.environment,
     { rawBody, headers },
@@ -201,6 +215,17 @@ export async function applyVerifiedPayPalWebhook(
 
   // Only now, after PayPal verifies the untouched bytes, is the event decoded.
   const event = parseRawEvent(rawBody)
+  let dispute: ReturnType<typeof parsePayPalDisputeEvent>
+  try {
+    dispute = parsePayPalDisputeEvent(event)
+  } catch (error) {
+    if (error instanceof PayPalDisputeParseError) badEvent(error.message)
+    throw error
+  }
+  if (dispute) {
+    const applied = await applyPayPalCreditDispute(dependencies.database, dispute)
+    return applied.applicationOutcome
+  }
   const capture = parseCaptureEvent(event)
   if (capture) {
     await applyCaptureEvent(dependencies, capture)

@@ -24,6 +24,8 @@ function appFor(input: {
   targetMatches?: boolean
   redirectRateLimited?: boolean
   vercel?: boolean
+  giftStatus?: 'pending' | 'accepted' | 'refused' | 'frozen' | 'revoked'
+  disputeBlocked?: boolean
 } = {}) {
   const calls: Array<{ text: string; params: readonly unknown[] }> = []
   const app = new Hono()
@@ -44,13 +46,30 @@ function appFor(input: {
           return input.targetMatches === false ? [] : [{ id: 8, handle: 'resident-eight' }]
         }
         if (text.includes('prepaid-credit:gift-accept')) {
-          return [{ gift_id: GIFT_ID, status: 'accepted', amount_units: '3000000' }]
+          return [{
+            gift_id: GIFT_ID,
+            status: input.giftStatus ?? 'accepted',
+            amount_units: '3000000',
+            frozen_at: input.disputeBlocked ? '2026-08-27T18:00:00.000Z' : null,
+          }]
         }
         if (text.includes('prepaid-credit:gift-refuse')) {
-          return [{ gift_id: GIFT_ID, status: 'refused', amount_units: '3000000' }]
+          return [{
+            gift_id: GIFT_ID,
+            status: input.giftStatus === 'frozen' ? 'refused' : input.giftStatus ?? 'refused',
+            amount_units: '3000000',
+            frozen_at: input.disputeBlocked || input.giftStatus === 'frozen'
+              ? '2026-08-27T18:00:00.000Z'
+              : null,
+          }]
         }
         if (text.includes('prepaid-credit:gift-redirect')) {
-          return [{ gift_id: GIFT_ID, status: 'pending', amount_units: '3000000' }]
+          return [{
+            gift_id: GIFT_ID,
+            status: input.giftStatus ?? 'pending',
+            amount_units: '3000000',
+            frozen_at: input.disputeBlocked ? '2026-08-27T18:00:00.000Z' : null,
+          }]
         }
         return []
       },
@@ -173,6 +192,67 @@ test('gift redirect rate limits token guesses before resident lookup or redirect
     30,
   ])
   assert.equal(limited.calls.some(call => /resident-confirmation|gift-redirect/u.test(call.text)), false)
+})
+
+test('frozen gifts allow recipient refusal while revoked gifts refuse every action', async () => {
+  const redirectBody = postJson({
+    claim_token: CLAIM_TOKEN,
+    recipient_number: 8,
+    recipient_handle: 'resident-eight',
+    request_id: 'gift-redirect-dispute-block-0001',
+  })
+  for (const status of ['frozen', 'revoked'] as const) {
+    for (const action of ['accept', 'refuse'] as const) {
+      const blocked = appFor({ authenticated: true, giftStatus: status })
+      const response = await blocked.app.request(
+        `/api/city-credit/gifts/${GIFT_ID}/${action}`,
+        { method: 'POST' },
+      )
+      if (status === 'frozen' && action === 'refuse') {
+        assert.equal(response.status, 200, await response.clone().text())
+        assert.deepEqual(await response.json(), {
+          gift_id: GIFT_ID,
+          status: 'refused',
+          amount_units: '3000000',
+        })
+      } else {
+        assert.equal(response.status, 409, await response.clone().text())
+        const message = String((await response.json() as { error: unknown }).error)
+        assert.match(message, status === 'frozen'
+          ? /payment dispute is open.*purchase that funded/iu
+          : /resolved against.*permanently revoked.*never add credit/iu)
+      }
+    }
+    const blockedRedirect = appFor({ giftStatus: status })
+    const redirect = await blockedRedirect.app.request(
+      `/api/city-credit/gifts/${GIFT_ID}/redirect`,
+      redirectBody,
+    )
+    assert.equal(redirect.status, 409, await redirect.clone().text())
+    const redirectMessage = String((await redirect.json() as { error: unknown }).error)
+    assert.match(redirectMessage, status === 'frozen'
+      ? /payment dispute is open.*purchase that funded/iu
+      : /resolved against.*permanently revoked.*never add credit/iu)
+  }
+})
+
+test('a refused gift keeps its status but an active dispute blocks accept and redirect', async () => {
+  const blocked = appFor({ authenticated: true, giftStatus: 'refused', disputeBlocked: true })
+  for (const action of ['accept', 'redirect'] as const) {
+    const response = action === 'accept'
+      ? await blocked.app.request(`/api/city-credit/gifts/${GIFT_ID}/accept`, { method: 'POST' })
+      : await blocked.app.request(`/api/city-credit/gifts/${GIFT_ID}/redirect`, postJson({
+          claim_token: CLAIM_TOKEN,
+          recipient_number: 8,
+          recipient_handle: 'resident-eight',
+          request_id: 'gift-redirect-refused-dispute-0001',
+        }))
+    assert.equal(response.status, 409, await response.clone().text())
+    assert.match(
+      String((await response.json() as { error: unknown }).error),
+      /payment dispute is open.*purchase that funded/iu,
+    )
+  }
 })
 
 function expectHash(): string {

@@ -32,7 +32,7 @@ test('buy page states self, gift, exact-credit, receipt, and one-time-key contra
   assert.match(html, /does not expire/iu)
   assert.match(html, /private receipt[\s\S]{0,80}<code>\/api\/me<\/code>/iu)
   assert.match(html, /Successful payment adds credit immediately[\s\S]{0,80}No acceptance/iu)
-  assert.match(html, /gift stays pending[\s\S]{0,100}accepts[\s\S]{0,80}refuse/iu)
+  assert.match(html, /gift normally stays pending[\s\S]{0,100}accepts[\s\S]{0,80}refuse/iu)
   assert.match(html, /never who bought it/iu)
   assert.match(html, /private redirect key/iu)
   assert.match(html, /shown once/iu)
@@ -158,6 +158,20 @@ test('captured gift shows the receipt id needed by the redirect form', () => {
   assert.match(html, /id="result-new-purchase"[^>]*hidden/u)
   assert.match(CREDIT_BUY_JS, /resultNewPurchase\.hidden\s*=\s*false/u)
   assert.doesNotMatch(CREDIT_BUY_JS, /(?:allowance-return|allowance-cancel|paypal'\) === 'cancel')[\s\S]{0,500}resultNewPurchase\.hidden\s*=\s*false/u)
+})
+
+test('captured gift copy follows pending, refused, frozen, accepted, and revoked custody', () => {
+  const html = renderCreditBuyPage()
+
+  assert.match(CREDIT_BUY_JS, /payload\.status/u)
+  assert.match(CREDIT_BUY_JS, /payload\.blocked_reason/u)
+  for (const status of ['pending', 'refused', 'frozen', 'accepted', 'revoked']) {
+    assert.match(CREDIT_BUY_JS, new RegExp(`['"]${status}['"]`, 'u'))
+  }
+  assert.match(CREDIT_BUY_JS, /resultGiftRedirectLink\.hidden/u)
+  assert.match(html, /payment dispute is open[\s\S]{0,180}redirect/iu)
+  assert.match(html, /id="result-gift-redirect-help"/u)
+  assert.match(html, /id="result-gift-redirect-link"/u)
 })
 
 test('gift redirect remains a standalone non-PayPal recovery door', () => {

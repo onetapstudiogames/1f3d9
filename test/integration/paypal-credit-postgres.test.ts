@@ -577,7 +577,8 @@ test('PayPal intent, capture, event, catalog, allowance, and limit replays stay 
     )
     assert.equal(receiptAfterAcceptance?.receipt_id, localCaptureReplay?.receipt_id)
     assert.equal(receiptAfterAcceptance?.gift_id, pendingGift.public_id)
-    assert.equal(receiptAfterAcceptance?.status, 'pending')
+    assert.equal(receiptAfterAcceptance?.status, 'accepted')
+    assert.equal(receiptAfterAcceptance?.dispute_blocked, false)
     const acceptanceEvidence = await postgres.client.query<{ count: string }>(`
       SELECT count(*)::text AS count FROM city_credit_entries
       WHERE gift_id = $1::bigint AND entry_kind = 'gift_accept'

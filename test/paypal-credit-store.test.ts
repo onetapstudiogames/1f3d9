@@ -260,6 +260,7 @@ test('PayPal delivery is one database operation with exact immutable intent term
     purchase_kind: 'paypal',
     gift_id: 'city_gift_0123456789abcdef0123456789abcdef',
     status: 'pending',
+    dispute_blocked: false,
   })
   assert.equal(database.calls.length, 1)
 })
@@ -288,7 +289,8 @@ test('a captured order receipt is recovered locally without a provider source in
     amount_units: '3000000',
     purchase_kind: 'paypal',
     gift_id: 'city_gift_0123456789abcdef0123456789abcdef',
-    status: 'pending',
+    status: 'accepted',
+    dispute_blocked: false,
   })
   assert.equal(database.calls.length, 1)
 })

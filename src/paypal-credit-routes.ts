@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { declaredBodyLength } from './bounded-body.ts'
 import { CITY_FEE_CREDIT_UNITS, parseCityCreditRequestId } from './city-credit.ts'
@@ -29,6 +29,10 @@ const MAX_RESIDENT_ID = 2_147_483_647
 const REMOTE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
 const PUBLIC_PURCHASE_ID = /^city_paypal_[0-9a-f]{32}$/u
 const PAYPAL_ROUTE_PATH = '/api/city-credit/paypal'
+
+function apiCaptureEventId(captureId: string): string {
+  return `api-capture:${createHash('sha256').update(captureId, 'utf8').digest('hex')}`
+}
 
 type AuthenticatedResident = Readonly<{ id: number }>
 type JsonRecord = Record<string, unknown>
@@ -644,14 +648,30 @@ async function capturedOrderResponse(
     throw new RouteFailure(503,
       'The capture completed, but the credited resident confirmation is temporarily unavailable. Reload this return page with the same purchase_id and paypal_order_id; do not start another payment.')
   }
+  const giftStatus = intent.delivery === 'gift' ? String(credit.status ?? '') : null
+  const disputeBlocked = intent.delivery === 'gift' && credit.dispute_blocked === true
+  if (giftStatus !== null
+    && !['pending', 'accepted', 'refused', 'frozen', 'revoked'].includes(giftStatus)) {
+    throw new RouteFailure(503,
+      'The capture completed, but the gift state is temporarily unavailable. Reload this return page with the same purchase_id and paypal_order_id; do not start another payment.')
+  }
   return c.json({
     purchase_id: intent.purchaseId,
     resident_handle: recipient.residentHandle,
     amount_dollars: (intent.amountUnits / CITY_FEE_CREDIT_UNITS).toString(),
     delivery: intent.delivery,
-    status: intent.delivery === 'gift' ? 'pending' : 'credited',
+    status: giftStatus ?? 'credited',
     receipt_id: credit.receipt_id,
     ...(intent.delivery === 'gift' ? { gift_id: credit.gift_id } : {}),
+    ...(giftStatus === 'frozen' ? {
+      blocked_reason: 'A payment dispute is open on the purchase that funded this gift. It cannot be accepted or redirected while frozen.',
+    } : {}),
+    ...(giftStatus === 'revoked' ? {
+      blocked_reason: 'The payment dispute was resolved against the city seller. This gift was permanently revoked and can never add credit.',
+    } : {}),
+    ...(giftStatus === 'refused' && disputeBlocked ? {
+      blocked_reason: 'A payment dispute is open on the purchase that funded this refused gift. It cannot be redirected while the dispute remains open.',
+    } : {}),
   })
 }
 
@@ -705,14 +725,21 @@ async function captureOrder(
     },
     fetcher(dependencies),
   )
-  const credit = await deliverPayPalCredit(dependencies.database, {
+  const delivered = await deliverPayPalCredit(dependencies.database, {
     intent,
     sourceKey: capture.sourceKey,
     purchaseKind: 'paypal',
-    eventId: `api-capture:${capture.captureId}`,
+    eventId: apiCaptureEventId(capture.captureId),
     eventKind: 'PAYMENT.CAPTURE.COMPLETED',
     remoteResourceId: capture.captureId,
   })
+  const credit = intent.delivery === 'gift'
+    ? await readDeliveredPayPalOrderCredit(dependencies.database, intent.purchaseId)
+    : delivered
+  if (!credit) {
+    throw new RouteFailure(503,
+      'The capture completed, but the gift receipt is temporarily unavailable. Reload this return page with the same purchase_id and paypal_order_id; do not start another payment.')
+  }
   return await capturedOrderResponse(c, dependencies, intent, credit)
 }
 

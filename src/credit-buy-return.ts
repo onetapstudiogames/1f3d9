@@ -15,6 +15,7 @@ export const CREDIT_BUY_RETURN_CLIENT = `
       const delivery = payload.delivery
       resultGiftReceipt.hidden = true
       resultGiftId.textContent = ''
+      resultGiftRedirectLink.hidden = false
       resultHeading.textContent = delivery === 'gift' ? 'Gift purchase captured.' : 'Credit purchase complete.'
       if (delivery === 'gift') {
         const giftId = typeof payload.gift_id === 'string' ? payload.gift_id : ''
@@ -24,7 +25,37 @@ export const CREDIT_BUY_RETURN_CLIENT = `
         resultGiftId.textContent = giftId
         resultGiftReceipt.hidden = false
         if (redirectGiftIdInput instanceof HTMLInputElement) redirectGiftIdInput.value = giftId
-        resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is pending. It adds nothing until that resident accepts it in /api/me.'
+        const giftStatus = payload.status
+        if (!['pending', 'accepted', 'refused', 'frozen', 'revoked'].includes(giftStatus)) {
+          throw new Error('The city did not return the current gift status. Do not start another payment; reload to retry this capture.')
+        }
+        const blockedReason = cleanMessage(payload.blocked_reason, '')
+        if (giftStatus === 'accepted') {
+          resultHeading.textContent = 'Gift accepted.'
+          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' was accepted. Its durable receipt is in /api/me.'
+          resultGiftRedirectHelp.textContent = 'This gift was accepted and can no longer be redirected.'
+          resultGiftRedirectLink.hidden = true
+        } else if (giftStatus === 'frozen') {
+          resultHeading.textContent = 'Gift purchase frozen.'
+          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is frozen. ' + (blockedReason || 'A payment dispute is open on the purchase that funded it.') + ' The recipient may still refuse it in /api/me.'
+          resultGiftRedirectHelp.textContent = 'Save this gift ID and private key. Redirect is blocked while the funding payment dispute is open.'
+          resultGiftRedirectLink.hidden = true
+        } else if (giftStatus === 'revoked') {
+          resultHeading.textContent = 'Gift permanently revoked.'
+          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is revoked. ' + (blockedReason || 'It can never add credit or be redirected.')
+          resultGiftRedirectHelp.textContent = 'Keep this gift ID as the receipt reference. This revoked gift cannot be redirected.'
+          resultGiftRedirectLink.hidden = true
+        } else if (giftStatus === 'refused') {
+          resultHeading.textContent = 'Gift refused.'
+          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' was refused and added no credit.' + (blockedReason ? ' ' + blockedReason : ' The saved private key can redirect it to another confirmed resident.')
+          resultGiftRedirectHelp.textContent = blockedReason
+            ? 'Save this gift ID and private key. Redirect is blocked while the funding payment dispute is open.'
+            : 'Save this gift ID with the private redirect key. Both are needed to redirect this refused gift.'
+          resultGiftRedirectLink.hidden = Boolean(blockedReason)
+        } else {
+          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is pending. It adds nothing until that resident accepts it in /api/me.'
+          resultGiftRedirectHelp.textContent = 'Save this gift ID with the private redirect key. Both are needed to redirect this pending gift.'
+        }
       } else {
         resultMessage.textContent = amount + ' credits were added to @' + handle + '. The resident can read the durable receipt in /api/me.'
       }

@@ -355,6 +355,10 @@ of the commons; everything you do with what is already yours is free.
   redirect requires a new request ID. These routes accept no query options.
   Gift redirect admits 30 attempts per caller per hour. A `429` includes
   `Retry-After: 3600`; after that delay the buyer may try a gift redirect again.
+  While a PayPal payment dispute is open on the purchase that funded a gift, accept and
+  redirect refuse without changing the gift or balance and say in caller words that the
+  funding purchase has an open payment dispute. Recipient refusal remains available; it
+  preserves the refusal while the open-dispute marker continues to block buyer redirect.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval
@@ -366,6 +370,35 @@ of the commons; everything you do with what is already yours is free.
   data. The operator absorbs PayPal fees; the buyer still receives exactly one credit per
   US dollar. Order capture, subscription renewal, and verified webhook retries use unique
   source keys, so one completed PayPal payment can deliver credit only once.
+- After the existing PayPal signature check accepts a
+  `CUSTOMER.DISPUTE.CREATED` or `CUSTOMER.DISPUTE.UPDATED` event, the city durably stages
+  its complete set of 1–1,000 unique capture references before acknowledging it. Each event
+  keeps its immutable reported set; the dispute reconciles the capped durable union across
+  all lifecycle events when PayPal later reports another capture. Each capture that minted city credit is reconciled, even when the dispute arrived first or one
+  dispute names several local purchases. A pending gift funded by one of those captures is
+  frozen. A previously refused gift stays refused, preserving the resident's choice, but
+  its buyer redirect is blocked while the dispute is open. Credit already delivered by a
+  self-purchase or accepted gift is never removed or driven negative; the dispute is
+  recorded in that resident's private append-only ledger history instead. A verified event
+  with no local capture receipt yet returns typed `200` outcome
+  `dispute_awaiting_capture_receipt`; later capture delivery reconciles it before returning.
+  Signature rejection remains unchanged and applies no dispute state, receipt, or credit
+  change.
+- A verified `CUSTOMER.DISPUTE.RESOLVED` with `RESOLVED_SELLER_FAVOUR`,
+  `CANCELED_BY_BUYER`, or deprecated `DENIED` returns an originally pending frozen gift
+  to ordinary pending state; a refusal made before or during the dispute stays refused.
+  `RESOLVED_BUYER_FAVOUR` or deprecated `ACCEPTED` permanently revokes unaccepted value,
+  adds no balance, and appends a private receipt that says why. Ambiguous
+  `RESOLVED_WITH_PAYOUT` or `NONE` returns an honest typed `200` but leaves pending value
+  frozen for founder review. PayPal's official
+  255-character dispute and seller-transaction IDs and RFC3339 update times are accepted;
+  times are stored in canonical UTC. Dispute/event idempotency and timestamp ordering make
+  exact, concurrent, and out-of-order replays converge. Each lifecycle event has one
+  receipt per locally affected purchase and never a second one. Each first recorded dispute
+  writes one city-internal note for founder resident #1. The founder's own root-key account
+  inspection includes staged captures that have no local purchase yet; inspections targeted
+  at another resident include only that resident's local matches. The note, provider identifiers,
+  and purchaser identity never enter ordinary resident or public output.
 - The PayPal purchase door is dormant until `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`,
   `PAYPAL_ENV`, and `PAYPAL_WEBHOOK_ID` are all valid. Every PayPal page, asset, lookup,
   create, capture, subscription, and webhook route returns an honest operation-specific
@@ -398,11 +431,13 @@ of the commons; everything you do with what is already yours is free.
   refuses if a concurrent spend wins first.
 - `city_credit_entries` is the append-only authority and `city_credit_accounts` is only
   its trigger-maintained nonnegative projection. Every purchase, gift pending, acceptance,
-  refusal, redirect, fee spend, and exact failed-spend return has a durable private receipt
-  row readable by that resident at `GET /api/me`; retries and concurrent requests have one
-  database winner. Founder resident #1 may still issue one fixed administrative credit and
-  inspect one account through root-key routes.
-- A resident's own private balance, pending gifts, and receipt history are available at
+  refusal, redirect, dispute freeze/unfreeze/revocation, fee spend, and exact failed-spend
+  return has a durable private receipt row readable by that resident at `GET /api/me`;
+  retries and concurrent requests have one database winner. Founder resident #1 may still
+  issue one fixed administrative credit and inspect one account, its PayPal dispute state,
+  and its internal dispute notes through root-key routes. Inspecting the founder's own
+  handle also returns unmatched staged capture references so the note's operator next step works.
+- A resident's own private balance, pending or frozen gifts, and receipt history are available at
   `GET /api/me`; another resident cannot read them. Receipts continue independently with
   `before_credit_id`/`credit_limit` and pending gifts with
   `before_gift_id`/`gift_limit`, using
