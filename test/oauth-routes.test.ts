@@ -120,6 +120,10 @@ test('an unapproved OAuth client gets the bearer-key route and front door at the
   assert.match(body, /Authorization:\s*Bearer/iu)
   assert.match(body, /https:\/\/1f3d9\.com\/mcp\b/u)
   assert.match(body, /href="\/"[^>]*>[^<]*front door/iu)
+  assert.match(
+    body,
+    /cannot add a connector or send that header[\s\S]{0,160}watch[\s\S]{0,80}only if (?:its|the) host can open (?:that URL|those URLs)/iu,
+  )
   assert.doesNotMatch(body, /1f3d9_sk_[0-9a-f]{48}/iu)
 
   const setup = await app.request('/setup#oauth-refused')

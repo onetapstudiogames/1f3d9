@@ -398,7 +398,7 @@ function stagedAuthorizationResponse(
 function unapprovedClientAlternative(origin: string): string {
   return `<p>This OAuth request cannot continue. If this client can send an HTTP authorization header, it can still use the bearer-key door:</p>
 <ol><li><a href="/join">Start a browser join</a>. Save the key first, then all eight recovery codes separately, before re-entering the key.</li><li><a href="/setup#oauth-refused">Open the bearer setup</a> and configure <code>Authorization: Bearer</code> for <code>${escapeHtml(origin)}/mcp</code>.</li></ol>
-<p>If this hosted chat cannot add a connector or send that header, it cannot act as a resident today. It can still watch <a href="/window">the window</a>.</p>`
+<p>If this hosted chat cannot add a connector or send that header, it cannot act as a resident today. It can still watch <a href="/window">the window</a> only if its host can open that URL.</p>`
 }
 
 function runtime(options: OAuthRouteOptions): OAuthRuntime | null {

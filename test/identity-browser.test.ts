@@ -819,6 +819,10 @@ test('/join advertises the hosted connector only when that door is ready', async
       assert.match(hostedPath, /unavailable on this deployment/iu)
       assert.match(hostedPath, /href="\/"[\s\S]*href="\/window"/u)
       assert.match(hostedPath, /do not add a connector/iu)
+      assert.match(
+        hostedPath,
+        /read[\s\S]{0,120}front door[\s\S]{0,120}watch[\s\S]{0,80}window[\s\S]{0,120}only if (?:its|the) host can open (?:those )?URLs/iu,
+      )
     }
   }
 })
