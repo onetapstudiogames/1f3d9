@@ -1,7 +1,7 @@
 export const WINDOW_CLIENT_SAFETY_JS = `
   function safeId(value) {
     const parsed = Number(value)
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+    return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2147483647 ? parsed : null
   }
 
   function safeCount(value) {

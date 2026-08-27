@@ -47,7 +47,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
   }
   assert.match(WINDOW_HTML, /id="place-filter"/)
   assert.match(WINDOW_HTML, /id="resident-filter"/)
-  assert.match(WINDOW_HTML, /id="share-view"/)
+  assert.match(WINDOW_HTML, /id="share-status"/)
   assert.match(WINDOW_HTML, /id="view-scope"/)
   assert.match(WINDOW_HTML, /href="https:\/\/1f916\.ai\/"/)
   assert.match(WINDOW_HTML, /href="https:\/\/1f3ea\.com\/"/)
@@ -74,12 +74,68 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_JS, /asleep: raw\.asleep === true/)
   assert.match(WINDOW_JS, /sleeper-toggle/)
   assert.match(WINDOW_JS, /' asleep'\)|asleep'\s*:\s*'occupant-chip'/)
-  assert.match(WINDOW_JS, /URLSearchParams\(window\.location\.hash\.slice\(1\)\)/)
+  assert.match(WINDOW_JS, /new URLSearchParams\(legacyHash \|\| window\.location\.search\)/)
+  assert.match(WINDOW_JS, /window\.location\.hash\.slice\(1\)/)
   assert.match(WINDOW_JS, /history\.replaceState/)
   assert.match(WINDOW_JS, /credentials:\s*'omit'/)
   assert.match(WINDOW_JS, /fetch\(url\.pathname/)
   assert.doesNotMatch(WINDOW_JS, /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i)
   assert.doesNotThrow(() => new Function(WINDOW_JS))
+})
+
+test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
+  const views = ['map', 'place', 'conversations', 'happenings', 'agreements', 'archive']
+  for (const view of views) {
+    const panel = WINDOW_HTML.match(
+      new RegExp(`<section id="${view}-panel"[\\s\\S]*?<\\/section>`),
+    )?.[0] ?? ''
+    assert.equal(
+      (panel.match(/data-share-scope="view"/gu) ?? []).length,
+      1,
+      `${view} must have exactly one view-share button`,
+    )
+  }
+  assert.doesNotMatch(WINDOW_HTML, /id="share-view"/u)
+  assert.match(WINDOW_HTML, /id="share-status"[^>]*aria-live="polite"/u)
+  const detail = WINDOW_HTML.match(/<dialog id="record-detail"[\s\S]*?<\/dialog>/u)?.[0] ?? ''
+  assert.equal((detail.match(/data-share-scope="detail"/gu) ?? []).length, 1)
+  assert.doesNotMatch(WINDOW_JS, /thing-card[\s\S]{0,500}data-share-scope/u)
+  assert.doesNotMatch(WINDOW_JS, /note-card[\s\S]{0,500}data-share-scope/u)
+})
+
+test('public search controls state their accepted shape, limits, normalization, and refusals before use', () => {
+  assert.match(
+    WINDOW_HTML,
+    /id="directory-search"[^>]*aria-describedby="directory-search-help directory-search-status"/u,
+  )
+  assert.match(
+    WINDOW_HTML,
+    /id="directory-search-help"[^>]*>[^<]*one plain line[^<]*NFC[^<]*100 characters[^<]*(?:resident key|recovery code)/iu,
+  )
+  assert.match(WINDOW_HTML, /id="archive-query"[^>]*aria-describedby="archive-query-help"/u)
+  assert.match(
+    WINDOW_HTML,
+    /id="archive-query-help"[^>]*>[^<]*one plain line[^<]*NFC[^<]*spacing[^<]*256 UTF-8 bytes[^<]*1–16 words[^<]*(?:resident key|recovery code)/iu,
+  )
+})
+
+test('share controls copy absolute canonical paths and visibly report clipboard refusal', () => {
+  assert.match(WINDOW_JS, /navigator\.clipboard\.writeText/u)
+  assert.match(WINDOW_JS, /new URL\(path, window\.location\.origin\)\.href/u)
+  assert.match(WINDOW_JS, /Link copied/u)
+  assert.match(WINDOW_JS, /could not copy/iu)
+  assert.match(WINDOW_JS, /credential[\s\S]{0,240}replace/iu)
+  assert.match(WINDOW_JS, /filter[\s\S]{0,240}public URL/iu)
+  assert.doesNotMatch(WINDOW_JS, /document\.execCommand/u)
+})
+
+test('detail sharing reports inside the modal and navigation invalidates stale feedback and reads', () => {
+  const detail = WINDOW_HTML.match(/<dialog id="record-detail"[\s\S]*?<\/dialog>/u)?.[0] ?? ''
+  assert.match(detail, /id="record-detail-share-status"[^>]*role="status"[^>]*aria-live="polite"/u)
+  assert.match(WINDOW_JS, /detailRequestRevision/u)
+  assert.match(WINDOW_JS, /requestAuthoredRevision/u)
+  assert.match(WINDOW_JS, /resetShareFeedback/u)
+  assert.match(WINDOW_JS, /closeDetail/u)
 })
 
 test('the share link round-trips every reproducible window question', () => {
@@ -192,14 +248,14 @@ test('global read retry keeps total failure and stale refresh visibly distinct',
   assert.match(WINDOW_CSS, /\.global-read-retry:focus-visible\s*\{/)
 })
 
-test('deliberate navigation makes real history and refresh keeps reading state', () => {
+test('deliberate navigation makes canonical history and refresh keeps reading state', () => {
   // Tabs, place and resident choices, and filter changes push a history
-  // entry; only unchanged-hash renders fall through to replaceState.
+  // entry; an unchanged canonical path does not add another entry.
   assert.match(WINDOW_JS, /function navigate\(next\)/)
   assert.match(WINDOW_JS, /history\.pushState/)
-  assert.match(WINDOW_JS, /if \(window\.location\.hash === hash\) return/)
+  assert.match(WINDOW_JS, /if \(current === path && !window\.location\.hash\) return true/)
   assert.match(WINDOW_JS, /window\.addEventListener\('popstate', syncStateFromLocation\)/)
-  assert.match(WINDOW_JS, /navigate\(\{ view, placeId \}\)/)
+  assert.match(WINDOW_JS, /navigate\(\{ view, placeId, detail: null \}\)/)
   assert.match(WINDOW_JS, /placeId: safeId\(nodes\.placeFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   assert.match(WINDOW_JS, /resident: safeHandle\(nodes\.residentFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   // Expanded bodies are keyed state, and focus lands back on the rebuilt
@@ -891,7 +947,7 @@ test('the selected-place panel identifies owner choices and links front matter w
   assert.match(WINDOW_JS, /place\.purpose/)
   assert.match(WINDOW_JS, /place\.front_matter/)
   assert.match(WINDOW_JS, /place\.front_matter\.map\(/)
-  assert.match(WINDOW_JS, /href\s*=\s*['"]\/api\/thing\/['"]\s*\+\s*String\([^)]*\.id\)/)
+  assert.match(WINDOW_JS, /link\.href\s*=\s*['"]\/window\/['"]\s*\+\s*kind\s*\+\s*['"]\/['"]\s*\+\s*String\(id\)/)
   assert.match(WINDOW_JS, /made by[\s\S]{0,600}currently owned by[\s\S]{0,600}UTF-8 bytes/iu)
   assert.doesNotMatch(WINDOW_JS, /front_matter\.(?:sort|toSorted|reverse|splice)\(/)
   assert.doesNotMatch(WINDOW_JS, /new URL\(\s*['"]\/api\/thing\//u)
@@ -1240,11 +1296,12 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
   // Dormant: the absolute promise holds. Armed: the buy page exists, so the
   // footer names the one human act instead of denying it exists.
   const { Hono } = await import('hono')
-  const app = new Hono()
-  app.get('/dormant', c => windowModule.windowPage(c, false))
-  app.get('/armed', c => windowModule.windowPage(c, true))
-  const dormant = await (await app.request('/dormant')).text()
-  const armed = await (await app.request('/armed')).text()
+  const dormantApp = new Hono()
+  const armedApp = new Hono()
+  dormantApp.get('/window', c => windowModule.windowPage(c, false))
+  armedApp.get('/window', c => windowModule.windowPage(c, true))
+  const dormant = await (await dormantApp.request('/window')).text()
+  const armed = await (await armedApp.request('/window')).text()
   assert.match(dormant, /No registration, credentials, payments, or city-changing controls exist here\./)
   assert.doesNotMatch(dormant, /Buy fee credit/)
   assert.match(armed, /Watching changes nothing\./)
@@ -1259,4 +1316,86 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
   assert.match(armed, /never power over the city/)
   assert.match(armed, /Buy fee credit/)
   assert.doesNotMatch(armed, /No registration, credentials, payments, or city-changing controls exist here\./)
+})
+
+test('canonical window pages render current public metadata and self-contained images', async () => {
+  const { Hono } = await import('hono')
+  const reads: Array<{ kind: string; id: number }> = []
+  const app = new Hono()
+  app.get('/window/:kind/:id', c => windowModule.windowPage(c, false, async detail => {
+    reads.push(detail)
+    return detail.id === 401
+      ? { name: 'field lantern', made_by: 'archive-smith', body: 'A current public inscription from the city.' }
+      : null
+  }))
+  app.get('/window/:view', c => windowModule.windowPage(c, false, async detail => {
+    reads.push(detail)
+    return null
+  }))
+  app.get('/share/thing.png', c => windowModule.windowShareImage(c, 'thing'))
+
+  const response = await app.request('/window/thing/401')
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  const html = await response.text()
+  assert.match(html, /<title>field lantern · Thing #401 by archive-smith — 1F3D9<\/title>/u)
+  assert.match(html, /property="og:description" content="A current public inscription from the city\."/u)
+  assert.match(html, /property="og:image" content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
+  assert.match(html, /name="twitter:card" content="summary_large_image"/u)
+  assert.deepEqual(reads, [{ kind: 'thing', id: 401 }])
+
+  const unavailable = await app.request('/window/thing/999')
+  assert.equal(unavailable.status, 200)
+  assert.match(await unavailable.text(), /current public state/iu)
+  const staticView = await app.request('/window/happenings')
+  assert.equal(staticView.status, 200)
+  assert.equal(reads.length, 2, 'a body-free view must not load a detail record')
+
+  const image = await app.request('/share/thing.png')
+  assert.equal(image.status, 200)
+  assert.equal(image.headers.get('content-type'), 'image/png')
+  assert.equal(image.headers.get('cross-origin-resource-policy'), 'cross-origin')
+  const bytes = new Uint8Array(await image.arrayBuffer())
+  assert.deepEqual([...bytes.subarray(1, 4)], [0x50, 0x4e, 0x47])
+})
+
+test('Preview metadata trusts Vercel system URLs instead of the request Host', async () => {
+  const { Hono } = await import('hono')
+  const app = new Hono()
+  const previewHost = '1f3d9-git-sharing-onetapstudiogames-projects.vercel.app'
+  app.get('/window/:kind/:id', c => windowModule.windowPage(
+    c,
+    false,
+    async () => ({ name: 'field lantern', made_by: 'archive-smith', body: 'Current public text.' }),
+    {
+      PUBLIC_ORIGIN: 'https://1f3d9-hosted-chat-preview.vercel.app',
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      VERCEL_BRANCH_URL: previewHost,
+    },
+  ))
+
+  const previewHtml = await (await app.request('https://evil.example/window/thing/401')).text()
+  assert.match(previewHtml, new RegExp(`<link rel="canonical" href="https://${previewHost}/window/thing/401">`, 'u'))
+  assert.match(previewHtml, new RegExp(`<meta property="og:url" content="https://${previewHost}/window/thing/401">`, 'u'))
+  assert.match(previewHtml, new RegExp(`<meta property="og:image" content="https://${previewHost}/share/thing.png">`, 'u'))
+  assert.match(previewHtml, new RegExp(`<meta name="twitter:image" content="https://${previewHost}/share/thing.png">`, 'u'))
+  assert.doesNotMatch(previewHtml, /evil\.example|1f3d9-hosted-chat-preview/u)
+
+  const productionApp = new Hono()
+  productionApp.get('/window/:kind/:id', c => windowModule.windowPage(
+    c,
+    false,
+    async () => ({ name: 'field lantern', made_by: 'archive-smith', body: 'Current public text.' }),
+    {
+      PUBLIC_ORIGIN: 'https://1f3d9.com',
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      VERCEL_BRANCH_URL: previewHost,
+    },
+  ))
+  const productionHtml = await (await productionApp.request('https://evil.example/window/thing/401')).text()
+  assert.match(productionHtml, /href="https:\/\/1f3d9\.com\/window\/thing\/401"/u)
+  assert.match(productionHtml, /content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
+  assert.doesNotMatch(productionHtml, /evil\.example|onetapstudiogames-projects/u)
 })

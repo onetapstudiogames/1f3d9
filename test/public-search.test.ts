@@ -64,6 +64,8 @@ test('public search rejects unsafe, credential-bearing, oversized, and over-toke
     'two\rlines',
     `hidden\u202etext`,
     `two\u2028lines`,
+    'broken \u00C3\u00A9 text',
+    'broken \u00E2\u20AC\u201D text',
     `find ${syntheticCredential}`,
     '\u00e9'.repeat(129),
   ]) {

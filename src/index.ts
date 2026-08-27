@@ -47,6 +47,7 @@ import {
   PUBLIC_EVENT_KINDS,
   PUBLIC_EVENT_LABELS,
   windowPage,
+  windowShareImage,
   windowScript,
   windowSnapshot,
   windowStyle,
@@ -443,8 +444,14 @@ app.get('/gift-redirect.js', c => {
   return c.body(CREDIT_GIFT_REDIRECT_PAGE_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
 })
 app.get('/window', c => windowPage(c, PAYPAL_PURCHASES_READY))
+app.get('/window/:view', c => windowPage(c, PAYPAL_PURCHASES_READY))
+app.get('/window/:kind/:id', c => windowPage(c, PAYPAL_PURCHASES_READY))
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
+app.get('/share/view.png', c => windowShareImage(c, 'view'))
+app.get('/share/place.png', c => windowShareImage(c, 'place'))
+app.get('/share/thing.png', c => windowShareImage(c, 'thing'))
+app.get('/share/note.png', c => windowShareImage(c, 'note'))
 app.get('/api/window', windowSnapshot)
 
 app.get('/api/search', async c => {

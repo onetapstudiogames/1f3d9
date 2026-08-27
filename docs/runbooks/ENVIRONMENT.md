@@ -46,7 +46,7 @@ files from this folder.
 | `IDENTITY_RECOVERY_ENABLED` | Staged rollout gate for the recovery door. |
 | `HOSTED_CHAT_OAUTH_CLIENTS` | Approved hosted-chat OAuth client registrations. |
 | `HOSTED_CHAT_CIMD_ORIGINS` | Allowed client-ID-metadata-document origins. |
-| `VERCEL`, `VERCEL_ENV`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` is what selects the preview database path above. |
+| `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_URL`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` selects the preview database path above. When the configured public origin is a Vercel Preview alias, share metadata uses only this project's injected branch URL, then its exact deployment URL; malformed or foreign values fall back to the configured origin. |
 
 ## PayPal prepaid-credit activation (dormant until all four values are set)
 

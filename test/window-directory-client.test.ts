@@ -95,6 +95,21 @@ test('directory search returns its own place and resident results', () => {
   assert.deepEqual(searchWindowDirectory(places, residents, 'nowhere'), [])
 })
 
+test('directory search treats canonically equivalent Unicode as the same public question', () => {
+  const places = [{
+    id: 1,
+    parent_id: null,
+    name: 'Caf\u00e9',
+    path: 'the world / Caf\u00e9',
+  }]
+
+  assert.deepEqual(
+    searchWindowDirectory(places, [], 'Cafe\u0301'),
+    searchWindowDirectory(places, [], 'Caf\u00e9'),
+  )
+  assert.equal(searchWindowDirectory(places, [], 'Cafe\u0301')[0]?.id, 1)
+})
+
 test('a watched place scope contains itself and every nested place', () => {
   const places = [
     { id: 1, parent_id: null, name: 'the world' },

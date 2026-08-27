@@ -3290,6 +3290,11 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
 }) as typeof fetch
 
 const { default: app } = await import('../src/index.ts')
+const {
+  loadPublicNoteRecord,
+  loadPublicPlaceRecord,
+  loadPublicThingRecord,
+} = await import('../src/public-records.ts')
 const { setEngineTransactionRunnerForTests } = await import('../src/engine.ts')
 setEngineTransactionRunnerForTests(async (db, work) => work(db, false))
 test.after(() => setEngineTransactionRunnerForTests(null))
@@ -4370,6 +4375,72 @@ test('public thing and note detail reads expose full active records without writ
   assert.equal((await app.request('/api/thing/41')).status, 404)
   assert.equal((await app.request('/api/thing/not-an-id')).status, 400)
   assert.equal((await app.request('/api/note/not-an-id')).status, 400)
+})
+
+test('single-record APIs expose the shared loaders\' exact moderated public truth', async () => {
+  reset({
+    scenario: 'public details',
+    moderatedKindIds: [3],
+    noteRemoved: true,
+  })
+
+  const place = await loadPublicPlaceRecord(2)
+  const thing = await loadPublicThingRecord(41)
+  const note = await loadPublicNoteRecord(51)
+  assert.ok(place)
+  assert.ok(thing)
+  assert.ok(note)
+  assert.equal(thing.kind, '[removed by maintainer]')
+  assert.equal(note.body, '[removed by maintainer]')
+
+  const placeResponse = await app.request('/api/place/2?view=outline')
+  const thingResponse = await app.request('/api/thing/41')
+  const noteResponse = await app.request('/api/note/51')
+  assert.equal(placeResponse.status, 200)
+  assert.equal(thingResponse.status, 200)
+  assert.equal(noteResponse.status, 200)
+
+  const placeBody = await placeResponse.json() as {
+    place: Record<string, unknown> & { labels: unknown; laws: unknown }
+  }
+  const thingBody = await thingResponse.json() as { thing: Record<string, unknown> }
+  const noteBody = await noteResponse.json() as { note: Record<string, unknown> }
+  const { labels: _labels, laws: _laws, ...placeRecord } = placeBody.place
+  assert.deepEqual(placeRecord, place)
+  assert.deepEqual(thingBody.thing, thing)
+  assert.deepEqual(noteBody.note, note)
+  assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+
+  reset({ scenario: 'public details', thingWithdrawn: true })
+  assert.equal(await loadPublicThingRecord(41), null)
+})
+
+test('canonical window routes unfurl one current moderated public record', async () => {
+  reset({ scenario: 'public details', moderatedKindIds: [3] })
+  const thing = await app.request('/window/thing/41')
+  assert.equal(thing.status, 200)
+  assert.equal(thing.headers.get('cache-control'), 'no-store')
+  const html = await thing.text()
+  assert.match(html, /<link rel="canonical" href="https:\/\/1f3d9\.com\/window\/thing\/41">/u)
+  assert.match(html, /<meta property="og:title" content="porch lantern · Thing #41 by tiny-lantern — 1F3D9">/u)
+  assert.match(html, /<meta property="og:description" content="warm light">/u)
+  assert.doesNotMatch(html, /1f3d9_(?:sk|at|rt|ac|rc)_/iu)
+
+  reset({ scenario: 'public details', thingWithdrawn: true })
+  const withdrawn = await app.request('/window/thing/41')
+  assert.equal(withdrawn.status, 200)
+  assert.match(await withdrawn.text(), /not publicly available now/iu)
+
+  reset({ scenario: 'public details' })
+  const view = await app.request('/window/happenings')
+  assert.equal(view.status, 200)
+  assert.match(await view.text(), /Recent public happenings — 1F3D9/u)
+  assert.equal(sqlCalls().length, 0, 'a body-free view must not read a detail record')
+
+  const image = await app.request('/share/thing.png')
+  assert.equal(image.status, 200)
+  assert.equal(image.headers.get('content-type'), 'image/png')
+  assert.equal(image.headers.get('cross-origin-resource-policy'), 'cross-origin')
 })
 
 test('each place permission is independent and an allowed visitor owns what they build', async () => {

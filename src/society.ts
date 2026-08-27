@@ -45,6 +45,7 @@ import {
   utf8TextBytes,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 
@@ -187,15 +188,9 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'note id must be a positive integer')
-    const rows = await sql`
-      SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
-      FROM notes note
-      JOIN residents author ON author.id = note.author_id
-      WHERE note.id = ${id}
-    ` as Array<Record<string, unknown> & { id: number }>
-    if (!rows[0]) return err(c, 404, 'note not found')
-    const notes = await moderatePublicRows('note', rows)
-    return publicJson(c, { note: notes[0] })
+    const note = await loadPublicNoteRecord(id)
+    if (!note) return err(c, 404, 'note not found')
+    return publicJson(c, { note })
   })
 
   app.post('/api/note', async c => {

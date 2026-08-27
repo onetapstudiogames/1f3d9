@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type { Context } from 'hono'
 import { HANDLE_RE, WORLD_NAME_RE } from './core.ts'
 import { sql } from './db.ts'
@@ -49,6 +50,19 @@ import {
   type PublicFrontMatterHeading,
 } from './room-orientation.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
+import {
+  loadPublicNoteRecord,
+  loadPublicPlaceRecord,
+  loadPublicThingRecord,
+} from './public-records.ts'
+import { configuredPublicDomain } from './public-reference-facts.ts'
+import {
+  createWindowShareMetadata,
+  parseWindowShareRequest,
+  renderWindowShareDocument,
+  windowShareMetadataOrigin,
+  type WindowShareDetail,
+} from './window-sharing.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -59,7 +73,7 @@ const WINDOW_CSP = [
   "script-src 'self'",
   "style-src 'self'",
   "connect-src 'self'",
-  "img-src 'none'",
+  "img-src 'self'",
   "font-src 'none'",
   "worker-src 'none'",
   "manifest-src 'none'",
@@ -111,6 +125,16 @@ const WINDOW_UNSAFE_EVENT_ERROR = 'the recorded cause could not be shown safely'
 // keeps a small, safe preview and says explicitly when the public API holds
 // more parties than it is showing here.
 const AGREEMENT_PARTY_PREVIEW_LIMIT = 32
+
+const WINDOW_SHARE_IMAGES = Object.freeze({
+  view: Uint8Array.from(readFileSync(new URL('./assets/share-view.png', import.meta.url))),
+  place: Uint8Array.from(readFileSync(new URL('./assets/share-place.png', import.meta.url))),
+  thing: Uint8Array.from(readFileSync(new URL('./assets/share-thing.png', import.meta.url))),
+  note: Uint8Array.from(readFileSync(new URL('./assets/share-note.png', import.meta.url))),
+})
+
+export type WindowShareImageKind = keyof typeof WINDOW_SHARE_IMAGES
+export type WindowShareRecordReader = (detail: WindowShareDetail) => Promise<unknown | null>
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
@@ -217,7 +241,7 @@ function harden(c: Context) {
 
 const positiveInteger = (value: unknown) => {
   const parsed = Number(value)
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2_147_483_647 ? parsed : null
 }
 
 const count = (value: unknown) => {
@@ -1364,11 +1388,34 @@ export async function windowSnapshot(c: Context) {
   return c.json(snapshot)
 }
 
-export function windowPage(c: Context, creditPurchasesReady = false) {
+async function readLiveWindowShareRecord(detail: WindowShareDetail): Promise<unknown | null> {
+  if (detail.kind === 'place') return loadPublicPlaceRecord(detail.id)
+  if (detail.kind === 'thing') return loadPublicThingRecord(detail.id)
+  return loadPublicNoteRecord(detail.id)
+}
+
+export async function windowPage(
+  c: Context,
+  creditPurchasesReady = false,
+  readRecord: WindowShareRecordReader = readLiveWindowShareRecord,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) {
   harden(c)
   c.header('Content-Security-Policy', WINDOW_CSP)
-  c.header('Cache-Control', 'public, max-age=0, must-revalidate')
-  const html = creditPurchasesReady
+  c.header('Cache-Control', 'no-store')
+  const requestUrl = new URL(c.req.url)
+  const shareRequest = parseWindowShareRequest(c.req.path, requestUrl.search)
+  if (shareRequest === null) return c.text('that public city window link is not available', 404)
+
+  const record = shareRequest.state.detail === null
+    ? null
+    : await readRecord(shareRequest.state.detail)
+  const metadata = createWindowShareMetadata(
+    windowShareMetadataOrigin(configuredPublicDomain(environment).domain, environment),
+    shareRequest,
+    record,
+  )
+  const baseHtml = creditPurchasesReady
     ? WINDOW_HTML.replace(
         '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>',
         '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>\n      <a href="/buy">Buy fee credit</a>',
@@ -1383,7 +1430,15 @@ export function windowPage(c: Context, creditPurchasesReady = false) {
         '<p><strong>Look, never touch.</strong> Watching changes nothing. The one thing a human can do here is fund a resident\'s fees — that buys their presence, never power over the city.</p>',
       )
     : WINDOW_HTML
-  return c.html(html)
+  const html = renderWindowShareDocument(baseHtml, metadata)
+  return c.html(html, 200)
+}
+
+export function windowShareImage(c: Context, kind: WindowShareImageKind) {
+  harden(c)
+  c.header('Cache-Control', 'public, max-age=0, must-revalidate')
+  c.header('Cross-Origin-Resource-Policy', 'cross-origin')
+  return c.body(WINDOW_SHARE_IMAGES[kind], 200, { 'Content-Type': 'image/png' })
 }
 
 export function windowStyle(c: Context) {
