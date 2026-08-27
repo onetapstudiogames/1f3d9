@@ -110,10 +110,12 @@ function searchQuery(
   type: PublicSearchType,
   limit = 10,
   before: string | null = null,
+  maker: string | null = null,
 ): PublicSearchQuery {
   const parsed = parsePublicSearchQuery({
     q: [q], mode: [mode], type: [type], limit: [String(limit)],
     ...(before === null ? {} : { before: [before] }),
+    ...(maker === null ? {} : { maker: [maker] }),
   })
   if (!parsed.ok) assert.fail(parsed.error)
   return parsed
@@ -245,7 +247,8 @@ test('large public searches use maintained indexes without changing archive trut
     await postgres.client.query(`
       INSERT INTO residents (id, handle, model, secret_hash) VALUES
         (1, 'maintainer', 'search-index-test', repeat('1', 64)),
-        (2, 'archivist', 'search-index-test', repeat('2', 64))
+        (2, 'archivist', 'search-index-test', repeat('2', 64)),
+        (3, 'other-maker', 'search-index-test', repeat('3', 64))
     `)
     const world = Number((await postgres.client.query<{ id: number }>(
       `SELECT id FROM places WHERE place_kind = 'world'`,
@@ -323,6 +326,22 @@ test('large public searches use maintained indexes without changing archive trut
     await postgres.client.query('ANALYZE notes')
     await postgres.client.query('ANALYZE things')
     await postgres.client.query('ANALYZE moderation_actions')
+
+    await postgres.client.query(`
+      INSERT INTO notes (place_id, author_id, body, created_at) VALUES
+        ($1, 2, 'makerfilterproof note', '2026-02-07T00:00:03Z')
+    `, [place])
+    await postgres.client.query(`
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, created_at) VALUES
+        ($1, 'Makerfilterproof Archivist', 'archivist body', 2, 2, '2026-02-07T00:00:02Z'),
+        ($1, 'Makerfilterproof Other', 'other body', 3, 3, '2026-02-07T00:00:01Z')
+    `, [place])
+    await postgres.client.query(`
+      UPDATE things SET owner_id = 1
+      WHERE name IN ('Makerfilterproof Archivist', 'Makerfilterproof Other')
+    `)
+    await postgres.client.query('ANALYZE notes')
+    await postgres.client.query('ANALYZE things')
 
     await t.test('the migration is idempotent and retries an interrupted concurrent build', async () => {
       await postgres.client.query(`
@@ -442,6 +461,27 @@ test('large public searches use maintained indexes without changing archive trut
         searchQuery('autoupdateproof', 'words', 'thing'),
       )).result
       assert.equal(withdrawn.totalItems, 0, 'a withdrawn thing must leave the active index automatically')
+    })
+
+    await t.test('maker narrows exact totals to active things by permanent maker', async () => {
+      const archivist = (await runSearch(
+        postgres.client,
+        searchQuery('makerfilterproof', 'words', 'all', 10, null, 'archivist'),
+      )).result
+      assert.equal(archivist.totalItems, 1)
+      assert.equal(archivist.totalBodyBytes, Buffer.byteLength('archivist body'))
+      assert.deepEqual(archivist.items.map(item => [item.type, item.made_by]), [
+        ['thing', 'archivist'],
+      ])
+
+      const other = (await runSearch(
+        postgres.client,
+        searchQuery('makerfilterproof', 'words', 'thing', 10, null, 'other-maker'),
+      )).result
+      assert.equal(other.totalItems, 1)
+      assert.deepEqual(other.items.map(item => [item.type, item.made_by]), [
+        ['thing', 'other-maker'],
+      ])
     })
   } finally {
     await postgres.client.end().catch(() => undefined)

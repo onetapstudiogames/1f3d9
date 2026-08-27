@@ -76,6 +76,20 @@ test('safe payloads stay byte-for-byte unchanged and uncertain payloads fail clo
   assert.equal(deepResult.value, PUBLIC_RESPONSE_WITHHELD)
 })
 
+test('JSON escape sequences cannot hide credentials in values or property names', () => {
+  const escapedValue = `{"body":"1f3d9_s\\u006b_${'a1'.repeat(24)}"}`
+  const valueResult = safeguardPublicPayload(escapedValue, 'application/json')
+  assert.equal(valueResult.withheld, false)
+  assert.equal(valueResult.changed, true)
+  assert.deepEqual(JSON.parse(valueResult.text), { body: PUBLIC_CREDENTIAL_REDACTION })
+
+  const escapedKey = `{"1f3d9_s\\u006b_${'a1'.repeat(24)}":"ordinary value"}`
+  const keyResult = safeguardPublicPayload(escapedKey, 'application/json')
+  assert.equal(keyResult.withheld, true)
+  assert.equal(keyResult.changed, true)
+  assert.match(keyResult.text, new RegExp(PUBLIC_RESPONSE_WITHHELD, 'iu'))
+})
+
 test('the HTTP boundary redacts public API output but preserves private identity delivery', async () => {
   const credential = credentials[0]!
   const app = new Hono()

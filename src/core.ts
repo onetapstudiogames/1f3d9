@@ -59,6 +59,10 @@ export function allowOAuthForHostedConnectorRequest(request: Request): void {
   hostedConnectorRequests.add(request)
 }
 
+export function isHostedConnectorRequest(request: Request): boolean {
+  return hostedConnectorRequests.has(request)
+}
+
 export function newSecret(): string {
   return SECRET_PREFIX + randomBytes(24).toString('hex')
 }

@@ -6632,6 +6632,9 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/search?q=',
     '/api/search?q=moss&q=fern',
     '/api/search?q=moss&mode=ranked',
+    '/api/search?q=moss&maker=First-Maker',
+    '/api/search?q=moss&maker=first-maker&maker=second-maker',
+    '/api/search?q=moss&maker=first-maker&type=note',
     '/api/search?q=moss&before=not-a-cursor',
     '/api/search?q=moss&unknown=true',
     '/api/changes?since=-1',
@@ -6661,13 +6664,13 @@ test('search and changes succeed through their real Hono routes without returnin
     reset({ scenario: 'public pagination' })
     const headers = { 'X-Vercel-Forwarded-For': '203.0.113.180' }
     const searched = await app.request(
-      '/api/search?q=archive+lantern&mode=phrase&type=thing',
+      '/api/search?q=archive+lantern&mode=phrase&type=thing&maker=archive-smith',
       { headers },
     )
     assert.equal(searched.status, 200)
     assert.equal(searched.headers.get('cache-control'), 'no-store')
     assert.deepEqual(await searched.json(), {
-      query: 'archive lantern', mode: 'phrase', type: 'thing',
+      query: 'archive lantern', mode: 'phrase', type: 'thing', maker: 'archive-smith',
       results: [{
         type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
         maker_id: 5, made_by: 'archive-smith',
@@ -6684,6 +6687,7 @@ test('search and changes succeed through their real Hono routes without returnin
     assert.match(searchRead?.query ?? '', /maker\.handle\s+AS\s+made_by/iu)
     assert.match(searchRead?.query ?? '', /thing\.owner_id\s+AS\s+current_owner_id/iu)
     assert.match(searchRead?.query ?? '', /owner\.handle\s+AS\s+current_owner/iu)
+    assert.ok(searchRead?.params?.includes('archive-smith'))
 
     const checkpoint = await app.request('/api/changes')
     assert.equal(checkpoint.status, 200)
@@ -7662,6 +7666,57 @@ test('a flag reason over 500 characters is rejected without losing text silently
   assert.equal(inserted('flags'), 0)
 })
 
+test('invalid MCP credentials cannot fall through to the anonymous flag lane', async () => {
+  reset({ scenario: 'flag quota' })
+  const argumentsBody = {
+    target_type: 'thing', target_id: 41, reason: 'private report detail',
+  }
+  const callBody = (name: string) => JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name, arguments: argumentsBody },
+  })
+
+  const legacy = await app.request('/mcp', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer invalid' },
+    body: callBody('flag'),
+  })
+  const legacyPayload = await legacy.json() as {
+    result: { isError: boolean; content: Array<{ text: string }> }
+  }
+  assert.equal(legacyPayload.result.isError, true)
+  assert.match(legacyPayload.result.content[0]?.text ?? '', /auth_required|bad or missing bearer/iu)
+  assert.equal(inserted('flags'), 0)
+
+  const previousHostedFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+  process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+  setOAuthResidentResolver(async () => null)
+  try {
+    const gateway = new Hono()
+    gateway.post('/mcp/connect', c => mcp(c, app, { hostedChat: true }))
+    for (const authorization of [undefined, `Bearer 1f3d9_at_${'ef'.repeat(32)}`]) {
+      const hosted = await gateway.request('/mcp/connect', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(authorization ? { authorization } : {}),
+        },
+        body: callBody('mcp_for_1f3d9_flag'),
+      })
+      const hostedPayload = await hosted.json() as {
+        result: { isError: boolean; content: Array<{ text: string }> }
+      }
+      assert.equal(hostedPayload.result.isError, true)
+      assert.match(hostedPayload.result.content[0]?.text ?? '', /auth_required|bad or missing bearer/iu)
+      assert.equal(inserted('flags'), 0)
+    }
+  } finally {
+    setOAuthResidentResolver(null)
+    if (previousHostedFlag === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHostedFlag
+  }
+})
+
 test('resident flags are bounded in their own hourly bucket', async () => {
   reset({ scenario: 'flag quota' })
   const body = JSON.stringify({ target_type: 'thing', target_id: 41, reason: 'private report detail' })
@@ -7702,11 +7757,13 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'credit_preflight',
-    'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
+    'credit_preflight', 'buy_credit', 'found', 'place_edit',
+    'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
+    'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
     'payment_attempt', 'transfer',
-    'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
+    'agree', 'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
     'mark_for_later', 'me', 'moderate',
   ])
   assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
