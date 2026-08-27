@@ -556,7 +556,12 @@ function publicWindowEvent(value: unknown) {
   const rawDetail = row.detail && typeof row.detail === 'object'
     ? row.detail as Record<string, unknown>
     : {}
-  const detail: Record<string, number | string | boolean> = Object.fromEntries(SAFE_DETAIL_IDS.flatMap(key => {
+  const creditDisputeDecision = kind === 'payment_repair'
+    && ['credit_dispute_seller_favour', 'credit_dispute_buyer_favour']
+      .includes(String(rawDetail.action))
+  const detail: Record<string, number | string | boolean> = Object.fromEntries((
+    creditDisputeDecision ? [] : SAFE_DETAIL_IDS
+  ).flatMap(key => {
     const safe = positiveInteger(rawDetail[key])
     return safe ? [[key, safe] as const] : []
   }))
@@ -575,6 +580,8 @@ function publicWindowEvent(value: unknown) {
     detail.status = rawDetail.status
     carriesFailureCause = rawDetail.status === 'skipped' || rawDetail.status === 'failed'
   } else if (kind === 'moderation' && ['remove', 'restore'].includes(String(rawDetail.action))) {
+    detail.action = String(rawDetail.action)
+  } else if (creditDisputeDecision) {
     detail.action = String(rawDetail.action)
   }
   if (carriesFailureCause && Object.hasOwn(rawDetail, 'error')) {

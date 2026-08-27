@@ -10,6 +10,7 @@ const CREDIT_UNITS_PER_DOLLAR = 1_000_000n
 const MAX_WHOLE_DOLLARS = BigInt('99999999999999999999999999999')
 const CONFIGURED_VALUE = /^[\x21-\x7e]{1,4096}$/u
 const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/u
+const RESOURCE_IDENTIFIER = /^[A-Za-z0-9._:-]{1,255}$/u
 const REQUEST_IDENTIFIER = /^[A-Za-z0-9._:-]{8,108}$/u
 const PAYPAL_CERTIFICATE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
 
@@ -162,6 +163,12 @@ function text(value: unknown, label: string, maximum = 4_096): string {
 function identifier(value: unknown, label: string): string {
   const parsed = text(value, label, 128)
   if (!IDENTIFIER.test(parsed)) throw new Error(`${label} is invalid`)
+  return parsed
+}
+
+function resourceIdentifier(value: unknown, label: string): string {
+  const parsed = text(value, label, 255)
+  if (!RESOURCE_IDENTIFIER.test(parsed)) throw new Error(`${label} is invalid`)
   return parsed
 }
 
@@ -483,7 +490,7 @@ export async function capturePayPalCreditOrder(
   if (amount.currency_code !== 'USD' || amount.value !== terms.amountValue) {
     throw new Error('PayPal capture amount changed from the accepted gross terms')
   }
-  const captureId = identifier(capture.id, 'PayPal capture id')
+  const captureId = resourceIdentifier(capture.id, 'PayPal capture id')
   return Object.freeze({
     orderId,
     captureId,
@@ -648,7 +655,7 @@ export function parsePayPalRenewal(value: unknown): PayPalRenewal | null {
   if (amount.currencyCode !== 'USD') throw new Error('PayPal renewal currency is invalid')
   const exactAmount = exactWholeDollarAmount(amount.amountValue, 'PayPal renewal amount')
   const eventId = identifier(event.id, 'PayPal webhook event id')
-  const saleId = identifier(resource.id, 'PayPal sale id')
+  const saleId = resourceIdentifier(resource.id, 'PayPal sale id')
   const subscriptionId = identifier(
     resource.billing_agreement_id,
     'PayPal subscription id',

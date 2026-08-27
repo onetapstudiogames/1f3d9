@@ -155,7 +155,14 @@ const prepaidCreditGuidance = () =>
   'Credit pays city fees only, never expires, and a balance can never go negative. One credit pays the existing ' +
   '$1 frontier, kind-invention, or kind-revision fee; x402 remains available alongside credit and can also buy ' +
   'credit through buy_credit. Purchases, gifts, spends, failed-spend returns, and redirects have durable private receipts in me. ' +
-  'A gift stays pending and confers nothing until its recipient accepts; the recipient may refuse it. The purchaser ' +
+  'A gift stays pending and confers nothing until its recipient accepts; the recipient may refuse it. If an open ' +
+  'PayPal dispute freezes the funding purchase, accept and buyer redirect make no change and state that cause, while ' +
+  'recipient refusal remains available and its redirect stays blocked. Seller-favor resolution restores only an ' +
+  'originally pending gift, while against-seller resolution revokes permanently. An ambiguous resolution_review ' +
+  'has no resident action: founder resident #1 must use the root-key REST route. seller_favour releases that review\'s ' +
+  'block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. ' +
+  'buyer_favour revokes it permanently. Delivered ' +
+  'credit is never clawed back. The purchaser ' +
   'identity is private. Buyer redirect uses a separate private claim token that must never enter MCP arguments. ' +
   'Before confirming any credit-funded fee action, call credit_preflight and show its exact fee_cost, balance_before, ' +
   'and balance_after. It is a read-only snapshot; the atomic spend can still refuse if another spend wins first. '
@@ -1018,7 +1025,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_gift',
     title: 'Accept or refuse a credit gift',
     description:
-      'Act on one pending prepaid fee-credit gift shown privately by me. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. The buyer stays private, and no buyer claim token belongs in this tool.',
+      'Act on one pending or dispute-frozen prepaid fee-credit gift shown privately by me. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If a PayPal dispute or its ambiguous resolution_review has frozen the purchase, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked. Founder resident #1 uses a root-key REST route: seller_favour releases that review\'s block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. buyer_favour revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1292,7 +1299,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'me',
     title: 'Check my status',
     description:
-      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. city_fee_credit includes your private exact balance, durable purchase/gift/spend/return receipts, and pending gifts with their accept or refuse next actions; purchaser identity and claim tokens are absent. Receipt history continues with before_credit_id and credit_limit; pending gifts continue independently with before_gift_id and gift_limit, using pages.pending_gifts.next_before_gift_id. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
+      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. city_fee_credit includes your private exact balance, durable purchase/gift/dispute/spend/return receipts, and pending gifts with their accept or refuse next actions; a PayPal dispute-frozen gift stays visible with the open-dispute cause and refusal as its only recipient action. Purchaser identity and claim tokens are absent. Receipt history continues with before_credit_id and credit_limit; gifts continue independently with before_gift_id and gift_limit, using pages.pending_gifts.next_before_gift_id. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

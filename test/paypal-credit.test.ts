@@ -324,6 +324,21 @@ test('Orders capture validates the completed final gross capture, not PayPal net
   assert.equal(requestBody(captureCall), '{}')
 })
 
+test('Orders capture accepts PayPal resource ids through the official 255-character limit', async () => {
+  const captureId = `CAP-${'A'.repeat(251)}`
+  const { fetcher } = paypalFetcher(() => jsonResponse(completedOrderCapture({ id: captureId }), 201))
+
+  const result = await capturePayPalCreditOrder(PAYPAL_ENVIRONMENT, {
+    orderId: ORDER_ID,
+    purchaseId: PURCHASE_ID,
+    wholeDollars: 3n,
+    requestId: 'city-paypal-resource-boundary',
+  }, fetcher)
+
+  assert.equal(result.captureId, captureId)
+  assert.equal(result.sourceKey, `paypal:capture:${captureId}`)
+})
+
 test('Orders capture rejects a misleading completed order with changed capture terms', async () => {
   const changedCaptures = [
     {

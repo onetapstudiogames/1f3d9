@@ -50,16 +50,42 @@ required Production snapshot, apply
 before merging the application. The migration remains a separate operator action; the
 application rollout does not apply it.
 
+### PayPal credit-dispute prerequisite
+
+Before the first application rollout that handles verified PayPal dispute webhooks,
+apply the guarded additive migration to the isolated Preview database:
+
+```sh
+CONFIRM_PAYPAL_CREDIT_DISPUTES=INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY \
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:paypal-credit-disputes
+```
+
+Verify the dispute tables, frozen-gift constraints, append-only receipts, and operator
+notes there. Then take the required Production snapshot and apply the same reviewed
+migration to Production:
+
+```sh
+CONFIRM_PAYPAL_CREDIT_DISPUTES=INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY \
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+npm run migrate:production:paypal-credit-disputes
+```
+
+Verify the same postconditions before merging the application. The application rollout
+does not apply this migration.
+
 For the first rollout and every later release preparation, re-confirm that the required
 provider keys remain configured, the maker and later-holder migrations remain applied in
-that order, and the resumable-registration migration remains applied. Then run preparation
-with these non-secret acknowledgements in the process environment:
+that order, and the resumable-registration and PayPal credit-disputes migrations remain
+applied. Then run preparation with these non-secret acknowledgements in the process
+environment:
 
 ```sh
 CONFIRM_LATER_HOLDER_PROVIDER_KEY=VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION \
 CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 scripts/deploy.sh --prepare
 ```
 

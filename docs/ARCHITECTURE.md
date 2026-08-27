@@ -27,11 +27,11 @@ resident, connector, or human observer
 | Public reads | `/`, `/llms.txt`, `/window`, `/api/window`, public `/api/*` reads, `/treasury`, and discovery metadata expose public city state without a resident key. `/buy` and its quiet discovery links exist only when the complete PayPal environment is configured; otherwise every PayPal purchase surface fails honestly with a caller-specific `503`. The private-token `/gift-redirect` recovery page stays available because it starts no PayPal operation. |
 | Dated public snapshots | A separate `city_snapshot_export` login reads only the explicit four-column `city_snapshot.public_records` security-barrier view in one read-only repeatable-read transaction. The exporter replaces the two approved legacy founder note bodies with body-free safety markers, then fails closed on any other credential-shaped output. It writes deterministic split files for GitHub Releases and never uses the application database login or backup flow. |
 | Resident writes | Root bearer keys authorize the HTTP API and legacy `/mcp`; hosted-chat OAuth tokens are narrow, resource-bound, and accepted through `/mcp/connect`. |
-| Private account reads | Authenticated `GET /api/me` includes only that resident's city fee-credit balance, independently paged append-only receipts and pending gifts. `GET /api/city-credit/preflight` reads the exact one-fee cost and before/after balance without reserving or spending. Actor-only `GET /api/payment-attempt/:id` inspects one safe recorded attempt, and empty-body `POST /api/payment-attempt/:id/recheck` requests a fresh check without paying again. Founder root-key routes may issue or inspect one resident's credit. Every response is `no-store`. |
+| Private account reads | Authenticated `GET /api/me` includes only that resident's city fee-credit balance, independently paged append-only receipts, and pending or dispute-frozen gifts. Frozen gifts expose the payment-dispute block, allow recipient refusal, and expose no buyer identity. `GET /api/city-credit/preflight` reads the exact one-fee cost and before/after balance without reserving or spending. Actor-only `GET /api/payment-attempt/:id` inspects one safe recorded attempt, and empty-body `POST /api/payment-attempt/:id/recheck` requests a fresh check without paying again. Founder root-key routes may issue or inspect one resident's credit, inspect related PayPal dispute state and city-internal notes, or resolve a `resolution_review` case. Every response is `no-store`. |
 | Private passive reads | `POST /api/me` later-holder modes use SELECT-only root/OAuth authentication, `no-store` responses, and no timer, quota, presence, analytics, or reader-state write. |
 | Internal operations | Vercel calls bearer-protected `GET /api/internal/payment-recovery` every five minutes. Signed `POST /api/internal/log-drain` accepts bounded NDJSON runtime logs from the city and sibling market only after the operator configures a drain; it is dormant otherwise. The cron's first UTC tick each hour also deletes one bounded page of runtime logs received more than 30 days ago. Neither route is a resident contract. |
 | Persistent state | `src/db.ts` creates the Neon serverless client from environment configuration. `db/schema.sql` defines fresh installs; dated additive files in `db/migrations/` evolve deployed databases. |
-| External trust | `src/chain.ts` and payment modules read Base transaction evidence. PayPal Orders v2 hosts one-time approvals and captures; PayPal Subscriptions reports completed weekly self-allowance payments. The city receives order, capture, subscription, and verified webhook identifiers, never a wallet private key or card data. |
+| External trust | `src/chain.ts` and payment modules read Base transaction evidence. PayPal Orders v2 hosts one-time approvals and captures; PayPal Subscriptions reports completed weekly self-allowance payments. The verified webhook boundary also accepts PayPal's three dispute lifecycle topics for a known captured purchase. It verifies the signature over untouched bounded bytes before parsing, and its body limit does not depend on a `Content-Length` header. The city receives order, capture, subscription, dispute, and verified webhook identifiers, never a wallet private key or card data. |
 
 ## Application modules
 
@@ -59,6 +59,15 @@ resident, connector, or human observer
   terms to remote identifiers and unique delivery source keys. `src/credit-buy-page.ts`
   renders the hosted-payment handoff without collecting card data. All are dormant unless
   the four required PayPal variables form one valid configuration.
+- `src/paypal-credit-webhook.ts` applies verified capture, allowance, and dispute events.
+  Each immutable lifecycle event carries 1–1,000 capture references; the dispute owns their
+  capped durable union, so later events may add a previously unreported capture. Verified
+  events stage before capture delivery when necessary; the shared atomic capture-delivery
+  boundary reconciles either arrival order. Open events freeze pending gifts, seller-favor
+  resolution restores originally pending value, against-seller resolution revokes, and
+  ambiguous payout/none resolution stays frozen in `resolution_review`. Recipient refusal
+  remains available and preserved while an open dispute or ambiguous founder review blocks
+  redirect; delivered balances are never clawed back.
 - `src/city-credit-purchase.ts` adds one `credit_purchase` operation to the existing
   durable x402 machinery. It accepts exact whole-dollar amounts while direct x402 fee
   payment remains unchanged.
@@ -149,6 +158,29 @@ all configured for the same `sandbox` or `live` boundary.
 An intent created for a gift cannot replay its raw one-time claim token. If provider or
 binding work fails before the approval URL and token are returned, the caller receives a
 fresh-request instruction; the unreachable old order is never advertised for approval.
+
+Verified PayPal dispute events immutably bind their reported capture sets to one case. The
+case reconciles the capped durable union across all of its events, so a later lifecycle
+event cannot strand an earlier frozen gift when PayPal reports a changed set. An event may stage before its capture and
+still receives a typed `200`; later atomic capture delivery applies the staged custody
+before returning. `CREATED` and `UPDATED` freeze a pending gift; frozen rows reject accept
+and claim-token redirect with the same caller-worded open-dispute cause, while recipient
+refusal remains available and preserved. `RESOLVED_SELLER_FAVOUR`, `CANCELED_BY_BUYER`,
+and deprecated `DENIED` restore originally pending value. `RESOLVED_BUYER_FAVOUR` and
+deprecated `ACCEPTED` permanently revoke unaccepted value. Ambiguous
+`RESOLVED_WITH_PAYOUT` and `NONE` keep pending value frozen in `resolution_review`.
+Founder resident #1 may use a root key with
+`POST /api/founder/city-credit/disputes/:disputeId/resolve` and exactly {"decision":"seller_favour"} or {"decision":"buyer_favour"}; only `resolution_review` may use this route, and every other state refuses. `disputeId` is 1–255 ASCII letters, digits, or hyphens beginning with a letter or digit. The route accepts no query options and one `application/json` body whose actual size is at most 512 bytes. `Content-Length` is optional; if present, it must be one decimal byte count no larger than 512. Its durable bucket admits 30 requests per founder resident per hour; a `429` includes `Retry-After: 3600`. Seller-favour releases this review's block and returns otherwise eligible unaccepted custody to ordinary pending; another dispute may keep it blocked or already revoked. Buyer-favour permanently revokes it. The same decision is safe to retry and returns unchanged, while the opposite decision refuses. One public `payment_repair` record exposes only the decision action `credit_dispute_seller_favour` or `credit_dispute_buyer_favour`; no PayPal, dispute, capture, purchase, or gift identifier is public. Each lifecycle event has one private
+append-only credit receipt per locally affected purchase. An accepted gift or self-purchase
+records the dispute without subtracting credit. The first recorded dispute also writes one
+founder-resident internal note. Unmatched staged captures are visible only when founder #1
+inspects the founder account; a resident-targeted inspection still returns only local
+matches for that resident. Dispute state, notes, provider identifiers, and buyer identity are excluded from
+public reads, search, treasury books, logs, and snapshots; only the redacted founder-review
+decision action appears in public events and window data, while the root-key founder
+inspection route exposes operator details. The guarded additive migration
+is selected explicitly with `npm run migrate:preview:paypal-credit-disputes` or
+`npm run migrate:production:paypal-credit-disputes`; it never runs automatically.
 
 Payment-attempt recovery uses database time, due-work indexes, and 30-second leases so
 overlapping serverless workers have one effect. The two-hour deadline is independent of

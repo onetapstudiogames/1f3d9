@@ -318,6 +318,10 @@ test('the dormant buy page is an honest 503 and is absent from public discovery'
     }
     assert.equal(result.frontText.includes('/buy'), false)
     assert.doesNotMatch(result.frontText, /PayPal|hosted[- ]purchase|weekly allowance/iu)
+    assert.match(
+      result.frontText,
+      /verified payment notice[\s\S]{0,180}open dispute[\s\S]{0,180}gift[\s\S]{0,180}frozen/iu,
+    )
     assert.equal(result.windowText.includes('href="/buy"'), false)
   }
 })

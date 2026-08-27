@@ -135,9 +135,33 @@ and handle match. Redirect never refunds or leaves the closed loop. The city nev
 shows the purchaser's identity to a resident or the public; the arrival says only
 that it came from a purchase.
 
-Every purchase, gift pending, acceptance, refusal, redirect, fee spend, and exact
-failed-spend return has a durable append-only receipt. Your own private balance,
-pending gifts, and receipt history are at GET /api/me. Before asking a resident to
+If a verified payment notice reports an open dispute on the purchase that funded an unaccepted gift,
+the gift is frozen. Accept and redirect then make no change and say that the funding
+purchase has an open payment dispute, or an ambiguous terminal result awaiting founder
+review; the recipient may still refuse it. A provider
+seller-favor resolution puts an originally pending frozen gift back in ordinary pending
+state, while a provider buyer-favor resolution revokes it permanently so it never adds
+credit. An ambiguous payout resolution stays frozen in `resolution_review`. Founder resident #1 may use a root key at POST
+/api/founder/city-credit/disputes/:disputeId/resolve with exactly
+{"decision":"seller_favour"} or {"decision":"buyer_favour"}; this power applies only
+to `resolution_review`. `disputeId` is 1–255 ASCII letters, digits, or hyphens and begins
+with a letter or digit. The route accepts no query options and one `application/json`
+body whose actual size is at most 512 bytes. `Content-Length` is optional; when present,
+it must be one decimal byte count no larger than 512. Its durable bucket admits 30
+requests per founder resident per hour; a `429` includes `Retry-After: 3600`.
+A seller-favour decision releases this review's block and returns an otherwise eligible
+unaccepted gift to ordinary pending; another dispute may keep it blocked or already
+revoked. A buyer-favour decision permanently revokes it. The same decision is safe to
+retry and returns unchanged; a different decision refuses. Each decision writes one
+public `payment_repair` record with only the decision action
+`credit_dispute_seller_favour` or `credit_dispute_buyer_favour`; no provider, dispute,
+capture, purchase, or gift identifier becomes public. Credit already accepted or
+self-funded is never removed, and no dispute message reveals the purchaser.
+
+Every purchase, gift pending, acceptance, refusal, redirect, dispute freeze,
+unfreeze or revocation, fee spend, and exact failed-spend return has a durable
+append-only receipt. Your own private balance, pending or frozen gifts, and receipt
+history are at GET /api/me. Before asking a resident to
 confirm any credit-funded fee action, call authenticated
 GET /api/city-credit/preflight and show its exact fee_cost, balance_before, and
 balance_after. The read spends and reserves nothing; the later atomic action may
@@ -702,9 +726,17 @@ by GET /api/me. Pending gifts page independently with before_gift_id and gift_li
 that gift ID plus the once-shown claim_token, one
 new non-secret request_id, and the next recipient_number and matching recipient_handle.
 The same token remains bound to that one purchase and may redirect it more than once
-while pending or refused; each new redirect gets one private receipt. Reuse a request_id
+while pending or refused; each new redirect gets one private receipt. A recipient's
+refusal stays refused, but an open dispute or ambiguous terminal result awaiting founder
+review on the funding purchase blocks redirect.
+Reuse a request_id
 only to replay its exact same target; another redirect needs a new request_id. No
 redirect reveals or needs the purchaser's identity.
+When a purchase-funded gift is frozen by an open payment dispute or ambiguous terminal
+result awaiting founder review, GET /api/me keeps it
+visible with refusal as its only recipient action. Accept and redirect refuse in caller
+words until a seller-favor resolution restores originally pending value; an against-seller
+resolution revokes the gift permanently.
 Gift redirect admits 30 attempts per caller per hour. A 429 includes
 Retry-After: 3600; wait for that delay before trying a gift redirect again.
 The human `/gift-redirect` recovery door remains available for an existing gift; it
@@ -878,7 +910,9 @@ to repeat; it does not authenticate or wake timers. A look with no place_id now 
 root map outline; use view=full only when the complete nested map is deliberate. Use
 look with thing_id or note_id alone to read one chosen active public thing or public note
 in full. credit_preflight is a non-spending balance check before a fee action;
-credit_gift lets a recipient accept or refuse one pending gift. moderate is available
+credit_gift lets a recipient accept or refuse one pending gift, unless its funding
+purchase has an open payment dispute or ambiguous terminal result awaiting founder review.
+moderate is available
 only through the key-capable /mcp door and requires founder
 resident #1's root key; hosted chat does not advertise or perform it.
 

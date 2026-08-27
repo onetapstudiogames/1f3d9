@@ -56,6 +56,7 @@ type RemoteMigration =
   | 'runtime-logs'
   | 'prepaid-city-credit'
   | 'resumable-registration'
+  | 'paypal-credit-disputes'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -91,6 +92,7 @@ export type MigrationFile =
   | 'db/migrations/20260826_runtime_logs.sql'
   | 'db/migrations/20260826_prepaid_city_credit.sql'
   | 'db/migrations/20260826_resumable_registration.sql'
+  | 'db/migrations/20260827_paypal_credit_disputes.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -120,6 +122,8 @@ const WORLD_ROOT_TOPOLOGY_ACKNOWLEDGEMENT = 'REPARENT_CONTINENTS_UNDER_UNOWNED_W
 const CITY_CREDIT_ACKNOWLEDGEMENT = 'INSTALL_PRIVATE_CITY_CREDIT_LEDGER'
 const PREPAID_CITY_CREDIT_ACKNOWLEDGEMENT =
   'INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY'
+const PAYPAL_CREDIT_DISPUTES_ACKNOWLEDGEMENT =
+  'INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY'
 const CITY_CREDIT = Object.freeze({ 'city-credit': '20260822_city_credit.sql' } as const)
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
 const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
@@ -155,6 +159,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'runtime-logs': 'db/migrations/20260826_runtime_logs.sql',
   'prepaid-city-credit': 'db/migrations/20260826_prepaid_city_credit.sql',
   'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
+  'paypal-credit-disputes': 'db/migrations/20260827_paypal_credit_disputes.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
@@ -251,6 +256,15 @@ export function resolveMigrationRun(
     throw new Error(
       'prepaid city credit requires CONFIRM_PREPAID_CITY_CREDIT=' +
       PREPAID_CITY_CREDIT_ACKNOWLEDGEMENT,
+    )
+  }
+  if (
+    migration === 'paypal-credit-disputes'
+    && environment.CONFIRM_PAYPAL_CREDIT_DISPUTES !== PAYPAL_CREDIT_DISPUTES_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      'PayPal credit disputes require CONFIRM_PAYPAL_CREDIT_DISPUTES=' +
+      PAYPAL_CREDIT_DISPUTES_ACKNOWLEDGEMENT,
     )
   }
 

@@ -15,6 +15,7 @@ const MAX_RESIDENT_ID = 2_147_483_647
 const MAX_CREDIT_UNITS = 10_000n * CITY_FEE_CREDIT_UNITS
 const PUBLIC_ID = /^city_paypal_[0-9a-f]{32}$/u
 const REMOTE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+const REMOTE_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/u
 const HASH = /^[0-9a-f]{64}$/u
 const SAFE_EVENT_KIND = /^[A-Z][A-Z0-9._-]{2,127}$/u
 const GIFT_PUBLIC_ID = /^city_gift_[0-9a-f]{32}$/u
@@ -123,6 +124,13 @@ function nullableRemoteId(value: unknown, label: string): string | null {
   return value == null ? null : remoteId(value, label)
 }
 
+function paypalResourceId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !REMOTE_RESOURCE_ID.test(value)) {
+    throw new TypeError(`${label} is invalid`)
+  }
+  return value
+}
+
 function environment(value: unknown): 'sandbox' | 'live' {
   if (value !== 'sandbox' && value !== 'live') throw new TypeError('PayPal environment is invalid')
   return value
@@ -174,9 +182,13 @@ function giftPublicId(value: unknown): string {
   return text
 }
 
-function pendingGiftStatus(value: unknown): 'pending' {
-  if (value !== 'pending') throw new TypeError('PayPal delivered gift status is invalid')
-  return value
+function deliveredGiftStatus(
+  value: unknown,
+): 'pending' | 'accepted' | 'refused' | 'frozen' | 'revoked' {
+  if (!['pending', 'accepted', 'refused', 'frozen', 'revoked'].includes(String(value))) {
+    throw new TypeError('PayPal delivered gift status is invalid')
+  }
+  return value as ReturnType<typeof deliveredGiftStatus>
 }
 
 type PayPalCreditReceiptTerms = Readonly<{
@@ -213,7 +225,8 @@ function deliveredCreditReceipt(
   }
   if (terms.delivery === 'gift') {
     result.gift_id = giftPublicId(row.gift_public_id)
-    result.status = pendingGiftStatus(row.status)
+    result.status = deliveredGiftStatus(row.status)
+    result.dispute_blocked = row.frozen_at != null
   }
   return Object.freeze(result)
 }
@@ -521,7 +534,7 @@ export async function deliverPayPalCreditAtomically(
 
   const sourceKey = parseCityCreditSourceKey(input.sourceKey)
   const eventId = remoteId(input.eventId, 'PayPal webhook event id')
-  const remoteResourceId = remoteId(input.remoteResourceId, 'PayPal webhook resource id')
+  const remoteResourceId = paypalResourceId(input.remoteResourceId, 'PayPal webhook resource id')
   if (sourceKey !== (
     input.purchaseKind === 'paypal'
       ? `paypal:capture:${remoteResourceId}`
@@ -575,7 +588,7 @@ export async function readDeliveredPayPalOrderCredit(
   const rows = await database.query(`
     /* paypal-credit:read-delivered-order */
     SELECT entry.*, gift.id AS gift_row_id, gift.public_id AS gift_public_id,
-      gift.claim_token_hash, gift.status, false AS created,
+      gift.claim_token_hash, gift.status, gift.frozen_at, false AS created,
       intent.delivery AS intent_delivery,
       intent.recipient_id AS intent_recipient_id,
       intent.amount_units AS intent_amount_units
@@ -601,7 +614,7 @@ export async function readDeliveredPayPalOrderCredit(
   const claimTokenHash = deliveryMethod === 'gift'
     ? nullableHash(row.claim_token_hash)
     : null
-  return deliveredCreditReceipt({ ...row, status: 'pending' }, {
+  return deliveredCreditReceipt(row, {
     delivery: deliveryMethod,
     residentId: positiveResidentId(Number(row.intent_recipient_id)),
     amountUnits: exactAmountUnits(row.intent_amount_units),
@@ -710,7 +723,7 @@ export async function recordPayPalCreditEvent(
   if (!SAFE_EVENT_KIND.test(input.eventKind)) throw new TypeError('PayPal webhook event kind is invalid')
   const remoteResourceId = input.remoteResourceId == null
     ? null
-    : remoteId(input.remoteResourceId, 'PayPal webhook resource id')
+    : paypalResourceId(input.remoteResourceId, 'PayPal webhook resource id')
   if (input.sourceKey !== null || input.outcome !== 'ignored') {
     throw new TypeError('credited PayPal events require atomic delivery')
   }

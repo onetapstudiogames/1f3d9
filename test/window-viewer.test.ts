@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import * as windowModule from '../src/window.ts'
 import * as windowClientModule from '../src/window-client.ts'
-import { WINDOW_JS, PUBLIC_EVENT_KINDS } from '../src/window-client.ts'
+import { WINDOW_JS, PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
 import { PUBLIC_CREDENTIAL_REDACTION } from '../src/credential-safety.ts'
@@ -312,6 +312,10 @@ test('the window covers the whole public life of the city', () => {
   assert.ok(PUBLIC_EVENT_KINDS.includes('home_set'))
   assert.ok(PUBLIC_EVENT_KINDS.includes('agreement_accession'))
   assert.ok(PUBLIC_EVENT_KINDS.includes('payment_repair'))
+  assert.equal(
+    PUBLIC_EVENT_LABELS.payment_repair,
+    'recorded a host payment correction',
+  )
   // The full enumeration is a truth surface: every kind the city writes for a
   // public act must be listed, or the window silently hides that life. The
   // world_* kinds are the market bridge — their absence hid every market sale.
@@ -380,6 +384,14 @@ test('public action happenings preserve meaning and collapse only consecutive re
 test('the /api/window route carries honest bounded causes without exporting its private shaper', () => {
   assert.equal(Object.hasOwn(windowModule, 'publicWindowEvent'), false)
   const rows = [
+    { id: 14, kind: 'payment_repair', detail: {
+      action: 'credit_dispute_seller_favour', resident_id: 1,
+      dispute_id: 'PP-D-PRIVATE', purchase_id: 77, reason: 'private operator context',
+    } },
+    { id: 13, kind: 'payment_repair', detail: {
+      action: 'credit_dispute_buyer_favour', resident_id: 1,
+      dispute_id: 'PP-D-PRIVATE', purchase_id: 77, reason: 'private operator context',
+    } },
     { id: 12, kind: 'action', detail: {
       action_id: 112, action: 'use', status: 'failed', error: 'y'.repeat(500),
     } },
@@ -462,6 +474,8 @@ test('the /api/window route carries honest bounded causes without exporting its 
   }>
   const detail = (id: number) => events.find(event => event.id === id)?.detail ?? {}
 
+  assert.deepEqual(detail(14), { action: 'credit_dispute_seller_favour' })
+  assert.deepEqual(detail(13), { action: 'credit_dispute_buyer_favour' })
   assert.equal(detail(10).error, 'the recipe needs a lit trait here')
   assert.equal(detail(11).error, 'the stored source thing no longer exists')
   assert.equal(detail(9).error, 'a local law blocks entry into this place')

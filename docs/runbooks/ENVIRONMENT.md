@@ -71,9 +71,11 @@ Activate in this order:
    issue. Leave production untouched.
 2. Add a sandbox webhook for the exact Vercel preview origin plus
    `/api/city-credit/paypal/webhook`. Subscribe to exactly the implemented credit-delivery
-   events: `PAYMENT.CAPTURE.COMPLETED` for one-time Orders and
-   `PAYMENT.SALE.COMPLETED` for Subscription renewals. Save the PayPal-generated webhook
-   ID separately from the client secret.
+   and dispute-lifecycle events: `PAYMENT.CAPTURE.COMPLETED` for one-time Orders,
+   `PAYMENT.SALE.COMPLETED` for Subscription renewals, and
+   `CUSTOMER.DISPUTE.CREATED`, `CUSTOMER.DISPUTE.UPDATED`, and
+   `CUSTOMER.DISPUTE.RESOLVED`. Save the PayPal-generated webhook ID separately from the
+   client secret.
 3. Apply `db/migrations/20260826_prepaid_city_credit.sql` to the isolated preview database.
    Pre-set `NEON_API_KEY`, `NEON_PROJECT_ID`, `NEON_PREVIEW_BRANCH_ID`,
    `NEON_PRODUCTION_BRANCH_ID`, and `PREVIEW_DATABASE_URL_UNPOOLED`; the migrator proves
@@ -100,7 +102,9 @@ Activate in this order:
 5. Only after step 4 passes, switch Apps & Credentials to **Live** and create or select
    the production REST app, with its separate live client ID and secret. Register
    `https://1f3d9.com/api/city-credit/paypal/webhook` with
-   `PAYMENT.CAPTURE.COMPLETED` and `PAYMENT.SALE.COMPLETED`, and copy that live webhook ID.
+   `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.SALE.COMPLETED`, `CUSTOMER.DISPUTE.CREATED`,
+   `CUSTOMER.DISPUTE.UPDATED`, and `CUSTOMER.DISPUTE.RESOLVED`, and copy that live webhook
+   ID.
    Before enabling routes, pre-set `NEON_API_KEY`, `NEON_PROJECT_ID`,
    `NEON_PRODUCTION_BRANCH_ID`, `PRODUCTION_DATABASE_URL_UNPOOLED`, and a fresh safe
    `PRODUCTION_SNAPSHOT_NAME`. The migrator proves the target, creates and verifies that
@@ -271,11 +275,11 @@ failing delivery target. The receiver rejects compressed deliveries, so keep
 | `LOCAL_DATABASE_URL_UNPOOLED`, `PREVIEW_DATABASE_URL_UNPOOLED`, `PRODUCTION_DATABASE_URL_UNPOOLED` | Direct port-5432 URLs for `pg_dump` and migrations. Pooled URLs are refused. |
 | `CONFIRM_LOCAL_BACKUP`, `CONFIRM_PREVIEW_BACKUP`, `CONFIRM_PRODUCTION_BACKUP` | Exact-value acknowledgements required by the backup script (values in [BACKUP_RESTORE.md](BACKUP_RESTORE.md)). |
 | `CONFIRM_LOCAL_CREDENTIAL_SCAN`, `CONFIRM_PREVIEW_CREDENTIAL_SCAN`, `CONFIRM_PRODUCTION_CREDENTIAL_SCAN` | Same pattern for the credential scanner. |
-| `CONFIRM_LOCAL_SCHEMA`, `CONFIRM_WORLD_ROOT_TOPOLOGY`, `CONFIRM_CITY_CREDIT`, `CONFIRM_PREPAID_CITY_CREDIT`, `CONFIRM_PREVIEW_MIGRATION`, `CONFIRM_PRODUCTION_MIGRATION` | Migration acknowledgements; prepaid credit requires `CONFIRM_PREPAID_CITY_CREDIT=INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY`, and each remote target also requires the Neon identity proofs above. |
+| `CONFIRM_LOCAL_SCHEMA`, `CONFIRM_WORLD_ROOT_TOPOLOGY`, `CONFIRM_CITY_CREDIT`, `CONFIRM_PREPAID_CITY_CREDIT`, `CONFIRM_PAYPAL_CREDIT_DISPUTES`, `CONFIRM_PREVIEW_MIGRATION`, `CONFIRM_PRODUCTION_MIGRATION` | Migration acknowledgements; prepaid credit requires `CONFIRM_PREPAID_CITY_CREDIT=INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY`, PayPal dispute custody requires `CONFIRM_PAYPAL_CREDIT_DISPUTES=INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY`, and each remote target also requires the Neon identity proofs above. |
 | `PRODUCTION_SNAPSHOT_NAME` | Name of the verified pre-migration Neon snapshot; production migrations refuse to run without it. |
 | `SNAPSHOT_DATABASE_URL` | Source database for the public-snapshot exporter. |
 | `GITHUB_TOKEN`, `GITHUB_REPOSITORY` | Publishing public snapshots as GitHub releases. |
-| `CONFIRM_LATER_HOLDER_PROVIDER_KEY`, `CONFIRM_THING_MAKER_MIGRATION`, `CONFIRM_LATER_HOLDER_MIGRATION` | Acknowledgements `scripts/deploy.sh --prepare` requires (exact values in [DEPLOYMENT.md](DEPLOYMENT.md)). |
+| `CONFIRM_LATER_HOLDER_PROVIDER_KEY`, `CONFIRM_THING_MAKER_MIGRATION`, `CONFIRM_LATER_HOLDER_MIGRATION`, `CONFIRM_RESUMABLE_REGISTRATION_MIGRATION`, `CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION` | Acknowledgements `scripts/deploy.sh --prepare` requires (exact values in [DEPLOYMENT.md](DEPLOYMENT.md)). |
 
 Names constructed dynamically in code (for example `${TARGET}_DATABASE_URL_UNPOOLED`)
 will not appear in a plain grep for the literal name; this table is the authority.

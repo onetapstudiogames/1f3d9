@@ -26,6 +26,10 @@ import {
 
 const deployScript = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'utf8')
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const liveProbeWorkflow = readFileSync(
+  new URL('../.github/workflows/live-probe.yml', import.meta.url),
+  'utf8',
+)
 const testingGuide = readFileSync(new URL('../docs/TESTING.md', import.meta.url), 'utf8')
 const workingStandard = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8')
 const PAYMENT_RELIABILITY_STANDARD = [
@@ -45,6 +49,10 @@ const PAYMENT_RELIABILITY_STANDARD = [
 ].join('\n')
 const deploymentRunbook = readFileSync(
   new URL('../docs/runbooks/DEPLOYMENT.md', import.meta.url),
+  'utf8',
+)
+const environmentRunbook = readFileSync(
+  new URL('../docs/runbooks/ENVIRONMENT.md', import.meta.url),
   'utf8',
 )
 const packageJson = JSON.parse(
@@ -200,6 +208,7 @@ test('every release test gate remains part of explicit branch preparation', () =
 
 test('payment reliability is fail-hard in required checks and documented where it binds', () => {
   assert.ok(workingStandard.includes(PAYMENT_RELIABILITY_STANDARD))
+  assert.match(workingStandard, /scheduled `live-probe` workflow/iu)
   assert.match(ciWorkflow, /^jobs:\r?\n  checks:\r?\n    runs-on:/mu)
   assert.match(
     ciWorkflow,
@@ -217,6 +226,26 @@ test('payment reliability is fail-hard in required checks and documented where i
     /CI \(`\.github\/workflows\/ci\.yml`\)[\s\S]{0,300}PostgreSQL/iu,
   )
   assert.doesNotMatch(testingGuide, /postgres suites run locally/iu)
+
+  assert.match(liveProbeWorkflow, /CUSTOMER\.DISPUTE\.CREATED/u)
+  assert.match(liveProbeWorkflow, /unsigned dispute events stop at the signature wall/iu)
+  assert.match(liveProbeWorkflow, /founder dispute review stops without a root key/iu)
+  assert.match(
+    liveProbeWorkflow,
+    /city-credit\/disputes\/PP-D-LIVE-PROBE\/resolve[\s\S]{0,500}\[ "\$CODE" = "401" \]/u,
+  )
+  assert.match(liveProbeWorkflow, /\[ "\$CODE" = "401" \]/u)
+  assert.doesNotMatch(liveProbeWorkflow, /PAYPAL_CLIENT_SECRET|PAYPAL_WEBHOOK_ID/u)
+
+  for (const eventType of [
+    'PAYMENT.CAPTURE.COMPLETED',
+    'PAYMENT.SALE.COMPLETED',
+    'CUSTOMER.DISPUTE.CREATED',
+    'CUSTOMER.DISPUTE.UPDATED',
+    'CUSTOMER.DISPUTE.RESOLVED',
+  ]) {
+    assert.match(environmentRunbook, new RegExp(eventType.replaceAll('.', '\\.'), 'u'))
+  }
 })
 
 test('preview migration requires exact acknowledgement and named isolated Neon targets', () => {
@@ -325,6 +354,7 @@ type PreparationFixture = Readonly<{
 const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
 })
@@ -402,6 +432,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_THING_MAKER_MIGRATION',
     'CONFIRM_RESUMABLE_REGISTRATION_MIGRATION="${4-}"',
     'export CONFIRM_RESUMABLE_REGISTRATION_MIGRATION',
+    'CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION="${5-}"',
+    'export CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -420,6 +452,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_LATER_HOLDER_MIGRATION ?? '',
         readiness.CONFIRM_THING_MAKER_MIGRATION ?? '',
         readiness.CONFIRM_RESUMABLE_REGISTRATION_MIGRATION ?? '',
+        readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -478,6 +511,14 @@ test('preparation requires provider-key and migration readiness before any relea
     /resumable-registration.*migration.*Preview and Production.*before.*rollout/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingPayPalCreditDisputes = fixture.run({ CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: '' })
+  assert.notEqual(missingPayPalCreditDisputes.status, 0)
+  assert.match(
+    `${missingPayPalCreditDisputes.stdout}\n${missingPayPalCreditDisputes.stderr}`,
+    /paypal-credit-disputes.*migration.*Preview and Production.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
 })
 
 test('release instructions require maker provenance before later-holder marks in each database', () => {
@@ -500,6 +541,15 @@ test('release preparation requires the resumable-registration schema in Preview 
   assert.match(
     deploymentRunbook,
     /CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
+})
+
+test('release preparation requires the PayPal credit disputes schema in Preview and Production', () => {
+  assert.match(deploymentRunbook, /npm run migrate:preview:paypal-credit-disputes/u)
+  assert.match(deploymentRunbook, /npm run migrate:production:paypal-credit-disputes/u)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
 })
 

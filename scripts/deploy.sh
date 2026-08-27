@@ -99,8 +99,12 @@ verify_release_readiness() {
     echo "!! the resumable-registration migration must be applied to Preview and Production before application rollout"
     return 1
   }
+  [ "${CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION" ] || {
+    echo "!! the paypal-credit-disputes migration must be applied to Preview and Production before application rollout"
+    return 1
+  }
 
-  echo "   provider key and maker/later-holder/resumable-registration schema readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes schema readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"
