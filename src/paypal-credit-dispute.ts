@@ -76,10 +76,37 @@ export type AppliedPayPalDispute = Readonly<{
   receiptsCreated: number
 }>
 
+export type FounderPayPalDisputeDecision = 'seller_favour' | 'buyer_favour'
+
+export type FounderPayPalDisputeResolution = Readonly<{
+  disputeId: string
+  decision: FounderPayPalDisputeDecision
+  state: 'resolved_seller' | 'resolved_against_seller'
+  applicationOutcome:
+    | 'founder_review_seller_favour_applied'
+    | 'founder_review_buyer_favour_applied'
+  disposition: 'created' | 'existing'
+  localPurchaseCount: number
+  receiptsCreated: number
+}>
+
 export class PayPalDisputeParseError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'PayPalDisputeParseError'
+  }
+}
+
+export class FounderPayPalDisputeResolutionError extends Error {
+  readonly kind: 'not_found' | 'not_reviewable' | 'decision_conflict'
+
+  constructor(
+    kind: FounderPayPalDisputeResolutionError['kind'],
+    message: string,
+  ) {
+    super(message)
+    this.name = 'FounderPayPalDisputeResolutionError'
+    this.kind = kind
   }
 }
 
@@ -324,17 +351,100 @@ export async function applyPayPalCreditDispute(
   return applied
 }
 
+export async function resolveFounderPayPalCreditDispute(
+  database: PayPalCreditStoreDatabase,
+  input: Readonly<{
+    founderId: number
+    disputeId: string
+    decision: FounderPayPalDisputeDecision
+  }>,
+): Promise<FounderPayPalDisputeResolution> {
+  if (input.founderId !== 1) {
+    throw new TypeError('only founder resident #1 may resolve a PayPal dispute review')
+  }
+  if (!DISPUTE_ID.test(input.disputeId)) {
+    throw new TypeError('PayPal dispute id is invalid')
+  }
+  if (!['seller_favour', 'buyer_favour'].includes(input.decision)) {
+    throw new TypeError('founder dispute decision is invalid')
+  }
+  let rows: readonly Record<string, unknown>[]
+  try {
+    rows = await database.query(`
+      /* paypal-credit:founder-dispute-resolution */
+      SELECT * FROM resolve_paypal_credit_dispute_review(
+        $1::integer, $2::text, $3::text
+      )
+    `, [input.founderId, input.disputeId, input.decision])
+  } catch (error) {
+    conflictFromDatabase(error)
+  }
+  if (rows.length !== 1) {
+    throw new PayPalCreditStoreConflictError(
+      'Founder PayPal dispute review did not produce one durable result.',
+    )
+  }
+  const row = rows[0]!
+  const status = String(row.status ?? '')
+  if (status === 'not_found') {
+    throw new FounderPayPalDisputeResolutionError(
+      'not_found',
+      'This PayPal dispute was not found. Nothing changed.',
+    )
+  }
+  if (status === 'not_reviewable') {
+    throw new FounderPayPalDisputeResolutionError(
+      'not_reviewable',
+      'This PayPal dispute is not awaiting founder review. Nothing changed.',
+    )
+  }
+  if (status === 'decision_conflict') {
+    throw new FounderPayPalDisputeResolutionError(
+      'decision_conflict',
+      'This PayPal dispute already has the opposite founder decision. Nothing changed.',
+    )
+  }
+  const expectedState = input.decision === 'seller_favour'
+    ? 'resolved_seller' as const
+    : 'resolved_against_seller' as const
+  const expectedOutcome = input.decision === 'seller_favour'
+    ? 'founder_review_seller_favour_applied' as const
+    : 'founder_review_buyer_favour_applied' as const
+  if (
+    status !== 'resolved'
+    || row.dispute_id !== input.disputeId
+    || row.decision !== input.decision
+    || row.state !== expectedState
+    || row.application_outcome !== expectedOutcome
+  ) {
+    throw new PayPalCreditStoreConflictError(
+      'Founder PayPal dispute review conflicts with durable credit history.',
+    )
+  }
+  return Object.freeze({
+    disputeId: input.disputeId,
+    decision: input.decision,
+    state: expectedState,
+    applicationOutcome: expectedOutcome,
+    disposition: bool(row.created) ? 'created' as const : 'existing' as const,
+    localPurchaseCount: count(row.local_purchase_count, 'local purchase count'),
+    receiptsCreated: count(row.receipts_created, 'receipt count'),
+  })
+}
+
 export type FounderPayPalDisputeInspection = Readonly<{
   dispute_id: string
   capture_id: string
   state: AppliedPayPalDispute['state']
   paypal_status: PayPalDisputeStatus
   outcome_code: PayPalDisputeOutcomeCode | null
+  founder_decision: FounderPayPalDisputeDecision | null
   gift_id: string | null
   amount_units: string | null
   internal_note: string
   opened_at: string
   resolved_at: string | null
+  founder_reviewed_at: string | null
   updated_at: string
 }>
 
@@ -359,8 +469,9 @@ export async function readFounderPayPalCreditDisputes(
       SELECT DISTINCT
         dispute.dispute_id, transaction.capture_id, dispute.state,
         dispute.paypal_status, dispute.outcome_code,
+        dispute.review_decision AS founder_decision,
         note.body AS internal_note, dispute.opened_at, dispute.resolved_at,
-        dispute.updated_at
+        dispute.reviewed_at AS founder_reviewed_at, dispute.updated_at
       FROM paypal_credit_disputes dispute
       JOIN paypal_credit_dispute_events dispute_event
         ON dispute_event.dispute_id = dispute.dispute_id
@@ -371,10 +482,11 @@ export async function readFounderPayPalCreditDisputes(
     )
     SELECT dispute_capture.dispute_id, dispute_capture.capture_id,
       dispute_capture.state, dispute_capture.paypal_status,
-      dispute_capture.outcome_code,
+      dispute_capture.outcome_code, dispute_capture.founder_decision,
       gift.public_id AS gift_public_id, purchase.amount_units::text AS amount_units,
       dispute_capture.internal_note, dispute_capture.opened_at,
-      dispute_capture.resolved_at, dispute_capture.updated_at
+      dispute_capture.resolved_at, dispute_capture.founder_reviewed_at,
+      dispute_capture.updated_at
     FROM dispute_capture
     LEFT JOIN paypal_credit_events capture
       ON capture.remote_resource_id = dispute_capture.capture_id
@@ -397,11 +509,19 @@ export async function readFounderPayPalCreditDisputes(
     state: storedState(row.state),
     paypal_status: paypalStatus(row.paypal_status),
     outcome_code: row.outcome_code == null ? null : outcomeCode(row.outcome_code),
+    founder_decision: row.founder_decision == null
+      ? null
+      : row.founder_decision === 'seller_favour' || row.founder_decision === 'buyer_favour'
+        ? row.founder_decision
+        : invalid('stored founder dispute decision is invalid.'),
     gift_id: giftPublicId(row.gift_public_id),
     amount_units: row.amount_units == null ? null : String(row.amount_units),
     internal_note: String(row.internal_note),
     opened_at: String(row.opened_at),
     resolved_at: row.resolved_at == null ? null : String(row.resolved_at),
+    founder_reviewed_at: row.founder_reviewed_at == null
+      ? null
+      : String(row.founder_reviewed_at),
     updated_at: String(row.updated_at),
   })))
 }

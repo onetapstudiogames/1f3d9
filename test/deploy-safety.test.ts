@@ -229,6 +229,11 @@ test('payment reliability is fail-hard in required checks and documented where i
 
   assert.match(liveProbeWorkflow, /CUSTOMER\.DISPUTE\.CREATED/u)
   assert.match(liveProbeWorkflow, /unsigned dispute events stop at the signature wall/iu)
+  assert.match(liveProbeWorkflow, /founder dispute review stops without a root key/iu)
+  assert.match(
+    liveProbeWorkflow,
+    /city-credit\/disputes\/PP-D-LIVE-PROBE\/resolve[\s\S]{0,500}\[ "\$CODE" = "401" \]/u,
+  )
   assert.match(liveProbeWorkflow, /\[ "\$CODE" = "401" \]/u)
   assert.doesNotMatch(liveProbeWorkflow, /PAYPAL_CLIENT_SECRET|PAYPAL_WEBHOOK_ID/u)
 

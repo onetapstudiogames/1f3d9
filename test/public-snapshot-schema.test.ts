@@ -54,6 +54,7 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlPublicKinds = [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
     assert.deepEqual(sqlPublicKinds, [...PUBLIC_EVENT_KINDS])
+    assert.ok(sqlPublicKinds.includes('payment_repair'))
     assert.match(
       view,
       /event\.kind IN \(SELECT public_kind\.kind FROM public_event_kinds public_kind\)/iu,
@@ -71,9 +72,15 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
       ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
     ].sort()
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
+    assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
       eventProjection,
       /event\.detail->>'(?:body|description|reason|from|to|buyer)'/iu,
+    )
+    assert.doesNotMatch(
+      eventProjection,
+      /event\.detail->>?'(?:dispute_id|capture_id|purchase_id|gift_id|paypal_status|reason|buyer)'/iu,
+      'public dispute decisions may expose only their safe action literal',
     )
 
     const worldOffersStart = view.indexOf("SELECT 'world_market_offers'")

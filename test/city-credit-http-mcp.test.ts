@@ -161,7 +161,10 @@ test('the founder can privately inspect one resident credit account but cannot e
 
   assert.match(route, /privateResidentHeaders|no-store/iu)
   assert.match(route, /authRootKey|root key/iu)
-  assert.match(route, /(?:founder|resident)[^\n]{0,100}(?:id|#)\s*(?:===?|=)\s*1/iu)
+  assert.match(
+    route,
+    /(?:founder|resident)[^\n]{0,100}(?:id|#)\s*(?:!={1,2}|===?|=)\s*1/iu,
+  )
   assert.match(route, /before_credit_id/iu)
   assert.match(route, /credit_limit/iu)
   assert.match(implementation, /city_credit_accounts/iu)
@@ -169,6 +172,25 @@ test('the founder can privately inspect one resident credit account but cannot e
   assert.match(implementation, /balance_usdc/iu)
   assert.match(route, /c\.req\.param\(['"]handle['"]\)/iu)
   assert.doesNotMatch(mcpSource, /name:\s*['"](?:founder_)?city_credit/iu)
+})
+
+test('founder dispute review is a root-key REST power and never a resident MCP tool', () => {
+  const routeMatch = /app\.post\(\s*['"]\/api\/founder\/city-credit\/disputes\/:disputeId\/resolve['"]/u
+    .exec(indexSource)
+  assert.ok(routeMatch, 'founder dispute review REST route is missing')
+  const routeStart = routeMatch.index
+  const nextRoute = indexSource.indexOf('\napp.', routeStart + 10)
+  const route = indexSource.slice(routeStart, nextRoute < 0 ? undefined : nextRoute)
+
+  assert.match(route, /authRootKey|root key/iu)
+  assert.match(
+    route,
+    /(?:founder|resident)[^\n]{0,100}(?:id|#)\s*(?:!={1,2}|===?|=)\s*1/iu,
+  )
+  assert.match(route, /resolution_review/iu)
+  assert.match(route, /seller_favour/iu)
+  assert.match(route, /buyer_favour/iu)
+  assert.doesNotMatch(mcpSource, /name:\s*['"][^'"]*dispute[^'"]*['"]/iu)
 })
 
 test('/api/me is the private balance/history surface and public windows do not expose credit', () => {
@@ -353,7 +375,20 @@ test('MCP recipients can accept or refuse a pending credit gift without exposing
   const tool = listed.result?.tools?.find(candidate => candidate.name === 'credit_gift')
   assert.ok(tool)
   assert.match(String(tool.description), /pending[\s\S]{0,220}accept[\s\S]{0,120}refus/iu)
+  assert.match(
+    String(tool.description),
+    /(?:ambiguous|resolution_review)[\s\S]{0,320}founder resident #1[\s\S]{0,320}(?:seller[-_ ]favou?r|pending)[\s\S]{0,320}(?:buyer[-_ ]favou?r|revok)/iu,
+  )
+  assert.match(
+    String(tool.description),
+    /seller_favour[\s\S]{0,180}releases?[\s\S]{0,180}(?:otherwise[- ]eligible|eligible)[\s\S]{0,180}pending[\s\S]{0,220}another dispute[\s\S]{0,180}(?:frozen|revoked)/iu,
+  )
   assert.doesNotMatch(JSON.stringify(tool.inputSchema), /token|buyer|payer/iu)
+  assert.equal(
+    listed.result?.tools?.some(candidate => /dispute/iu.test(candidate.name)),
+    false,
+    'founder dispute review stays REST-only',
+  )
 
   for (const action of ['accept', 'refuse'] as const) {
     const validGiftId = `city_gift_${(action === 'accept' ? 'ab' : 'cd').repeat(16)}`

@@ -664,13 +664,13 @@ async function capturedOrderResponse(
     receipt_id: credit.receipt_id,
     ...(intent.delivery === 'gift' ? { gift_id: credit.gift_id } : {}),
     ...(giftStatus === 'frozen' ? {
-      blocked_reason: 'A payment dispute is open on the purchase that funded this gift. It cannot be accepted or redirected while frozen.',
+      blocked_reason: 'A payment dispute is open on the purchase that funded this gift, or PayPal resolved it ambiguously and founder review is pending. It cannot be accepted or redirected while frozen.',
     } : {}),
     ...(giftStatus === 'revoked' ? {
-      blocked_reason: 'The payment dispute was resolved against the city seller. This gift was permanently revoked and can never add credit.',
+      blocked_reason: 'Either PayPal resolved the funding dispute against the city seller, or founder resident #1 chose buyer favour after PayPal returned an ambiguous outcome. This gift was permanently revoked and can never add credit.',
     } : {}),
     ...(giftStatus === 'refused' && disputeBlocked ? {
-      blocked_reason: 'A payment dispute is open on the purchase that funded this refused gift. It cannot be redirected while the dispute remains open.',
+      blocked_reason: 'A payment dispute is open on the purchase that funded this refused gift, or PayPal resolved it ambiguously and founder review is pending. It cannot be redirected while that block remains.',
     } : {}),
   })
 }

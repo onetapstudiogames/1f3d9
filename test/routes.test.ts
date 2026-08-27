@@ -153,6 +153,18 @@ interface FakeRecentNote {
   body: string
   created_at: string
 }
+interface FakeFounderPayPalDispute {
+  dispute_id: string
+  state: 'open' | 'resolved_seller' | 'resolved_against_seller' | 'resolution_review'
+  decision: 'seller_favour' | 'buyer_favour' | null
+}
+interface FakeFounderPayPalDisputeEvent {
+  kind: 'payment_repair'
+  actor: string
+  detail: Readonly<{
+    action: 'credit_dispute_seller_favour' | 'credit_dispute_buyer_favour'
+  }>
+}
 type LawRecipe = Record<string, unknown>
 interface FakeState {
   scenario: string
@@ -210,6 +222,10 @@ interface FakeState {
   cityCreditBalances: Map<number, bigint>
   cityCreditEntries: FakeCityCreditEntry[]
   nextCityCreditEntryId: number
+  founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
+  founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
+  nextFounderPayPalDisputeEventId: number
+  paypalCreditRateSlotsUsed: number
   paymentReplaySchemaReady: boolean
   facilitatorVerify: boolean
   facilitatorSettle: boolean
@@ -291,6 +307,10 @@ const initialState = (): FakeState => ({
   cityCreditBalances: new Map(),
   cityCreditEntries: [],
   nextCityCreditEntryId: 1,
+  founderPayPalDisputes: new Map(),
+  founderPayPalDisputeEvents: [],
+  nextFounderPayPalDisputeEventId: 1,
+  paypalCreditRateSlotsUsed: 0,
   paymentReplaySchemaReady: true,
   facilitatorVerify: false,
   facilitatorSettle: false,
@@ -800,6 +820,94 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }]
   }
   if (q.includes('/* paypal-credit:founder-dispute-inspection */')) return []
+  if (q.includes('/* paypal-credit:rate-limit */')) {
+    const maximum = Number(params[1])
+    if (state.paypalCreditRateSlotsUsed >= maximum) return []
+    const used = state.paypalCreditRateSlotsUsed + 1
+    state = { ...state, paypalCreditRateSlotsUsed: used }
+    return [{ used }]
+  }
+  if (q.includes('/* paypal-credit:founder-dispute-resolution */')) {
+    const disputeId = String(params.find(value => /^PP-D-[A-Za-z0-9-]+$/u.test(String(value))) ?? '')
+    const requestedDecision = params.find(value =>
+      value === 'seller_favour' || value === 'buyer_favour') as
+        | 'seller_favour'
+        | 'buyer_favour'
+        | undefined
+    const stored = state.founderPayPalDisputes.get(disputeId)
+    if (!stored) {
+      return [{
+        status: 'not_found', application_outcome: 'dispute_not_found',
+        dispute_id: disputeId, state: null, decision: null, created: false,
+      }]
+    }
+    if (stored.decision !== null) {
+      const existing = stored.decision === requestedDecision
+      const applicationOutcome = stored.decision === 'seller_favour'
+        ? 'founder_review_seller_favour_applied'
+        : 'founder_review_buyer_favour_applied'
+      return [{
+        status: existing ? 'resolved' : 'decision_conflict',
+        application_outcome: existing
+          ? applicationOutcome
+          : 'founder_dispute_resolution_conflict',
+        dispute_id: disputeId,
+        state: stored.state,
+        decision: stored.decision,
+        created: false,
+        disposition: existing ? 'existing' : 'conflict',
+        founder_event_id: 'founder-review-1',
+        public_event_id: 1,
+        local_purchase_count: 1,
+        receipts_created: existing ? 0 : 1,
+      }]
+    }
+    if (stored.state !== 'resolution_review') {
+      return [{
+        status: 'not_reviewable', application_outcome: 'dispute_not_in_resolution_review',
+        dispute_id: disputeId, state: stored.state, decision: null, created: false,
+      }]
+    }
+    if (!requestedDecision) throw new Error('founder dispute fake received no decision')
+    const resolvedState = requestedDecision === 'seller_favour'
+      ? 'resolved_seller' as const
+      : 'resolved_against_seller' as const
+    const eventId = state.nextFounderPayPalDisputeEventId
+    const resolved: FakeFounderPayPalDispute = {
+      ...stored,
+      state: resolvedState,
+      decision: requestedDecision,
+    }
+    state = {
+      ...state,
+      founderPayPalDisputes: new Map(state.founderPayPalDisputes).set(disputeId, resolved),
+      founderPayPalDisputeEvents: [...state.founderPayPalDisputeEvents, {
+        kind: 'payment_repair',
+        actor: state.actorHandle,
+        detail: {
+          action: requestedDecision === 'seller_favour'
+            ? 'credit_dispute_seller_favour'
+            : 'credit_dispute_buyer_favour',
+        },
+      }],
+      nextFounderPayPalDisputeEventId: eventId + 1,
+    }
+    return [{
+      status: 'resolved',
+      application_outcome: requestedDecision === 'seller_favour'
+        ? 'founder_review_seller_favour_applied'
+        : 'founder_review_buyer_favour_applied',
+      dispute_id: disputeId,
+      state: resolvedState,
+      decision: requestedDecision,
+      created: true,
+      disposition: 'created',
+      founder_event_id: `founder-review-${eventId}`,
+      public_event_id: eventId,
+      local_purchase_count: 1,
+      receipts_created: 1,
+    }]
+  }
   if (q.includes('/* city-credit:preflight */')) {
     const residentId = Number(params[0])
     if (![1, 7, 8].includes(residentId)) return []
@@ -5954,6 +6062,258 @@ test('only founder resident one issues one private city fee credit and exact ret
   const officialText = await (await app.request('/api/official')).text()
   const treasuryText = await (await app.request('/treasury')).text()
   assert.doesNotMatch(officialText + treasuryText, /wave4-grant-0001|1000000/u)
+})
+
+const FOUNDER_DISPUTE_PATH =
+  '/api/founder/city-credit/disputes/PP-D-FOUNDER-REVIEW/resolve'
+const SELLER_FAVOUR_BODY = JSON.stringify({ decision: 'seller_favour' })
+
+function founderReviewDispute(
+  disputeId: string,
+  state: FakeFounderPayPalDispute['state'] = 'resolution_review',
+): FakeFounderPayPalDispute {
+  return { dispute_id: disputeId, state, decision: null }
+}
+
+test('founder PayPal dispute resolution is root-key-only, private, queryless, and strictly bounded', async () => {
+  reset({
+    founderPayPalDisputes: new Map([[
+      'PP-D-FOUNDER-REVIEW',
+      founderReviewDispute('PP-D-FOUNDER-REVIEW'),
+    ]]),
+  })
+
+  const missingKey = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: SELLER_FAVOUR_BODY,
+  })
+  assert.equal(missingKey.status, 401)
+  assert.match(missingKey.headers.get('cache-control') ?? '', /no-store/iu)
+
+  const nonFounder = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST', headers: authHeaders(), body: SELLER_FAVOUR_BODY,
+  })
+  assert.equal(nonFounder.status, 403)
+  assert.match(nonFounder.headers.get('cache-control') ?? '', /no-store/iu)
+
+  setActor(1, 'founder')
+  const invalidRequests: Array<Readonly<{
+    path: string
+    body: string
+    error: RegExp
+  }>> = [
+    {
+      path: `${FOUNDER_DISPUTE_PATH}?force=true`,
+      body: SELLER_FAVOUR_BODY,
+      error: /query|option|parameter/iu,
+    },
+    {
+      path: '/api/founder/city-credit/disputes/not%20a%20dispute/resolve',
+      body: SELLER_FAVOUR_BODY,
+      error: /dispute id/iu,
+    },
+    { path: FOUNDER_DISPUTE_PATH, body: '{', error: /json|body/iu },
+    {
+      path: FOUNDER_DISPUTE_PATH,
+      body: JSON.stringify({ decision: 'seller_favour', reason: 'not accepted' }),
+      error: /unsupported|exactly|body/iu,
+    },
+    {
+      path: FOUNDER_DISPUTE_PATH,
+      body: JSON.stringify({ decision: 'approve' }),
+      error: /seller_favour|buyer_favour/iu,
+    },
+    {
+      path: FOUNDER_DISPUTE_PATH,
+      body: JSON.stringify({ decision: 'seller_favour', padding: 'x'.repeat(1_024) }),
+      error: /1,?024|bytes|large|limit/iu,
+    },
+  ]
+  for (const invalid of invalidRequests) {
+    const response = await app.request(invalid.path, {
+      method: 'POST', headers: authHeaders(), body: invalid.body,
+    })
+    assert.equal(response.status, 400, `${invalid.path}: ${await response.clone().text()}`)
+    assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+    assert.match(await response.text(), invalid.error)
+  }
+  for (const declaration of ['10, 20', '513']) {
+    const rateCallsBefore = sqlCalls().filter(call =>
+      call.query?.includes('/* paypal-credit:rate-limit */')).length
+    const resolutionCallsBefore = sqlCalls().filter(call =>
+      call.query?.includes('/* paypal-credit:founder-dispute-resolution */')).length
+    const response = await app.request(FOUNDER_DISPUTE_PATH, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'Content-Length': declaration,
+      },
+      body: SELLER_FAVOUR_BODY,
+    })
+    assert.equal(response.status, 400, `${declaration}: ${await response.clone().text()}`)
+    assert.match(await response.text(), /Content-Length|byte|declar/iu)
+    assert.equal(sqlCalls().filter(call =>
+      call.query?.includes('/* paypal-credit:rate-limit */')).length, rateCallsBefore)
+    assert.equal(sqlCalls().filter(call =>
+      call.query?.includes('/* paypal-credit:founder-dispute-resolution */')).length,
+    resolutionCallsBefore)
+  }
+  assert.equal(sqlCalls().filter(call =>
+    call.query?.includes('/* paypal-credit:founder-dispute-resolution */')).length, 0)
+  assert.deepEqual(state.founderPayPalDisputeEvents, [])
+})
+
+test('founder PayPal dispute resolution creates once, replays exactly, and publicly logs no private identifier', async () => {
+  reset({
+    actorId: 1,
+    actorHandle: 'founder',
+    founderPayPalDisputes: new Map([[
+      'PP-D-FOUNDER-REVIEW',
+      founderReviewDispute('PP-D-FOUNDER-REVIEW'),
+    ]]),
+  })
+
+  // No Content-Length is supplied. The route must enforce the actual body
+  // bytes and accept the edge-shaped headerless request.
+  const created = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST', headers: authHeaders(), body: SELLER_FAVOUR_BODY,
+  })
+  assert.equal(created.status, 201, await created.clone().text())
+  assert.match(created.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.deepEqual(await created.json(), {
+    paypal_dispute_resolution: {
+      dispute_id: 'PP-D-FOUNDER-REVIEW',
+      decision: 'seller_favour',
+      state: 'resolved_seller',
+      disposition: 'created',
+      application_outcome: 'founder_review_seller_favour_applied',
+      local_purchase_count: 1,
+      receipts_created: 1,
+    },
+  })
+
+  const replay = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST', headers: authHeaders(), body: SELLER_FAVOUR_BODY,
+  })
+  assert.equal(replay.status, 200, await replay.clone().text())
+  assert.deepEqual(await replay.json(), {
+    paypal_dispute_resolution: {
+      dispute_id: 'PP-D-FOUNDER-REVIEW',
+      decision: 'seller_favour',
+      state: 'resolved_seller',
+      disposition: 'existing',
+      application_outcome: 'founder_review_seller_favour_applied',
+      local_purchase_count: 1,
+      receipts_created: 0,
+    },
+  })
+
+  const opposite = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ decision: 'buyer_favour' }),
+  })
+  assert.equal(opposite.status, 409, await opposite.clone().text())
+  assert.match(opposite.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.match(await opposite.text(), /already|seller.favour|cannot|nothing changed/iu)
+  assert.deepEqual(state.founderPayPalDisputeEvents, [{
+    kind: 'payment_repair',
+    actor: 'founder',
+    detail: { action: 'credit_dispute_seller_favour' },
+  }])
+  assert.deepEqual(Object.keys(state.founderPayPalDisputeEvents[0]!.detail), ['action'])
+  assert.doesNotMatch(
+    JSON.stringify(state.founderPayPalDisputeEvents[0]!.detail),
+    /PP-D-FOUNDER-REVIEW|CAPTURE|city_gift|purchase|resident_id|buyer_id/iu,
+  )
+
+  reset({
+    actorId: 1,
+    actorHandle: 'founder',
+    founderPayPalDisputes: new Map([[
+      'PP-D-FOUNDER-REVIEW',
+      founderReviewDispute('PP-D-FOUNDER-REVIEW'),
+    ]]),
+  })
+  const buyerFavour = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ decision: 'buyer_favour' }),
+  })
+  assert.equal(buyerFavour.status, 201, await buyerFavour.clone().text())
+  assert.match(buyerFavour.headers.get('cache-control') ?? '', /no-store/iu)
+  const buyerBody = await buyerFavour.json() as {
+    paypal_dispute_resolution: Record<string, unknown>
+  }
+  assert.deepEqual(buyerBody.paypal_dispute_resolution, {
+    dispute_id: 'PP-D-FOUNDER-REVIEW',
+    decision: 'buyer_favour',
+    state: 'resolved_against_seller',
+    disposition: 'created',
+    application_outcome: 'founder_review_buyer_favour_applied',
+    local_purchase_count: 1,
+    receipts_created: 1,
+  })
+  assert.deepEqual(state.founderPayPalDisputeEvents, [{
+    kind: 'payment_repair',
+    actor: 'founder',
+    detail: { action: 'credit_dispute_buyer_favour' },
+  }])
+})
+
+test('founder PayPal dispute resolution refuses missing and non-review cases without a public event', async () => {
+  reset({ actorId: 1, actorHandle: 'founder' })
+  const missing = await app.request(
+    '/api/founder/city-credit/disputes/PP-D-MISSING/resolve',
+    { method: 'POST', headers: authHeaders(), body: SELLER_FAVOUR_BODY },
+  )
+  assert.equal(missing.status, 404, await missing.clone().text())
+  assert.match(missing.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.match(await missing.text(), /not found|nothing changed/iu)
+
+  for (const wrongState of [
+    'open', 'resolved_seller', 'resolved_against_seller',
+  ] as const) {
+    reset({
+      actorId: 1,
+      actorHandle: 'founder',
+      founderPayPalDisputes: new Map([[
+        'PP-D-FOUNDER-REVIEW',
+        founderReviewDispute('PP-D-FOUNDER-REVIEW', wrongState),
+      ]]),
+    })
+    const response = await app.request(FOUNDER_DISPUTE_PATH, {
+      method: 'POST', headers: authHeaders(), body: SELLER_FAVOUR_BODY,
+    })
+    assert.equal(response.status, 409, `${wrongState}: ${await response.clone().text()}`)
+    assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+    assert.match(await response.text(), /open|already resolved|founder review|nothing changed/iu)
+    assert.deepEqual(state.founderPayPalDisputeEvents, [])
+  }
+})
+
+test('founder PayPal dispute resolution uses a durable rate bucket before changing custody', async () => {
+  reset({
+    actorId: 1,
+    actorHandle: 'founder',
+    paypalCreditRateSlotsUsed: 300,
+    founderPayPalDisputes: new Map([[
+      'PP-D-FOUNDER-REVIEW',
+      founderReviewDispute('PP-D-FOUNDER-REVIEW'),
+    ]]),
+  })
+  const limited = await app.request(FOUNDER_DISPUTE_PATH, {
+    method: 'POST', headers: authHeaders(), body: SELLER_FAVOUR_BODY,
+  })
+  assert.equal(limited.status, 429, await limited.clone().text())
+  assert.equal(limited.headers.get('retry-after'), '3600')
+  assert.match(limited.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.match(await limited.text(), /too many|one hour|retry/iu)
+  assert.ok(sqlCalls().some(call => call.query?.includes('/* paypal-credit:rate-limit */')))
+  assert.equal(sqlCalls().some(call =>
+    call.query?.includes('/* paypal-credit:founder-dispute-resolution */')), false)
+  assert.deepEqual(state.founderPayPalDisputeEvents, [])
 })
 
 test('/api/me reports a private exact zero city fee credit account before any issuance', async () => {

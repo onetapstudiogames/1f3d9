@@ -64,11 +64,11 @@ function disputeBlockedGift(
 ): never {
   if (status === 'frozen') {
     throw new PrepaidCreditConflictError(
-      `This gift cannot be ${action} because a payment dispute is open on the purchase that funded it.`,
+      `This gift cannot be ${action} because a payment dispute is open on the purchase that funded it, or PayPal resolved it ambiguously and founder review is pending.`,
     )
   }
   throw new PrepaidCreditConflictError(
-    `This gift cannot be ${action} because the payment dispute was resolved against the city seller; the gift was permanently revoked and can never add credit.`,
+    `This gift cannot be ${action} because either PayPal resolved the funding dispute against the city seller, or founder resident #1 chose buyer favour after PayPal returned an ambiguous outcome. The gift was permanently revoked and can never add credit.`,
   )
 }
 
@@ -357,7 +357,7 @@ export async function readPendingCreditGifts(
       created_at: String(row.created_at),
       ...(status === 'frozen'
         ? {
-            blocked_reason: 'A payment dispute is open on the purchase that funded this gift. It cannot be accepted or redirected while frozen; the recipient may still refuse it.',
+            blocked_reason: 'A payment dispute is open on the purchase that funded this gift, or PayPal resolved it ambiguously and founder review is pending. It cannot be accepted or redirected while frozen; the recipient may still refuse it.',
             next_actions: Object.freeze({
               refuse: `POST /api/city-credit/gifts/${publicId}/refuse`,
             }),

@@ -220,7 +220,7 @@ test('frozen gifts allow recipient refusal while revoked gifts refuse every acti
         const message = String((await response.json() as { error: unknown }).error)
         assert.match(message, status === 'frozen'
           ? /payment dispute is open.*purchase that funded/iu
-          : /resolved against.*permanently revoked.*never add credit/iu)
+          : /either PayPal resolved.*against.*or founder resident #1 chose buyer favour.*ambiguous.*permanently revoked.*never add credit/iu)
       }
     }
     const blockedRedirect = appFor({ giftStatus: status })
@@ -232,7 +232,7 @@ test('frozen gifts allow recipient refusal while revoked gifts refuse every acti
     const redirectMessage = String((await redirect.json() as { error: unknown }).error)
     assert.match(redirectMessage, status === 'frozen'
       ? /payment dispute is open.*purchase that funded/iu
-      : /resolved against.*permanently revoked.*never add credit/iu)
+      : /either PayPal resolved.*against.*or founder resident #1 chose buyer favour.*ambiguous.*permanently revoked.*never add credit/iu)
   }
 })
 

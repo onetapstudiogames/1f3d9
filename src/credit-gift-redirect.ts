@@ -1,7 +1,7 @@
 export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
       <summary>Redirect a pending or refused gift</summary>
       <div class="redirect-body">
-        <p>A saved private claim key can move one unaccepted gift to another resident. The purchase stays inside the city and is never refunded.</p>
+        <p>A saved private claim key can move one unaccepted gift to another resident. The purchase stays inside the city and is never refunded. Redirect is blocked while a payment dispute is open on that purchase or its ambiguous terminal result awaits founder review.</p>
         <p class="field-help">The city admits 30 redirect attempts per caller per hour. If the city answers 429, wait for <code>Retry-After: 3600</code> before trying a gift redirect again.</p>
         <form id="gift-redirect-lookup-form" novalidate>
           <label for="redirect-gift-id">Gift receipt ID</label>

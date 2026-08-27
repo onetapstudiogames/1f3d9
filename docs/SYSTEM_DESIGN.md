@@ -355,10 +355,11 @@ of the commons; everything you do with what is already yours is free.
   redirect requires a new request ID. These routes accept no query options.
   Gift redirect admits 30 attempts per caller per hour. A `429` includes
   `Retry-After: 3600`; after that delay the buyer may try a gift redirect again.
-  While a PayPal payment dispute is open on the purchase that funded a gift, accept and
-  redirect refuse without changing the gift or balance and say in caller words that the
-  funding purchase has an open payment dispute. Recipient refusal remains available; it
-  preserves the refusal while the open-dispute marker continues to block buyer redirect.
+  While a PayPal payment dispute is open on the purchase that funded a gift, or its
+  ambiguous terminal resolution awaits founder review, accept and redirect refuse without
+  changing the gift or balance and state that exact cause in caller words. Recipient
+  refusal remains available; it preserves the refusal while either block continues to stop
+  buyer redirect.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval
@@ -377,7 +378,8 @@ of the commons; everything you do with what is already yours is free.
   all lifecycle events when PayPal later reports another capture. Each capture that minted city credit is reconciled, even when the dispute arrived first or one
   dispute names several local purchases. A pending gift funded by one of those captures is
   frozen. A previously refused gift stays refused, preserving the resident's choice, but
-  its buyer redirect is blocked while the dispute is open. Credit already delivered by a
+  its buyer redirect is blocked while the dispute is open or an ambiguous terminal result
+  awaits founder review. Credit already delivered by a
   self-purchase or accepted gift is never removed or driven negative; the dispute is
   recorded in that resident's private append-only ledger history instead. A verified event
   with no local capture receipt yet returns typed `200` outcome
@@ -390,7 +392,8 @@ of the commons; everything you do with what is already yours is free.
   `RESOLVED_BUYER_FAVOUR` or deprecated `ACCEPTED` permanently revokes unaccepted value,
   adds no balance, and appends a private receipt that says why. Ambiguous
   `RESOLVED_WITH_PAYOUT` or `NONE` returns an honest typed `200` but leaves pending value
-  frozen for founder review. PayPal's official
+  frozen in `resolution_review`. Founder resident #1 may use a root key with
+  `POST /api/founder/city-credit/disputes/:disputeId/resolve` and exactly {"decision":"seller_favour"} or {"decision":"buyer_favour"}; this power applies only to `resolution_review`, and every other state refuses. `disputeId` is 1–255 ASCII letters, digits, or hyphens beginning with a letter or digit. The route accepts no query options and one `application/json` body whose actual size is at most 512 bytes. `Content-Length` is optional; if present, it must be one decimal byte count no larger than 512. Its durable bucket admits 30 requests per founder resident per hour; a `429` includes `Retry-After: 3600`. Seller-favour releases this review's block and returns otherwise eligible unaccepted custody to ordinary pending; another dispute may keep it blocked or already revoked. Buyer-favour permanently revokes it. The same decision is safe to retry and returns unchanged, while the opposite decision refuses. The applied choice writes one public `payment_repair` record whose only detail is decision action `credit_dispute_seller_favour` or `credit_dispute_buyer_favour`; no PayPal, dispute, capture, purchase, or gift identifier is public. PayPal's official
   255-character dispute and seller-transaction IDs and RFC3339 update times are accepted;
   times are stored in canonical UTC. Dispute/event idempotency and timestamp ordering make
   exact, concurrent, and out-of-order replays converge. Each lifecycle event has one
@@ -398,7 +401,8 @@ of the commons; everything you do with what is already yours is free.
   writes one city-internal note for founder resident #1. The founder's own root-key account
   inspection includes staged captures that have no local purchase yet; inspections targeted
   at another resident include only that resident's local matches. The note, provider identifiers,
-  and purchaser identity never enter ordinary resident or public output.
+  and purchaser identity never enter ordinary resident or public output; only the redacted
+  founder-review decision action described above enters the public record.
 - The PayPal purchase door is dormant until `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`,
   `PAYPAL_ENV`, and `PAYPAL_WEBHOOK_ID` are all valid. Every PayPal page, asset, lookup,
   create, capture, subscription, and webhook route returns an honest operation-specific
@@ -434,8 +438,9 @@ of the commons; everything you do with what is already yours is free.
   refusal, redirect, dispute freeze/unfreeze/revocation, fee spend, and exact failed-spend
   return has a durable private receipt row readable by that resident at `GET /api/me`;
   retries and concurrent requests have one database winner. Founder resident #1 may still
-  issue one fixed administrative credit and inspect one account, its PayPal dispute state,
-  and its internal dispute notes through root-key routes. Inspecting the founder's own
+  issue one fixed administrative credit, inspect one account and its PayPal dispute state,
+  resolve a `resolution_review` case, and read its internal dispute notes through root-key
+  routes. Inspecting the founder's own
   handle also returns unmatched staged capture references so the note's operator next step works.
 - A resident's own private balance, pending or frozen gifts, and receipt history are available at
   `GET /api/me`; another resident cannot read them. Receipts continue independently with
@@ -599,6 +604,7 @@ GET  /api/me                auth — wakes due timers; private holdings/history 
 GET  /api/payment-attempt/:id auth, actor — private safe facts for one recorded paid action
 POST /api/payment-attempt/:id/recheck auth, actor, empty body — request one fresh check without paying again
 POST /api/founder/city-credit auth, founder root key — issue one fixed fee credit idempotently
+POST /api/founder/city-credit/disputes/:disputeId/resolve auth, founder #1 root key — `resolution_review` only; no query; `application/json` ≤512 actual bytes, optional decimal `Content-Length`; 30/hour, then `429` with `Retry-After: 3600`
 GET  /api/founder/city-credit/:handle auth, founder root key — inspect one private account
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
 GET  /api/official          same public facts as `official_facts`: addresses, no-token statement, snapshots

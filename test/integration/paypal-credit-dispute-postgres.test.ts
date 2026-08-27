@@ -5,10 +5,12 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Pool, type PoolClient } from 'pg'
+import { readCityCreditAccount } from '../../src/city-credit.ts'
 import { deliverPayPalCredit } from '../../src/paypal-credit-delivery.ts'
 import {
   applyPayPalCreditDispute,
   readFounderPayPalCreditDisputes,
+  resolveFounderPayPalCreditDispute,
   type ParsedPayPalDisputeEvent,
 } from '../../src/paypal-credit-dispute.ts'
 import {
@@ -170,6 +172,7 @@ function dispute(input: Readonly<{
   captureId?: string
   captureIds?: readonly string[]
   updateTime: string
+  paypalStatus?: ParsedPayPalDisputeEvent['paypalStatus']
   outcomeCode?: ParsedPayPalDisputeEvent['outcomeCode']
 }>): ParsedPayPalDisputeEvent {
   return Object.freeze({
@@ -177,9 +180,11 @@ function dispute(input: Readonly<{
     eventKind: input.eventKind,
     disputeId: input.disputeId,
     captureIds: input.captureIds ?? [input.captureId!],
-    paypalStatus: input.eventKind === 'CUSTOMER.DISPUTE.RESOLVED'
-      ? 'RESOLVED'
-      : input.eventKind === 'CUSTOMER.DISPUTE.UPDATED' ? 'UNDER_REVIEW' : 'OPEN',
+    paypalStatus: input.paypalStatus ?? (
+      input.eventKind === 'CUSTOMER.DISPUTE.RESOLVED'
+        ? 'RESOLVED'
+        : input.eventKind === 'CUSTOMER.DISPUTE.UPDATED' ? 'UNDER_REVIEW' : 'OPEN'
+    ),
     outcomeCode: input.outcomeCode ?? null,
     resourceUpdatedAt: input.updateTime,
   })
@@ -616,6 +621,554 @@ test('disputes reconcile before capture, honor latest time, and classify every o
       assert.equal(result.rows[0]?.application_outcome,
         'dispute_awaiting_capture_receipt')
     }
+  })
+})
+
+test('equal dispute timestamps advance lifecycle without weakening stale or conflict guards', {
+  timeout: 120_000,
+}, async () => {
+  await withPostgres(async (pool, db) => {
+    const sellerGift = await deliveredGift(db, 2)
+    const sellerDisputeId = 'PP-D-EQUAL-TIME-SELLER'
+    const sharedResolutionTime = '2026-08-27T20:00:00.000Z'
+    const sellerCreated = dispute({
+      eventId: 'WH-EQUAL-TIME-SELLER-CREATED',
+      eventKind: 'CUSTOMER.DISPUTE.CREATED',
+      disputeId: sellerDisputeId,
+      captureId: sellerGift.captureId,
+      updateTime: sharedResolutionTime,
+    })
+    assert.equal((await applyPayPalCreditDispute(db, sellerCreated)).state, 'open')
+    assert.equal((await giftState(pool, sellerGift.giftId)).status, 'frozen')
+
+    const sellerResolved = dispute({
+      eventId: 'WH-EQUAL-TIME-SELLER-RESOLVED',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: sellerDisputeId,
+      captureId: sellerGift.captureId,
+      updateTime: sharedResolutionTime,
+      outcomeCode: 'CANCELED_BY_BUYER',
+    })
+    const appliedResolution = await applyPayPalCreditDispute(db, sellerResolved)
+    assert.equal(appliedResolution.state, 'resolved_seller')
+    assert.equal(appliedResolution.applicationOutcome, 'dispute_resolved_gift_pending')
+    assert.equal((await giftState(pool, sellerGift.giftId)).status, 'pending')
+
+    const resolutionReplay = await applyPayPalCreditDispute(db, sellerResolved)
+    assert.equal(resolutionReplay.disposition, 'existing')
+    assert.equal(resolutionReplay.state, 'resolved_seller')
+    const createdReplay = await applyPayPalCreditDispute(db, sellerCreated)
+    assert.equal(createdReplay.disposition, 'existing')
+    assert.equal(createdReplay.state, 'resolved_seller')
+    assert.equal((await giftState(pool, sellerGift.giftId)).status, 'pending')
+
+    const equalTimeLowerLifecycle = dispute({
+      eventId: 'WH-EQUAL-TIME-SELLER-LATE-UPDATED',
+      eventKind: 'CUSTOMER.DISPUTE.UPDATED',
+      disputeId: sellerDisputeId,
+      captureId: sellerGift.captureId,
+      updateTime: sharedResolutionTime,
+      paypalStatus: 'UNDER_REVIEW',
+    })
+    const lowerLifecycle = await applyPayPalCreditDispute(db, equalTimeLowerLifecycle)
+    assert.equal(lowerLifecycle.state, 'resolved_seller')
+    assert.equal(lowerLifecycle.applicationOutcome, 'dispute_stale_event_ignored')
+
+    const olderUpdate = dispute({
+      eventId: 'WH-EQUAL-TIME-SELLER-OLDER-UPDATED',
+      eventKind: 'CUSTOMER.DISPUTE.UPDATED',
+      disputeId: sellerDisputeId,
+      captureId: sellerGift.captureId,
+      updateTime: '2026-08-27T19:59:59.000Z',
+      paypalStatus: 'WAITING_FOR_SELLER_RESPONSE',
+    })
+    const olderApplied = await applyPayPalCreditDispute(db, olderUpdate)
+    assert.equal(olderApplied.state, 'resolved_seller')
+    assert.equal(olderApplied.applicationOutcome, 'dispute_stale_event_ignored')
+    assert.equal((await giftState(pool, sellerGift.giftId)).status, 'pending')
+
+    const updatedGift = await deliveredGift(db, 3)
+    const updatedDisputeId = 'PP-D-EQUAL-TIME-UPDATES'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-EQUAL-TIME-UPDATES-CREATED',
+      eventKind: 'CUSTOMER.DISPUTE.CREATED',
+      disputeId: updatedDisputeId,
+      captureId: updatedGift.captureId,
+      updateTime: '2026-08-27T20:59:59.000Z',
+    }))
+    const firstUpdate = dispute({
+      eventId: 'WH-EQUAL-TIME-UPDATES-FIRST',
+      eventKind: 'CUSTOMER.DISPUTE.UPDATED',
+      disputeId: updatedDisputeId,
+      captureId: updatedGift.captureId,
+      updateTime: '2026-08-27T21:00:00.000Z',
+      paypalStatus: 'WAITING_FOR_SELLER_RESPONSE',
+    })
+    const secondUpdate = dispute({
+      eventId: 'WH-EQUAL-TIME-UPDATES-SECOND',
+      eventKind: 'CUSTOMER.DISPUTE.UPDATED',
+      disputeId: updatedDisputeId,
+      captureId: updatedGift.captureId,
+      updateTime: '2026-08-27T21:00:00.000Z',
+      paypalStatus: 'UNDER_REVIEW',
+    })
+    assert.equal((await applyPayPalCreditDispute(db, firstUpdate)).paypalStatus,
+      'WAITING_FOR_SELLER_RESPONSE')
+    assert.equal((await applyPayPalCreditDispute(db, secondUpdate)).paypalStatus,
+      'UNDER_REVIEW')
+    const earlierUpdateReplay = await applyPayPalCreditDispute(db, firstUpdate)
+    assert.equal(earlierUpdateReplay.disposition, 'existing')
+    assert.equal(earlierUpdateReplay.paypalStatus, 'UNDER_REVIEW')
+    assert.equal((await giftState(pool, updatedGift.giftId)).status, 'frozen')
+
+    const conflictingGift = await deliveredGift(db, 2)
+    const conflictingDisputeId = 'PP-D-EQUAL-TIME-CONFLICT'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-EQUAL-TIME-CONFLICT-CREATED',
+      eventKind: 'CUSTOMER.DISPUTE.CREATED',
+      disputeId: conflictingDisputeId,
+      captureId: conflictingGift.captureId,
+      updateTime: '2026-08-27T21:59:59.000Z',
+    }))
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-EQUAL-TIME-CONFLICT-RESOLVED',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: conflictingDisputeId,
+      captureId: conflictingGift.captureId,
+      updateTime: '2026-08-27T22:00:00.000Z',
+      outcomeCode: 'CANCELED_BY_BUYER',
+    }))
+    await assert.rejects(applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-EQUAL-TIME-CONFLICT-CHANGED',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: conflictingDisputeId,
+      captureId: conflictingGift.captureId,
+      updateTime: '2026-08-27T22:00:00.000Z',
+      outcomeCode: 'RESOLVED_SELLER_FAVOUR',
+    })), /conflicts with durable credit history/iu)
+
+    const evidence = await pool.query<{
+      seller_events: string
+      seller_receipts: string
+      update_events: string
+      update_receipts: string
+      conflict_events: string
+      conflict_receipts: string
+      conflict_outcome: string
+    }>(`
+      SELECT
+        (SELECT count(*) FROM paypal_credit_dispute_events
+          WHERE dispute_id = $1)::text AS seller_events,
+        (SELECT count(*) FROM city_credit_entries
+          WHERE paypal_dispute_id = $1)::text AS seller_receipts,
+        (SELECT count(*) FROM paypal_credit_dispute_events
+          WHERE dispute_id = $2)::text AS update_events,
+        (SELECT count(*) FROM city_credit_entries
+          WHERE paypal_dispute_id = $2)::text AS update_receipts,
+        (SELECT count(*) FROM paypal_credit_dispute_events
+          WHERE dispute_id = $3)::text AS conflict_events,
+        (SELECT count(*) FROM city_credit_entries
+          WHERE paypal_dispute_id = $3)::text AS conflict_receipts,
+        (SELECT outcome_code FROM paypal_credit_disputes
+          WHERE dispute_id = $3)::text AS conflict_outcome
+    `, [sellerDisputeId, updatedDisputeId, conflictingDisputeId])
+    assert.deepEqual(evidence.rows[0], {
+      seller_events: '4', seller_receipts: '4',
+      update_events: '3', update_receipts: '3',
+      conflict_events: '2', conflict_receipts: '2',
+      conflict_outcome: 'CANCELED_BY_BUYER',
+    })
+  })
+})
+
+test('only current adverse evidence or prior adverse custody can support an adverse projection', {
+  timeout: 120_000,
+}, async () => {
+  await withPostgres(async (pool, db) => {
+    const guardedGift = await deliveredGift(db, 2)
+    const guardedDisputeId = 'PP-D-ADVERSE-PROJECTION-GUARD'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-ADVERSE-PROJECTION-REVIEW',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: guardedDisputeId,
+      captureId: guardedGift.captureId,
+      updateTime: '2026-08-28T10:00:00.000Z',
+      outcomeCode: 'NONE',
+    }))
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-ADVERSE-PROJECTION-STALE',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: guardedDisputeId,
+      captureId: guardedGift.captureId,
+      updateTime: '2026-08-28T09:00:00.000Z',
+      outcomeCode: 'ACCEPTED',
+    }))
+    const attacker = await pool.connect()
+    try {
+      await attacker.query('BEGIN')
+      await attacker.query(`
+        UPDATE paypal_credit_disputes
+        SET state = 'resolved_against_seller', paypal_status = 'RESOLVED',
+          outcome_code = 'ACCEPTED', resolved_at = clock_timestamp(),
+          updated_at = clock_timestamp()
+        WHERE dispute_id = $1
+      `, [guardedDisputeId])
+      await assert.rejects(attacker.query('COMMIT'),
+        /current adverse lifecycle evidence|matching append-only event/iu)
+    } finally {
+      await attacker.query('ROLLBACK').catch(() => undefined)
+      attacker.release()
+    }
+    const guardedProjection = await pool.query<{
+      state: string
+      outcome_code: string
+    }>(`
+      SELECT state, outcome_code FROM paypal_credit_disputes
+      WHERE dispute_id = $1
+    `, [guardedDisputeId])
+    assert.deepEqual(guardedProjection.rows, [{
+      state: 'resolution_review', outcome_code: 'NONE',
+    }])
+    assert.equal((await giftState(pool, guardedGift.giftId)).status, 'frozen')
+
+    const retainedGift = await deliveredGift(db, 3)
+    const retainedDisputeId = 'PP-D-ADVERSE-PROJECTION-RETAINED'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-ADVERSE-PROJECTION-CURRENT',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: retainedDisputeId,
+      captureId: retainedGift.captureId,
+      updateTime: '2026-08-28T11:00:00.000Z',
+      outcomeCode: 'RESOLVED_BUYER_FAVOUR',
+    }))
+    const laterProviderUpdate = await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-ADVERSE-PROJECTION-LATER-UPDATE',
+      eventKind: 'CUSTOMER.DISPUTE.UPDATED',
+      disputeId: retainedDisputeId,
+      captureId: retainedGift.captureId,
+      updateTime: '2026-08-28T12:00:00.000Z',
+      paypalStatus: 'UNDER_REVIEW',
+    }))
+    assert.equal(laterProviderUpdate.state, 'resolved_against_seller')
+    assert.equal((await giftState(pool, retainedGift.giftId)).status, 'revoked')
+  })
+})
+
+test('founder review decisions resolve ambiguous custody once and leave a redacted public record', {
+  timeout: 120_000,
+}, async () => {
+  await withPostgres(async (pool, db) => {
+    const sellerGift = await deliveredGift(db, 2)
+    const sellerDisputeId = 'PP-D-FOUNDER-REVIEW-SELLER'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-FOUNDER-REVIEW-SELLER',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: sellerDisputeId,
+      captureId: sellerGift.captureId,
+      updateTime: '2026-08-28T01:00:00.000Z',
+      outcomeCode: 'RESOLVED_WITH_PAYOUT',
+    }))
+    assert.equal((await giftState(pool, sellerGift.giftId)).status, 'frozen')
+
+    const sellerDecision = await resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: sellerDisputeId,
+      decision: 'seller_favour',
+    })
+    assert.deepEqual(sellerDecision, {
+      disputeId: sellerDisputeId,
+      decision: 'seller_favour',
+      state: 'resolved_seller',
+      applicationOutcome: 'founder_review_seller_favour_applied',
+      disposition: 'created',
+      localPurchaseCount: 1,
+      receiptsCreated: 1,
+    })
+    const sellerGiftAfter = await giftState(pool, sellerGift.giftId)
+    assert.equal(sellerGiftAfter.status, 'pending')
+    assert.equal(sellerGiftAfter.frozen_at, null)
+
+    const sellerReplay = await resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: sellerDisputeId,
+      decision: 'seller_favour',
+    })
+    assert.deepEqual(sellerReplay, {
+      ...sellerDecision,
+      disposition: 'existing',
+      receiptsCreated: 0,
+    })
+    await assert.rejects(resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: sellerDisputeId,
+      decision: 'buyer_favour',
+    }), /already has.*founder decision|opposite founder decision/iu)
+
+    const sellerReviews = await pool.query<{
+      founder_id: number
+      decision: string
+    }>(`
+      SELECT founder_id, decision FROM paypal_credit_dispute_reviews
+      WHERE dispute_id = $1
+    `, [sellerDisputeId])
+    assert.deepEqual(sellerReviews.rows, [{ founder_id: 1, decision: 'seller_favour' }])
+    const sellerReceipts = await pool.query<{
+      resident_id: number
+      entry_kind: string
+      reason: string
+    }>(`
+      SELECT resident_id, entry_kind, reason FROM city_credit_entries
+      WHERE paypal_dispute_id = $1 AND entry_kind = 'paypal_dispute_reviewed'
+    `, [sellerDisputeId])
+    assert.equal(sellerReceipts.rows.length, 1)
+    assert.equal(sellerReceipts.rows[0]?.resident_id, 2)
+    assert.equal(sellerReceipts.rows[0]?.entry_kind, 'paypal_dispute_reviewed')
+    assert.match(sellerReceipts.rows[0]?.reason ?? '', /founder.*seller favour|seller favour.*founder/iu)
+    const sellerAccount = await readCityCreditAccount(db, 2, { limit: 50 })
+    const sellerPrivateReceipt = sellerAccount.history.find(entry =>
+      entry.kind === 'paypal_dispute_reviewed')
+    assert.ok(sellerPrivateReceipt)
+    assert.equal(sellerPrivateReceipt.amount_units, '0')
+    assert.equal(sellerPrivateReceipt.credit_amount_units, sellerGift.amountUnits.toString())
+    assert.equal(sellerPrivateReceipt.source_key, null)
+    assert.equal(sellerPrivateReceipt.request_id, null)
+    assert.match(sellerPrivateReceipt.reason ?? '', /seller favour/iu)
+    const sellerInspection = (await readFounderPayPalCreditDisputes(db, 2))
+      .find(item => item.dispute_id === sellerDisputeId)
+    assert.ok(sellerInspection)
+    assert.equal(sellerInspection.state, 'resolved_seller')
+    assert.equal(sellerInspection.outcome_code, 'RESOLVED_WITH_PAYOUT')
+    assert.equal(sellerInspection.founder_decision, 'seller_favour')
+    assert.ok(sellerInspection.founder_reviewed_at)
+    const sellerPublicEvents = await pool.query<{
+      actor: string
+      detail: Record<string, unknown>
+    }>(`
+      SELECT actor, detail FROM events WHERE kind = 'payment_repair'
+      ORDER BY id
+    `)
+    assert.deepEqual(sellerPublicEvents.rows, [{
+      actor: 'founder',
+      detail: { action: 'credit_dispute_seller_favour' },
+    }])
+
+    const refusedGift = await deliveredGift(db, 3)
+    assert.equal((await refuseCreditGift(db, {
+      residentId: 3, giftId: refusedGift.giftId,
+    })).status, 'refused')
+    const buyerDisputeId = 'PP-D-FOUNDER-REVIEW-BUYER'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-FOUNDER-REVIEW-BUYER',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: buyerDisputeId,
+      captureId: refusedGift.captureId,
+      updateTime: '2026-08-28T02:00:00.000Z',
+      outcomeCode: 'NONE',
+    }))
+    const refusedDuringReview = await giftState(pool, refusedGift.giftId)
+    assert.equal(refusedDuringReview.status, 'refused')
+    assert.ok(refusedDuringReview.frozen_at)
+
+    const buyerDecision = await resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: buyerDisputeId,
+      decision: 'buyer_favour',
+    })
+    assert.deepEqual(buyerDecision, {
+      disputeId: buyerDisputeId,
+      decision: 'buyer_favour',
+      state: 'resolved_against_seller',
+      applicationOutcome: 'founder_review_buyer_favour_applied',
+      disposition: 'created',
+      localPurchaseCount: 1,
+      receiptsCreated: 1,
+    })
+    assert.equal((await giftState(pool, refusedGift.giftId)).status, 'revoked')
+    const buyerReplay = await resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: buyerDisputeId,
+      decision: 'buyer_favour',
+    })
+    assert.deepEqual(buyerReplay, {
+      ...buyerDecision,
+      disposition: 'existing',
+      receiptsCreated: 0,
+    })
+    await assert.rejects(resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: buyerDisputeId,
+      decision: 'seller_favour',
+    }), /already has.*founder decision|opposite founder decision/iu)
+    const buyerAccount = await readCityCreditAccount(db, 3, { limit: 50 })
+    const buyerPrivateReceipt = buyerAccount.history.find(entry =>
+      entry.kind === 'paypal_dispute_reviewed')
+    assert.ok(buyerPrivateReceipt)
+    assert.equal(buyerPrivateReceipt.amount_units, '0')
+    assert.equal(buyerPrivateReceipt.credit_amount_units, refusedGift.amountUnits.toString())
+    assert.equal(buyerPrivateReceipt.source_key, null)
+    assert.equal(buyerPrivateReceipt.request_id, null)
+    assert.match(buyerPrivateReceipt.reason ?? '', /buyer favour/iu)
+    const buyerInspection = (await readFounderPayPalCreditDisputes(db, 3))
+      .find(item => item.dispute_id === buyerDisputeId)
+    assert.ok(buyerInspection)
+    assert.equal(buyerInspection.state, 'resolved_against_seller')
+    assert.equal(buyerInspection.outcome_code, 'NONE')
+    assert.equal(buyerInspection.founder_decision, 'buyer_favour')
+    assert.ok(buyerInspection.founder_reviewed_at)
+
+    const acceptedGift = await deliveredGift(db, 2)
+    assert.equal((await acceptCreditGift(db, {
+      residentId: 2, giftId: acceptedGift.giftId,
+    })).status, 'accepted')
+    const balanceBeforeReview = await pool.query<{ balance_units: string }>(`
+      SELECT balance_units::text AS balance_units
+      FROM city_credit_accounts WHERE resident_id = 2
+    `)
+    const acceptedDisputeId = 'PP-D-FOUNDER-REVIEW-DELIVERED'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-FOUNDER-REVIEW-DELIVERED',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: acceptedDisputeId,
+      captureId: acceptedGift.captureId,
+      updateTime: '2026-08-28T03:00:00.000Z',
+      outcomeCode: 'RESOLVED_WITH_PAYOUT',
+    }))
+    assert.equal((await resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: acceptedDisputeId,
+      decision: 'buyer_favour',
+    })).applicationOutcome, 'founder_review_buyer_favour_applied')
+    assert.equal((await giftState(pool, acceptedGift.giftId)).status, 'accepted')
+    const balanceAfterReview = await pool.query<{ balance_units: string }>(`
+      SELECT balance_units::text AS balance_units
+      FROM city_credit_accounts WHERE resident_id = 2
+    `)
+    assert.equal(balanceAfterReview.rows[0]?.balance_units,
+      balanceBeforeReview.rows[0]?.balance_units)
+
+    const wrongStateDisputes = [
+      dispute({
+        eventId: 'WH-FOUNDER-REVIEW-WRONG-OPEN',
+        eventKind: 'CUSTOMER.DISPUTE.CREATED',
+        disputeId: 'PP-D-FOUNDER-REVIEW-WRONG-OPEN',
+        captureIds: ['CAPTURE-FOUNDER-REVIEW-WRONG-OPEN'],
+        updateTime: '2026-08-28T04:00:00.000Z',
+      }),
+      dispute({
+        eventId: 'WH-FOUNDER-REVIEW-WRONG-SELLER',
+        eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+        disputeId: 'PP-D-FOUNDER-REVIEW-WRONG-SELLER',
+        captureIds: ['CAPTURE-FOUNDER-REVIEW-WRONG-SELLER'],
+        updateTime: '2026-08-28T05:00:00.000Z',
+        outcomeCode: 'DENIED',
+      }),
+      dispute({
+        eventId: 'WH-FOUNDER-REVIEW-WRONG-BUYER',
+        eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+        disputeId: 'PP-D-FOUNDER-REVIEW-WRONG-BUYER',
+        captureIds: ['CAPTURE-FOUNDER-REVIEW-WRONG-BUYER'],
+        updateTime: '2026-08-28T06:00:00.000Z',
+        outcomeCode: 'ACCEPTED',
+      }),
+    ]
+    for (const wrongState of wrongStateDisputes) {
+      await applyPayPalCreditDispute(db, wrongState)
+      await assert.rejects(resolveFounderPayPalCreditDispute(db, {
+        founderId: 1,
+        disputeId: wrongState.disputeId,
+        decision: 'seller_favour',
+      }), /not awaiting founder review/iu)
+    }
+    await assert.rejects(resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: 'PP-D-FOUNDER-REVIEW-MISSING',
+      decision: 'seller_favour',
+    }), /not found/iu)
+
+    const durableEvidence = await pool.query<{
+      reviews: string
+      receipts: string
+      seller_public_events: string
+      buyer_public_events: string
+    }>(`
+      SELECT
+        (SELECT count(*) FROM paypal_credit_dispute_reviews
+          WHERE dispute_id = ANY($1::text[]))::text AS reviews,
+        (SELECT count(*) FROM city_credit_entries
+          WHERE entry_kind = 'paypal_dispute_reviewed'
+            AND paypal_dispute_id = ANY($1::text[]))::text AS receipts,
+        (SELECT count(*) FROM events WHERE kind = 'payment_repair'
+          AND detail = '{"action":"credit_dispute_seller_favour"}'::jsonb)::text
+          AS seller_public_events,
+        (SELECT count(*) FROM events WHERE kind = 'payment_repair'
+          AND detail = '{"action":"credit_dispute_buyer_favour"}'::jsonb)::text
+          AS buyer_public_events
+    `, [[sellerDisputeId, buyerDisputeId, acceptedDisputeId]])
+    assert.deepEqual(durableEvidence.rows[0], {
+      reviews: '3', receipts: '3',
+      seller_public_events: '1', buyer_public_events: '2',
+    })
+    const publicDetails = await pool.query<{ detail: Record<string, unknown> }>(`
+      SELECT detail FROM events WHERE kind = 'payment_repair' ORDER BY id
+    `)
+    assert.deepEqual(publicDetails.rows.map(row => row.detail), [
+      { action: 'credit_dispute_seller_favour' },
+      { action: 'credit_dispute_buyer_favour' },
+      { action: 'credit_dispute_buyer_favour' },
+    ])
+  })
+})
+
+test('seller-favour review states when another dispute already revoked the gift', {
+  timeout: 120_000,
+}, async () => {
+  await withPostgres(async (pool, db) => {
+    const gift = await deliveredGift(db, 2)
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-MULTI-DISPUTE-ADVERSE',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: 'PP-D-MULTI-DISPUTE-ADVERSE',
+      captureId: gift.captureId,
+      updateTime: '2026-08-28T07:00:00.000Z',
+      outcomeCode: 'RESOLVED_BUYER_FAVOUR',
+    }))
+    assert.equal((await giftState(pool, gift.giftId)).status, 'revoked')
+
+    const reviewDisputeId = 'PP-D-MULTI-DISPUTE-REVIEW'
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-MULTI-DISPUTE-REVIEW',
+      eventKind: 'CUSTOMER.DISPUTE.RESOLVED',
+      disputeId: reviewDisputeId,
+      captureId: gift.captureId,
+      updateTime: '2026-08-28T08:00:00.000Z',
+      outcomeCode: 'RESOLVED_WITH_PAYOUT',
+    }))
+    const resolution = await resolveFounderPayPalCreditDispute(db, {
+      founderId: 1,
+      disputeId: reviewDisputeId,
+      decision: 'seller_favour',
+    })
+    assert.equal(resolution.applicationOutcome,
+      'founder_review_seller_favour_applied')
+    assert.equal((await giftState(pool, gift.giftId)).status, 'revoked')
+
+    const receipts = await pool.query<{
+      application_outcome: string
+      reason: string
+    }>(`
+      SELECT application_outcome, reason FROM city_credit_entries
+      WHERE paypal_dispute_id = $1 AND entry_kind = 'paypal_dispute_reviewed'
+    `, [reviewDisputeId])
+    assert.deepEqual(receipts.rows, [{
+      application_outcome: 'founder_review_gift_still_revoked',
+      reason: 'Founder resident #1 chose seller favour for the ambiguous PayPal outcome. Another dispute already permanently revoked this gift.',
+    }])
+    const account = await readCityCreditAccount(db, 2, { limit: 50 })
+    const receipt = account.history.find(entry =>
+      entry.kind === 'paypal_dispute_reviewed'
+      && entry.reason?.includes('Another dispute already permanently revoked'))
+    assert.ok(receipt)
+    assert.equal(receipt.amount_units, '0')
   })
 })
 

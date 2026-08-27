@@ -465,7 +465,7 @@ test('an API capture returns the frozen gift state when it reconciles an earlier
       status: 'frozen',
       receipt_id: '1',
       gift_id: [...fixture.database.purchases.values()][0]?.gift_public_id,
-      blocked_reason: 'A payment dispute is open on the purchase that funded this gift. It cannot be accepted or redirected while frozen.',
+      blocked_reason: 'A payment dispute is open on the purchase that funded this gift, or PayPal resolved it ambiguously and founder review is pending. It cannot be accepted or redirected while frozen.',
     },
   )
 })
@@ -522,6 +522,39 @@ test('an API capture replay says when a refused gift remains dispute-blocked', a
   assert.equal(replay.status, 200)
   assert.equal(payload.status, 'refused')
   assert.match(String(payload.blocked_reason), /payment dispute is open[\s\S]*cannot be redirected/iu)
+})
+
+test('an API capture replay gives either truthful cause for a review-revoked gift', async () => {
+  const fixture = configuredApp()
+  const createdResponse = await fixture.app.request('/api/city-credit/paypal/orders', postJson({
+    request_id: 'paypal-api-capture-founder-review-revoked',
+    resident_number: 193,
+    resident_handle: 'keeps-the-maybe',
+    amount_dollars: '3',
+    delivery: 'gift',
+  }))
+  const created = await createdResponse.json() as { purchase_id: string }
+  assert.equal((await fixture.app.request(
+    `/api/city-credit/paypal/orders/${created.purchase_id}/capture`,
+    postJson({ paypal_order_id: ORDER_ID }),
+  )).status, 200)
+  // Revoked custody can result from provider-adverse evidence or the founder's
+  // buyer-favour decision after an ambiguous provider outcome. The purchase row
+  // deliberately carries custody, not private dispute provenance.
+  const [sourceKey, purchase] = [...fixture.database.purchases.entries()][0]!
+  fixture.database.purchases.set(sourceKey, { ...purchase, status: 'revoked' })
+
+  const replay = await fixture.app.request(
+    `/api/city-credit/paypal/orders/${created.purchase_id}/capture`,
+    postJson({ paypal_order_id: ORDER_ID }),
+  )
+  const payload = await replay.json() as { status?: unknown; blocked_reason?: unknown }
+  const reason = String(payload.blocked_reason)
+  assert.equal(replay.status, 200)
+  assert.equal(payload.status, 'revoked')
+  assert.match(reason,
+    /either PayPal resolved.*against.*or founder resident #1 chose buyer favour.*ambiguous/iu)
+  assert.match(reason, /permanently revoked.*never add credit/iu)
 })
 
 test('official maximum dispute identifiers and offset update_time are accepted canonically', async () => {

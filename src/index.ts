@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
+import { declaredBodyLength } from './bounded-body.ts'
 import { sql } from './db.ts'
 import {
   auth,
@@ -134,7 +135,15 @@ import {
   renderCreditGiftRedirectPage,
 } from './credit-gift-redirect.ts'
 import { paypalReadiness } from './paypal-credit.ts'
-import { readFounderPayPalCreditDisputes } from './paypal-credit-dispute.ts'
+import {
+  FounderPayPalDisputeResolutionError,
+  readFounderPayPalCreditDisputes,
+  resolveFounderPayPalCreditDispute,
+} from './paypal-credit-dispute.ts'
+import {
+  PayPalCreditStoreConflictError,
+  takePayPalCreditRateLimit,
+} from './paypal-credit-store.ts'
 import {
   mountPayPalCreditRoutes,
   PAYPAL_CREDIT_UNAVAILABLE_MESSAGE,
@@ -153,6 +162,27 @@ const IDENTITY_ROTATION_ENABLED = IDENTITY_BROWSER_READY
 const PAYPAL_PURCHASES_READY = paypalReadiness(process.env).ready
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 const RESIDENT_FLAGS_PER_HOUR = 20
+const FOUNDER_DISPUTE_REVIEWS_PER_HOUR = 30
+const FOUNDER_DISPUTE_REVIEW_BODY_BYTES = 512
+
+type FounderDisputeReviewBody =
+  | Readonly<{ state: 'ok'; bytes: Buffer }>
+  | Readonly<{ state: 'empty' }>
+  | Readonly<{ state: 'oversized' }>
+
+async function readFounderDisputeReviewBody(
+  c: Context,
+): Promise<FounderDisputeReviewBody> {
+  // Use the framework reader because Vercel's Node bridge can stall when a
+  // handler drives the raw stream. The actual bytes remain the enforced bound;
+  // Content-Length is only an early refusal and may be absent at the edge.
+  const bytes = Buffer.from(await c.req.arrayBuffer())
+  if (bytes.byteLength === 0) return { state: 'empty' }
+  if (bytes.byteLength > FOUNDER_DISPUTE_REVIEW_BODY_BYTES) {
+    return { state: 'oversized' }
+  }
+  return { state: 'ok', bytes }
+}
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
@@ -985,6 +1015,102 @@ app.post('/api/founder/city-credit', async c => {
   } catch (error) {
     if (error instanceof TypeError) return err(c, 400, error.message)
     if (error instanceof CityCreditConflictError) return err(c, 409, error.message)
+    throw error
+  }
+})
+
+app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
+  privateResidentHeaders(c)
+  const founder = await authRootKey(c)
+  if (!founder) return err(c, 401, 'founder root key required')
+  if (founder.id !== 1) {
+    return err(c, 403,
+      'only founder resident #1 may resolve an ambiguous PayPal credit dispute')
+  }
+  if (Object.keys(c.req.queries()).length !== 0) {
+    return err(c, 400, 'this founder PayPal dispute route accepts no query options')
+  }
+  const disputeId = c.req.param('disputeId')
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,254}$/u.test(disputeId)) {
+    return err(c, 400, 'PayPal dispute id must be 1 to 255 letters, numbers, or hyphens')
+  }
+  if (declaredBodyLength(
+    c.req.header('content-length'),
+    FOUNDER_DISPUTE_REVIEW_BODY_BYTES,
+  ) === 'unusable') {
+    return err(c, 400,
+      `The founder PayPal dispute body declared an unusable Content-Length. Declare one decimal byte count no larger than ${FOUNDER_DISPUTE_REVIEW_BODY_BYTES} bytes, or omit the header.`)
+  }
+  if (!await takePayPalCreditRateLimit(
+    runtimeDatabase,
+    sha256(`paypal-credit:founder-dispute-review:resident:${founder.id}`),
+    FOUNDER_DISPUTE_REVIEWS_PER_HOUR,
+  )) {
+    c.header('Retry-After', '3600')
+    return err(c, 429,
+      'Too many founder PayPal dispute review requests were received. Retry in one hour.')
+  }
+  const bodyRead = await readFounderDisputeReviewBody(c)
+  const mediaType = (c.req.header('content-type') ?? '')
+    .split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'application/json') {
+    return err(c, 400, 'send one application/json founder PayPal dispute body')
+  }
+  if (bodyRead.state === 'empty') {
+    return err(c, 400, 'founder PayPal dispute body is empty; nothing changed')
+  }
+  if (bodyRead.state === 'oversized') {
+    return err(c, 400,
+      `founder PayPal dispute body is larger than ${FOUNDER_DISPUTE_REVIEW_BODY_BYTES} bytes; nothing changed`)
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(bodyRead.bytes.toString('utf8')) as unknown
+  } catch {
+    return err(c, 400, 'founder PayPal dispute body must be valid JSON; nothing changed')
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return err(c, 400, 'founder PayPal dispute body must be one JSON object')
+  }
+  const input = body as Record<string, unknown>
+  if (Object.keys(input).length !== 1 || !Object.hasOwn(input, 'decision')) {
+    return err(c, 400,
+      'founder PayPal dispute body must contain exactly decision and no unsupported field')
+  }
+  if (input.decision !== 'seller_favour' && input.decision !== 'buyer_favour') {
+    return err(c, 400, 'decision must be seller_favour or buyer_favour')
+  }
+  try {
+    const resolution = await resolveFounderPayPalCreditDispute(runtimeDatabase, {
+      founderId: founder.id,
+      disputeId,
+      decision: input.decision,
+    })
+    return c.json({
+      paypal_dispute_resolution: {
+        dispute_id: resolution.disputeId,
+        decision: resolution.decision,
+        state: resolution.state,
+        disposition: resolution.disposition,
+        application_outcome: resolution.applicationOutcome,
+        local_purchase_count: resolution.localPurchaseCount,
+        receipts_created: resolution.receiptsCreated,
+      },
+    }, resolution.disposition === 'created' ? 201 : 200)
+  } catch (error) {
+    if (error instanceof FounderPayPalDisputeResolutionError) {
+      if (error.kind === 'not_found') return err(c, 404, error.message)
+      if (error.kind === 'not_reviewable') {
+        return err(c, 409,
+          'This PayPal dispute is not in resolution_review and is not awaiting founder review. Nothing changed.')
+      }
+      return err(c, 409, error.message)
+    }
+    if (error instanceof PayPalCreditStoreConflictError) {
+      return err(c, 409,
+        'Durable PayPal dispute history rejected this founder decision. Nothing changed.')
+    }
+    if (error instanceof TypeError) return err(c, 400, error.message)
     throw error
   }
 })

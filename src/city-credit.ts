@@ -40,6 +40,7 @@ export type CityCreditEntryKind =
   | 'paypal_dispute_created'
   | 'paypal_dispute_updated'
   | 'paypal_dispute_resolved'
+  | 'paypal_dispute_reviewed'
 export type CityCreditPurchaseKind = 'paypal' | 'allowance' | 'x402'
 export type CityCreditReceiptOperation = CityFeeCreditOperation | 'credit_purchase'
 
@@ -626,6 +627,7 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
     'founder_issue', 'purchase', 'gift_pending', 'gift_accept', 'gift_refuse',
     'gift_redirect', 'spend', 'return', 'admin_credit', 'admin_debit',
     'paypal_dispute_created', 'paypal_dispute_updated', 'paypal_dispute_resolved',
+    'paypal_dispute_reviewed',
   ].includes(kind)) {
     throw new TypeError('city credit history kind is invalid')
   }
@@ -635,7 +637,10 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
     throw new TypeError('city credit gift receipt id is invalid')
   }
   const zeroBalanceEvent = ['gift_pending', 'gift_refuse', 'gift_redirect'].includes(kind)
-    || ['paypal_dispute_created', 'paypal_dispute_updated', 'paypal_dispute_resolved']
+    || [
+      'paypal_dispute_created', 'paypal_dispute_updated',
+      'paypal_dispute_resolved', 'paypal_dispute_reviewed',
+    ]
       .includes(kind)
     || (kind === 'purchase' && giftPublicId != null)
   const signedUnits = zeroBalanceEvent
@@ -651,6 +656,7 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
   const privateFundingEvent = [
     'purchase', 'gift_pending', 'gift_accept', 'gift_refuse', 'gift_redirect',
     'paypal_dispute_created', 'paypal_dispute_updated', 'paypal_dispute_resolved',
+    'paypal_dispute_reviewed',
   ].includes(kind)
   const sourceKey = privateFundingEvent
     ? null

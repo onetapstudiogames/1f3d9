@@ -170,6 +170,11 @@ test('captured gift copy follows pending, refused, frozen, accepted, and revoked
   }
   assert.match(CREDIT_BUY_JS, /resultGiftRedirectLink\.hidden/u)
   assert.match(html, /payment dispute is open[\s\S]{0,180}redirect/iu)
+  assert.match(
+    html,
+    /neither an open payment dispute nor an ambiguous terminal result awaiting founder review blocks (?:the gift|it)/iu,
+  )
+  assert.doesNotMatch(html, /no payment dispute is open or ambiguous terminal result/iu)
   assert.match(html, /id="result-gift-redirect-help"/u)
   assert.match(html, /id="result-gift-redirect-link"/u)
 })

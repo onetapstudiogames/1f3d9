@@ -282,6 +282,57 @@ test('city fee credit help stays deliberate, private, fixed, and non-transferabl
   assert.match(decisions, /\| 40 \|[^\n]*founder-issued city fee credit/iu)
 })
 
+test('founder dispute review has one executable, retry-safe, publicly logged exit', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['architecture', architecture],
+  ] as const) {
+    assert.match(text, /founder resident #1[^.]{0,180}root key/iu, `${name}: founder-only authority`)
+    assert.match(text, /seller[-_ ]favou?r[^.]{0,180}(?:ordinary )?pending/iu, `${name}: seller-favour exit`)
+    assert.match(text, /buyer[-_ ]favou?r[^.]{0,180}(?:permanent|revok)/iu, `${name}: buyer-favour exit`)
+    assert.match(text, /public[^.]{0,240}(?:payment_repair|payment correction)/iu, `${name}: public operator record`)
+    assert.match(text, /no query options/iu, `${name}: no-query contract`)
+    assert.match(text, /application\/json/iu, `${name}: media-type contract`)
+    assert.match(text, /512[^.\n]{0,60}bytes/iu, `${name}: actual body bound`)
+    assert.match(text, /30[^.\n]{0,100}(?:attempts|requests)[^.\n]{0,60}hour/iu, `${name}: durable rate limit`)
+    assert.match(text, /Retry-After(?::|\s)+3600/iu, `${name}: rate-limit next step`)
+    assert.match(text, /Content-Length[^.\n]{0,120}(?:omit|optional|absent)/iu, `${name}: edge header contract`)
+    assert.match(
+      text,
+      /(?:only[^.]{0,100}decision action|decision action[^.]{0,100}only|no[^.]{0,140}(?:PayPal|provider|dispute|capture|purchase|gift)[^.]{0,100}(?:identifier|id))/iu,
+      `${name}: redacted public record`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['architecture', architecture],
+  ] as const) {
+    assert.match(
+      text,
+      /POST\s+\/api\/founder\/city-credit\/disputes\/:dispute(?:Id|_id)\/resolve/iu,
+      `${name}: founder review route`,
+    )
+    assert.match(text, /"decision"[^\n]{0,100}"seller_favour"[^\n]{0,100}"buyer_favour"/iu, `${name}: exact decisions`)
+    assert.match(text, /(?:same|identical)[^.]{0,120}(?:decision|request)[^.]{0,120}(?:safe to retry|idempotent|unchanged)/iu, `${name}: replay contract`)
+    assert.match(text, /(?:only|must be)[^.]{0,100}resolution_review|resolution_review[^.]{0,120}(?:only|otherwise|refus)/iu, `${name}: state precondition`)
+    assert.match(text, /credit_dispute_seller_favour[^\n]{0,160}credit_dispute_buyer_favour/iu, `${name}: redacted action vocabulary`)
+  }
+
+  assert.match(
+    decisions,
+    /\| 52 \|[^\n]*founder resident #1[^\n]*seller[-_ ]favou?r[^\n]*buyer[-_ ]favou?r[^\n]*public/iu,
+    'decision 52 records the narrow operator power and its public accountability',
+  )
+})
+
 test('paid city-action help explains bounded recovery without another payment', () => {
   for (const [name, text] of [
     ['front door', frontdoor],
@@ -604,7 +655,7 @@ test('public help states the complete resident census contract', () => {
   ] as const) {
     const censusStart = text.indexOf('/api/residents')
     assert.ok(censusStart >= 0, `${name}: resident census route`)
-    const censusContract = text.slice(censusStart, censusStart + 1_600)
+    const censusContract = text.slice(censusStart, censusStart + 2_400)
     assert.match(
       censusContract,
       /(?:default(?:s| page(?: size)?)?[^\n]{0,100}200|200[^\n]{0,100}(?:default|page size))/iu,

@@ -158,7 +158,10 @@ const prepaidCreditGuidance = () =>
   'A gift stays pending and confers nothing until its recipient accepts; the recipient may refuse it. If an open ' +
   'PayPal dispute freezes the funding purchase, accept and buyer redirect make no change and state that cause, while ' +
   'recipient refusal remains available and its redirect stays blocked. Seller-favor resolution restores only an ' +
-  'originally pending gift, against-seller resolution revokes permanently, and delivered ' +
+  'originally pending gift, while against-seller resolution revokes permanently. An ambiguous resolution_review ' +
+  'has no resident action: founder resident #1 must use the root-key REST route. seller_favour releases that review\'s ' +
+  'block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. ' +
+  'buyer_favour revokes it permanently. Delivered ' +
   'credit is never clawed back. The purchaser ' +
   'identity is private. Buyer redirect uses a separate private claim token that must never enter MCP arguments. ' +
   'Before confirming any credit-funded fee action, call credit_preflight and show its exact fee_cost, balance_before, ' +
@@ -1022,7 +1025,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_gift',
     title: 'Accept or refuse a credit gift',
     description:
-      'Act on one pending or dispute-frozen prepaid fee-credit gift shown privately by me. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If an open PayPal dispute has frozen the purchase that funded the gift, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked until resolution. Seller-favor restores only originally pending value, while an against-seller resolution revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool.',
+      'Act on one pending or dispute-frozen prepaid fee-credit gift shown privately by me. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If a PayPal dispute or its ambiguous resolution_review has frozen the purchase, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked. Founder resident #1 uses a root-key REST route: seller_favour releases that review\'s block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. buyer_favour revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
