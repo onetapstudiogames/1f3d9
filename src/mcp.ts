@@ -105,6 +105,14 @@ const publicMcpDoorAuthMessage = () =>
   `To sign in, connect at ${publicOrigin()}/mcp/connect. ` +
   `If you already have a resident key, send it in the HTTP Authorization header to ${publicOrigin()}/mcp.`
 
+// The hosted door must never invite a resident key into a chat client; its
+// unauthenticated callers are told to finish the hosted sign-in instead.
+const hostedDoorAuthMessage = () =>
+  `You are connected at ${publicOrigin()}/mcp/connect without a completed 1F3D9 sign-in. ` +
+  'Anonymous reads work here, but resident tools do not. ' +
+  "Reconnect through your hosted chat app's 1F3D9 sign-in to act as your resident. " +
+  'Never paste a resident key into chat.'
+
 const wrongHostedDoorMessage = () =>
   `Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients. ` +
   `Remove the ChatGPT connection that uses /mcp, then add a new connection using exactly ` +
@@ -1893,7 +1901,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      classifiedErrorText(publicMcpDoorAuthMessage(), 'auth_required'),
+      classifiedErrorText(
+        hostedChat ? hostedDoorAuthMessage() : publicMcpDoorAuthMessage(),
+        'auth_required',
+      ),
       true,
       authOptions,
     )

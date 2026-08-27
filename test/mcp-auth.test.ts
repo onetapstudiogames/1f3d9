@@ -1672,3 +1672,16 @@ test('hosted and legacy MCP reads redact every resident credential family', asyn
     }
   }
 })
+
+test('the hosted door never invites a resident key into chat', async () => {
+  setHostedChatFlag(true)
+  const { gateway } = createHarness()
+  const response = await gateway.request('/mcp/connect', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'me', arguments: {} } }),
+  })
+  const text = JSON.stringify(await response.json())
+  assert.match(text, /Never paste a resident key into chat/)
+  assert.doesNotMatch(text, /send it in the HTTP Authorization header/)
+})
