@@ -24,13 +24,14 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 49)
-  assert.match(contributorGuide, /\(49 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 50)
+  assert.match(contributorGuide, /\(50 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 48 \|[^\n]*Prepaid fee credit is exact[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 49 \|[^\n]*PayPal-hosted dollars and x402 crypto[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 50 \|[^\n]*Shared city-window links are sparse[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 

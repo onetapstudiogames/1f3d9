@@ -55,6 +55,7 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import { loadPublicPlaceRecord, loadPublicThingRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { cachedPublicMapOutline, readPublicMapOutline } from './public-map.ts'
@@ -293,16 +294,8 @@ export function mountWorldRoutes(app: Hono): void {
           notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
         })
       : textLimits
-    const places = (await sql`
-      SELECT p.id, p.parent_id, p.name, p.description, p.purpose,
-        p.owner_id, owner.handle AS owner,
-        p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
-      FROM places p
-      LEFT JOIN residents owner ON owner.id = p.owner_id
-      WHERE p.id = ${id}
-    `) as PlaceRow[]
-    const place = places[0]
-    if (!place) return err(c, 404, 'place not found')
+    const publicPlace = await loadPublicPlaceRecord(id)
+    if (!publicPlace) return err(c, 404, 'place not found')
 
     const [collections, labels, laws, frontMatterByPlace] = await Promise.all([
       loadPublicPlaceCollectionRows(executePublicQuery, id, {
@@ -368,8 +361,7 @@ export function mountWorldRoutes(app: Hono): void {
           items: collections.notes as Array<Record<string, unknown> & { id: number }>,
           ...collections.pages.notes,
         }
-    const [[publicPlace], publicSubplaces, publicDetails, publicNotes] = await Promise.all([
-      moderatePublicRows('place', [place]),
+    const [publicSubplaces, publicDetails, publicNotes] = await Promise.all([
       moderatePublicRows('place', subplacesPage.items),
       moderatePlaceDetails(thingsPage.items, laws),
       moderatePublicRows('note', notesPage.items),
@@ -436,22 +428,9 @@ export function mountWorldRoutes(app: Hono): void {
     if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
-    const rows = await sql`
-      SELECT thing.id, thing.place_id, thing.name, thing.body,
-        thing.maker_id, maker.handle AS made_by,
-        thing.owner_id AS current_owner_id, owner.handle AS current_owner,
-        thing.owner_id, owner.handle AS owner, thing.open_to_use,
-        thing.kind_id, kind.name AS kind,
-        thing.birth_revision, thing.current_revision, thing.created_at
-      FROM things thing
-      JOIN residents maker ON maker.id = thing.maker_id
-      JOIN residents owner ON owner.id = thing.owner_id
-      LEFT JOIN kinds kind ON kind.id = thing.kind_id
-      WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
-    ` as ThingRow[]
-    if (!rows[0]) return err(c, 404, 'thing not found')
-    const publicDetails = await moderatePlaceDetails(rows, [])
-    return publicJson(c, { thing: publicDetails.things[0] })
+    const thing = await loadPublicThingRecord(id)
+    if (!thing) return err(c, 404, 'thing not found')
+    return publicJson(c, { thing })
   })
 
   app.post('/api/place', async c => {

@@ -4,6 +4,7 @@ export const WINDOW_HTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow, noarchive">
+  <!-- WINDOW_SHARE_HEAD -->
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0b1714">
   <title>The City Window — 1F3D9</title>
@@ -45,9 +46,10 @@ export const WINDOW_HTML = `<!doctype html>
     <div class="directory-search-field">
       <label for="directory-search">Search places and residents</label>
       <div class="directory-search-shell">
-        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name or place #id or resident #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-status">
+        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name or place #id or resident #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-help directory-search-status">
         <div id="directory-search-results" class="directory-search-results" role="listbox" aria-label="Directory search results" hidden></div>
       </div>
+      <small id="directory-search-help" class="input-contract">Use one plain line; NFC-normalized and trimmed; 100 characters maximum. Never paste a resident key or recovery code.</small>
       <small id="directory-search-status" class="directory-search-status" aria-live="polite">Loading the city directory.</small>
     </div>
     <div class="view-filters">
@@ -66,8 +68,8 @@ export const WINDOW_HTML = `<!doctype html>
       <div id="directory-status" class="directory-status" aria-live="polite">
         Loading the complete city directory. Map and content below are currently loaded separately.
       </div>
-      <a id="share-view" class="share-view" href="#view=map">Link this view</a>
     </div>
+    <p id="share-status" class="share-status" role="status" aria-live="polite"></p>
     <p id="view-scope" class="view-scope" aria-live="polite">The current bounded public view is loading.</p>
   </section>
 
@@ -78,6 +80,7 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">Live civic atlas</p>
         <h2>Who is standing where</h2>
         <p>Places nest inside places. Loaded resident markers show the current bounded public view.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <div class="map-layout">
         <div id="place-map" class="place-map">
@@ -99,6 +102,7 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">One address under glass</p>
         <h2 id="place-focus-title">Watch a place</h2>
         <p id="place-focus-summary">Choose a place above or from the map.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <section class="place-orientation" aria-label="Room orientation">
         <div class="orientation-block">
@@ -138,6 +142,7 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">Public speech, kept local</p>
         <h2>Conversations by place</h2>
         <p>Every visible note stays with the room where it was spoken.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <div id="conversation-mode" class="conversation-mode" role="group" aria-label="Conversation question" hidden></div>
       <div id="conversation-stream" class="conversation-stream">
@@ -151,6 +156,7 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">From the append-only ledger</p>
         <h2>Recent happenings</h2>
         <p>Follow one resident or watch one place to narrow the signal.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <ol id="activity-list" class="activity-list">
         <li class="loading-row">Listening for footsteps…</li>
@@ -163,6 +169,7 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">Promises, never enforced</p>
         <h2>Agreements and signatures</h2>
         <p>The city records each text, its named parties, and who signed.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <div id="agreement-list" class="agreement-list">
         <p class="loading-row">Opening the agreement book…</p>
@@ -175,11 +182,13 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">Public notes and things</p>
         <h2>Search the archive</h2>
         <p>Find old public material in plain date order. Results are not relevance-ranked and never reveal the body text.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <div id="archive-form" class="archive-form" role="search" aria-label="Search the public archive">
         <label class="archive-query-field" for="archive-query">
           <span>Words or phrase</span>
-          <input id="archive-query" name="q" type="search" maxlength="256" required autocomplete="off" spellcheck="false">
+          <input id="archive-query" name="q" type="search" maxlength="256" required autocomplete="off" spellcheck="false" aria-describedby="archive-query-help">
+          <small id="archive-query-help" class="input-contract">Use one plain line; NFC-normalized, trimmed, and spacing normalized; 256 UTF-8 bytes maximum. Words mode accepts 1–16 words. Never paste a resident key or recovery code.</small>
         </label>
         <label for="archive-mode">
           <span>Match</span>
@@ -204,6 +213,25 @@ export const WINDOW_HTML = `<!doctype html>
       <div id="archive-page" class="archive-page" aria-live="polite" hidden></div>
     </section>
   </main>
+
+  <dialog id="record-detail" class="record-detail" aria-labelledby="record-detail-title">
+    <article>
+      <header class="record-detail-heading">
+        <div>
+          <p id="record-detail-kind" class="eyebrow">Public city record</p>
+          <h2 id="record-detail-title">Opening the record…</h2>
+        </div>
+        <div class="record-detail-actions">
+          <button class="share-button" type="button" data-share-scope="detail">Share this detail</button>
+          <button id="record-detail-close" class="detail-close" type="button">Close</button>
+        </div>
+      </header>
+      <p id="record-detail-share-status" class="share-status record-detail-share-status" role="status" aria-live="polite"></p>
+      <div id="record-detail-body" class="record-detail-body">
+        <p class="loading-row">Reading the live public record…</p>
+      </div>
+    </article>
+  </dialog>
 
   <footer class="window-footer">
     <p><strong>Look, never touch.</strong> No registration, credentials, payments, or city-changing controls exist here.</p>

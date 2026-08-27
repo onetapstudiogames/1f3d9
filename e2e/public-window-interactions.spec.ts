@@ -716,7 +716,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.setContent(htmlWithoutAutomaticClient)
   await page.addStyleTag({ content: WINDOW_CSS })
   await page.addScriptTag({ content: WINDOW_JS })
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
 })
 
 test('real window route loads its production assets and renders the public snapshot', async ({ page }) => {
@@ -735,7 +735,7 @@ test('real window route loads its production assets and renders the public snaps
   expect(css.headers()['content-type']).toContain('text/css')
   expect(script.status()).toBe(200)
   expect(script.headers()['content-type']).toContain('text/javascript')
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
   await expect(page.getByRole('button', { name: 'root_plaza', exact: true })).toBeVisible()
   const humanDiscussion = page.getByRole('link', { name: 'reddit.com/r/TheAiCity' })
   await expect(humanDiscussion).toHaveAttribute('href', 'https://www.reddit.com/r/TheAiCity')
@@ -778,12 +778,12 @@ test('selected Place labels and preserves owner-chosen body-free front matter wi
   const readLinks = frontMatter.getByRole('link')
   await expect(readLinks).toHaveCount(2)
   await expect(readLinks.nth(0)).toContainText('borrowed_field_guide')
-  await expect(readLinks.nth(0)).toHaveAttribute('href', '/api/thing/33')
+  await expect(readLinks.nth(0)).toHaveAttribute('href', '/window/thing/33')
   await expect(readLinks.nth(1)).toContainText('room_compass')
-  await expect(readLinks.nth(1)).toHaveAttribute('href', '/api/thing/32')
+  await expect(readLinks.nth(1)).toHaveAttribute('href', '/window/thing/32')
   expect(await readLinks.evaluateAll(links => links.map(link => link.getAttribute('href')))).toEqual([
-    '/api/thing/33',
-    '/api/thing/32',
+    '/window/thing/33',
+    '/window/thing/32',
   ])
 
   const automaticThingReads = (API_REQUESTS.get(page) ?? []).filter(value => {
@@ -1015,7 +1015,7 @@ test('outline snapshot loads, pages, deduplicates, and preserves one map branch'
 
   await page.getByRole('button', { name: 'older_cell', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
-  await expect(page).toHaveURL(/#view=place&place=13$/)
+  await expect(page).toHaveURL(/\/window\/place\/13$/u)
   await page.goBack()
   await expect(page.getByRole('tab', { name: 'Map' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
@@ -1240,7 +1240,7 @@ test('complete resident selection uses one focused presence read and a directory
     .toHaveLength(1)
 })
 
-test('Link this view restores the directory filter and sleeper visibility', async ({ page }) => {
+test('clean view URL restores the directory filter and sleeper visibility', async ({ page }) => {
   const sleeper = page.locator('.sleeper-toggle').first()
   await expect(sleeper).toBeVisible()
   await sleeper.click()
@@ -1248,11 +1248,13 @@ test('Link this view restores the directory filter and sleeper visibility', asyn
 
   const directorySearch = page.locator('#directory-search')
   await directorySearch.fill('quiet annex')
-  const shareHash = await page.locator('#share-view').getAttribute('href')
-  expect(shareHash).toContain('find=quiet+annex')
-  expect(shareHash).toMatch(/(?:^|&)sleepers=\d+/u)
+  const cleanUrl = new URL(page.url())
+  expect(cleanUrl.pathname).toBe('/window/map')
+  expect(cleanUrl.searchParams.get('find')).toBe('quiet annex')
+  expect(cleanUrl.searchParams.get('sleepers')).toMatch(/^\d+(?:,\d+)*$/u)
+  expect(cleanUrl.hash).toBe('')
 
-  await page.goto(`/window${shareHash}`)
+  await page.reload()
   await expect(directorySearch).toHaveValue('quiet annex')
   await expect(page.locator('.sleeper-toggle[aria-expanded="true"]').first()).toBeVisible()
 })
@@ -3119,8 +3121,8 @@ test('Archive finds an old body-free result and follows its opaque continuation'
 
   await expect(page.locator('#archive-results')).toContainText('new_hush_lantern')
   await expect(page.locator('#archive-results')).not.toContainText('secret body text')
-  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open original' }))
-    .toHaveAttribute('href', '/api/thing/31')
+  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open detail' }))
+    .toHaveAttribute('href', '/window/thing/31')
   expect(requests[0]?.searchParams.get('q')).toBe('hush lantern')
   expect(requests[0]?.searchParams.get('mode')).toBe('phrase')
   expect(requests[0]?.searchParams.get('type')).toBe('thing')
@@ -3129,7 +3131,7 @@ test('Archive finds an old body-free result and follows its opaque continuation'
   await page.getByRole('button', { name: 'Load older matches' }).click()
   await expect(page.locator('#archive-results')).toContainText('old_hush_lantern')
   expect(requests[1]?.searchParams.get('before')).toBe('older-search-page')
-  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open original' }))
+  await expect(page.locator('#archive-results').getByRole('link', { name: 'Open detail' }))
     .toHaveCount(2)
 })
 
@@ -3160,7 +3162,7 @@ test('Archive rejects an incomplete page without its promised continuation', asy
   await expect(page.locator('#archive-results')).not.toContainText('Public note #41')
 })
 
-test('Link this view restores and automatically runs the Archive question', async ({ page }) => {
+test('clean Archive URL restores and automatically runs the question', async ({ page }) => {
   const requests: URL[] = []
   await page.route('**/api/search**', route => {
     const url = new URL(route.request().url())
@@ -3194,22 +3196,26 @@ test('Link this view restores and automatically runs the Archive question', asyn
   await page.locator('#archive-search').click()
   await expect(page.locator('#archive-results')).toContainText('shared_hush_lantern')
 
-  const shareHash = await page.locator('#share-view').getAttribute('href')
-  expect(shareHash).toBe('#view=archive&q=hush+lantern&mode=phrase&type=thing')
-  expect(page.url()).toContain(shareHash)
+  const cleanUrl = new URL(page.url())
+  expect(cleanUrl.pathname + cleanUrl.search).toBe(
+    '/window/archive?q=hush+lantern&mode=phrase&type=thing',
+  )
+  expect(cleanUrl.hash).toBe('')
 
   const restoredSearch = page.waitForRequest(request => {
     const url = new URL(request.url())
     return url.pathname === '/api/search' && url.searchParams.get('q') === 'hush lantern'
   })
-  await page.goto(`/window${shareHash}`)
+  await page.reload()
   await restoredSearch
 
   await expect(page.locator('#archive-query')).toHaveValue('hush lantern')
   await expect(page.locator('#archive-mode')).toHaveValue('phrase')
   await expect(page.locator('#archive-type')).toHaveValue('thing')
   await expect(page.locator('#archive-results')).toContainText('shared_hush_lantern')
-  await expect(page.locator('#share-view')).toHaveAttribute('href', shareHash ?? '')
+  expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe(
+    '/window/archive?q=hush+lantern&mode=phrase&type=thing',
+  )
   expect(requests).toHaveLength(2)
 })
 
@@ -3534,4 +3540,81 @@ test('an older history response already in flight cannot repopulate a newer mark
   }))
   await expect(page.locator('.thing-card').filter({ hasText: 'record_lantern' })).toHaveCount(0)
   await expect(page.locator('.thing-card').filter({ hasText: 'old_bench' })).toHaveCount(0)
+})
+
+test('a delayed thing detail cannot overwrite its reread after an authored refresh', async ({ page }) => {
+  const staleBody = 'Stale inscription returned after the authored refresh.'
+  const refreshedBody = 'Fresh inscription read after the authored refresh.'
+  let detailAttempts = 0
+  let markStaleDetailStarted!: () => void
+  const staleDetailStarted = new Promise<void>(resolve => { markStaleDetailStarted = resolve })
+  let releaseStaleDetail: (() => void) | null = null
+
+  await page.route('**/api/thing/31', async route => {
+    detailAttempts += 1
+    const body = detailAttempts === 1 ? staleBody : refreshedBody
+    const payload = {
+      thing: {
+        id: 31,
+        place_id: 11,
+        name: 'record_lantern',
+        made_by: 'mapkeeper',
+        current_owner: 'mapkeeper',
+        body,
+        moderated: false,
+      },
+    }
+    if (detailAttempts !== 1) return route.fulfill({ json: payload })
+    markStaleDetailStarted()
+    await new Promise<void>(resolve => {
+      releaseStaleDetail = () => {
+        void route.fulfill({ json: payload }).then(() => resolve())
+      }
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Place', exact: true }).click()
+  await page.locator('#place-things .thing-detail-link', { hasText: 'record_lantern' }).click()
+  await staleDetailStarted
+  const detailBody = page.locator('#record-detail-body')
+  const detailText = detailBody.locator('.record-detail-text')
+  await expect(detailBody).toContainText('Reading the live public record')
+
+  await page.route('**/api/changes**', route => route.fulfill({
+    json: {
+      change_marker: '21', changes: [{ change_id: '21' }], returned_items: 1,
+      unchanged: false, has_more: false, next_since: '21',
+    },
+  }))
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') !== '21') return route.fallback()
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+
+  const coveredSnapshot = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/window' &&
+      url.searchParams.get('after_change_marker') === '21' && response.status() === 200
+  })
+  const refreshedDetail = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/thing/31' && response.status() === 200
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await Promise.all([coveredSnapshot, refreshedDetail])
+  expect(detailAttempts).toBe(2)
+  await expect(detailText).toHaveText(refreshedBody)
+
+  const staleDetailResponse = page.waitForResponse(response => {
+    return new URL(response.url()).pathname === '/api/thing/31' && response.status() === 200
+  })
+  expect(releaseStaleDetail).not.toBeNull()
+  releaseStaleDetail?.()
+  await staleDetailResponse
+  await page.evaluate(() => new Promise<void>(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+
+  await expect(detailText).toHaveText(refreshedBody)
+  await expect(detailText).not.toContainText(staleBody)
 })

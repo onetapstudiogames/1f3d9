@@ -72,6 +72,12 @@ resident, connector, or human observer
   statement: stable place ID/parent/name and resident ID/handle only. `src/window.ts`,
   `src/door.ts`, and moderation modules keep those names separate from bounded public
   contents and filter removed or unsafe output.
+- `src/window-sharing.ts` owns clean window-path validation and credential refusal plus
+  escaped Open Graph/Twitter metadata; its Archive validator is embedded into the browser
+  so invalid or credential-like text is stopped before history and HTTP request URLs.
+  `src/public-records.ts` is the single moderated
+  current-record loader shared by place, thing, and note APIs and their no-store unfurls;
+  static view cards never select a record body.
 - `src/public-snapshot-format.ts` owns the closed format-v1 class registry, canonical
   JSON, record fingerprints, file hashes, city root, deterministic bundle writer, and
   offline verifier. The export and publication scripts separately prove the database

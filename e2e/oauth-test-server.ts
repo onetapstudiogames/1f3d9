@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:https'
 import { getRequestListener } from '@hono/node-server'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import {
   auth,
   setOAuthResidentResolver,
@@ -33,7 +33,8 @@ import {
   CREDIT_GIFT_REDIRECT_PAGE_JS,
   renderCreditGiftRedirectPage,
 } from '../src/credit-gift-redirect.ts'
-import { windowPage, windowScript, windowStyle } from '../src/window.ts'
+import { windowPage, windowScript, windowShareImage, windowStyle } from '../src/window.ts'
+import type { WindowShareDetail } from '../src/window-sharing.ts'
 
 const port = Number(process.env.E2E_PORT ?? 41_739)
 const origin = `https://127.0.0.1:${port}`
@@ -57,6 +58,30 @@ const noteExcerpt = 'The public note begins here'
 const noteFull = `${noteExcerpt}, then continues beyond the snapshot excerpt.`
 const thingExcerpt = 'A lantern with an abbreviated inscription'
 const thingFull = `${thingExcerpt}; the complete inscription is readable without signing in.`
+const publicPlaceShareRecord = Object.freeze({
+  id: 11,
+  name: 'test_square',
+  description: placeDescription,
+  owner: 'browser-resident',
+  moderated: false,
+})
+const publicThingShareRecord = Object.freeze({
+  id: 401,
+  place_id: 11,
+  name: 'field_lantern',
+  made_by: 'browser-resident',
+  current_owner: 'browser-resident',
+  body: thingFull,
+  moderated: false,
+})
+const publicNoteShareRecord = Object.freeze({
+  id: 301,
+  place_id: 11,
+  author: 'browser-resident',
+  body: noteFull,
+  created_at: '2026-08-13T19:03:00.000Z',
+  moderated: false,
+})
 const creditPurchaseId = `city_paypal_${'ef'.repeat(16)}`
 const creditGiftId = `city_gift_${'ab'.repeat(16)}`
 const creditClaimToken = `gift_claim_${'cd'.repeat(32)}`
@@ -566,6 +591,21 @@ process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
 process.env.PUBLIC_ORIGIN = origin
 
 const app = new Hono()
+
+function readPublicWindowShareRecord(detail: WindowShareDetail): Promise<unknown | null> {
+  const record = detail.kind === 'place' && detail.id === publicPlaceShareRecord.id
+    ? publicPlaceShareRecord
+    : detail.kind === 'thing' && detail.id === publicThingShareRecord.id
+      ? publicThingShareRecord
+      : detail.kind === 'note' && detail.id === publicNoteShareRecord.id
+        ? publicNoteShareRecord
+        : null
+  return Promise.resolve(record)
+}
+
+function renderPublicWindowPage(c: Context): Promise<Response> {
+  return windowPage(c, false, readPublicWindowShareRecord)
+}
 const store = makeMemoryStore()
 type TestIdentityResident = Readonly<{
   id: number
@@ -863,9 +903,15 @@ app.get('/gift-redirect.js', c => {
   c.header('Cache-Control', 'no-store')
   return c.body(CREDIT_GIFT_REDIRECT_PAGE_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
 })
-app.get('/window', windowPage)
+app.get('/window', renderPublicWindowPage)
+app.get('/window/:view', renderPublicWindowPage)
+app.get('/window/:kind/:id', renderPublicWindowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
+app.get('/share/view.png', c => windowShareImage(c, 'view'))
+app.get('/share/place.png', c => windowShareImage(c, 'place'))
+app.get('/share/thing.png', c => windowShareImage(c, 'thing'))
+app.get('/share/note.png', c => windowShareImage(c, 'note'))
 app.get('/api/city-credit/paypal/residents/:number', c => {
   c.header('Cache-Control', 'no-store')
   if (c.req.param('number') !== '193') {
@@ -991,7 +1037,7 @@ app.get('/api/thing/:id', c => {
       has_cookie: Boolean(c.req.header('cookie')),
     }],
   }
-  return c.json({ thing: { id: 401, body: thingFull } })
+  return c.json({ thing: publicThingShareRecord })
 })
 app.get('/api/note/:id', c => {
   if (c.req.param('id') !== '301') return c.json({ error: 'note not found' }, 404)
@@ -1004,7 +1050,7 @@ app.get('/api/note/:id', c => {
       has_cookie: Boolean(c.req.header('cookie')),
     }],
   }
-  return c.json({ note: { id: 301, body: noteFull } })
+  return c.json({ note: publicNoteShareRecord })
 })
 app.get('/api/events', c => {
   const beforeIdValue = c.req.query('before_id')

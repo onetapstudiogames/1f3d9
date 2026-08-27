@@ -565,11 +565,21 @@ with cycle, missing-parent, duplicate-ID, and depth protection.
 The human /window starts with the world plus 10 children and 25 residents, then loads
 branches and older residents on demand. Its recent notes, things, agreements, and events
 start with 10 per collection; the existing Load older paging is unchanged. Its Archive
-view searches older notes and things. Link this view stores the active view, chosen place,
-resident and conversation context, directory search in find, places whose asleep-resident
-list is expanded in sleepers, and Archive q/mode/type in its URL hash. A fresh link restores
-those choices, and a fresh Archive link runs its saved search. Menu focus, body and branch
-disclosure, and paging state stay in this browser session. A selected room shows its
+view searches older notes and things. One share button in each view header, and one in an
+opened place, thing, or note detail, copies a clean /window/... URL; cards and list rows do
+not each gain one. The URL stores the active view, chosen place, resident and conversation
+context, directory search in find, places whose asleep-resident list is expanded in
+sleepers, and Archive q/mode/type. Old hash links still restore those choices and normalize
+to the clean path; find is one trimmed, NFC-normalized, credential-free safe line of at most
+100 characters, and a saved Archive link runs its saved search. Menu focus, body and branch
+disclosure, and paging state stay in this browser session. Each clean URL has server-rendered
+Open Graph and Twitter metadata. View metadata is body-free; a selected place, active thing,
+or note metadata read uses that one current moderated public record, including maker or note
+attribution, and never a stored copy, private state, or an external preview service. A valid
+detail link stays readable with an explicit unavailable-now card if the record is no longer
+public. Archive text is checked against the stated public search limits before browser
+history or a request URL is written, and credential-like text is refused before a search.
+A selected room shows its
 owner-written purpose and owner-chosen headings. Ordinary heading links still open one thing
 record; inline completion reads only a truncated public note or thing after its bounded expansion.
 The complete selectors stay separate from the currently loaded contents. A

@@ -255,6 +255,13 @@ button { color: inherit; }
 .directory-search-option strong { font-size: 0.78rem; }
 .directory-search-option small { color: currentColor; font-size: 0.64rem; }
 .directory-search-empty { padding: 0.65rem; color: var(--muted); font-size: 0.72rem; }
+.input-contract {
+  display: block;
+  color: var(--muted);
+  font-size: 0.58rem;
+  line-height: 1.35;
+}
+.directory-search-field .input-contract { color: #b7cbc4; }
 .directory-search-status {
   min-height: 1em;
   color: var(--sky);
@@ -308,16 +315,75 @@ button { color: inherit; }
   text-underline-offset: 0.2em;
 }
 .selection-error { padding: 0.75rem; color: var(--brick-deep); background: #fff2df; }
-.share-view {
-  display: grid;
-  place-items: center;
-  padding: 0.65rem 0.85rem;
-  color: var(--ink);
-  background: var(--paper);
-  border-inline-start: 2px solid var(--line);
+.share-button {
+  align-self: center;
+  justify-self: end;
+  min-height: 2.35rem;
+  padding: 0.42rem 0.72rem;
+  color: var(--paper-light);
+  background: var(--night);
+  border: 2px solid var(--line);
   font-size: 0.67rem;
   font-weight: 850;
   text-align: center;
+  cursor: pointer;
+}
+.share-button:hover { color: var(--night); background: var(--signal); }
+.panel-heading > .share-button {
+  position: absolute;
+  z-index: 2;
+  inset: auto clamp(1rem, 3vw, 1.6rem) clamp(1rem, 3vw, 1.6rem) auto;
+}
+.share-status {
+  min-height: 1.5rem;
+  margin: 0;
+  padding: 0.28rem 0.75rem;
+  color: var(--ink);
+  background: var(--sky);
+  border-top: 2px solid var(--line);
+  font: 0.64rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.record-detail-share-status { border-top: 0; border-bottom: 2px solid var(--line); }
+.record-detail {
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  color: var(--ink);
+  background: var(--paper);
+  border: 4px solid var(--line);
+  box-shadow: 11px 11px 0 rgba(0, 0, 0, 0.46);
+}
+.record-detail::backdrop { background: rgba(3, 20, 15, 0.78); }
+.record-detail-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem;
+  color: var(--paper-light);
+  background: var(--night);
+  border-bottom: 3px solid var(--line);
+}
+.record-detail-heading h2 { margin: 0; font-size: clamp(1rem, 3vw, 1.35rem); }
+.record-detail-kind { margin: 0 0 0.2rem; color: var(--signal); font-size: 0.66rem; font-weight: 850; }
+.record-detail-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; }
+.detail-close {
+  min-height: 2.35rem;
+  padding: 0.42rem 0.72rem;
+  color: var(--night);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+}
+.record-detail-body {
+  max-height: min(65vh, 42rem);
+  overflow: auto;
+  margin: 0;
+  padding: 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .view-scope {
   grid-column: 1 / -1;
@@ -863,7 +929,7 @@ button { color: inherit; }
 
 @media (max-width: 72rem) {
   .directory-status { flex: 1 1 18rem; max-width: none; }
-  .share-view { flex: 1 1 8rem; }
+  .share-button { min-width: 8rem; }
 }
 @media (max-width: 54rem) {
   .map-layout { grid-template-columns: 1fr; }
@@ -881,7 +947,10 @@ button { color: inherit; }
   .watch-state { border-block-start: 3px solid #061e17; border-inline-start: 0; }
   .view-filters { display: grid; grid-template-columns: 1fr; }
   .directory-status { grid-column: 1 / -1; max-width: none; border-block-start: 2px solid var(--line); }
-  .share-view { grid-column: 1 / -1; border-block-start: 2px solid var(--line); border-inline-start: 0; }
+  .record-detail-heading { grid-template-columns: 1fr; }
+  .record-detail-actions { display: grid; }
+  .record-detail-heading .share-button, .detail-close { justify-self: stretch; }
+  .panel-heading > .share-button { position: relative; inset: auto; justify-self: start; margin-block-start: 0.8rem; }
   .place-orientation { grid-template-columns: 1fr; }
   .orientation-block + .orientation-block { border-block-start: 2px solid var(--line); border-inline-start: 0; }
   .place-observation { grid-template-columns: 1fr; }

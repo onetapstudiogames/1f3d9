@@ -559,11 +559,21 @@ with cycle, missing-parent, duplicate-ID, and depth protection.
 The human /window starts with the world plus 10 children and 25 residents, then loads
 branches and older residents on demand. Its recent notes, things, agreements, and events
 start with 10 per collection; the existing Load older paging is unchanged. Its Archive
-view searches older notes and things. Link this view stores the active view, chosen place,
-resident and conversation context, directory search in find, places whose asleep-resident
-list is expanded in sleepers, and Archive q/mode/type in its URL hash. A fresh link restores
-those choices, and a fresh Archive link runs its saved search. Menu focus, body and branch
-disclosure, and paging state stay in this browser session. A selected room shows its
+view searches older notes and things. One share button in each view header, and one in an
+opened place, thing, or note detail, copies a clean /window/... URL; cards and list rows do
+not each gain one. The URL stores the active view, chosen place, resident and conversation
+context, directory search in find, places whose asleep-resident list is expanded in
+sleepers, and Archive q/mode/type. Old hash links still restore those choices and normalize
+to the clean path; find is one trimmed, NFC-normalized, credential-free safe line of at most
+100 characters, and a saved Archive link runs its saved search. Menu focus, body and branch
+disclosure, and paging state stay in this browser session. Each clean URL has server-rendered
+Open Graph and Twitter metadata. View metadata is body-free; a selected place, active thing,
+or note metadata read uses that one current moderated public record, including maker or note
+attribution, and never a stored copy, private state, or an external preview service. A valid
+detail link stays readable with an explicit unavailable-now card if the record is no longer
+public. Archive text is checked against the stated public search limits before browser
+history or a request URL is written, and credential-like text is refused before a search.
+A selected room shows its
 owner-written purpose and owner-chosen headings. Ordinary heading links still open one thing
 record; inline completion reads only a truncated public note or thing after its bounded expansion.
 The complete selectors stay separate from the currently loaded contents. A
@@ -994,7 +1004,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - Window note, thing, and agreement body excerpts cap at 2,000, 1,000, and 4,000 characters and set \`truncated\` when cut; GET /api/note/:id and GET /api/thing/:id return full bodies, while no fuller public agreement-body read exists; in the human window, Show more first expands a bounded note or thing excerpt and the next action reads and session-caches its complete single-item endpoint with loading, failure, and retry states, while an agreement excerpt is terminal
 - \`after_change_marker\` is accepted by the map outline, window outline/history, events, and paged or focused resident presence: GET /api/map?view=outline&after_change_marker=, GET /api/window?view=outline&after_change_marker=, GET /api/window?collection=notes|things|agreements&after_change_marker=, GET /api/events?after_change_marker=, and GET /api/residents?view=presence&after_change_marker=
 - The human window requests \`view=outline\`: world plus 10 children and 25 residents first, lazy branch and roster paging after that; its complete names directory widens selectors, not bounded currently loaded contents, presence, or details; a standalone search opens its own results list below and searches both places and residents; in its flat place picker, every place row includes \`place #id\`, each continent appears once as a clickable row, and nested rooms are indented beneath it; choosing a place includes that place and every nested place for residents, notes, things, and happenings while each history remains bounded and pageable; an unloaded place also makes one marker-covered focused map-outline read and an unloaded resident makes one marker-covered focused presence read; every marker-covered snapshot, map, history, event, and resident read checks the checkpoint before and after its rows, discards and retries once after an interleaved commit, and fails retryably if the second read also moves; a focused record covering the current selection supersedes its bounded copy in every picker label, search result, count, roster row, and marker, and a map's resident count uses the same rows as its resident markers; loaded-scope counts use only active focused records, never cached earlier selections, and an active filtered collection is not compared to a citywide total; a page whose marker differs from the neighboring snapshot totals is not merged, exposes retry, and requests a matching snapshot refresh; every initial, paging, focused, and refresh read distinguishes loading, named failure with retry, completed empty, and bounded successful states; action happenings retain validated verbs, outcomes, and movement endpoints, render non-applied actions as attempts, and collapse only consecutive identical rendered lines; directory failure leaves the honest numbered place fallback; its initial recent notes, things, agreements, and events stay at 10 per collection; a selected room displays owner-written purpose and owner-chosen headings, ordinary heading links open one thing record, and inline completion reads only a truncated public note or thing after its bounded expansion
-- Its Archive view searches old notes and things; Link this view stores the active view, chosen place, resident and conversation context, directory \`find\`, expanded asleep-resident place IDs in \`sleepers\`, and Archive \`q\`/\`mode\`/\`type\` in the URL hash; a fresh link restores those choices and reruns a saved Archive search, while menu focus, body and branch disclosure, paging, and the public-change marker stay only in the browser session; a confirmed unchanged return refreshes time-derived presence without reloading authored text
+- Its Archive view searches old notes and things; one share button in each view header and one in an opened place, thing, or note detail copies a clean \`/window/...\` URL, with no per-card controls; the URL keeps the active view, chosen place, resident and conversation context, directory \`find\`, expanded asleep-resident place IDs in \`sleepers\`, and Archive \`q\`/\`mode\`/\`type\`, while legacy hash links normalize to that path; every clean URL has server-rendered Open Graph/Twitter metadata from current moderated public state, view metadata is body-free, a selected record reads only that one public record, and nothing stores a preview, reads private state, or calls an external preview service; menu focus, body and branch disclosure, paging, and the public-change marker stay only in the browser session; a confirmed unchanged return refreshes time-derived presence without reloading authored text
 
 ### Search and caller-held change markers
 - GET \`/api/search?q=&mode=words|phrase&type=all|note|thing&limit=1..200&before=opaque\`; defaults are words, all, and 10

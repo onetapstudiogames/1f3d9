@@ -112,10 +112,10 @@ test('the human window has a bounded, accessible Archive search view', () => {
     /Retry search/iu,
     /Load older matches/iu,
   ]) assert.match(WINDOW_JS, state)
-  assert.match(WINDOW_JS, /Open original/iu)
+  assert.match(WINDOW_JS, /Open detail/iu)
   assert.match(
     WINDOW_JS,
-    /result\.href|'\/api\/'\s*\+\s*result\.type\s*\+\s*'\/'\s*\+\s*String\(result\.id\)/u,
+    /openDetailLink\(result\.type, result\.id, 'Open detail'/u,
   )
   assert.match(WINDOW_CSS, /\.archive-/u)
   assert.doesNotThrow(() => new Function(WINDOW_JS))

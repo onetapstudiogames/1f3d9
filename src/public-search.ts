@@ -8,6 +8,7 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
+import { containsMalformedPublicText } from './input.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'thing'
@@ -74,7 +75,10 @@ export type PublicSearchQueryResult = PublicSearchQuery | Readonly<{
 }>
 
 function normalizeQuery(value: string): string | null {
-  if (/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}\uD800-\uDFFF]/u.test(value)) {
+  if (
+    containsMalformedPublicText(value) ||
+    /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}\uD800-\uDFFF]/u.test(value)
+  ) {
     return null
   }
   const normalized = value.normalize('NFC').trim().replace(/[\t\p{Zs}]+/gu, ' ')

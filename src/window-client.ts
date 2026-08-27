@@ -1,4 +1,5 @@
 import { WINDOW_CLIENT_SAFETY_JS } from './window-client-safety.ts'
+import { containsMalformedPublicText } from './input.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 import { BASIC_ACTIONS } from './physics.ts'
 import {
@@ -6,6 +7,11 @@ import {
   PUBLIC_EVENT_KINDS,
   PUBLIC_EVENT_LABELS,
 } from './public-events.ts'
+import {
+  validateWindowArchiveQuery,
+  validateWindowDirectorySearch,
+  windowSharePath,
+} from './window-sharing.ts'
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
@@ -19,7 +25,7 @@ export function parseWindowSleeperPlaceIds(
   for (const token of value.split(',')) {
     if (!/^[1-9]\d*$/u.test(token)) return []
     const id = Number(token)
-    if (!Number.isSafeInteger(id)) return []
+    if (!Number.isSafeInteger(id) || id > 2_147_483_647) return []
     if (!seen.has(id)) {
       seen.add(id)
       ids.push(id)
@@ -230,18 +236,19 @@ export function searchWindowDirectory(
   query: string,
   limit = 20,
 ): WindowDirectorySearchResult[] {
-  const normalizedQuery = query.trim().toLowerCase()
+  const normalizedSearchText = (value: string): string => value.normalize('NFC').toLowerCase()
+  const normalizedQuery = normalizedSearchText(query.trim())
   if (!normalizedQuery) return []
   const safeLimit = Math.max(0, Math.floor(limit))
   const score = (primary: string, searchText: string, id: number): number | null => {
-    const normalizedPrimary = primary.toLowerCase()
+    const normalizedPrimary = normalizedSearchText(primary)
     if (
       normalizedQuery === normalizedPrimary || normalizedQuery === String(id) ||
       normalizedQuery === `#${id}` || normalizedQuery === `place #${id}` ||
       normalizedQuery === `resident #${id}`
     ) return 0
     if (normalizedPrimary.startsWith(normalizedQuery)) return 1
-    return searchText.toLowerCase().includes(normalizedQuery) ? 2 : null
+    return normalizedSearchText(searchText).includes(normalizedQuery) ? 2 : null
   }
   const candidates = [
     ...places.flatMap((place, order) => {
@@ -318,6 +325,10 @@ const SEARCH_WINDOW_DIRECTORY_JS = searchWindowDirectory.toString()
 const PAGE_WINDOW_DIRECTORY_SEARCH_JS = pageWindowDirectorySearch.toString()
 const WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS = windowDirectoryPlaceScopeIds.toString()
 const PARSE_WINDOW_SLEEPER_PLACE_IDS_JS = parseWindowSleeperPlaceIds.toString()
+const CONTAINS_MALFORMED_PUBLIC_TEXT_JS = containsMalformedPublicText.toString()
+const VALIDATE_WINDOW_ARCHIVE_QUERY_JS = validateWindowArchiveQuery.toString()
+const VALIDATE_WINDOW_DIRECTORY_SEARCH_JS = validateWindowDirectorySearch.toString()
+const WINDOW_SHARE_PATH_JS = windowSharePath.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -347,6 +358,10 @@ export const WINDOW_JS = `(() => {
   const pageWindowDirectorySearch = ${PAGE_WINDOW_DIRECTORY_SEARCH_JS}
   const windowDirectoryPlaceScopeIds = ${WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS}
   const parseWindowSleeperPlaceIds = ${PARSE_WINDOW_SLEEPER_PLACE_IDS_JS}
+  const containsMalformedPublicText = ${CONTAINS_MALFORMED_PUBLIC_TEXT_JS}
+  const validateWindowArchiveQuery = ${VALIDATE_WINDOW_ARCHIVE_QUERY_JS}
+  const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}
+  const windowSharePath = ${WINDOW_SHARE_PATH_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -361,7 +376,13 @@ export const WINDOW_JS = `(() => {
     placeFilter: document.getElementById('place-filter'),
     residentFilter: document.getElementById('resident-filter'),
     directoryStatus: document.getElementById('directory-status'),
-    share: document.getElementById('share-view'),
+    shareStatus: document.getElementById('share-status'),
+    detailShareStatus: document.getElementById('record-detail-share-status'),
+    detail: document.getElementById('record-detail'),
+    detailKind: document.getElementById('record-detail-kind'),
+    detailTitle: document.getElementById('record-detail-title'),
+    detailBody: document.getElementById('record-detail-body'),
+    detailClose: document.getElementById('record-detail-close'),
     placeTitle: document.getElementById('place-focus-title'),
     placeSummary: document.getElementById('place-focus-summary'),
     placePurposeLabel: document.getElementById('place-purpose-title'),
@@ -390,11 +411,15 @@ export const WINDOW_JS = `(() => {
   }
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
+  const viewShareButtons = [...document.querySelectorAll('[data-share-scope="view"]')]
+  const detailShareButton = document.querySelector('[data-share-scope="detail"]')
   let bodyIdSequence = 0
   let branchRefreshOffset = 0
   let navigationRevision = 0
   let authoredRevision = 0
   let archiveRequestRevision = 0
+  let detailRequestRevision = 0
+  let shareFeedbackRevision = 0
   let state = {
     failures: 0,
     refreshing: false,
@@ -417,6 +442,8 @@ export const WINDOW_JS = `(() => {
     sleeperPlaceIds: [],
     expandedBodies: [],
     fullBodies: {},
+    detail: null,
+    details: {},
     archive: {
       query: '', mode: 'words', type: 'all', results: [], totalItems: 0,
       totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
@@ -437,6 +464,64 @@ export const WINDOW_JS = `(() => {
     return node
   }
 ${WINDOW_CLIENT_SAFETY_JS}
+
+  function resetShareFeedback() {
+    shareFeedbackRevision += 1
+    for (const status of [nodes.shareStatus, nodes.detailShareStatus]) {
+      if (!status) continue
+      status.textContent = ''
+      delete status.dataset.tone
+    }
+    for (const button of [...viewShareButtons, detailShareButton].filter(Boolean)) {
+      button.textContent = button.dataset.shareScope === 'detail'
+        ? 'Share this detail'
+        : 'Share this view'
+    }
+  }
+
+  function setShareStatus(message, tone, button) {
+    const status = button?.dataset.shareScope === 'detail'
+      ? nodes.detailShareStatus
+      : nodes.shareStatus
+    if (!status) return
+    status.textContent = message
+    status.dataset.tone = tone
+  }
+
+  async function copyCurrentShareLink(button) {
+    const requestShareFeedbackRevision = ++shareFeedbackRevision
+    const path = windowSharePath(viewShareState())
+    if (!path) {
+      const values = [state.directorySearch, state.archive.query]
+      const credentialPresent = values.some(value => (
+        typeof value === 'string' && /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/iu.test(value)
+      ))
+      setShareStatus(credentialPresent
+        ? 'That looks like a credential. Never put it in a public URL. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set.'
+        : 'This view contains a filter that is not safe for a public URL. Clear that filter, then try sharing again.',
+      'error', button)
+      return
+    }
+    const absoluteUrl = new URL(path, window.location.origin).href
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(absoluteUrl)
+      if (
+        shareFeedbackRevision !== requestShareFeedbackRevision ||
+        windowSharePath(viewShareState()) !== path
+      ) return
+      setShareStatus('Link copied: ' + absoluteUrl, 'success', button)
+      if (button) button.textContent = button.dataset.shareScope === 'detail'
+        ? 'Detail link copied'
+        : 'View link copied'
+    } catch {
+      if (
+        shareFeedbackRevision !== requestShareFeedbackRevision ||
+        windowSharePath(viewShareState()) !== path
+      ) return
+      setShareStatus('The link could not copy. Copy this URL: ' + absoluteUrl, 'error', button)
+    }
+  }
 
   function safePlacePurpose(value) {
     const purpose = safeText(value, '', 1000, true)
@@ -606,7 +691,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       currentOwner,
       name,
       textBytes: safeCount(rawResult.body_text_bytes ?? rawResult.text_bytes),
-      href: '/api/' + type + '/' + String(id),
+      href: '/window/' + type + '/' + String(id),
     })
   }
 
@@ -657,8 +742,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       String(result.textBytes) + ' public text bytes',
     ].filter(Boolean)
     const meta = element('p', 'archive-result-meta', details.join(' · '))
-    const link = element('a', 'archive-open', 'Open original')
-    link.href = result.href
+    const link = openDetailLink(result.type, result.id, 'Open detail', 'archive-open')
     card.append(heading, meta, link)
     return card
   }
@@ -739,15 +823,29 @@ ${WINDOW_CLIENT_SAFETY_JS}
   async function loadArchive(reset, fromLocation = false) {
     if (state.archive.loading) return
     const requestAuthoredRevision = authoredRevision
-    const formQuery = reset
-      ? safeText(nodes.archiveQuery?.value, '', 256, false)
-      : state.archive.query
     const mode = reset
       ? safeArchiveChoice(nodes.archiveMode?.value, ['words', 'phrase'], 'words')
       : state.archive.mode
     const type = reset
       ? safeArchiveChoice(nodes.archiveType?.value, ['all', 'note', 'thing'], 'all')
       : state.archive.type
+    const candidateQuery = reset ? nodes.archiveQuery?.value : state.archive.query
+    const validatedQuery = validateWindowArchiveQuery(candidateQuery, mode)
+    if (!validatedQuery.ok) {
+      const error = validatedQuery.reason === 'credential'
+        ? 'That looks like a credential. Never put it in a public URL. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set.'
+        : validatedQuery.reason === 'word_count'
+          ? 'Words mode needs 1 to 16 word lexemes.'
+          : 'Search must be one safe line of 1 to 256 UTF-8 bytes.'
+      state = {
+        ...state,
+        archive: { ...state.archive, initialized: true, loading: false, error },
+      }
+      renderArchive()
+      nodes.archiveQuery?.focus()
+      return
+    }
+    const formQuery = validatedQuery.value
     if (!formQuery) {
       state = {
         ...state,
@@ -758,6 +856,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.archiveQuery?.focus()
       return
     }
+    if (reset && nodes.archiveQuery) nodes.archiveQuery.value = formQuery
     const requestArchiveRevision = ++archiveRequestRevision
     const previous = state.archive
     state = {
@@ -773,7 +872,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         error: null,
       },
     }
-    if (reset) writeHash(!fromLocation)
+    if (reset) writeLocation(!fromLocation)
     renderArchive()
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -1686,20 +1785,34 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return histories
   }
 
-  function readHashState() {
-    const params = new URLSearchParams(window.location.hash.slice(1))
-    const view = params.get('view')
+  function readLocationState() {
+    const legacyHash = window.location.hash.slice(1)
+    const params = new URLSearchParams(legacyHash || window.location.search)
+    const parts = window.location.pathname.split('/').filter(Boolean)
+    const pathKind = parts[0] === 'window' ? parts[1] || null : null
+    const pathId = safeId(parts[2])
+    const pathView = legacyHash
+      ? null
+      : VIEWS.includes(pathKind) ? pathKind
+        : pathKind === 'thing' || pathKind === 'note' ? 'map' : null
+    const view = legacyHash ? params.get('view') : pathView
     const resident = safeHandle(params.get('resident'))
-    const query = safeText(params.get('q'), '', 256, false)
     const mode = safeArchiveChoice(params.get('mode'), ['words', 'phrase'], 'words')
     const type = safeArchiveChoice(params.get('type'), ['all', 'note', 'thing'], 'all')
-    const directorySearch = safeText(params.get('find'), '', 100, false)
+    const archiveQuery = validateWindowArchiveQuery(params.get('q') || '', mode)
+    const query = archiveQuery.ok ? archiveQuery.value : ''
+    const sharedDirectorySearch = validateWindowDirectorySearch(params.get('find') || '')
+    const directorySearch = sharedDirectorySearch.ok ? sharedDirectorySearch.value : ''
     const sleeperPlaceIds = parseWindowSleeperPlaceIds(params.get('sleepers'))
     const archiveChanged = query !== state.archive.query || mode !== state.archive.mode ||
       type !== state.archive.type
+    const detail = !legacyHash && pathId && ['place', 'thing', 'note'].includes(pathKind)
+      ? Object.freeze({ kind: pathKind, id: pathId })
+      : null
+    const pathPlaceId = detail?.kind === 'place' ? detail.id : null
     return {
       view: VIEWS.includes(view) ? view : 'map',
-      placeId: safeId(params.get('place')),
+      placeId: pathPlaceId || safeId(params.get('place')),
       resident,
       conversationContext: Boolean(resident && params.get('context') === 'place'),
       directorySearch,
@@ -1721,32 +1834,39 @@ ${WINDOW_CLIENT_SAFETY_JS}
             error: null,
           }
         : state.archive,
+      detail,
     }
   }
 
-  function viewHash() {
-    const params = new URLSearchParams()
-    params.set('view', state.view)
-    if (state.placeId) params.set('place', String(state.placeId))
-    if (state.resident) params.set('resident', state.resident)
-    if (state.resident && state.conversationContext) params.set('context', 'place')
-    if (state.directorySearch) params.set('find', state.directorySearch)
-    const sleeperPlaceIds = [...new Set(state.sleeperPlaceIds)].sort((left, right) => left - right)
-    if (sleeperPlaceIds.length) params.set('sleepers', sleeperPlaceIds.join(','))
-    if (state.archive.query) {
-      params.set('q', state.archive.query)
-      params.set('mode', state.archive.mode)
-      params.set('type', state.archive.type)
-    }
-    return '#' + params.toString()
+  function viewShareState() {
+    return Object.freeze({
+      view: state.view,
+      placeId: state.placeId,
+      resident: state.resident,
+      conversationContext: state.conversationContext,
+      directorySearch: state.directorySearch,
+      sleeperPlaceIds: state.sleeperPlaceIds,
+      archive: Object.freeze({
+        query: state.archive.query,
+        mode: state.archive.mode,
+        type: state.archive.type,
+      }),
+      detail: state.detail,
+    })
   }
 
-  function writeHash(push) {
-    const hash = viewHash()
-    if (nodes.share) nodes.share.href = hash
-    if (window.location.hash === hash) return
-    if (push) history.pushState(null, '', hash)
-    else history.replaceState(null, '', hash)
+  function writeLocation(push, entryState = null) {
+    const path = windowSharePath(viewShareState())
+    if (!path) {
+      resetShareFeedback()
+      return false
+    }
+    const current = window.location.pathname + window.location.search
+    if (current === path && !window.location.hash) return true
+    resetShareFeedback()
+    if (push) history.pushState(entryState, '', path)
+    else history.replaceState(entryState, '', path)
+    return true
   }
 
   // Deliberate navigation — tabs, choosing a place or resident, filters —
@@ -1756,8 +1876,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
   // walking the tab list never floods the back button.
   let rovingTabActivation = false
   function navigate(next) {
+    const openingDetail = Boolean(next?.detail && (
+      state.detail?.kind !== next.detail.kind || state.detail?.id !== next.detail.id
+    ))
+    if (openingDetail || (Object.hasOwn(next, 'detail') && next.detail === null)) {
+      detailRequestRevision += 1
+    }
+    resetShareFeedback()
     state = { ...state, ...next }
-    writeHash(!rovingTabActivation)
+    writeLocation(!rovingTabActivation, openingDetail ? { windowDetailEntry: true } : null)
+    renderAll()
+    void ensureFocusedSelection()
+    void ensureDetail()
+  }
+
+  function closeDetail() {
+    if (!state.detail) return
+    detailRequestRevision += 1
+    resetShareFeedback()
+    if (nodes.detail?.open) nodes.detail.close()
+    if (history.state?.windowDetailEntry === true) {
+      history.back()
+      return
+    }
+    state = { ...state, detail: null }
+    writeLocation(false)
     renderAll()
     void ensureFocusedSelection()
   }
@@ -2142,7 +2285,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? state.sleeperPlaceIds.filter(id => id !== placeId)
       : [...state.sleeperPlaceIds, placeId]
     state = { ...state, sleeperPlaceIds }
-    writeHash(true)
+    writeLocation(true)
     if (state.snapshot) renderAll()
   }
 
@@ -2640,6 +2783,157 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return follow
   }
 
+  function openDetailLink(kind, id, label, className) {
+    const link = element('a', className || 'detail-link', label)
+    link.href = '/window/' + kind + '/' + String(id)
+    link.addEventListener('click', event => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      navigate({ detail: Object.freeze({ kind, id }) })
+    })
+    return link
+  }
+
+  function normalizeDetailRecord(kind, id, payload) {
+    const raw = payload && typeof payload === 'object' ? payload[kind] : null
+    if (!raw || typeof raw !== 'object' || safeId(raw.id) !== id) return null
+    const placeId = safeId(raw.place_id)
+    const body = safeText(raw.body, null, kind === 'note' ? 4000 : 65536, kind === 'thing')
+    if (!placeId || body === null) return null
+    if (kind === 'note') {
+      const author = safeHandle(raw.author)
+      const createdAt = safeDate(raw.created_at)
+      return author && createdAt ? Object.freeze({
+        kind, id, placeId, author, body, createdAt, moderated: raw.moderated === true,
+      }) : null
+    }
+    const name = safeText(raw.name, '', 120, false)
+    const madeBy = safeHandle(raw.made_by)
+    const currentOwner = safeHandle(raw.current_owner)
+    return name && madeBy && currentOwner ? Object.freeze({
+      kind, id, placeId, name, madeBy, currentOwner, body,
+      moderated: raw.moderated === true,
+    }) : null
+  }
+
+  async function ensureDetail(force) {
+    const target = state.detail
+    if (!target || target.kind === 'place') return
+    const key = target.kind + ':' + String(target.id)
+    const current = state.details[key]
+    if (current?.loading || (!force && (current?.record || current?.notFound))) return
+    const requestAuthoredRevision = authoredRevision
+    const requestDetailRevision = ++detailRequestRevision
+    const requestIsCurrent = () => (
+      authoredRevision === requestAuthoredRevision &&
+      detailRequestRevision === requestDetailRevision &&
+      state.detail?.kind === target.kind &&
+      state.detail?.id === target.id
+    )
+    state = {
+      ...state,
+      details: {
+        ...state.details,
+        [key]: Object.freeze({ loading: true, error: false, notFound: false, record: null }),
+      },
+    }
+    renderDetail()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/' + target.kind + '/' + String(target.id), window.location.origin)
+      const response = await fetch(url.pathname, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!requestIsCurrent()) return
+      if (response.status === 404) {
+        state = {
+          ...state,
+          details: {
+            ...state.details,
+            [key]: Object.freeze({ loading: false, error: false, notFound: true, record: null }),
+          },
+        }
+        return
+      }
+      if (!response.ok) throw new Error('public detail unavailable')
+      const record = normalizeDetailRecord(target.kind, target.id, await response.json())
+      if (!requestIsCurrent()) return
+      if (!record) throw new Error('invalid public detail')
+      state = {
+        ...state,
+        details: {
+          ...state.details,
+          [key]: Object.freeze({ loading: false, error: false, notFound: false, record }),
+        },
+      }
+    } catch {
+      if (!requestIsCurrent()) return
+      state = {
+        ...state,
+        details: {
+          ...state.details,
+          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: null }),
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (requestIsCurrent()) renderDetail()
+    }
+  }
+
+  function renderDetail() {
+    const target = state.detail
+    if (!nodes.detail) return
+    if (!target || target.kind === 'place') {
+      if (nodes.detail.open) nodes.detail.close()
+      return
+    }
+    const key = target.kind + ':' + String(target.id)
+    const entry = state.details[key]
+    if (nodes.detailKind) nodes.detailKind.textContent = target.kind === 'thing'
+      ? 'Public thing · live current record'
+      : 'Public note · live current record'
+    if (nodes.detailTitle) nodes.detailTitle.textContent = target.kind === 'thing'
+      ? entry?.record?.name || 'Thing #' + String(target.id)
+      : 'Public note #' + String(target.id)
+    if (nodes.detailBody) {
+      if (!entry || entry.loading) {
+        nodes.detailBody.replaceChildren(element('p', 'loading-row', 'Reading the live public record…'))
+      } else if (entry.notFound) {
+        nodes.detailBody.replaceChildren(element(
+          'p', 'empty-row', 'This public ' + target.kind + ' is not available now.',
+        ))
+      } else if (entry.error || !entry.record) {
+        const message = element('p', 'error-row', 'This public detail could not be read.')
+        const retry = element('button', 'detail-retry', 'Retry reading this detail')
+        retry.type = 'button'
+        retry.addEventListener('click', () => void ensureDetail(true))
+        nodes.detailBody.replaceChildren(message, retry)
+      } else {
+        const record = entry.record
+        const meta = record.kind === 'thing'
+          ? 'made by ' + record.madeBy + ' · currently owned by ' + record.currentOwner +
+            ' · place #' + String(record.placeId)
+          : 'by ' + record.author + ' · place #' + String(record.placeId) + ' · ' +
+            new Date(record.createdAt).toLocaleString()
+        const body = element('p', 'record-detail-text public-body', record.body)
+        nodes.detailBody.replaceChildren(element('p', 'record-detail-meta', meta), body)
+        if (record.moderated) {
+          nodes.detailBody.append(element(
+            'p', 'moderated-mark', 'Maintainer removal is shown as a current tombstone.',
+          ))
+        }
+      }
+    }
+    if (!nodes.detail.open) nodes.detail.showModal()
+  }
+
   async function loadFullBody(kind, id) {
     if (kind !== 'note' && kind !== 'thing') return
     const bodyKey = kind + ':' + String(id)
@@ -2866,7 +3160,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
           element('span', 'thing-location', location),
         )
       }
-      item.append(element('h4', '', thing.name), thingMeta)
+      const heading = element('h4', '')
+      heading.append(openDetailLink(
+        'thing', thing.id, thing.name, 'detail-link thing-detail-link',
+      ))
+      item.append(heading, thingMeta)
       if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
       const traits = element('div', 'trait-list')
       if (thing.traits.length) {
@@ -2902,6 +3200,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('span', 'note-location', location),
       )
     }
+    meta.append(
+      document.createTextNode(' · '),
+      openDetailLink(
+        'note', note.id, 'Open note #' + String(note.id), 'detail-link note-detail-link',
+      ),
+    )
     card.append(meta, renderExpandableBody('note', note.id, note.body, note.truncated))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return card
@@ -2989,8 +3293,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     list.setAttribute('aria-labelledby', 'place-front-matter-title')
     list.append(...place.front_matter.map(heading => {
       const item = element('li', 'front-matter-heading')
-      const link = element('a', 'front-matter-link', heading.name)
-      link.href = '/api/thing/' + String(heading.id)
+      const link = openDetailLink(
+        'thing', heading.id, heading.name, 'front-matter-link detail-link',
+      )
       const meta = element('p', 'front-matter-meta thing-meta')
       meta.append(
         document.createTextNode('made by '),
@@ -3882,7 +4187,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : null
     renderView()
     renderDirectoryStatus()
-    writeHash()
+    writeLocation(false)
+    renderDetail()
     if (state.view === 'archive') renderArchive()
     if (!snapshot) return
     renderCounts(snapshot)
@@ -3917,6 +4223,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       directorySearch: '',
       directorySearchIndex: -1,
       view: openPlace ? 'place' : state.view,
+      detail: null,
     })
     if (state.snapshot) populateFilters(state.snapshot)
   }
@@ -3933,6 +4240,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       conversationContext: false,
       directorySearch: '',
       directorySearchIndex: -1,
+      detail: null,
     })
   }
 
@@ -4432,12 +4740,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
         histories,
         archive,
         fullBodies: replaceAuthored ? {} : state.fullBodies,
+        details: replaceAuthored ? {} : state.details,
         changeMarker: freshSnapshot.changeMarker || requiredMarker,
         hasSnapshot: true,
         failures: 0,
       }
       populateFilters(snapshot)
       renderAll()
+      void ensureDetail(replaceAuthored)
       loadSharedArchiveQuestion()
       if (hadSnapshot && replaceAuthored &&
           (state.directory.loaded || state.directory.error) && !state.directory.loading) {
@@ -4474,7 +4784,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         !selectedPlace(state.snapshot || { residents: [], flatPlaces: [] })) {
         placeId = state.snapshot?.flatPlaces[0]?.id || null
       }
-      navigate({ view, placeId })
+      navigate({ view, placeId, detail: null })
     })
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -4492,13 +4802,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  for (const button of viewShareButtons) {
+    button.addEventListener('click', () => void copyCurrentShareLink(button))
+  }
+  detailShareButton?.addEventListener('click', () => void copyCurrentShareLink(detailShareButton))
+  nodes.detailClose?.addEventListener('click', closeDetail)
+  nodes.detail?.addEventListener('cancel', event => {
+    event.preventDefault()
+    closeDetail()
+  })
+
   nodes.directorySearch?.addEventListener('input', () => {
     state = {
       ...state,
       directorySearch: String(nodes.directorySearch.value || '').slice(0, 100),
       directorySearchIndex: 0,
     }
-    writeHash(false)
+    writeLocation(false)
     if (state.snapshot) renderDirectorySearch(state.snapshot, true)
   })
   nodes.directorySearch?.addEventListener('focus', () => {
@@ -4514,7 +4834,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       event.preventDefault()
       nodes.directorySearch.value = ''
       state = { ...state, directorySearch: '', directorySearchIndex: -1 }
-      writeHash(false)
+      writeLocation(false)
       if (state.snapshot) renderDirectorySearch(state.snapshot, false)
       return
     }
@@ -4541,6 +4861,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       placeId: safeId(nodes.placeFilter.value),
       directorySearch: '',
       directorySearchIndex: -1,
+      detail: null,
     })
     if (state.snapshot) populateFilters(state.snapshot)
   })
@@ -4552,6 +4873,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       conversationContext: false,
       directorySearch: '',
       directorySearchIndex: -1,
+      detail: null,
     })
   })
   nodes.archiveSearch?.addEventListener('click', () => void loadArchive(true))
@@ -4561,12 +4883,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     void loadArchive(true)
   })
   function syncStateFromLocation() {
-    const nextLocationState = readHashState()
+    const nextLocationState = readLocationState()
     if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
+    if (
+      nextLocationState.detail?.kind !== state.detail?.kind ||
+      nextLocationState.detail?.id !== state.detail?.id
+    ) detailRequestRevision += 1
+    resetShareFeedback()
     state = { ...state, ...nextLocationState }
     syncArchiveControls()
     renderAll()
     void ensureFocusedSelection()
+    void ensureDetail()
     loadSharedArchiveQuestion()
   }
   window.addEventListener('hashchange', syncStateFromLocation)
@@ -4577,10 +4905,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!document.hidden) void refreshCity()
   })
 
-  state = { ...state, ...readHashState() }
+  state = { ...state, ...readLocationState() }
   syncArchiveControls()
   renderView()
-  writeHash()
+  writeLocation(false)
+  void ensureDetail()
   void loadDirectory(false)
   void refreshCity()
 })()

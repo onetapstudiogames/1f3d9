@@ -1,9 +1,12 @@
-import { expect, test, type Request } from '@playwright/test'
+import { expect, test, type Page, type Request } from '@playwright/test'
 
 const NOTE_EXCERPT = 'The public note begins here'
 const THING_EXCERPT = 'A lantern with an abbreviated inscription'
 const NOTE_FULL = `${NOTE_EXCERPT}, then continues beyond the snapshot excerpt.`
 const THING_FULL = `${THING_EXCERPT}; the complete inscription is readable without signing in.`
+const SYNTHETIC_RESIDENT_KEY = `1f3d9_sk_${'12'.repeat(24)}`
+const CREDENTIAL_RECOVERY_INSTRUCTION =
+  'That looks like a credential. Never put it in a public URL. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set.'
 
 interface PublicWindowTestState {
   readonly write_requests?: Array<{ readonly method?: unknown; readonly path?: unknown }>
@@ -23,6 +26,31 @@ function isWrite(request: Request): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
 }
 
+async function installClipboardRecorder(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const copiedShareLinks: string[] = []
+    Object.defineProperty(window, '__copiedShareLinks', {
+      configurable: true,
+      value: copiedShareLinks,
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText(value: string) {
+          copiedShareLinks.push(value)
+          return Promise.resolve()
+        },
+      },
+    })
+  })
+}
+
+async function copiedShareLinks(page: Page): Promise<readonly string[]> {
+  return page.evaluate(() => [
+    ...((window as Window & { __copiedShareLinks?: string[] }).__copiedShareLinks ?? []),
+  ])
+}
+
 test('public window links to the dated public snapshot archive', async ({ page }) => {
   await page.goto('/window')
   const link = page.getByRole('link', { name: 'Public snapshots' })
@@ -30,6 +58,291 @@ test('public window links to the dated public snapshot archive', async ({ page }
     'href',
     'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
   )
+})
+
+test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {
+  await installClipboardRecorder(page)
+  await page.goto('/window')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const views = [
+    { tab: 'Map', path: '/window/map' },
+    { tab: 'Place', path: '/window/place/11' },
+    { tab: 'Conversations', path: '/window/conversations?place=11' },
+    { tab: 'Happenings', path: '/window/happenings?place=11' },
+    { tab: 'Agreements', path: '/window/agreements?place=11' },
+    { tab: 'Archive', path: '/window/archive?place=11' },
+  ] as const
+  const expectedLinks: string[] = []
+
+  for (const view of views) {
+    await page.getByRole('tab', { name: view.tab, exact: true }).click()
+    const currentUrl = new URL(page.url())
+    expect(currentUrl.pathname + currentUrl.search).toBe(view.path)
+    expect(currentUrl.hash).toBe('')
+
+    const visiblePanel = page.locator('[role="tabpanel"]:visible')
+    await expect(visiblePanel).toHaveCount(1)
+    const shareButton = visiblePanel.locator('[data-share-scope="view"]')
+    await expect(shareButton).toHaveCount(1)
+    await expect(page.locator('[data-share-scope="view"]:visible')).toHaveCount(1)
+
+    await shareButton.click()
+    expectedLinks.push(currentUrl.origin + view.path)
+    await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
+  }
+})
+
+test('a filtered Place URL survives server render and browser restoration exactly', async ({ page }) => {
+  const path = '/window/place/11?resident=browser-resident&context=place&find=field&sleepers=11'
+  const navigation = await page.goto(path)
+  expect(navigation?.status()).toBe(200)
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe(path)
+  await expect(page.locator('#resident-filter')).toHaveValue('browser-resident')
+  await expect(page.locator('#directory-search')).toHaveValue('field')
+
+  await page.reload()
+
+  expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe(path)
+  await expect(page.locator('#resident-filter')).toHaveValue('browser-resident')
+  await expect(page.locator('#directory-search')).toHaveValue('field')
+})
+
+test('place, thing, and note details each copy one absolute clean live-record URL', async ({ page }) => {
+  await installClipboardRecorder(page)
+  const navigation = await page.goto('/window/place/11')
+  expect(navigation?.status()).toBe(200)
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const origin = new URL(page.url()).origin
+  const expectedLinks = [`${origin}/window/place/11`]
+  const placePanel = page.locator('#place-panel')
+  await expect(placePanel).toBeVisible()
+  await expect(placePanel.locator('[data-share-scope="view"]')).toHaveCount(1)
+  await placePanel.locator('[data-share-scope="view"]').click()
+  await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
+
+  await page.locator('#place-things .thing-detail-link', { hasText: 'field_lantern' }).click()
+  await expect(page).toHaveURL(`${origin}/window/thing/401`)
+  const detail = page.locator('#record-detail')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-share-scope="detail"]')).toHaveCount(1)
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  await detail.locator('[data-share-scope="detail"]').click()
+  expectedLinks.push(`${origin}/window/thing/401`)
+  await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
+
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page).toHaveURL(`${origin}/window/place/11`)
+  await page.getByRole('link', { name: 'Open note #301', exact: true }).click()
+  await expect(page).toHaveURL(`${origin}/window/note/301`)
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-share-scope="detail"]')).toHaveCount(1)
+  await expect(detail.locator('#record-detail-body')).toContainText(NOTE_FULL)
+  await detail.locator('[data-share-scope="detail"]').click()
+  expectedLinks.push(`${origin}/window/note/301`)
+  await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
+
+  const shareImage = await page.request.get('/share/thing.png')
+  expect(shareImage.status()).toBe(200)
+  expect(shareImage.headers()['content-type']).toContain('image/png')
+})
+
+test('clipboard denial leaves the clean absolute URL visibly available', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText() {
+          return Promise.reject(new DOMException('clipboard denied', 'NotAllowedError'))
+        },
+      },
+    })
+  })
+  await page.goto('/window/map')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  await page.locator('[role="tabpanel"]:visible [data-share-scope="view"]').click()
+  const expectedUrl = `${new URL(page.url()).origin}/window/map`
+  await expect(page.locator('#share-status')).toHaveText(
+    `The link could not copy. Copy this URL: ${expectedUrl}`,
+  )
+  await expect(page.locator('#share-status')).toHaveAttribute('data-tone', 'error')
+})
+
+test('Archive refuses a credential without searching or changing its address', async ({ page }) => {
+  const searchRequests: string[] = []
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.pathname === '/api/search') searchRequests.push(url.href)
+  })
+  await page.goto('/window/archive')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const addressBeforeSearch = page.url()
+
+  await page.locator('#archive-query').fill(`where ${SYNTHETIC_RESIDENT_KEY} appeared`)
+  await page.locator('#archive-search').click()
+
+  await expect(page.locator('#archive-results .error-row')).toHaveText(
+    CREDENTIAL_RECOVERY_INSTRUCTION,
+  )
+  expect(page.url()).toBe(addressBeforeSearch)
+  expect(searchRequests).toEqual([])
+})
+
+test('closing an in-window detail prevents Back from reopening that detail', async ({ page }) => {
+  await page.goto('/window/map')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await page.getByRole('tab', { name: 'Place', exact: true }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
+
+  await page.locator('#place-things .thing-detail-link', { hasText: 'field_lantern' }).click()
+  const detail = page.locator('#record-detail')
+  await expect(page).toHaveURL(/\/window\/thing\/401$/u)
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
+  await expect(detail).toBeHidden()
+
+  await page.goBack()
+  await expect(detail).toBeHidden()
+  expect(new URL(page.url()).pathname).not.toBe('/window/thing/401')
+})
+
+test('closing a directly loaded detail falls back to the map deterministically', async ({ page }) => {
+  await page.goto('/window/thing/401')
+  const detail = page.locator('#record-detail')
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+
+  await expect(page).toHaveURL(/\/window\/map$/u)
+  await expect(detail).toBeHidden()
+  await expect(page.getByRole('tab', { name: 'Map', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+})
+
+test('share copy feedback resets whenever the canonical target changes', async ({ page }) => {
+  await installClipboardRecorder(page)
+  await page.goto('/window/place/11')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const origin = new URL(page.url()).origin
+  const placeShare = page.locator('#place-panel [data-share-scope="view"]')
+
+  await placeShare.click()
+  await expect(placeShare).toHaveText('View link copied')
+  await expect(page.locator('#share-status')).toHaveText(
+    `Link copied: ${origin}/window/place/11`,
+  )
+
+  await page.locator('#place-things .thing-detail-link', { hasText: 'field_lantern' }).click()
+  const detail = page.locator('#record-detail')
+  const detailShare = detail.locator('[data-share-scope="detail"]')
+  const detailShareStatus = detail.locator('#record-detail-share-status')
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  await expect(placeShare).toHaveText('Share this view')
+  await expect(page.locator('#share-status')).toBeEmpty()
+  await expect(detailShare).toHaveText('Share this detail')
+  await expect(detailShareStatus).toBeEmpty()
+
+  await detailShare.click()
+  await expect(detailShare).toHaveText('Detail link copied')
+  await expect(detailShareStatus).toHaveText(
+    `Link copied: ${origin}/window/thing/401`,
+  )
+
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
+  await page.getByRole('link', { name: 'Open note #301', exact: true }).click()
+  await expect(detail.locator('#record-detail-title')).toHaveText('Public note #301')
+  await expect(detailShare).toHaveText('Share this detail')
+  await expect(detailShareStatus).toBeEmpty()
+})
+
+test('an invalid public filter clears old share success before another share attempt', async ({ page }) => {
+  await installClipboardRecorder(page)
+  await page.goto('/window/map')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const mapShare = page.locator('#map-panel [data-share-scope="view"]')
+
+  await mapShare.click()
+  await expect(mapShare).toHaveText('View link copied')
+  await expect(page.locator('#share-status')).toContainText('Link copied:')
+
+  await page.locator('#directory-search').fill(SYNTHETIC_RESIDENT_KEY)
+
+  await expect(mapShare).toHaveText('Share this view')
+  await expect(page.locator('#share-status')).toBeEmpty()
+  await expect(page).toHaveURL(/\/window\/map$/u)
+})
+
+test('a delayed clipboard completion cannot repaint feedback for a newer detail', async ({ page }) => {
+  await page.addInitScript(() => {
+    let finishClipboardWrite: (() => void) | null = null
+    Object.defineProperty(window, '__finishClipboardWrite', {
+      configurable: true,
+      value: () => finishClipboardWrite?.(),
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText() {
+          return new Promise<void>(resolve => { finishClipboardWrite = resolve })
+        },
+      },
+    })
+  })
+  await page.goto('/window/place/11')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await page.locator('#place-things .thing-detail-link', { hasText: 'field_lantern' }).click()
+  const detail = page.locator('#record-detail')
+  const detailShare = detail.locator('[data-share-scope="detail"]')
+  const detailShareStatus = detail.locator('#record-detail-share-status')
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+
+  await detailShare.click()
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByRole('link', { name: 'Open note #301', exact: true }).click()
+  await expect(detail.locator('#record-detail-title')).toHaveText('Public note #301')
+
+  await page.evaluate(() => {
+    (window as Window & { __finishClipboardWrite?: () => void }).__finishClipboardWrite?.()
+  })
+  await page.evaluate(() => new Promise<void>(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+
+  await expect(detailShare).toHaveText('Share this detail')
+  await expect(detailShareStatus).toBeEmpty()
+})
+
+test('detail clipboard denial reports its fallback URL inside the dialog', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText() {
+          return Promise.reject(new DOMException('clipboard denied', 'NotAllowedError'))
+        },
+      },
+    })
+  })
+  await page.goto('/window/thing/401')
+  const detail = page.locator('#record-detail')
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  const expectedUrl = `${new URL(page.url()).origin}/window/thing/401`
+
+  await detail.locator('[data-share-scope="detail"]').click()
+
+  const detailShareStatus = detail.locator('#record-detail-share-status')
+  await expect(detailShareStatus).toHaveText(
+    `The link could not copy. Copy this URL: ${expectedUrl}`,
+  )
+  await expect(detailShareStatus).toHaveAttribute('data-tone', 'error')
+  await expect(page.locator('#share-status')).toBeEmpty()
 })
 
 test('public window completes deliberate excerpts and loads older happenings without writing', async ({ page }) => {
@@ -46,8 +359,9 @@ test('public window completes deliberate excerpts and loads older happenings wit
   const baselineWriteCount = baselineState.write_requests?.length ?? 0
 
   await page.goto('/window#view=place&place=11')
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
 
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
   await expect(page.locator('#view-scope')).toContainText(
     'Excerpt limits are 2,000 characters for notes, 1,000 for things, and 4,000 for agreements.',
   )
@@ -116,7 +430,7 @@ test('public window completes deliberate excerpts and loads older happenings wit
 
 test('unfiltered happenings still page older history on demand', async ({ page }) => {
   await page.goto('/window#view=happenings')
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
 
   // No filter is active, so nothing fetches by itself; the snapshot slice
   // renders and the reader pages backward deliberately.
@@ -135,7 +449,7 @@ test('unfiltered happenings still page older history on demand', async ({ page }
 
 test('all-place conversations stay newest-first and name each room', async ({ page }) => {
   await page.goto('/window#view=conversations')
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
 
   const cards = page.locator('#conversation-stream .note-card')
   await expect(cards).toHaveCount(3)
@@ -185,7 +499,7 @@ test('a followed resident defaults to their words and keeps room context as a se
       response.status() === 200
   })
   await page.goto('/window#view=conversations&resident=oldwalker')
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
   await residentOnlyResponse
 
   const cards = page.locator('#conversation-stream .note-card')
@@ -231,7 +545,7 @@ test('a followed resident defaults to their words and keeps room context as a se
 
 test('agreements show author consent and distinguish later signers', async ({ page }) => {
   await page.goto('/window#view=agreements')
-  await expect(page.getByRole('status')).toContainText('Watching')
+  await expect(page.locator('#window-status')).toContainText('Watching')
 
   const opened = page.locator('#agreement-list .agreement-card')
     .filter({ hasText: 'A public agreement opened by its author.' })

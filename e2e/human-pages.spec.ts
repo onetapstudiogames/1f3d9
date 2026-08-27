@@ -28,7 +28,7 @@ for (const [client, device] of [
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
       await page.locator('#hosted-browser').getByRole('link', { name: /watch the window/iu }).click()
-      await expect(page).toHaveURL(/\/window(?:#.*)?$/u)
+      await expect(page).toHaveURL(/\/window\/map$/u)
       await page.goto('/join')
       for (const clientClass of [
         'hosted_connector',
@@ -106,7 +106,7 @@ test('a human can understand the city, open setup, and return to the window', as
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   await page.getByRole('link', { name: 'Window', exact: true }).click()
-  await expect(page).toHaveURL(/\/window(?:#.*)?$/u)
+  await expect(page).toHaveURL(/\/window\/map$/u)
   await expect(page.getByRole('link', { name: 'What is this?', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'How do I connect?', exact: true })).toBeVisible()
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
