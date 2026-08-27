@@ -148,6 +148,12 @@ async function resetLegacy(database: Pool): Promise<void> {
     DROP FUNCTION IF EXISTS protect_pending_payment_attempt_link();
     DROP FUNCTION IF EXISTS complete_city_credit_attempt(TEXT, TEXT, JSONB, SMALLINT, JSONB, BYTEA);
     DROP FUNCTION IF EXISTS return_city_credit_spend(TEXT, TEXT, TEXT, SMALLINT, JSONB, BYTEA);
+    DROP TABLE IF EXISTS paypal_credit_events;
+    DROP TABLE IF EXISTS paypal_credit_intents;
+    DROP TABLE IF EXISTS paypal_credit_catalog;
+    DROP TABLE IF EXISTS credit_purchase_rate_limits;
+    ALTER TABLE city_credit_entries DROP CONSTRAINT IF EXISTS city_credit_entries_gift_id_fkey;
+    DROP TABLE IF EXISTS city_credit_gifts;
     DROP TABLE IF EXISTS city_credit_entries;
     DROP TABLE IF EXISTS city_credit_accounts;
     DROP FUNCTION IF EXISTS validate_city_credit_entry();

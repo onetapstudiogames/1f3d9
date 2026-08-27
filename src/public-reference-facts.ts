@@ -61,7 +61,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
     token: null,
     statement:
       'There is no 1F3D9 token, coin, or tradeable points program, and there never will be. ' +
-      'Founder-issued city fee credit is private, fixed, nontransferable, and cannot be sold or redeemed. ' +
+      'Prepaid city fee credit is private, resident-bound, nontransferable, and cannot be sold or redeemed. ' +
       'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet.',
     claim_fee_usdc: CLAIM_FEE_USDC,
     paid_actions: Object.freeze(['frontier_founding', 'kind_invention', 'kind_revision']),
@@ -69,8 +69,10 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       unit_usdc: '1.000000',
       eligible_actions: Object.freeze(['frontier_founding', 'kind_invention', 'kind_revision']),
       selector_header: 'X-1F3D9-FEE-CREDIT',
-      issuance: 'founder-only for an accounting reason; no public balance or totals',
-      limits: 'one exact fee per credit; private, nontransferable, not redeemable, and never cash',
+      funding: 'founder issue, exact whole-dollar x402 purchase, or feature-gated hosted PayPal purchase; no rounding',
+      gifts: 'a gift is pending until the named resident accepts; refusal and private purchaser redirect never expire',
+      receipts: 'purchase, gift, spend, and failed-spend return events are private append-only resident receipts',
+      limits: 'balances never go negative or expire; credit is private, nontransferable, not redeemable, and never cash',
     }),
     market: marketOrigin,
     city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',

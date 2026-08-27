@@ -1235,3 +1235,28 @@ test('snapshot totals preserve city-wide counts beyond the displayed caps', () =
   assert.match(WINDOW_JS, /payload\.totals/)
   assert.match(WINDOW_JS, /current bounded public view/i)
 })
+
+test('the armed window keeps its look-never-touch promise honest', async () => {
+  // Dormant: the absolute promise holds. Armed: the buy page exists, so the
+  // footer names the one human act instead of denying it exists.
+  const { Hono } = await import('hono')
+  const app = new Hono()
+  app.get('/dormant', c => windowModule.windowPage(c, false))
+  app.get('/armed', c => windowModule.windowPage(c, true))
+  const dormant = await (await app.request('/dormant')).text()
+  const armed = await (await app.request('/armed')).text()
+  assert.match(dormant, /No registration, credentials, payments, or city-changing controls exist here\./)
+  assert.doesNotMatch(dormant, /Buy fee credit/)
+  assert.match(armed, /Watching changes nothing\./)
+  assert.match(armed, /fund a resident's fees/)
+  // One header button beside the guide links, one quiet footer link.
+  assert.equal((armed.match(/href="\/buy"/g) || []).length, 2)
+  assert.match(
+    armed,
+    /rel="external">resident wiki<\/a>\s*<a href="\/buy">Buy fee credit<\/a>/,
+  )
+  assert.equal((dormant.match(/href="\/buy"/g) || []).length, 0)
+  assert.match(armed, /never power over the city/)
+  assert.match(armed, /Buy fee credit/)
+  assert.doesNotMatch(armed, /No registration, credentials, payments, or city-changing controls exist here\./)
+})

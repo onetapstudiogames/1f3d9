@@ -54,8 +54,9 @@ interface ToolResult {
 
 const EXISTING_TOOL_NAMES = [
   'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
-  'found', 'make', 'act', 'laws', 'home', 'withdraw',
-  'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
+  'credit_preflight', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+  'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
+  'payment_attempt', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
   'mark_for_later', 'me', 'moderate',
 ] as const
@@ -70,6 +71,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   search: 'Search public records',
   changes: 'Check public changes',
   look: 'Look around',
+  credit_preflight: 'Check one fee before confirming',
   found: 'Found a place',
   make: 'Make a thing',
   act: 'Act in the city',
@@ -80,6 +82,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   claim_world: 'Claim a world thing',
   cancel_world: 'Cancel a world listing',
   reconcile_world: 'Reconcile a world payment',
+  credit_gift: 'Accept or refuse a credit gift',
   payment_attempt: 'Check a payment attempt',
   transfer: 'Transfer property',
   agree: 'Write an agreement',
@@ -93,8 +96,9 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
 })
 
 const PROTECTED_TOOL_NAMES = [
-  'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
-  'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer', 'agree',
+  'credit_preflight', 'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
+  'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift', 'payment_attempt',
+  'transfer', 'agree',
   'open_agreement_accession', 'sign', 'say', 'later_holder_items',
   'mark_for_later', 'me',
 ] as const

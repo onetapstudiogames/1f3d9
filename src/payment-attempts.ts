@@ -14,7 +14,8 @@ export const PAYMENT_RECOVERY_WINDOW_MILLISECONDS = 2 * 60 * 60 * 1_000
 export const MAX_RECOVERABLE_PAYMENT_ATTEMPTS = 100
 
 const PAYMENT_ATTEMPT_OPERATIONS = [
-  'frontier', 'kind_invention', 'kind_revision', 'direct_sale', 'world_sale', 'legacy',
+  'frontier', 'kind_invention', 'kind_revision', 'credit_purchase',
+  'direct_sale', 'world_sale', 'legacy',
 ] as const
 const PAYMENT_ATTEMPT_ASSET_TYPES = ['place', 'thing', 'kind'] as const
 const PAYMENT_ATTEMPT_METHODS = ['x402', 'credit', 'claim', 'legacy'] as const
@@ -38,7 +39,8 @@ export interface PaymentAttemptRecord {
   publicId: string
   actorId: number
   counterpartyId: number | null
-  operation: 'frontier' | 'kind_invention' | 'kind_revision' | 'direct_sale' | 'world_sale' | 'legacy'
+  operation: 'frontier' | 'kind_invention' | 'kind_revision' | 'credit_purchase'
+    | 'direct_sale' | 'world_sale' | 'legacy'
   targetKey: string | null
   offerId: number | null
   assetType: 'place' | 'thing' | 'kind' | null
@@ -640,16 +642,29 @@ function readByTargetOrNonce(input: PaymentAttemptInput): { text: string; params
           updated_at = clock_timestamp()
         WHERE $1::text IS NOT NULL
           AND operation = $2
-          AND operation IN ('frontier', 'kind_invention', 'kind_revision')
+          AND (
+            operation IN ('frontier', 'kind_invention', 'kind_revision')
+            OR operation = 'credit_purchase'
+          )
           AND target_key = $1
           AND method = 'x402'
           AND status IN ('settling', 'payment_pending', 'needs_review')
           AND recovery_deadline_at IS NOT NULL
           AND recovery_deadline_at <= clock_timestamp()
-        RETURNING public_id
+        RETURNING *
+      ), replayable_attempt AS (
+        SELECT closed.*
+        FROM closed_due_target closed
+        WHERE $2 = 'credit_purchase'
+        UNION ALL
+        SELECT stored.*
+        FROM payment_attempts stored
+        WHERE ($2 = 'credit_purchase'
+          OR stored.status IN ('settling', 'payment_pending', 'needs_review', 'completed'))
+          AND stored.public_id NOT IN (SELECT public_id FROM closed_due_target)
       )
       SELECT attempt.*
-      FROM payment_attempts attempt
+      FROM replayable_attempt attempt
       WHERE (
         ($1::text IS NOT NULL AND attempt.operation = $2 AND attempt.target_key = $1)
         OR (
@@ -660,8 +675,6 @@ function readByTargetOrNonce(input: PaymentAttemptInput): { text: string; params
           AND attempt.x402_nonce = lower($3)
         )
       )
-        AND attempt.status IN ('settling', 'payment_pending', 'needs_review', 'completed')
-        AND attempt.public_id NOT IN (SELECT public_id FROM closed_due_target)
       ORDER BY attempt.created_at DESC
       LIMIT 1
     `,
@@ -724,21 +737,32 @@ export async function findReplayableTargetPaymentAttempt(
         lease_expires_at = NULL,
         updated_at = clock_timestamp()
       WHERE operation = $2
-        AND operation IN ('frontier', 'kind_invention', 'kind_revision')
+        AND (
+          operation IN ('frontier', 'kind_invention', 'kind_revision')
+          OR operation = 'credit_purchase'
+        )
         AND target_key = $3
         AND method = 'x402'
         AND status IN ('settling', 'payment_pending', 'needs_review')
         AND recovery_deadline_at IS NOT NULL
         AND recovery_deadline_at <= clock_timestamp()
-      RETURNING public_id
+      RETURNING *
+    ), replayable_target AS (
+      SELECT closed.*
+      FROM closed_due_target closed
+      WHERE $2 = 'credit_purchase'
+      UNION ALL
+      SELECT stored.*
+      FROM payment_attempts stored
+      WHERE ($2 = 'credit_purchase'
+        OR stored.status IN ('settling', 'payment_pending', 'needs_review', 'completed'))
+        AND stored.public_id NOT IN (SELECT public_id FROM closed_due_target)
     )
     SELECT attempt.*
-    FROM payment_attempts attempt
+    FROM replayable_target attempt
     WHERE attempt.actor_id = $1
       AND attempt.operation = $2
       AND attempt.target_key = $3
-      AND attempt.status IN ('settling', 'payment_pending', 'needs_review', 'completed')
-      AND attempt.public_id NOT IN (SELECT public_id FROM closed_due_target)
     ORDER BY attempt.created_at DESC, attempt.public_id DESC
     LIMIT 1
   `, [
@@ -1308,6 +1332,7 @@ const SAFE_REQUEST_KEYS: Readonly<Record<PaymentAttemptRecord['operation'], read
   ],
   kind_invention: ['name', 'description', 'traits', 'recipe'],
   kind_revision: ['kind_id', 'description', 'traits', 'recipe'],
+  credit_purchase: ['request_id', 'amount_dollars'],
   direct_sale: [
     'offer_id', 'buyer_wallet', 'seller_wallet', 'price_usdc', 'asset_type', 'asset_id',
   ],
