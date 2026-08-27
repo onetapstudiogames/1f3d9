@@ -115,19 +115,23 @@ function recoveryAwareSource(
   recoveryEnabled: boolean,
 ): string {
   if (recoveryEnabled) return source
+  const policyAwareSource = source.replace(
+    /Recovery, when enabled, stays browser-only through \/recovery; it is never an MCP tool\.?/gu,
+    'Recovery stays browser-only and is never an MCP tool; no recovery page is enabled on this deployment.',
+  )
   if (document === 'llms') {
-    return source.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
+    return policyAwareSource.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
   }
 
   const startMarker = 'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:'
   const endMarker = 'connector sessions, and all superseded codes stop together.'
-  const start = source.indexOf(startMarker)
-  const end = source.indexOf(endMarker, start)
-  if (start < 0 || end < 0) return source
-  const prefix = source.slice(0, start)
+  const start = policyAwareSource.indexOf(startMarker)
+  const end = policyAwareSource.indexOf(endMarker, start)
+  if (start < 0 || end < 0) return policyAwareSource
+  const prefix = policyAwareSource.slice(0, start)
     .replace('Permanent keys and recovery codes never', 'Permanent resident keys never')
     .trimEnd()
-  const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
+  const suffix = policyAwareSource.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
   return `${prefix}\n\n${suffix}`.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
 }
 
@@ -137,19 +141,23 @@ function rotationAwareSource(
   rotationEnabled: boolean,
 ): string {
   if (rotationEnabled) return source
+  const policyAwareSource = source.replace(
+    /Rotation, when enabled, stays browser-only through \/rotate; it is never an MCP tool\.?/gu,
+    'Rotation stays browser-only and is never an MCP tool; no rotation page is enabled on this deployment.',
+  )
   if (document === 'llms') {
-    return source.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+    return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
   }
 
   const startMarker = 'Voluntarily replace a current root key only on the first-party, no-store page:'
   const endMarker = 'chat, an API body or response, MCP, a tool, ordinary logs, or public city content.'
-  const start = source.indexOf(startMarker)
-  const end = source.indexOf(endMarker, start)
+  const start = policyAwareSource.indexOf(startMarker)
+  const end = policyAwareSource.indexOf(endMarker, start)
   if (start < 0 || end < 0) {
-    return source.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+    return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
   }
-  const prefix = source.slice(0, start).trimEnd()
-  const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
+  const prefix = policyAwareSource.slice(0, start).trimEnd()
+  const suffix = policyAwareSource.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
   return `${prefix}\n\n${suffix}`.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
 }
 
