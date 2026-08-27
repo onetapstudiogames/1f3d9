@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { Hono } from 'hono'
 
 process.env.DATABASE_URL = ''
 process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
@@ -10,6 +11,7 @@ process.env.IDENTITY_ROTATION_ENABLED = 'false'
 const { default: app } = await import('../src/index.ts')
 const { FRONTDOOR } = await import('../src/door.ts')
 const { hostedChatDiscovery } = await import('../src/hosted-chat-discovery.ts')
+const { mountHumanPages } = await import('../src/human-pages.ts')
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
@@ -65,6 +67,12 @@ async function pngDimensions(path: string): Promise<readonly [number, number]> {
   return [view.getUint32(16), view.getUint32(20)]
 }
 
+async function readyHumanPage(path: '/about' | '/setup'): Promise<Response> {
+  const humanPages = new Hono()
+  mountHumanPages(humanPages, { hostedChatSigninReady: () => true })
+  return humanPages.request(path)
+}
+
 test('about is a useful, indexable human entrance that names who runs each agent place', async () => {
   const response = await app.request('/about')
   const html = await response.text()
@@ -96,7 +104,7 @@ test('about is a useful, indexable human entrance that names who runs each agent
 })
 
 test('setup keeps permanent rules separate from dated menu paths and explains both doors', async () => {
-  const response = await app.request('/setup')
+  const response = await readyHumanPage('/setup')
   const html = await response.text()
   assertIndexablePage(response, html, '/setup')
 
@@ -136,8 +144,84 @@ test('setup keeps permanent rules separate from dated menu paths and explains bo
   assert.match(text, /(?:Use|run|call)[^.]{0,80}\bme\b[^.]{0,160}(?:handle|city name|resident name)/iu)
 })
 
+test('setup gives each client an honest path and keeps the safe ceremony to three steps', async () => {
+  const response = await readyHumanPage('/setup')
+  const html = await response.text()
+  const text = visibleText(html)
+
+  for (const id of [
+    'hosted-connector',
+    'hosted-browser',
+    'coding-persistent',
+    'coding-ephemeral',
+    'oauth-refused',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`, 'u'), id)
+  }
+  assert.match(text, /without Developer Mode[^.]{0,220}(?:cannot|can't)[^.]{0,120}(?:add|install|connect)[^.]{0,100}connector/iu)
+  assert.match(html, /id="hosted-browser"[\s\S]{0,520}href="\/window"[\s\S]{0,220}href="\/join"/iu)
+  assert.match(text, /persistent coding[\s\S]{0,420}(?:password manager|operating-system credential vault|secret manager)/iu)
+  assert.match(text, /ephemeral coding[\s\S]{0,520}(?:never|do not|don't)[^.]{0,180}(?:workspace|container|context|session)[\s\S]{0,220}(?:password manager|credential vault|secret manager)/iu)
+  assert.match(text, /app not approved[\s\S]{0,420}\/join[\s\S]{0,220}Authorization[\s\S]{0,100}Bearer/iu)
+  assert.match(
+    html,
+    /data-ceremony-path="hosted-connector"[\s\S]{0,520}\/mcp\/connect[\s\S]{0,320}(?:stored request|where you stopped)/iu,
+  )
+  assert.match(
+    html,
+    /data-ceremony-path="browser-join"[\s\S]{0,420}href="\/join"[\s\S]{0,280}same private cookie/iu,
+  )
+
+  const stepOne = html.indexOf('data-ceremony-step="1"')
+  const stepTwo = html.indexOf('data-ceremony-step="2"')
+  const stepThree = html.indexOf('data-ceremony-step="3"')
+  assert.ok(stepOne >= 0 && stepOne < stepTwo && stepTwo < stepThree)
+  assert.match(html.slice(stepOne, stepTwo), /resident key/iu)
+  assert.match(html.slice(stepTwo, stepThree), /eight recovery codes/iu)
+  assert.match(html.slice(stepThree), /re-enter/iu)
+})
+
+test('setup advertises the hosted connector only while that door is ready', async () => {
+  for (const ready of [false, true]) {
+    const humanPages = new Hono()
+    mountHumanPages(humanPages, { hostedChatSigninReady: () => ready })
+    const response = await humanPages.request('/setup')
+    const html = await response.text()
+    const hostedPath = html.match(
+      /<article id="hosted-connector"[^>]*>([\s\S]*?)<\/article>/u,
+    )?.[1]
+    const chatGptGuide = html.match(
+      /<article id="chatgpt"[^>]*>([\s\S]*?)<\/article>/u,
+    )?.[1]
+    const claudeGuide = html.match(
+      /<article id="claude"[^>]*>([\s\S]*?)<\/article>/u,
+    )?.[1]
+
+    assert.equal(response.status, 200)
+    assert.ok(hostedPath)
+    assert.ok(chatGptGuide)
+    assert.ok(claudeGuide)
+    if (ready) {
+      assert.match(html, /https:\/\/1f3d9\.com\/mcp\/connect/u)
+      assert.doesNotMatch(hostedPath, /unavailable on this deployment/iu)
+    } else {
+      assert.doesNotMatch(html, /(?:https:\/\/1f3d9\.com)?\/mcp\/connect/iu)
+      assert.match(hostedPath, /unavailable on this deployment/iu)
+      assert.match(hostedPath, /href="\/"[\s\S]*href="\/window"/u)
+      assert.match(hostedPath, /do not add a connector/iu)
+      assert.doesNotMatch(chatGptGuide, /turn on <strong>Developer mode<\/strong>|Open the <strong>Plugins<\/strong>/iu)
+      assert.doesNotMatch(claudeGuide, /Click <strong>Connectors<\/strong>|Add custom connector/iu)
+      for (const guide of [chatGptGuide, claudeGuide]) {
+        assert.match(guide, /unavailable on this deployment/iu)
+        assert.match(guide, /href="#hosted-browser"/u)
+        assert.match(guide, /href="\/"[\s\S]*href="\/window"[\s\S]*href="\/join"/u)
+      }
+    }
+  }
+})
+
 test('setup names the likely failures, including the public look trap', async () => {
-  const response = await app.request('/setup')
+  const response = await readyHumanPage('/setup')
   const text = visibleText(await response.text())
 
   assert.match(text, /\blook\b[^.]{0,120}(?:is public|public)[^.]{0,160}(?:does not|doesn't|won't|never)[^.]{0,100}prove[^.]{0,100}key/iu)
@@ -152,7 +236,7 @@ test('setup names the likely failures, including the public look trap', async ()
 
 test('both pages use ordinary sentences instead of decorative section numbers and slogans', async () => {
   for (const path of ['/about', '/setup'] as const) {
-    const response = await app.request(path)
+    const response = await readyHumanPage(path)
     const html = await response.text()
     const text = visibleText(html)
 

@@ -344,6 +344,84 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       )
     })
 
+    await t.test('concurrent duplicate OAuth staging keeps one resumable credential set', async () => {
+      await resetDatabase()
+      const request = authorizationRequestInput('concurrent-oauth-stage')
+      await store.createAuthorizationRequest(request)
+      const firstCredentials = stagedRegistration('concurrent-oauth-stage:first', 'concurrent-oauth-stage')
+      const secondCredentials = stagedRegistration('concurrent-oauth-stage:second', 'concurrent-oauth-stage')
+      const first = {
+        ...firstCredentials,
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      }
+      const second = {
+        ...secondCredentials,
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      }
+      const attempts = [first, second] as const
+
+      const results = await Promise.all(
+        attempts.map(attempt => store.stageNewResidentRegistration(attempt)),
+      )
+
+      assert.deepEqual(
+        results.map(result => result.status).sort(),
+        ['request_unavailable', 'staged'],
+      )
+      const winnerIndex = results.findIndex(result => result.status === 'staged')
+      const winner = winnerIndex === 0 ? first : second
+      const loser = winnerIndex === 0 ? second : first
+      const persisted = await requestState(request.sessionHash)
+      assert.deepEqual({
+        intent: persisted.intent,
+        resident_id: persisted.resident_id,
+        new_handle: persisted.new_handle,
+        new_model: persisted.new_model,
+        new_secret_hash: persisted.new_secret_hash,
+        root_key_confirmed_at: persisted.root_key_confirmed_at,
+        used_at: persisted.used_at,
+      }, {
+        intent: 'new',
+        resident_id: null,
+        new_handle: winner.handle,
+        new_model: winner.model,
+        new_secret_hash: winner.residentSecretHash,
+        root_key_confirmed_at: null,
+        used_at: null,
+      })
+      const persistedCodes = await database!.query<{ ordinal: number; code_hash: string }>(
+        `SELECT code.ordinal, code.code_hash
+         FROM oauth_authorization_request_recovery_codes code
+         JOIN oauth_authorization_requests request ON request.id = code.request_id
+         WHERE request.session_hash = $1
+         ORDER BY code.ordinal`,
+        [request.sessionHash],
+      )
+      assert.deepEqual(
+        persistedCodes.rows,
+        winner.recoveryCodeHashes.map((code_hash, index) => ({ ordinal: index + 1, code_hash })),
+      )
+      assert.equal(
+        loser.recoveryCodeHashes.some(hash => persistedCodes.rows.some(row => row.code_hash === hash)),
+        false,
+      )
+      const resumable = await store.getAuthorizationRequest(request.sessionHash)
+      assert.ok(resumable)
+      assert.deepEqual({
+        intent: resumable.intent,
+        new_handle: resumable.new_handle,
+        new_model: resumable.new_model,
+        root_key_confirmed_at: resumable.root_key_confirmed_at,
+      }, {
+        intent: 'new',
+        new_handle: winner.handle,
+        new_model: winner.model,
+        root_key_confirmed_at: null,
+      })
+    })
+
     await t.test('unknown and wrong resident keys stay merged and leave the same request retryable', async () => {
       await resetDatabase()
       const request = authorizationRequestInput('existing-key-retry')
@@ -499,8 +577,6 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         [sha256('race-winner-key')],
       )
       await database!.query('UPDATE resident_id_allocator SET last_id = 2 WHERE singleton')
-      const pendingBefore = await requestState(request.sessionHash)
-
       const result = await store.confirmNewResidentAndIssueAuthorizationCode({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
@@ -509,7 +585,38 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       })
 
       assert.deepEqual(result, { status: 'handle_taken' })
-      assert.deepEqual(await requestState(request.sessionHash), pendingBefore)
+      const canceled = await requestState(request.sessionHash)
+      assert.deepEqual({
+        intent: canceled.intent,
+        resident_id: canceled.resident_id,
+        new_handle: canceled.new_handle,
+        new_model: canceled.new_model,
+        new_secret_hash: canceled.new_secret_hash,
+        verified_at: canceled.verified_at,
+        approved_at: canceled.approved_at,
+        root_key_confirmed_at: canceled.root_key_confirmed_at,
+      }, {
+        intent: null,
+        resident_id: null,
+        new_handle: null,
+        new_model: null,
+        new_secret_hash: null,
+        verified_at: null,
+        approved_at: null,
+        root_key_confirmed_at: null,
+      })
+      assert.ok(canceled.used_at)
+      const pendingCodes = await database!.query<{ count: string }>(
+        `SELECT count(*) FROM oauth_authorization_request_recovery_codes code
+         JOIN oauth_authorization_requests request ON request.id = code.request_id
+         WHERE request.session_hash = $1`,
+        [request.sessionHash],
+      )
+      assert.equal(pendingCodes.rows[0]!.count, '0')
+      assert.equal((await store.getAuthorizationRequestProgress({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      }))?.status, 'canceled')
 
       const allocator = await database!.query<{ last_id: number }>(
         'SELECT last_id FROM resident_id_allocator WHERE singleton',
@@ -676,6 +783,16 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         { redirectUri: request.redirectUri, state: request.state },
       )
       assert.equal(await store.getAuthorizationRequest(request.sessionHash), null)
+      const canceledProgress = await store.getAuthorizationRequestProgress({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      })
+      assert.equal(canceledProgress?.status, 'canceled')
+      assert.equal(canceledProgress?.request.client_id, request.clientId)
+      assert.equal(await store.getAuthorizationRequestProgress({
+        sessionHash: request.sessionHash,
+        csrfHash: sha256('wrong-progress-csrf'),
+      }), null)
       assert.ok((await requestState(request.sessionHash)).used_at)
     })
 
@@ -702,6 +819,12 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         [expiredRequest.sessionHash],
       )
       await store.createAuthorizationRequest(authorizationRequestInput('oauth-cleanup-trigger'))
+      const expiredProgress = await store.getAuthorizationRequestProgress({
+        sessionHash: expiredRequest.sessionHash,
+        csrfHash: expiredRequest.csrfHash,
+      })
+      assert.equal(expiredProgress?.status, 'expired')
+      assert.equal(expiredProgress?.request.client_id, expiredRequest.clientId)
 
       const state = await database!.query(
         `SELECT request.session_hash, request.intent, request.new_handle, request.new_model,
@@ -961,6 +1084,16 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         }),
         { status: 'request_unavailable' },
       )
+      const confirmedProgress = await store.getAuthorizationRequestProgress({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      })
+      assert.equal(confirmedProgress?.status, 'confirmed')
+      if (confirmedProgress?.status === 'confirmed') {
+        assert.equal(confirmedProgress.residentId, 2)
+        assert.equal(confirmedProgress.handle, 'new-resident')
+        assert.equal(confirmedProgress.request.client_id, request.clientId)
+      }
 
       const resident = await database!.query<{
         id: number
@@ -1063,8 +1196,58 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       )
       assert.deepEqual(state.rows, [{
         last_id: 2, residents: '1', presences: '1', events: '1', authorization_codes: '1',
-        active_codes: '8', winner_pending_codes: '0', loser_pending_codes: '8',
+        active_codes: '8', winner_pending_codes: '0', loser_pending_codes: '0',
       }])
+      assert.equal((await store.getAuthorizationRequestProgress({
+        sessionHash: loser.sessionHash,
+        csrfHash: loser.csrfHash,
+      }))?.status, 'canceled')
+    })
+
+    await t.test('OAuth cancellation waiting behind confirmation reports the completed resident', async () => {
+      await resetDatabase()
+      const request = authorizationRequestInput('oauth-cancel-confirm-race')
+      const pending = stagedRegistration('oauth-cancel-confirm-race', 'oauth-cancel-race')
+      await store.createAuthorizationRequest(request)
+      assert.equal((await store.stageNewResidentRegistration(pending)).status, 'staged')
+      await database!.query(`
+        CREATE OR REPLACE FUNCTION delay_oauth_cancel_race_event() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.kind = 'register' AND NEW.actor = 'oauth-cancel-race' THEN
+            PERFORM pg_sleep(0.25);
+          END IF;
+          RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER delay_oauth_cancel_race_event
+        BEFORE INSERT ON events
+        FOR EACH ROW EXECUTE FUNCTION delay_oauth_cancel_race_event();
+      `)
+
+      const confirmation = store.confirmNewResidentAndIssueAuthorizationCode({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+        authorizationCodeHash: sha256('oauth-cancel-confirm-race:authorization-code'),
+      })
+      await delay(25)
+      const cancellation = store.cancelAuthorizationRequest({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      })
+
+      assert.equal((await confirmation).status, 'approved')
+      assert.equal(await cancellation, null)
+      const progress = await store.getAuthorizationRequestProgress({
+        sessionHash: request.sessionHash,
+        csrfHash: request.csrfHash,
+      })
+      assert.equal(progress?.status, 'confirmed')
+      if (progress?.status === 'confirmed') {
+        assert.equal(progress.handle, 'oauth-cancel-race')
+        assert.equal(progress.residentId, 2)
+      }
     })
 
     await t.test('existing-resident linking leaves recovery generation and codes unchanged', async () => {

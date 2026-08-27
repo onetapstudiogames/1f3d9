@@ -7419,6 +7419,7 @@ test('/api/me independently pages every growing holdings and history collection'
   const firstResponse = await app.request('/api/me', { headers: authHeaders() })
   assert.equal(firstResponse.status, 200)
   const first = await firstResponse.json() as Record<string, unknown>
+  assert.equal(first.front_door, 'https://1f3d9.com/')
   const newestByCollection = {
     places: 1570,
     things: 1670,

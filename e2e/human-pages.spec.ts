@@ -1,4 +1,81 @@
-import { test, expect } from '@playwright/test'
+import { devices, test, expect } from '@playwright/test'
+
+for (const [client, device] of [
+  ['desktop', devices['Desktop Chrome']],
+  ['phone', devices['Pixel 5']],
+] as const) {
+  test.describe(`resumable onboarding on ${client}`, () => {
+    test.use({
+      userAgent: device.userAgent,
+      viewport: device.viewport,
+      screen: device.screen,
+      deviceScaleFactor: device.deviceScaleFactor,
+      isMobile: device.isMobile,
+      hasTouch: device.hasTouch,
+    })
+
+    test('setup and join render all five client paths without hiding a next step', async ({ page }) => {
+      await page.goto('/setup')
+      for (const id of [
+        'hosted-connector',
+        'hosted-browser',
+        'coding-persistent',
+        'coding-ephemeral',
+        'oauth-refused',
+      ]) {
+        await expect(page.locator(`#${id}`)).toBeVisible()
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+      await page.locator('#hosted-browser').getByRole('link', { name: /watch the window/iu }).click()
+      await expect(page).toHaveURL(/\/window(?:#.*)?$/u)
+      await page.goto('/join')
+      for (const clientClass of [
+        'hosted_connector',
+        'hosted_browser',
+        'coding_persistent',
+        'coding_ephemeral',
+        'oauth_refused',
+      ]) {
+        await expect(page.locator(`[data-client-class="${clientClass}"]`)).toBeVisible()
+      }
+      for (const value of [
+        'hosted_browser',
+        'coding_persistent',
+        'coding_ephemeral',
+        'oauth_refused',
+      ]) {
+        await page.locator(`input[name="client_class"][value="${value}"]`).check()
+        await expect(page.locator(`input[value="${value}"]`)).toBeChecked()
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+      await page.locator('[data-client-class="oauth_refused"]').getByRole('link', { name: /setup details/iu }).click()
+      await expect(page).toHaveURL(/\/setup#oauth-refused$/u)
+      await expect(page.locator('#oauth-refused')).toBeVisible()
+    })
+
+    test('feature-off setup gives hosted chats only working paths', async ({ page }) => {
+      const response = await page.goto('/feature-off/setup')
+      expect(response?.status()).toBe(200)
+
+      const chatGptGuide = page.locator('#chatgpt')
+      const claudeGuide = page.locator('#claude')
+      await expect(chatGptGuide).not.toContainText('turn on Developer mode')
+      await expect(chatGptGuide).not.toContainText('Open the Plugins tab')
+      await expect(claudeGuide).not.toContainText('Add custom connector')
+
+      for (const guide of [chatGptGuide, claudeGuide]) {
+        await expect(guide).toContainText('unavailable on this deployment today')
+        await expect(guide.getByRole('link', { name: /hosted-chat-without-Developer-Mode path/iu })).toHaveAttribute('href', '#hosted-browser')
+        await expect(guide.getByRole('link', { name: /plain-text front door/iu })).toHaveAttribute('href', '/')
+        await expect(guide.getByRole('link', { name: /watch the window/iu })).toHaveAttribute('href', '/window')
+        await expect(guide.getByRole('link', { name: /browser join/iu })).toHaveAttribute('href', '/join')
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    })
+  })
+}
 
 test('a human can understand the city, open setup, and return to the window', async ({ page }) => {
   const aboutResponse = await page.goto('/about')

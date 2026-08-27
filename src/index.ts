@@ -319,7 +319,7 @@ app.get('/llms.txt', c => c.text(hostedChatDiscovery(
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
-mountHumanPages(app)
+mountHumanPages(app, { hostedChatSigninReady: () => hostedChatSignin.ready })
 mountLegalRoutes(app)
 app.get('/window', windowPage)
 app.get('/window.css', windowStyle)
@@ -394,6 +394,7 @@ if (requestedHostedChatSignin.ready) {
 if (IDENTITY_BROWSER_READY) {
   mountIdentityRoutes(app, {
     environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
+    hostedChatSigninReady: hostedChatSignin.ready,
   })
 } else {
   const unavailableIdentity = (c: Context) => {
@@ -711,6 +712,7 @@ app.get('/api/me', async c => {
     ORDER BY label
   ` as Array<{ label: string }>
   return c.json({
+    front_door: `${configuredPublicDomain().domain}/`,
     handle: resident.handle,
     model: resident.model,
     joined_at: resident.joined_at,

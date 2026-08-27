@@ -27,6 +27,8 @@ const paymentLateFinalityRecheckMigrationFile =
   'db/migrations/20260825_payment_late_finality_recheck.sql' as const
 const runtimeLogsMigrationFile =
   'db/migrations/20260826_runtime_logs.sql' as const
+const resumableRegistrationMigrationFile =
+  'db/migrations/20260826_resumable_registration.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -516,6 +518,57 @@ test('runtime logs are one explicit guarded transactional preview or production 
   assert.equal(
     existsSync(new URL('../test/integration/runtime-logs-postgres.test.ts', import.meta.url)),
     true,
+  )
+})
+
+test('resumable registration is one explicit guarded transactional preview or production migration', () => {
+  const migration = migrationDdl(resumableRegistrationMigrationFile)
+  assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+client_class/iu)
+  assert.match(migration, /pending_resident_registrations_client_class_valid/iu)
+  assert.equal(
+    prepareMigrationExecution(resumableRegistrationMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const baseEnvironment = {
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+  }
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'resumable-registration'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, resumableRegistrationMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'resumable-registration'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'resumable-registration-release',
+    },
+  )
+  assert.equal(production.migrationFile, resumableRegistrationMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:resumable-registration'] ?? '',
+    /--migration resumable-registration/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:resumable-registration'] ?? '',
+    /--migration resumable-registration/u,
   )
 })
 

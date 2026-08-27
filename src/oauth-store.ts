@@ -37,6 +37,10 @@ export interface AuthorizationRequestRecord {
   root_key_confirmed_at: string | null
 }
 
+export type AuthorizationRequestProgress =
+  | { status: 'confirmed'; request: AuthorizationRequestRecord; residentId: number; handle: string }
+  | { status: 'canceled' | 'expired' | 'unavailable'; request: AuthorizationRequestRecord }
+
 export type PendingRegistrationResult =
   | { status: 'staged'; handle: string }
   | { status: 'handle_taken' }
@@ -162,6 +166,51 @@ export async function getAuthorizationRequest(
     LIMIT 1
   `) as AuthorizationRequestRecord[]
   return rows[0] ?? null
+}
+
+export async function getAuthorizationRequestProgress(input: {
+  sessionHash: string
+  csrfHash: string
+}): Promise<AuthorizationRequestProgress | null> {
+  const rows = (await sql`
+    SELECT request.id, request.client_id, request.client_display_name,
+      request.redirect_uri, request.resource, request.scope, request.state,
+      request.code_challenge, request.intent, request.resident_id,
+      request.new_handle, request.new_model, request.root_key_confirmed_at,
+      CASE
+        WHEN request.resident_id IS NOT NULL
+          AND request.root_key_confirmed_at IS NOT NULL
+          AND request.used_at IS NOT NULL
+          AND resident.id IS NOT NULL
+          THEN 'confirmed'
+        WHEN request.resident_id IS NULL
+          AND request.used_at IS NOT NULL
+          AND request.used_at < request.expires_at
+          THEN 'canceled'
+        WHEN request.resident_id IS NULL AND request.expires_at <= now()
+          THEN 'expired'
+        ELSE 'unavailable'
+      END AS progress_status,
+      resident.handle AS resident_handle
+    FROM oauth_authorization_requests request
+    LEFT JOIN residents resident ON resident.id = request.resident_id
+    WHERE request.session_hash = ${input.sessionHash}
+      AND request.csrf_hash = ${input.csrfHash}
+    LIMIT 1
+  `) as Array<AuthorizationRequestRecord & {
+    progress_status: AuthorizationRequestProgress['status']
+    resident_handle: string | null
+  }>
+  const row = rows[0]
+  if (!row) return null
+  const { progress_status: status, resident_handle: residentHandle, ...request } = row
+  if (status === 'confirmed') {
+    if (request.resident_id === null || residentHandle === null) {
+      return { status: 'unavailable', request }
+    }
+    return { status, request, residentId: request.resident_id, handle: residentHandle }
+  }
+  return { status, request }
 }
 
 export async function cancelAuthorizationRequest(input: {
@@ -361,6 +410,30 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
           SELECT resident.handle
           FROM residents resident
           JOIN eligible ON eligible.new_handle = resident.handle
+        ), canceled_handle_conflict AS MATERIALIZED (
+          UPDATE oauth_authorization_requests request
+          SET used_at = now(),
+              intent = NULL,
+              new_handle = NULL,
+              new_model = NULL,
+              new_secret_hash = NULL,
+              verified_at = NULL,
+              approved_at = NULL,
+              root_key_confirmed_at = NULL
+          FROM eligible
+          WHERE request.id = eligible.id
+            AND EXISTS (SELECT 1 FROM handle_conflict)
+          RETURNING request.id
+        ), scrubbed_conflict_codes AS (
+          DELETE FROM oauth_authorization_request_recovery_codes code
+          USING canceled_handle_conflict request
+          WHERE code.request_id = request.id
+          RETURNING code.request_id
+        ), completed_handle_conflict AS MATERIALIZED (
+          SELECT request.id
+          FROM canceled_handle_conflict request
+          LEFT JOIN scrubbed_conflict_codes code ON code.request_id = request.id
+          GROUP BY request.id
         ), pending_codes AS MATERIALIZED (
           SELECT code.code_hash
           FROM oauth_authorization_request_recovery_codes code
@@ -462,8 +535,7 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
           AND NOT EXISTS (SELECT 1 FROM eligible)
         UNION ALL
         SELECT 'handle_taken'::text, NULL::text, NULL::text
-        WHERE EXISTS (SELECT 1 FROM eligible)
-          AND EXISTS (SELECT 1 FROM handle_conflict)
+        FROM completed_handle_conflict
     `) as {
       status:
         | 'approved'
@@ -485,7 +557,18 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
     if (
       postgresErrorCode(error) === '23505' &&
       postgresErrorConstraint(error) === 'residents_handle_key'
-    ) return { status: 'handle_taken' }
+    ) {
+      const canceled = await cancelAuthorizationRequest({
+        sessionHash: input.sessionHash,
+        csrfHash: input.csrfHash,
+      })
+      if (canceled) return { status: 'handle_taken' }
+      const progress = await getAuthorizationRequestProgress({
+        sessionHash: input.sessionHash,
+        csrfHash: input.csrfHash,
+      })
+      if (progress?.status === 'canceled') return { status: 'handle_taken' }
+    }
     throw error
   }
 }
@@ -815,6 +898,7 @@ export async function consumeOAuthRateLimit(input: {
 export const postgresOAuthStore = {
   createAuthorizationRequest,
   getAuthorizationRequest,
+  getAuthorizationRequestProgress,
   cancelAuthorizationRequest,
   approveExistingResidentAndIssueAuthorizationCode,
   stageNewResidentRegistration,

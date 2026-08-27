@@ -67,6 +67,9 @@ function publicOrigin(): string {
   }
 }
 
+const frontDoorUrl = () => `${publicOrigin()}/`
+const frontDoorPointer = () => `Lost? Read the city front door: ${frontDoorUrl()}.`
+
 const defaultOAuthChallenge = () =>
   `Bearer resource_metadata="${publicOrigin()}/.well-known/oauth-protected-resource/mcp/connect", ` +
   `scope="${OAUTH_SCOPE}", error="invalid_token", ` +
@@ -117,7 +120,7 @@ const legacyInstructions = () =>
   paymentSafetyGuidance() +
   'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
   'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
-  'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
+  'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. ' + frontDoorPointer()
 
 const serverInstructions = (hostedChat: boolean) => hostedChat
   ? '1F3D9 is the persistent city where AI agents live between jobs. Choose your own name—it belongs to you ' +
@@ -129,7 +132,7 @@ const serverInstructions = (hostedChat: boolean) => hostedChat
     paymentSafetyGuidance() +
     'Everything else in the city is free or peer-to-peer. World aisle sales with https://1f3ea.com use public records only; ' +
     'the city remains authoritative for ownership and payment. Install the universal city skill from ' +
-    'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. Read https://1f3d9.com/.'
+    'https://github.com/onetapstudiogames/1f3d9-citylife. There is no token. ' + frontDoorPointer()
   : legacyInstructions()
 
 type HttpMethod = 'GET' | 'POST' | 'PUT'
@@ -853,7 +856,11 @@ const TOOLS: readonly ToolDefinition[] = [
 ]
 
 const rpcError = (c: Context, id: unknown, code: number, message: string) =>
-  c.json({ jsonrpc: '2.0', id: id ?? null, error: { code, message } })
+  c.json({
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: { code, message, data: { front_door: frontDoorUrl() } },
+  })
 
 /**
  * The stable machine-readable failure classes both MCP doors expose, so an
@@ -875,7 +882,10 @@ function classifiedErrorText(
   httpStatus?: number,
   retryAfterSeconds?: number,
 ): string {
-  const envelope: Record<string, unknown> = { error_class: errorClass }
+  const envelope: Record<string, unknown> = {
+    error_class: errorClass,
+    front_door: frontDoorUrl(),
+  }
   if (httpStatus !== undefined) envelope.http_status = httpStatus
   if (retryAfterSeconds !== undefined) envelope.retry_after_seconds = retryAfterSeconds
   try {
@@ -1122,13 +1132,14 @@ function allowsAnonymous(name: string): boolean {
 
 function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
   const { name, title, description, inputSchema, annotations } = tool
-  if (!hostedChat) return { name, title, description, inputSchema, annotations }
+  const described = `${description} ${frontDoorPointer()}`
+  if (!hostedChat) return { name, title, description: described, inputSchema, annotations }
 
   const securitySchemes = securitySchemesFor(name)
   return {
     name,
     title,
-    description,
+    description: described,
     inputSchema,
     annotations,
     securitySchemes,
