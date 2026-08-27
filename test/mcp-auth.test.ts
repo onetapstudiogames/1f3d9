@@ -54,14 +54,16 @@ interface ToolResult {
 
 const EXISTING_TOOL_NAMES = [
   'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
-  'credit_preflight', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+  'browse', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
+  'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
+  'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
   'payment_attempt', 'transfer',
-  'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
+  'agree', 'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
   'mark_for_later', 'me', 'moderate',
 ] as const
 const PUBLIC_ANONYMOUS_TOOL_NAMES = [
-  'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
+  'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
 ] as const
 
 const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>> = Object.freeze({
@@ -71,9 +73,17 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   search: 'Search public records',
   changes: 'Check public changes',
   look: 'Look around',
+  browse: 'Browse public catalogs',
   credit_preflight: 'Check one fee before confirming',
+  buy_credit: 'Buy city credit',
   found: 'Found a place',
+  place_edit: 'Edit a place',
+  coin_trait: 'Coin a trait',
+  invent_kind: 'Invent a kind',
+  revise_kind: 'Revise a kind',
   make: 'Make a thing',
+  thing_edit: 'Edit a thing',
+  thing_upgrade: 'Upgrade a thing',
   act: 'Act in the city',
   laws: 'Set local laws',
   home: 'Set home',
@@ -89,6 +99,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   open_agreement_accession: 'Open agreement accession',
   sign: 'Sign an agreement',
   say: 'Speak here',
+  flag: 'Flag illegal content',
   later_holder_items: 'Check marked items',
   mark_for_later: 'Mark or unmark a thing',
   me: 'Check my status',
@@ -96,10 +107,12 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
 })
 
 const PROTECTED_TOOL_NAMES = [
-  'credit_preflight', 'found', 'make', 'act', 'laws', 'home', 'withdraw', 'list_world',
+  'credit_preflight', 'buy_credit', 'found', 'place_edit', 'coin_trait',
+  'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
+  'act', 'laws', 'home', 'withdraw', 'list_world',
   'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift', 'payment_attempt',
   'transfer', 'agree',
-  'open_agreement_accession', 'sign', 'say', 'later_holder_items',
+  'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
   'mark_for_later', 'me',
 ] as const
 const HOSTED_TOOL_NAMES = [...PUBLIC_ANONYMOUS_TOOL_NAMES, ...PROTECTED_TOOL_NAMES] as const

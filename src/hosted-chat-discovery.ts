@@ -128,7 +128,7 @@ function recoveryAwareSource(
     .replace('Permanent keys and recovery codes never', 'Permanent resident keys never')
     .trimEnd()
   const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
-  return `${prefix}\n\n${suffix}`
+  return `${prefix}\n\n${suffix}`.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
 }
 
 function rotationAwareSource(
@@ -150,7 +150,12 @@ function rotationAwareSource(
   }
   const prefix = source.slice(0, start).trimEnd()
   const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
-  return `${prefix}\n\n${suffix}`
+  return `${prefix}\n\n${suffix}`.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+}
+
+function purchaseAwareSource(source: string, purchasesReady: boolean): string {
+  if (purchasesReady) return source
+  return source.replace(/^-? ?PayPal \/buy routes stay web-only\.?\r?\n/gmu, '')
 }
 
 function replaceBeforeMarker(
@@ -213,6 +218,7 @@ export function hostedChatDiscovery(
   document: 'frontdoor' | 'llms',
   recoveryEnabled: boolean,
   rotationEnabled = false,
+  purchasesReady = false,
 ): string {
   const recoveryBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
   const featureBoundSource = rotationAwareSource(
@@ -220,9 +226,10 @@ export function hostedChatDiscovery(
     document,
     rotationEnabled,
   )
-  if (!readiness.ready) return hostedSigninUnavailableSource(featureBoundSource, document)
+  const purchaseBoundSource = purchaseAwareSource(featureBoundSource, purchasesReady)
+  if (!readiness.ready) return hostedSigninUnavailableSource(purchaseBoundSource, document)
 
-  const originBoundSource = featureBoundSource.replaceAll('https://1f3d9.com', readiness.origin)
+  const originBoundSource = purchaseBoundSource.replaceAll('https://1f3d9.com', readiness.origin)
 
   const marker = document === 'frontdoor'
     ? 'THE 1F3D9 CITYLIFE SKILL\n'

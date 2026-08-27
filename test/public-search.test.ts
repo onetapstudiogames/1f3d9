@@ -26,6 +26,7 @@ test('public search parses one bounded GET query with explicit defaults', () => 
   assert.equal(defaults.q, 'Caf\u00e9 garden')
   assert.equal(defaults.mode, 'words')
   assert.equal(defaults.type, 'all')
+  assert.equal(defaults.maker, null)
   assert.equal(defaults.limit, 10)
   assert.equal(defaults.fetchLimit, 11)
   assert.equal(defaults.before, null)
@@ -35,6 +36,7 @@ test('public search parses one bounded GET query with explicit defaults', () => 
   assert.equal(validSearch({ q: ['moss'], mode: ['phrase'] }).mode, 'phrase')
   assert.equal(validSearch({ q: ['moss'], type: ['note'] }).type, 'note')
   assert.equal(validSearch({ q: ['moss'], type: ['thing'] }).type, 'thing')
+  assert.equal(validSearch({ q: ['moss'], maker: ['first-maker'] }).maker, 'first-maker')
 
   for (const query of [
     {},
@@ -43,12 +45,15 @@ test('public search parses one bounded GET query with explicit defaults', () => 
     { q: ['moss', 'fern'] },
     { q: ['moss'], mode: ['ranked'] },
     { q: ['moss'], type: ['place'] },
+    { q: ['moss'], maker: ['First-Maker'] },
+    { q: ['moss'], maker: ['first-maker', 'second-maker'] },
+    { q: ['moss'], maker: ['first-maker'], type: ['note'] },
     { q: ['moss'], limit: ['0'] },
     { q: ['moss'], limit: ['201'] },
     { q: ['moss'], limit: ['1.5'] },
     { q: ['moss'], extra: ['true'] },
   ] satisfies SearchQueryValues[]) {
-    assert.match(invalidSearch(query), /q|mode|type|limit|unsupported/i)
+    assert.match(invalidSearch(query), /q|mode|type|maker|limit|unsupported/i)
   }
 })
 
@@ -123,6 +128,34 @@ test('opaque search cursors bind normalized q, mode, and type without losing mic
   ] satisfies SearchQueryValues[]) {
     assert.match(invalidSearch(query), /before|cursor|query/i)
   }
+})
+
+test('maker-filtered cursors bind the permanent maker across every continuation', () => {
+  const cursorRecord = Object.freeze({
+    q: 'lantern',
+    mode: 'words' as const,
+    type: 'thing' as const,
+    maker: 'first-maker',
+    createdAt: '2026-08-21T19:20:21.123456Z',
+    itemType: 'thing' as const,
+    id: 73,
+    changeMarker: '12',
+  })
+  const cursor = encodePublicSearchCursor(cursorRecord)
+  assert.deepEqual(decodePublicSearchCursor(cursor), cursorRecord)
+
+  const accepted = validSearch({
+    q: ['lantern'], type: ['thing'], maker: ['first-maker'], before: [cursor],
+  })
+  assert.equal(accepted.maker, 'first-maker')
+  assert.equal(accepted.before?.maker, 'first-maker')
+
+  assert.match(invalidSearch({
+    q: ['lantern'], type: ['thing'], maker: ['second-maker'], before: [cursor],
+  }), /before|cursor|maker|query/i)
+  assert.match(invalidSearch({
+    q: ['lantern'], type: ['thing'], before: [cursor],
+  }), /before|cursor|maker|query/i)
 })
 
 test('search extraction returns exact body-free outlines, exact totals, and a stable next cursor', async () => {
@@ -374,4 +407,27 @@ test('search SQL filters private rows before matching and pages by creation time
   assert.match(wordSql, /to_tsvector\s*\(\s*'simple'/i)
   assert.match(wordSql, /plainto_tsquery\s*\(\s*'simple'/i)
   assert.doesNotMatch(wordSql, /\benglish\b|\b(?:stem|rank|headline|snippet)\w*\b/i)
+})
+
+test('maker filtering uses the permanent thing maker and excludes notes before totals', async () => {
+  const query = validSearch({
+    q: ['lantern'], maker: ['first-maker'], type: ['all'], limit: ['5'],
+  })
+  let sql = ''
+  let params: readonly unknown[] = []
+  await loadPublicSearchResults(async (text, values) => {
+    sql = text
+    params = values
+    return [{
+      result_type: null,
+      id: null,
+      total_items: 0,
+      total_body_bytes: '0',
+      change_marker: '12',
+    }]
+  }, query)
+
+  assert.ok(params.includes('first-maker'))
+  assert.match(sql, /note_candidates[\s\S]*AND \$9::text IS NULL/iu)
+  assert.match(sql, /thing_candidates[\s\S]*maker\.handle\s*=\s*\$\d+::text/iu)
 })
