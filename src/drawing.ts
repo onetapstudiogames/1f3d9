@@ -89,37 +89,20 @@ export async function readBoundedJsonObject(
   request: Request,
   maximumBytes: number,
 ): Promise<BoundedJsonResult> {
-  const reader = request.body?.getReader()
-  const chunks: Uint8Array[] = []
-  let totalBytes = 0
+  // Hand-driving request.body's reader never resolves on Vercel's Node
+  // bridge (the PR #115 class) — only the framework read is safe, with the
+  // bound enforced on the actual bytes afterward.
+  let bytes: Uint8Array
   try {
-    if (reader) {
-      while (true) {
-        const next = await reader.read()
-        if (next.done) break
-        totalBytes += next.value.byteLength
-        if (totalBytes > maximumBytes) {
-          await reader.cancel().catch(() => undefined)
-          return Object.freeze({
-            ok: false,
-            error: `body must be no larger than ${maximumBytes} UTF-8 bytes`,
-          })
-        }
-        chunks.push(next.value)
-      }
-    }
+    bytes = new Uint8Array(await request.arrayBuffer())
   } catch {
-    await reader?.cancel().catch(() => undefined)
     return Object.freeze({ ok: false, error: 'body could not be read' })
-  } finally {
-    reader?.releaseLock()
   }
-
-  const bytes = new Uint8Array(totalBytes)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
+  if (bytes.byteLength > maximumBytes) {
+    return Object.freeze({
+      ok: false,
+      error: `body must be no larger than ${maximumBytes} UTF-8 bytes`,
+    })
   }
 
   let value: unknown

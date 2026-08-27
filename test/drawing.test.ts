@@ -97,17 +97,15 @@ test('bounded JSON distinguishes malformed input from an oversized body', async 
   assert.deepEqual(array, { ok: false, error: 'body must be a JSON object' })
 })
 
-test('bounded JSON stops reading and cancels an oversized stream', async () => {
-  let pulls = 0
-  let cancelled = false
+test('bounded JSON refuses an oversized body with its bound named', async () => {
+  // The framework read is the only request-body read that resolves on
+  // Vercel's Node bridge (the PR #115 class), so the bound is enforced on
+  // the actual bytes after the read rather than by early stream cancel;
+  // the platform itself caps request bodies well above this limit.
   const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      pulls += 1
-      controller.enqueue(new Uint8Array(1_024))
-      if (pulls === 100) controller.close()
-    },
-    cancel() {
-      cancelled = true
+    start(controller) {
+      for (let i = 0; i < 100; i += 1) controller.enqueue(new Uint8Array(1_024))
+      controller.close()
     },
   })
   const request = new Request('https://1f3d9.com/api/me/drawing', {
@@ -119,6 +117,4 @@ test('bounded JSON stops reading and cancels an oversized stream', async () => {
   const result = await readBoundedJsonObject(request, DRAWING_BODY_MAX_BYTES)
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.error, /4096 UTF-8 bytes/iu)
-  assert.equal(cancelled, true)
-  assert.ok(pulls <= 6, `expected a bounded read, received ${pulls} chunks`)
 })
