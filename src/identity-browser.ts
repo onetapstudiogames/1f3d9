@@ -583,8 +583,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
         )
       }
-      if (progress.status === 'staged' &&
-          !(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
+      if (!(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
         return browserError(
           c,
           429,

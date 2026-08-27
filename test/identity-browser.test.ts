@@ -959,6 +959,59 @@ test('join stages only a hash and creates a resident only after exact key re-ent
   assert.equal(memory.calls.filter(call => call.method === 'stageRegistration').length, 1)
 })
 
+test('confirmed join retries stop at the same ten-attempt confirmation limit', async () => {
+  const maximumConfirmAttempts = 10
+  const joinStageRateCalls = 2
+  const bucketsPerConfirmAttempt = 2
+  const { app, memory } = appWithMemoryStore({
+    deniedRateCall: joinStageRateCalls + (maximumConfirmAttempts * bucketsPerConfirmAttempt) + 1,
+  })
+  const start = await pageState(app, '/join')
+  const staged = await postForm(app, '/join', start.cookie, {
+    action: 'stage', csrf: start.csrf, handle: 'limited-retry', model: '', client_class: 'coding_persistent',
+  })
+  const rootKey = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  assert.ok(rootKey)
+
+  const confirmed = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: rootKey,
+  })
+  assert.equal(confirmed.status, 200)
+
+  const legitimateRetry = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: rootKey,
+  })
+  assert.equal(legitimateRetry.status, 200)
+  assert.match(await legitimateRetry.text(), /limited-retry now lives/iu)
+
+  for (let attempt = 3; attempt <= maximumConfirmAttempts; attempt += 1) {
+    const rejected = await postForm(app, '/join', start.cookie, {
+      action: 'confirm', csrf: start.csrf, resident_key: OTHER_ROOT_KEY,
+    })
+    assert.equal(rejected.status, 403, `confirmation attempt ${attempt}`)
+    assert.equal(rejected.headers.get('x-1f3d9-reason'), 'credential_rejected')
+  }
+
+  const limited = await postForm(app, '/join', start.cookie, {
+    action: 'confirm', csrf: start.csrf, resident_key: OTHER_ROOT_KEY,
+  })
+  assert.equal(limited.status, 429)
+  assert.equal(limited.headers.get('x-1f3d9-reason'), 'rate_limited')
+  const limitedBody = await limited.text()
+  assert.match(limitedBody, /after one hour/iu)
+  assert.match(limitedBody, /href="\/window"[\s\S]*href="\/join\?new=1"/u)
+  assert.doesNotMatch(limitedBody, /name="action" value="confirm"/u)
+
+  const confirmRateInputs = memory.calls
+    .filter(call => call.method === 'rate')
+    .map(call => call.input as { attemptKind?: string; bucketHash?: string; maximum?: number })
+    .filter(input => input.attemptKind === 'join_confirm')
+  assert.equal(confirmRateInputs.length, 21)
+  assert.equal(confirmRateInputs.every(input => input.maximum === maximumConfirmAttempts), true)
+  assert.equal(new Set(confirmRateInputs.map(input => input.bucketHash)).size, 2)
+  assert.equal(memory.calls.filter(call => call.method === 'confirmRegistration').length, 10)
+})
+
 test('two overlapping join submissions reveal only the one credential set that was persisted', async () => {
   let arrivals = 0
   let release = () => {}
