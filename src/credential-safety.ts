@@ -12,6 +12,7 @@ export const PUBLIC_RESPONSE_WITHHELD =
 
 const MAX_PUBLIC_VALUE_DEPTH = 32
 const MAX_PUBLIC_VALUE_NODES = 20_000
+const JSON_UNICODE_ESCAPE = /\\u[0-9a-f]{4}/iu
 
 export type ResidentCredentialKind =
   | 'resident_key'
@@ -123,6 +124,10 @@ function sanitizeValue(value: unknown, depth: number, state: TraversalState): un
     state.uncertain = true
     return null
   }
+  if (entries.some(([key]) => containsPublicCredential(key))) {
+    state.uncertain = true
+    return null
+  }
   return Object.freeze(Object.fromEntries(entries.map(([key, nested]) => [
     key,
     sanitizeValue(nested, depth + 1, state),
@@ -163,13 +168,19 @@ export function safeguardPublicPayload(
   rawText: string,
   contentType = 'application/json',
 ): PublicPayloadSafety {
-  if (!containsPublicCredential(rawText)) {
-    return Object.freeze({ text: rawText, changed: false, withheld: false })
-  }
+  const rawContainsCredential = containsPublicCredential(rawText)
 
   if (JSON_CONTENT_TYPE.test(contentType)) {
+    if (!rawContainsCredential && !JSON_UNICODE_ESCAPE.test(rawText)) {
+      return Object.freeze({ text: rawText, changed: false, withheld: false })
+    }
     try {
-      const result = sanitizePublicValue(JSON.parse(rawText) as unknown)
+      const parsed = JSON.parse(rawText) as unknown
+      const canonicalText = JSON.stringify(parsed)
+      if (!containsPublicCredential(canonicalText)) {
+        return Object.freeze({ text: rawText, changed: false, withheld: false })
+      }
+      const result = sanitizePublicValue(parsed)
       if (!result.withheld) {
         const text = JSON.stringify(result.value)
         if (!containsPublicCredential(text)) {
@@ -178,7 +189,14 @@ export function safeguardPublicPayload(
       }
     } catch {
       // A malformed credential-bearing response stays fail-closed.
+      if (!rawContainsCredential) {
+        return Object.freeze({ text: rawText, changed: false, withheld: false })
+      }
     }
+  }
+
+  if (!rawContainsCredential && !JSON_CONTENT_TYPE.test(contentType)) {
+    return Object.freeze({ text: rawText, changed: false, withheld: false })
   }
 
   return Object.freeze({

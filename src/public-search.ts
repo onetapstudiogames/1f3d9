@@ -2,6 +2,7 @@ import {
   containsCredentialLikeInput,
   PUBLIC_CREDENTIAL_PATTERN_SOURCE,
 } from './credential-safety.ts'
+import { HANDLE_RE } from './core.ts'
 import {
   allowedPublicQuery,
   singlePublicQueryValue,
@@ -46,6 +47,7 @@ export interface PublicSearchCursorRecord {
   readonly q: string
   readonly mode: PublicSearchMode
   readonly type: PublicSearchType
+  readonly maker?: string | null
   readonly createdAt: string
   readonly itemType: PublicSearchItemType
   readonly id: number
@@ -57,6 +59,7 @@ export interface PublicSearchBoundary {
   readonly itemType: PublicSearchItemType
   readonly id: number
   readonly changeMarker: string
+  readonly maker?: string
 }
 
 export interface PublicSearchQuery {
@@ -64,6 +67,7 @@ export interface PublicSearchQuery {
   readonly q: string
   readonly mode: PublicSearchMode
   readonly type: PublicSearchType
+  readonly maker: string | null
   readonly limit: number
   readonly fetchLimit: number
   readonly before: PublicSearchBoundary | null
@@ -101,10 +105,15 @@ function positiveInteger(value: string | null, maximum: number): number | null {
 }
 
 export function encodePublicSearchCursor(record: PublicSearchCursorRecord): string {
-  const value = JSON.stringify([
-    2, record.q, record.mode, record.type,
-    record.createdAt, record.itemType, record.id, record.changeMarker,
-  ])
+  const value = JSON.stringify(record.maker == null
+    ? [
+        2, record.q, record.mode, record.type,
+        record.createdAt, record.itemType, record.id, record.changeMarker,
+      ]
+    : [
+        3, record.q, record.mode, record.type, record.maker,
+        record.createdAt, record.itemType, record.id, record.changeMarker,
+      ])
   return Buffer.from(value, 'utf8').toString('base64url')
 }
 
@@ -113,18 +122,26 @@ export function decodePublicSearchCursor(value: string): PublicSearchCursorRecor
   try {
     const decoded = Buffer.from(value, 'base64url').toString('utf8')
     const parsed: unknown = JSON.parse(decoded)
-    if (!Array.isArray(parsed) || parsed.length !== 8 || parsed[0] !== 2) return null
-    const [, q, mode, type, createdAt, itemType, id, changeMarker] = parsed
+    if (!Array.isArray(parsed)) return null
+    const version = parsed[0]
+    if ((version !== 2 || parsed.length !== 8) && (version !== 3 || parsed.length !== 9)) {
+      return null
+    }
+    const [, q, mode, type, ...tail] = parsed
+    const [maker, createdAt, itemType, id, changeMarker] = version === 3
+      ? tail
+      : [null, ...tail]
     if (
       typeof q !== 'string' || normalizeQuery(q) !== q ||
       !['words', 'phrase'].includes(String(mode)) ||
       !['all', 'note', 'thing'].includes(String(type)) ||
+      (maker !== null && (typeof maker !== 'string' || !HANDLE_RE.test(maker))) ||
       typeof createdAt !== 'string' || !safeTimestamp(createdAt) ||
       !['note', 'thing'].includes(String(itemType)) ||
       !Number.isSafeInteger(id) || Number(id) < 1 || Number(id) > POSTGRES_INTEGER_MAX ||
       parsePublicChangeMarker(changeMarker) === null
     ) return null
-    const record = Object.freeze({
+    const common = {
       q,
       mode: mode as PublicSearchMode,
       type: type as PublicSearchType,
@@ -132,7 +149,8 @@ export function decodePublicSearchCursor(value: string): PublicSearchCursorRecor
       itemType: itemType as PublicSearchItemType,
       id: Number(id),
       changeMarker: String(changeMarker),
-    })
+    }
+    const record = Object.freeze(maker === null ? common : { ...common, maker })
     return encodePublicSearchCursor(record) === value ? record : null
   } catch {
     return null
@@ -142,7 +160,7 @@ export function decodePublicSearchCursor(value: string): PublicSearchCursorRecor
 export function parsePublicSearchQuery(
   query: Readonly<Record<string, readonly string[] | undefined>>,
 ): PublicSearchQueryResult {
-  const allowed = allowedPublicQuery(query, ['q', 'mode', 'type', 'limit', 'before'])
+  const allowed = allowedPublicQuery(query, ['q', 'mode', 'type', 'maker', 'limit', 'before'])
   if (!allowed.ok) return allowed
 
   const qValue = singlePublicQueryValue(query, 'q')
@@ -173,6 +191,16 @@ export function parsePublicSearchQuery(
     return { ok: false, error: 'type must be all, note, or thing' }
   }
 
+  const makerValue = singlePublicQueryValue(query, 'maker')
+  if (!makerValue.ok) return makerValue
+  const maker = makerValue.value
+  if (maker !== null && !HANDLE_RE.test(maker)) {
+    return { ok: false, error: 'maker must be one valid resident handle' }
+  }
+  if (maker !== null && type === 'note') {
+    return { ok: false, error: 'maker filters active things; type must be all or thing' }
+  }
+
   const limitValue = singlePublicQueryValue(query, 'limit')
   if (!limitValue.ok) return limitValue
   const limit = limitValue.value === null
@@ -187,7 +215,10 @@ export function parsePublicSearchQuery(
   const cursor = beforeValue.value === null ? null : decodePublicSearchCursor(beforeValue.value)
   if (
     beforeValue.value !== null &&
-    (cursor === null || cursor.q !== q || cursor.mode !== mode || cursor.type !== type)
+    (
+      cursor === null || cursor.q !== q || cursor.mode !== mode || cursor.type !== type
+      || (cursor.maker ?? null) !== maker
+    )
   ) {
     return { ok: false, error: 'before cursor does not belong to this search query' }
   }
@@ -197,6 +228,7 @@ export function parsePublicSearchQuery(
     q,
     mode,
     type,
+    maker,
     limit,
     fetchLimit: limit + 1,
     before: cursor === null ? null : Object.freeze({
@@ -204,6 +236,7 @@ export function parsePublicSearchQuery(
       itemType: cursor.itemType,
       id: cursor.id,
       changeMarker: cursor.changeMarker,
+      ...(cursor.maker == null ? {} : { maker: cursor.maker }),
     }),
   })
 }
@@ -245,6 +278,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       FROM notes note
       JOIN residents author ON author.id = note.author_id
       WHERE $2::text IN ('all', 'note')
+        AND $9::text IS NULL
         AND ${indexedMatchExpression(mode, 'note.body')}
         AND coalesce((
           SELECT moderation.action
@@ -273,6 +307,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       JOIN residents owner ON owner.id = thing.owner_id
       WHERE $2::text IN ('all', 'thing')
         AND thing.withdrawn_at IS NULL
+        AND ($9::text IS NULL OR maker.handle = $9::text)
         AND ${indexedMatchExpression(mode, "thing.name || ' ' || thing.body")}
         AND coalesce((
           SELECT moderation.action
@@ -400,6 +435,7 @@ export async function loadPublicSearchResults(
     query.before?.id ?? null,
     query.fetchLimit,
     query.mode === 'phrase' ? literalPhrasePattern(query.q) : query.q,
+    query.maker,
   ])
   if (rows.length === 0) throw new Error('public search totals are unavailable')
   const fetched = rows.flatMap(row => {
@@ -431,6 +467,7 @@ export async function loadPublicSearchResults(
       q: query.q,
       mode: query.mode,
       type: query.type,
+      ...(query.maker === null ? {} : { maker: query.maker }),
       createdAt: String(last.created_at),
       itemType: last.type as PublicSearchItemType,
       id: Number(last.id),

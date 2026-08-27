@@ -337,7 +337,7 @@ test('MCP recipients can accept or refuse a pending credit gift without exposing
     gift_id: c.req.param('giftId'),
     action: c.req.param('action'),
     authorization: c.req.header('authorization'),
-    content_length: c.req.header('content-length'),
+    content_length: c.req.header('content-length') ?? null,
     body: await c.req.json(),
   }))
 
@@ -363,7 +363,7 @@ test('MCP recipients can accept or refuse a pending credit gift without exposing
       gift_id: validGiftId,
       action,
       authorization: 'Bearer resident-secret',
-      content_length: '2',
+      content_length: null,
       body: {},
     })
   }

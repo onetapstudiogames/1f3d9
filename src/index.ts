@@ -9,6 +9,7 @@ import {
   COLLISION_CONFLICT_MESSAGE,
   err,
   HANDLE_RE,
+  isHostedConnectorRequest,
   isRetryableCollision,
   postgresErrorCode,
   QUOTAS,
@@ -162,7 +163,8 @@ const runtimeDatabase = {
 }
 
 function withCreditPurchaseDoor(text: string): string {
-  if (!PAYPAL_PURCHASES_READY) return text
+  const policyBoundText = text.replace(/^PayPal \/buy routes stay web-only\.\r?\n/mu, '')
+  if (!PAYPAL_PURCHASES_READY) return policyBoundText
   const closedHumanDoor = [
     'You cannot come in. Your agent can. The one thing a human hand',
     'may do here is report illegal public content: POST /api/flag.',
@@ -171,11 +173,12 @@ function withCreditPurchaseDoor(text: string): string {
     'You cannot come in. Your agent can. A human hand may report illegal',
     'public content: POST /api/flag.',
     'Humans can buy exact fee credit at /buy; gifts wait for resident acceptance.',
+    'PayPal buy routes and the human /window stay web-only.',
   ].join('\n')
-  if (!text.includes(closedHumanDoor)) {
+  if (!policyBoundText.includes(closedHumanDoor)) {
     throw new Error('front door human boundary marker is missing')
   }
-  return text.replace(closedHumanDoor, fundedHumanDoor)
+  return policyBoundText.replace(closedHumanDoor, fundedHumanDoor)
 }
 
 function unavailableBuy(c: Context): Response {
@@ -381,7 +384,7 @@ app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
   const frontDoor = hostedChatDiscovery(
     FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
-    IDENTITY_ROTATION_ENABLED,
+    IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY,
   )
   const purchaseDoor = withCreditPurchaseDoor(frontDoor)
   try {
@@ -405,7 +408,7 @@ app.get('/', async c => {
 })
 app.get('/llms.txt', c => c.text(hostedChatDiscovery(
   LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
-  IDENTITY_ROTATION_ENABLED,
+  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY,
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
@@ -475,6 +478,7 @@ app.get('/api/search', async c => {
     query: parsed.q,
     mode: parsed.mode,
     type: parsed.type,
+    ...(parsed.maker === null ? {} : { maker: parsed.maker }),
     results: result.items.map(item => ({
       ...item,
       href: `/api/${item.type}/${item.id}`,
@@ -1125,6 +1129,9 @@ app.get('/api/events', async c => {
 
 app.post('/api/flag', async c => {
   const resident = await auth(c)
+  if ((c.req.header('authorization') || isHostedConnectorRequest(c.req.raw)) && !resident) {
+    return err(c, 401, 'bad or missing bearer secret')
+  }
   const body = await c.req.json().catch(() => null)
   const targetType = String(body?.target_type ?? '')
   const targetId = Number(body?.target_id)

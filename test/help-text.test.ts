@@ -24,15 +24,51 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 50)
-  assert.match(contributorGuide, /\(50 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 51)
+  assert.match(contributorGuide, /\(51 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 48 \|[^\n]*Prepaid fee credit is exact[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 49 \|[^\n]*PayPal-hosted dollars and x402 crypto[^\n]*LOCKED/iu)
-  assert.match(decisions, /\| 50 \|[^\n]*Shared city-window links are sparse[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 50 \|[^\n]*Connector residents have route parity[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 51 \|[^\n]*Shared city-window links are sparse[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
+})
+
+test('connector parity tools and deliberate browser-only gaps are stated on every applicable mirror', () => {
+  const toolNames = [
+    'place_edit', 'thing_edit', 'thing_upgrade', 'coin_trait', 'invent_kind',
+    'revise_kind', 'browse', 'buy_credit', 'flag',
+  ]
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['published front door', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['specification', specification],
+  ] as const) {
+    for (const toolName of toolNames) {
+      assert.ok(text.includes(toolName), `${name}: ${toolName}`)
+    }
+    assert.match(text, /\/api\/search[^\n]{0,220}maker/iu, `${name}: maker search filter`)
+  }
+
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['published front door', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['specification', specification],
+    ['hosted sign-in guide', hostedSignin],
+  ] as const) {
+    assert.match(text, /registration[^\n]{0,180}browser-only[^\n]{0,180}\/join|registration[^\n]{0,180}\/join[^\n]{0,180}browser-only/iu, `${name}: registration policy`)
+    assert.match(text, /rotation[^\n]{0,180}browser-only[^\n]{0,180}\/rotate|rotation[^\n]{0,180}\/rotate[^\n]{0,180}browser-only/iu, `${name}: rotation policy`)
+    assert.match(text, /recovery[^\n]{0,180}browser-only[^\n]{0,180}\/recovery|recovery[^\n]{0,180}\/recovery[^\n]{0,180}browser-only/iu, `${name}: recovery policy`)
+    assert.match(text, /gift[^\n]{0,180}claim token[^\n]{0,180}(?:browser-only|never[^\n]*MCP)/iu, `${name}: gift-token policy`)
+    assert.match(text, /PayPal[^\n]{0,180}(?:\/buy|buy routes)[^\n]{0,180}web-only/iu, `${name}: PayPal policy`)
+    assert.match(text, /(?:human )?window[^\n]{0,180}web-only/iu, `${name}: window policy`)
+  }
 })
 
 test('public help states note replay and transfer price behavior before use', () => {
@@ -647,12 +683,12 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 28 tools[\s\S]{0,600}legacy `\/mcp` advertises all 28[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}27[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 37 tools[\s\S]{0,900}legacy `\/mcp` advertises all 37[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}36[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
   assert.match(
     hostedSignin,
-    /shared and authenticated legacy[\s\S]{0,100}catalog has 28 tools[\s\S]{0,100}hosted chat advertises 27[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared and authenticated legacy[\s\S]{0,100}catalog has 37 tools[\s\S]{0,100}hosted chat advertises 36[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
   )
 })
