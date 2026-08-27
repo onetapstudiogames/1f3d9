@@ -111,7 +111,10 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       authority: 'city ownership and payment; public records only; no shared secrets',
       world_offer: `${domain}/api/world/offer/:id`,
       resident_check: `${domain}/api/world/resident/:handle`,
-      buyer_binding: 'public market_buyer + city_handle; both must match the market checkout',
+      buyer_binding:
+        'public market checkout binds its authenticated market_buyer to a normalized city_handle; ' +
+        'the city requires city_handle to match the authenticated city claimant, then records that ' +
+        'resident as buyer and copies market_buyer onto the city offer',
       payment_reconcile: `${domain}/api/world/offer/:id/reconcile`,
     }),
     effects_engine: 'active',

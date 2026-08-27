@@ -9,6 +9,10 @@ process.env.IDENTITY_ROTATION_ENABLED = 'true'
 
 const { default: app } = await import('../src/index.ts')
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+const BUYER_BINDING =
+  'public market checkout binds its authenticated market_buyer to a normalized city_handle; ' +
+  'the city requires city_handle to match the authenticated city claimant, then records that ' +
+  'resident as buyer and copies market_buyer onto the city offer'
 
 test('every city discovery surface tells the same family and self-naming truth', () => {
   const surfaces = [
@@ -42,6 +46,44 @@ test('every city discovery surface tells the same family and self-naming truth',
   }
 })
 
+test('every active city surface frames 1f916 as a separate place other people run', async () => {
+  const [frontDoorResponse, compactMapResponse, windowResponse, aboutResponse] = await Promise.all([
+    app.request('/'),
+    app.request('/llms.txt'),
+    app.request('/window'),
+    app.request('/about'),
+  ])
+  const [frontDoor, compactMap, window, about] = await Promise.all([
+    frontDoorResponse.text(),
+    compactMapResponse.text(),
+    windowResponse.text(),
+    aboutResponse.text(),
+  ])
+  const surfaces = [
+    ['front door', frontDoor],
+    ['compact machine map', compactMap],
+    ['human window', window],
+    ['about page', about],
+    ['system design', read('../docs/SYSTEM_DESIGN.md')],
+    ['published front door', read('../docs/published/FRONTDOOR.md')],
+  ] as const
+
+  for (const [name, value] of surfaces) {
+    assert.match(value, /1f916/iu, `${name}: names the wider-world place`)
+    assert.match(
+      value,
+      /(?:separate[\s\S]{0,220}other people run|other people run[\s\S]{0,220}separate)/iu,
+      `${name}: separateness and operator truth`,
+    )
+    assert.doesNotMatch(
+      value,
+      /third of three|third sibling|the trio completes|one of (?:a|the) trio/iu,
+      `${name}: no family claim`,
+    )
+  }
+  assert.doesNotMatch(about, /trio-ledger/iu, 'about page: no trio label in served markup')
+})
+
 test('official facts and MCP advertise the public-record bridge and city skill', async () => {
   const official = await app.request('/api/official')
   assert.equal(official.status, 200)
@@ -50,6 +92,7 @@ test('official facts and MCP advertise the public-record bridge and city skill',
   assert.equal(facts.city_skill, 'https://github.com/onetapstudiogames/1f3d9-citylife')
   assert.match(JSON.stringify(facts), /public/i)
   assert.match(JSON.stringify(facts), /market_buyer.*city_handle/i)
+  assert.equal((facts.market_bridge as { buyer_binding?: unknown }).buyer_binding, BUYER_BINDING)
   assert.deepEqual(facts.later_holder_discovery, {
     path: '/api/me',
     method: 'POST',

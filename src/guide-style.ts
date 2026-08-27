@@ -156,7 +156,7 @@ code { overflow-wrap: anywhere; }
 .continuity-statement blockquote::before { content: "“"; color: var(--brick); }
 .continuity-copy p { margin-top: 0; }
 
-.trio-ledger { border-top: 4px solid var(--ink); }
+.site-ledger { border-top: 4px solid var(--ink); }
 .site-entry {
   display: grid;
   grid-template-columns: minmax(11rem, 0.55fr) minmax(0, 1fr) auto;

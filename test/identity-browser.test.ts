@@ -499,6 +499,18 @@ test('identity doors set one base cookie and show the form immediately', async (
   }
 })
 
+test('every credential-handling page carries the operator contact and safety links', async () => {
+  for (const path of ['/join', '/rotate', '/recovery'] as const) {
+    const { app } = appWithMemoryStore()
+    const { html } = await pageState(app, path)
+
+    assert.match(html, /<footer class="identity-footer">/u, path)
+    assert.match(html, /href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/u, path)
+    assert.match(html, /href="\/terms">Terms<\/a>/u, path)
+    assert.match(html, /href="\/about">About<\/a>/u, path)
+  }
+})
+
 test('identity POST distinguishes a missing cookie from a present cookie that does not match the form', async () => {
   const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
