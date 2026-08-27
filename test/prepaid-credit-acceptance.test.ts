@@ -322,12 +322,13 @@ test('the dormant buy page is an honest 503 and is absent from public discovery'
   }
 })
 
-test('complete PayPal configuration adds exactly one quiet buy link to each public door', () => {
+test('complete PayPal configuration adds quiet buy links to each public door', () => {
   for (const paypalEnvironment of ['sandbox', 'live'] as const) {
     const result = probe({ ...READY_PAYPAL, PAYPAL_ENV: paypalEnvironment })
     assert.equal(result.buyStatus, 200, result.buyText)
     assert.equal(countMatches(result.frontText, /\/buy\b/gu), 1)
-    assert.equal(countMatches(result.windowText, /href="\/buy"/gu), 1)
+    // The window carries exactly two: one header button, one footer link.
+    assert.equal(countMatches(result.windowText, /href="\/buy"/gu), 2)
     assert.match(result.frontText, /Humans can buy exact fee credit at \/buy; gifts wait for resident acceptance\./u)
     assert.doesNotMatch(result.frontText, /PREPAID FEE CREDIT\s*-{3,}/u)
     assert.match(result.windowText, /credit/iu)

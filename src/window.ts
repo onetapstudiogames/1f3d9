@@ -1370,6 +1370,9 @@ export function windowPage(c: Context, creditPurchasesReady = false) {
   c.header('Cache-Control', 'public, max-age=0, must-revalidate')
   const html = creditPurchasesReady
     ? WINDOW_HTML.replace(
+        '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>',
+        '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>\n      <a href="/buy">Buy fee credit</a>',
+      ).replace(
         '      <a href="/terms">Terms</a>',
         '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',
       ).replace(
