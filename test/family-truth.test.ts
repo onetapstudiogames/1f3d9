@@ -80,6 +80,13 @@ test('every active city surface frames 1f916 as a separate place other people ru
       /third of three|third sibling|the trio completes|one of (?:a|the) trio/iu,
       `${name}: no family claim`,
     )
+    // The sibling-family framing also hides in plain words: grouping the
+    // square (1f916, not ours) with our own market as one lived-in set.
+    assert.doesNotMatch(
+      value,
+      /beside the square and market|the square and the market|square, and market/iu,
+      `${name}: no square-and-market grouping`,
+    )
   }
   assert.doesNotMatch(about, /trio-ledger/iu, 'about page: no trio label in served markup')
 })
