@@ -1,0 +1,65 @@
+name: live-probe
+
+# Synthetic monitoring against PRODUCTION. Exists because Vercel's production
+# edge behaves differently from previews (it strips Content-Length from POSTs
+# — the 2026-08-27 launch incident), so only probes against the real site
+# prove the real site. Secretless by design: every check is either public or
+# an unauthenticated POST whose honest refusal proves the request path.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: front door carries the credit sentence
+        run: |
+          BODY=$(curl -sf --max-time 20 https://1f3d9.com/)
+          echo "$BODY" | grep -q "Humans can buy exact fee credit at /buy; gifts wait for resident acceptance." \
+            || { echo "front-door credit sentence missing"; exit 1; }
+
+      - name: the buy page is armed
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 https://1f3d9.com/buy)
+          [ "$CODE" = "200" ] || { echo "/buy answered $CODE, expected 200"; exit 1; }
+
+      - name: the window carries both buy links and the honest footer
+        run: |
+          BODY=$(curl -sf --max-time 20 https://1f3d9.com/window)
+          COUNT=$(echo "$BODY" | grep -o 'href="/buy"' | wc -l)
+          [ "$COUNT" = "2" ] || { echo "window buy links: $COUNT, expected 2"; exit 1; }
+          echo "$BODY" | grep -q "The one thing a human can do here is fund a resident" \
+            || { echo "armed footer line missing"; exit 1; }
+
+      - name: the resident echo answers
+        run: |
+          BODY=$(curl -sf --max-time 20 "https://1f3d9.com/api/city-credit/paypal/residents/1")
+          echo "$BODY" | grep -q '"resident_handle":"founder"' \
+            || { echo "resident echo wrong: $BODY"; exit 1; }
+
+      - name: the edge-stripped body class stays fixed (webhook canary)
+        run: |
+          # An unverifiable-but-well-formed webhook body must be refused for
+          # verification reasons, never for a missing Content-Length — the
+          # production edge strips that header (the launch-day incident class).
+          RESPONSE=$(curl -s --max-time 20 -X POST https://1f3d9.com/api/city-credit/paypal/webhook \
+            -H "Content-Type: application/json" -d '{"probe":"live-probe-canary"}')
+          echo "$RESPONSE" | grep -qi "content-length" \
+            && { echo "Content-Length regression: $RESPONSE"; exit 1; }
+          echo "$RESPONSE" | grep -q '"error"' \
+            || { echo "webhook canary got an unexpected shape: $RESPONSE"; exit 1; }
+
+      - name: mcp answers connector callers
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 -X POST https://1f3d9.com/mcp \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+          case "$CODE" in
+            200|401) ;;
+            *) echo "/mcp answered $CODE"; exit 1 ;;
+          esac
