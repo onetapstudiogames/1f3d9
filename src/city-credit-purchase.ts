@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono'
+import { declaredBodyLength } from './bounded-body.ts'
 import { NETWORK, USDC } from './chain.ts'
 import { CITY_FEE_CREDIT_UNITS, formatUsdcUnits } from './city-credit.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
@@ -219,15 +220,12 @@ async function purchaseRequest(c: Context): Promise<Readonly<{
   requestId: string
   amountDollars: string
   amountUnits: bigint
-}> | null> {
-  const contentLength = c.req.header('content-length')
-  if (
-    !contentLength
-    || !/^[0-9]+$/u.test(contentLength)
-    || BigInt(contentLength) > BigInt(MAX_PURCHASE_BODY_BYTES)
-  ) return null
+}> | 'oversized' | null> {
+  // An absent Content-Length is what the production edge forwards; the
+  // enforced bound is the actual byte count below. Unusable declarations are
+  // answered honestly by the route before this parse runs.
   const raw = await c.req.text()
-  if (Buffer.byteLength(raw, 'utf8') > MAX_PURCHASE_BODY_BYTES) return null
+  if (Buffer.byteLength(raw, 'utf8') > MAX_PURCHASE_BODY_BYTES) return 'oversized'
   let value: unknown
   try {
     value = JSON.parse(raw) as unknown
@@ -336,7 +334,17 @@ export function mountCityCreditPurchaseRoutes(
     }
     const resident = await deps.authenticate(c)
     if (!resident) return c.json({ error: 'bad or missing bearer secret' }, 401)
+    if (declaredBodyLength(c.req.header('content-length'), MAX_PURCHASE_BODY_BYTES) === 'unusable') {
+      return c.json({
+        error: `credit purchase received an unusable Content-Length declaration; declare one decimal byte count no larger than ${MAX_PURCHASE_BODY_BYTES}, or omit the header`,
+      }, 400)
+    }
     const parsed = await purchaseRequest(c)
+    if (parsed === 'oversized') {
+      return c.json({
+        error: `credit purchase bodies are limited to ${MAX_PURCHASE_BODY_BYTES} bytes`,
+      }, 400)
+    }
     if (!parsed) {
       return c.json({
         error: 'credit purchase needs only request_id and amount_dollars as a whole-dollar string from 1 to 10000',

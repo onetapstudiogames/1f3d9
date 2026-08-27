@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { declaredBodyLength } from './bounded-body.ts'
 import { HANDLE_RE } from './core.ts'
 import { takePayPalCreditRateLimit } from './paypal-credit-store.ts'
 import {
@@ -67,28 +68,56 @@ async function requireGiftRedirectRateSlot(
   }, 429)
 }
 
-async function boundedBody(c: Context): Promise<string | null> {
-  const contentLength = c.req.header('content-length')
-  if (
-    !contentLength
-    || !/^\d+$/u.test(contentLength)
-    || Number(contentLength) > MAX_ACTION_BODY_BYTES
-  ) return null
+type BoundedBodyResult =
+  | Readonly<{ state: 'ok'; raw: string }>
+  | Readonly<{ state: 'unusable_declaration' }>
+  | Readonly<{ state: 'oversized' }>
+
+async function boundedBody(c: Context): Promise<BoundedBodyResult> {
+  // An absent Content-Length is what the production edge forwards; the
+  // enforced bound is the actual byte count below.
+  if (declaredBodyLength(c.req.header('content-length'), MAX_ACTION_BODY_BYTES) === 'unusable') {
+    return { state: 'unusable_declaration' }
+  }
   const raw = await c.req.text()
-  return Buffer.byteLength(raw, 'utf8') <= MAX_ACTION_BODY_BYTES ? raw : null
+  return Buffer.byteLength(raw, 'utf8') <= MAX_ACTION_BODY_BYTES
+    ? { state: 'ok', raw }
+    : { state: 'oversized' }
 }
 
-async function hasEmptyActionBody(c: Context): Promise<boolean> {
-  if (c.req.raw.body == null) return true
-  const raw = await boundedBody(c)
-  if (raw == null || raw.trim() === '') return raw != null
-  try {
-    const value: unknown = JSON.parse(raw)
-    return Boolean(value && typeof value === 'object' && !Array.isArray(value)
-      && Object.keys(value).length === 0)
-  } catch {
-    return false
+// The two body-bound refusals name their real causes; every other refusal on
+// these routes speaks about fields, so a size or header problem must never
+// borrow a field message.
+function bodyBoundFailure(
+  c: Context,
+  state: 'unusable_declaration' | 'oversized',
+): Response {
+  if (state === 'unusable_declaration') {
+    return c.json({
+      error: `this gift request declared an unusable Content-Length; declare one decimal byte count no larger than ${MAX_ACTION_BODY_BYTES}, or omit the header`,
+    }, 400)
   }
+  return c.json({
+    error: `gift request bodies are limited to ${MAX_ACTION_BODY_BYTES} bytes`,
+  }, 400)
+}
+
+async function emptyActionBodyFailure(
+  c: Context,
+  action: 'accept' | 'refuse',
+): Promise<Response | null> {
+  if (c.req.raw.body == null) return null
+  const body = await boundedBody(c)
+  if (body.state !== 'ok') return bodyBoundFailure(c, body.state)
+  if (body.raw.trim() === '') return null
+  try {
+    const value: unknown = JSON.parse(body.raw)
+    if (value && typeof value === 'object' && !Array.isArray(value)
+      && Object.keys(value).length === 0) return null
+  } catch {
+    // fall through to the honest field answer below
+  }
+  return c.json({ error: `gift ${action} accepts an empty body only` }, 400)
 }
 
 function positiveResidentNumber(value: unknown): number | null {
@@ -103,14 +132,12 @@ function positiveResidentNumber(value: unknown): number | null {
     : null
 }
 
-async function redirectInput(c: Context): Promise<Readonly<{
+function redirectInput(raw: string): Readonly<{
   claimToken: string
   recipientNumber: number
   recipientHandle: string
   requestId: string
-}> | null> {
-  const raw = await boundedBody(c)
-  if (raw == null) return null
+}> | null {
   let value: unknown
   try {
     value = JSON.parse(raw) as unknown
@@ -199,9 +226,8 @@ export function mountPrepaidCreditGiftRoutes(
       if (!resident) return c.json({ error: 'bad or missing bearer secret' }, 401)
       const giftId = safeGiftId(c.req.param('giftId'))
       if (!giftId) return c.json({ error: 'gift id is invalid' }, 400)
-      if (!await hasEmptyActionBody(c)) {
-        return c.json({ error: `gift ${action} accepts an empty body only` }, 400)
-      }
+      const bodyFailure = await emptyActionBodyFailure(c, action)
+      if (bodyFailure) return bodyFailure
       try {
         return c.json(await (action === 'accept' ? acceptCreditGift : refuseCreditGift)(
           deps.database,
@@ -220,7 +246,9 @@ export function mountPrepaidCreditGiftRoutes(
     if (!giftId) return c.json({ error: 'gift id is invalid' }, 400)
     const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
     if (rateLimitResponse) return rateLimitResponse
-    const input = await redirectInput(c)
+    const body = await boundedBody(c)
+    if (body.state !== 'ok') return bodyBoundFailure(c, body.state)
+    const input = redirectInput(body.raw)
     if (!input) {
       return c.json({
         error: 'gift redirect needs only claim_token, recipient_number, recipient_handle, and request_id',

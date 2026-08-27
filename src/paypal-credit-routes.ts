@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { declaredBodyLength } from './bounded-body.ts'
 import { CITY_FEE_CREDIT_UNITS, parseCityCreditRequestId } from './city-credit.ts'
 import { deliverPayPalCredit } from './paypal-credit-delivery.ts'
 import {
@@ -116,23 +117,25 @@ function queryless(c: Context): void {
   }
 }
 
-function declaredBodyFits(c: Context, maximumBytes: number): boolean {
-  const contentLength = c.req.header('content-length')
-  return contentLength !== undefined
-    && /^\d+$/u.test(contentLength)
-    && BigInt(contentLength) <= BigInt(maximumBytes)
+function assertDeclaredBodyFits(c: Context, maximumBytes: number): void {
+  if (declaredBodyLength(c.req.header('content-length'), maximumBytes) === 'unusable') {
+    throw new RouteFailure(400,
+      `The PayPal request declared an unusable Content-Length. Declare one decimal byte count no larger than ${maximumBytes} bytes, or omit the header.`)
+  }
 }
 
 async function readBoundedBody(c: Context, maximumBytes: number): Promise<Buffer> {
-  if (!declaredBodyFits(c, maximumBytes)) {
-    throw new RouteFailure(400,
-      `The PayPal request must declare a decimal Content-Length no larger than ${maximumBytes} bytes.`)
-  }
-  // Vercel's Node bridge can stall when a handler drives the raw stream reader.
-  // The framework read is content-length-gated and the actual bytes are checked again.
+  assertDeclaredBodyFits(c, maximumBytes)
+  // Vercel's Node bridge can stall when a handler drives the raw stream reader,
+  // so the framework read is used and the actual bytes are checked afterward.
   const body = Buffer.from(await c.req.arrayBuffer())
-  if (body.byteLength === 0 || body.byteLength > maximumBytes) {
-    throw new RouteFailure(400, 'The PayPal request body is invalid. No payment was started.')
+  if (body.byteLength === 0) {
+    throw new RouteFailure(400,
+      'The PayPal request body is empty. Send one JSON body. No payment was started.')
+  }
+  if (body.byteLength > maximumBytes) {
+    throw new RouteFailure(400,
+      `The PayPal request body is larger than ${maximumBytes} bytes. No payment was started.`)
   }
   return body
 }
@@ -719,10 +722,8 @@ async function handleWebhook(
   ready: ReadyPayPal,
 ): Promise<Response> {
   queryless(c)
-  if (!declaredBodyFits(c, MAX_WEBHOOK_BODY_BYTES)) {
-    throw new RouteFailure(400,
-      `The PayPal request must declare a decimal Content-Length no larger than ${MAX_WEBHOOK_BODY_BYTES} bytes.`)
-  }
+  // Refuse an oversized declaration before spending a rate slot on it.
+  assertDeclaredBodyFits(c, MAX_WEBHOOK_BODY_BYTES)
   await requireRateSlot(c, dependencies, null, 'webhook')
   const rawBody = await readBoundedBody(c, MAX_WEBHOOK_BODY_BYTES)
   const outcome = await applyVerifiedPayPalWebhook(rawBody, c.req.raw.headers, {
