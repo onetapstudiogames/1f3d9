@@ -11,6 +11,8 @@ const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 const frontdoor = read('../src/frontdoor.txt')
 const llms = read('../src/llms.txt')
 const specification = read('../docs/SYSTEM_DESIGN.md')
+const drawingDesign = read('../docs/DRAWING_AND_LIVE_VIEW.md')
+const publicSnapshots = read('../docs/PUBLIC_SNAPSHOTS.md')
 const productRequirements = read('../docs/PRD.md')
 const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
@@ -793,14 +795,51 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 37 tools[\s\S]{0,900}legacy `\/mcp` advertises all 37[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}36[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 38 tools[\s\S]{0,900}legacy `\/mcp` advertises all 38[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}37[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
   assert.match(
     hostedSignin,
-    /shared and authenticated legacy[\s\S]{0,100}catalog has 37 tools[\s\S]{0,100}hosted chat advertises 36[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared and authenticated legacy[\s\S]{0,100}catalog has 38 tools[\s\S]{0,100}hosted chat advertises 37[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
   )
+})
+
+test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+    ['drawing design', drawingDesign],
+  ] as const) {
+    assert.match(text, /palette[\s\S]{0,180}(?:0\.\.64|0 (?:through|to) 64)[\s\S]{0,180}lowercase `?#rrggbb`?/iu, `${name}: palette shape`)
+    assert.match(text, /indices[\s\S]{0,180}exactly 64[\s\S]{0,180}(?:null|empty)[\s\S]{0,180}(?:in-range|existing palette)/iu, `${name}: index shape`)
+    assert.match(text, /2,?048 UTF-8 bytes/iu, `${name}: canonical drawing bytes`)
+    assert.match(text, /\/api\/me\/drawing/iu, `${name}: resident drawing route`)
+    assert.match(text, /\/api\/drawing\/:type\/:id/iu, `${name}: dedicated drawing read`)
+    assert.match(text, /\bdraw_self\b/iu, `${name}: resident MCP tool`)
+    assert.match(text, /\bresident_edited\b/iu, `${name}: resident drawing event`)
+    assert.match(text, /six changed[\s\S]{0,180}UTC minute/iu, `${name}: resident drawing rate`)
+    assert.match(text, /from_place_id[\s\S]{0,160}to_place_id|to_place_id[\s\S]{0,160}from_place_id/iu, `${name}: movement endpoints`)
+    assert.match(text, /\bsource_thing_id\b/iu, `${name}: used thing reference`)
+    assert.match(text, /\bsource_thing_id\b[\s\S]{0,120}\bplace_id\b/iu, `${name}: committed use place`)
+    assert.match(text, /give[\s\S]{0,180}\btransfer\b[\s\S]{0,220}consume[\s\S]{0,180}\bthing_withdrawn\b/iu, `${name}: typed give and consume events`)
+  }
+
+  for (const [name, text] of [
+    ['specification', specification],
+    ['drawing design', drawingDesign],
+  ] as const) {
+    assert.match(text, /cartographic plate/iu, `${name}: plate direction`)
+    assert.match(text, /25 seconds[\s\S]{0,180}60[\s\S]{0,80}120[\s\S]{0,80}240[\s\S]{0,80}300 seconds/iu, `${name}: activity-following cadence`)
+    assert.match(text, /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u, `${name}: beta sentence`)
+    assert.match(text, /prefers-reduced-motion[\s\S]{0,220}forced-colors|forced-colors[\s\S]{0,220}prefers-reduced-motion/iu, `${name}: accessibility modes`)
+    assert.match(text, /no new dependenc/iu, `${name}: dependency boundary`)
+  }
+
+  assert.match(publicSnapshots, /residents[\s\S]{0,200}drawing/iu)
+  assert.match(publicSnapshots, /things[\s\S]{0,260}drawing_source[\s\S]{0,180}kind_revision/iu)
+  assert.match(publicSnapshots, /ordinary[\s\S]{0,160}(?:map|room|window|census)[\s\S]{0,180}(?:omit|do not include|never include)[\s\S]{0,100}drawing/iu)
 })
 
 test('Wave 9 complete names and bounded window truths stay aligned', () => {

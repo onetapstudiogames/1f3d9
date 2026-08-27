@@ -1330,8 +1330,8 @@ const SAFE_REQUEST_KEYS: Readonly<Record<PaymentAttemptRecord['operation'], read
   frontier: [
     'parent_id', 'name', 'description', 'open_to_building', 'open_to_things', 'open_to_notes',
   ],
-  kind_invention: ['name', 'description', 'traits', 'recipe'],
-  kind_revision: ['kind_id', 'description', 'traits', 'recipe'],
+  kind_invention: ['name', 'description', 'traits', 'recipe', 'drawing'],
+  kind_revision: ['kind_id', 'description', 'traits', 'recipe', 'drawing'],
   credit_purchase: ['request_id', 'amount_dollars'],
   direct_sale: [
     'offer_id', 'buyer_wallet', 'seller_wallet', 'price_usdc', 'asset_type', 'asset_id',

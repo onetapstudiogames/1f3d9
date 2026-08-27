@@ -76,6 +76,7 @@ export interface PlaceRow {
   parent_id: number | null
   name: string
   description: string
+  drawing?: unknown
   purpose: string
   front_matter_thing_ids?: readonly number[]
   front_matter?: readonly object[]
@@ -102,6 +103,7 @@ export interface KindRow {
   owner: string
   revision: number
   description: string
+  drawing?: unknown
   traits: string[]
   recipe: unknown
   created_at: string
@@ -112,6 +114,7 @@ export interface ThingRow {
   place_id: number
   name: string
   body: string
+  drawing?: unknown
   maker_id: number
   made_by: string
   current_owner_id: number

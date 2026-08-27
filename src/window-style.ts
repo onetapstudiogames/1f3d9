@@ -115,6 +115,18 @@ button { color: inherit; }
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+.watch-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.watch-badges strong { margin: 0; }
+.beta-chip {
+  width: fit-content;
+  padding: 0.3rem 0.55rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--ink);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+.beta-note { display: block; font-size: 0.67rem; line-height: 1.45; }
 .watch-state [data-tone="live"]::before { content: "● "; color: var(--forest); }
 .watch-state [data-tone="stale"]::before,
 .watch-state [data-tone="working"]::before { content: "● "; color: var(--brick); }
@@ -464,6 +476,296 @@ button { color: inherit; }
   max-width: 42rem;
   margin: 0.9rem 0 0;
   line-height: 1.5;
+}
+
+.live-heading { background: #183a30; }
+.live-instrument-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  padding: 0.7rem clamp(0.8rem, 2.5vw, 1.25rem);
+  color: var(--paper-light);
+  background: var(--night-soft);
+  border-bottom: 3px solid var(--line);
+  font: 750 0.68rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.live-breadcrumb {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0.15rem 0.25rem;
+  color: var(--sky);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.live-breadcrumb[aria-current="location"] { color: var(--signal); text-decoration: none; }
+.live-breadcrumb-separator { color: var(--paper-line); }
+.live-clock { margin: 0; color: var(--paper-light); }
+.live-history-status {
+  min-height: 2.5rem;
+  margin: 0;
+  padding: 0.62rem clamp(0.8rem, 2.5vw, 1.25rem);
+  color: var(--ink);
+  background: var(--sky);
+  border-bottom: 3px solid var(--line);
+  font: 750 0.66rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-history-retry {
+  min-height: 24px;
+  padding: 0;
+  color: var(--brick-deep);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.live-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
+.live-stage { min-width: 0; background: var(--night-soft); }
+.live-plates { min-height: 28rem; padding: clamp(1rem, 3vw, 2rem); }
+.live-plate {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--paper);
+  border: 4px solid var(--line);
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.36);
+}
+.live-plate-caption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.8fr);
+  gap: 0.25rem 1rem;
+  padding: 0.75rem 0.9rem;
+  color: var(--paper-light);
+  background: var(--forest-deep);
+  border-bottom: 3px solid var(--line);
+}
+.live-plate-caption .block-number { grid-column: 1 / -1; margin: 0; }
+.live-plate-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font: 900 clamp(1.4rem, 3vw, 2.2rem)/0.95 "Arial Narrow", "Aptos Narrow", system-ui, sans-serif;
+  text-transform: uppercase;
+}
+.live-plate-legend {
+  align-self: end;
+  margin: 0;
+  color: var(--sky);
+  font: 0.62rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-plate-ground { position: relative; isolation: isolate; padding: clamp(0.75rem, 2vw, 1.25rem); }
+.live-terrain {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  overflow: hidden;
+  border: 2px solid var(--line);
+  background: var(--paper-light);
+}
+.drawing-grid {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  image-rendering: pixelated;
+  border-radius: 0;
+}
+.drawing-undrawn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  background: repeating-linear-gradient(-45deg,
+    transparent 0 7px, rgba(157, 146, 118, 0.55) 7px 8px);
+  border: 1px dashed var(--paper-line);
+}
+.drawing-undrawn-label {
+  max-width: 100%;
+  padding: 0.12rem;
+  overflow: hidden;
+  color: var(--muted);
+  background: rgba(255, 249, 232, 0.88);
+  font: 800 0.45rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+}
+.drawing-loading { opacity: 0.72; }
+.drawing-unavailable { border-style: solid; }
+.drawing-authored rect { vector-effect: non-scaling-stroke; }
+.live-terrain .drawing-undrawn-label { display: none; }
+.live-terrain > .drawing-grid:first-child .drawing-undrawn-label { display: block; }
+.live-plate-ground > .live-portrait-grid { margin-top: 0.75rem; }
+.live-islands {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(var(--live-columns, 1), minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+.live-island {
+  min-width: 0;
+  padding: 0.6rem;
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.16);
+}
+.live-island-open {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.55rem 0 0;
+  color: var(--forest-deep);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: start;
+}
+.live-island-open::after { content: "→"; margin-inline-start: auto; color: var(--brick); }
+.live-island-terrain { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.live-island-name {
+  overflow-wrap: anywhere;
+  font-family: "Arial Narrow", "Aptos Narrow", system-ui, sans-serif;
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.live-island-owner { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.65rem; }
+.live-portrait-grid { display: flex; flex-wrap: wrap; gap: 0.38rem; align-items: start; }
+.live-island > .live-portrait-grid { margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px dashed var(--paper-line); }
+.live-portrait {
+  display: grid;
+  width: 3.1rem;
+  min-height: 24px;
+  padding: 0.2rem;
+  color: var(--ink);
+  background: #fffef8;
+  border: 2px solid var(--line);
+  cursor: pointer;
+}
+.live-portrait.asleep { opacity: 0.48; }
+.live-portrait-name {
+  overflow: hidden;
+  font: 750 0.48rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-overflow: ellipsis;
+}
+.live-portrait-more {
+  align-self: center;
+  padding: 0.28rem 0.4rem;
+  color: var(--paper-light);
+  background: var(--forest);
+  border: 2px solid var(--line);
+  font: 800 0.55rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-room-empty {
+  margin: 0;
+  padding: 0.75rem;
+  color: var(--muted);
+  border: 1px dashed var(--paper-line);
+  font: 750 0.65rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-thing-shelf {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 2px solid var(--paper-line);
+}
+.live-thing-specimen {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 6rem);
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.3rem;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+.live-thing-name { overflow-wrap: anywhere; }
+.live-trace-layer { position: absolute; z-index: 2; inset: 0; pointer-events: none; }
+.live-traces { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.live-trail {
+  stroke: var(--brick);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.live-trace-arrowhead { fill: var(--brick); }
+.live-footnote-mark, .live-action-mark {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0.12rem;
+  transform: translate(-50%, -50%);
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  border-radius: 0;
+  pointer-events: auto;
+  font: 900 0.62rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-footnote-mark { cursor: pointer; }
+.live-action-mark { color: #fff; background: var(--brick); }
+[data-live-key][data-highlighted="true"] { outline: 4px solid var(--signal); outline-offset: 2px; }
+.live-trail[data-highlighted="true"] { stroke: var(--signal); stroke-width: 2; }
+.live-pulse { animation: live-print-pulse 600ms steps(2, end) 1; }
+.live-ledger-panel {
+  padding: 1rem clamp(0.8rem, 2.5vw, 1.25rem) 1.25rem;
+  color: var(--paper-light);
+  background: var(--forest-deep);
+  border-top: 4px solid var(--line);
+}
+.live-ledger-panel h3 {
+  margin: 0.35rem 0 0.75rem;
+  font-family: "Arial Narrow", "Aptos Narrow", system-ui, sans-serif;
+  font-size: 1.45rem;
+  text-transform: uppercase;
+}
+.live-ledger { display: grid; gap: 0; padding: 0; margin: 0; list-style: none; }
+.live-ledger-row {
+  display: grid;
+  grid-template-columns: 2.3rem minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: baseline;
+  min-height: 44px;
+  padding: 0.65rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: default;
+}
+.live-ledger-number { color: var(--signal); font: 900 0.68rem ui-monospace, monospace; }
+.live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; font-size: 0.72rem; line-height: 1.5; }
+.live-ledger-time { color: var(--sky); font: 0.58rem ui-monospace, monospace; white-space: nowrap; }
+.live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
+.live-roster-list .resident-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); justify-content: normal; align-items: center; }
+.live-roster-list .resident-number { grid-column: 2; }
+
+@keyframes live-print-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--brick); }
+  50% { box-shadow: 0 0 0 10px transparent; }
 }
 
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
@@ -933,6 +1235,13 @@ button { color: inherit; }
 }
 @media (max-width: 54rem) {
   .map-layout { grid-template-columns: 1fr; }
+  .live-layout { display: block; }
+  .live-plates { padding: 0.8rem; }
+  .live-islands { grid-template-columns: 1fr; }
+  .live-island-terrain { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .live-plate-caption { grid-template-columns: 1fr; }
+  .live-plate-legend { align-self: auto; }
+  .live-roster-board { border-block-start: 4px solid var(--line); border-inline-start: 0; }
   .roster-board { border-block-start: 4px solid var(--line); border-inline-start: 0; }
   .conversation-group { grid-template-columns: 1fr; }
   .agreement-card { grid-template-columns: 1fr; }
@@ -959,6 +1268,12 @@ button { color: inherit; }
   .activity-row { grid-template-columns: 1fr; }
   .activity-time, .activity-context { grid-column: 1; }
   .place-map { padding: 0.55rem; }
+  .live-instrument-strip { align-items: flex-start; }
+  .live-clock { flex-basis: 100%; }
+  .live-terrain { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .live-island-terrain { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .live-ledger-row { grid-template-columns: 2rem minmax(0, 1fr); }
+  .live-ledger-time { grid-column: 2; }
   .conversation-mode { align-items: stretch; }
   .conversation-choices { width: 100%; }
   .conversation-mode-button { flex: 1 1 12rem; }
@@ -972,9 +1287,14 @@ button { color: inherit; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
+  .live-action-mark.live-pulse { display: none !important; animation: none !important; }
+  .live-trail { transition: none !important; }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
-  .note-card, .agreement-card { border-color: CanvasText; box-shadow: none; }
+  .note-card, .agreement-card, .live-plate, .live-island, .live-portrait,
+  .drawing-grid { border-color: CanvasText; box-shadow: none; }
+  .live-trail { stroke: LinkText; }
+  .live-footnote-mark, .live-action-mark { color: ButtonText; background: ButtonFace; }
 }
 `

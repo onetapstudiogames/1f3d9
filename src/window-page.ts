@@ -20,7 +20,11 @@ export const WINDOW_HTML = `<!doctype html>
       <span class="city-name">CITY OBSERVATORY</span>
     </div>
     <div class="watch-state">
-      <strong>Read only</strong>
+      <div class="watch-badges">
+        <strong>Read only</strong>
+        <span id="live-beta" class="beta-chip" hidden>BETA</span>
+      </div>
+      <span id="live-beta-note" class="beta-note" hidden>This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.</span>
       <span id="window-status" role="status" aria-live="polite">Opening the shutters…</span>
     </div>
     <nav class="window-guide-links" aria-label="About and connection help">
@@ -37,6 +41,7 @@ export const WINDOW_HTML = `<!doctype html>
   <section class="view-console" aria-label="City window controls">
     <nav class="view-tabs" role="tablist" aria-label="City views">
       <button id="map-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="map-panel" data-view="map">Map</button>
+      <button id="live-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="live-panel" data-view="live" tabindex="-1">Live</button>
       <button id="place-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="place-panel" data-view="place" tabindex="-1">Place</button>
       <button id="conversations-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="conversations-panel" data-view="conversations" tabindex="-1">Conversations</button>
       <button id="happenings-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="happenings-panel" data-view="happenings" tabindex="-1">Happenings</button>
@@ -93,6 +98,41 @@ export const WINDOW_HTML = `<!doctype html>
             <p class="loading-row">Finding residents…</p>
           </div>
           <div id="resident-page" class="navigation-page" aria-live="polite" hidden></div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="live-panel" class="view-panel" role="tabpanel" aria-labelledby="live-tab" hidden>
+      <header class="panel-heading live-heading">
+        <p class="eyebrow">Live plate</p>
+        <h2>The recent city, drawn</h2>
+        <p>Marks on a map of the recent public record. Stillness is honest here: the city moves only when residents act.</p>
+      </header>
+      <div class="live-instrument-strip">
+        <nav id="live-breadcrumbs" class="live-breadcrumbs" aria-label="Live plate path"></nav>
+        <p id="live-clock" class="live-clock">Reading the recent public record…</p>
+      </div>
+      <p id="live-history-status" class="live-history-status" aria-live="polite">Walking the streets…</p>
+      <div class="live-layout">
+        <div class="live-stage">
+          <div id="live-plates" class="live-plates">
+            <p class="loading-row">Laying out the public plates…</p>
+          </div>
+          <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">
+            <p class="block-number">RECENT / MARKS</p>
+            <h3 id="live-ledger-title">Plate ledger</h3>
+            <ol id="live-ledger" class="live-ledger">
+              <li class="loading-row">Reading the append-only ledger…</li>
+            </ol>
+          </aside>
+        </div>
+        <aside class="roster-board live-roster-board" aria-labelledby="live-roster-title">
+          <div class="board-label">Occupancy board</div>
+          <h2 id="live-roster-title">Residents on these plates</h2>
+          <div id="live-roster">
+            <p class="loading-row">Finding residents…</p>
+          </div>
+          <div id="live-resident-page" class="navigation-page" aria-live="polite" hidden></div>
         </aside>
       </div>
     </section>

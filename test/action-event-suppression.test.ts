@@ -236,6 +236,8 @@ for (const [recipientId, expectedPublicActionEvent] of [[8, false], [7, true]] a
 for (const action of ['use', 'move', 'go_home'] as const) {
   test(`${action} keeps its bare action event`, async () => {
     const { db, calls } = fakeSql(call => {
+      if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
+      if (/FROM kind_revision_traits/u.test(call.text)) return []
       if (/SELECT id, parent_id FROM places/u.test(call.text)) {
         return [{ id: 2, parent_id: 1 }, { id: 4, parent_id: 2 }]
       }
@@ -257,6 +259,7 @@ for (const action of ['use', 'move', 'go_home'] as const) {
       action,
       placeId: action === 'go_home' ? null : 2,
       destinationPlaceId: action === 'move' ? 4 : null,
+      sourceThingId: action === 'use' ? 41 : null,
     }, db)
 
     assert.equal(result.status, action === 'use' ? 'noop' : 'applied')
@@ -264,7 +267,16 @@ for (const action of ['use', 'move', 'go_home'] as const) {
     assert.equal(resolution.values.at(-1), true)
     const publicDetail = JSON.parse(String(resolution.values.at(-2))) as Record<string, unknown>
     assert.equal(publicDetail.action, action)
-    if (action === 'move') {
+    if (action === 'use') {
+      assert.deepEqual(publicDetail, {
+        action_id: 501,
+        action: 'use',
+        status: 'noop',
+        effects_applied: 0,
+        place_id: 2,
+        source_thing_id: 41,
+      })
+    } else if (action === 'move') {
       assert.deepEqual(publicDetail, {
         action_id: 501,
         action: 'move',
@@ -274,8 +286,14 @@ for (const action of ['use', 'move', 'go_home'] as const) {
         to_place_id: 4,
       })
     } else {
-      assert.equal(Object.hasOwn(publicDetail, 'from_place_id'), false)
-      assert.equal(Object.hasOwn(publicDetail, 'to_place_id'), false)
+      assert.deepEqual(publicDetail, {
+        action_id: 501,
+        action: 'go_home',
+        status: 'applied',
+        effects_applied: 0,
+        from_place_id: 2,
+        to_place_id: 3,
+      })
     }
   })
 }

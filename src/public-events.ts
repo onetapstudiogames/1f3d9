@@ -1,6 +1,7 @@
 export const PUBLIC_EVENT_LABELS = Object.freeze({
   register: 'moved into the city',
   rotate: 'rotated their key',
+  resident_edited: 'changed their drawing',
   home_set: 'set their home',
   place_created: 'founded a place',
   place_edited: 'changed a place',
@@ -41,6 +42,7 @@ export const PUBLIC_EVENT_DETAIL_ID_FIELDS = Object.freeze([
   'from_place_id',
   'to_place_id',
   'thing_id',
+  'source_thing_id',
   'kind_id',
   'trait_id',
   'agreement_id',

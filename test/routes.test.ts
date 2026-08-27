@@ -4892,6 +4892,132 @@ test('kind revision is paid but never rewrites existing things', async () => {
   assert.equal(sqlCalls().some(call => /update\s+things/i.test(call.query ?? '')), false)
 })
 
+test('drawing writes ride the existing owner edit and paid kind revision surfaces', async () => {
+  const drawing = {
+    palette: ['#ad3f25', '#f0c95f'],
+    indices: Array.from({ length: 64 }, (_, index) => index % 3 === 0 ? null : index % 2),
+  }
+
+  reset({ scenario: 'place drawing', placeOwnerId: 7 })
+  const place = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing }),
+  })
+  assert.equal(place.status, 200, await place.clone().text())
+  const placeWrite = sqlCalls().find(call => /update\s+places\s+set/iu.test(call.query ?? ''))
+  assert.match(placeWrite?.query ?? '', /drawing\s*=.*drawing\s+IS\s+DISTINCT\s+FROM/isu)
+
+  reset({ scenario: 'thing drawing', thingOwnerId: 7 })
+  const thing = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing }),
+  })
+  assert.equal(thing.status, 200, await thing.clone().text())
+  const thingWrite = sqlCalls().find(call => /update\s+things\s+set/iu.test(call.query ?? ''))
+  assert.match(thingWrite?.query ?? '', /drawing\s*=\s*CASE\s+WHEN/isu)
+  assert.match(thingWrite?.query ?? '', /drawing\s+IS\s+DISTINCT\s+FROM/isu)
+  assert.match(thingWrite?.query ?? '', /NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+changed\s*\)/isu)
+
+  reset({
+    scenario: 'kind drawing', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const kind = await app.request('/api/kind', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      name: 'painted-lantern', description: 'a drawn kind', traits: [], recipe: [], drawing,
+    }),
+  })
+  assert.equal(kind.status, 201, await kind.clone().text())
+  const inventionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_invention')
+  assert.deepEqual(inventionAttempt?.request_json?.drawing, drawing)
+
+  reset({
+    scenario: 'kind drawing revision', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const revised = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ drawing }),
+  })
+  assert.equal(revised.status, 200, await revised.clone().text())
+  const revisionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_revision')
+  assert.deepEqual(revisionAttempt?.request_json?.drawing, drawing)
+})
+
+test('omitted empty kind drawings retain the pre-drawing canonical payment shape', async () => {
+  reset({
+    scenario: 'legacy-shaped kind invention', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const invented = await app.request('/api/kind', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      name: 'legacy-shaped-lantern', description: 'no drawing supplied', traits: [], recipe: [],
+    }),
+  })
+  assert.equal(invented.status, 201, await invented.clone().text())
+  const inventionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_invention')
+  assert.equal(Object.hasOwn(inventionAttempt?.request_json ?? {}, 'drawing'), false)
+
+  reset({
+    scenario: 'legacy-shaped kind revision', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const revised = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ description: 'still no drawing supplied' }),
+  })
+  assert.equal(revised.status, 200, await revised.clone().text())
+  const revisionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_revision')
+  assert.equal(Object.hasOwn(revisionAttempt?.request_json ?? {}, 'drawing'), false)
+})
+
+test('drawing write validation is caller-worded and runs before owner writes or payment', async () => {
+  const invalid = {
+    palette: ['red'],
+    indices: Array.from({ length: 64 }, () => 0),
+  }
+  const cases = [
+    ['/api/place/2', 'PATCH'],
+    ['/api/thing/41', 'PATCH'],
+    ['/api/kind', 'POST'],
+    ['/api/kind/3/revise', 'POST'],
+  ] as const
+
+  for (const [path, method] of cases) {
+    reset({ scenario: `invalid drawing ${path}`, placeOwnerId: 7, thingOwnerId: 7 })
+    const response = await app.request(path, {
+      method,
+      headers: authHeaders(),
+      body: JSON.stringify(path === '/api/kind'
+        ? { name: 'invalid-drawing', traits: [], recipe: [], drawing: invalid }
+        : { drawing: invalid }),
+    })
+    assert.equal(response.status, 400, `${path}: ${await response.clone().text()}`)
+    assert.match((await response.json() as { error: string }).error, /drawing.*#rrggbb/iu)
+    assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false)
+    assert.equal(sqlCalls().some(call => /update\s+(?:places|things)|insert\s+into\s+kind/iu.test(call.query ?? '')), false)
+  }
+})
+
+test('a maximum valid thing body still fits its actual-byte drawing-aware request envelope', async () => {
+  reset({ scenario: 'maximum escaped thing body', thingOwnerId: 7 })
+  const body = '\\'.repeat(65_536)
+  const requestBody = JSON.stringify({ body, drawing: null })
+  assert.ok(Buffer.byteLength(requestBody, 'utf8') > 131_072)
+
+  const response = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: requestBody,
+  })
+
+  assert.equal(response.status, 200, await response.clone().text())
+})
+
 test('duplicate trait names fail before charging for a kind', async () => {
   reset({ scenario: 'duplicate kind traits', chainFrom: SELLER_WALLET, chainTo: TREASURY })
   const response = await app.request('/api/kind', {
@@ -8261,7 +8387,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
     'credit_preflight', 'buy_credit', 'found', 'place_edit',
     'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
-    'act', 'laws', 'home', 'withdraw',
+    'draw_self', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
     'payment_attempt', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
@@ -8854,12 +8980,12 @@ test('the thing owner can toggle open_to_use and a visitor cannot edit it', asyn
   assert.equal(changedBody.reading_cost.room_stored_text_bytes, 1234)
   const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
   assert.match(update?.query ?? '', /\bopen_to_use\b/i)
-  assert.match(update?.query ?? '', /changed\.maker_id/i)
+  assert.match(update?.query ?? '', /result\.maker_id/i)
   assert.match(update?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
-  assert.match(update?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(update?.query ?? '', /result\.owner_id\s+AS\s+current_owner_id/i)
   assert.match(update?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
-  assert.match(update?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*changed\.maker_id/i)
-  assert.match(update?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*changed\.owner_id/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*result\.maker_id/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*result\.owner_id/i)
 
   reset({
     scenario: 'transferred thing edit keeps maker',

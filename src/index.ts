@@ -32,6 +32,7 @@ import {
 } from './oauth.ts'
 import { mountSocietyRoutes } from './society.ts'
 import { mountWorldRoutes } from './world.ts'
+import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
@@ -581,6 +582,7 @@ app.post('/api/rotate', async c => {
 })
 
 mountActionRoutes(app)
+mountDrawingRoutes(app, { database: runtimeDatabase, authenticate: auth })
 app.get('/api/city-credit/preflight', async c => {
   privateResidentHeaders(c)
   const resident = await authPassive(c)

@@ -25,7 +25,7 @@ import {
 
 test('the moderation vocabulary is frozen and has no governance powers', () => {
   assert.deepEqual(MODERATION_TARGET_TYPES, [
-    'place', 'thing', 'kind', 'trait', 'note', 'agreement',
+    'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement',
   ])
   assert.deepEqual(MODERATION_ACTIONS, ['remove', 'restore'])
   assert.equal(Object.isFrozen(MODERATION_TARGET_TYPES), true)
@@ -36,7 +36,7 @@ test('the moderation vocabulary is frozen and has no governance powers', () => {
   }
   for (const action of MODERATION_ACTIONS) assert.equal(moderationAction(action), action)
 
-  for (const value of ['resident', 'event', ' place', 'PLACE', '', null, 1]) {
+  for (const value of ['event', ' place', 'PLACE', '', null, 1]) {
     assert.equal(moderationTargetType(value), null)
   }
   for (const value of ['pin', 'unpin', 'delete', ' remove', 'REMOVE', '', null, 1]) {
@@ -88,7 +88,6 @@ test('a moderation request has an exact shape and never coerces IDs or verbs', (
     { action: 'remove', target_type: 'thing', target_id: 0, reason: 'reason' },
     { action: 'remove', target_type: 'thing', target_id: 1.5, reason: 'reason' },
     { action: 'pin', target_type: 'note', target_id: 1, reason: 'reason' },
-    { action: 'remove', target_type: 'resident', target_id: 1, reason: 'reason' },
     { action: 'remove', target_type: 'thing', target_id: 1, reason: '' },
     { action: 'remove', target_type: 'thing', target_id: 1, reason: 'reason', owner_id: 9 },
   ]
@@ -99,6 +98,24 @@ test('a moderation request has an exact shape and never coerces IDs or verbs', (
   } as Record<PropertyKey, unknown>
   decorated[Symbol('hidden')] = true
   assert.equal(moderationInput(decorated), null)
+})
+
+test('resident moderation keeps public identity but clears its drawing', () => {
+  const source = {
+    id: 7,
+    handle: 'tiny-lantern',
+    drawing: { palette: ['#ad3f25'], indices: Array.from({ length: 64 }, () => 0) },
+  }
+  const redacted = redactModeratedTarget('resident', source)
+
+  assert.deepEqual(redacted, {
+    id: 7,
+    handle: 'tiny-lantern',
+    drawing: null,
+    moderated: true,
+  })
+  assert.notEqual(redacted, source)
+  assert.notEqual(source.drawing, null)
 })
 
 test('target redactors remove authored payloads and retain public history', () => {

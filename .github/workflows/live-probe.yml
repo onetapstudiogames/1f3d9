@@ -42,6 +42,45 @@ jobs:
           echo "$BODY" | grep -q '"resident_handle":"founder"' \
             || { echo "resident echo wrong: $BODY"; exit 1; }
 
+      - name: paid kind drawings resolve without spending
+        run: |
+          # llms.txt is the caller contract for why a public kind is the right
+          # read-only specimen: kind drawings live in paid kind revisions.
+          CONTRACT=$(curl -sf --max-time 20 https://1f3d9.com/llms.txt)
+          echo "$CONTRACT" | grep -Fq "Kind drawings live in paid kind revisions." \
+            || { echo "paid kind drawing contract missing"; exit 1; }
+
+          KINDS=$(curl -sf --max-time 20 "https://1f3d9.com/api/kinds?limit=1")
+          echo "$KINDS" | jq -e '.kinds | type == "array"' >/dev/null \
+            || { echo "kind discovery shape wrong: $KINDS"; exit 1; }
+          KIND_COUNT=$(echo "$KINDS" | jq -r '.kinds | length')
+          if [ "$KIND_COUNT" = "0" ]; then
+            echo "no public kind is discoverable; the paid drawing contract is present"
+            exit 0
+          fi
+          KIND_ID=$(echo "$KINDS" | jq -er '
+            .kinds[0].id
+            | select(type == "number" and . >= 1 and floor == .)
+            | tostring
+          ') || { echo "kind discovery returned no positive integer id: $KINDS"; exit 1; }
+
+          DRAWING=$(curl -sf --max-time 20 "https://1f3d9.com/api/drawing/kind/$KIND_ID")
+          echo "$DRAWING" | jq -e --argjson id "$KIND_ID" '
+            .type == "kind"
+            and .id == $id
+            and .kind_id == $id
+            and (.revision | type == "number" and . >= 1 and floor == .)
+            and (
+              (.drawing == null and .source == null)
+              or (
+                .source == "kind_revision"
+                and (.drawing | type == "object")
+                and (.drawing.palette | type == "array")
+                and (.drawing.indices | type == "array" and length == 64)
+              )
+            )
+          ' >/dev/null || { echo "kind drawing projection wrong: $DRAWING"; exit 1; }
+
       - name: the edge-stripped body class stays fixed (webhook canary)
         run: |
           # An unverifiable-but-well-formed webhook body must be refused for

@@ -8,7 +8,11 @@ import {
 } from '../src/public-events.ts'
 
 const migrationUrl = new URL('../db/migrations/20260823_public_snapshots.sql', import.meta.url)
+const drawingsMigrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
+const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
+  ? [...PUBLIC_EVENT_KINDS]
+  : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)]
 
 for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaUrl]] as const) {
   test(`${name} installs one explicit fail-closed public snapshot view`, async () => {
@@ -53,7 +57,10 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     assert.ok(publicKindsCte)
     const sqlPublicKinds = [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
-    assert.deepEqual(sqlPublicKinds, [...PUBLIC_EVENT_KINDS])
+    const expectedKinds = name === 'migration'
+      ? currentPublicEventKinds.filter(kind => kind !== 'resident_edited')
+      : currentPublicEventKinds
+    assert.deepEqual(sqlPublicKinds, expectedKinds)
     assert.ok(sqlPublicKinds.includes('payment_repair'))
     assert.match(
       view,
@@ -70,7 +77,7 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const expectedEventDetailFields = [
       ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
       ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
-    ].sort()
+    ].filter(field => name !== 'migration' || field !== 'source_thing_id').sort()
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
@@ -101,5 +108,41 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
       'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
       'agreements', 'events', 'moderation', 'treasury_fees', 'world_market_offers',
     ]) assert.match(sql, new RegExp(`'${className}'`, 'u'), className)
+  })
+}
+
+for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh schema', schemaUrl]] as const) {
+  test(`${name} exports exact drawings with moderated resident and resolved thing provenance`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)
+    assert.ok(viewStart >= 0, `${name}: snapshot view`)
+    const view = sql.slice(viewStart)
+
+    assert.match(view, /'drawing',\s*CASE[\s\S]{0,240}resident_hidden\.action\s*=\s*'remove'[\s\S]{0,120}resident\.drawing/iu)
+    assert.match(view, /resident_hidden\.target_type\s*=\s*'resident'/iu)
+    assert.match(view, /'drawing',\s*place\.drawing/iu)
+    assert.match(view, /'drawing',\s*CASE[\s\S]{0,320}thing\.drawing[\s\S]{0,320}revision\.drawing/iu)
+    assert.match(view, /'drawing_source',\s*CASE[\s\S]{0,500}'type',\s*'thing'[\s\S]{0,500}'type',\s*'kind_revision'/iu)
+    assert.match(view, /revision\.kind_id\s*=\s*thing\.kind_id\s+AND\s+revision\.revision\s*=\s*thing\.current_revision/iu)
+    assert.match(view, /'drawing',\s*revision\.drawing/iu)
+    assert.match(view, /\('resident_edited'\)/u)
+    assert.match(view, /'source_thing_id',\s*event\.detail->'source_thing_id'/u)
+
+    const publicKindsCte = view.match(
+      /public_event_kinds\(kind\)\s+AS\s*\(\s*VALUES([\s\S]*?)\r?\n\),\r?\nplace_ancestry/iu,
+    )?.[1]
+    assert.ok(publicKindsCte)
+    assert.deepEqual(
+      [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)].map(match => match[1]!),
+      currentPublicEventKinds,
+    )
+    const eventsStart = view.indexOf("SELECT 'events'")
+    const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
+    const eventProjection = view.slice(eventsStart, moderationStart)
+    assert.deepEqual(
+      [...eventProjection.matchAll(/'([a-z_]+)',\s*event\.detail->'\1'/gu)]
+        .map(match => match[1]!).sort(),
+      [...PUBLIC_EVENT_DETAIL_ID_FIELDS, ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS].sort(),
+    )
   })
 }

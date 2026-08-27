@@ -82,6 +82,8 @@ test('treasury completion trusts one stored attempt and performs every paid writ
   assert.match(call.text, /INSERT\s+INTO\s+places/iu)
   assert.match(call.text, /INSERT\s+INTO\s+kinds/iu)
   assert.match(call.text, /INSERT\s+INTO\s+kind_revisions/iu)
+  assert.match(call.text, /kind_revisions\s*\([^)]*drawing/iu)
+  assert.match(call.text, /valid_city_drawing/iu)
   assert.match(call.text, /UPDATE\s+kinds/iu)
   assert.match(call.text, /complete_payment_attempt/iu)
   assert.match(call.text, /complete_city_credit_attempt/iu)
@@ -112,7 +114,7 @@ test('treasury completion validates exact stored request shapes for all three op
   }
   for (const field of [
     'parent_id', 'name', 'description', 'open_to_building', 'open_to_things',
-    'open_to_notes', 'traits', 'recipe', 'kind_id',
+    'open_to_notes', 'traits', 'recipe', 'drawing', 'kind_id',
   ]) {
     assert.match(query, new RegExp(`['"]${field}['"]`, 'iu'))
   }
@@ -122,6 +124,28 @@ test('treasury completion validates exact stored request shapes for all three op
     query,
     /target_changed_result\s+AS\s*\([\s\S]*?FROM\s+owned_attempt\s+attempt[\s\S]*?NOT\s+EXISTS\s*\(SELECT\s+1\s+FROM\s+operation_result\)/iu,
   )
+})
+
+test('treasury completion preserves pre-drawing kind attempts while validating new drawings', async () => {
+  const database = new RecordingDatabase([completedRow()])
+
+  await completeTreasuryPaymentOperation(database, {
+    attemptId: ATTEMPT_ID,
+    leaseOwner: LEASE_OWNER,
+  })
+
+  const query = database.calls[0]!.text
+  assert.match(
+    query,
+    /request_json\s+\?&\s+ARRAY\['name',\s*'description',\s*'traits',\s*'recipe'\]/iu,
+  )
+  assert.match(
+    query,
+    /request_json\s+\?&\s+ARRAY\['kind_id',\s*'description',\s*'traits',\s*'recipe'\]/iu,
+  )
+  assert.match(query, /NOT\s+attempt\.request_json\s+\?\s+'drawing'/iu)
+  assert.match(query, /CASE\s+WHEN\s+NOT\s+request\.request_json\s+\?\s+'drawing'/iu)
+  assert.match(query, /':'\s*\|\|\s*\(attempt\.request_json->>'name'\)/iu)
 })
 
 test('treasury completion returns a typed no-effect result at the database deadline', async () => {

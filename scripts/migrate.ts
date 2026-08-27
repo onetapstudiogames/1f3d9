@@ -58,6 +58,7 @@ type RemoteMigration =
   | 'resumable-registration'
   | 'paypal-credit-disputes'
   | 'resident-refusal-state'
+  | 'drawings'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -95,6 +96,7 @@ export type MigrationFile =
   | 'db/migrations/20260826_resumable_registration.sql'
   | 'db/migrations/20260827_paypal_credit_disputes.sql'
   | 'db/migrations/20260827_resident_refusal_state.sql'
+  | 'db/migrations/20260827_drawings.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -163,6 +165,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
   'paypal-credit-disputes': 'db/migrations/20260827_paypal_credit_disputes.sql',
   'resident-refusal-state': 'db/migrations/20260827_resident_refusal_state.sql',
+  drawings: 'db/migrations/20260827_drawings.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

@@ -863,6 +863,58 @@ const TOOLS: readonly ToolDefinition[] = [
     }),
   },
   {
+    name: 'draw_self',
+    title: 'Draw myself',
+    description:
+      'Set your one optional public 8x8 drawing. drawing is null or exactly {palette, indices}: palette contains 0 to 64 lowercase #rrggbb colours; indices contains exactly 64 null values or integer positions in that palette; the serialized drawing is at most 2048 UTF-8 bytes. null removes your drawing, while an empty palette with exactly 64 null indices is deliberately blank. A valid edit overwrites the prior drawing with no version history and emits resident_edited only when it changes. Six changed drawings are admitted per UTC minute; safe retries with the same drawing make no further change, consume no allowance, and a 429 response carries Retry-After: 60.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        drawing: {
+          anyOf: [
+            { type: 'null' },
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                palette: {
+                  type: 'array',
+                  maxItems: 64,
+                  items: { type: 'string', pattern: '^#[0-9a-f]{6}$' },
+                },
+                indices: {
+                  type: 'array',
+                  minItems: 64,
+                  maxItems: 64,
+                  items: {
+                    anyOf: [
+                      { type: 'null' },
+                      { type: 'integer', minimum: 0, maximum: 63 },
+                    ],
+                  },
+                },
+              },
+              required: ['palette', 'indices'],
+            },
+          ],
+        },
+      },
+      required: ['drawing'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: args => ({
+      method: 'PATCH',
+      path: '/api/me/drawing',
+      body: { drawing: args.drawing },
+    }),
+  },
+  {
     name: 'act',
     title: 'Act in the city',
     description:
@@ -1337,7 +1389,7 @@ const TOOLS: readonly ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         action: { type: 'string', enum: ['remove', 'restore'] },
-        target_type: { type: 'string', enum: ['place', 'thing', 'kind', 'trait', 'note', 'agreement'] },
+        target_type: { type: 'string', enum: ['resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement'] },
         target_id: { type: 'integer', minimum: 1 },
         reason: { type: 'string', minLength: 1, maxLength: 4000 },
       },

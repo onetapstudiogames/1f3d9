@@ -70,9 +70,32 @@ import {
   parsePlaceFrontMatter,
   parsePlacePurpose,
 } from './room-orientation.ts'
+import {
+  DRAWING_RECORD_BODY_MAX_BYTES,
+  parseDrawing,
+  readBoundedJsonObject,
+  type Drawing,
+} from './drawing.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
+
+type DrawingField =
+  | Readonly<{ ok: true; supplied: false }>
+  | Readonly<{ ok: true; supplied: true; drawing: Drawing | null; stored: string | null }>
+  | Readonly<{ ok: false; error: string }>
+
+function drawingField(body: Record<string, unknown>): DrawingField {
+  if (!Object.hasOwn(body, 'drawing')) return Object.freeze({ ok: true, supplied: false })
+  const parsed = parseDrawing(body.drawing)
+  if (!parsed.ok) return parsed
+  return Object.freeze({
+    ok: true,
+    supplied: true,
+    drawing: parsed.drawing,
+    stored: parsed.drawing === null ? null : JSON.stringify(parsed.drawing),
+  })
+}
 
 function publicPlaceWriteRow(row: PlaceRow): Readonly<Record<string, unknown>> {
   return Object.freeze(Object.fromEntries(
@@ -595,14 +618,20 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
-    const body = await jsonBody(c)
-    if (!body) return err(c, 400, 'body must be a JSON object')
+    const decoded = await readBoundedJsonObject(c.req.raw, DRAWING_RECORD_BODY_MAX_BYTES)
+    if (!decoded.ok) {
+      return /no larger than/iu.test(decoded.error)
+        ? c.json({ error: decoded.error }, 413)
+        : err(c, 400, decoded.error)
+    }
+    const body = decoded.body
     const fields = [
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes',
+      'drawing',
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
-      return err(c, 400, 'edit description, purpose, front matter, or a permission switch')
+      return err(c, 400, 'edit description, purpose, front matter, drawing, or a permission switch')
     }
 
     const description = body.description === undefined
@@ -613,6 +642,8 @@ export function mountWorldRoutes(app: Hono): void {
     const openToBuilding = optionalBoolean(body.open_to_building)
     const openToThings = optionalBoolean(body.open_to_things)
     const openToNotes = optionalBoolean(body.open_to_notes)
+    const requestedDrawing = drawingField(body)
+    if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     if (description === null || purpose === null || frontMatterThingIds === null
         || openToBuilding === null || openToThings === null || openToNotes === null) {
       return err(c, 400, 'place text, front matter, or permissions are invalid')
@@ -713,7 +744,10 @@ export function mountWorldRoutes(app: Hono): void {
               ELSE front_matter_thing_ids END,
             open_to_building = coalesce(${openToBuilding ?? null}::boolean, open_to_building),
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
-            open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes)
+            open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
+            drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
+              THEN ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb
+              ELSE drawing END
           WHERE id IN (SELECT id FROM editable)
             AND (
               (${description !== undefined}::boolean
@@ -729,6 +763,9 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_things IS DISTINCT FROM ${openToThings ?? false}::boolean)
               OR (${openToNotes !== undefined}::boolean
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
+              OR (${requestedDrawing.supplied}::boolean
+                AND drawing IS DISTINCT FROM
+                  ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb)
             )
           RETURNING *
         ), new_event AS (
@@ -831,11 +868,18 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const selectionConflict = feeSelectionConflict(c)
     if (selectionConflict) return selectionConflict
-    const body = await jsonBody(c)
-    if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['name', 'description', 'traits', 'recipe'])) {
+    const decoded = await readBoundedJsonObject(c.req.raw, DRAWING_RECORD_BODY_MAX_BYTES)
+    if (!decoded.ok) {
+      return /no larger than/iu.test(decoded.error)
+        ? c.json({ error: decoded.error }, 413)
+        : err(c, 400, decoded.error)
+    }
+    const body = decoded.body
+    if (!hasOnly(body, ['name', 'description', 'traits', 'recipe', 'drawing'])) {
       return err(c, 400, 'kind body contains an unsupported field')
     }
+    const requestedDrawing = drawingField(body)
+    if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const name = worldName(body.name)
     const description = publicText(body.description ?? '', {
       maximumCharacters: DESCRIPTION_MAX,
@@ -864,7 +908,10 @@ export function mountWorldRoutes(app: Hono): void {
       {
         operation: 'kind_invention',
         targetKey: `kind-invention:${name}`,
-        request: { name, description, traits, recipe },
+        request: {
+          name, description, traits, recipe,
+          ...(requestedDrawing.supplied ? { drawing: requestedDrawing.drawing } : {}),
+        },
       },
     )
     if (fee instanceof Response) return fee
@@ -914,11 +961,18 @@ export function mountWorldRoutes(app: Hono): void {
     if (selectionConflict) return selectionConflict
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'kind id must be a positive integer')
-    const body = await jsonBody(c)
-    if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['description', 'traits', 'recipe'])) {
+    const decoded = await readBoundedJsonObject(c.req.raw, DRAWING_RECORD_BODY_MAX_BYTES)
+    if (!decoded.ok) {
+      return /no larger than/iu.test(decoded.error)
+        ? c.json({ error: decoded.error }, 413)
+        : err(c, 400, decoded.error)
+    }
+    const body = decoded.body
+    if (!hasOnly(body, ['description', 'traits', 'recipe', 'drawing'])) {
       return err(c, 400, 'kind revision contains an unsupported field')
     }
+    const requestedDrawing = drawingField(body)
+    if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const suppliedTraits = body.traits === undefined ? undefined : stringList(body.traits)
     if (suppliedTraits === null) {
       return err(c, 400, 'traits must be a list of at most 32 valid trait names')
@@ -929,7 +983,7 @@ export function mountWorldRoutes(app: Hono): void {
 
     const currentRows = (await sql`
       SELECT k.id, k.name, k.owner_id, k.current_revision AS revision,
-        revision.description, revision.traits, revision.recipe,
+        revision.description, revision.traits, revision.recipe, revision.drawing,
         k.active_offer_id, (offer.id IS NOT NULL) AS has_open_offer
       FROM kinds k
       JOIN kind_revisions revision
@@ -950,6 +1004,8 @@ export function mountWorldRoutes(app: Hono): void {
       : publicText(body.description, { maximumCharacters: DESCRIPTION_MAX, allowEmpty: true })
     const traits = suppliedTraits ?? current.traits
     const recipe = parseKindRecipe(body.recipe === undefined ? current.recipe : body.recipe)
+    const currentDrawing = parseDrawing(current.drawing ?? null)
+    if (!currentDrawing.ok) return err(c, 500, 'stored kind drawing is invalid')
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
     if (recipe == null) {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
@@ -957,6 +1013,9 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait')
     }
+    const revisionDrawing = requestedDrawing.supplied
+      ? requestedDrawing.drawing
+      : currentDrawing.drawing
 
     const fee = await treasuryFee(
       c,
@@ -968,7 +1027,12 @@ export function mountWorldRoutes(app: Hono): void {
         targetKey: `kind-revision:${id}:${current.revision + 1}`,
         assetType: 'kind',
         assetId: id,
-        request: { kind_id: id, description, traits, recipe },
+        request: {
+          kind_id: id, description, traits, recipe,
+          ...(requestedDrawing.supplied || revisionDrawing !== null
+            ? { drawing: revisionDrawing }
+            : {}),
+        },
       },
     )
     if (fee instanceof Response) return fee
@@ -1173,10 +1237,15 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
-    const body = await jsonBody(c)
-    if (!body) return err(c, 400, 'body must be a JSON object')
-    if (!hasOnly(body, ['name', 'body', 'open_to_use']) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, and open_to_use are editable; birth_revision is permanent')
+    const decoded = await readBoundedJsonObject(c.req.raw, DRAWING_RECORD_BODY_MAX_BYTES)
+    if (!decoded.ok) {
+      return /no larger than/iu.test(decoded.error)
+        ? c.json({ error: decoded.error }, 413)
+        : err(c, 400, decoded.error)
+    }
+    const body = decoded.body
+    if (!hasOnly(body, ['name', 'body', 'open_to_use', 'drawing']) || Object.keys(body).length === 0) {
+      return err(c, 400, 'only name, body, drawing, and open_to_use are editable; birth_revision is permanent')
     }
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
@@ -1186,6 +1255,8 @@ export function mountWorldRoutes(app: Hono): void {
     const openToUse = body.open_to_use === undefined
       ? undefined
       : typeof body.open_to_use === 'boolean' ? body.open_to_use : null
+    const requestedDrawing = drawingField(body)
+    if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     if (name === null) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody === null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
     if (openToUse === null) return err(c, 400, 'open_to_use must be boolean when present')
@@ -1224,23 +1295,41 @@ export function mountWorldRoutes(app: Hono): void {
         UPDATE things SET
           name = coalesce(${name ?? null}::text, name),
           body = coalesce(${thingBody ?? null}::text, body),
-          open_to_use = coalesce(${openToUse ?? null}::boolean, open_to_use)
+          open_to_use = coalesce(${openToUse ?? null}::boolean, open_to_use),
+          drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
+            THEN ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb
+            ELSE drawing END
         WHERE id IN (SELECT id FROM editable)
+          AND (
+            (${name !== undefined}::boolean AND name IS DISTINCT FROM ${name ?? null}::text)
+            OR (${thingBody !== undefined}::boolean AND body IS DISTINCT FROM ${thingBody ?? null}::text)
+            OR (${openToUse !== undefined}::boolean
+              AND open_to_use IS DISTINCT FROM ${openToUse ?? null}::boolean)
+            OR (${requestedDrawing.supplied}::boolean
+              AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb)
+          )
         RETURNING *
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id)
         FROM changed
+      ), result AS (
+        SELECT changed.* FROM changed
+        UNION ALL
+        SELECT thing.*
+        FROM things thing
+        JOIN editable ON editable.id = thing.id
+        WHERE NOT EXISTS (SELECT 1 FROM changed)
       )
-      SELECT changed.*, maker.handle AS made_by,
-        changed.owner_id AS current_owner_id,
+      SELECT result.*, maker.handle AS made_by,
+        result.owner_id AS current_owner_id,
         current_owner.handle AS current_owner,
         current_owner.handle AS owner,
         kind_definition.name AS kind
-      FROM changed
-      JOIN residents maker ON maker.id = changed.maker_id
-      JOIN residents current_owner ON current_owner.id = changed.owner_id
-      LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
+      FROM result
+      JOIN residents maker ON maker.id = result.maker_id
+      JOIN residents current_owner ON current_owner.id = result.owner_id
+      LEFT JOIN kinds kind_definition ON kind_definition.id = result.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
     return c.json({

@@ -1,6 +1,7 @@
 import { publicText } from './input.ts'
 
 export const MODERATION_TARGET_TYPES = Object.freeze([
+  'resident',
   'place',
   'thing',
   'kind',
@@ -51,6 +52,7 @@ const INPUT_FIELDS: ReadonlySet<string> = new Set([
 ])
 
 const DISPLAY_FIELDS = Object.freeze({
+  resident: Object.freeze([] as const),
   place: Object.freeze(['name', 'description', 'purpose'] as const),
   thing: Object.freeze(['name', 'body'] as const),
   kind: Object.freeze(['name', 'description'] as const),
@@ -60,6 +62,7 @@ const DISPLAY_FIELDS = Object.freeze({
 } satisfies Readonly<Record<ModerationTargetType, readonly string[]>>)
 
 const CONTENT_TOMBSTONES = Object.freeze({
+  resident: Object.freeze({ drawing: null }),
   place: Object.freeze({}),
   thing: Object.freeze({}),
   kind: Object.freeze({ traits: Object.freeze([]), recipe: null }),

@@ -75,15 +75,15 @@ of four dispositions.
 
 | Class | Approved anonymous shape |
 |---|---|
-| `residents` | Public resident identity, plus safe reserved and sequence-gap markers. |
+| `residents` | Public resident identity and optional drawing; a moderation removal keeps identity but exports drawing as null; plus safe reserved and sequence-gap markers. |
 | `public_presence` | Current public place and asleep display facts. |
-| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, and effective laws. |
-| `things` | Active public things with permanent maker and current owner, plus body-free withdrawn, hidden, and gap markers. |
+| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and optional drawing. |
+| `things` | Active public things with permanent maker and current owner, resolved `drawing`, and `drawing_source`; a thing override wins, otherwise `kind_revision` names its pinned source; plus body-free withdrawn, hidden, and gap markers. |
 | `notes` | Public place speech, plus body-free legacy-safety, hidden, and gap markers. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
-| `kinds` | Current public kind revision, plus body-free hidden and gap markers. |
+| `kinds` | Current public kind revision including its optional drawing, plus body-free hidden and gap markers. |
 | `agreements` | Public body, parties, accession state, and signatures, plus body-free hidden and gap markers. |
-| `events` | Append-only public event headings and allowlisted safe references; authored text stays in its primary record. |
+| `events` | Append-only public event headings and allowlisted safe references, including `resident_edited`, movement endpoints, and a used thing's `source_thing_id` plus committed `place_id`; authored text stays in its primary record. |
 | `moderation` | Append-only public moderation actions and reasons. |
 | `treasury_fees` | Public city-fee books. |
 | `world_market_offers` | Public world-aisle locks, state, and receipts only; a moderated thing leaves only a body-free offer marker. |
@@ -96,7 +96,7 @@ of four dispositions.
 |---|---|
 | `credentials` | Resident secret hashes, pending registration, rotation, and recovery material are private. |
 | `oauth` | Hosted sign-in requests, codes, tokens, token families, and rate limits are private. |
-| `infrastructure_limits` | IP hashes and identity or flag rate-limit rows are private operations data. |
+| `infrastructure_limits` | IP hashes and identity, flag, or drawing rate-limit rows are private operations data. |
 | `resident_private_state` | Home location and personal daily quota state remain private to the resident. |
 | `private_flags` | Flag-report bodies are private; only safe public event references can appear. |
 | `payment_attempts` | Request bodies, leases, payment uses, and recovery state are private. |
@@ -126,16 +126,33 @@ of four dispositions.
 |---|---|
 | `corrections` | Original records are never edited. Errata are separate append-only release material. |
 
-The exact machine-readable registry is embedded in every manifest and locked
-in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts). A
-format change requires a new version; silently expanding version 1 is not
-allowed.
+The exact machine-readable class registry is embedded in every manifest and
+locked in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts).
+The drawings migration explicitly expands the approved payload projection and
+this document records that change. Other new tables and fields remain absent
+until both boundaries explicitly add them; a class or file registry change
+requires a new version. Original releases never change, so their manifest's
+source commit remains the schema point for that release.
 
 `events.detail` is also fail-closed. Version 1 keeps only the identifier and
 scalar fields in `PUBLIC_EVENT_DETAIL_ID_FIELDS` and
 `PUBLIC_EVENT_DETAIL_SCALAR_FIELDS` from
 [`src/public-events.ts`](../src/public-events.ts). It does not export authored
 event detail text such as `body`, `description`, `reason`, or `error`.
+
+Drawings use the same exact public shape as the live service: null or exactly
+`{palette, indices}`, with 0..64 lowercase `#rrggbb` palette entries, exactly
+64 null or in-range indices, and canonical JSON no larger than 2,048 UTF-8
+bytes. A thing's `drawing_source` is null, `{"type":"thing"}`, or
+`{"type":"kind_revision","kind_id":N,"revision":N}`. The inherited
+revision is the thing's pinned `current_revision`, never the kind's newest
+revision by accident. Hiding a kind suppresses inherited drawing output; an
+active thing's own public override remains its own source.
+
+The snapshot is the deliberate full public export. Ordinary map, room, window,
+directory, and census reads omit drawing fields; a live browser fetches one
+drawing through `GET /api/drawing/:type/:id` only after choosing a visible
+record. This distinction does not make drawings private.
 
 ## Safe status markers
 

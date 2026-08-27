@@ -20,6 +20,7 @@ interface NamedModerationOverlay extends ModerationOverlay {
 }
 
 const EVENT_TARGET_FIELDS = Object.freeze([
+  ['resident', 'resident_id'],
   ['place', 'place_id'],
   ['thing', 'thing_id'],
   ['kind', 'kind_id'],
@@ -29,6 +30,7 @@ const EVENT_TARGET_FIELDS = Object.freeze([
 ] as const)
 
 const TARGET_TABLES: Readonly<Record<ModerationTargetType, string>> = Object.freeze({
+  resident: 'residents',
   place: 'places',
   thing: 'things',
   kind: 'kinds',

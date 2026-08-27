@@ -138,6 +138,63 @@ test('detail sharing reports inside the modal and navigation invalidates stale f
   assert.match(WINDOW_JS, /closeDetail/u)
 })
 
+test('the live plate is one linkable observatory instrument, never a game viewport', () => {
+  assert.match(WINDOW_HTML, /id="live-tab"[\s\S]*?data-view="live"/u)
+  assert.match(WINDOW_HTML, /id="live-panel"[\s\S]*?aria-labelledby="live-tab"/u)
+  for (const id of [
+    'live-clock', 'live-breadcrumbs', 'live-plates', 'live-ledger',
+    'live-roster', 'live-resident-page',
+  ]) assert.match(WINDOW_HTML, new RegExp(`id="${id}"`))
+  assert.equal((WINDOW_HTML.match(/>BETA</gu) ?? []).length, 1)
+  assert.match(
+    WINDOW_HTML,
+    /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u,
+  )
+  assert.match(WINDOW_JS, /VIEWS[^\n]*'live'/u)
+  assert.match(WINDOW_JS, /state\.view === 'live'/u)
+
+  const shipped = `${WINDOW_HTML}\n${WINDOW_JS}`
+  assert.doesNotMatch(shipped, /type="range"|zoom-slider|speech-bubble|sprite|pinch|pan-control/iu)
+  assert.doesNotMatch(WINDOW_CSS, /position:\s*fixed[^}]*live-|100vw[^}]*live-/iu)
+})
+
+test('the live plate states its honest timing and drawing rules in shipped code', () => {
+  assert.match(WINDOW_JS, /\b(?:25000|25e3)\b/u)
+  assert.match(WINDOW_JS, /\b(?:120000|12e4)\b/u)
+  assert.match(WINDOW_JS, /\b(?:240000|24e4)\b/u)
+  for (const value of ['60000', '300000', '1800000', '600000', '600']) {
+    assert.match(WINDOW_JS, new RegExp(`\\b${value}\\b`))
+  }
+  assert.match(WINDOW_JS, /\/api\/events/u)
+  assert.match(WINDOW_JS, /after_change_marker/u)
+  assert.match(WINDOW_JS, /\/api\/changes/u)
+  assert.match(WINDOW_JS, /\/api\/drawing\//u)
+  assert.match(WINDOW_JS, /\/api\/note\//u)
+  assert.match(WINDOW_CSS, /\.live-trail/u)
+  assert.match(WINDOW_CSS, /\.live-footnote-mark/u)
+  assert.match(WINDOW_CSS, /\.drawing-undrawn/u)
+  assert.match(
+    WINDOW_CSS,
+    /\.live-terrain\s*>\s*\.drawing-grid:first-child\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
+  )
+  assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
+  assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
+  assert.match(WINDOW_JS, /resident_edited[\s\S]{0,180}resident:/u)
+  assert.match(WINDOW_JS, /state\.live\.drawings\[key\]\s*!==\s+loading/u)
+  assert.match(WINDOW_JS, /cache:\s*force\s*\?\s*'reload'\s*:\s*'default'/u)
+  assert.match(WINDOW_JS, /loadDirectory\(true, false\), 31_000/u)
+  assert.match(
+    WINDOW_JS,
+    /function scheduleLiveClock\(\)[\s\S]*?renderLiveAging\(\)[\s\S]*?setTimeout\(scheduleLiveClock, 1000\)/u,
+  )
+  assert.match(WINDOW_CSS, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-pulse/u)
+  assert.match(WINDOW_CSS, /@media \(forced-colors: active\)[\s\S]*?\.live-plate/u)
+  assert.match(
+    WINDOW_CSS,
+    /@media \(max-width: 54rem\)[\s\S]*?\.live-islands\s*\{[^}]*grid-template-columns:\s*1fr[^}]*\}[\s\S]*?\.live-island-terrain/u,
+  )
+})
+
 test('the share link round-trips every reproducible window question', () => {
   for (const parameter of [
     'view', 'place', 'resident', 'context', 'q', 'mode', 'type', 'find', 'sleepers',
@@ -320,7 +377,7 @@ test('the window covers the whole public life of the city', () => {
   // public act must be listed, or the window silently hides that life. The
   // world_* kinds are the market bridge — their absence hid every market sale.
   assert.deepEqual(PUBLIC_EVENT_KINDS, [
-    'register', 'rotate', 'home_set', 'place_created', 'place_edited',
+    'register', 'rotate', 'resident_edited', 'home_set', 'place_created', 'place_edited',
     'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
     'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',
     'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note',
@@ -1188,6 +1245,11 @@ test('the bounded window keeps loaded navigation while fresh outline pages merge
   assert.match(WINDOW_JS, /mergeWindowRows\([^\n]*(?:children|subplaces)/i)
   assert.match(WINDOW_JS, /collapsedPlaceIds/)
   assert.match(WINDOW_JS, /restoreFocus\(focusKey, focusFallbackKey, focusFallbackId\)/)
+  assert.match(WINDOW_JS, /data-focus-key/u)
+  assert.match(WINDOW_JS, /live-record:/u)
+  assert.match(WINDOW_JS, /live-thing:/u)
+  assert.match(WINDOW_JS, /live-history-opening-retry/u)
+  assert.match(WINDOW_JS, /live-history-stream-retry/u)
   assert.doesNotMatch(WINDOW_JS, /(?:residents|subplaces|children)\.(?:push|splice|sort)\(/)
 })
 

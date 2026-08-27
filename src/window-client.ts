@@ -15,6 +15,56 @@ import {
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
+export type WindowDrawing = Readonly<{
+  palette: readonly string[]
+  indices: readonly (number | null)[]
+}>
+
+export function normalizeWindowDrawing(value: unknown): WindowDrawing | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Record<string, unknown>
+  const fields = Object.keys(candidate).sort()
+  if (fields.length !== 2 || fields[0] !== 'indices' || fields[1] !== 'palette') return null
+  if (!Array.isArray(candidate.palette) || candidate.palette.length > 64 ||
+      !candidate.palette.every(colour => typeof colour === 'string' && /^#[0-9a-f]{6}$/u.test(colour))) {
+    return null
+  }
+  if (!Array.isArray(candidate.indices) || candidate.indices.length !== 64 ||
+      !candidate.indices.every(index => index === null || (
+        typeof index === 'number' && Number.isInteger(index) && index >= 0 &&
+        index < (candidate.palette as unknown[]).length
+      ))) return null
+  try {
+    if (new TextEncoder().encode(JSON.stringify(candidate)).byteLength > 2_048) return null
+  } catch {
+    return null
+  }
+  return Object.freeze({
+    palette: Object.freeze([...(candidate.palette as string[])]),
+    indices: Object.freeze([...(candidate.indices as Array<number | null>)]),
+  })
+}
+
+export function windowLivePlateChildren<T extends Readonly<{
+  id: number
+  parent_id: number | null
+}>>(values: readonly T[], parentId: number): T[] {
+  return values.filter(value => value.parent_id === parentId)
+    .sort((left, right) => left.id - right.id)
+}
+
+export function windowLivePollDelay(hadEvents: boolean, quietReads: number): number {
+  if (hadEvents) return 25000
+  return [60000, 120000, 240000, 300000][Math.min(3, Math.max(0, quietReads))]!
+}
+
+export function windowLiveTraceOpacity(at: number, now: number, lifetime: number): number {
+  if (!Number.isFinite(at) || !Number.isFinite(now) || !Number.isFinite(lifetime) || lifetime <= 0) {
+    return 0
+  }
+  return Math.max(0, Math.min(1, 1 - Math.max(0, now - at) / lifetime))
+}
+
 export function parseWindowSleeperPlaceIds(
   value: string | null,
   maximumLength = 8_192,
@@ -329,19 +379,28 @@ const CONTAINS_MALFORMED_PUBLIC_TEXT_JS = containsMalformedPublicText.toString()
 const VALIDATE_WINDOW_ARCHIVE_QUERY_JS = validateWindowArchiveQuery.toString()
 const VALIDATE_WINDOW_DIRECTORY_SEARCH_JS = validateWindowDirectorySearch.toString()
 const WINDOW_SHARE_PATH_JS = windowSharePath.toString()
+const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
+const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
+const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
+const WINDOW_LIVE_TRACE_OPACITY_JS = windowLiveTraceOpacity.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
 
   const BASE_REFRESH_MS = 60000
   const MAX_REFRESH_MS = 300000
+  const LIVE_MOVE_LIFETIME_MS = 1800000
+  const LIVE_NOTE_LIFETIME_MS = 600000
+  const LIVE_PULSE_MS = 600
+  const LIVE_OPENING_PAGE_LIMIT = 200
+  const LIVE_PORTRAIT_LIMIT = 6
   const REQUEST_TIMEOUT_MS = 10000
   const MAX_FORWARD_RECONCILE_PAGES = 8
   const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{2,31}$/
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
   const MODERATED_TEXT = '[removed by maintainer]'
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
-  const VIEWS = Object.freeze(['map', 'place', 'conversations', 'happenings', 'agreements', 'archive'])
+  const VIEWS = Object.freeze(['map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive'])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
   const SAFE_EVENT_DETAIL_IDS = Object.freeze(${PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON})
   const SAFE_ACTIONS = new Set(${BASIC_ACTIONS_JSON})
@@ -362,11 +421,24 @@ export const WINDOW_JS = `(() => {
   const validateWindowArchiveQuery = ${VALIDATE_WINDOW_ARCHIVE_QUERY_JS}
   const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}
   const windowSharePath = ${WINDOW_SHARE_PATH_JS}
+  const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
+  const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
+  const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
+  const windowLiveTraceOpacity = ${WINDOW_LIVE_TRACE_OPACITY_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
     counts: document.getElementById('city-counts'),
     scope: document.getElementById('view-scope'),
+    liveBeta: document.getElementById('live-beta'),
+    liveBetaNote: document.getElementById('live-beta-note'),
+    liveClock: document.getElementById('live-clock'),
+    liveBreadcrumbs: document.getElementById('live-breadcrumbs'),
+    liveHistoryStatus: document.getElementById('live-history-status'),
+    livePlates: document.getElementById('live-plates'),
+    liveLedger: document.getElementById('live-ledger'),
+    liveRoster: document.getElementById('live-roster'),
+    liveResidentPage: document.getElementById('live-resident-page'),
     map: document.getElementById('place-map'),
     roster: document.getElementById('resident-roster'),
     residentPage: document.getElementById('resident-page'),
@@ -428,7 +500,8 @@ export const WINDOW_JS = `(() => {
     changeMarker: null,
     snapshot: null,
     directory: {
-      places: [], residents: [], loaded: false, loading: false, error: false, marker: null,
+      places: [], residents: [], loaded: false, loading: false, error: false,
+      marker: null, recheckTimer: 0,
     },
     focusedPlaces: {},
     focusedResidents: {},
@@ -455,6 +528,13 @@ export const WINDOW_JS = `(() => {
     placeId: null,
     resident: null,
     conversationContext: false,
+    live: {
+      openingMarker: null, openingEvents: [], openingLoaded: false, openingLoading: false,
+      openingComplete: false, openingError: false, streamError: false, streamMarker: null,
+      changes: [], drawings: {}, noteBodies: {},
+      highlightedKey: null, pulsedKeys: [], quietReads: 0, nextReadAt: null,
+      lastChangeAt: null, clockTimer: 0,
+    },
   }
 
   function element(tagName, className, text) {
@@ -600,10 +680,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderGlobalReadRetry(message, 'error')
     if (nodes.counts) nodes.counts.textContent = message
     if (nodes.scope) nodes.scope.textContent = message
-    for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
+    for (const target of [nodes.map, nodes.roster, nodes.livePlates, nodes.liveRoster,
+      nodes.placePurpose, nodes.placeFrontMatter,
       nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,
       nodes.agreements]) {
       renderEmpty(target, 'error-row', message)
+    }
+    if (nodes.liveLedger) {
+      nodes.liveLedger.replaceChildren(element('li', 'error-row', message))
     }
     if (nodes.activity) {
       nodes.activity.replaceChildren(element('li', 'error-row', message))
@@ -1144,6 +1228,253 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       return [{ id, actor, kind: raw.kind, verb, at, detail }]
     })
+  }
+
+  function normalizeLiveChanges(values) {
+    if (!Array.isArray(values)) return []
+    return values.slice(0, LIVE_OPENING_PAGE_LIMIT).flatMap(raw => {
+      if (!raw || typeof raw !== 'object') return []
+      const changeId = safeChangeMarker(raw.change_id)
+      const actor = safeHandle(raw.actor)
+      const verb = SAFE_EVENT_KINDS.get(raw.kind)
+      const at = safeDate(raw.created_at)
+      if (!changeId || !actor || !verb || !at) return []
+      const source = raw.detail && typeof raw.detail === 'object' ? raw.detail : {}
+      const detail = Object.fromEntries(SAFE_EVENT_DETAIL_IDS.flatMap(key => {
+        const value = safeId(source[key])
+        return value ? [[key, value]] : []
+      }))
+      if (raw.kind === 'action' && SAFE_ACTIONS.has(source.action)) {
+        detail.action = source.action
+        if (SAFE_ACTION_STATUSES.has(source.status)) detail.status = source.status
+      }
+      return [Object.freeze({ change_id: changeId, actor, kind: raw.kind, verb, at, detail })]
+    })
+  }
+
+  function mergeLiveChanges(current, incoming) {
+    const rows = new Map(current.map(row => [row.change_id, row]))
+    for (const row of incoming) rows.set(row.change_id, row)
+    return Object.freeze([...rows.values()].sort((left, right) =>
+      Number(BigInt(right.change_id) - BigInt(left.change_id))))
+  }
+
+  function liveTraceKey(record) {
+    return record.change_id ? 'change:' + record.change_id : 'event:' + String(record.id)
+  }
+
+  function liveRecordType(record) {
+    if (record.kind === 'note' && record.detail.note_id && record.detail.place_id) return 'note'
+    if ((record.kind === 'thing_created' || record.kind === 'thing_crafted') &&
+        record.detail.place_id) return 'make'
+    if (record.kind !== 'action' || (record.detail.status && record.detail.status !== 'applied')) {
+      return null
+    }
+    if ((record.detail.action === 'move' || record.detail.action === 'go_home') &&
+        record.detail.from_place_id && record.detail.to_place_id) return 'move'
+    if (record.detail.action === 'use' && record.detail.source_thing_id &&
+        record.detail.place_id) return 'use'
+    if (record.detail.action === 'make' && record.detail.place_id) return 'make'
+    return null
+  }
+
+  function liveRecords() {
+    const records = [...state.live.openingEvents, ...state.live.changes]
+    return records.sort((left, right) => right.at.getTime() - left.at.getTime())
+  }
+
+  function liveRecordLifetime(record) {
+    return liveRecordType(record) === 'note' ? LIVE_NOTE_LIFETIME_MS : LIVE_MOVE_LIFETIME_MS
+  }
+
+  function liveRecordPlaceId(record) {
+    const type = liveRecordType(record)
+    if (type === 'move') return record.detail.to_place_id || null
+    if (record.detail.place_id) return record.detail.place_id
+    return null
+  }
+
+  function livePlaceAnchor(placeId, focusId, children) {
+    if (!placeId) return null
+    if (placeId === focusId) return focusId
+    const places = state.snapshot
+      ? livePlaceRows(state.snapshot)
+      : state.directory.loaded ? state.directory.places : []
+    const byId = new Map(places.map(place => [place.id, place]))
+    const childIds = new Set(children.map(place => place.id))
+    const seen = new Set()
+    let current = byId.get(placeId)
+    while (current && !seen.has(current.id)) {
+      if (childIds.has(current.id)) return current.id
+      if (current.parent_id === focusId) return current.id
+      seen.add(current.id)
+      current = current.parent_id ? byId.get(current.parent_id) : null
+    }
+    return null
+  }
+
+  function liveDrawingKey(type, id) {
+    return type + ':' + String(id)
+  }
+
+  async function loadLiveDrawing(type, id) {
+    const key = liveDrawingKey(type, id)
+    const held = state.live.drawings[key]
+    if (held?.loading || held?.loaded) return
+    const loading = Object.freeze({ loading: true, loaded: false, error: false })
+    state = {
+      ...state,
+      live: {
+        ...state.live,
+        drawings: { ...state.live.drawings, [key]: loading },
+      },
+    }
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    let settled = false
+    try {
+      const url = new URL('/api/drawing/' + type + '/' + String(id), window.location.origin)
+      const response = await fetch(url.pathname, {
+        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('drawing unavailable')
+      const payload = await response.json()
+      if (!payload || payload.type !== type || safeId(payload.id) !== id) throw new Error('invalid drawing')
+      const drawing = payload.drawing === null ? null : normalizeWindowDrawing(payload.drawing)
+      if (payload.drawing !== null && !drawing) throw new Error('invalid drawing')
+      if (![null, 'place', 'resident', 'thing', 'kind_revision'].includes(payload.source)) {
+        throw new Error('invalid drawing source')
+      }
+      const source = payload.source
+      if (state.live.drawings[key] !== loading) return
+      state = {
+        ...state,
+        live: {
+          ...state.live,
+          drawings: {
+            ...state.live.drawings,
+            [key]: Object.freeze({ loading: false, loaded: true, error: false, drawing, source }),
+          },
+        },
+      }
+      settled = true
+    } catch {
+      if (state.live.drawings[key] !== loading) return
+      state = {
+        ...state,
+        live: {
+          ...state.live,
+          drawings: {
+            ...state.live.drawings,
+            [key]: Object.freeze({ loading: false, loaded: false, error: true }),
+          },
+        },
+      }
+      settled = true
+    } finally {
+      window.clearTimeout(timeout)
+      if (settled && state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+    }
+  }
+
+  function drawingNode(type, id, label, immutableWorld) {
+    const entry = immutableWorld ? Object.freeze({ loaded: true, drawing: null })
+      : state.live.drawings[liveDrawingKey(type, id)]
+    if (!immutableWorld && !entry) {
+      void loadLiveDrawing(type, id)
+    }
+    if (!immutableWorld && entry?.error) {
+      const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
+      unavailable.setAttribute('role', 'img')
+      unavailable.setAttribute('aria-label', label + ' drawing could not be read')
+      unavailable.append(element('span', 'drawing-undrawn-label', 'drawing unavailable'))
+      return unavailable
+    }
+    if (!entry?.loaded) {
+      const loading = element('span', 'drawing-grid drawing-undrawn drawing-loading')
+      loading.setAttribute('role', 'img')
+      loading.setAttribute('aria-label', 'Reading ' + label + ' drawing')
+      loading.append(element('span', 'drawing-undrawn-label', 'reading drawing'))
+      return loading
+    }
+    if (entry.drawing === null) {
+      const standIn = element('span', immutableWorld
+        ? 'drawing-grid drawing-undrawn drawing-world-standin'
+        : 'drawing-grid drawing-undrawn')
+      standIn.setAttribute('role', 'img')
+      standIn.setAttribute('aria-label', immutableWorld
+        ? label + ' uses a composed browser stand-in'
+        : label + ' is undrawn')
+      standIn.append(element('span', 'drawing-undrawn-label', immutableWorld ? 'world stand-in' : 'undrawn'))
+      return standIn
+    }
+    const drawing = entry.drawing
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.classList.add('drawing-grid', 'drawing-authored')
+    svg.setAttribute('viewBox', '0 0 8 8')
+    svg.setAttribute('role', 'img')
+    const blank = drawing.indices.every(index => index === null)
+    svg.setAttribute('aria-label', label + (blank ? ' is deliberately blank' : ' has an authored drawing'))
+    svg.setAttribute('shape-rendering', 'crispEdges')
+    drawing.indices.forEach((paletteIndex, index) => {
+      if (paletteIndex === null) return
+      const square = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      square.setAttribute('x', String(index % 8))
+      square.setAttribute('y', String(Math.floor(index / 8)))
+      square.setAttribute('width', '1')
+      square.setAttribute('height', '1')
+      square.setAttribute('fill', drawing.palette[paletteIndex])
+      svg.append(square)
+    })
+    return svg
+  }
+
+  async function loadLiveNote(noteId) {
+    const key = String(noteId)
+    const held = state.live.noteBodies[key]
+    if (held?.loading || held?.body) return
+    const loading = Object.freeze({ loading: true, error: false, body: null })
+    state = {
+      ...state,
+      live: { ...state.live, noteBodies: {
+        ...state.live.noteBodies, [key]: loading,
+      } },
+    }
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    let settled = false
+    try {
+      const response = await fetch('/api/note/' + key, {
+        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('note unavailable')
+      const payload = await response.json()
+      const body = safeText(payload?.note?.body, null, 4000, false)
+      if (!body || safeId(payload?.note?.id) !== noteId) throw new Error('invalid note')
+      if (state.live.noteBodies[key] !== loading) return
+      state = { ...state, live: { ...state.live, noteBodies: {
+        ...state.live.noteBodies, [key]: Object.freeze({ loading: false, error: false, body }),
+      } } }
+      settled = true
+    } catch {
+      if (state.live.noteBodies[key] !== loading) return
+      state = { ...state, live: { ...state.live, noteBodies: {
+        ...state.live.noteBodies, [key]: Object.freeze({ loading: false, error: true, body: null }),
+      } } }
+      settled = true
+    } finally {
+      window.clearTimeout(timeout)
+      if (settled && state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+    }
+  }
+
+  function setLiveHighlight(key) {
+    state = { ...state, live: { ...state.live, highlightedKey: key } }
+    for (const node of document.querySelectorAll('[data-live-key]')) {
+      node.dataset.highlighted = String(node.dataset.liveKey === key)
+    }
   }
 
   function flattenPlaces(values, ancestors) {
@@ -1876,6 +2207,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   // walking the tab list never floods the back button.
   let rovingTabActivation = false
   function navigate(next) {
+    const previousView = state.view
     const openingDetail = Boolean(next?.detail && (
       state.detail?.kind !== next.detail.kind || state.detail?.id !== next.detail.id
     ))
@@ -1888,6 +2220,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderAll()
     void ensureFocusedSelection()
     void ensureDetail()
+    if (state.view !== previousView) {
+      scheduleRefresh(state.view === 'live' && !document.hidden ? 0 : BASE_REFRESH_MS)
+    }
   }
 
   function closeDetail() {
@@ -2728,6 +3063,685 @@ ${WINDOW_CLIENT_SAFETY_JS}
       fragment.append(group)
     }
     nodes.roster.replaceChildren(fragment)
+  }
+
+  function livePlaceRows(snapshot) {
+    if (!state.directory.loaded) return snapshot.flatPlaces
+    const rows = new Map(state.directory.places.map(place => [place.id, place]))
+    for (const place of snapshot.flatPlaces) {
+      rows.set(place.id, Object.freeze({ ...(rows.get(place.id) || {}), ...place }))
+    }
+    return Object.freeze([...rows.values()])
+  }
+
+  function liveFocusPlace(snapshot) {
+    const chosen = selectedPlace(snapshot)
+    if (chosen) return chosen
+    const places = livePlaceRows(snapshot)
+    const world = places.find(place => place.parent_id === null && place.name === WORLD_ROOT_NAME)
+    return world || places.find(place => place.parent_id === null) || snapshot.places[0] || null
+  }
+
+  function liveChildren(snapshot, focus) {
+    return windowLivePlateChildren(livePlaceRows(snapshot), focus.id).map(place =>
+      placeReference(snapshot, place.id) || place)
+  }
+
+  function livePath(snapshot, focus) {
+    const places = livePlaceRows(snapshot)
+    const byId = new Map(places.map(place => [place.id, place]))
+    const path = []
+    const seen = new Set()
+    let current = focus
+    while (current && !seen.has(current.id) && path.length < 32) {
+      path.push(placeReference(snapshot, current.id) || current)
+      seen.add(current.id)
+      current = current.parent_id ? byId.get(current.parent_id) || null : null
+    }
+    return path.reverse()
+  }
+
+  function renderLiveBreadcrumbs(snapshot, focus) {
+    if (!nodes.liveBreadcrumbs) return
+    const parts = []
+    livePath(snapshot, focus).forEach((place, index, path) => {
+      const button = element('button', 'live-breadcrumb', place.name)
+      button.type = 'button'
+      button.dataset.focusKey = 'live-breadcrumb:' + String(place.id)
+      button.setAttribute('aria-current', index === path.length - 1 ? 'location' : 'false')
+      button.addEventListener('click', () => navigate({ view: 'live', placeId: place.id }))
+      parts.push(button)
+      if (index < path.length - 1) parts.push(element('span', 'live-breadcrumb-separator', '/'))
+    })
+    nodes.liveBreadcrumbs.replaceChildren(...parts)
+  }
+
+  function livePortraitGrid(residents, label) {
+    const grid = element('div', 'live-portrait-grid')
+    grid.setAttribute('aria-label', label)
+    const ordered = [...residents.filter(resident => !resident.asleep),
+      ...residents.filter(resident => resident.asleep)]
+    for (const resident of ordered.slice(0, LIVE_PORTRAIT_LIMIT)) {
+      const portrait = element('button', resident.asleep
+        ? 'live-portrait asleep'
+        : 'live-portrait')
+      portrait.type = 'button'
+      portrait.dataset.focusKey = 'live-resident:' + resident.handle
+      portrait.title = 'Follow ' + resident.handle
+      portrait.addEventListener('click', () => chooseResident(resident.handle))
+      portrait.append(
+        drawingNode('resident', resident.id, resident.handle, false),
+        element('span', 'live-portrait-name', resident.handle),
+      )
+      grid.append(portrait)
+    }
+    if (ordered.length > LIVE_PORTRAIT_LIMIT) {
+      grid.append(element('span', 'live-portrait-more', '+' +
+        String(ordered.length - LIVE_PORTRAIT_LIMIT) + ' more'))
+    }
+    return grid
+  }
+
+  function livePlaceCard(snapshot, place) {
+    const card = element('article', 'live-island')
+    card.dataset.placeId = String(place.id)
+    const terrain = liveTerrain(place)
+    terrain.classList.add('live-island-terrain')
+    const open = element('button', 'live-island-open')
+    open.type = 'button'
+    open.dataset.focusKey = 'live-place:' + String(place.id)
+    open.title = 'Open the live plate for ' + place.name
+    open.addEventListener('click', () => navigate({ view: 'live', placeId: place.id }))
+    open.append(element('span', 'live-island-name', place.name))
+    const drawing = state.live.drawings[liveDrawingKey('place', place.id)]
+    const undrawn = drawing?.loaded && drawing.drawing === null
+    const owner = Object.hasOwn(place, 'owner')
+      ? place.owner ? (undrawn ? 'undrawn · ' : '') + 'kept by ' + place.owner : 'ownerless world ground'
+      : 'Place #' + String(place.id)
+    card.append(terrain, open, element('p', 'live-island-owner', owner))
+    const residents = residentsAt(snapshot, place.id)
+    if (residents.length) {
+      card.append(livePortraitGrid(residents, 'Residents inside ' + place.name))
+    }
+    return card
+  }
+
+  function liveTerrain(place) {
+    const terrain = element('div', 'live-terrain')
+    const immutableWorld = place.parent_id === null && place.name === WORLD_ROOT_NAME
+    terrain.setAttribute('aria-label', immutableWorld
+      ? 'Composed browser ground for the immutable world root'
+      : 'Drawing tiled inside ' + place.name)
+    for (let index = 0; index < 8; index += 1) {
+      const tile = drawingNode('place', place.id, place.name, immutableWorld)
+      tile.setAttribute('aria-hidden', index === 0 ? 'false' : 'true')
+      terrain.append(tile)
+    }
+    return terrain
+  }
+
+  function liveThingShelf(snapshot, place) {
+    const things = snapshot.things.filter(thing => thing.place_id === place.id).slice(0, 12)
+    if (!things.length) return null
+    const shelf = element('section', 'live-thing-shelf')
+    shelf.setAttribute('aria-label', 'Things shown inside ' + place.name)
+    for (const thing of things) {
+      const specimen = element('a', 'live-thing-specimen')
+      specimen.href = '/api/thing/' + String(thing.id)
+      specimen.title = 'Read ' + thing.name
+      specimen.dataset.focusKey = 'live-thing:' + String(thing.id)
+      specimen.append(
+        drawingNode('thing', thing.id, thing.name, false),
+        element('span', 'live-thing-name', thing.name),
+      )
+      shelf.append(specimen)
+    }
+    return shelf
+  }
+
+  function renderLiveResidentPage() {
+    if (!nodes.liveResidentPage) return
+    const entry = state.residentPaging
+    if (!entry.hasMore && !entry.loading && !entry.error) {
+      nodes.liveResidentPage.hidden = true
+      nodes.liveResidentPage.replaceChildren()
+      return
+    }
+    const parts = []
+    if (entry.error) {
+      const message = element('p', 'navigation-error', 'Could not load more residents.')
+      message.setAttribute('role', 'alert')
+      parts.push(message)
+    }
+    const button = element('button', 'resident-load', entry.loading
+      ? 'Loading more residents…'
+      : entry.error ? 'Retry loading residents' : 'Load more residents')
+    button.type = 'button'
+    button.dataset.focusKey = 'live-resident-page'
+    button.dataset.focusFallbackId = 'live-roster'
+    button.setAttribute('aria-busy', String(entry.loading))
+    button.setAttribute('aria-controls', 'live-roster')
+    button.addEventListener('click', () => void loadResidents())
+    parts.push(button)
+    nodes.liveResidentPage.hidden = false
+    nodes.liveResidentPage.replaceChildren(...parts)
+  }
+
+  function renderLiveRoster(snapshot, focus) {
+    if (!nodes.liveRoster) return
+    renderLiveResidentPage()
+    const scope = placeScopeSet(focus.id, snapshot)
+    const residents = displayedResidents(snapshot).filter(resident =>
+      scope.has(resident.current_place_id) &&
+      (!state.resident || resident.handle === state.resident))
+    if (!residents.length) {
+      const empty = element('p', 'empty-row', 'Nobody is here right now. The room keeps its things.')
+      empty.setAttribute('role', 'status')
+      nodes.liveRoster.replaceChildren(empty)
+      return
+    }
+    const list = element('div', 'live-roster-list')
+    for (const resident of [...residents.filter(row => !row.asleep),
+      ...residents.filter(row => row.asleep)]) {
+      const row = element('div', resident.asleep ? 'resident-row asleep' : 'resident-row')
+      const follow = element('button', 'resident-follow', resident.handle)
+      follow.type = 'button'
+      follow.dataset.focusKey = 'live-roster:' + resident.handle
+      follow.addEventListener('click', () => chooseResident(resident.handle))
+      const place = placeReference(snapshot, resident.current_place_id)
+      const location = place ? place.name : resident.current_place_id
+        ? 'Place #' + String(resident.current_place_id)
+        : 'Between places'
+      row.append(
+        drawingNode('resident', resident.id, resident.handle, false),
+        follow,
+        element('span', 'resident-number', location + (resident.asleep ? ' · asleep' : '')),
+      )
+      list.append(row)
+    }
+    nodes.liveRoster.replaceChildren(list)
+  }
+
+  function liveIslandColumnCount(childCount) {
+    if (window.matchMedia('(max-width: 54rem)').matches) return 1
+    return Math.min(3, Math.max(1, Math.ceil(Math.sqrt(childCount))))
+  }
+
+  function liveAnchorPoint(anchorId, focusId, children) {
+    if (anchorId === focusId) return Object.freeze({ x: 50, y: 18 })
+    const index = children.findIndex(place => place.id === anchorId)
+    if (index < 0) return null
+    const columns = liveIslandColumnCount(children.length)
+    const rows = Math.max(1, Math.ceil(children.length / columns))
+    return Object.freeze({
+      x: ((index % columns) + 0.5) * (100 / columns),
+      y: 38 + (Math.floor(index / columns) + 0.5) * (58 / rows),
+    })
+  }
+
+  function visibleLiveRecords(snapshot, focus, children) {
+    const now = Date.now()
+    return liveRecords().filter(record => {
+      const type = liveRecordType(record)
+      if (!type || (state.resident && record.actor !== state.resident)) return false
+      if (windowLiveTraceOpacity(record.at.getTime(), now, liveRecordLifetime(record)) <= 0) {
+        return false
+      }
+      if (type === 'move') {
+        return Boolean(
+          livePlaceAnchor(record.detail.from_place_id, focus.id, children) ||
+          livePlaceAnchor(record.detail.to_place_id, focus.id, children)
+        )
+      }
+      return Boolean(livePlaceAnchor(liveRecordPlaceId(record), focus.id, children))
+    })
+  }
+
+  function bindLiveHighlight(node, key, surface) {
+    node.dataset.liveKey = key
+    node.dataset.focusKey = 'live-record:' + surface + ':' + key
+    node.dataset.highlighted = String(state.live.highlightedKey === key)
+    node.addEventListener('mouseenter', () => setLiveHighlight(key))
+    node.addEventListener('mouseleave', () => setLiveHighlight(null))
+    node.addEventListener('focus', () => setLiveHighlight(key))
+    node.addEventListener('blur', () => setLiveHighlight(null))
+    node.addEventListener('click', () => setLiveHighlight(
+      state.live.highlightedKey === key ? null : key))
+  }
+
+  function renderLiveTraceLayer(snapshot, focus, children, records) {
+    const layer = element('div', 'live-trace-layer')
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.classList.add('live-traces')
+    svg.setAttribute('viewBox', '0 0 100 100')
+    svg.setAttribute('preserveAspectRatio', 'none')
+    svg.setAttribute('aria-label', 'Recent movement trails')
+    const definitions = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
+    marker.setAttribute('id', 'live-trace-arrow')
+    marker.setAttribute('markerWidth', '6')
+    marker.setAttribute('markerHeight', '6')
+    marker.setAttribute('refX', '5')
+    marker.setAttribute('refY', '3')
+    marker.setAttribute('orient', 'auto')
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    arrow.setAttribute('d', 'M0,0 L6,3 L0,6 Z')
+    arrow.classList.add('live-trace-arrowhead')
+    marker.append(arrow)
+    definitions.append(marker)
+    svg.append(definitions)
+
+    const noteNumbers = new Map(records.map((record, index) => [liveTraceKey(record), index + 1]))
+    for (const record of records) {
+      const type = liveRecordType(record)
+      const key = liveTraceKey(record)
+      const opacity = windowLiveTraceOpacity(
+        record.at.getTime(), Date.now(), liveRecordLifetime(record))
+      if (type === 'move') {
+        const fromAnchor = livePlaceAnchor(record.detail.from_place_id, focus.id, children)
+        const toAnchor = livePlaceAnchor(record.detail.to_place_id, focus.id, children)
+        const from = liveAnchorPoint(fromAnchor, focus.id, children)
+        const to = liveAnchorPoint(toAnchor, focus.id, children)
+        if (!from || !to || (from.x === to.x && from.y === to.y)) continue
+        const trail = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+        trail.classList.add('live-trail')
+        trail.setAttribute('x1', String(from.x))
+        trail.setAttribute('y1', String(from.y))
+        trail.setAttribute('x2', String(to.x))
+        trail.setAttribute('y2', String(to.y))
+        trail.setAttribute('marker-end', 'url(#live-trace-arrow)')
+        trail.setAttribute('tabindex', '0')
+        trail.setAttribute('role', 'button')
+        trail.setAttribute('aria-label', record.actor + ' moved from ' +
+          String(record.detail.from_place_id) + ' to ' + String(record.detail.to_place_id))
+        trail.dataset.liveAt = String(record.at.getTime())
+        trail.dataset.liveLifetime = String(liveRecordLifetime(record))
+        trail.style.opacity = String(opacity)
+        bindLiveHighlight(trail, key, 'trail')
+        svg.append(trail)
+        continue
+      }
+      const placeId = liveRecordPlaceId(record)
+      const anchor = livePlaceAnchor(placeId, focus.id, children)
+      const point = liveAnchorPoint(anchor, focus.id, children)
+      if (!point) continue
+      if (type === 'note') {
+        const mark = element('button', 'live-footnote-mark', String(noteNumbers.get(key)))
+        mark.type = 'button'
+        mark.style.left = String(point.x) + '%'
+        mark.style.top = String(point.y) + '%'
+        mark.dataset.liveAt = String(record.at.getTime())
+        mark.dataset.liveLifetime = String(liveRecordLifetime(record))
+        mark.style.opacity = String(opacity)
+        mark.setAttribute('aria-label', 'Show ' + record.actor + "'s note in the plate ledger")
+        bindLiveHighlight(mark, key, 'mark')
+        layer.append(mark)
+      } else if (state.live.pulsedKeys.includes(key)) {
+        const pulse = element('span', 'live-action-mark live-pulse', type === 'make' ? '+' : '×')
+        pulse.style.left = String(point.x) + '%'
+        pulse.style.top = String(point.y) + '%'
+        pulse.setAttribute('role', 'img')
+        pulse.setAttribute('aria-label', record.actor + (type === 'make'
+          ? ' made something here'
+          : ' used something here'))
+        bindLiveHighlight(pulse, key, 'pulse')
+        layer.append(pulse)
+      }
+    }
+    layer.prepend(svg)
+    return layer
+  }
+
+  function livePlaceName(snapshot, id) {
+    const place = placeReference(snapshot, id)
+    return place ? place.name : id ? 'Place #' + String(id) : 'between places'
+  }
+
+  function liveLedgerText(snapshot, record) {
+    const type = liveRecordType(record)
+    if (type === 'move') {
+      return record.actor + ' moved: ' + livePlaceName(snapshot, record.detail.from_place_id) +
+        ' → ' + livePlaceName(snapshot, record.detail.to_place_id)
+    }
+    if (type === 'note') {
+      const noteId = record.detail.note_id
+      const entry = state.live.noteBodies[String(noteId)]
+      if (!entry && noteId) void loadLiveNote(noteId)
+      if (entry?.body) {
+        const firstLine = entry.body.split(String.fromCharCode(10))[0]
+        return record.actor + ': ' + (firstLine.endsWith(String.fromCharCode(13))
+          ? firstLine.slice(0, -1)
+          : firstLine)
+      }
+      if (entry?.error) return record.actor + "'s note #" + String(noteId) + ' could not be read.'
+      return 'Reading ' + record.actor + "'s note #" + String(noteId) + '…'
+    }
+    const placeId = liveRecordPlaceId(record)
+    if (type === 'make') {
+      return record.actor + ' made thing #' + String(record.detail.thing_id || '?') +
+        ' in ' + livePlaceName(snapshot, placeId)
+    }
+    return record.actor + ' used thing #' + String(record.detail.source_thing_id || '?') +
+      ' in ' + livePlaceName(snapshot, placeId)
+  }
+
+  function renderLiveLedger(snapshot, focus, children, suppliedRecords) {
+    if (!nodes.liveLedger) return
+    const liveFocus = focus || liveFocusPlace(snapshot)
+    if (!liveFocus) {
+      nodes.liveLedger.replaceChildren(element('li', 'empty-row', 'No public plate is available.'))
+      return
+    }
+    const liveChildrenRows = children || liveChildren(snapshot, liveFocus)
+    const records = suppliedRecords || visibleLiveRecords(snapshot, liveFocus, liveChildrenRows)
+    if (!records.length) {
+      nodes.liveLedger.replaceChildren(element('li', 'empty-row',
+        'No recent marks reach this plate. The city moves only when residents act.'))
+      return
+    }
+    nodes.liveLedger.replaceChildren(...records.map((record, index) => {
+      const row = element('li', 'live-ledger-row')
+      const key = liveTraceKey(record)
+      const number = element('span', 'live-ledger-number', String(index + 1).padStart(2, '0'))
+      const copy = element('p', 'live-ledger-copy', liveLedgerText(snapshot, record))
+      const age = windowLiveTraceOpacity(record.at.getTime(), Date.now(), liveRecordLifetime(record))
+      row.dataset.liveAt = String(record.at.getTime())
+      row.dataset.liveLifetime = String(liveRecordLifetime(record))
+      row.style.opacity = String(Math.max(0.25, age))
+      row.append(number, copy, timeNode(record.at, 'live-ledger-time'))
+      row.tabIndex = 0
+      bindLiveHighlight(row, key, 'ledger')
+      return row
+    }))
+  }
+
+  function renderLiveHistoryStatus() {
+    if (!nodes.liveHistoryStatus) return
+    const parts = []
+    if (state.live.openingLoading) {
+      parts.push(document.createTextNode('Reading backward to the 30-minute trace edge…'))
+    } else if (state.live.openingError) {
+      parts.push(document.createTextNode(
+        'Recent history is incomplete before the 30-minute edge. The plate shows only records it could verify. '
+      ))
+      const retry = element('button', 'live-history-retry', 'Retry recent history')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'live-history-opening-retry'
+      retry.addEventListener('click', () => {
+        if (state.snapshot) void loadLiveOpeningHistory(state.snapshot, true)
+      })
+      parts.push(retry)
+    } else if (state.live.openingComplete) {
+      parts.push(document.createTextNode('Recent history is complete through the 30-minute trace edge.'))
+    } else {
+      parts.push(document.createTextNode('Preparing the recent public record…'))
+    }
+    if (state.live.streamError) {
+      parts.push(document.createTextNode(
+        ' The latest change pages could not be completed; this plate is holding its last verified cursor. '
+      ))
+      const retry = element('button', 'live-history-retry', 'Retry the latest read')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'live-history-stream-retry'
+      retry.addEventListener('click', () => void refreshCity())
+      parts.push(retry)
+    }
+    nodes.liveHistoryStatus.replaceChildren(...parts)
+  }
+
+  async function loadLiveOpeningHistory(snapshot, force) {
+    if (state.live.openingLoading || (state.live.openingLoaded && !force)) return
+    const requestMarker = state.live.openingMarker || snapshot.changeMarker || state.changeMarker
+    if (!requestMarker) return
+    const startingEvents = force ? state.live.openingEvents : []
+    state = {
+      ...state,
+      live: {
+        ...state.live,
+        openingMarker: requestMarker,
+        openingEvents: startingEvents,
+        openingLoaded: false,
+        openingLoading: true,
+        openingComplete: false,
+        openingError: false,
+        changes: state.live.openingMarker ? state.live.changes : [],
+        streamMarker: state.live.openingMarker ? state.live.streamMarker : requestMarker,
+      },
+    }
+    renderLiveHistoryStatus()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const cutoff = Date.now() - LIVE_MOVE_LIFETIME_MS
+    let events = startingEvents
+    let beforeId = null
+    let heldMarker = null
+    const seenCursors = new Set()
+    let complete = false
+    try {
+      while (!complete) {
+        const url = new URL('/api/events', window.location.origin)
+        url.searchParams.set('limit', String(LIVE_OPENING_PAGE_LIMIT))
+        url.searchParams.set('after_change_marker', heldMarker || requestMarker)
+        if (beforeId) url.searchParams.set('before_id', String(beforeId))
+        const response = await fetch(url.pathname + url.search, {
+          credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+          redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('recent public events unavailable')
+        const payload = await response.json()
+        if (!payload || typeof payload !== 'object') throw new Error('invalid recent public events')
+        const pageMarker = safeChangeMarker(payload.change_marker)
+        if (!pageMarker || !markerCovers(pageMarker, heldMarker || requestMarker)) {
+          throw new Error('recent public event marker did not cover its page')
+        }
+        if (!heldMarker) heldMarker = pageMarker
+        const incoming = normalizeEvents(payload.events, LIVE_OPENING_PAGE_LIMIT)
+        events = mergeWindowRows(events, incoming)
+        const oldest = incoming.length
+          ? Math.min(...incoming.map(event => event.at.getTime()))
+          : Number.POSITIVE_INFINITY
+        if (payload.has_more !== true || oldest <= cutoff) {
+          complete = true
+          break
+        }
+        const nextBeforeId = safeId(payload.next_before_id)
+        if (!incoming.length || !nextBeforeId || seenCursors.has(nextBeforeId) ||
+            (beforeId && nextBeforeId >= beforeId)) {
+          throw new Error('recent public event cursor did not progress')
+        }
+        seenCursors.add(nextBeforeId)
+        beforeId = nextBeforeId
+      }
+      const latestAt = events.length
+        ? Math.max(...events.map(event => event.at.getTime()))
+        : state.live.lastChangeAt
+      const streamBase = heldMarker || requestMarker
+      const changes = Object.freeze(state.live.changes.filter(change =>
+        BigInt(change.change_id) > BigInt(streamBase)))
+      const streamMarker = markerCovers(state.live.streamMarker, streamBase)
+        ? state.live.streamMarker
+        : streamBase
+      state = {
+        ...state,
+        live: {
+          ...state.live,
+          openingEvents: Object.freeze(events),
+          openingMarker: streamBase,
+          openingLoaded: true,
+          openingLoading: false,
+          openingComplete: complete,
+          openingError: false,
+          changes,
+          streamMarker,
+          lastChangeAt: latestAt || null,
+        },
+      }
+    } catch {
+      const streamBase = heldMarker || requestMarker
+      const changes = Object.freeze(state.live.changes.filter(change =>
+        BigInt(change.change_id) > BigInt(streamBase)))
+      state = {
+        ...state,
+        live: {
+          ...state.live,
+          openingEvents: Object.freeze(events),
+          openingMarker: streamBase,
+          openingLoaded: true,
+          openingLoading: false,
+          openingComplete: false,
+          openingError: true,
+          changes,
+          streamMarker: markerCovers(state.live.streamMarker, streamBase)
+            ? state.live.streamMarker
+            : streamBase,
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+      if (heldMarker && !markerCovers(state.changeMarker, heldMarker)) void refreshCity()
+    }
+  }
+
+  function liveAgeLabel(milliseconds) {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000))
+    if (seconds < 60) return String(seconds) + 's'
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return String(minutes) + (minutes === 1 ? ' minute' : ' minutes')
+    const hours = Math.floor(minutes / 60)
+    return String(hours) + (hours === 1 ? ' hour' : ' hours')
+  }
+
+  function renderLiveClock() {
+    if (!nodes.liveClock) return
+    if (document.hidden) {
+      nodes.liveClock.textContent = 'Reads pause while this tab is hidden. The last completed plate stays visible.'
+      return
+    }
+    const now = Date.now()
+    const next = state.live.nextReadAt
+      ? ' · next read in ' + String(Math.max(0, Math.ceil((state.live.nextReadAt - now) / 1000))) + 's'
+      : ' · next read pending'
+    if (!state.live.lastChangeAt) {
+      nodes.liveClock.textContent =
+        'The city has been still for longer than this plate can show. It moves only when residents act.' + next
+      return
+    }
+    const elapsed = Math.max(0, now - state.live.lastChangeAt)
+    nodes.liveClock.textContent = elapsed >= 60000
+      ? 'The city has been still for ' + liveAgeLabel(elapsed) +
+        '. It moves only when residents act.' + next
+      : 'last change ' + liveAgeLabel(elapsed) + ' ago' + next
+  }
+
+  function renderLiveAging() {
+    if (state.view !== 'live' || document.hidden) return
+    const now = Date.now()
+    const agedNodes = [
+      ...(nodes.livePlates?.querySelectorAll('[data-live-at][data-live-lifetime]') || []),
+      ...(nodes.liveLedger?.querySelectorAll('[data-live-at][data-live-lifetime]') || []),
+    ]
+    let expiredLedgerRow = false
+    for (const node of agedNodes) {
+      const opacity = windowLiveTraceOpacity(
+        Number(node.dataset.liveAt), now, Number(node.dataset.liveLifetime))
+      if (opacity <= 0) {
+        expiredLedgerRow ||= node.classList.contains('live-ledger-row')
+        node.remove()
+      } else {
+        node.style.opacity = String(node.classList.contains('live-ledger-row')
+          ? Math.max(0.25, opacity)
+          : opacity)
+      }
+    }
+    if (expiredLedgerRow && nodes.liveLedger &&
+        !nodes.liveLedger.querySelector('.live-ledger-row')) {
+      nodes.liveLedger.replaceChildren(element('li', 'empty-row',
+        'No recent marks reach this plate. The city moves only when residents act.'))
+    }
+  }
+
+  function scheduleLiveClock() {
+    window.clearTimeout(state.live.clockTimer)
+    if (state.view !== 'live') {
+      if (state.live.clockTimer) {
+        state = { ...state, live: { ...state.live, clockTimer: 0 } }
+      }
+      return
+    }
+    renderLiveClock()
+    renderLiveAging()
+    const clockTimer = window.setTimeout(scheduleLiveClock, 1000)
+    state = { ...state, live: { ...state.live, clockTimer } }
+  }
+
+  function renderLive(snapshot) {
+    if (!nodes.livePlates) return
+    const active = document.activeElement
+    const focusKey = active?.closest?.('#live-panel') && active.dataset
+      ? active.dataset.focusKey || null
+      : null
+    const issue = selectionIssue(snapshot, true)
+    if (issue) {
+      renderSelectionIssue(nodes.livePlates, issue)
+      renderLiveHistoryStatus()
+      scheduleLiveClock()
+      restoreFocus(focusKey, null, null)
+      return
+    }
+    const focus = liveFocusPlace(snapshot)
+    if (!focus) {
+      renderEmpty(nodes.livePlates, 'empty-row', 'No public plate is available.')
+      renderLiveHistoryStatus()
+      scheduleLiveClock()
+      restoreFocus(focusKey, null, null)
+      return
+    }
+    const children = liveChildren(snapshot, focus)
+    const records = visibleLiveRecords(snapshot, focus, children)
+    renderLiveBreadcrumbs(snapshot, focus)
+
+    const plate = element('section', 'live-plate')
+    plate.setAttribute('aria-label', 'Live cartographic plate for ' + focus.name)
+    const caption = element('header', 'live-plate-caption')
+    caption.append(
+      element('p', 'block-number', 'LIVE PLATE / PLACE #' + String(focus.id)),
+      element('h3', 'live-plate-title', focus.name),
+      element('p', 'live-plate-legend',
+        'brick dash = recorded move · yellow number = public note · hatch = browser stand-in'),
+    )
+    const ground = element('div', 'live-plate-ground')
+    ground.append(liveTerrain(focus))
+    const directResidents = displayedResidents(snapshot).filter(resident =>
+      resident.current_place_id === focus.id &&
+      (!state.resident || resident.handle === state.resident))
+    if (directResidents.length) {
+      ground.append(livePortraitGrid(directResidents, 'Residents standing directly in ' + focus.name))
+    }
+    const islands = element('div', 'live-islands')
+    islands.style.setProperty('--live-columns', String(liveIslandColumnCount(children.length)))
+    if (children.length) {
+      islands.append(...children.map(place => livePlaceCard(snapshot, place)))
+    } else {
+      islands.append(element('p', 'live-room-empty',
+        directResidents.length
+          ? 'No smaller public places are drawn inside this room.'
+          : 'Nobody is here right now. The room keeps its things.'))
+    }
+    ground.append(islands)
+    const shelf = liveThingShelf(snapshot, focus)
+    if (shelf) ground.append(shelf)
+    ground.append(renderLiveTraceLayer(snapshot, focus, children, records))
+    plate.append(caption, ground)
+    nodes.livePlates.replaceChildren(plate)
+    renderLiveLedger(snapshot, focus, children, records)
+    renderLiveRoster(snapshot, focus)
+    renderLiveHistoryStatus()
+    scheduleLiveClock()
+    restoreFocus(focusKey, null, null)
+    if (!state.live.openingLoaded && !state.live.openingLoading) {
+      void loadLiveOpeningHistory(snapshot, false)
+    }
   }
 
   function renderPeople(target, residents, placeOf) {
@@ -4145,6 +5159,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       tab.tabIndex = active ? 0 : -1
     }
     for (const panel of panels) panel.hidden = panel.id !== state.view + '-panel'
+    const live = state.view === 'live'
+    if (nodes.liveBeta) nodes.liveBeta.hidden = !live
+    if (nodes.liveBetaNote) nodes.liveBetaNote.hidden = !live
+    scheduleLiveClock()
   }
 
   // A refresh rebuilds the DOM, which would silently drop the reader's
@@ -4196,6 +5214,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.view === 'map') {
       renderMap(snapshot)
       renderRoster(snapshot)
+    } else if (state.view === 'live') {
+      renderLive(snapshot)
     } else if (state.view === 'place') {
       renderPlace(snapshot)
     } else if (state.view === 'conversations') {
@@ -4244,8 +5264,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
-  async function loadDirectory(force) {
+  async function loadDirectory(force, scheduleRecheck = true) {
     if (state.directory.loading) return
+    if (force) window.clearTimeout(state.directory.recheckTimer)
     state = {
       ...state,
       directory: Object.freeze({ ...state.directory, loading: true, error: false }),
@@ -4260,6 +5281,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         credentials: 'omit',
         headers: { Accept: 'application/json' },
         mode: 'same-origin',
+        cache: force ? 'reload' : 'default',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
@@ -4274,6 +5296,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           loading: false,
           error: false,
           marker: state.changeMarker || null,
+          recheckTimer: 0,
         }),
       }
       if (state.snapshot) populateFilters(state.snapshot)
@@ -4288,6 +5311,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       renderAll()
     } finally {
       window.clearTimeout(timeout)
+      if (force && scheduleRecheck) {
+        const recheckTimer = window.setTimeout(() => void loadDirectory(true, false), 31_000)
+        state = {
+          ...state,
+          directory: Object.freeze({ ...state.directory, recheckTimer }),
+        }
+      }
     }
   }
 
@@ -4560,35 +5590,156 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
-      const url = new URL('/api/changes', window.location.origin)
-      if (state.changeMarker) url.searchParams.set('since', state.changeMarker)
-      url.searchParams.set('limit', '200')
-      const response = await fetch(url.pathname + url.search, {
-        credentials: 'omit',
-        headers: { Accept: 'application/json' },
-        mode: 'same-origin',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal,
+      const startingMarker = state.live.streamMarker || state.changeMarker
+      let cursor = startingMarker
+      let marker = startingMarker
+      let changes = []
+      let unchanged = true
+      const seenCursors = new Set()
+      while (true) {
+        const url = new URL('/api/changes', window.location.origin)
+        if (state.live.streamMarker && cursor === state.live.streamMarker) {
+          url.searchParams.set('since', state.live.streamMarker)
+        } else if (state.changeMarker && cursor === state.changeMarker) {
+          url.searchParams.set('since', state.changeMarker)
+        } else if (cursor) {
+          url.searchParams.set('since', cursor)
+        }
+        url.searchParams.set('limit', String(LIVE_OPENING_PAGE_LIMIT))
+        const response = await fetch(url.pathname + url.search, {
+          credentials: 'omit',
+          headers: { Accept: 'application/json' },
+          mode: 'same-origin',
+          redirect: 'error',
+          referrerPolicy: 'no-referrer',
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('public changes unavailable')
+        const payload = await response.json()
+        if (!payload || typeof payload !== 'object') throw new Error('invalid public changes')
+        const nextMarker = safeChangeMarker(payload.change_marker ?? payload.checkpoint)
+        if (!nextMarker || (cursor && !markerCovers(nextMarker, cursor)) ||
+            (startingMarker && !markerCovers(nextMarker, startingMarker))) {
+          throw new Error('public change marker did not cover its page')
+        }
+        marker = nextMarker
+        unchanged = unchanged && payload.unchanged === true
+        if (!startingMarker) {
+          return Object.freeze({ status: 'unchanged', marker, changes: Object.freeze([]) })
+        }
+        const incoming = normalizeLiveChanges(payload.changes)
+        changes = mergeLiveChanges(changes, incoming)
+        if (payload.has_more !== true) break
+        const nextSince = safeChangeMarker(payload.next_since)
+        if (!nextSince || !cursor || BigInt(nextSince) <= BigInt(cursor) ||
+            BigInt(nextSince) > BigInt(nextMarker) || seenCursors.has(nextSince)) {
+          throw new Error('public change cursor did not progress')
+        }
+        seenCursors.add(nextSince)
+        cursor = nextSince
+      }
+      return Object.freeze({
+        status: changes.length || marker !== startingMarker || !unchanged ? 'changed' : 'unchanged',
+        marker,
+        changes,
       })
-      if (!response.ok) return Object.freeze({ status: 'unavailable', marker: null })
-      const payload = await response.json()
-      if (!payload || typeof payload !== 'object') {
-        return Object.freeze({ status: 'unavailable', marker: null })
-      }
-      const nextMarker = safeChangeMarker(payload.change_marker ?? payload.checkpoint)
-      if (!nextMarker || (state.changeMarker && !markerCovers(nextMarker, state.changeMarker))) {
-        return Object.freeze({ status: 'unavailable', marker: null })
-      }
-      if (payload.unchanged === true) {
-        return Object.freeze({ status: 'unchanged', marker: nextMarker })
-      }
-      return Object.freeze({ status: 'changed', marker: nextMarker })
     } catch {
-      return Object.freeze({ status: 'unavailable', marker: null })
+      return Object.freeze({ status: 'unavailable', marker: null, changes: Object.freeze([]) })
     } finally {
       window.clearTimeout(timeout)
     }
+  }
+
+  function invalidateLiveCaches(drawings, noteBodies, changes) {
+    const drawingKeys = new Set()
+    let clearAll = false
+    for (const change of changes) {
+      if (change.kind === 'resident_edited' && change.detail.resident_id) {
+        drawingKeys.add('resident:' + String(change.detail.resident_id))
+      } else if (change.kind === 'place_edited' && change.detail.place_id) {
+        drawingKeys.add('place:' + String(change.detail.place_id))
+      } else if (
+        (change.kind === 'thing_edited' || change.kind === 'thing_upgraded') &&
+        change.detail.thing_id
+      ) {
+        drawingKeys.add('thing:' + String(change.detail.thing_id))
+      } else if (change.kind === 'kind_revised' && change.detail.kind_id) {
+        drawingKeys.add('kind:' + String(change.detail.kind_id))
+      } else if (change.kind === 'moderation') {
+        clearAll = true
+      }
+    }
+    const filteredDrawings = clearAll
+      ? {}
+      : Object.fromEntries(Object.entries(drawings).filter(([key]) => !drawingKeys.has(key)))
+    return Object.freeze({
+      drawings: clearAll || drawingKeys.size ? filteredDrawings : drawings,
+      noteBodies: clearAll ? {} : noteBodies,
+    })
+  }
+
+  function commitLiveChangeRead(changeState) {
+    if (changeState.status === 'unavailable') {
+      state = { ...state, live: { ...state.live, streamError: true } }
+      return BASE_REFRESH_MS
+    }
+    const incoming = changeState.changes || []
+    const hadStreamError = state.live.streamError
+    const openingMarker = state.live.openingMarker
+    const streamIncoming = openingMarker
+      ? incoming.filter(change => BigInt(change.change_id) > BigInt(openingMarker))
+      : incoming
+    const known = new Set(state.live.changes.map(change => change.change_id))
+    const pulsedKeys = streamIncoming.filter(change =>
+      !known.has(change.change_id) && ['make', 'use'].includes(liveRecordType(change)))
+      .map(liveTraceKey)
+    const cutoff = Date.now() - LIVE_MOVE_LIFETIME_MS
+    const merged = Object.freeze(mergeLiveChanges(state.live.changes, streamIncoming)
+      .filter(change => change.at.getTime() >= cutoff &&
+        (!openingMarker || BigInt(change.change_id) > BigInt(openingMarker))))
+    const latestAt = streamIncoming.length
+      ? Math.max(...streamIncoming.map(change => change.at.getTime()), state.live.lastChangeAt || 0)
+      : state.live.lastChangeAt
+    const hadEvents = incoming.length > 0
+    const invalidatedCaches = invalidateLiveCaches(
+      state.live.drawings,
+      state.live.noteBodies,
+      incoming,
+    )
+    const quietReadsBefore = state.live.quietReads
+    state = {
+      ...state,
+      live: {
+        ...state.live,
+        changes: merged,
+        drawings: invalidatedCaches.drawings,
+        noteBodies: invalidatedCaches.noteBodies,
+        streamError: false,
+        streamMarker: changeState.marker || state.live.streamMarker,
+        quietReads: state.view === 'live'
+          ? hadEvents ? 0 : quietReadsBefore + 1
+          : 0,
+        lastChangeAt: latestAt || null,
+        pulsedKeys: pulsedKeys.length
+          ? Object.freeze([...new Set([...state.live.pulsedKeys, ...pulsedKeys])])
+          : state.live.pulsedKeys,
+      },
+    }
+    if ((incoming.length || hadStreamError) && state.view === 'live' && state.snapshot) {
+      renderLive(state.snapshot)
+    }
+    if (pulsedKeys.length) {
+      window.setTimeout(() => {
+        const expired = new Set(pulsedKeys)
+        state = { ...state, live: { ...state.live,
+          pulsedKeys: Object.freeze(state.live.pulsedKeys.filter(key => !expired.has(key))),
+        } }
+        if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+      }, LIVE_PULSE_MS)
+    }
+    return state.view === 'live'
+      ? windowLivePollDelay(hadEvents, quietReadsBefore)
+      : BASE_REFRESH_MS
   }
 
   async function refreshUnchangedPresence(signal, minimumMarker) {
@@ -4642,7 +5793,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       void refreshCity()
     }, delay)
-    state = { ...state, pollTimer }
+    state = {
+      ...state,
+      pollTimer,
+      live: { ...state.live, nextReadAt: document.hidden ? null : Date.now() + delay },
+    }
+    if (state.view === 'live') renderLiveClock()
   }
 
   async function refreshCity() {
@@ -4661,7 +5817,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       // presence read is unavailable, the complete bounded snapshot remains the
       // safe fallback.
       const changeState = await checkPublicChanges()
-      if (state.hasSnapshot && changeState.status === 'unchanged') {
+      nextDelay = commitLiveChangeRead(changeState)
+      if (state.hasSnapshot && changeState.status === 'unchanged' &&
+          state.changeMarker === changeState.marker) {
         try {
           const residents = await refreshUnchangedPresence(
             controller.signal,
@@ -4731,6 +5889,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
             hasMore: false, loading: false, initialized: false, error: null,
           }
         : state.archive
+      const invalidateSnapshotCaches = hadSnapshot && replaceAuthored &&
+        changeState.status !== 'changed'
       if (replaceAuthored) authoredRevision += 1
       state = {
         ...state,
@@ -4739,6 +5899,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
         residentPaging: navigation.residentPaging,
         histories,
         archive,
+        live: invalidateSnapshotCaches
+          ? {
+              ...state.live,
+              drawings: {},
+              noteBodies: {},
+            }
+          : state.live,
         fullBodies: replaceAuthored ? {} : state.fullBodies,
         details: replaceAuthored ? {} : state.details,
         changeMarker: freshSnapshot.changeMarker || requiredMarker,
@@ -4758,7 +5925,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       setStatus('Watching the public streets', 'live')
     } catch {
       const failures = state.failures + 1
-      state = { ...state, failures }
+      state = {
+        ...state,
+        failures,
+        live: {
+          ...state.live,
+          streamMarker: state.changeMarker || state.live.streamMarker,
+        },
+      }
       nextDelay = Math.min(BASE_REFRESH_MS * Math.pow(2, failures), MAX_REFRESH_MS)
       if (state.hasSnapshot) {
         renderGlobalReadRetry(
@@ -4883,6 +6057,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     void loadArchive(true)
   })
   function syncStateFromLocation() {
+    const previousView = state.view
     const nextLocationState = readLocationState()
     if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
     if (
@@ -4896,13 +6071,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
     void ensureFocusedSelection()
     void ensureDetail()
     loadSharedArchiveQuestion()
+    if (state.view !== previousView) {
+      scheduleRefresh(state.view === 'live' && !document.hidden ? 0 : BASE_REFRESH_MS)
+    }
   }
   window.addEventListener('hashchange', syncStateFromLocation)
   window.addEventListener('popstate', syncStateFromLocation)
-  window.addEventListener('resize', scheduleBodyDisclosureSync)
+  window.addEventListener('resize', () => {
+    scheduleBodyDisclosureSync()
+    if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+  })
   document.addEventListener('visibilitychange', () => {
     window.clearTimeout(state.pollTimer)
-    if (!document.hidden) void refreshCity()
+    if (document.hidden) {
+      state = { ...state, pollTimer: 0, live: { ...state.live, nextReadAt: null } }
+      renderLiveClock()
+    } else {
+      void refreshCity()
+    }
   })
 
   state = { ...state, ...readLocationState() }

@@ -1082,6 +1082,9 @@ test('complete directory selection loads one focused place and its inside conten
 
   await page.getByRole('tab', { name: 'Map' }).focus()
   await page.getByRole('tab', { name: 'Map' }).press('ArrowRight')
+  await expect(page.getByRole('tab', { name: 'Live' })).toBeFocused()
+  await expect(page.getByRole('tab', { name: 'Live' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'Live' }).press('ArrowRight')
   await expect(page.getByRole('tab', { name: 'Place' })).toBeFocused()
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
 })

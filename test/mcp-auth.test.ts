@@ -56,7 +56,7 @@ const EXISTING_TOOL_NAMES = [
   'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
   'browse', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
   'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
-  'act', 'laws', 'home', 'withdraw',
+  'draw_self', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
   'payment_attempt', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
@@ -84,6 +84,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   make: 'Make a thing',
   thing_edit: 'Edit a thing',
   thing_upgrade: 'Upgrade a thing',
+  draw_self: 'Draw myself',
   act: 'Act in the city',
   laws: 'Set local laws',
   home: 'Set home',
@@ -109,7 +110,7 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
 const PROTECTED_TOOL_NAMES = [
   'credit_preflight', 'buy_credit', 'found', 'place_edit', 'coin_trait',
   'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
-  'act', 'laws', 'home', 'withdraw', 'list_world',
+  'draw_self', 'act', 'laws', 'home', 'withdraw', 'list_world',
   'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift', 'payment_attempt',
   'transfer', 'agree',
   'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
@@ -160,6 +161,16 @@ function createHarness() {
     if (forwardedAuthorization === `Bearer ${LEGACY_SECRET}` || await authPassive(c)) {
       c.header('Cache-Control', 'no-store')
       return c.json({ count: 1, question: 'approved question' })
+    }
+    return c.json({ error: 'A valid resident sign-in is required.' }, 401)
+  })
+  city.patch('/api/me/drawing', async c => {
+    forwardedAuthorization = c.req.header('authorization')
+    forwardedMethod = c.req.method
+    forwardedBody = await c.req.json()
+    if (forwardedAuthorization === `Bearer ${LEGACY_SECRET}` || await authPassive(c)) {
+      c.header('Cache-Control', 'no-store')
+      return c.json({ resident: { id: 49, handle: 'chatty', drawing: forwardedBody }, changed: true })
     }
     return c.json({ error: 'A valid resident sign-in is required.' }, 401)
   })
@@ -693,6 +704,48 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
     }, path)
     assert.equal(say.annotations?.idempotentHint, false, path)
   }
+})
+
+test('draw_self states the complete public shape and forwards one authenticated PATCH', async () => {
+  const drawing = {
+    palette: ['#ad3f25'],
+    indices: Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null),
+  }
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const { gateway } = createHarness()
+    const tool = toolByName(await listTools(gateway, path, authorization), 'draw_self')
+    assert.match(tool.description, /exactly 64/iu, path)
+    assert.match(tool.description, /64 lowercase #rrggbb/iu, path)
+    assert.match(tool.description, /2048 UTF-8 bytes/iu, path)
+    assert.match(tool.description, /null removes[\s\S]*64 null indices[\s\S]*deliberately blank/iu, path)
+    assert.match(tool.description, /overwrites[\s\S]*no version history/iu, path)
+    assert.match(tool.description, /six changed drawings[\s\S]*UTC minute[\s\S]*Retry-After: 60/iu, path)
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    }, path)
+    assert.deepEqual(tool.inputSchema.required, ['drawing'], path)
+    assert.equal(tool.inputSchema.additionalProperties, false, path)
+  }
+
+  setHostedChatFlag(false)
+  const legacy = createHarness()
+  const response = await callTool(
+    legacy.gateway,
+    'draw_self',
+    { drawing },
+    `Bearer ${LEGACY_SECRET}`,
+    '/mcp',
+  )
+  assert.equal(response.isError, false)
+  assert.equal(legacy.forwardedMethod(), 'PATCH')
+  assert.deepEqual(legacy.forwardedBody(), { drawing })
 })
 
 test('MCP descriptions state enforced caller contracts before use', async () => {

@@ -3,6 +3,50 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
+-- A drawing is presentation only: one exact 8x8 palette-indexed mark. NULL is
+-- undrawn, while an all-NULL indices array is a deliberately blank drawing.
+CREATE OR REPLACE FUNCTION valid_city_drawing(candidate JSONB) RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $function$
+DECLARE
+  palette_size INTEGER;
+  square JSONB;
+  square_text TEXT;
+BEGIN
+  IF candidate IS NULL THEN RETURN TRUE; END IF;
+  IF octet_length(candidate::text) > 2048
+    OR jsonb_typeof(candidate) <> 'object'
+    OR (SELECT count(*) FROM jsonb_object_keys(candidate)) <> 2
+    OR NOT candidate ?& ARRAY['palette', 'indices'] THEN
+    RETURN FALSE;
+  END IF;
+  IF jsonb_typeof(candidate->'palette') <> 'array'
+    OR jsonb_array_length(candidate->'palette') NOT BETWEEN 0 AND 64
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(candidate->'palette') colour
+      WHERE jsonb_typeof(colour) <> 'string'
+        OR colour #>> '{}' !~ '^#[0-9a-f]{6}$'
+    ) THEN
+    RETURN FALSE;
+  END IF;
+  IF jsonb_typeof(candidate->'indices') <> 'array'
+    OR jsonb_array_length(candidate->'indices') <> 64 THEN
+    RETURN FALSE;
+  END IF;
+  palette_size := jsonb_array_length(candidate->'palette');
+  FOR square IN SELECT value FROM jsonb_array_elements(candidate->'indices') LOOP
+    IF jsonb_typeof(square) = 'null' THEN CONTINUE; END IF;
+    IF jsonb_typeof(square) <> 'number' THEN RETURN FALSE; END IF;
+    square_text := square #>> '{}';
+    IF square_text !~ '^(0|[1-9][0-9]*)$'
+      OR square_text::NUMERIC >= palette_size THEN
+      RETURN FALSE;
+    END IF;
+  END LOOP;
+  RETURN TRUE;
+END
+$function$;
+
 CREATE TABLE IF NOT EXISTS residents (
   id                        INTEGER PRIMARY KEY,
   handle                    TEXT NOT NULL UNIQUE
@@ -15,11 +59,14 @@ CREATE TABLE IF NOT EXISTS residents (
   things_today              INTEGER NOT NULL DEFAULT 0 CHECK (things_today >= 0),
   notes_today               INTEGER NOT NULL DEFAULT 0 CHECK (notes_today >= 0),
   agreement_actions_today   INTEGER NOT NULL DEFAULT 0 CHECK (agreement_actions_today >= 0),
-  recovery_generation       BIGINT NOT NULL DEFAULT 0 CHECK (recovery_generation >= 0)
+  recovery_generation       BIGINT NOT NULL DEFAULT 0 CHECK (recovery_generation >= 0),
+  drawing                   JSONB,
+  CONSTRAINT residents_drawing_valid CHECK (valid_city_drawing(drawing))
 );
 ALTER TABLE residents ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE residents
   ADD COLUMN IF NOT EXISTS recovery_generation BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS drawing JSONB;
 DO $resident_recovery_generation$
 BEGIN
   IF NOT EXISTS (
@@ -34,6 +81,18 @@ BEGIN
 END
 $resident_recovery_generation$;
 ALTER TABLE residents VALIDATE CONSTRAINT residents_recovery_generation_nonnegative;
+DO $residents_drawing_constraint$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'residents'::regclass AND conname = 'residents_drawing_valid'
+  ) THEN
+    ALTER TABLE residents ADD CONSTRAINT residents_drawing_valid
+      CHECK (valid_city_drawing(drawing)) NOT VALID;
+  END IF;
+END
+$residents_drawing_constraint$;
+ALTER TABLE residents VALIDATE CONSTRAINT residents_drawing_valid;
 ALTER TABLE residents DROP CONSTRAINT IF EXISTS residents_id_landmark;
 ALTER TABLE residents ADD CONSTRAINT residents_id_landmark CHECK (id > 0 AND id <> 4);
 CREATE INDEX IF NOT EXISTS residents_joined ON residents (joined_at, id);
@@ -48,6 +107,18 @@ CREATE TABLE IF NOT EXISTS resident_refusal_state (
   repetition_count SMALLINT NOT NULL CHECK (repetition_count BETWEEN 1 AND 10),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Changed resident drawings are bounded separately from exact no-op retries.
+-- These operational rows are short-lived and are never a drawing history.
+CREATE TABLE IF NOT EXISTS resident_drawing_rate_limits (
+  resident_id  INTEGER NOT NULL REFERENCES residents(id) ON DELETE CASCADE,
+  minute       TIMESTAMPTZ NOT NULL
+               CHECK (minute = date_trunc('minute', minute, 'UTC')),
+  used         SMALLINT NOT NULL CHECK (used BETWEEN 1 AND 6),
+  PRIMARY KEY (resident_id, minute)
+);
+CREATE INDEX IF NOT EXISTS resident_drawing_rate_limits_expiry
+  ON resident_drawing_rate_limits (minute, resident_id);
 
 -- Resident 4 is an intentional permanent landmark. This row lock is the only
 -- ID allocator, so failed registrations roll its increment back with the insert.
@@ -501,12 +572,14 @@ CREATE TABLE IF NOT EXISTS places (
   open_to_things    BOOLEAN NOT NULL DEFAULT FALSE,
   open_to_notes     BOOLEAN NOT NULL DEFAULT FALSE,
   active_offer_id   INTEGER,
+  drawing           JSONB,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT places_place_kind_allowed
     CHECK (place_kind IN ('world', 'continent', 'place')),
   CONSTRAINT places_active_offer_positive
     CHECK (active_offer_id IS NULL OR active_offer_id > 0),
   CONSTRAINT places_no_self_parent CHECK (parent_id IS NULL OR parent_id <> id),
+  CONSTRAINT places_drawing_valid CHECK (valid_city_drawing(drawing)),
   CONSTRAINT places_world_shape CHECK (
     (
       place_kind = 'world'
@@ -514,6 +587,7 @@ CREATE TABLE IF NOT EXISTS places (
       AND name = 'the world'
       AND owner_id IS NULL
       AND active_offer_id IS NULL
+      AND drawing IS NULL
       AND NOT open_to_building
       AND NOT open_to_things
       AND NOT open_to_notes
@@ -533,9 +607,23 @@ ALTER TABLE places
   ADD COLUMN IF NOT EXISTS place_kind TEXT NOT NULL DEFAULT 'place';
 ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER;
 ALTER TABLE places ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT '';
+ALTER TABLE places ADD COLUMN IF NOT EXISTS drawing JSONB;
 ALTER TABLE places
   ADD COLUMN IF NOT EXISTS front_matter_thing_ids INTEGER[] NOT NULL DEFAULT '{}'::INTEGER[];
 ALTER TABLE places ALTER COLUMN owner_id DROP NOT NULL;
+
+DO $places_drawing_constraint$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'places'::regclass AND conname = 'places_drawing_valid'
+  ) THEN
+    ALTER TABLE places ADD CONSTRAINT places_drawing_valid
+      CHECK (valid_city_drawing(drawing)) NOT VALID;
+  END IF;
+END
+$places_drawing_constraint$;
+ALTER TABLE places VALIDATE CONSTRAINT places_drawing_valid;
 
 DO $schema_upgrade$
 BEGIN
@@ -631,6 +719,7 @@ ALTER TABLE places
       AND name = 'the world'
       AND owner_id IS NULL
       AND active_offer_id IS NULL
+      AND drawing IS NULL
       AND NOT open_to_building
       AND NOT open_to_things
       AND NOT open_to_notes
@@ -733,10 +822,26 @@ CREATE TABLE IF NOT EXISTS kind_revisions (
   description    TEXT NOT NULL DEFAULT '' CHECK (octet_length(description) <= 65536),
   traits         TEXT[] NOT NULL DEFAULT '{}',
   recipe         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  drawing        JSONB,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (kind_id, revision),
-  CHECK (jsonb_typeof(recipe) IN ('array', 'object'))
+  CHECK (jsonb_typeof(recipe) IN ('array', 'object')),
+  CONSTRAINT kind_revisions_drawing_valid CHECK (valid_city_drawing(drawing))
 );
+ALTER TABLE kind_revisions ADD COLUMN IF NOT EXISTS drawing JSONB;
+DO $kind_revisions_drawing_constraint$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'kind_revisions'::regclass
+      AND conname = 'kind_revisions_drawing_valid'
+  ) THEN
+    ALTER TABLE kind_revisions ADD CONSTRAINT kind_revisions_drawing_valid
+      CHECK (valid_city_drawing(drawing)) NOT VALID;
+  END IF;
+END
+$kind_revisions_drawing_constraint$;
+ALTER TABLE kind_revisions VALIDATE CONSTRAINT kind_revisions_drawing_valid;
 CREATE INDEX IF NOT EXISTS kind_revisions_created
   ON kind_revisions (kind_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS kind_revisions_traits
@@ -771,6 +876,7 @@ CREATE TABLE IF NOT EXISTS things (
   kind_id           INTEGER REFERENCES kinds(id) ON DELETE RESTRICT,
   birth_revision    INTEGER,
   current_revision  INTEGER,
+  drawing           JSONB,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   withdrawn_at      TIMESTAMPTZ,
   CHECK (
@@ -781,7 +887,8 @@ CREATE TABLE IF NOT EXISTS things (
   FOREIGN KEY (kind_id, birth_revision)
     REFERENCES kind_revisions(kind_id, revision) MATCH FULL ON DELETE RESTRICT,
   FOREIGN KEY (kind_id, current_revision)
-    REFERENCES kind_revisions(kind_id, revision) MATCH FULL ON DELETE RESTRICT
+    REFERENCES kind_revisions(kind_id, revision) MATCH FULL ON DELETE RESTRICT,
+  CONSTRAINT things_drawing_valid CHECK (valid_city_drawing(drawing))
 );
 CREATE INDEX IF NOT EXISTS things_place ON things (place_id, created_at, id)
   WHERE withdrawn_at IS NULL;
@@ -803,10 +910,23 @@ CREATE INDEX IF NOT EXISTS things_public_search_phrase_active
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
 ALTER TABLE things ADD COLUMN IF NOT EXISTS open_to_use BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE things ADD COLUMN IF NOT EXISTS drawing JSONB;
 -- Legacy loopback databases need the column before earlier schema maintenance
 -- statements can invoke the history trigger. Authenticated backfill waits until
 -- the immutable events table exists below.
 ALTER TABLE things ADD COLUMN IF NOT EXISTS maker_id INTEGER;
+DO $things_drawing_constraint$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'things'::regclass AND conname = 'things_drawing_valid'
+  ) THEN
+    ALTER TABLE things ADD CONSTRAINT things_drawing_valid
+      CHECK (valid_city_drawing(drawing)) NOT VALID;
+  END IF;
+END
+$things_drawing_constraint$;
+ALTER TABLE things VALIDATE CONSTRAINT things_drawing_valid;
 
 -- A place's current laws are the latest change for each trait. Reordering is a
 -- fresh `add`; removing a law never erases the earlier public record.
@@ -963,13 +1083,32 @@ CREATE INDEX IF NOT EXISTS effect_resolutions_time
 -- never rewrite or delete it. The actor check anchors that narrow power to #1.
 CREATE TABLE IF NOT EXISTS moderation_actions (
   id           BIGSERIAL PRIMARY KEY,
-  target_type  TEXT NOT NULL CHECK (target_type IN ('place', 'thing', 'kind', 'trait', 'note', 'agreement')),
+  target_type  TEXT NOT NULL,
   target_id    INTEGER NOT NULL CHECK (target_id > 0),
   action       TEXT NOT NULL CHECK (action IN ('remove', 'restore')),
   actor_id     INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT CHECK (actor_id = 1),
   reason       TEXT NOT NULL CHECK (octet_length(reason) BETWEEN 1 AND 4000),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT moderation_actions_target_type_allowed
+    CHECK (target_type IN ('resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement'))
 );
+ALTER TABLE moderation_actions DROP CONSTRAINT IF EXISTS moderation_actions_target_type_check;
+DO $moderation_actions_resident_target$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'moderation_actions'::regclass
+      AND conname = 'moderation_actions_target_type_allowed'
+  ) THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_target_type_allowed
+      CHECK (target_type IN (
+        'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement'
+      )) NOT VALID;
+  END IF;
+END
+$moderation_actions_resident_target$;
+ALTER TABLE moderation_actions
+  VALIDATE CONSTRAINT moderation_actions_target_type_allowed;
 CREATE INDEX IF NOT EXISTS moderation_actions_target
   ON moderation_actions (target_type, target_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS moderation_actions_time
@@ -4747,6 +4886,7 @@ public_event_kinds(kind) AS (
   VALUES
     ('register'),
     ('rotate'),
+    ('resident_edited'),
     ('home_set'),
     ('place_created'),
     ('place_edited'),
@@ -4883,11 +5023,15 @@ SELECT 'residents'::TEXT AS class_name, slot.id::TEXT AS record_id, slot.id AS s
       'status', 'exported',
       'handle', resident.handle,
       'model', resident.model,
-      'joined_at', resident.joined_at
+      'joined_at', resident.joined_at,
+      'drawing', CASE WHEN resident_hidden.action = 'remove' THEN NULL
+        ELSE resident.drawing END
     )
   END AS payload
 FROM resident_slots slot
 LEFT JOIN public.residents resident ON resident.id = slot.id
+LEFT JOIN latest_moderation resident_hidden
+  ON resident_hidden.target_type = 'resident' AND resident_hidden.target_id = resident.id
 
 UNION ALL
 
@@ -4933,6 +5077,7 @@ SELECT 'places', slot.id::TEXT, slot.id,
       'open_to_building', place.open_to_building,
       'open_to_things', place.open_to_things,
       'open_to_notes', place.open_to_notes,
+      'drawing', place.drawing,
       'front_matter', coalesce((
         SELECT jsonb_agg(jsonb_build_object(
           'id', thing.id,
@@ -5006,6 +5151,21 @@ SELECT 'things', slot.id::TEXT, slot.id,
       'kind_moderated', kind_hidden.action = 'remove',
       'birth_revision', thing.birth_revision,
       'current_revision', thing.current_revision,
+      'drawing', CASE
+        WHEN thing.drawing IS NOT NULL THEN thing.drawing
+        WHEN coalesce(kind_hidden.action, 'restore') <> 'remove' THEN revision.drawing
+        ELSE NULL
+      END,
+      'drawing_source', CASE
+        WHEN thing.drawing IS NOT NULL THEN jsonb_build_object('type', 'thing')
+        WHEN coalesce(kind_hidden.action, 'restore') <> 'remove'
+          AND revision.drawing IS NOT NULL THEN jsonb_build_object(
+            'type', 'kind_revision',
+            'kind_id', thing.kind_id,
+            'revision', thing.current_revision
+          )
+        ELSE NULL
+      END,
       'created_at', thing.created_at
     )
   END
@@ -5014,6 +5174,8 @@ LEFT JOIN public.things thing ON thing.id = slot.id
 LEFT JOIN public.residents maker ON maker.id = thing.maker_id
 LEFT JOIN public.residents current_owner ON current_owner.id = thing.owner_id
 LEFT JOIN public.kinds kind ON kind.id = thing.kind_id
+LEFT JOIN public.kind_revisions revision
+  ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
 LEFT JOIN latest_moderation hidden
   ON hidden.target_type = 'thing' AND hidden.target_id = thing.id
 LEFT JOIN latest_moderation kind_hidden
@@ -5091,6 +5253,7 @@ SELECT 'kinds', slot.id::TEXT, slot.id,
       'owner', owner.handle,
       'revision', revision.revision,
       'description', revision.description,
+      'drawing', revision.drawing,
       'traits', coalesce((
         SELECT jsonb_agg(
           CASE WHEN trait_hidden.action = 'remove'
@@ -5209,6 +5372,7 @@ SELECT 'events', slot.id::TEXT, slot.id,
         'from_place_id', event.detail->'from_place_id',
         'to_place_id', event.detail->'to_place_id',
         'thing_id', event.detail->'thing_id',
+        'source_thing_id', event.detail->'source_thing_id',
         'kind_id', event.detail->'kind_id',
         'trait_id', event.detail->'trait_id',
         'agreement_id', event.detail->'agreement_id',

@@ -160,7 +160,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
     WHERE attempt.target_key = 'frontier:' ||
       CASE WHEN jsonb_typeof(attempt.request_json->'parent_id') = 'null'
         THEN 'root' ELSE attempt.request_json->>'parent_id' END ||
-      ':' || attempt.request_json->>'name'
+      ':' || (attempt.request_json->>'name')
   ), frontier_parent AS MATERIALIZED (
     SELECT request.public_id AS attempt_id, root.id AS parent_id
     FROM frontier_request request
@@ -229,7 +229,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       AND attempt.request_json ?& ARRAY['name', 'description', 'traits', 'recipe']
       AND NOT EXISTS (
         SELECT 1 FROM jsonb_object_keys(attempt.request_json) key
-        WHERE key <> ALL(ARRAY['name', 'description', 'traits', 'recipe']::text[])
+        WHERE key <> ALL(ARRAY['name', 'description', 'traits', 'recipe', 'drawing']::text[])
       )
       AND jsonb_typeof(attempt.request_json->'name') = 'string'
       AND (attempt.request_json->>'name') ~ '^[a-z0-9][a-z0-9_-]{0,63}$'
@@ -283,7 +283,12 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           FROM jsonb_array_elements(attempt.request_json->'recipe') ingredient(value)
         ) <= 1024
       ELSE false END
-      AND attempt.target_key = 'kind-invention:' || attempt.request_json->>'name'
+      AND (
+        NOT attempt.request_json ? 'drawing'
+        OR attempt.request_json->'drawing' = 'null'::jsonb
+        OR valid_city_drawing(attempt.request_json->'drawing')
+      )
+      AND attempt.target_key = 'kind-invention:' || (attempt.request_json->>'name')
   ), new_kind AS (
     INSERT INTO kinds (name, owner_id, current_revision)
     SELECT request.request_json->>'name', request.actor_id, 1
@@ -291,7 +296,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
     ON CONFLICT DO NOTHING
     RETURNING *
   ), new_kind_revision AS (
-    INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
+    INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe, drawing)
     SELECT kind.id, 1, request.request_json->>'description',
       ARRAY(
         SELECT trait.value #>> '{}'
@@ -299,10 +304,13 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           WITH ORDINALITY trait(value, position)
         ORDER BY trait.position
       )::text[],
-      request.request_json->'recipe'
+      request.request_json->'recipe',
+      CASE WHEN NOT request.request_json ? 'drawing'
+          OR request.request_json->'drawing' = 'null'::jsonb
+        THEN NULL ELSE request.request_json->'drawing' END
     FROM new_kind kind
     JOIN kind_invention_shaped request ON true
-    RETURNING kind_id, revision, description, traits, recipe
+    RETURNING kind_id, revision, description, traits, recipe, drawing
   ), kind_invention_result AS MATERIALIZED (
     SELECT request.public_id AS attempt_id, request.actor_id, request.actor_handle,
       request.operation, request.method, request.tx_hash, request.payer_wallet,
@@ -321,7 +329,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'id', kind.id, 'name', kind.name, 'owner_id', kind.owner_id,
         'owner', request.actor_handle, 'revision', revision.revision,
         'description', revision.description, 'traits', revision.traits,
-        'recipe', revision.recipe, 'created_at', kind.created_at
+        'recipe', revision.recipe, 'drawing', revision.drawing, 'created_at', kind.created_at
       )) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
@@ -344,7 +352,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       AND attempt.request_json ?& ARRAY['kind_id', 'description', 'traits', 'recipe']
       AND NOT EXISTS (
         SELECT 1 FROM jsonb_object_keys(attempt.request_json) key
-        WHERE key <> ALL(ARRAY['kind_id', 'description', 'traits', 'recipe']::text[])
+        WHERE key <> ALL(ARRAY['kind_id', 'description', 'traits', 'recipe', 'drawing']::text[])
       )
       AND jsonb_typeof(attempt.request_json->'kind_id') = 'number'
       AND (attempt.request_json->>'kind_id') ~ '^[1-9][0-9]*$'
@@ -370,6 +378,11 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           WHERE known.id IS NULL
         )
       ELSE false END
+      AND (
+        NOT attempt.request_json ? 'drawing'
+        OR attempt.request_json->'drawing' = 'null'::jsonb
+        OR valid_city_drawing(attempt.request_json->'drawing')
+      )
       AND CASE WHEN jsonb_typeof(attempt.request_json->'recipe') = 'array' THEN
         jsonb_array_length(attempt.request_json->'recipe') <= 64
         AND octet_length((attempt.request_json->'recipe')::text) <= 65536
@@ -412,7 +425,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         (kind.current_revision + 1)::text
     FOR UPDATE OF kind
   ), revised_kind_revision AS (
-    INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
+    INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe, drawing)
     SELECT kind.id, kind.current_revision + 1,
       request.request_json->>'description',
       ARRAY(
@@ -421,11 +434,14 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           WITH ORDINALITY trait(value, position)
         ORDER BY trait.position
       )::text[],
-      request.request_json->'recipe'
+      request.request_json->'recipe',
+      CASE WHEN NOT request.request_json ? 'drawing'
+          OR request.request_json->'drawing' = 'null'::jsonb
+        THEN NULL ELSE request.request_json->'drawing' END
     FROM locked_kind kind
     JOIN kind_revision_shaped request ON request.public_id = kind.attempt_id
     ON CONFLICT DO NOTHING
-    RETURNING kind_id, revision, description, traits, recipe
+    RETURNING kind_id, revision, description, traits, recipe, drawing
   ), changed_kind AS (
     UPDATE kinds kind SET current_revision = revision.revision
     FROM revised_kind_revision revision
@@ -449,7 +465,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'id', kind.id, 'name', kind.name, 'owner_id', kind.owner_id,
         'owner', request.actor_handle, 'revision', revision.revision,
         'description', revision.description, 'traits', revision.traits,
-        'recipe', revision.recipe, 'created_at', kind.created_at
+        'recipe', revision.recipe, 'drawing', revision.drawing, 'created_at', kind.created_at
       )) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
