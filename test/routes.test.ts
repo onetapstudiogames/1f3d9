@@ -8420,6 +8420,23 @@ test('use composes effects, local laws act on talk, and going home stays unblock
   assert.equal(home.status, 200)
   const homeBody = await home.json() as { action: { place_id: number | null } }
   assert.equal(homeBody.action.place_id, 3)
+
+  // An alias body without a Content-Length header — the shape the production
+  // edge forwards — still faces the accepted-field rules instead of being
+  // silently discarded.
+  const rejected = await app.request('/api/go-home', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: JSON.stringify({ to_place_id: 9 }),
+  })
+  assert.equal(rejected.status, 400)
+
+  const emptyObject = await app.request('/api/go-home', {
+    method: 'POST',
+    headers: authHeaders(OTHER_SECRET),
+    body: '{}',
+  })
+  assert.equal(emptyObject.status, 200)
 })
 
 test('a visitor may use an open thing but not consume it', async () => {

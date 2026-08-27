@@ -211,12 +211,23 @@ async function runResidentAction(
 async function actionRequest(c: Context, forced?: Partial<JsonObject>): Promise<Response> {
   const resident = await auth(c)
   if (!resident) return err(c, 401, 'bad or missing bearer secret')
-  const contentLength = c.req.header('content-length')
-  const supplied = forced && (contentLength == null || contentLength === '0')
-    ? {}
-    : await jsonBody(c)
-  if (supplied === null) return err(c, 400, 'body must be a JSON object')
-  const body = { ...supplied, ...forced }
+  // The production edge strips Content-Length, so an alias's optional body is
+  // detected by reading it, never from the header; a body that is present
+  // always faces the same accepted-field rules as /api/action.
+  const raw = await c.req.text()
+  if (forced && raw.trim() === '') {
+    return runResidentAction(c, resident, { ...forced })
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw) as unknown
+  } catch {
+    return err(c, 400, 'body must be a JSON object')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return err(c, 400, 'body must be a JSON object')
+  }
+  const body = { ...parsed as JsonObject, ...forced }
   return runResidentAction(c, resident, body)
 }
 
