@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { declaredBodyLength } from './bounded-body.ts'
 import { HANDLE_RE } from './core.ts'
 import { takePayPalCreditRateLimit } from './paypal-credit-store.ts'
 import {
@@ -68,12 +69,11 @@ async function requireGiftRedirectRateSlot(
 }
 
 async function boundedBody(c: Context): Promise<string | null> {
-  const contentLength = c.req.header('content-length')
-  if (
-    !contentLength
-    || !/^\d+$/u.test(contentLength)
-    || Number(contentLength) > MAX_ACTION_BODY_BYTES
-  ) return null
+  // An absent Content-Length is what the production edge forwards; the
+  // enforced bound is the actual byte count below.
+  if (declaredBodyLength(c.req.header('content-length'), MAX_ACTION_BODY_BYTES) === 'unusable') {
+    return null
+  }
   const raw = await c.req.text()
   return Buffer.byteLength(raw, 'utf8') <= MAX_ACTION_BODY_BYTES ? raw : null
 }

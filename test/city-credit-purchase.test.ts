@@ -26,6 +26,15 @@ type CityCreditPurchaseModule = Readonly<{
     },
     input: Readonly<{ attemptId: string; leaseOwner: string }>,
   ): Promise<PurchaseCompletion>
+  mountCityCreditPurchaseRoutes(
+    app: unknown,
+    dependencies: Readonly<{
+      authenticate(c: unknown): Promise<{ id: number } | null>
+      database: {
+        query(text: string, params?: readonly unknown[]): Promise<readonly Record<string, unknown>[]>
+      }
+    }>,
+  ): void
 }>
 
 const PURCHASE_MODULE_URL = new URL('../src/city-credit-purchase.ts', import.meta.url)
@@ -198,4 +207,47 @@ test('the authenticated x402 route resumes a headerless request before offering 
   )
   assert.doesNotMatch(purchaseSource, /\btoUnits\s*\(|\brequirements\s*\(/u)
   assert.match(purchaseSource, /amountUnits\.toString\(\)/u)
+})
+
+test('the purchase route reads bodies without a Content-Length and answers unusable declarations honestly', async () => {
+  const { Hono } = await import('hono')
+  const { mountCityCreditPurchaseRoutes } = await purchaseModule()
+  const calls: string[] = []
+  const app = new Hono()
+  mountCityCreditPurchaseRoutes(app, {
+    authenticate: async () => ({ id: 7 }),
+    database: {
+      query: async (text: string) => {
+        calls.push(text)
+        return []
+      },
+    },
+  })
+  const body = JSON.stringify({
+    request_id: 'credit-purchase-request-0900',
+    amount_dollars: '1',
+  })
+
+  // The production edge forwards no usable Content-Length; the body must
+  // still be read, parsed, and answered with the x402 challenge.
+  const absent = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+  })
+  assert.equal(absent.status, 402)
+  assert.ok(calls.length > 0, 'the headerless request must reach the replay lookup')
+
+  const before = calls.length
+  const unusable = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': '10, 20' },
+    body,
+  })
+  assert.equal(unusable.status, 400)
+  assert.match(
+    String((await unusable.json() as { error: string }).error),
+    /Content-Length/iu,
+  )
+  assert.equal(calls.length, before, 'an unusable declaration must refuse before DB work')
 })

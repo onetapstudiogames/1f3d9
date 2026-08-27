@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { declaredBodyLength } from './bounded-body.ts'
 import { CITY_FEE_CREDIT_UNITS, parseCityCreditRequestId } from './city-credit.ts'
 import { deliverPayPalCredit } from './paypal-credit-delivery.ts'
 import {
@@ -116,17 +117,8 @@ function queryless(c: Context): void {
   }
 }
 
-// The production edge forwards bodies without a usable Content-Length header
-// (it may also fold duplicates into one comma-joined value), so an absent
-// declaration must be allowed; the enforced bound is the actual byte count
-// checked after the framework read. A declaration that is present but
-// malformed or over the bound is still refused before the body is read.
 function assertDeclaredBodyFits(c: Context, maximumBytes: number): void {
-  const contentLength = c.req.header('content-length')
-  if (contentLength === undefined) return
-  const declaredValues = [...new Set(contentLength.split(',').map(part => part.trim()))]
-  const declared = declaredValues.length === 1 ? declaredValues[0]! : ''
-  if (!/^\d+$/u.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
+  if (declaredBodyLength(c.req.header('content-length'), maximumBytes) === 'unusable') {
     throw new RouteFailure(400,
       `The PayPal request declared an unusable Content-Length. Declare one decimal byte count no larger than ${maximumBytes} bytes, or omit the header.`)
   }

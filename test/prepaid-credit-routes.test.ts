@@ -193,6 +193,8 @@ test('gift action routes reject query switches and unexpected redirect fields', 
       buyer: 'must-never-exist',
     }))).status, 400)
 
+  // The production edge forwards no usable Content-Length, so a valid
+  // redirect without the header must still be read and accepted.
   const headerless = JSON.stringify({
     claim_token: CLAIM_TOKEN,
     recipient_number: 8,
@@ -203,5 +205,5 @@ test('gift action routes reject query switches and unexpected redirect fields', 
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: headerless,
-  })).status, 400)
+  })).status, 200)
 })

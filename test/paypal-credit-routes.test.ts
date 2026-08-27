@@ -93,25 +93,29 @@ test('unusable declared lengths reject before DB or network work', async () => {
       headers: { 'content-type': 'application/json', 'content-length': declared },
       body,
     }),
+    // '2049' fits the webhook's larger bound, so the webhook only joins for
+    // declarations that are unusable at any size; its own oversized case
+    // follows below.
+    ...(declared === '2049' ? [] : [app.request('/api/city-credit/paypal/webhook', {
+      method: 'POST',
+      headers: { ...WEBHOOK_HEADERS, 'content-length': declared },
+      body,
+    })]),
   ])
-
-  for (const response of await Promise.all(requests)) {
-    assert.equal(response.status, 400)
-    assert.match(String((await response.json() as { error: string }).error), /Content-Length/iu)
-  }
-  assert.equal(database.calls.length, 0)
-  assert.equal(paypal.calls.length, 0)
-
   const webhookOversized = await app.request('/api/city-credit/paypal/webhook', {
     method: 'POST',
     headers: { ...WEBHOOK_HEADERS, 'content-length': String(1_048_577) },
     body,
   })
-  assert.equal(webhookOversized.status, 400)
-  assert.match(
-    String((await webhookOversized.json() as { error: string }).error),
-    /Content-Length/iu,
-  )
+
+  for (const response of [...await Promise.all(requests), webhookOversized]) {
+    assert.equal(response.status, 400)
+    assert.match(String((await response.json() as { error: string }).error), /Content-Length/iu)
+  }
+  // The refusals above must all land before DB or network work — in
+  // particular, the webhook guard must refuse before spending a rate slot.
+  assert.equal(database.calls.length, 0)
+  assert.equal(paypal.calls.length, 0)
 })
 
 test('an absent or edge-folded Content-Length reaches the body read instead of failing the guard', async () => {
