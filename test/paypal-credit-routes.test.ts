@@ -70,23 +70,30 @@ test('every dormant PayPal route returns a caller-specific config-first 503 with
   })
 })
 
-test('configured PayPal body routes reject undeclared lengths before DB or network work', async () => {
+test('unusable declared lengths reject before DB or network work', async () => {
+  // The production edge may drop or fold the Content-Length header, so only a
+  // declaration that is present and unusable is refused up front; the enforced
+  // bound is the actual byte count after the read.
   const { app, database, paypal } = configuredApp()
   const body = JSON.stringify({ request_id: 'bounded-body-proof-0001' })
-  const requests = [
+  const badDeclarations = ['abc', '2049', '10, 20']
+  const requests = badDeclarations.flatMap(declared => [
     app.request('/api/city-credit/paypal/orders', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': declared },
+      body,
     }),
     app.request(`/api/city-credit/paypal/orders/city_paypal_${'ab'.repeat(16)}/capture`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': declared },
+      body,
     }),
     app.request('/api/city-credit/paypal/allowances', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': declared },
+      body,
     }),
-    app.request('/api/city-credit/paypal/webhook', {
-      method: 'POST', headers: WEBHOOK_HEADERS, body,
-    }),
-  ]
+  ])
 
   for (const response of await Promise.all(requests)) {
     assert.equal(response.status, 400)
@@ -94,6 +101,38 @@ test('configured PayPal body routes reject undeclared lengths before DB or netwo
   }
   assert.equal(database.calls.length, 0)
   assert.equal(paypal.calls.length, 0)
+
+  const webhookOversized = await app.request('/api/city-credit/paypal/webhook', {
+    method: 'POST',
+    headers: { ...WEBHOOK_HEADERS, 'content-length': String(1_048_577) },
+    body,
+  })
+  assert.equal(webhookOversized.status, 400)
+  assert.match(
+    String((await webhookOversized.json() as { error: string }).error),
+    /Content-Length/iu,
+  )
+})
+
+test('an absent or edge-folded Content-Length reaches the body read instead of failing the guard', async () => {
+  const { app } = configuredApp()
+  const body = JSON.stringify({ request_id: 'bounded-body-proof-0002' })
+  const declaredLength = String(Buffer.byteLength(body, 'utf8'))
+  const headerVariants: Array<Record<string, string>> = [
+    { 'content-type': 'application/json' },
+    {
+      'content-type': 'application/json',
+      'content-length': `${declaredLength}, ${declaredLength}`,
+    },
+  ]
+  for (const headers of headerVariants) {
+    const response = await app.request('/api/city-credit/paypal/orders', {
+      method: 'POST', headers, body,
+    })
+    const error = String((await response.json() as { error: string }).error)
+    assert.doesNotMatch(error, /Content-Length/iu)
+    assert.notEqual(response.status, 500)
+  }
 })
 
 test('capture and webhook rate limits stop PayPal calls in separate buckets', async () => {
