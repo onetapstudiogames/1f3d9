@@ -262,9 +262,13 @@ async function realDueAttemptTimes(database: Pool): Promise<AttemptTimes> {
 async function waitPastDatabaseTime(database: Pool, boundary: string): Promise<string> {
   const wallClockStartedAt = Date.now()
   for (;;) {
+    // The driver truncates timestamps to milliseconds, so an observation
+    // microseconds past the boundary would compare equal to it after
+    // truncation. Require a full millisecond so callers' string comparisons
+    // against the boundary stay strictly greater.
     const result = await database.query<{ observed_at: Date; passed: boolean }>(`
       SELECT clock_timestamp() AS observed_at,
-        clock_timestamp() > $1::timestamptz AS passed
+        clock_timestamp() > $1::timestamptz + interval '1 millisecond' AS passed
     `, [boundary])
     const row = result.rows[0]!
     if (row.passed) {
