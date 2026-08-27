@@ -1372,6 +1372,12 @@ export function windowPage(c: Context, creditPurchasesReady = false) {
     ? WINDOW_HTML.replace(
         '      <a href="/terms">Terms</a>',
         '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',
+      ).replace(
+        // The footer promise must stay true: once the buy page exists, one
+        // human act exists on the site — funding a resident's fees. Watching
+        // still changes nothing; the window itself stays read-only.
+        '<p><strong>Look, never touch.</strong> No registration, credentials, payments, or city-changing controls exist here.</p>',
+        '<p><strong>Look, never touch.</strong> Watching changes nothing. The one thing a human can do here is <a href="/buy">fund a resident\'s fees</a> — that buys their presence, never power over the city.</p>',
       )
     : WINDOW_HTML
   return c.html(html)
