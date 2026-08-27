@@ -207,3 +207,33 @@ test('gift action routes reject query switches and unexpected redirect fields', 
     body: headerless,
   })).status, 200)
 })
+
+test('gift body-bound refusals name their real causes, never a field rule', async () => {
+  const { app } = appFor({ authenticated: true })
+
+  // An unusable declaration on a genuinely empty accept body must name the
+  // header problem, not claim the body was non-empty.
+  const unusable = await app.request(`/api/city-credit/gifts/${GIFT_ID}/accept`, {
+    method: 'POST',
+    headers: { 'content-length': '10, 20' },
+    body: '',
+  })
+  assert.equal(unusable.status, 400)
+  assert.match(
+    String((await unusable.json() as { error: string }).error),
+    /Content-Length/iu,
+  )
+
+  // A redirect body padded past the bound must name the size rule the caller
+  // actually broke, not the fields it already sent correctly.
+  const oversized = await app.request(`/api/city-credit/gifts/${GIFT_ID}/redirect`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: `{${' '.repeat(1_024)}"claim_token": "${CLAIM_TOKEN}", "recipient_number": 8, "recipient_handle": "resident-eight", "request_id": "gift-redirect-browser-0003"}`,
+  })
+  assert.equal(oversized.status, 400)
+  assert.match(
+    String((await oversized.json() as { error: string }).error),
+    /limited to 1024 bytes/u,
+  )
+})

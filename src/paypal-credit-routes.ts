@@ -129,8 +129,13 @@ async function readBoundedBody(c: Context, maximumBytes: number): Promise<Buffer
   // Vercel's Node bridge can stall when a handler drives the raw stream reader,
   // so the framework read is used and the actual bytes are checked afterward.
   const body = Buffer.from(await c.req.arrayBuffer())
-  if (body.byteLength === 0 || body.byteLength > maximumBytes) {
-    throw new RouteFailure(400, 'The PayPal request body is invalid. No payment was started.')
+  if (body.byteLength === 0) {
+    throw new RouteFailure(400,
+      'The PayPal request body is empty. Send one JSON body. No payment was started.')
+  }
+  if (body.byteLength > maximumBytes) {
+    throw new RouteFailure(400,
+      `The PayPal request body is larger than ${maximumBytes} bytes. No payment was started.`)
   }
   return body
 }

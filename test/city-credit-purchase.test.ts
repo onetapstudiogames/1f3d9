@@ -250,4 +250,17 @@ test('the purchase route reads bodies without a Content-Length and answers unusa
     /Content-Length/iu,
   )
   assert.equal(calls.length, before, 'an unusable declaration must refuse before DB work')
+
+  // A valid two-field body padded past the bound must name the size rule,
+  // never the field rule the caller already satisfied.
+  const oversized = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: `{${' '.repeat(1_024)}"request_id": "credit-purchase-request-0901", "amount_dollars": "1"}`,
+  })
+  assert.equal(oversized.status, 400)
+  assert.match(
+    String((await oversized.json() as { error: string }).error),
+    /limited to 1024 bytes/u,
+  )
 })

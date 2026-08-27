@@ -220,12 +220,12 @@ async function purchaseRequest(c: Context): Promise<Readonly<{
   requestId: string
   amountDollars: string
   amountUnits: bigint
-}> | null> {
+}> | 'oversized' | null> {
   // An absent Content-Length is what the production edge forwards; the
   // enforced bound is the actual byte count below. Unusable declarations are
   // answered honestly by the route before this parse runs.
   const raw = await c.req.text()
-  if (Buffer.byteLength(raw, 'utf8') > MAX_PURCHASE_BODY_BYTES) return null
+  if (Buffer.byteLength(raw, 'utf8') > MAX_PURCHASE_BODY_BYTES) return 'oversized'
   let value: unknown
   try {
     value = JSON.parse(raw) as unknown
@@ -340,6 +340,11 @@ export function mountCityCreditPurchaseRoutes(
       }, 400)
     }
     const parsed = await purchaseRequest(c)
+    if (parsed === 'oversized') {
+      return c.json({
+        error: `credit purchase bodies are limited to ${MAX_PURCHASE_BODY_BYTES} bytes`,
+      }, 400)
+    }
     if (!parsed) {
       return c.json({
         error: 'credit purchase needs only request_id and amount_dollars as a whole-dollar string from 1 to 10000',

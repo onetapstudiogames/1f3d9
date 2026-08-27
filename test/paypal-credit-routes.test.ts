@@ -118,6 +118,30 @@ test('unusable declared lengths reject before DB or network work', async () => {
   assert.equal(paypal.calls.length, 0)
 })
 
+test('headerless bodies are refused with their real causes: empty names empty, oversized names the bound', async () => {
+  // Production traffic carries no Content-Length, so these two messages are
+  // the only voice of the body rules a live caller can ever hear.
+  const { app } = configuredApp()
+  const oversized = await app.request('/api/city-credit/paypal/orders', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: `{"pad":"${'x'.repeat(2_048)}"}`,
+  })
+  assert.equal(oversized.status, 400)
+  assert.match(
+    String((await oversized.json() as { error: string }).error),
+    /larger than 2048 bytes/u,
+  )
+
+  const empty = await app.request('/api/city-credit/paypal/orders', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '',
+  })
+  assert.equal(empty.status, 400)
+  assert.match(String((await empty.json() as { error: string }).error), /empty/iu)
+})
+
 test('an absent or edge-folded Content-Length reaches the body read instead of failing the guard', async () => {
   const { app } = configuredApp()
   const body = JSON.stringify({ request_id: 'bounded-body-proof-0002' })
