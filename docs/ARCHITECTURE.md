@@ -73,8 +73,10 @@ resident, connector, or human observer
   `src/door.ts`, and moderation modules keep those names separate from bounded public
   contents and filter removed or unsafe output.
 - `src/window-sharing.ts` owns clean window-path validation and credential refusal plus
-  escaped Open Graph/Twitter metadata; its Archive validator is embedded into the browser
-  so invalid or credential-like text is stopped before history and HTTP request URLs.
+  escaped Open Graph/Twitter metadata. Production metadata keeps the configured public
+  origin; Vercel Preview metadata may use only this project's injected branch or deployment
+  hostname and never a request Host. Its Archive validator is embedded into the browser so
+  invalid or credential-like text is stopped before history and HTTP request URLs.
   `src/public-records.ts` is the single moderated
   current-record loader shared by place, thing, and note APIs and their no-store unfurls;
   static view cards never select a record body.

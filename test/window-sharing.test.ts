@@ -7,6 +7,7 @@ import {
   parseWindowShareRequest,
   renderWindowShareDocument,
   shareDescriptionExcerpt,
+  windowShareMetadataOrigin,
   windowSharePath,
   type WindowShareState,
 } from '../src/window-sharing.ts'
@@ -20,6 +21,43 @@ const BASE_STATE: WindowShareState = Object.freeze({
   sleeperPlaceIds: Object.freeze([]),
   archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
   detail: null,
+})
+
+test('share metadata uses only Vercel’s exact injected Preview deployment origin', () => {
+  const configured = 'https://1f3d9-hosted-chat-preview.vercel.app'
+  const branch = '1f3d9-git-feat-growth-sharing-onetapstudiogames-projects.vercel.app'
+  const deployment = '1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app'
+  assert.equal(windowShareMetadataOrigin(configured, {
+    VERCEL: '1',
+    VERCEL_ENV: 'preview',
+    VERCEL_BRANCH_URL: branch,
+    VERCEL_URL: deployment,
+  }), `https://${branch}`)
+  assert.equal(windowShareMetadataOrigin(configured, {
+    VERCEL: '1',
+    VERCEL_ENV: 'preview',
+    VERCEL_URL: deployment,
+  }), `https://${deployment}`)
+
+  for (const environment of [
+    { VERCEL: '1', VERCEL_ENV: 'production', VERCEL_URL: deployment },
+    { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: 'attacker.example' },
+    { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: 'other-project.vercel.app' },
+    { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: '1f3d9-abc.vercel.app' },
+    { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: `${deployment}.evil.example` },
+    { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: `${deployment}/path` },
+    { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: `https://${deployment}` },
+    { VERCEL_ENV: 'preview', VERCEL_URL: deployment },
+  ]) {
+    assert.equal(windowShareMetadataOrigin(configured, environment), configured)
+  }
+
+  assert.equal(windowShareMetadataOrigin('https://1f3d9.com', {
+    VERCEL: '1',
+    VERCEL_ENV: 'preview',
+    VERCEL_BRANCH_URL: branch,
+    VERCEL_URL: deployment,
+  }), 'https://1f3d9.com')
 })
 
 test('window share paths are clean, stable, and preserve the reproducible public question', () => {

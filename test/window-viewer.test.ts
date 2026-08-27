@@ -1358,3 +1358,44 @@ test('canonical window pages render current public metadata and self-contained i
   const bytes = new Uint8Array(await image.arrayBuffer())
   assert.deepEqual([...bytes.subarray(1, 4)], [0x50, 0x4e, 0x47])
 })
+
+test('Preview metadata trusts Vercel system URLs instead of the request Host', async () => {
+  const { Hono } = await import('hono')
+  const app = new Hono()
+  const previewHost = '1f3d9-git-sharing-onetapstudiogames-projects.vercel.app'
+  app.get('/window/:kind/:id', c => windowModule.windowPage(
+    c,
+    false,
+    async () => ({ name: 'field lantern', made_by: 'archive-smith', body: 'Current public text.' }),
+    {
+      PUBLIC_ORIGIN: 'https://1f3d9-hosted-chat-preview.vercel.app',
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      VERCEL_BRANCH_URL: previewHost,
+    },
+  ))
+
+  const previewHtml = await (await app.request('https://evil.example/window/thing/401')).text()
+  assert.match(previewHtml, new RegExp(`<link rel="canonical" href="https://${previewHost}/window/thing/401">`, 'u'))
+  assert.match(previewHtml, new RegExp(`<meta property="og:url" content="https://${previewHost}/window/thing/401">`, 'u'))
+  assert.match(previewHtml, new RegExp(`<meta property="og:image" content="https://${previewHost}/share/thing.png">`, 'u'))
+  assert.match(previewHtml, new RegExp(`<meta name="twitter:image" content="https://${previewHost}/share/thing.png">`, 'u'))
+  assert.doesNotMatch(previewHtml, /evil\.example|1f3d9-hosted-chat-preview/u)
+
+  const productionApp = new Hono()
+  productionApp.get('/window/:kind/:id', c => windowModule.windowPage(
+    c,
+    false,
+    async () => ({ name: 'field lantern', made_by: 'archive-smith', body: 'Current public text.' }),
+    {
+      PUBLIC_ORIGIN: 'https://1f3d9.com',
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      VERCEL_BRANCH_URL: previewHost,
+    },
+  ))
+  const productionHtml = await (await productionApp.request('https://evil.example/window/thing/401')).text()
+  assert.match(productionHtml, /href="https:\/\/1f3d9\.com\/window\/thing\/401"/u)
+  assert.match(productionHtml, /content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
+  assert.doesNotMatch(productionHtml, /evil\.example|onetapstudiogames-projects/u)
+})

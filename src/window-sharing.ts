@@ -347,6 +347,40 @@ function shareOrigin(value: string): string {
   return url.origin
 }
 
+const VERCEL_SHARE_HOST = /^1f3d9-[a-z0-9-]+-onetapstudiogames-projects\.vercel\.app$/u
+
+function trustedVercelShareOrigin(value: string | undefined): string | null {
+  if (typeof value !== 'string' || value.trim() !== value || !VERCEL_SHARE_HOST.test(value)) {
+    return null
+  }
+  const url = new URL(`https://${value}`)
+  return url.hostname === value && url.host === value && url.port === '' ? url.origin : null
+}
+
+/**
+ * Production cards stay on the configured public domain. A Vercel Preview whose
+ * configured origin is itself a Preview alias uses only Vercel's injected
+ * branch or deployment hostname, never the request Host header.
+ */
+export function windowShareMetadataOrigin(
+  configuredOriginValue: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const configuredOrigin = shareOrigin(configuredOriginValue)
+  const configured = new URL(configuredOrigin)
+  if (
+    environment.VERCEL !== '1' ||
+    environment.VERCEL_ENV !== 'preview' ||
+    configured.protocol !== 'https:' ||
+    !configured.hostname.endsWith('.vercel.app')
+  ) {
+    return configuredOrigin
+  }
+  return trustedVercelShareOrigin(environment.VERCEL_BRANCH_URL)
+    ?? trustedVercelShareOrigin(environment.VERCEL_URL)
+    ?? configuredOrigin
+}
+
 const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
   title: string
   description: string

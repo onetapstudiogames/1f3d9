@@ -870,6 +870,12 @@ URL always reads live city state. A Discord, Reddit, or
 X client may independently cache the card it already fetched; that outside cache is not a
 city snapshot and the city cannot invalidate it.
 
+Production unfurls always use the configured public origin. When that configured origin is
+itself a Vercel Preview alias, Preview unfurls instead use Vercel's validated, server-injected
+branch URL, with the exact deployment URL as fallback, so their canonical paths and images
+exist on the code under review. Incoming `Host` and forwarding headers never select this
+origin; a missing, malformed, or foreign platform hostname falls back to the configured one.
+
 Raw HTTP place reads default to `view=full` for compatibility with existing clients.
 The official `look` tool defaults to `view=outline`. Outline keeps the place identity,
 owner-authored description and purpose, body-free owner-chosen front matter,

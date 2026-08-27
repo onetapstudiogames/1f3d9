@@ -60,6 +60,7 @@ import {
   createWindowShareMetadata,
   parseWindowShareRequest,
   renderWindowShareDocument,
+  windowShareMetadataOrigin,
   type WindowShareDetail,
 } from './window-sharing.ts'
 
@@ -1397,6 +1398,7 @@ export async function windowPage(
   c: Context,
   creditPurchasesReady = false,
   readRecord: WindowShareRecordReader = readLiveWindowShareRecord,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ) {
   harden(c)
   c.header('Content-Security-Policy', WINDOW_CSP)
@@ -1409,7 +1411,7 @@ export async function windowPage(
     ? null
     : await readRecord(shareRequest.state.detail)
   const metadata = createWindowShareMetadata(
-    configuredPublicDomain().domain,
+    windowShareMetadataOrigin(configuredPublicDomain(environment).domain, environment),
     shareRequest,
     record,
   )
