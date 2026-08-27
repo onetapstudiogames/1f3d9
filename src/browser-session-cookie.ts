@@ -39,8 +39,13 @@ export function inspectBrowserSessionCookie(
   }
 }
 
-export function setBrowserSessionCookie(c: Context, name: string, value: string): void {
-  c.header('Set-Cookie', `${name}=${value}; Path=/; Max-Age=900; Secure; HttpOnly; SameSite=Lax`)
+export function setBrowserSessionCookie(
+  c: Context,
+  name: string,
+  value: string,
+  maxAgeSeconds = 900,
+): void {
+  c.header('Set-Cookie', `${name}=${value}; Path=/; Max-Age=${maxAgeSeconds}; Secure; HttpOnly; SameSite=Lax`)
 }
 
 export function clearBrowserSessionCookie(c: Context, name: string): void {

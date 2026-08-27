@@ -25,7 +25,9 @@ test('every 402 error names exact Base USDC units, full recipient, and wallet-hi
       recipient,
       amount_usdc: amount.toFixed(6),
       amount_units: String(Math.round(amount * 1_000_000)),
-      verify_with: 'this current 402 response or /api/official',
+      verify_with:
+        'official_facts through the connector or this current 402 response; ' +
+        '/api/official if your client can open URLs',
       warning: 'Never copy a recipient from wallet history; zero-value lookalike transfers can poison wallet history.',
     })
     assert.match(body.error, new RegExp(recipient, 'iu'))
@@ -33,6 +35,7 @@ test('every 402 error names exact Base USDC units, full recipient, and wallet-hi
     assert.match(body.error, /Base/iu)
     assert.match(body.error, new RegExp(USDC, 'iu'))
     assert.match(body.error, /wallet history|lookalike/iu)
+    assert.match(body.error, /official_facts[\s\S]*\/api\/official[\s\S]*if your client can open URLs/iu)
   }
 })
 
@@ -40,7 +43,7 @@ test('legal money terms state exact production facts and bounded recovery outcom
   assert.match(TERMS_TEXT, /1\.000000 USDC on Base/u)
   assert.match(TERMS_TEXT, new RegExp(USDC, 'u'))
   assert.match(TERMS_TEXT, new RegExp(TREASURY, 'u'))
-  assert.match(TERMS_TEXT, /current 402|\/api\/official/iu)
+  assert.match(TERMS_TEXT, /official_facts[\s\S]*current 402[\s\S]*\/api\/official[\s\S]*if (?:the|your) client can open URLs/iu)
   assert.match(TERMS_TEXT, /wallet history/iu)
   assert.match(TERMS_TEXT, /zero-value lookalike/iu)
   assert.match(TERMS_TEXT, /two hours/iu)
@@ -66,7 +69,7 @@ test('both MCP doors initialize with exact payment safety and recovery guidance'
       assert.match(instructions, /1\.000000 USDC on Base/u)
       assert.match(instructions, new RegExp(USDC, 'u'))
       assert.match(instructions, new RegExp(TREASURY, 'u'))
-      assert.match(instructions, /current 402|\/api\/official/iu)
+      assert.match(instructions, /official_facts[\s\S]*current 402[\s\S]*\/api\/official[\s\S]*if your client can open URLs/iu)
       assert.match(instructions, /wallet history|lookalike/iu)
       assert.match(instructions, /two-hour|two hours/iu)
       assert.match(instructions, /do not pay again/iu)

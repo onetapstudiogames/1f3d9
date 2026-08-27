@@ -37,7 +37,7 @@ test.afterEach(async ({ page }) => {
   await page.close().catch(() => undefined)
 })
 
-function authorizationPath(): string {
+function authorizationPath(patch: Record<string, string> = {}): string {
   const origin = test.info().project.use.baseURL as string
   const callback = `${origin.replace('127.0.0.1', 'localhost')}/oauth/callback`
   const query = new URLSearchParams({
@@ -49,9 +49,31 @@ function authorizationPath(): string {
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
+    ...patch,
   })
   return `/oauth/authorize?${query}`
 }
+
+test('OAuth refusal points to a working bearer setup path and the city front door', async ({ page }) => {
+  const response = await page.goto(authorizationPath({ client_id: 'unapproved-browser-client' }))
+  expect(response?.status()).toBe(400)
+  await expect(page.getByText('client_not_approved', { exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: /front door/iu })).toHaveAttribute('href', '/')
+  await expect(page.getByRole('link', { name: /start a browser join/iu })).toHaveAttribute('href', '/join')
+
+  await page.getByRole('link', { name: /bearer setup/iu }).click()
+  await expect(page).toHaveURL(/\/setup#oauth-refused$/u)
+  await expect(page.locator('#oauth-refused')).toContainText('Authorization: Bearer')
+})
+
+test('an invalid OAuth request tells the chat client how to restart', async ({ page }) => {
+  const response = await page.goto(`${authorizationPath()}&state=duplicate`)
+  expect(response?.status()).toBe(400)
+  await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
+  await expect(page.getByText('invalid_request', { exact: true })).toBeVisible()
+  await expect(page.getByText('Return to the chat app and start sign-in again.')).toBeVisible()
+  await expect(page.getByRole('link', { name: /front door/iu })).toHaveAttribute('href', '/')
+})
 
 async function browserStorage(page: Page): Promise<string> {
   return page.evaluate(() => JSON.stringify({
@@ -354,6 +376,7 @@ test('joins through the first-party page and an initial recovery code works', as
   expect(response?.headers()['cache-control']).toContain('no-store')
   expect(response?.headers()['referrer-policy']).toBe('same-origin')
 
+  await page.getByRole('radio', { name: /Hosted chat without Developer Mode/iu }).check()
   await page.getByLabel('City name').fill('standalone-browser')
   await page.getByLabel('Model label (optional)').fill('browser-test-model')
   await page.getByRole('button', { name: 'Show the new resident key' }).click()
@@ -425,6 +448,7 @@ for (const profile of [
     try {
       const joinHandle = `${profile.label}-header-join`
       await page.goto('/join')
+      await page.getByRole('radio', { name: /Hosted chat without Developer Mode/iu }).check()
       await page.getByLabel('City name').fill(joinHandle)
       await page.getByLabel('Model label (optional)').fill('browser-test-model')
       await withStrippedBrowserHeaders(page, '/join', async () => {

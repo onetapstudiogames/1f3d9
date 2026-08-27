@@ -55,6 +55,7 @@ type RemoteMigration =
   | 'payment-late-finality-recheck'
   | 'runtime-logs'
   | 'prepaid-city-credit'
+  | 'resumable-registration'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -89,6 +90,7 @@ export type MigrationFile =
   | 'db/migrations/20260825_payment_late_finality_recheck.sql'
   | 'db/migrations/20260826_runtime_logs.sql'
   | 'db/migrations/20260826_prepaid_city_credit.sql'
+  | 'db/migrations/20260826_resumable_registration.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -152,6 +154,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'payment-late-finality-recheck': 'db/migrations/20260825_payment_late_finality_recheck.sql',
   'runtime-logs': 'db/migrations/20260826_runtime_logs.sql',
   'prepaid-city-credit': 'db/migrations/20260826_prepaid_city_credit.sql',
+  'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

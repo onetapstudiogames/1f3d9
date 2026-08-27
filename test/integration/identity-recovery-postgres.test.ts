@@ -23,6 +23,10 @@ const initialRecoveryCodesMigrationDdl = await readFile(
   new URL('../../db/migrations/20260817_initial_recovery_codes.sql', import.meta.url),
   'utf8',
 )
+const resumableRegistrationMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260826_resumable_registration.sql', import.meta.url),
+  'utf8',
+)
 
 let database: Pool | null = null
 
@@ -112,6 +116,7 @@ function registration(label: string, handle = 'new-resident') {
     ipHash: sha256(`${label}:ip`),
     handle,
     model: 'postgres-test',
+    clientClass: 'coding_ephemeral' as const,
     residentSecretHash: sha256(`${label}:root-key`),
     recoveryCodeHashes: Array.from(
       { length: 8 },
@@ -208,11 +213,11 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       const legacy = registration('legacy-no-codes', 'legacy-no-codes')
       await database!.query(
         `INSERT INTO pending_resident_registrations (
-           session_hash, csrf_hash, ip_hash, handle, model, secret_hash, expires_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '15 minutes')`,
+           session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '15 minutes')`,
         [
           legacy.sessionHash, legacy.csrfHash, legacy.ipHash, legacy.handle,
-          legacy.model, legacy.residentSecretHash,
+          legacy.model, legacy.clientClass, legacy.residentSecretHash,
         ],
       )
 
@@ -250,13 +255,87 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         'staged',
       )
       const expired = await database!.query(
-        `SELECT handle, model, secret_hash, ip_hash, canceled_at IS NOT NULL AS canceled
+        `SELECT handle, model, client_class, secret_hash, ip_hash, canceled_at IS NOT NULL AS canceled
          FROM pending_resident_registrations WHERE session_hash = $1`,
         [legacy.sessionHash],
       )
       assert.deepEqual(expired.rows, [{
-        handle: null, model: null, secret_hash: null, ip_hash: null, canceled: true,
+        handle: null, model: null, client_class: null, secret_hash: null, ip_hash: null, canceled: true,
       }])
+    })
+
+    await t.test('the resumable-registration migration upgrades an old staged join and is idempotent', async () => {
+      await resetDatabase()
+      await database!.query(`
+        ALTER TABLE pending_resident_registrations
+          DROP CONSTRAINT pending_resident_registrations_client_class_valid;
+        ALTER TABLE pending_resident_registrations DROP COLUMN client_class;
+      `)
+      const legacy = registration('resumable-legacy', 'resumable-legacy')
+      await database!.query(
+        `INSERT INTO pending_resident_registrations (
+           session_hash, csrf_hash, ip_hash, handle, model, secret_hash, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '15 minutes')`,
+        [
+          legacy.sessionHash, legacy.csrfHash, legacy.ipHash, legacy.handle,
+          legacy.model, legacy.residentSecretHash,
+        ],
+      )
+      await database!.query(
+        `INSERT INTO pending_resident_registration_recovery_codes (
+           registration_session_hash, ordinal, code_hash
+         ) SELECT $1, code.ordinality::smallint, code.code_hash
+           FROM unnest($2::text[]) WITH ORDINALITY AS code(code_hash, ordinality)`,
+        [legacy.sessionHash, legacy.recoveryCodeHashes],
+      )
+      assert.equal((await database!.query(
+        `SELECT count(*) FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'pending_resident_registrations'
+           AND column_name = 'client_class'`,
+      )).rows[0]!.count, '0')
+
+      await database!.query(resumableRegistrationMigrationDdl)
+      const upgraded = await database!.query(
+        `SELECT
+           (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'pending_resident_registrations'
+              AND column_name = 'client_class') AS columns,
+           (SELECT convalidated FROM pg_constraint
+            WHERE conrelid = 'pending_resident_registrations'::regclass
+              AND conname = 'pending_resident_registrations_client_class_valid') AS validated`,
+      )
+      assert.deepEqual(upgraded.rows, [{ columns: '1', validated: true }])
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: legacy.sessionHash,
+        csrfHash: legacy.csrfHash,
+      }), {
+        status: 'staged', handle: legacy.handle, clientClass: 'legacy_unknown',
+      })
+
+      const pending = registration('resumable-migration', 'resumable-migration')
+      assert.equal((await store.stageResidentRegistration(pending)).status, 'staged')
+      await database!.query(resumableRegistrationMigrationDdl)
+      const state = await database!.query(
+        `SELECT client_class, secret_hash,
+           (SELECT count(*) FROM pending_resident_registration_recovery_codes
+            WHERE registration_session_hash = $1) AS pending_codes
+         FROM pending_resident_registrations WHERE session_hash = $1`,
+        [pending.sessionHash],
+      )
+      assert.deepEqual(state.rows, [{
+        client_class: 'coding_ephemeral',
+        secret_hash: pending.residentSecretHash,
+        pending_codes: '8',
+      }])
+      assert.deepEqual(await store.confirmResidentRegistration({
+        sessionHash: legacy.sessionHash,
+        csrfHash: legacy.csrfHash,
+        residentSecretHash: legacy.residentSecretHash,
+      }), {
+        status: 'confirmed', residentId: 2, handle: legacy.handle,
+      })
     })
 
     await t.test('registration rejects every non-exact, malformed, or duplicate initial-code set', async () => {
@@ -276,6 +355,68 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       }
       assert.equal((await database!.query('SELECT count(*) FROM pending_resident_registrations')).rows[0]!.count, '0')
       assert.equal((await database!.query('SELECT count(*) FROM pending_resident_registration_recovery_codes')).rows[0]!.count, '0')
+    })
+
+    await t.test('concurrent duplicate registration staging keeps one resumable credential set', async () => {
+      await resetDatabase()
+      const first = registration('concurrent-stage:first', 'concurrent-stage')
+      const secondCredentials = registration('concurrent-stage:second', 'concurrent-stage')
+      const second = {
+        ...secondCredentials,
+        sessionHash: first.sessionHash,
+        csrfHash: first.csrfHash,
+        ipHash: first.ipHash,
+      }
+      const attempts = [first, second] as const
+
+      const results = await Promise.all(
+        attempts.map(attempt => store.stageResidentRegistration(attempt)),
+      )
+
+      assert.deepEqual(
+        results.map(result => result.status).sort(),
+        ['request_unavailable', 'staged'],
+      )
+      const winnerIndex = results.findIndex(result => result.status === 'staged')
+      const winner = winnerIndex === 0 ? first : second
+      const loser = winnerIndex === 0 ? second : first
+      const persisted = await database!.query<{
+        handle: string
+        model: string
+        client_class: string
+        secret_hash: string
+        pending_codes: string
+        code_hashes: string[]
+      }>(
+        `SELECT pending.handle, pending.model, pending.client_class, pending.secret_hash,
+           count(code.*) AS pending_codes,
+           array_agg(code.code_hash ORDER BY code.ordinal) AS code_hashes
+         FROM pending_resident_registrations pending
+         JOIN pending_resident_registration_recovery_codes code
+           ON code.registration_session_hash = pending.session_hash
+         WHERE pending.session_hash = $1
+         GROUP BY pending.handle, pending.model, pending.client_class, pending.secret_hash`,
+        [first.sessionHash],
+      )
+
+      assert.deepEqual(persisted.rows, [{
+        handle: winner.handle,
+        model: winner.model,
+        client_class: winner.clientClass,
+        secret_hash: winner.residentSecretHash,
+        pending_codes: '8',
+        code_hashes: winner.recoveryCodeHashes,
+      }])
+      assert.equal(
+        loser.recoveryCodeHashes.some(hash => persisted.rows[0]!.code_hashes.includes(hash)),
+        false,
+      )
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: first.sessionHash,
+        csrfHash: first.csrfHash,
+      }), {
+        status: 'staged', handle: winner.handle, clientClass: winner.clientClass,
+      })
     })
 
     await t.test('recovery-set generation rejects every non-exact, malformed, or duplicate hash set', async () => {
@@ -305,14 +446,21 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       assert.deepEqual(await store.stageResidentRegistration(pending), {
         status: 'staged', handle: 'new-resident',
       })
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+      }), {
+        status: 'staged', handle: 'new-resident', clientClass: 'coding_ephemeral',
+      })
       const before = await database!.query(
-        `SELECT handle, model, secret_hash, ip_hash, resident_id, confirmed_at, canceled_at
+        `SELECT handle, model, client_class, secret_hash, ip_hash, resident_id, confirmed_at, canceled_at
          FROM pending_resident_registrations WHERE session_hash = $1`,
         [pending.sessionHash],
       )
       assert.deepEqual(before.rows, [{
         handle: pending.handle,
         model: pending.model,
+        client_class: pending.clientClass,
         secret_hash: pending.residentSecretHash,
         ip_hash: pending.ipHash,
         resident_id: null,
@@ -360,15 +508,19 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-      }), { status: 'request_unavailable' })
+      }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+      }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
 
       const after = await database!.query(
-        `SELECT handle, model, secret_hash, ip_hash, resident_id, confirmed_at IS NOT NULL AS confirmed
+        `SELECT handle, model, client_class, secret_hash, ip_hash, resident_id, confirmed_at IS NOT NULL AS confirmed
          FROM pending_resident_registrations WHERE session_hash = $1`,
         [pending.sessionHash],
       )
       assert.deepEqual(after.rows, [{
-        handle: null, model: null, secret_hash: null, ip_hash: null,
+        handle: null, model: null, client_class: null, secret_hash: null, ip_hash: null,
         resident_id: 2, confirmed: true,
       }])
       const recoveryState = await database!.query(
@@ -440,6 +592,26 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: canceled.sessionHash,
         csrfHash: canceled.csrfHash,
       }), true)
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: canceled.sessionHash,
+        csrfHash: canceled.csrfHash,
+      }), { status: 'canceled' })
+      assert.equal(await store.cancelResidentRegistration({
+        sessionHash: canceled.sessionHash,
+        csrfHash: canceled.csrfHash,
+      }), false)
+      await database!.query(
+        `UPDATE pending_resident_registrations
+         SET created_at = now() - interval '3 minutes',
+             canceled_at = now() - interval '2 minutes',
+             expires_at = now() - interval '1 minute'
+         WHERE session_hash = $1`,
+        [canceled.sessionHash],
+      )
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: canceled.sessionHash,
+        csrfHash: canceled.csrfHash,
+      }), { status: 'canceled' })
 
       const expired = registration('expired-registration', 'expired-registration')
       assert.equal((await store.stageResidentRegistration(expired))?.status, 'staged')
@@ -450,20 +622,28 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
          WHERE session_hash = $1`,
         [expired.sessionHash],
       )
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: expired.sessionHash,
+        csrfHash: expired.csrfHash,
+      }), { status: 'expired' })
       assert.equal(
         (await store.stageResidentRegistration(registration('cleanup-trigger', 'cleanup-trigger')))?.status,
         'staged',
       )
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: expired.sessionHash,
+        csrfHash: expired.csrfHash,
+      }), { status: 'expired' })
 
       const state = await database!.query(
-        `SELECT pending.session_hash, pending.handle, pending.model, pending.secret_hash,
+        `SELECT pending.session_hash, pending.handle, pending.model, pending.client_class, pending.secret_hash,
            pending.ip_hash, pending.canceled_at IS NOT NULL AS canceled,
            count(code.code_hash) AS pending_codes
          FROM pending_resident_registrations pending
          LEFT JOIN pending_resident_registration_recovery_codes code
            ON code.registration_session_hash = pending.session_hash
          WHERE pending.session_hash IN ($1, $2)
-         GROUP BY pending.session_hash, pending.handle, pending.model, pending.secret_hash,
+         GROUP BY pending.session_hash, pending.handle, pending.model, pending.client_class, pending.secret_hash,
            pending.ip_hash, pending.canceled_at
          ORDER BY pending.session_hash`,
         [canceled.sessionHash, expired.sessionHash],
@@ -473,6 +653,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         assert.deepEqual({
           handle: row.handle,
           model: row.model,
+          client_class: row.client_class,
           secret_hash: row.secret_hash,
           ip_hash: row.ip_hash,
           canceled: row.canceled,
@@ -480,6 +661,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         }, {
           handle: null,
           model: null,
+          client_class: null,
           secret_hash: null,
           ip_hash: null,
           canceled: true,
@@ -496,6 +678,51 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         csrfHash: expired.csrfHash,
         residentSecretHash: expired.residentSecretHash,
       }), { status: 'request_unavailable' })
+    })
+
+    await t.test('concurrent correct and wrong confirmations preserve exact saved-key truth', async () => {
+      await resetDatabase()
+      const pending = registration('race-exact-key', 'race-exact-key')
+      assert.equal((await store.stageResidentRegistration(pending)).status, 'staged')
+      await database!.query(`
+        CREATE OR REPLACE FUNCTION delay_race_registration_event() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.kind = 'register' AND NEW.actor = 'race-exact-key' THEN
+            PERFORM pg_sleep(0.25);
+          END IF;
+          RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER delay_race_registration_event
+        BEFORE INSERT ON events
+        FOR EACH ROW EXECUTE FUNCTION delay_race_registration_event();
+      `)
+
+      const correct = store.confirmResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+      })
+      await new Promise(resolve => setTimeout(resolve, 50))
+      const wrong = store.confirmResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+        residentSecretHash: sha256('wrong-racing-key'),
+      })
+      assert.deepEqual(await Promise.all([correct, wrong]), [
+        { status: 'confirmed', residentId: 2, handle: 'race-exact-key' },
+        { status: 'credential_rejected' },
+      ])
+      assert.equal((await database!.query(
+        `SELECT count(*) FROM residents WHERE handle = 'race-exact-key'`,
+      )).rows[0]!.count, '1')
+      assert.equal((await database!.query(
+        `SELECT count(*) FROM events WHERE kind = 'register' AND actor = 'race-exact-key'`,
+      )).rows[0]!.count, '1')
+      assert.equal((await database!.query(
+        `SELECT count(*) FROM resident_recovery_codes WHERE resident_id = 2`,
+      )).rows[0]!.count, '8')
     })
 
     await t.test('an active-code collision rolls back resident creation and keeps the pending set retryable', async () => {
@@ -620,8 +847,53 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         [winner.sessionHash, loser.sessionHash],
       )
       assert.deepEqual(codes.rows, [{
-        active_codes: '8', winner_pending_codes: '0', loser_pending_codes: '8',
+        active_codes: '8', winner_pending_codes: '0', loser_pending_codes: '0',
       }])
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: loser.sessionHash,
+        csrfHash: loser.csrfHash,
+      }), { status: 'canceled' })
+    })
+
+    await t.test('a cancel waiting behind confirmation reports that it lost', async () => {
+      await resetDatabase()
+      const pending = registration('cancel-confirm-race', 'cancel-confirm-race')
+      assert.equal((await store.stageResidentRegistration(pending)).status, 'staged')
+      await database!.query(`
+        CREATE OR REPLACE FUNCTION delay_cancel_race_event() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.kind = 'register' AND NEW.actor = 'cancel-confirm-race' THEN
+            PERFORM pg_sleep(0.25);
+          END IF;
+          RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER delay_cancel_race_event
+        BEFORE INSERT ON events
+        FOR EACH ROW EXECUTE FUNCTION delay_cancel_race_event();
+      `)
+
+      const confirmation = store.confirmResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+      })
+      await new Promise(resolve => setTimeout(resolve, 25))
+      const cancellation = store.cancelResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+      })
+      assert.deepEqual(await confirmation, {
+        status: 'confirmed', residentId: 2, handle: pending.handle,
+      })
+      assert.equal(await cancellation, false)
+      assert.deepEqual(await store.getResidentRegistrationProgress({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+      }), {
+        status: 'confirmed', residentId: 2, handle: pending.handle,
+      })
     })
 
     await t.test('abandoned or canceled recovery preserves the old key, code, and connector grant', async () => {

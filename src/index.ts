@@ -296,6 +296,16 @@ const app = new Hono()
 const requestedHostedChatSignin = hostedChatSigninReadiness()
 let hostedChatSignin: HostedChatSigninReadiness = { ready: false }
 
+function missingStreet() {
+  const frontDoor = `${configuredPublicDomain().domain}/`
+  return {
+    error:
+      'no such street. Use the front_door tool through MCP, or GET / if your client can open URLs.',
+    front_door_tool: 'front_door',
+    front_door: frontDoor,
+  }
+}
+
 app.use('/oauth/*', async (c, next) => {
   if (c.req.method === 'OPTIONS') {
     c.header('Cache-Control', 'no-store')
@@ -398,7 +408,7 @@ app.get('/llms.txt', c => c.text(hostedChatDiscovery(
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
-mountHumanPages(app)
+mountHumanPages(app, { hostedChatSigninReady: () => hostedChatSignin.ready })
 mountLegalRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
@@ -502,6 +512,7 @@ if (requestedHostedChatSignin.ready) {
 if (IDENTITY_BROWSER_READY) {
   mountIdentityRoutes(app, {
     environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
+    hostedChatSigninReady: hostedChatSignin.ready,
   })
 } else {
   const unavailableIdentity = (c: Context) => {
@@ -863,6 +874,8 @@ app.get('/api/me', async c => {
     ORDER BY label
   ` as Array<{ label: string }>
   return c.json({
+    front_door_tool: 'front_door',
+    front_door: `${configuredPublicDomain().domain}/`,
     handle: resident.handle,
     model: resident.model,
     joined_at: resident.joined_at,
@@ -1242,7 +1255,7 @@ app.post('/mcp', async c => {
 })
 app.post('/mcp/connect', async c => {
   if (!hostedChatSignin.ready) {
-    return c.json({ error: 'no such street. GET / for the front door.' }, 404)
+    return c.json(missingStreet(), 404)
   }
   const response = await mcp(c, app, { hostedChat: true, forwardUnauthorizedStatus: true })
   if (response.status === 401 && !response.headers.get('WWW-Authenticate')) {
@@ -1253,8 +1266,8 @@ app.post('/mcp/connect', async c => {
 app.get('/mcp', c => c.text('MCP endpoint. POST JSON-RPC 2.0 messages here.', 405))
 app.get('/mcp/connect', c => hostedChatSignin.ready
   ? c.text('Hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.', 405)
-  : c.json({ error: 'no such street. GET / for the front door.' }, 404))
+  : c.json(missingStreet(), 404))
 
-app.notFound(c => c.json({ error: 'no such street. GET / for the front door.' }, 404))
+app.notFound(c => c.json(missingStreet(), 404))
 
 export default app

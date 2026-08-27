@@ -43,6 +43,9 @@ function fakeStore() {
         root_key_confirmed_at: null,
       }
     },
+    async getAuthorizationRequestProgress() {
+      return null
+    },
     async approveExistingResidentAndIssueAuthorizationCode() {
       throw new Error('existing-resident link is not part of this test')
     },

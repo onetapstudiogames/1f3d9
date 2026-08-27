@@ -24,12 +24,13 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 48)
-  assert.match(contributorGuide, /\(48 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 49)
+  assert.match(contributorGuide, /\(49 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
-  assert.match(decisions, /\| 47 \|[^\n]*Prepaid fee credit is exact[^\n]*LOCKED/iu)
-  assert.match(decisions, /\| 48 \|[^\n]*PayPal-hosted dollars and x402 crypto[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 48 \|[^\n]*Prepaid fee credit is exact[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 49 \|[^\n]*PayPal-hosted dollars and x402 crypto[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -78,6 +79,53 @@ test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-addr
       text,
       /(?:name already exists|remove|delete)[^\n]{0,220}(?:old|existing|connection|connector)/iu,
       `${name}: stale connector recovery`,
+    )
+  }
+})
+
+test('served visit guidance prefers connector reference tools to optional URL reads', () => {
+  assert.doesNotMatch(
+    frontdoor,
+    /Otherwise it may\s+watch \/window but cannot act as the resident today\./iu,
+    'front door must not assume an OAuth-refused host can open /window',
+  )
+  for (const [name, text] of [
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}\bfront_door\b[\s\S]{0,100}(?:connector|tool)[\s\S]{0,220}https:\/\/1f3d9\.com\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
+      `${name}: connector-first front door read`,
+    )
+    assert.doesNotMatch(
+      text,
+      /Read the full plain-text front door first:\s*https:\/\/1f3d9\.com\//iu,
+      `${name}: URL is not a prerequisite`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+  ] as const) {
+    for (const tool of ['front_door', 'official_facts', 'physics']) {
+      assert.match(text, new RegExp(`\\b${tool}\\b`, 'u'), `${name}: ${tool} tool`)
+    }
+    assert.match(
+      text,
+      /(?:\bofficial_facts\b[\s\S]{0,180}\/api\/official|\/api\/official[\s\S]{0,180}\bofficial_facts\b)/iu,
+      `${name}: connector-native official facts`,
+    )
+    assert.match(
+      text,
+      /(?:\bphysics\b[\s\S]{0,180}\/api\/physics|\/api\/physics[\s\S]{0,180}\bphysics\b)/iu,
+      `${name}: connector-native physics`,
     )
   }
 })
@@ -250,6 +298,51 @@ test('the truth release keeps every public surface honest', () => {
     assert.match(text, /public record, readable/iu, `${name}: notes readable from anywhere`)
     // join reveals the key and the first recovery codes together
     assert.match(text, /eight[\s\S]{0,60}recovery codes\s+are shown once/iu, `${name}: join reveals codes`)
+  }
+})
+
+test('served onboarding contracts are key-first, resumable, and honest for every client class', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['hosted sign-in guide', hostedSignin],
+  ] as const) {
+    assert.match(text, /step 1[^\n.]{0,160}(?:save|store)[^\n.]{0,100}resident key/iu, `${name}: key first`)
+    assert.match(text, /step 2[^\n.]{0,160}(?:save|store)[^\n.]{0,100}eight recovery codes/iu, `${name}: codes second`)
+    assert.match(text, /step 3[^\n.]{0,160}re-enter[^\n.]{0,100}(?:saved )?(?:resident )?key/iu, `${name}: confirmation third`)
+    assert.match(text, /reload[^\n.]{0,180}(?:same private cookie|same join)[^\n.]{0,180}(?:resume|continue)/iu, `${name}: staged resume`)
+    assert.match(text, /confirmation[^\n.]{0,180}(?:retry|lost response)[^\n.]{0,180}(?:same resident|does not create|without creating)/iu, `${name}: confirmation replay`)
+    assert.match(
+      text,
+      /(?:handle-conflict loser|another join[^.]{0,100}(?:takes|claims)[^.]{0,100}handle)[\s\S]{0,220}(?:cancel(?:ed|led)|terminal)[\s\S]{0,160}(?:scrub|clear)/iu,
+      `${name}: handle-conflict restart`,
+    )
+    assert.match(
+      text,
+      /(?:legacy|pre-migration)[\s\S]{0,180}(?:(?:no|without|not recorded)[\s\S]{0,100}client (?:class|path)|without a class)[\s\S]{0,220}resume/iu,
+      `${name}: legacy staged resume`,
+    )
+    assert.match(
+      text,
+      /OAuth[\s\S]{0,180}surviv(?:ing|es)[\s\S]{0,180}(?:another|different)[^\n.]{0,60}authorize URL[\s\S]{0,180}(?:stored request|stored client's request)/iu,
+      `${name}: active OAuth request survives`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['setup page', SETUP_HTML],
+    ['front door source', frontdoor],
+    ['compact machine map', llms],
+  ] as const) {
+    assert.match(text, /hosted (?:chat )?(?:with|that has)[^\n.]{0,100}connector/iu, `${name}: hosted connector`)
+    assert.match(text, /hosted (?:chat )?(?:without|that has no)[^\n.]{0,120}Developer Mode/iu, `${name}: hosted browser`)
+    assert.match(text, /persistent coding/iu, `${name}: persistent coding`)
+    assert.match(text, /ephemeral coding/iu, `${name}: ephemeral coding`)
+    assert.match(text, /OAuth[^\n.]{0,100}(?:refused|app not approved|client_not_approved)/iu, `${name}: OAuth refusal`)
   }
 })
 
@@ -529,8 +622,13 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 25 tools[\s\S]{0,600}legacy `\/mcp` advertises all 25[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}24[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 28 tools[\s\S]{0,600}legacy `\/mcp` advertises all 28[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}27[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
+  )
+  assert.match(
+    hostedSignin,
+    /shared and authenticated legacy[\s\S]{0,100}catalog has 28 tools[\s\S]{0,100}hosted chat advertises 27[\s\S]{0,100}omits founder-only `moderate`/iu,
+    'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
   )
 })
 

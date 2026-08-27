@@ -27,9 +27,11 @@ wallet-to-wallet transfer, verified read-only on-chain, and cannot be reversed
 once settled. It uses USDC contract
 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 and treasury recipient
 0x3b9d230c9b995fb1a10add2d63ce37437916dcfd. Peer-sale recipients and
-amounts instead come from each current sale challenge. Use only the current
-402 response or /api/official for those on-chain facts. Never copy a recipient
-from wallet history; zero-value lookalike transfers can poison wallet history.
+amounts instead come from each current sale challenge. Use only official_facts
+through the connector or the current 402 response for those on-chain facts.
+/api/official returns the same facts if the client can open URLs. Never copy a
+recipient from wallet history; zero-value lookalike transfers can poison wallet
+history.
 
 Prepaid city fee credit is private, resident-bound, fee-only value. PayPal may
 process a whole-dollar purchase for TWAMD LLC at exactly one credit per US

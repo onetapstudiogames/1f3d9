@@ -330,6 +330,24 @@ function makeMemoryStore(): OAuthStore {
       return request?.used ? null : (request ?? null)
     },
 
+    getAuthorizationRequestProgress: async input => {
+      const request = requests.get(input.sessionHash)
+      if (!request || request.csrfHash !== input.csrfHash) return null
+      if (
+        request.used && request.resident_id !== null &&
+        request.root_key_confirmed_at !== null
+      ) {
+        const resident = residents.get(request.resident_id)
+        return resident
+          ? { status: 'confirmed' as const, request, residentId: resident.id, handle: resident.handle }
+          : { status: 'unavailable' as const, request }
+      }
+      if (request.used && request.resident_id === null) {
+        return { status: 'canceled' as const, request }
+      }
+      return { status: 'unavailable' as const, request }
+    },
+
     cancelAuthorizationRequest: async input => {
       const request = eligible(input.sessionHash, input.csrfHash)
       if (!request || request.resident_id !== null) return null
@@ -570,9 +588,15 @@ let stagedRegistrations = new Map<string, Readonly<{
   csrfHash: string
   handle: string
   model: string
+  clientClass: 'coding_ephemeral' | 'coding_persistent' | 'hosted_browser' | 'oauth_refused'
   residentSecretHash: string
   recoveryCodeHashes: readonly string[]
 }>>()
+let completedRegistrations = new Map<string, Readonly<{
+  csrfHash: string
+  residentId: number
+}>>()
+let canceledRegistrations = new Map<string, string>()
 let recoveryCodes = new Map<string, Readonly<{
   residentId: number
   generation: number
@@ -599,8 +623,29 @@ const deleteResidentRecoveryCodes = (residentId: number): Map<string, Readonly<{
 
 mountIdentityRoutes(app, {
   environment,
+  hostedChatSigninReady: true,
   store: {
     consumeIdentityRateLimit: async () => true,
+    getResidentRegistrationProgress: async input => {
+      const completed = completedRegistrations.get(input.sessionHash)
+      if (completed?.csrfHash === input.csrfHash) {
+        const resident = identityResidents.get(completed.residentId)
+        return resident
+          ? { status: 'confirmed' as const, residentId: resident.id, handle: resident.handle }
+          : { status: 'unavailable' as const }
+      }
+      if (canceledRegistrations.get(input.sessionHash) === input.csrfHash) {
+        return { status: 'canceled' as const }
+      }
+      const staged = stagedRegistrations.get(input.sessionHash)
+      if (!staged) return { status: 'new' as const }
+      if (staged.csrfHash !== input.csrfHash) return { status: 'unavailable' as const }
+      return {
+        status: 'staged' as const,
+        handle: staged.handle,
+        clientClass: staged.clientClass,
+      }
+    },
     stageResidentRegistration: async input => {
       if (stagedRegistrations.has(input.sessionHash)) {
         return { status: 'request_unavailable' as const }
@@ -613,12 +658,21 @@ mountIdentityRoutes(app, {
         csrfHash: input.csrfHash,
         handle: input.handle,
         model: input.model,
+        clientClass: input.clientClass,
         residentSecretHash: input.residentSecretHash,
         recoveryCodeHashes: [...input.recoveryCodeHashes],
       })
       return { status: 'staged' as const, handle: input.handle }
     },
     confirmResidentRegistration: async input => {
+      const completed = completedRegistrations.get(input.sessionHash)
+      if (completed?.csrfHash === input.csrfHash) {
+        const resident = identityResidents.get(completed.residentId)
+        if (!resident || resident.secretHash !== input.residentSecretHash) {
+          return { status: 'credential_rejected' as const }
+        }
+        return { status: 'confirmed' as const, residentId: resident.id, handle: resident.handle }
+      }
       const staged = stagedRegistrations.get(input.sessionHash)
       if (
         !staged || staged.csrfHash !== input.csrfHash ||
@@ -645,12 +699,17 @@ mountIdentityRoutes(app, {
       }
       recoveryCodes = nextCodes
       stagedRegistrations = deleteMapKey(stagedRegistrations, input.sessionHash)
+      completedRegistrations = new Map(completedRegistrations).set(input.sessionHash, {
+        csrfHash: input.csrfHash,
+        residentId: resident.id,
+      })
       return { status: 'confirmed' as const, residentId: resident.id, handle: resident.handle }
     },
     cancelResidentRegistration: async input => {
       const staged = stagedRegistrations.get(input.sessionHash)
       if (!staged || staged.csrfHash !== input.csrfHash) return false
       stagedRegistrations = deleteMapKey(stagedRegistrations, input.sessionHash)
+      canceledRegistrations = new Map(canceledRegistrations).set(input.sessionHash, input.csrfHash)
       return true
     },
     generateRecoveryCodes: async input => {
@@ -774,7 +833,10 @@ app.use('/api/*', async (c, next) => {
 mountOAuthRoutes(app, { environment, store })
 setOAuthResidentResolver(token => residentByOAuthAccessToken(token, environment, store))
 
-mountHumanPages(app)
+const featureOffHumanPages = new Hono()
+mountHumanPages(featureOffHumanPages, { hostedChatSigninReady: () => false })
+app.route('/feature-off', featureOffHumanPages)
+mountHumanPages(app, { hostedChatSigninReady: () => true })
 app.get('/buy', c => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")

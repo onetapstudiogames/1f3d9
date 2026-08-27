@@ -87,14 +87,17 @@ export function challenge402(c: Context, accepted: PaymentRequirements, note: st
     x402Version: 1,
     error:
       `${note} Pay exactly ${amountUsdc} USDC on Base using contract ${accepted.asset} ` +
-      `to ${accepted.payTo}. Verify with this current 402 response or /api/official. ${warning}`,
+      `to ${accepted.payTo}. Verify with official_facts through the connector or this current 402 response; ` +
+      `/api/official if your client can open URLs. ${warning}`,
     payment_safety: {
       network: 'Base',
       usdc_contract: accepted.asset,
       recipient: accepted.payTo,
       amount_usdc: amountUsdc,
       amount_units: accepted.maxAmountRequired,
-      verify_with: 'this current 402 response or /api/official',
+      verify_with:
+        'official_facts through the connector or this current 402 response; ' +
+        '/api/official if your client can open URLs',
       warning,
     },
     accepts: [accepted],

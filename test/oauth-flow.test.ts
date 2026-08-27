@@ -166,6 +166,31 @@ class MemoryOAuthStore {
       return request ? { ...request } : null
     },
 
+    getAuthorizationRequestProgress: async (input: {
+      sessionHash: string
+      csrfHash: string
+    }) => {
+      const request = this.requests.get(input.sessionHash)
+      if (!request || request.csrfHash !== input.csrfHash) return null
+      const requestRecord: AuthorizationRequestRecord = { ...request }
+      if (
+        request.used && request.resident_id !== null &&
+        request.root_key_confirmed_at !== null
+      ) {
+        const resident = this.residents.get(request.resident_id)
+        return resident
+          ? { status: 'confirmed' as const, request: requestRecord, residentId: resident.id, handle: resident.handle }
+          : { status: 'unavailable' as const, request: requestRecord }
+      }
+      if (request.resident_id === null && request.expiresAt <= Date.now()) {
+        return { status: 'expired' as const, request: requestRecord }
+      }
+      if (request.used && request.resident_id === null) {
+        return { status: 'canceled' as const, request: requestRecord }
+      }
+      return { status: 'unavailable' as const, request: requestRecord }
+    },
+
     approveExistingResidentAndIssueAuthorizationCode: async (
       input: Parameters<OAuthStore['approveExistingResidentAndIssueAuthorizationCode']>[0],
     ) => {
@@ -254,6 +279,12 @@ class MemoryOAuthStore {
         // the unique-handle insert fails, then the whole statement is restored.
         this.nextResidentId = allocatedResidentId
         this.duplicateHandleRollbacks++
+        request.used = true
+        request.intent = null
+        request.new_handle = null
+        request.new_model = null
+        request.pendingSecretHash = null
+        request.pendingRecoveryCodeHashes = null
         return { status: 'handle_taken' as const }
       }
       const resident: Resident = {
@@ -597,11 +628,42 @@ test('OAuth sets its cookie and renders the form in the initial response', async
   const session = await begin(app)
   assert.match(session.cookie, /^__Host-1f3d9_oauth=/u)
   assert.match(session.html, /name="resident_key"[^>]*type="password"/iu)
+  const retryContract = session.html.indexOf('If “Prepare resident” is submitted again')
+  const registerSubmit = session.html.indexOf('name="action" value="register"')
+  assert.ok(retryContract >= 0 && retryContract < registerSubmit)
+  assert.match(
+    session.html,
+    /same staged signup returns[^.]*never creates or shows a second key or recovery-code set/iu,
+  )
   assert.equal((JSON.parse(memory.safeState()) as { requests: unknown[] }).requests.length, 1)
 })
 
-test('an identical reload reuses its request while a different request replaces the browser cookie', async () => {
-  const { app, memory } = fixture()
+test('an active OAuth request survives both identical and different authorize reloads', async () => {
+  const memory = new MemoryOAuthStore()
+  const otherClientId = 'other-approved-hosted-chat'
+  const otherCallback = 'https://other-chat.example.test/oauth/callback'
+  const app = new Hono()
+  mountOAuthRoutes(app, {
+    environment: {
+      ...environment,
+      HOSTED_CHAT_OAUTH_CLIENTS: JSON.stringify([
+        {
+          client_id: CLIENT_ID,
+          client_name: 'Hosted Chat Flow Test',
+          redirect_uris: [CALLBACK],
+        },
+        {
+          client_id: otherClientId,
+          client_name: 'Other Approved Chat',
+          redirect_uris: [otherCallback],
+        },
+      ]),
+    },
+    store: memory.api,
+    fetcher: (async input => {
+      throw new Error(`unexpected network call: ${String(input)}`)
+    }) as typeof fetch,
+  })
   const createAuthorizationRequest = memory.api.createAuthorizationRequest
   const consumeOAuthRateLimit = memory.api.consumeOAuthRateLimit
   let createCalls = 0
@@ -619,40 +681,44 @@ test('an identical reload reuses its request while a different request replaces 
 
   const refreshed = await app.request(session.location, { headers: { cookie: session.cookie } })
   assert.equal(refreshed.status, 200)
-  assert.equal(await refreshed.text(), session.html)
   assert.equal(refreshed.headers.get('set-cookie'), null)
+  const refreshedBody = await refreshed.text()
+  assert.match(refreshedBody, /continuing the sign-in already held by this browser/iu)
+  assert.match(refreshedBody, /start a different connector[^.]*cancel this request first/iu)
+  assert.match(refreshedBody, /Hosted Chat Flow Test/iu)
 
   const changed = new URL(session.location, ORIGIN)
+  changed.searchParams.set('client_id', otherClientId)
+  changed.searchParams.set('redirect_uri', otherCallback)
   changed.searchParams.set('state', 'different-client-state')
-  const replacement = await app.request(`${changed.pathname}${changed.search}`, {
+  const preserved = await app.request(`${changed.pathname}${changed.search}`, {
     headers: { cookie: session.cookie },
   })
-  assert.equal(replacement.status, 200)
-  assert.equal(replacement.headers.get('location'), null)
-  assert.equal(replacement.headers.get('x-1f3d9-reason'), null)
-  const replacementCookie = (replacement.headers.get('set-cookie') ?? '').split(';', 1)[0]!
-  assert.match(replacementCookie, /^__Host-1f3d9_oauth=/u)
-  assert.notEqual(replacementCookie, session.cookie)
-  assert.match(await replacement.text(), /name="resident_key"[^>]*type="password"/iu)
+  assert.equal(preserved.status, 200)
+  assert.equal(preserved.headers.get('location'), null)
+  assert.equal(preserved.headers.get('x-1f3d9-reason'), null)
+  assert.equal(preserved.headers.get('set-cookie'), null)
+  const preservedBody = await preserved.text()
+  assert.equal(preservedBody, refreshedBody)
+  assert.doesNotMatch(preservedBody, /Other Approved Chat|different-client-state|other-chat\.example\.test/u)
+  assert.match(
+    preserved.headers.get('content-security-policy') ?? '',
+    /form-action 'self' https:\/\/chat\.example\.test;/u,
+  )
 
-  const oldTab = await browserPost(app, { ...session, cookie: replacementCookie }, {
+  const originalForm = await browserPost(app, session, {
     action: 'link',
     csrf: session.csrf,
     resident_key: EXISTING_KEY,
   })
-  assert.equal(oldTab.status, 403)
-  assert.equal(oldTab.headers.get('x-1f3d9-reason'), 'browser_cookie_mismatch')
-  assert.match(
-    await oldTab.text(),
-    /This sign-in form and its private browser cookie did not match\./u,
-  )
+  assert.equal(originalForm.status, 303)
 
-  assert.equal(createCalls, 2)
-  assert.equal(authorizeRateChecks, 6)
-  assert.equal((JSON.parse(memory.safeState()) as { requests: unknown[] }).requests.length, 2)
+  assert.equal(createCalls, 1)
+  assert.equal(authorizeRateChecks, 2)
+  assert.equal((JSON.parse(memory.safeState()) as { requests: unknown[] }).requests.length, 1)
 })
 
-test('an expired database request with a retained cookie starts a fresh browser session', async () => {
+test('an expired database request reports its state without spending quota or replacing the cookie', async () => {
   const { app, memory } = fixture()
   const session = await begin(app)
   memory.expireBrowserSession(session.rawSession)
@@ -663,28 +729,23 @@ test('an expired database request with a retained cookie starts a fresh browser 
     createdSessionHashes.push(input.sessionHash)
     return createAuthorizationRequest(input)
   }
+  memory.api.consumeOAuthRateLimit = async () => {
+    throw new Error('an expired resume must not spend sign-in quota')
+  }
 
-  const restarted = await app.request(session.location, { headers: { cookie: session.cookie } })
-  assert.equal(restarted.status, 200)
-  assert.equal(restarted.headers.get('x-1f3d9-reason'), null)
-  const replacementCookie = (restarted.headers.get('set-cookie') ?? '').split(';', 1)[0]!
-  assert.match(replacementCookie, /^__Host-1f3d9_oauth=/u)
-  assert.notEqual(replacementCookie, session.cookie)
-  const replacementSession = replacementCookie.split('=', 2)[1]!.split('.', 2)[0]!
-  assert.deepEqual(createdSessionHashes, [sha256(replacementSession)])
-  assert.notEqual(createdSessionHashes[0], expiredSessionHash)
-  assert.match(await restarted.text(), /Let this chat enter 1F3D9/iu)
-
-  const recovered = await app.request(session.location, {
-    headers: { cookie: replacementCookie },
-  })
-  assert.equal(recovered.status, 200)
-  assert.equal(recovered.headers.get('set-cookie'), null)
-  assert.match(await recovered.text(), /Let this chat enter 1F3D9/iu)
+  const stopped = await app.request(session.location, { headers: { cookie: session.cookie } })
+  assert.equal(stopped.status, 403)
+  assert.equal(stopped.headers.get('x-1f3d9-reason'), 'request_expired')
+  assert.equal(stopped.headers.get('set-cookie'), null)
+  assert.deepEqual(createdSessionHashes, [])
+  assert.notEqual(expiredSessionHash, '')
+  const stoppedBody = await stopped.text()
+  assert.match(stoppedBody, /expired[^.]*no resident/iu)
+  assert.match(stoppedBody, /Return to the chat app and start sign-in again/iu)
 })
 
-test('reloading a staged signup resumes confirmation without showing its secrets again', async () => {
-  const { app } = fixture()
+test('reloading or repeating a staged signup resumes confirmation without showing its secrets again', async () => {
+  const { app, memory } = fixture()
   const session = await begin(app)
   const staged = await browserPost(app, session, {
     action: 'register',
@@ -699,6 +760,21 @@ test('reloading a staged signup resumes confirmation without showing its secrets
   const recoveryCodes = stagedPage.match(/1f3d9_rc_[0-9a-f]{64}/gu) ?? []
   assert.ok(rootKey)
   assert.equal(recoveryCodes.length, 8)
+  const keyInstruction = stagedPage.indexOf('Step 1')
+  const keyValue = stagedPage.indexOf(rootKey)
+  const codeInstruction = stagedPage.indexOf('Step 2')
+  const firstCode = stagedPage.indexOf(recoveryCodes[0]!)
+  const confirmation = stagedPage.indexOf('Step 3')
+  assert.ok(keyInstruction >= 0 && keyInstruction < keyValue)
+  assert.ok(keyValue < codeInstruction && codeInstruction < firstCode)
+  assert.ok(firstCode < confirmation)
+  assert.match(stagedPage, /password manager|operating-system credential vault/iu)
+  assert.match(stagedPage, /outside (?:this|the) chat/iu)
+  assert.match(stagedPage, /recovery codes[^.]*separate/iu)
+
+  memory.api.consumeOAuthRateLimit = async () => {
+    throw new Error('a staged reload must not spend sign-in quota')
+  }
 
   const reloaded = await app.request(session.location, {
     headers: { cookie: session.cookie },
@@ -712,6 +788,68 @@ test('reloading a staged signup resumes confirmation without showing its secrets
   for (const recoveryCode of recoveryCodes) {
     assert.doesNotMatch(reloadedPage, new RegExp(recoveryCode, 'u'))
   }
+
+  const different = new URL(session.location, ORIGIN)
+  different.searchParams.set('state', 'different-state-must-not-orphan-staged-signup')
+  const preserved = await app.request(`${different.pathname}${different.search}`, {
+    headers: { cookie: session.cookie },
+  })
+  assert.equal(preserved.status, 200)
+  assert.equal(preserved.headers.get('set-cookie'), null)
+  const preservedPage = await preserved.text()
+  assert.match(preservedPage, /Re-enter the saved resident key/iu)
+  assert.doesNotMatch(preservedPage, new RegExp(rootKey, 'u'))
+  for (const recoveryCode of recoveryCodes) {
+    assert.doesNotMatch(preservedPage, new RegExp(recoveryCode, 'u'))
+  }
+
+  Object.assign(memory.api, {
+    stageNewResidentRegistration: async () => { throw new Error('a staged replay must not stage again') },
+  })
+  const repeated = await browserPost(app, session, {
+    action: 'register', csrf: session.csrf, handle: 'reload-signup', model: '',
+  })
+  assert.equal(repeated.status, 200)
+  const repeatedPage = await repeated.text()
+  assert.match(repeatedPage, /Re-enter the saved resident key/iu)
+  assert.match(repeatedPage, /cannot show the resident key or recovery codes again/iu)
+  assert.doesNotMatch(repeatedPage, new RegExp(rootKey, 'u'))
+  for (const recoveryCode of recoveryCodes) {
+    assert.doesNotMatch(repeatedPage, new RegExp(recoveryCode, 'u'))
+  }
+})
+
+test('concurrent repeated signup submissions show secrets once and resume the staged request', async () => {
+  const { app, memory } = fixture()
+  const session = await begin(app)
+  const stage = memory.api.stageNewResidentRegistration
+  let arrivals = 0
+  let releaseFirst!: () => void
+  const secondArrived = new Promise<void>(resolve => {
+    releaseFirst = resolve
+  })
+  memory.api.stageNewResidentRegistration = async input => {
+    arrivals += 1
+    if (arrivals === 1) await secondArrived
+    else releaseFirst()
+    return stage(input)
+  }
+
+  const submit = () => browserPost(app, session, {
+    action: 'register', csrf: session.csrf, handle: 'concurrent-replay', model: '',
+  })
+  const responses = await Promise.all([submit(), submit()])
+  assert.deepEqual(responses.map(response => response.status), [200, 200])
+
+  const bodies = await Promise.all(responses.map(response => response.text()))
+  const disclosed = bodies.filter(body => /1f3d9_sk_[0-9a-f]{48}/u.test(body))
+  const resumed = bodies.filter(body => /cannot show the resident key or recovery codes again/iu.test(body))
+  assert.equal(disclosed.length, 1)
+  assert.equal(disclosed[0]!.match(/1f3d9_rc_[0-9a-f]{64}/gu)?.length, 8)
+  assert.equal(resumed.length, 1)
+  const disclosedSecrets = disclosed[0]!.match(/1f3d9_(?:sk_[0-9a-f]{48}|rc_[0-9a-f]{64})/gu) ?? []
+  assert.equal(disclosedSecrets.length, 9)
+  assertSecretsAbsent(resumed[0]!, disclosedSecrets)
 })
 
 test('authorization accepts a bounded language hint without relaxing unknown-field checks', async () => {
@@ -752,6 +890,7 @@ test('an unexpected authorization-store failure is bounded and logged without re
   assert.match(response.headers.get('x-request-id') ?? '', /^[0-9a-f-]{36}$/i)
   const body = await response.text()
   assert.match(body, /try again/i)
+  assert.match(body, /Return to the chat app and start sign-in again/iu)
   assert.doesNotMatch(body, new RegExp(leakedCredential, 'i'))
 
   assert.equal(diagnostics.length, 1)
@@ -765,6 +904,35 @@ test('an unexpected authorization-store failure is bounded and logged without re
   assert.equal(diagnostics[0]?.error_class, 'storage_unavailable')
   assert.equal(diagnostics[0]?.status, 503)
   assert.doesNotMatch(JSON.stringify(diagnostics), new RegExp(leakedCredential, 'i'))
+})
+
+test('an initial authorization rate limit tells the caller how to restart', async () => {
+  const { app, memory } = fixture()
+  memory.api.consumeOAuthRateLimit = async () => false
+
+  const response = await app.request(authorizationUrl())
+  assert.equal(response.status, 429)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'rate_limited')
+  assert.equal(response.headers.get('set-cookie'), null)
+  assert.match(await response.text(), /Return to the chat app and start sign-in again/iu)
+})
+
+test('an active existing-resident rate limit discards the expired sign-in form', async () => {
+  const { app, memory } = fixture()
+  const session = await begin(app)
+  memory.api.consumeOAuthRateLimit = async () => false
+
+  const response = await browserPost(app, session, {
+    action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+  })
+  const body = await response.text()
+
+  assert.equal(response.status, 429)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'rate_limited')
+  assert.match(body, /after one hour[^.]*return to the chat app[^.]*fresh sign-in/iu)
+  assert.doesNotMatch(body, /on this page/iu)
+  assert.doesNotMatch(body, /name="action" value="link"/u)
+  assert.doesNotMatch(body, /name="resident_key"/u)
 })
 
 test('approval, exchange, refresh, and revocation failures stay bounded and emit safe stage records', async () => {
@@ -1137,8 +1305,11 @@ test('new resident sees its root key once, must re-enter it, then receives only 
     handle: 'goldfish-agent-two',
     model: 'hosted-chat',
   })
-  assert.equal(repeatedRegistration.status, 403)
-  assertSecretsAbsent(await repeatedRegistration.text(), initialSecrets)
+  assert.equal(repeatedRegistration.status, 200)
+  const repeatedRegistrationBody = await repeatedRegistration.text()
+  assert.match(repeatedRegistrationBody, /Re-enter the saved resident key/iu)
+  assert.match(repeatedRegistrationBody, /cannot show the resident key or recovery codes again/iu)
+  assertSecretsAbsent(repeatedRegistrationBody, initialSecrets)
 
   const missingConfirmation = await browserPost(app, session, {
     action: 'confirm',
@@ -1257,6 +1428,9 @@ test('connector signup discloses no generated secrets when throttling or staging
     })
     const surface = `${await response.text()}\n${JSON.stringify([...response.headers])}`
     assert.equal(response.status, 429)
+    assert.match(surface, /after one hour[^.]*return to the chat app[^.]*fresh sign-in/iu)
+    assert.doesNotMatch(surface, /on this page/iu)
+    assert.doesNotMatch(surface, /name="action" value="register"/u)
     assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
   }
 
@@ -1296,6 +1470,12 @@ test('connector signup discloses no generated secrets when throttling or staging
 
     assert.equal({ missing: 403, duplicate: 409, unique_error: 503, error: 503 }[stageFailure], response.status)
     assert.doesNotMatch(surface, /1f3d9_(?:sk|rc)_/)
+    if (stageFailure === 'duplicate') {
+      assert.match(surface, /href="\/window"[^>]*>Check the resident list/iu)
+      assert.match(surface, /earlier resident[^.]*choose “I already live here”/iu)
+      assert.match(surface, /If it is not[^.]*choose a different name below/iu)
+      assert.match(surface, /name="action" value="register"/u)
+    }
     assert.deepEqual(state.residents.map(resident => resident.id), [49])
     assert.equal(state.recoveryCodes.length, 0)
     assert.equal(state.events.length, 0)
@@ -1360,6 +1540,12 @@ test('connector signup confirmation stays uncommitted when its rate limit or sto
     }
 
     assert.equal({ rate_limit: 429, missing: 403, error: 503 }[confirmFailure], response.status)
+    if (confirmFailure === 'rate_limit') {
+      assert.match(surface, /after one hour[^.]*return to the chat app[^.]*fresh sign-in/iu)
+      assert.doesNotMatch(surface, /on this page/iu)
+      assert.doesNotMatch(surface, /name="action" value="confirm"/u)
+      assert.doesNotMatch(surface, /name="resident_key"/u)
+    }
     assertSecretsAbsent(surface, [rootKey, ...recoveryCodes])
     assert.deepEqual(state.residents.map(resident => resident.id), [49])
     assert.equal(state.recoveryCodes.length, 0)
@@ -1452,14 +1638,20 @@ test('same-name pending registrations stay harmless and only one confirmation ca
   assert.equal(loser.headers.get('x-1f3d9-reason'), 'handle_taken')
   assert.equal(loser.headers.get('location'), null)
   const loserSurface = `${await loser.text()}\n${[...loser.headers].flat().join('\n')}`
+  assert.match(loserSurface, /losing signup is closed/iu)
+  assert.match(loserSurface, /saved key and recovery codes are inactive/iu)
   assert.doesNotMatch(loserSurface, new RegExp(`${firstKey}|${secondKey}`, 'i'))
 
-  const cancelledLoser = await browserPost(app, second, {
-    action: 'cancel', csrf: second.csrf,
-  })
-  assert.equal(cancelledLoser.status, 303)
-
   const state = JSON.parse(memory.safeState()) as {
+    requests: Array<{
+      sessionHash: string
+      used: boolean
+      intent: 'existing' | 'new' | null
+      new_handle: string | null
+      new_model: string | null
+      pendingSecretHash: string | null
+      pendingRecoveryCodeHashes: string[] | null
+    }>
     residents: Resident[]
     residentSecretHashes: [string, number][]
     events: { actor: string }[]
@@ -1471,7 +1663,32 @@ test('same-name pending registrations stay harmless and only one confirmation ca
   assert.equal(state.residentSecretHashes.length, 2)
   assert.equal(state.nextResidentId, beforeLoser.nextResidentId)
   assert.equal(state.duplicateHandleRollbacks, 1)
+  const loserRequest = state.requests.find(request => request.sessionHash === sha256(second.rawSession))
+  assert.ok(loserRequest)
+  assert.deepEqual({
+    used: loserRequest.used,
+    intent: loserRequest.intent,
+    handle: loserRequest.new_handle,
+    model: loserRequest.new_model,
+    secretHash: loserRequest.pendingSecretHash,
+    recoveryCodeHashes: loserRequest.pendingRecoveryCodeHashes,
+  }, {
+    used: true,
+    intent: null,
+    handle: null,
+    model: null,
+    secretHash: null,
+    recoveryCodeHashes: null,
+  })
   assert.doesNotMatch(memory.safeState(), new RegExp(`${firstKey}|${secondKey}`, 'i'))
+
+  const restartUrl = authorizationUrl({ state: 'after-handle-race' })
+  const restarted = await app.request(restartUrl, { headers: { cookie: second.cookie } })
+  assert.equal(restarted.status, 200)
+  const replacementCookie = (restarted.headers.get('set-cookie') ?? '').split(';', 1)[0]!
+  assert.match(replacementCookie, /^__Host-1f3d9_oauth=/u)
+  assert.notEqual(replacementCookie, second.cookie)
+  assert.match(await restarted.text(), /Let this chat enter 1F3D9/iu)
 })
 
 test('refresh tokens rotate once; reuse revokes the whole token family', async () => {
@@ -1512,7 +1729,7 @@ test('refresh tokens rotate once; reuse revokes the whole token family', async (
   assert.deepEqual(await descendant.json(), { error: 'invalid_grant' })
 })
 
-test('authorization query rejects wrong return addresses, resources, duplicates, and unknown fields', async () => {
+test('invalid authorization queries reject safely and tell the chat client how to restart', async () => {
   const { app } = fixture()
   for (const patch of [
     { redirect_uri: `${CALLBACK}/near-match` },
@@ -1526,11 +1743,19 @@ test('authorization query rejects wrong return addresses, resources, duplicates,
       response.headers.get('content-security-policy') ?? '',
       /https:\/\/(?:chat|unapproved)\.example\.test/u,
     )
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'invalid_request')
+    const body = await response.text()
+    assert.match(body, /Return to the chat app and start sign-in again/iu)
+    assert.match(body, /Lost\? Read the city front door/iu)
   }
   const duplicate = await app.request(`${authorizationUrl()}&state=duplicate`)
   assert.equal(duplicate.status, 400)
+  assert.equal(duplicate.headers.get('x-1f3d9-reason'), 'invalid_request')
+  assert.match(await duplicate.text(), /Return to the chat app and start sign-in again/iu)
   const unknown = await app.request(`${authorizationUrl()}&resident_key=forbidden`)
   assert.equal(unknown.status, 400)
+  assert.equal(unknown.headers.get('x-1f3d9-reason'), 'invalid_request')
+  assert.match(await unknown.text(), /Return to the chat app and start sign-in again/iu)
 })
 
 test('browser approval rejects wrong origin and CSRF without reflecting the resident key', async () => {
@@ -1542,10 +1767,14 @@ test('browser approval rejects wrong origin and CSRF without reflecting the resi
   assert.equal(wrongOrigin.status, 403)
   assert.equal(wrongOrigin.headers.get('x-1f3d9-error-class'), 'forbidden')
   assert.equal(wrongOrigin.headers.get('x-1f3d9-reason'), 'untrusted_browser_request')
+  const wrongOriginPolicy = wrongOrigin.headers.get('content-security-policy') ?? ''
+  assert.match(wrongOriginPolicy, /form-action 'self';/u)
+  assert.doesNotMatch(wrongOriginPolicy, /[<>]/u)
   const wrongOriginRequestId = wrongOrigin.headers.get('x-request-id') ?? ''
   assert.match(wrongOriginRequestId, /^[0-9a-f-]{36}$/iu)
   const wrongOriginBody = await wrongOrigin.text()
   assert.match(wrongOriginBody, new RegExp(wrongOriginRequestId, 'u'))
+  assert.match(wrongOriginBody, /Return to the chat app and start sign-in again/iu)
   assert.doesNotMatch(wrongOriginBody, new RegExp(EXISTING_KEY, 'i'))
   const wrongCsrf = await browserPost(app, session, {
     action: 'link', csrf: 'wrong-csrf', resident_key: EXISTING_KEY,
@@ -1604,7 +1833,8 @@ test('browser approval distinguishes wrong keys from expired sign-in state and a
     assert.equal(wrongKey.headers.get('x-1f3d9-reason'), 'resident_key_rejected')
     const wrongKeyBody = await wrongKey.text()
     assert.match(wrongKeyBody, /resident key could not be verified/iu)
-    assert.doesNotMatch(wrongKeyBody, /Start again|href=/iu)
+    assert.doesNotMatch(wrongKeyBody, /Start again/iu)
+    assert.match(wrongKeyBody, /href="\/">Lost\? Read the city front door\./u)
   }
 
   {
@@ -1640,7 +1870,8 @@ test('browser approval distinguishes wrong keys from expired sign-in state and a
     assert.equal(wrong.headers.get('x-1f3d9-reason'), 'confirmation_rejected')
     const wrongBody = await wrong.text()
     assert.match(wrongBody, /saved resident key could not be verified/iu)
-    assert.doesNotMatch(wrongBody, /Start again|href=/iu)
+    assert.doesNotMatch(wrongBody, /Start again/iu)
+    assert.match(wrongBody, /href="\/">Lost\? Read the city front door\./u)
   }
 })
 
@@ -1680,6 +1911,7 @@ test('browser approval rejects unknown and duplicate fields instead of guessing 
     })
     assert.equal(unexpected.status, 403)
     assert.equal(unexpected.headers.get('location'), null)
+    assert.match(await unexpected.text(), /Return to the chat app and start sign-in again/iu)
   }
 
   {
@@ -1691,6 +1923,49 @@ test('browser approval rejects unknown and duplicate fields instead of guessing 
     duplicateFields.append('csrf', session.csrf)
     const duplicate = await browserPost(app, session, duplicateFields)
     assert.equal(duplicate.status, 403)
+    assert.match(await duplicate.text(), /Return to the chat app and start sign-in again/iu)
+  }
+})
+
+test('canceled and confirmed hosted signups report the exact safe resume path without quota', async () => {
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const canceled = await browserPost(app, session, { action: 'cancel', csrf: session.csrf })
+    assert.equal(canceled.status, 303)
+    memory.api.consumeOAuthRateLimit = async () => {
+      throw new Error('a canceled resume must not spend sign-in quota')
+    }
+    const resumed = await app.request(session.location, { headers: { cookie: session.cookie } })
+    assert.equal(resumed.status, 403)
+    assert.equal(resumed.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    const body = await resumed.text()
+    assert.match(body, /canceled[^.]*no resident/iu)
+    assert.match(body, /Return to the chat app and start sign-in again/iu)
+  }
+
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'confirmed-resume', model: '',
+    })
+    const key = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+    assert.ok(key)
+    const confirmed = await browserPost(app, session, {
+      action: 'confirm', csrf: session.csrf, resident_key: key,
+    })
+    authorizationCode(confirmed)
+    memory.api.consumeOAuthRateLimit = async () => {
+      throw new Error('a confirmed resume must not spend sign-in quota')
+    }
+    const resumed = await app.request(session.location, { headers: { cookie: session.cookie } })
+    assert.equal(resumed.status, 403)
+    assert.equal(resumed.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    const body = await resumed.text()
+    assert.match(body, /confirmed-resume[^.]*already (?:exists|lives)/iu)
+    assert.match(body, /choose “I already live here,”[^.]*saved key/iu)
+    assert.doesNotMatch(body, new RegExp(key, 'u'))
   }
 })
 
@@ -1772,6 +2047,64 @@ test('token exchange rejects wrong verifier, resource, private-client credential
   }
 })
 
+test('OAuth cancel and confirm races re-read the completed resident before replying', async () => {
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'cancel-race-resident', model: '',
+    })
+    const key = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+    assert.ok(key)
+    const confirm = memory.api.confirmNewResidentAndIssueAuthorizationCode
+    memory.api.cancelAuthorizationRequest = async input => {
+      const completed = await confirm({
+        ...input,
+        residentSecretHash: sha256(key),
+        authorizationCodeHash: sha256('cancel-race-authorization-code'),
+      })
+      assert.equal(completed.status, 'approved')
+      return null
+    }
+
+    const canceled = await browserPost(app, session, {
+      action: 'cancel', csrf: session.csrf,
+    })
+    assert.equal(canceled.status, 403)
+    assert.equal(canceled.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    const body = await canceled.text()
+    assert.match(body, /cancel-race-resident[^.]*already lives/iu)
+    assert.match(body, /choose “I already live here,”[^.]*saved key/iu)
+    assert.doesNotMatch(body, new RegExp(key, 'u'))
+  }
+
+  {
+    const { app, memory } = fixture()
+    const session = await begin(app)
+    const staged = await browserPost(app, session, {
+      action: 'register', csrf: session.csrf, handle: 'confirm-race-resident', model: '',
+    })
+    const key = (await staged.text()).match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+    assert.ok(key)
+    const confirm = memory.api.confirmNewResidentAndIssueAuthorizationCode
+    memory.api.confirmNewResidentAndIssueAuthorizationCode = async input => {
+      const completed = await confirm(input)
+      assert.equal(completed.status, 'approved')
+      return { status: 'request_unavailable' as const }
+    }
+
+    const response = await browserPost(app, session, {
+      action: 'confirm', csrf: session.csrf, resident_key: key,
+    })
+    assert.equal(response.status, 403)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    const body = await response.text()
+    assert.match(body, /confirm-race-resident[^.]*already lives/iu)
+    assert.match(body, /choose “I already live here,”[^.]*saved key/iu)
+    assert.doesNotMatch(body, new RegExp(key, 'u'))
+  }
+})
+
 test('expired and used connector requests direct the person back to the chat app', async () => {
   const stopped: Response[] = []
 
@@ -1810,9 +2143,12 @@ test('expired and used connector requests direct the person back to the chat app
     }))
   }
 
-  for (const response of stopped) {
+  for (const [index, response] of stopped.entries()) {
     assert.equal(response.status, 403)
-    assert.equal(response.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    assert.equal(
+      response.headers.get('x-1f3d9-reason'),
+      index < 2 ? 'request_expired' : 'request_unavailable',
+    )
     const body = await response.text()
     assert.match(body, /return to the chat app and start sign-in again/iu)
     assert.doesNotMatch(body, /name="resident_key"/u)

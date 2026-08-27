@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (48 recorded decisions — do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (49 recorded decisions — do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
@@ -90,7 +90,7 @@ neighbors, landlords, and a frontier.
 ## Hard rules (inherited from the siblings — never break)
 
 1. Direct world payments stay wallet-to-wallet and read-only on-chain. The only hosted
-   exception is closed-loop prepaid fee credit under decisions #47–#48; it is never
+   exception is closed-loop prepaid fee credit under decisions #48–#49; it is never
    transferable, redeemable, or resident money held by the city.
 2. Claude never touches private keys or fund movement.
 3. **There is no token. Never.** Real USDC or barter. A made-up currency rots everything.

@@ -9,7 +9,7 @@ import {
 
 const PREVIEW_ORIGIN = 'https://signin-preview.example.test'
 
-test('feature-off discovery stays byte-for-byte unchanged', () => {
+test('feature-off discovery does not advertise the unavailable hosted connector', () => {
   const readiness = hostedChatSigninReadiness({
     HOSTED_CHAT_SIGNIN_ENABLED: 'false',
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
@@ -17,8 +17,20 @@ test('feature-off discovery stays byte-for-byte unchanged', () => {
   })
 
   assert.deepEqual(readiness, { ready: false })
-  assert.equal(hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true), FRONTDOOR)
-  assert.equal(hostedChatDiscovery(LLMS, readiness, 'llms', true, true), LLMS)
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true, true)],
+  ] as const) {
+    assert.doesNotMatch(output, /(?:https:\/\/1f3d9\.com)?\/mcp\/connect/iu, name)
+    assert.match(output, /hosted connector[^.]*unavailable on this deployment/iu, name)
+    assert.match(output, /(?:read (?:this|the) front door|watch \/window)/iu, name)
+    assert.match(output, /do not (?:add|create|repair) (?:a |the )?connector/iu, name)
+    assert.match(
+      output,
+      /Hosted chat without Developer Mode[\s\S]{0,240}cannot add[\s\S]{0,180}watch \/window[\s\S]{0,180}\/join/iu,
+      name,
+    )
+  }
 })
 
 test('recovery-off discovery does not advertise an unavailable browser route', () => {
@@ -89,6 +101,21 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/join`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/recovery`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/rotate`), name)
+    assert.match(
+      output,
+      /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}\bfront_door\b[\s\S]{0,100}(?:connector|tool)[\s\S]{0,180}https:\/\/signin-preview\.example\.test\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
+      `${name}: connector-first front door read`,
+    )
+    assert.match(
+      output,
+      /(?:\bofficial_facts\b[\s\S]{0,180}\/api\/official|\/api\/official[\s\S]{0,180}\bofficial_facts\b)/iu,
+      `${name}: connector-native official facts`,
+    )
+    assert.match(
+      output,
+      /(?:\bphysics\b[\s\S]{0,180}\/api\/physics|\/api\/physics[\s\S]{0,180}\bphysics\b)/iu,
+      `${name}: connector-native physics`,
+    )
     assert.match(output, /browser sign-in/iu, name)
     assert.match(output, /never paste (?:a |your )?resident key into chat/iu, name)
     assert.match(output, /(?:local|key-capable) clients/iu, name)
@@ -111,6 +138,16 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.match(output, /menu names can change/iu, name)
     assert.match(output, /official (?:custom-)?connector (?:instructions|documentation)/iu, name)
     assert.match(output, /review (?:each )?tool permission/iu, name)
+    assert.doesNotMatch(
+      output,
+      /It may read https:\/\/signin-preview\.example\.test\/ and watch https:\/\/signin-preview\.example\.test\/window\. A human/iu,
+      `${name}: no unconditional URL-only fallback`,
+    )
+    assert.match(
+      output,
+      /cannot add (?:the (?:city )?)?connector[\s\S]{0,180}read (?:https:\/\/signin-preview\.example\.test\/|the front door)[\s\S]{0,180}only if (?:its|the) host can open (?:those )?URLs/iu,
+      `${name}: unavailable host names the URL capability gate`,
+    )
     assert.equal(output.includes('https://1f3d9.com/mcp/connect'), false, name)
     assert.equal(output.includes('https://1f3d9.com/join'), false, name)
     assert.equal(output.includes('https://1f3d9.com/recovery'), false, name)
@@ -161,7 +198,7 @@ function startupProbe(overrides: Record<string, string | undefined>) {
     }
     const { default: app } = await import('./src/index.ts')
     const corsHeaders = { origin: 'https://reader.example.test' }
-    const [front, llms, legacy, connector, metadata, join, official] = await Promise.all([
+    const [front, llms, legacy, connector, metadata, join, setup, official] = await Promise.all([
       app.request('/', { headers: corsHeaders }),
       app.request('/llms.txt', { headers: corsHeaders }),
       app.request('/mcp', {
@@ -176,6 +213,7 @@ function startupProbe(overrides: Record<string, string | undefined>) {
       }),
       app.request('/.well-known/oauth-authorization-server'),
       app.request('/join'),
+      app.request('/setup'),
       app.request('/api/official'),
     ])
     const officialBody = await official.json()
@@ -191,6 +229,9 @@ function startupProbe(overrides: Record<string, string | undefined>) {
       connector: connector.status,
       metadata: metadata.status,
       join: join.status,
+      joinText: await join.text(),
+      setup: setup.status,
+      setupText: await setup.text(),
       officialJoin: officialBody.identity?.join ?? null,
       oauthQueries: oauthQueries.length,
     }))
@@ -248,6 +289,9 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
       connector: number
       metadata: number
       join: number
+      joinText: string
+      setup: number
+      setupText: string
       officialJoin: string | null
       oauthQueries: number
     }
@@ -258,6 +302,7 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
     assert.equal(probe.legacy, 200)
     assert.equal(probe.connector, 404)
     assert.equal(probe.metadata, 404)
+    assert.equal(probe.setup, 200)
     assert.equal(probe.oauthQueries, 0)
     if (overrides.PUBLIC_ORIGIN === 'not-an-origin') {
       assert.equal(probe.join, 503)
@@ -274,6 +319,16 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
       probe.llmsText,
       hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, false),
     )
+    const unavailablePages: ReadonlyArray<readonly [string, string]> = [
+      ['front door', probe.frontText],
+      ['llms.txt', probe.llmsText],
+      ['setup', probe.setupText],
+      ...(probe.join === 200 ? [['join', probe.joinText] as const] : []),
+    ]
+    for (const [name, body] of unavailablePages) {
+      assert.doesNotMatch(body, /(?:https:\/\/signin-preview\.example\.test|https:\/\/1f3d9\.com)?\/mcp\/connect/iu, name)
+      assert.match(body, /hosted connector[^.]*unavailable on this deployment/iu, name)
+    }
   }
 })
 
@@ -294,14 +349,22 @@ test('a ready connector is advertised on both public discovery routes', () => {
     legacy: number
     connector: number
     metadata: number
+    join: number
+    joinText: string
+    setup: number
+    setupText: string
   }
   assert.equal(probe.front, 200)
   assert.equal(probe.llms, 200)
   assert.equal(probe.legacy, 200)
   assert.notEqual(probe.connector, 404)
   assert.equal(probe.metadata, 200)
+  assert.equal(probe.join, 200)
+  assert.equal(probe.setup, 200)
   assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
   assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
+  assert.ok(probe.joinText.includes('https://1f3d9.com/mcp/connect'))
+  assert.ok(probe.setupText.includes('https://1f3d9.com/mcp/connect'))
   assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/recovery`))
   assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/recovery`))
   assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/rotate`))

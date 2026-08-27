@@ -95,6 +95,30 @@ CREATE INDEX IF NOT EXISTS pending_resident_registrations_expiry
   ON pending_resident_registrations (expires_at, session_hash)
   WHERE confirmed_at IS NULL AND canceled_at IS NULL;
 
+ALTER TABLE pending_resident_registrations
+  ADD COLUMN IF NOT EXISTS client_class TEXT;
+
+DO $resumable_registration_client_class$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'pending_resident_registrations'::regclass
+      AND conname = 'pending_resident_registrations_client_class_valid'
+  ) THEN
+    ALTER TABLE pending_resident_registrations
+      ADD CONSTRAINT pending_resident_registrations_client_class_valid
+      CHECK (
+        client_class IS NULL OR client_class IN (
+          'hosted_browser', 'coding_persistent', 'coding_ephemeral', 'oauth_refused'
+        )
+      ) NOT VALID;
+  END IF;
+END
+$resumable_registration_client_class$;
+
+ALTER TABLE pending_resident_registrations
+  VALIDATE CONSTRAINT pending_resident_registrations_client_class_valid;
+
 CREATE TABLE IF NOT EXISTS pending_resident_registration_recovery_codes (
   registration_session_hash TEXT NOT NULL
                             REFERENCES pending_resident_registrations(session_hash)

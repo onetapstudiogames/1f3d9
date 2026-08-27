@@ -11,12 +11,23 @@ export type IdentityAttemptKind =
   | 'rotation_begin'
   | 'rotation_confirm'
 
+export const REGISTRATION_CLIENT_CLASSES = [
+  'hosted_browser',
+  'coding_persistent',
+  'coding_ephemeral',
+  'oauth_refused',
+] as const
+
+export type RegistrationClientClass = typeof REGISTRATION_CLIENT_CLASSES[number]
+export type RegistrationResumeClientClass = RegistrationClientClass | 'legacy_unknown'
+
 export interface RegistrationStageInput {
   sessionHash: string
   csrfHash: string
   ipHash: string
   handle: string
   model: string
+  clientClass: RegistrationClientClass
   residentSecretHash: string
   recoveryCodeHashes: string[]
 }
@@ -30,6 +41,14 @@ export interface IdentityResidentResult {
   residentId: number
   handle: string
 }
+
+export type RegistrationProgressResult =
+  | { status: 'new' }
+  | { status: 'staged'; handle: string; clientClass: RegistrationResumeClientClass }
+  | ({ status: 'confirmed' } & IdentityResidentResult)
+  | { status: 'canceled' }
+  | { status: 'expired' }
+  | { status: 'unavailable' }
 
 export interface RecoveryGenerationResult extends IdentityResidentResult {
   generation: number
@@ -113,8 +132,8 @@ export async function stageResidentRegistration(
   const rows = (await sql`
       WITH cleared_expired AS MATERIALIZED (
         UPDATE pending_resident_registrations
-        SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL,
-            ip_hash = NULL
+        SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
+            secret_hash = NULL, ip_hash = NULL
         WHERE confirmed_at IS NULL AND canceled_at IS NULL AND expires_at <= now()
         RETURNING session_hash
       ), cleared_expired_codes AS (
@@ -124,10 +143,10 @@ export async function stageResidentRegistration(
         RETURNING code.registration_session_hash
       ), staged AS MATERIALIZED (
         INSERT INTO pending_resident_registrations (
-          session_hash, csrf_hash, ip_hash, handle, model, secret_hash, expires_at
+          session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash, expires_at
         )
         SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
-          ${input.model}, ${input.residentSecretHash}, now() + interval '15 minutes'
+          ${input.model}, ${input.clientClass}, ${input.residentSecretHash}, now() + interval '15 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
         RETURNING session_hash, handle
@@ -152,6 +171,61 @@ export async function stageResidentRegistration(
   return { status: 'request_unavailable' }
 }
 
+export async function getResidentRegistrationProgress(input: {
+  sessionHash: string
+  csrfHash: string
+}): Promise<RegistrationProgressResult> {
+  const rows = (await sql`
+    SELECT CASE
+      WHEN pending.resident_id IS NOT NULL AND pending.confirmed_at IS NOT NULL
+        AND pending.canceled_at IS NULL AND resident.id IS NOT NULL
+        THEN 'confirmed'
+      WHEN pending.canceled_at IS NOT NULL AND pending.resident_id IS NULL
+        AND pending.canceled_at < pending.expires_at
+        THEN 'canceled'
+      WHEN pending.resident_id IS NULL AND pending.confirmed_at IS NULL
+        AND pending.expires_at <= now()
+        THEN 'expired'
+      WHEN pending.resident_id IS NULL AND pending.confirmed_at IS NULL
+        AND pending.canceled_at IS NULL AND pending.expires_at > now()
+        AND pending.handle IS NOT NULL AND pending.model IS NOT NULL
+        AND pending.secret_hash IS NOT NULL
+        AND (SELECT count(*) FROM pending_resident_registration_recovery_codes code
+             WHERE code.registration_session_hash = pending.session_hash) = 8
+        THEN 'staged'
+      ELSE 'unavailable'
+    END AS status,
+    pending.resident_id,
+    COALESCE(resident.handle, pending.handle) AS handle,
+    pending.client_class
+    FROM pending_resident_registrations pending
+    LEFT JOIN residents resident ON resident.id = pending.resident_id
+    WHERE pending.session_hash = ${input.sessionHash}
+      AND pending.csrf_hash = ${input.csrfHash}
+    LIMIT 1
+  `) as Array<{
+    status: 'confirmed' | 'canceled' | 'expired' | 'staged' | 'unavailable'
+    resident_id: number | null
+    handle: string | null
+    client_class: RegistrationClientClass | null
+  }>
+  const result = rows[0]
+  if (!result) return { status: 'new' }
+  if (result.status === 'confirmed') {
+    if (result.resident_id === null || result.handle === null) return { status: 'unavailable' }
+    return { status: 'confirmed', residentId: result.resident_id, handle: result.handle }
+  }
+  if (result.status === 'staged') {
+    if (result.handle === null) return { status: 'unavailable' }
+    return {
+      status: 'staged',
+      handle: result.handle,
+      clientClass: result.client_class ?? 'legacy_unknown',
+    }
+  }
+  return { status: result.status }
+}
+
 export async function confirmResidentRegistration(input: {
   sessionHash: string
   csrfHash: string
@@ -168,6 +242,14 @@ export async function confirmResidentRegistration(input: {
           AND canceled_at IS NULL
           AND expires_at > now()
         FOR UPDATE
+      ), completed_request AS MATERIALIZED (
+        SELECT resident.id AS resident_id, resident.handle, resident.secret_hash
+        FROM pending_resident_registrations pending
+        JOIN residents resident ON resident.id = pending.resident_id
+        WHERE pending.session_hash = ${input.sessionHash}
+          AND pending.csrf_hash = ${input.csrfHash}
+          AND pending.confirmed_at IS NOT NULL
+          AND pending.canceled_at IS NULL
       ), eligible AS MATERIALIZED (
         SELECT session_hash, ip_hash, handle, model, secret_hash
         FROM active_request
@@ -176,10 +258,28 @@ export async function confirmResidentRegistration(input: {
         SELECT resident.handle
         FROM residents resident
         JOIN eligible ON eligible.handle = resident.handle
+      ), canceled_handle_conflict AS MATERIALIZED (
+        UPDATE pending_resident_registrations pending
+        SET canceled_at = now(),
+            handle = NULL,
+            model = NULL,
+            client_class = NULL,
+            secret_hash = NULL,
+            ip_hash = NULL
+        FROM eligible
+        WHERE pending.session_hash = eligible.session_hash
+          AND EXISTS (SELECT 1 FROM handle_conflict)
+        RETURNING pending.session_hash
+      ), scrubbed_conflict_codes AS (
+        DELETE FROM pending_resident_registration_recovery_codes code
+        USING canceled_handle_conflict canceled
+        WHERE code.registration_session_hash = canceled.session_hash
+        RETURNING code.registration_session_hash
       ), pending_codes AS MATERIALIZED (
         SELECT code.code_hash
         FROM pending_resident_registration_recovery_codes code
         JOIN eligible ON eligible.session_hash = code.registration_session_hash
+        WHERE NOT EXISTS (SELECT 1 FROM handle_conflict)
         ORDER BY code.ordinal
         FOR UPDATE OF code
       ), valid_code_set AS MATERIALIZED (
@@ -222,6 +322,7 @@ export async function confirmResidentRegistration(input: {
             confirmed_at = now(),
             handle = NULL,
             model = NULL,
+            client_class = NULL,
             secret_hash = NULL,
             ip_hash = NULL
         FROM eligible CROSS JOIN new_resident resident
@@ -255,16 +356,28 @@ export async function confirmResidentRegistration(input: {
       SELECT 'confirmed'::text AS status, completed.resident_id, completed.handle
       FROM completed
       UNION ALL
+      SELECT 'confirmed'::text, completed_request.resident_id, completed_request.handle
+      FROM completed_request
+      WHERE completed_request.secret_hash = ${input.residentSecretHash}
+      UNION ALL
       SELECT 'request_unavailable'::text, NULL::integer, NULL::text
       WHERE NOT EXISTS (SELECT 1 FROM active_request)
+        AND NOT EXISTS (SELECT 1 FROM completed_request)
       UNION ALL
       SELECT 'credential_rejected'::text, NULL::integer, NULL::text
       WHERE EXISTS (SELECT 1 FROM active_request)
         AND NOT EXISTS (SELECT 1 FROM eligible)
       UNION ALL
+      SELECT 'credential_rejected'::text, NULL::integer, NULL::text
+      WHERE EXISTS (SELECT 1 FROM completed_request)
+        AND NOT EXISTS (
+          SELECT 1 FROM completed_request
+          WHERE completed_request.secret_hash = ${input.residentSecretHash}
+        )
+      UNION ALL
       SELECT 'handle_taken'::text, NULL::integer, NULL::text
-      WHERE EXISTS (SELECT 1 FROM eligible)
-        AND EXISTS (SELECT 1 FROM handle_conflict)
+      WHERE EXISTS (SELECT 1 FROM canceled_handle_conflict)
+        AND (SELECT count(*) FROM scrubbed_conflict_codes) = 8
     `) as {
       status: 'confirmed' | 'credential_rejected' | 'handle_taken' | 'request_unavailable'
       resident_id: number | null
@@ -272,6 +385,25 @@ export async function confirmResidentRegistration(input: {
     }[]
     const result = rows[0]
     if (!result) throw new Error('resident registration confirmation produced no outcome')
+    if (result.status === 'request_unavailable') {
+      const completed = (await sql`
+        SELECT resident.id, resident.handle,
+          resident.secret_hash = ${input.residentSecretHash} AS secret_matches
+        FROM pending_resident_registrations pending
+        JOIN residents resident ON resident.id = pending.resident_id
+        WHERE pending.session_hash = ${input.sessionHash}
+          AND pending.csrf_hash = ${input.csrfHash}
+          AND pending.confirmed_at IS NOT NULL
+          AND pending.canceled_at IS NULL
+        LIMIT 1
+      `) as Array<{ id: number; handle: string; secret_matches: boolean }>
+      const confirmed = completed[0]
+      if (confirmed) {
+        return confirmed.secret_matches
+          ? { status: 'confirmed', residentId: confirmed.id, handle: confirmed.handle }
+          : { status: 'credential_rejected' }
+      }
+    }
     if (result.status !== 'confirmed') return { status: result.status }
     if (result.resident_id === null || result.handle === null) {
       throw new Error('resident registration confirmation returned an incomplete resident')
@@ -283,7 +415,13 @@ export async function confirmResidentRegistration(input: {
     if (
       postgresErrorCode(error) === '23505' &&
       postgresErrorConstraint(error) === 'residents_handle_key'
-    ) return { status: 'handle_taken' }
+    ) {
+      await cancelResidentRegistration({
+        sessionHash: input.sessionHash,
+        csrfHash: input.csrfHash,
+      })
+      return { status: 'handle_taken' }
+    }
     throw error
   }
 }
@@ -295,8 +433,8 @@ export async function cancelResidentRegistration(input: {
   const rows = (await sql`
     WITH canceled AS MATERIALIZED (
       UPDATE pending_resident_registrations
-      SET canceled_at = now(), handle = NULL, model = NULL, secret_hash = NULL,
-          ip_hash = NULL
+      SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
+          secret_hash = NULL, ip_hash = NULL
       WHERE session_hash = ${input.sessionHash}
         AND csrf_hash = ${input.csrfHash}
         AND resident_id IS NULL
@@ -845,6 +983,7 @@ export async function cancelRootRotation(input: {
 
 export const postgresIdentityStore = {
   consumeIdentityRateLimit,
+  getResidentRegistrationProgress,
   stageResidentRegistration,
   confirmResidentRegistration,
   cancelResidentRegistration,

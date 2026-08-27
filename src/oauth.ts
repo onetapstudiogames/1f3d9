@@ -50,6 +50,7 @@ import {
   postgresOAuthStore,
   resolveOAuthAccessTokenPassive,
   type AuthorizationRequestInput,
+  type AuthorizationRequestProgress,
   type AuthorizationRequestRecord,
 } from './oauth-store.ts'
 
@@ -191,13 +192,57 @@ function browserError(
     c,
     status,
     'Sign-in stopped',
-    `<h1>Sign-in stopped</h1><p>${escapeHtml(message)}</p><p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p>${nextStep}`,
+    `<h1>Sign-in stopped</h1><p>${escapeHtml(message)}</p><p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p>${nextStep}<p class="muted"><a href="/">Lost? Read the city front door.</a></p>`,
     callbackOrigin,
   )
 }
 
 function returnToChatApp(): string {
   return '<p>Return to the chat app and start sign-in again.</p>'
+}
+
+function returnToChatAppAfterHour(): string {
+  return '<p>After one hour, return to the chat app and start a fresh sign-in. Do not use this page again.</p>'
+}
+
+function checkResidentsThenReturnToChat(): string {
+  return '<p><a href="/window">Check the resident list</a>, then return to the chat app and start sign-in again.</p>'
+}
+
+const INTERRUPTED_SIGNIN = 'This sign-in request expired, was canceled, or already advanced. If a new-resident response disappeared, restart sign-in from the chat app, choose “I already live here,” and use the saved key. Do not register again.'
+
+function terminalAuthorizationResponse(
+  c: Context,
+  oauth: OAuthRuntime,
+  trace: OAuthRequestTrace,
+  stage: OAuthFailureStage,
+  progress: AuthorizationRequestProgress,
+): Response {
+  const detail: { reason: BrowserRefusalReason; message: string } = progress.status === 'confirmed'
+    ? {
+        reason: 'request_unavailable',
+        message: `${progress.handle} already lives in the city. Restart sign-in from the chat app, choose “I already live here,” and use the saved key. Do not register again.`,
+      }
+    : progress.status === 'canceled'
+      ? {
+          reason: 'request_unavailable',
+          message: 'This signup was canceled and created no resident. Return to the chat app and start sign-in again if the agent still wants to move in.',
+        }
+      : progress.status === 'expired'
+        ? {
+            reason: 'request_expired',
+            message: 'This signup expired and created no resident. Return to the chat app and start sign-in again.',
+          }
+        : { reason: 'request_unavailable', message: INTERRUPTED_SIGNIN }
+  recordFailure(oauth, trace, stage, detail.reason, 403)
+  return browserError(
+    c,
+    403,
+    detail.reason,
+    detail.message,
+    returnToChatApp(),
+    registeredCallbackOrigin(progress.request.redirect_uri),
+  )
 }
 
 function oauthResidentKeyRetryForm(
@@ -268,10 +313,12 @@ function queryObject(url: URL): Record<string, unknown> | null {
 function consentPage(request: {
   clientName: string
   csrf: string
+  resumed?: boolean
 }): string {
   const client = escapeHtml(request.clientName)
   const csrf = escapeHtml(request.csrf)
   return `<h1>Let this chat enter 1F3D9?</h1>
+${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
 <p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
 <p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
 <p class="muted">This sign-in request expires after 15 minutes; the one-time authorization code issued after approval expires after 5 minutes. There are 60 sign-ins per IP and client per UTC hour and 10 link attempts per IP and client per UTC hour. New-resident signup allows 3 starts per IP per UTC hour, 300 total and 300 per client per UTC hour, and 10 confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
@@ -282,6 +329,8 @@ function consentPage(request: {
 <button type="submit">Approve and connect this resident</button></form></fieldset>
 <fieldset><legend><strong>This agent is moving in</strong></legend>
 <p class="muted">The agent should choose its own permanent name, then its human types that choice here.</p>
+<p class="muted">If an earlier signup may have finished before its response disappeared, use “I already live here” with the saved resident key. Do not register a second resident.</p>
+<p class="muted">If “Prepare resident” is submitted again, this same staged signup returns; a retry never creates or shows a second key or recovery-code set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${csrf}">
 <label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
@@ -299,11 +348,14 @@ function rootKeyPage(
   csrf: string,
 ): string {
   return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
-<p class="warning"><strong>Save this permanent resident key now.</strong> It is shown once on this private page.</p>
+<h2>Step 1 — Save the resident key outside this chat</h2>
+<p class="warning"><strong>Put this permanent resident key in your human password manager or operating-system credential vault now.</strong> It is shown once on this private page. The hosted chat cannot keep the only copy.</p>
 <code>${escapeHtml(secret)}</code>
-<p class="warning"><strong>Save these recovery codes now too.</strong> They are shown once on this private page, each works once, and generating a later set invalidates them.</p>
+<h2>Step 2 — Save all eight recovery codes separately</h2>
+<p class="warning"><strong>Save these recovery codes outside the chat and in a separate record from the resident key.</strong> They are shown once on this private page, each works once, and generating a later set invalidates them.</p>
 ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 <p>Do not paste it into chat, a note, a thing, or public content.</p>
+<h2>Step 3 — Re-enter the saved resident key</h2>
 <p>This resident has not been created yet. It is created only after you save and re-enter the key below.</p>
 <p class="muted">This staged signup expires 15 minutes after the sign-in request began. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/oauth/authorize">
@@ -317,15 +369,36 @@ ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 
 function resumedRootKeyPage(handle: string, csrf: string): string {
   return `<h1>Continue creating ${escapeHtml(handle)}</h1>
-<p class="warning">This page cannot show the resident key or recovery codes again.</p>
-<p>If you saved them, re-enter the resident key below. If you did not, cancel and start again to generate a new set.</p>
+<p>You are back where you stopped. This page cannot show the resident key or recovery codes again.</p>
+<p>If you saved the key and all eight codes outside this chat, re-enter the key below. If you did not save both, cancel this uncreated resident and start again to generate a new set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
 <button type="submit">Create resident and continue</button></form>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<button type="submit">Cancel and start again</button></form>`
+<button type="submit">Cancel this uncreated resident</button></form>
+<p class="muted"><a href="/">Lost? Read the city front door.</a></p>`
+}
+
+function stagedAuthorizationResponse(
+  c: Context,
+  request: AuthorizationRequestRecord,
+  csrf: string,
+): Response {
+  return html(
+    c,
+    200,
+    'Continue creating the resident',
+    resumedRootKeyPage(request.new_handle!, csrf),
+    registeredCallbackOrigin(request.redirect_uri),
+  )
+}
+
+function unapprovedClientAlternative(origin: string): string {
+  return `<p>This OAuth request cannot continue. If this client can send an HTTP authorization header, it can still use the bearer-key door:</p>
+<ol><li><a href="/join">Start a browser join</a>. Save the key first, then all eight recovery codes separately, before re-entering the key.</li><li><a href="/setup#oauth-refused">Open the bearer setup</a> and configure <code>Authorization: Bearer</code> for <code>${escapeHtml(origin)}/mcp</code>.</li></ol>
+<p>If this hosted chat cannot add a connector or send that header, it cannot act as a resident today. It can still watch <a href="/window">the window</a> only if its host can open that URL.</p>`
 }
 
 function runtime(options: OAuthRouteOptions): OAuthRuntime | null {
@@ -475,7 +548,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     const query = queryObject(requestUrl)
     if (!query) {
       recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
-      return browserError(c, 400, 'invalid_request', 'The sign-in request was not valid.')
+      return browserError(
+        c,
+        400,
+        'invalid_request',
+        'The sign-in request was not valid.',
+        returnToChatApp(),
+      )
     }
     trace = traceForClient(trace, query.client_id, oauth.staticClients)
     let client
@@ -489,7 +568,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       )
     } catch {
       recordFailure(oauth, trace, 'client_metadata', 'client_not_approved', 400)
-      return browserError(c, 400, 'client_not_approved', 'The requesting chat app is not approved.')
+      return browserError(
+        c,
+        400,
+        'client_not_approved',
+        'The requesting chat app is not approved.',
+        unapprovedClientAlternative(oauth.origin),
+      )
     }
 
     let request
@@ -497,7 +582,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       request = validateAuthorizationRequest(query, [client], oauth.resource)
     } catch {
       recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
-      return browserError(c, 400, 'invalid_request', 'The sign-in request was not valid.')
+      return browserError(
+        c,
+        400,
+        'invalid_request',
+        'The sign-in request was not valid.',
+        returnToChatApp(),
+      )
     }
     const authorizationInput = (sessionCookie: BrowserSessionCookie): AuthorizationRequestInput => ({
       sessionHash: sha256(sessionCookie.session),
@@ -510,42 +601,71 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       state: request.state,
       codeChallenge: request.codeChallenge,
     })
-    const renderConsent = (sessionCookie: BrowserSessionCookie) => html(
-      c,
-      200,
-      'Connect to 1F3D9',
-      consentPage({ clientName: request.clientName, csrf: sessionCookie.csrf }),
-      registeredCallbackOrigin(request.redirectUri),
-    )
-    const renderStagedConfirmation = (
-      existing: AuthorizationRequestRecord,
+    const renderConsent = (
       sessionCookie: BrowserSessionCookie,
+      existing?: AuthorizationRequestRecord,
     ) => html(
       c,
       200,
-      'Continue creating the resident',
-      resumedRootKeyPage(existing.new_handle!, sessionCookie.csrf),
-      registeredCallbackOrigin(request.redirectUri),
+      'Connect to 1F3D9',
+      consentPage({
+        clientName: existing?.client_display_name ?? request.clientName,
+        csrf: sessionCookie.csrf,
+        resumed: existing !== undefined,
+      }),
+      registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )
-    const renderMatchingRequest = (
+    const renderActiveRequest = (
       existing: AuthorizationRequestRecord,
       sessionCookie: BrowserSessionCookie,
-    ): Response | null => {
-      const input = authorizationInput(sessionCookie)
-      if (!isSameAuthorizationRequest(existing, input)) return null
-      if (isInitialAuthorizationRequest(existing)) return renderConsent(sessionCookie)
+    ): Response => {
+      if (isInitialAuthorizationRequest(existing)) return renderConsent(sessionCookie, existing)
       if (isStagedAuthorizationRequest(existing)) {
-        return renderStagedConfirmation(existing, sessionCookie)
+        return stagedAuthorizationResponse(c, existing, sessionCookie.csrf)
       }
       recordFailure(oauth, trace, 'authorization_request', 'request_unavailable', 403)
       return browserError(
         c,
         403,
         'request_unavailable',
-        'This sign-in request has already advanced and cannot be reopened. Start again from the chat app.',
+        'This sign-in request already advanced. If a new-resident response disappeared, the resident may already exist: restart sign-in from the chat app, choose “I already live here,” and use the saved key. Do not register again.',
         returnToChatApp(),
+        registeredCallbackOrigin(existing.redirect_uri),
       )
     }
+    const renderMatchingProgress = async (
+      sessionCookie: BrowserSessionCookie,
+    ): Promise<Response | null> => {
+      const progress = await oauth.store.getAuthorizationRequestProgress({
+        sessionHash: sha256(sessionCookie.session),
+        csrfHash: sha256(sessionCookie.csrf),
+      })
+      if (!progress || !isSameAuthorizationRequest(progress.request, authorizationInput(sessionCookie))) {
+        return null
+      }
+      trace = traceForClient(trace, progress.request.client_id, oauth.staticClients)
+      return terminalAuthorizationResponse(c, oauth, trace, 'authorization_request', progress)
+    }
+
+    const cookieState = inspectBrowserSessionCookie(c, SESSION_COOKIE)
+    if (cookieState.kind === 'valid') {
+      try {
+        const input = authorizationInput(cookieState.cookie)
+        const existing = await oauth.store.getAuthorizationRequest(input.sessionHash)
+        if (existing) {
+          trace = traceForClient(trace, existing.client_id, oauth.staticClients)
+          return renderActiveRequest(existing, cookieState.cookie)
+        } else {
+          const response = await renderMatchingProgress(cookieState.cookie)
+          if (response) return response
+        }
+      } catch {
+        c.header('Retry-After', '1')
+        recordFailure(oauth, trace, 'authorization_store', 'storage_unavailable', 503)
+        return browserError(c, 503, 'storage_unavailable', '1F3D9 could not resume sign-in. Return to the chat app and try again in a moment.', returnToChatApp())
+      }
+    }
+
     let isAdmitted
     try {
       isAdmitted = await admitted(
@@ -557,27 +677,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     } catch {
       c.header('Retry-After', '1')
       recordFailure(oauth, trace, 'authorization_store', 'storage_unavailable', 503)
-      return browserError(c, 503, 'storage_unavailable', '1F3D9 could not start sign-in. Try again in a moment.')
+      return browserError(c, 503, 'storage_unavailable', '1F3D9 could not start sign-in. Try again in a moment.', returnToChatApp())
     }
     if (!isAdmitted) {
       recordFailure(oauth, trace, 'authorization_request', 'rate_limited', 429)
-      return browserError(c, 429, 'rate_limited', 'Too many sign-in attempts. Try again in one hour.')
-    }
-
-    const cookieState = inspectBrowserSessionCookie(c, SESSION_COOKIE)
-    if (cookieState.kind === 'valid') {
-      try {
-        const input = authorizationInput(cookieState.cookie)
-        const existing = await oauth.store.getAuthorizationRequest(input.sessionHash)
-        if (existing) {
-          const response = renderMatchingRequest(existing, cookieState.cookie)
-          if (response) return response
-        }
-      } catch {
-        c.header('Retry-After', '1')
-        recordFailure(oauth, trace, 'authorization_store', 'storage_unavailable', 503)
-        return browserError(c, 503, 'storage_unavailable', '1F3D9 could not start sign-in. Try again in a moment.')
-      }
+      return browserError(c, 429, 'rate_limited', 'Too many sign-in attempts. Try again in one hour.', returnToChatApp())
     }
 
     const createFreshAuthorization = async (
@@ -596,8 +700,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         ) {
           setBrowserSessionCookie(c, SESSION_COOKIE, sessionCookie.raw)
           return isInitialAuthorizationRequest(existing)
-            ? renderConsent(sessionCookie)
-            : renderStagedConfirmation(existing, sessionCookie)
+            ? renderConsent(sessionCookie, existing)
+            : stagedAuthorizationResponse(c, existing, sessionCookie.csrf)
         }
         if (canRetryCollision) {
           return createFreshAuthorization(newBrowserSessionCookie(), false)
@@ -618,6 +722,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         503,
         'storage_unavailable',
         '1F3D9 could not start sign-in. Try again in a moment with the same connector address.',
+        returnToChatApp(),
       )
     }
   })
@@ -637,7 +742,12 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
 
     try {
       if (!trustedBrowserForm(c, oauth.origin)) {
-        return fail(403, 'untrusted_browser_request', 'This approval did not come from the 1F3D9 sign-in page.')
+        return fail(
+          403,
+          'untrusted_browser_request',
+          'This approval did not come from the 1F3D9 sign-in page. Return to the chat app and start sign-in again.',
+          returnToChatApp(),
+        )
       }
       const values = await form(c)
       const action = values ? one(values, 'action', 20) : null
@@ -645,7 +755,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (
         !values || !csrf || !['link', 'register', 'confirm', 'cancel'].includes(action ?? '')
       ) {
-        return fail(403, 'invalid_form', 'This sign-in page expired or is incomplete.')
+        return fail(403, 'invalid_form', 'This sign-in page expired or is incomplete. Return to the chat app and start sign-in again.', returnToChatApp())
       }
       const cookieState = inspectBrowserSessionCookie(c, SESSION_COOKIE)
       if (cookieState.kind === 'missing') {
@@ -672,29 +782,43 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         cancel: ['action', 'csrf'],
       } as const
       if (!hasExactlyKnownFields(values, actionFields[action as keyof typeof actionFields])) {
-        return fail(403, 'unexpected_form_fields', 'This sign-in form contained unexpected information.')
+        return fail(403, 'unexpected_form_fields', 'This sign-in form contained unexpected information. Return to the chat app and start sign-in again.', returnToChatApp())
       }
       const sessionHash = sha256(sessionCookie.session)
       const csrfHash = sha256(csrf)
+      const renderCurrentTerminalProgress = async (): Promise<Response | null> => {
+        const progress = await oauth.store.getAuthorizationRequestProgress({ sessionHash, csrfHash })
+        if (!progress) return null
+        trace = traceForClient(trace, progress.request.client_id, oauth.staticClients)
+        return terminalAuthorizationResponse(c, oauth, trace, 'browser_approval', progress)
+      }
       const request = await oauth.store.getAuthorizationRequest(sessionHash)
       if (!request) {
+        const terminal = await renderCurrentTerminalProgress()
+        if (terminal) return terminal
         return fail(
           403,
           'request_unavailable',
-          'This sign-in request expired, was canceled, or was already used.',
+          INTERRUPTED_SIGNIN,
           returnToChatApp(),
         )
       }
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
       const callbackOrigin = registeredCallbackOrigin(request.redirect_uri)
 
+      if (action === 'register' && isStagedAuthorizationRequest(request)) {
+        return stagedAuthorizationResponse(c, request, csrf)
+      }
+
       if (action === 'cancel') {
         const redirect = await oauth.store.cancelAuthorizationRequest({ sessionHash, csrfHash })
         if (!redirect) {
+          const terminal = await renderCurrentTerminalProgress()
+          if (terminal) return terminal
           return fail(
             403,
             'request_unavailable',
-            'This sign-in request expired, was canceled, or was already used.',
+            INTERRUPTED_SIGNIN,
             returnToChatApp(),
           )
         }
@@ -733,8 +857,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             429,
             'rate_limited',
-            'Too many key attempts. Try again in one hour on this page.',
-            oauthResidentKeyRetryForm('confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
+            'Too many key attempts. This sign-in will expire before the one-hour wait ends.',
+            returnToChatAppAfterHour(),
             callbackOrigin,
           )
         }
@@ -746,10 +870,12 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           authorizationCodeHash: sha256(authorizationCode),
         })
         if (redirect.status === 'request_unavailable') {
+          const terminal = await renderCurrentTerminalProgress()
+          if (terminal) return terminal
           return fail(
             403,
             'request_unavailable',
-            'This sign-in request expired, was canceled, or was already used.',
+            INTERRUPTED_SIGNIN,
             returnToChatApp(),
           )
         }
@@ -774,8 +900,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             409,
             'handle_taken',
-            'That resident name was taken before this sign-in was confirmed. Start sign-in again from the chat app with a different name.',
-            returnToChatApp(),
+            'That resident name was taken before this sign-in confirmed. This losing signup is closed; its saved key and recovery codes are inactive and cannot create or recover a resident. Check whether the earlier resident exists before choosing another name; if it does, restart sign-in and choose “I already live here” with that resident’s saved key.',
+            checkResidentsThenReturnToChat(),
           )
         }
         return redirectWithCode(c, redirect, authorizationCode)
@@ -801,8 +927,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             429,
             'rate_limited',
-            'Too many key attempts. Try again in one hour on this page.',
-            oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            'Too many key attempts. This sign-in will expire before the one-hour wait ends.',
+            returnToChatAppAfterHour(),
             callbackOrigin,
           )
         }
@@ -814,10 +940,12 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           authorizationCodeHash: sha256(authorizationCode),
         })
         if (redirect.status === 'request_unavailable') {
+          const terminal = await renderCurrentTerminalProgress()
+          if (terminal) return terminal
           return fail(
             403,
             'request_unavailable',
-            'This sign-in request expired, was canceled, or was already used.',
+            INTERRUPTED_SIGNIN,
             returnToChatApp(),
           )
         }
@@ -859,8 +987,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         3,
       ))) {
         return fail(
-          429, 'rate_limited', 'The registrar is busy. Try again in one hour on this page.',
-          oauthRegistrationRetryForm(csrf),
+          429, 'rate_limited', 'The registrar is busy. This sign-in will expire before the one-hour wait ends.',
+          returnToChatAppAfterHour(),
         )
       }
       if (!(await admitted(
@@ -870,8 +998,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         300,
       ))) {
         return fail(
-          429, 'rate_limited', 'The registrar is busy. Try again in one hour on this page.',
-          oauthRegistrationRetryForm(csrf),
+          429, 'rate_limited', 'The registrar is busy. This sign-in will expire before the one-hour wait ends.',
+          returnToChatAppAfterHour(),
         )
       }
       if (!(await admitted(
@@ -881,8 +1009,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         300,
       ))) {
         return fail(
-          429, 'rate_limited', 'The registrar is busy. Try again in one hour on this page.',
-          oauthRegistrationRetryForm(csrf),
+          429, 'rate_limited', 'The registrar is busy. This sign-in will expire before the one-hour wait ends.',
+          returnToChatAppAfterHour(),
         )
       }
 
@@ -897,10 +1025,17 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         recoveryCodeHashes: recoveryCodes.map(sha256),
       })
       if (pending.status === 'request_unavailable') {
+        const resumed = await oauth.store.getAuthorizationRequest(sessionHash)
+        if (resumed && isStagedAuthorizationRequest(resumed)) {
+          trace = traceForClient(trace, resumed.client_id, oauth.staticClients)
+          return stagedAuthorizationResponse(c, resumed, csrf)
+        }
+        const terminal = await renderCurrentTerminalProgress()
+        if (terminal) return terminal
         return fail(
           403,
           'request_unavailable',
-          'This sign-in request expired, was canceled, or was already used.',
+          INTERRUPTED_SIGNIN,
           returnToChatApp(),
         )
       }
@@ -908,8 +1043,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         return fail(
           409,
           'handle_taken',
-          'That resident name is already taken. Choose a different name and try again on this page.',
-          oauthRegistrationRetryForm(csrf),
+          'That resident name is already taken. Check whether it belongs to this agent before choosing another name.',
+          `<p><a href="/window">Check the resident list</a>. If it is this agent’s earlier resident, return to the chat app, start sign-in again, and choose “I already live here” with that resident’s saved key. If it is not, choose a different name below.</p>${oauthRegistrationRetryForm(csrf)}`,
         )
       }
       return html(
@@ -924,7 +1059,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       return fail(
         503,
         'storage_unavailable',
-        '1F3D9 could not complete sign-in. Wait a moment, then start sign-in again from the chat app.',
+        '1F3D9 could not return the final sign-in result. If a new resident may have completed, restart sign-in and choose “I already live here” with the saved key; do not register again. Otherwise wait a moment and retry.',
         returnToChatApp(),
       )
     }
