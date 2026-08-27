@@ -8,6 +8,7 @@ import {
   issueCityFeeCredit,
   parseCityCreditRequestId,
   readCityCreditAccount,
+  readCityCreditPreflight,
   returnCityCreditSpend,
   returnExpiredCityCreditSpend,
 } from '../src/city-credit.ts'
@@ -61,6 +62,31 @@ const REQUEST = Object.freeze({
   nested: Object.freeze({ b: 2, a: 1 }),
 })
 const CANONICAL_REQUEST = canonicalPaymentRequest(REQUEST)
+
+test('preflight shows exact cost and before/after balance without a debit', async () => {
+  const database = new MarkerDatabase({
+    preflight: [[{
+      balance_units: '3000000',
+      observed_at: '2026-08-26T23:30:00.000Z',
+    }]],
+  })
+  const result = await readCityCreditPreflight(database, 7)
+  assert.deepEqual(result, {
+    resident_id: 7,
+    fee_cost: '1.000000',
+    fee_cost_units: '1000000',
+    balance_before: '3.000000',
+    balance_before_units: '3000000',
+    balance_after: '2.000000',
+    balance_after_units: '2000000',
+    can_confirm: true,
+    observed_at: '2026-08-26T23:30:00.000Z',
+    applies_to: ['frontier', 'kind_invention', 'kind_revision'],
+    freshness: 'read_only_snapshot',
+  })
+  assert.equal(database.calls.length, 1)
+  assert.doesNotMatch(database.calls[0]!.text, /\b(?:INSERT|UPDATE|DELETE)\b/iu)
+})
 
 function issueRow(overrides: QueryRow = {}): QueryRow {
   return {
@@ -850,4 +876,49 @@ test('account reads expose exact decimal and integer strings, including signed h
   assert.doesNotThrow(() => JSON.stringify(account))
   assert.equal(database.calls[0]?.marker, 'read-account')
   assert.deepEqual(database.calls[0]?.params, [7])
+})
+
+test('account receipts show exact purchase and gift events without exposing payment source keys', async () => {
+  const giftId = `city_gift_${'ab'.repeat(16)}`
+  const rows = [
+    { id: '201', entry_kind: 'purchase', amount_units: '3000000', source_key: 'paypal:capture:private-001', purchase_kind: 'paypal', gift_public_id: null, operation: null },
+    { id: '202', entry_kind: 'purchase', amount_units: '2000000', source_key: 'paypal:capture:private-002', purchase_kind: 'paypal', gift_public_id: giftId, operation: null },
+    { id: '203', entry_kind: 'gift_pending', amount_units: '2000000', source_key: 'gift:private:pending', purchase_kind: null, gift_public_id: giftId, operation: null },
+    { id: '204', entry_kind: 'gift_accept', amount_units: '2000000', source_key: 'gift:private:accept', purchase_kind: null, gift_public_id: giftId, operation: null },
+    { id: '205', entry_kind: 'gift_refuse', amount_units: '2000000', source_key: 'gift:private:refuse', purchase_kind: null, gift_public_id: giftId, operation: null },
+    { id: '206', entry_kind: 'gift_redirect', amount_units: '2000000', source_key: 'gift:private:redirect', purchase_kind: null, gift_public_id: giftId, operation: null },
+    { id: '207', entry_kind: 'purchase', amount_units: '7000000', source_key: 'x402:credit:private-transaction', purchase_kind: 'x402', gift_public_id: null, operation: 'credit_purchase' },
+  ].map(row => ({
+    ...row,
+    request_id: row.entry_kind === 'gift_redirect' ? 'private-buyer-alias-0001' : null,
+    target_key: null,
+    related_spend_id: null,
+    reason: null,
+    created_at: CREATED_AT,
+  }))
+  const database = new MarkerDatabase({
+    'read-account': [[{ resident_id: 7, balance_units: '12000000', history: rows }]],
+  })
+
+  const account = await readCityCreditAccount(database, 7)
+
+  assert.deepEqual(account.history.map(receipt => ({
+    kind: receipt.kind,
+    amount_units: receipt.amount_units,
+    credit_amount_units: receipt.credit_amount_units,
+    source_key: receipt.source_key,
+    purchase_kind: receipt.purchase_kind,
+    gift_id: receipt.gift_id,
+    operation: receipt.operation,
+  })), [
+    { kind: 'purchase', amount_units: '3000000', credit_amount_units: '3000000', source_key: null, purchase_kind: 'paypal', gift_id: null, operation: null },
+    { kind: 'purchase', amount_units: '0', credit_amount_units: '2000000', source_key: null, purchase_kind: 'paypal', gift_id: giftId, operation: null },
+    { kind: 'gift_pending', amount_units: '0', credit_amount_units: '2000000', source_key: null, purchase_kind: null, gift_id: giftId, operation: null },
+    { kind: 'gift_accept', amount_units: '2000000', credit_amount_units: '2000000', source_key: null, purchase_kind: null, gift_id: giftId, operation: null },
+    { kind: 'gift_refuse', amount_units: '0', credit_amount_units: '2000000', source_key: null, purchase_kind: null, gift_id: giftId, operation: null },
+    { kind: 'gift_redirect', amount_units: '0', credit_amount_units: '2000000', source_key: null, purchase_kind: null, gift_id: giftId, operation: null },
+    { kind: 'purchase', amount_units: '7000000', credit_amount_units: '7000000', source_key: null, purchase_kind: 'x402', gift_id: null, operation: 'credit_purchase' },
+  ])
+  assert.ok(account.history.every(receipt => receipt.request_id === null))
+  assert.doesNotMatch(JSON.stringify(account), /private-buyer-alias/iu)
 })

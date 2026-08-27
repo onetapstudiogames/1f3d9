@@ -10,6 +10,7 @@ import {
   returnCityCreditSpend,
   type CityCreditDatabase,
 } from './city-credit.ts'
+import { completeCityCreditPurchase } from './city-credit-purchase.ts'
 import {
   acquireDueSettlementLease,
   acquireSettlementLease,
@@ -50,7 +51,8 @@ import {
 
 const RECOVERY_LEASE_MILLISECONDS = 30_000
 const RECOVERY_OPERATIONS = new Set<PaymentRecoveryAttempt['operation']>([
-  'frontier', 'kind_invention', 'kind_revision', 'direct_sale', 'world_sale',
+  'frontier', 'kind_invention', 'kind_revision', 'credit_purchase',
+  'direct_sale', 'world_sale',
 ])
 const RETURN_REASON = 'automatic payment recovery deadline passed'
 const LATE_REASON = 'matching finalized payment was discovered after the automatic recovery deadline; no city effect was applied'
@@ -78,6 +80,7 @@ export interface PaymentRecoveryRuntimeServices {
     nextLeaseOwner: () => string,
   ): Promise<LeaseResult>
   completeTreasury: typeof completeTreasuryPaymentOperation
+  completeCreditPurchase: typeof completeCityCreditPurchase
   completeDirectSale: typeof completeDirectSalePayment
   completeWorldSale: typeof completeWorldSalePayment
   closeSaleTarget: typeof closeSalePaymentTarget
@@ -243,6 +246,7 @@ const baseServices: Omit<PaymentRecoveryRuntimeServices, 'returnDueCredit'> = {
   acquireLease: acquireSettlementLease,
   acquireDueLease: acquireDueSettlementLease,
   completeTreasury: completeTreasuryPaymentOperation,
+  completeCreditPurchase: completeCityCreditPurchase,
   completeDirectSale: completeDirectSalePayment,
   completeWorldSale: completeWorldSalePayment,
   closeSaleTarget: closeSalePaymentTarget,
@@ -288,7 +292,7 @@ export interface PaymentRecoveryRuntime {
   runBatch(limit: number): ReturnType<typeof runPaymentRecoveryBatch>
 }
 
-/** Connect the pure recovery policy to durable state and the five operation adapters. */
+/** Connect the pure recovery policy to durable state and the six operation adapters. */
 export function createPaymentRecoveryRuntime(
   database: PaymentRecoveryRuntimeDatabase,
   serviceOverrides: Partial<PaymentRecoveryRuntimeServices> = {},
@@ -354,6 +358,9 @@ export function createPaymentRecoveryRuntime(
       }
       if (input.attempt.operation === 'world_sale') {
         return operationResult(await services.completeWorldSale(database, operationInput))
+      }
+      if (input.attempt.operation === 'credit_purchase') {
+        return operationResult(await services.completeCreditPurchase(database, operationInput))
       }
       return operationResult(await services.completeTreasury(database, operationInput))
     },

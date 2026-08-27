@@ -519,6 +519,61 @@ test('runtime logs are one explicit guarded transactional preview or production 
   )
 })
 
+test('prepaid city credit is an explicitly selected transactional payment migration', () => {
+  const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
+  const migration = readFileSync(new URL(`../${migrationFile}`, import.meta.url), 'utf8')
+  assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+
+  const previewEnvironment = {
+    CONFIRM_PREPAID_CITY_CREDIT: 'INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY',
+    CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+    PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+  }
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'prepaid-city-credit'],
+      { ...previewEnvironment, CONFIRM_PREPAID_CITY_CREDIT: undefined },
+    ),
+    /CONFIRM_PREPAID_CITY_CREDIT/iu,
+  )
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'prepaid-city-credit'],
+    previewEnvironment,
+  )
+  assert.equal(preview.migrationFile, migrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'prepaid-city-credit'],
+    {
+      CONFIRM_PREPAID_CITY_CREDIT: 'INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY',
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'prepaid-city-credit-release',
+    },
+  )
+  assert.equal(production.migrationFile, migrationFile)
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:prepaid-city-credit'] ?? '',
+    /--target preview --migration prepaid-city-credit$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:prepaid-city-credit'] ?? '',
+    /--target production --migration prepaid-city-credit$/u,
+  )
+})
+
 test('round-two records are append-only rather than deleted after resolution', () => {
   for (const table of [
     'place_law_changes',

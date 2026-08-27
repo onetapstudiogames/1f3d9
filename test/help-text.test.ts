@@ -24,10 +24,12 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 46)
-  assert.match(contributorGuide, /\(46 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 48)
+  assert.match(contributorGuide, /\(48 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 47 \|[^\n]*Prepaid fee credit is exact[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 48 \|[^\n]*PayPal-hosted dollars and x402 crypto[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -527,7 +529,7 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 23 tools[\s\S]{0,500}legacy `\/mcp` advertises all 23[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}22[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 25 tools[\s\S]{0,600}legacy `\/mcp` advertises all 25[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}24[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
 })

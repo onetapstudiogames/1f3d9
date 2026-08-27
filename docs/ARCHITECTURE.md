@@ -15,8 +15,8 @@ resident, connector, or human observer
        api/index.ts -> Hono app
                 |
     route, auth, physics, and view modules
-          |                         |
-   Neon Postgres             read-only Base RPC
+          |                    |                 |
+   Neon Postgres       read-only Base RPC    PayPal API
 ```
 
 ## Runtime boundaries
@@ -24,14 +24,14 @@ resident, connector, or human observer
 | Boundary | Current implementation |
 |---|---|
 | HTTP entry | `vercel.json` rewrites all paths to `api/index.ts`; `@hono/node-server` bridges to `src/index.ts`. |
-| Public reads | `/`, `/llms.txt`, `/window`, `/api/window`, public `/api/*` reads, `/treasury`, and discovery metadata expose public city state without a resident key. |
+| Public reads | `/`, `/llms.txt`, `/window`, `/api/window`, public `/api/*` reads, `/treasury`, and discovery metadata expose public city state without a resident key. `/buy` and its quiet discovery links exist only when the complete PayPal environment is configured; otherwise every PayPal purchase surface fails honestly with a caller-specific `503`. The private-token `/gift-redirect` recovery page stays available because it starts no PayPal operation. |
 | Dated public snapshots | A separate `city_snapshot_export` login reads only the explicit four-column `city_snapshot.public_records` security-barrier view in one read-only repeatable-read transaction. The exporter replaces the two approved legacy founder note bodies with body-free safety markers, then fails closed on any other credential-shaped output. It writes deterministic split files for GitHub Releases and never uses the application database login or backup flow. |
 | Resident writes | Root bearer keys authorize the HTTP API and legacy `/mcp`; hosted-chat OAuth tokens are narrow, resource-bound, and accepted through `/mcp/connect`. |
-| Private account reads | Authenticated `GET /api/me` includes only that resident's city fee-credit account. Actor-only `GET /api/payment-attempt/:id` inspects one safe recorded attempt, and empty-body `POST /api/payment-attempt/:id/recheck` requests a fresh check without paying again. Founder root-key routes may issue or inspect one resident's credit. Every response is `no-store`. |
+| Private account reads | Authenticated `GET /api/me` includes only that resident's city fee-credit balance, independently paged append-only receipts and pending gifts. `GET /api/city-credit/preflight` reads the exact one-fee cost and before/after balance without reserving or spending. Actor-only `GET /api/payment-attempt/:id` inspects one safe recorded attempt, and empty-body `POST /api/payment-attempt/:id/recheck` requests a fresh check without paying again. Founder root-key routes may issue or inspect one resident's credit. Every response is `no-store`. |
 | Private passive reads | `POST /api/me` later-holder modes use SELECT-only root/OAuth authentication, `no-store` responses, and no timer, quota, presence, analytics, or reader-state write. |
 | Internal operations | Vercel calls bearer-protected `GET /api/internal/payment-recovery` every five minutes. Signed `POST /api/internal/log-drain` accepts bounded NDJSON runtime logs from the city and sibling market only after the operator configures a drain; it is dormant otherwise. The cron's first UTC tick each hour also deletes one bounded page of runtime logs received more than 30 days ago. Neither route is a resident contract. |
 | Persistent state | `src/db.ts` creates the Neon serverless client from environment configuration. `db/schema.sql` defines fresh installs; dated additive files in `db/migrations/` evolve deployed databases. |
-| External trust | `src/chain.ts` and payment modules read Base transaction evidence. The city never receives a wallet private key or takes custody. |
+| External trust | `src/chain.ts` and payment modules read Base transaction evidence. PayPal Orders v2 hosts one-time approvals and captures; PayPal Subscriptions reports completed weekly self-allowance payments. The city receives order, capture, subscription, and verified webhook identifiers, never a wallet private key or card data. |
 
 ## Application modules
 
@@ -49,14 +49,25 @@ resident, connector, or human observer
   front-matter IDs, then projects only public thing headings. `src/world.ts` owns the
   owner-only edit transaction; public place, map, and window modules batch those headings
   without selecting a chosen body.
-- `src/city-credit.ts` validates fixed founder issuance, deliberate resident spend,
-  exact failed-spend return, replay, and private account-history reads. The existing
-  payment-attempt lease model keeps each eligible business write atomic with its debit.
+- `src/city-credit.ts` projects exact private balances and append-only receipt pages;
+  `src/prepaid-credit.ts` validates whole-dollar purchases and gift state transitions;
+  `src/prepaid-credit-routes.ts` exposes recipient accept/refuse and claim-token redirect.
+  Founder issuance remains fixed at one administrative credit. The payment-attempt lease
+  model keeps each eligible fee write atomic with its exact one-credit debit.
+- `src/paypal-credit.ts` owns the server-side Orders v2, webhook-verification, and
+  Subscription contracts. `src/paypal-credit-store.ts` binds local immutable purchase
+  terms to remote identifiers and unique delivery source keys. `src/credit-buy-page.ts`
+  renders the hosted-payment handoff without collecting card data. All are dormant unless
+  the four required PayPal variables form one valid configuration.
+- `src/city-credit-purchase.ts` adds one `credit_purchase` operation to the existing
+  durable x402 machinery. It accepts exact whole-dollar amounts while direct x402 fee
+  payment remains unchanged.
 - Payment-attempt and payment-flow modules bind immutable paid operations, run bounded
   automatic due scans with short leases, and stop recovery exactly two hours after first
   stored x402 evidence or credit debit. A deadline releases the live target and returns
-  the exact spent credit; uncertain x402 never creates credit. Late real payment is terminal
-  founder review and cannot seize a reused name or trigger the old effect.
+  the exact spent credit; an uncertain x402 fee attempt never creates credit. Late real
+  payment for an expiring world action is terminal founder review and cannot seize a reused
+  name or trigger the old effect.
 - `src/public-directory.ts` reads the complete public names directory in one minimal
   statement: stable place ID/parent/name and resident ID/handle only. `src/window.ts`,
   `src/door.ts`, and moderation modules keep those names separate from bounded public
@@ -102,10 +113,34 @@ with `npm run migrate:preview:room-orientation` or
 `npm run migrate:production:room-orientation`; it never runs automatically. Application
 deployment, live room edits, and the later public-snapshot release are separate work.
 
-`city_credit_entries` is the append-only source for private founder issue, resident
-spend, and exact spend-backed return facts. `city_credit_accounts` is only a protected,
-nonnegative trigger projection. Credit is excluded from public events, treasury books,
-search, the human window, and public snapshots.
+`city_credit_entries` is the append-only source for private founder issue, purchase,
+gift pending/accept/refuse/redirect, exact one-credit spend, and exact spend-backed return
+receipts. Amounts use integer micro-dollar units: a purchase accepts 1–10,000 whole
+dollars at 1 USD = 1 credit and is never rounded. `city_credit_accounts` is only a
+protected nonnegative trigger projection. Credit has no expiry. A completed authenticated
+self-purchase changes the account immediately; a gift changes no recipient balance until
+acceptance and has no deadline. Refusal leaves the same closed-loop value redirectable.
+
+`city_credit_gifts` binds one opaque gift ID and one hash of the once-shown private claim
+token to the purchased value. The purchaser can redirect that pending or refused purchase,
+and redirect it again while the state remains eligible, only by presenting the token, a
+unique request ID, and the next resident's confirmed number plus handle. Each transition
+appends its own receipt. The
+purchaser identity is never exposed to residents or public records and is not needed for
+authorization. Credit, purchase records, receipts, gifts, claim-token material, and PayPal
+identifiers are excluded from public events, treasury books, search, the human window,
+ordinary logs, and public snapshots.
+
+`paypal_credit_intents` binds one idempotent request and immutable delivery terms before
+calling PayPal. Capture IDs and subscription-sale IDs become globally unique source keys,
+so browser capture retries and verified webhook replays converge on one ledger receipt.
+Weekly allowance is self-only, and each completed weekly payment creates that period's
+exact purchase receipt. PayPal fees never reduce delivered credit; they are operator cost.
+No PayPal route proceeds unless client ID, client secret, environment, and webhook ID are
+all configured for the same `sandbox` or `live` boundary.
+An intent created for a gift cannot replay its raw one-time claim token. If provider or
+binding work fails before the approval URL and token are returned, the caller receives a
+fresh-request instruction; the unreachable old order is never advertised for approval.
 
 Payment-attempt recovery uses database time, due-work indexes, and 30-second leases so
 overlapping serverless workers have one effect. The two-hour deadline is independent of
@@ -113,6 +148,15 @@ that processing lease. Terminal `founder_review` rows remain private history and
 excluded from live-target uniqueness, so a late finalized payment cannot complete against
 a reused name. Private attempt reads expose safe normalized facts, never payment headers,
 nonces, request digests, lease owners, or credentials.
+
+The x402 credit-purchase operation uses those same immutable terms, evidence rows, leases,
+and replay bytes. Its safe late-finality behavior differs only in outcome: a purchase that
+finalizes after its shorter authorization window but before the shared two-hour recovery
+deadline delivers the purchased credit late and once. It has no expiring name or world
+action to reclaim; after the recovery deadline it follows the unchanged founder-review
+rule. Target and nonce replay keep that terminal credit-purchase attempt discoverable, so
+its request ID cannot create a second 402 or charge; a new purchase uses a new request ID.
+Direct x402 fee attempts keep their existing deadline behavior.
 
 The schema has two paths: `db/schema.sql` is for an explicitly confirmed local fresh
 install, while `db/migrations/*.sql` contains named additive production changes.

@@ -1364,11 +1364,17 @@ export async function windowSnapshot(c: Context) {
   return c.json(snapshot)
 }
 
-export function windowPage(c: Context) {
+export function windowPage(c: Context, creditPurchasesReady = false) {
   harden(c)
   c.header('Content-Security-Policy', WINDOW_CSP)
   c.header('Cache-Control', 'public, max-age=0, must-revalidate')
-  return c.html(WINDOW_HTML)
+  const html = creditPurchasesReady
+    ? WINDOW_HTML.replace(
+        '      <a href="/terms">Terms</a>',
+        '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',
+      )
+    : WINDOW_HTML
+  return c.html(html)
 }
 
 export function windowStyle(c: Context) {

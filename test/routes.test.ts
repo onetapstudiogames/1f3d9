@@ -799,6 +799,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_more: matching.length > limit,
     }]
   }
+  if (q.includes('/* city-credit:preflight */')) {
+    const residentId = Number(params[0])
+    if (![1, 7, 8].includes(residentId)) return []
+    return [{
+      balance_units: String(state.cityCreditBalances.get(residentId) ?? 0n),
+      observed_at: '2026-08-26T23:30:00.000Z',
+    }]
+  }
+  if (q.includes('/* prepaid-credit:read-pending-gifts */')) return []
   if (q.includes('/* city-credit:issue-balance */')) {
     const residentId = Number(params[0])
     const balance = state.cityCreditBalances.get(residentId)
@@ -5875,7 +5884,10 @@ test('/api/me reports a private exact zero city fee credit account before any is
   assert.equal(response.status, 200, await response.clone().text())
   const body = await response.json() as {
     city_fee_credit: Record<string, unknown>
-    pages: { city_fee_credit: Record<string, unknown> }
+    pages: {
+      city_fee_credit: Record<string, unknown>
+      pending_gifts: Record<string, unknown>
+    }
   }
   assert.deepEqual(body.city_fee_credit, {
     resident_id: 7,
@@ -5884,12 +5896,54 @@ test('/api/me reports a private exact zero city fee credit account before any is
     balance_units: '0',
     history: [],
     page: { has_more: false, next_before_credit_id: null },
+    receipts: [],
+    pending_gifts: [],
   })
   assert.deepEqual(body.pages.city_fee_credit, {
     has_more: false,
     next_before_credit_id: null,
   })
+  assert.deepEqual(body.pages.pending_gifts, {
+    has_more: false,
+    next_before_gift_id: null,
+  })
   assert.equal(response.headers.get('cache-control'), 'no-store')
+})
+
+test('/api/city-credit/preflight privately shows exact cost and balance without spending', async () => {
+  reset()
+  state = {
+    ...state,
+    cityCreditBalances: new Map(state.cityCreditBalances).set(7, 3_000_000n),
+  }
+  const beforeEntries = state.cityCreditEntries
+  const response = await app.request('/api/city-credit/preflight', { headers: authHeaders() })
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body, {
+    resident_id: 7,
+    fee_cost: '1.000000',
+    fee_cost_units: '1000000',
+    balance_before: '3.000000',
+    balance_before_units: '3000000',
+    balance_after: '2.000000',
+    balance_after_units: '2000000',
+    can_confirm: true,
+    observed_at: '2026-08-26T23:30:00.000Z',
+    applies_to: ['frontier', 'kind_invention', 'kind_revision'],
+    freshness: 'read_only_snapshot',
+    next_action: 'Show fee_cost, balance_before, and balance_after before confirming one eligible fee action. The later debit is atomic and may refuse if another spend wins first.',
+  })
+  assert.equal(state.cityCreditEntries, beforeEntries)
+  assert.equal(state.cityCreditBalances.get(7), 3_000_000n)
+
+  const invalid = await app.request('/api/city-credit/preflight?reserve=true', {
+    headers: authHeaders(),
+  })
+  assert.equal(invalid.status, 400)
+  const denied = await app.request('/api/city-credit/preflight')
+  assert.equal(denied.status, 401)
 })
 
 const CITY_CREDIT_ROUTE_CASES = [
@@ -7646,8 +7700,9 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
-    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
+    'search', 'changes', 'look', 'credit_preflight', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
+    'payment_attempt', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
     'mark_for_later', 'me', 'moderate',
   ])
