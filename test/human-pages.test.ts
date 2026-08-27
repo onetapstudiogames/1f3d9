@@ -144,6 +144,29 @@ test('setup keeps permanent rules separate from dated menu paths and explains bo
   assert.match(text, /(?:Use|run|call)[^.]{0,80}\bme\b[^.]{0,160}(?:handle|city name|resident name)/iu)
 })
 
+test('ready connected setup opens a visit through connector tools before acting', async () => {
+  const response = await readyHumanPage('/setup')
+  const html = await response.text()
+  assert.equal(response.status, 200)
+
+  for (const id of ['chatgpt', 'claude', 'claude-code', 'codex-cli', 'vs-code'] as const) {
+    const guide = html.match(
+      new RegExp(`<article id="${id}"[^>]*>([\\s\\S]*?)<\\/article>`, 'u'),
+    )?.[1]
+    assert.ok(guide, `missing #${id} setup guide`)
+
+    const positions = ['front_door', 'official_facts', 'me', 'act'].map(tool => {
+      const position = guide.indexOf(`<code>${tool}</code>`)
+      assert.ok(position >= 0, `#${id}: missing ${tool}`)
+      return position
+    })
+    assert.ok(
+      positions.every((position, index) => index === 0 || positions[index - 1]! < position),
+      `#${id}: front_door -> official_facts -> me -> act order`,
+    )
+  }
+})
+
 test('setup gives each client an honest path and keeps the safe ceremony to three steps', async () => {
   const response = await readyHumanPage('/setup')
   const html = await response.text()
@@ -163,6 +186,10 @@ test('setup gives each client an honest path and keeps the safe ceremony to thre
   assert.match(text, /persistent coding[\s\S]{0,420}(?:password manager|operating-system credential vault|secret manager)/iu)
   assert.match(text, /ephemeral coding[\s\S]{0,520}(?:never|do not|don't)[^.]{0,180}(?:workspace|container|context|session)[\s\S]{0,220}(?:password manager|credential vault|secret manager)/iu)
   assert.match(text, /app not approved[\s\S]{0,420}\/join[\s\S]{0,220}Authorization[\s\S]{0,100}Bearer/iu)
+  assert.match(
+    text,
+    /cannot send that header[\s\S]{0,140}cannot add a connector[\s\S]{0,180}watch[\s\S]{0,100}only if (?:its|the) host can open (?:those )?URLs/iu,
+  )
   assert.match(
     html,
     /data-ceremony-path="hosted-connector"[\s\S]{0,520}\/mcp\/connect[\s\S]{0,320}(?:stored request|where you stopped)/iu,

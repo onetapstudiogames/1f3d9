@@ -20,7 +20,8 @@ const PUBLIC_ORIGIN = 'https://1f3d9.com'
 const LEGACY_SECRET = `1f3d9_sk_${'ab'.repeat(24)}`
 const OAUTH_ACCESS_TOKEN = `1f3d9_at_${'cd'.repeat(32)}`
 const RESOURCE_METADATA = `${PUBLIC_ORIGIN}/.well-known/oauth-protected-resource/mcp/connect`
-const FRONT_DOOR_POINTER = 'Lost? Read the city front door: https://1f3d9.com/.'
+const FRONT_DOOR_POINTER =
+  'Lost? Read the city front door with the front_door tool, or at https://1f3d9.com/ if your client can open URLs.'
 const OAUTH_SCHEME = { type: 'oauth2', scopes: ['city:resident'] } as const
 const NOAUTH_SCHEME = { type: 'noauth' } as const
 
@@ -52,14 +53,20 @@ interface ToolResult {
 }
 
 const EXISTING_TOOL_NAMES = [
-  'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+  'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
+  'found', 'make', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
   'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
   'mark_for_later', 'me', 'moderate',
 ] as const
-const PUBLIC_ANONYMOUS_TOOL_NAMES = ['search', 'changes', 'look'] as const
+const PUBLIC_ANONYMOUS_TOOL_NAMES = [
+  'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
+] as const
 
 const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>> = Object.freeze({
+  front_door: 'Read front door',
+  official_facts: 'Read official facts',
+  physics: 'Read city physics',
   search: 'Search public records',
   changes: 'Check public changes',
   look: 'Look around',
@@ -104,14 +111,23 @@ function createHarness() {
   let noteCalls = 0
 
   const city = new Hono()
+  city.get('/', c => c.text('connector-native front door\n'))
+  city.get('/api/official', c => c.json({ domain: PUBLIC_ORIGIN, token: null }))
+  city.get('/api/physics', c => c.json({ basic_actions: ['move'], max_effect_depth: 12 }))
   city.get('/api/me', async c => {
     forwardedAuthorization = c.req.header('authorization')
     forwardedMethod = c.req.method
     if (forwardedAuthorization === `Bearer ${LEGACY_SECRET}`) {
-      return c.json({ resident: { id: 49, handle: 'chatty' }, front_door: `${PUBLIC_ORIGIN}/` })
+      return c.json({
+        resident: { id: 49, handle: 'chatty' },
+        front_door: `${PUBLIC_ORIGIN}/`,
+        front_door_tool: 'front_door',
+      })
     }
     const resident = await auth(c)
-    if (resident) return c.json({ resident, front_door: `${PUBLIC_ORIGIN}/` })
+    if (resident) {
+      return c.json({ resident, front_door: `${PUBLIC_ORIGIN}/`, front_door_tool: 'front_door' })
+    }
 
     c.header(
       'WWW-Authenticate',
@@ -195,6 +211,52 @@ function createAuthenticatedLookHarness(payload: Record<string, unknown>) {
   return gateway
 }
 
+function createVisitOpeningHarness() {
+  const backingCalls: Array<{
+    method: string
+    path: string
+    authorization: string | null
+    body?: unknown
+  }> = []
+  const city = new Hono()
+  const record = (method: string, path: string, authorization: string | null, body?: unknown) => {
+    backingCalls.push({ method, path, authorization, ...(body === undefined ? {} : { body }) })
+  }
+
+  city.get('/', c => {
+    record(c.req.method, c.req.path, c.req.header('authorization') ?? null)
+    return c.text('connector-native front door\n')
+  })
+  city.get('/api/official', c => {
+    record(c.req.method, c.req.path, c.req.header('authorization') ?? null)
+    return c.json({ domain: PUBLIC_ORIGIN, token: null })
+  })
+  city.get('/api/me', async c => {
+    record(c.req.method, c.req.path, c.req.header('authorization') ?? null)
+    const resident = await auth(c)
+    if (!resident) return c.json({ error: 'A valid resident sign-in is required.' }, 401)
+    return c.json({
+      handle: resident.handle,
+      front_door: `${PUBLIC_ORIGIN}/`,
+      front_door_tool: 'front_door',
+    })
+  })
+  city.post('/api/action', async c => {
+    const body = await c.req.json()
+    record(c.req.method, c.req.path, c.req.header('authorization') ?? null, body)
+    const resident = await auth(c)
+    if (!resident) return c.json({ error: 'A valid resident sign-in is required.' }, 401)
+    return c.json({ action: { action: 'go_home', status: 'applied', actor: resident.handle } })
+  })
+
+  const gateway = new Hono()
+  gateway.post('/mcp/connect', c => mcp(c, city, {
+    hostedChat: true,
+    forwardUnauthorizedStatus: false,
+  }))
+  return { gateway, backingCalls }
+}
+
 async function rpc(
   app: Hono,
   method: string,
@@ -226,6 +288,24 @@ function toolByName(tools: ToolDefinition[], name: string) {
   return tool
 }
 
+async function callTool(
+  app: Hono,
+  name: string,
+  arguments_: Record<string, unknown>,
+  authorization?: string,
+  path = '/mcp/connect',
+): Promise<ToolResult> {
+  const response = await rpc(app, 'tools/call', {
+    name,
+    arguments: arguments_,
+  }, authorization, path) as {
+    result?: ToolResult
+    error?: { message?: string }
+  }
+  assert.ok(response.result, response.error?.message ?? `${name} returned no tool result`)
+  return response.result
+}
+
 test('initialize defaults to the current MCP version and echoes an explicit current version', async () => {
   setHostedChatFlag(true)
   const { gateway } = createHarness()
@@ -240,7 +320,7 @@ test('initialize defaults to the current MCP version and echoes an explicit curr
   assert.equal(current.result.protocolVersion, '2025-11-25')
 })
 
-test('feature on advertises OAuth for resident tools and mixed auth for public look', async () => {
+test('feature on advertises OAuth for resident tools and mixed auth for every public read', async () => {
   setHostedChatFlag(true)
   const { gateway } = createHarness()
   const tools = await listTools(gateway)
@@ -248,7 +328,11 @@ test('feature on advertises OAuth for resident tools and mixed auth for public l
   for (const name of PROTECTED_TOOL_NAMES) {
     assert.deepEqual(toolByName(tools, name).securitySchemes, [OAUTH_SCHEME], name)
   }
-  assert.deepEqual(toolByName(tools, 'look').securitySchemes, [NOAUTH_SCHEME, OAUTH_SCHEME])
+  for (const name of PUBLIC_ANONYMOUS_TOOL_NAMES) {
+    const tool = toolByName(tools, name)
+    assert.deepEqual(tool.securitySchemes, [NOAUTH_SCHEME, OAUTH_SCHEME], name)
+    assert.deepEqual(tool._meta?.securitySchemes, tool.securitySchemes, `${name}: compatibility mirror`)
+  }
   assert.equal(tools.some(tool => tool.name === 'register'), false)
   assert.equal(tools.some(tool => tool.name === 'moderate'), false)
 
@@ -260,6 +344,103 @@ test('feature on advertises OAuth for resident tools and mixed auth for public l
       false,
       `${forbiddenField} must never be a tool argument`,
     )
+  }
+})
+
+test('connector-native reference tools accept no arguments and are safe anonymous reads', async () => {
+  setHostedChatFlag(true)
+  const { gateway } = createHarness()
+  const tools = await listTools(gateway)
+  const readAnnotations = {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  }
+
+  for (const name of ['front_door', 'official_facts', 'physics'] as const) {
+    const tool = toolByName(tools, name)
+    assert.equal(tool.inputSchema.additionalProperties, false, `${name}: closed input`)
+    assert.deepEqual(tool.inputSchema.properties ?? {}, {}, `${name}: no arguments`)
+    assert.deepEqual(tool.inputSchema.required ?? [], [], `${name}: no required arguments`)
+    assert.deepEqual(tool.annotations, readAnnotations, `${name}: read-only annotations`)
+  }
+})
+
+test('connector-native reference tools execute anonymously with identical content on both MCP doors', async () => {
+  setHostedChatFlag(true)
+  const { gateway } = createHarness()
+  const expected = {
+    front_door: 'connector-native front door\n',
+    official_facts: JSON.stringify({ domain: PUBLIC_ORIGIN, token: null }),
+    physics: JSON.stringify({ basic_actions: ['move'], max_effect_depth: 12 }),
+  } as const
+
+  for (const name of ['front_door', 'official_facts', 'physics'] as const) {
+    const legacy = await callTool(gateway, name, {}, undefined, '/mcp')
+    const hosted = await callTool(gateway, name, {}, undefined, '/mcp/connect')
+    assert.equal(legacy.isError, false, `/mcp: ${name}`)
+    assert.equal(hosted.isError, false, `/mcp/connect: ${name}`)
+    assert.equal(legacy.content[0]?.text, expected[name], `/mcp: ${name}`)
+    assert.equal(hosted.content[0]?.text, legacy.content[0]?.text, `${name}: identical doors`)
+  }
+})
+
+test('a hosted resident can open a visit through connector tools without a global web fetch', async () => {
+  setHostedChatFlag(true)
+  const resident = {
+    id: 49,
+    handle: 'chatty',
+    model: 'hosted-chat',
+    joined_at: '2026-08-13T00:00:00.000Z',
+    quota_day: '2026-08-13',
+    things_today: 0,
+    notes_today: 0,
+    agreement_actions_today: 0,
+  }
+  setOAuthResidentResolver(async token => token === OAUTH_ACCESS_TOKEN ? resident : null)
+  const originalFetch = globalThis.fetch
+  let globalFetchCalls = 0
+  globalThis.fetch = (async () => {
+    globalFetchCalls += 1
+    throw new Error('the hosted visit-opening sequence must not use global fetch')
+  }) as typeof fetch
+
+  try {
+    const { gateway, backingCalls } = createVisitOpeningHarness()
+    const authorization = `Bearer ${OAUTH_ACCESS_TOKEN}`
+    const frontDoor = await callTool(gateway, 'front_door', {}, authorization)
+    const officialFacts = await callTool(gateway, 'official_facts', {}, authorization)
+    const me = await callTool(gateway, 'me', {}, authorization)
+    const act = await callTool(gateway, 'act', { action: 'go_home' }, authorization)
+
+    assert.equal(frontDoor.isError, false)
+    assert.equal(frontDoor.content[0]?.text, 'connector-native front door\n')
+    assert.equal(officialFacts.isError, false)
+    assert.deepEqual(JSON.parse(officialFacts.content[0]?.text ?? '{}'), {
+      domain: PUBLIC_ORIGIN,
+      token: null,
+    })
+    assert.equal(JSON.parse(me.content[0]?.text ?? '{}').handle, 'chatty')
+    assert.equal(JSON.parse(act.content[0]?.text ?? '{}').action.status, 'applied')
+    assert.deepEqual(
+      backingCalls.map(call => [call.method, call.path]),
+      [
+        ['GET', '/'],
+        ['GET', '/api/official'],
+        ['GET', '/api/me'],
+        ['POST', '/api/action'],
+      ],
+    )
+    assert.deepEqual(
+      backingCalls.map(call => call.authorization),
+      [authorization, authorization, authorization, authorization],
+    )
+    assert.deepEqual(backingCalls.at(-1)?.body, { action: 'go_home' })
+    assert.equal(globalFetchCalls, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+    setOAuthResidentResolver(null)
   }
 })
 
@@ -310,7 +491,12 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       authorization,
       path,
     ) as { result: { content: Array<{ text: string }> } }
-    assert.deepEqual(JSON.parse(badCall.result.content[0]!.text).front_door, 'https://1f3d9.com/')
+    const badCallBody = JSON.parse(badCall.result.content[0]!.text) as {
+      front_door?: string
+      front_door_tool?: string
+    }
+    assert.equal(badCallBody.front_door, 'https://1f3d9.com/')
+    assert.equal(badCallBody.front_door_tool, 'front_door')
 
     const unknownMethod = await rpc(
       gateway,
@@ -318,13 +504,24 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       {},
       authorization,
       path,
-    ) as { error: { code: number; message: string; data?: { front_door?: string } } }
+    ) as {
+      error: {
+        code: number
+        message: string
+        data?: { front_door?: string; front_door_tool?: string }
+      }
+    }
     assert.equal(unknownMethod.error.code, -32601, `${path}: unknown method`)
     assert.match(unknownMethod.error.message, /method not found/iu, `${path}: unknown method`)
     assert.equal(
       unknownMethod.error.data?.front_door,
       'https://1f3d9.com/',
       `${path}: unknown method front door`,
+    )
+    assert.equal(
+      unknownMethod.error.data?.front_door_tool,
+      'front_door',
+      `${path}: unknown method front-door tool`,
     )
 
     const unknownTool = await rpc(
@@ -333,7 +530,13 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       { name: 'unknown_city_tool', arguments: {} },
       authorization,
       path,
-    ) as { error: { code: number; message: string; data?: { front_door?: string } } }
+    ) as {
+      error: {
+        code: number
+        message: string
+        data?: { front_door?: string; front_door_tool?: string }
+      }
+    }
     assert.equal(unknownTool.error.code, -32602, `${path}: unknown tool`)
     assert.match(unknownTool.error.message, /no such tool/iu, `${path}: unknown tool`)
     assert.equal(
@@ -341,10 +544,15 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       'https://1f3d9.com/',
       `${path}: unknown tool front door`,
     )
+    assert.equal(
+      unknownTool.error.data?.front_door_tool,
+      'front_door',
+      `${path}: unknown tool front-door tool`,
+    )
   }
 })
 
-test('successful me results preserve the canonical front-door pointer on both MCP doors', async () => {
+test('successful me results preserve connector and URL front-door pointers on both MCP doors', async () => {
   setHostedChatFlag(true)
   const resident = {
     id: 49,
@@ -374,8 +582,10 @@ test('successful me results preserve the canonical front-door pointer on both MC
       assert.equal(response.result.isError, false, path)
       const payload = JSON.parse(response.result.content[0]?.text ?? '{}') as {
         front_door?: string
+        front_door_tool?: string
       }
       assert.equal(payload.front_door, 'https://1f3d9.com/', path)
+      assert.equal(payload.front_door_tool, 'front_door', path)
     }
   } finally {
     setOAuthResidentResolver(null)

@@ -7420,6 +7420,7 @@ test('/api/me independently pages every growing holdings and history collection'
   assert.equal(firstResponse.status, 200)
   const first = await firstResponse.json() as Record<string, unknown>
   assert.equal(first.front_door, 'https://1f3d9.com/')
+  assert.equal(first.front_door_tool, 'front_door')
   const newestByCollection = {
     places: 1570,
     things: 1670,
@@ -7647,7 +7648,8 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'search', 'changes', 'look', 'found', 'make', 'act', 'laws', 'home', 'withdraw',
+    'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
+    'found', 'make', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'payment_attempt', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'later_holder_items',
     'mark_for_later', 'me', 'moderate',
@@ -7755,6 +7757,58 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.equal(challenged.result.isError, true)
   assert.match(challenged.result.content[0]!.text, /reservation opened|five minutes/i)
   assert.equal(state.offer.buyerWallet, BUYER_WALLET)
+})
+
+test('public MCP reference tools return byte-identical web handler bodies', async () => {
+  reset({ scenario: 'activity surfaces' })
+
+  const webBytes = async (path: string): Promise<Buffer> => {
+    const response = await app.request(path)
+    assert.equal(response.status, 200, path)
+    return Buffer.from(await response.arrayBuffer())
+  }
+  const toolBytes = async (name: string): Promise<Buffer> => {
+    const response = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: name,
+        method: 'tools/call',
+        params: { name, arguments: {} },
+      }),
+    })
+    assert.equal(response.status, 200, name)
+    const payload = await response.json() as {
+      result?: { isError: boolean; content: Array<{ text: string }> }
+      error?: { message?: string }
+    }
+    assert.ok(payload.result, payload.error?.message ?? `${name} returned no tool result`)
+    assert.equal(payload.result.isError, false, name)
+    assert.equal(payload.result.content.length, 1, name)
+    return Buffer.from(payload.result.content[0]!.text, 'utf8')
+  }
+
+  for (const [name, path] of [
+    ['front_door', '/'],
+    ['official_facts', '/api/official'],
+    ['physics', '/api/physics'],
+  ] as const) {
+    assert.deepEqual(await toolBytes(name), await webBytes(path), name)
+  }
+})
+
+test('missing HTTP routes give connector-first front-door recovery', async () => {
+  const response = await app.request('/definitely-not-a-city-route')
+  assert.equal(response.status, 404)
+  const body = await response.json() as {
+    error?: string
+    front_door_tool?: string
+    front_door?: string
+  }
+  assert.equal(body.front_door_tool, 'front_door')
+  assert.equal(body.front_door, 'https://1f3d9.com/')
+  assert.match(body.error ?? '', /front_door[\s\S]*GET \/[\s\S]*if your client can open URLs/iu)
 })
 
 test('front door and human window surface the event names the world actually emits', async () => {

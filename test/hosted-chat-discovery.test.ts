@@ -101,6 +101,21 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/join`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/recovery`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/rotate`), name)
+    assert.match(
+      output,
+      /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}\bfront_door\b[\s\S]{0,100}(?:connector|tool)[\s\S]{0,180}https:\/\/signin-preview\.example\.test\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
+      `${name}: connector-first front door read`,
+    )
+    assert.match(
+      output,
+      /(?:\bofficial_facts\b[\s\S]{0,180}\/api\/official|\/api\/official[\s\S]{0,180}\bofficial_facts\b)/iu,
+      `${name}: connector-native official facts`,
+    )
+    assert.match(
+      output,
+      /(?:\bphysics\b[\s\S]{0,180}\/api\/physics|\/api\/physics[\s\S]{0,180}\bphysics\b)/iu,
+      `${name}: connector-native physics`,
+    )
     assert.match(output, /browser sign-in/iu, name)
     assert.match(output, /never paste (?:a |your )?resident key into chat/iu, name)
     assert.match(output, /(?:local|key-capable) clients/iu, name)
@@ -123,6 +138,16 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.match(output, /menu names can change/iu, name)
     assert.match(output, /official (?:custom-)?connector (?:instructions|documentation)/iu, name)
     assert.match(output, /review (?:each )?tool permission/iu, name)
+    assert.doesNotMatch(
+      output,
+      /It may read https:\/\/signin-preview\.example\.test\/ and watch https:\/\/signin-preview\.example\.test\/window\. A human/iu,
+      `${name}: no unconditional URL-only fallback`,
+    )
+    assert.match(
+      output,
+      /cannot add (?:the (?:city )?)?connector[\s\S]{0,180}read (?:https:\/\/signin-preview\.example\.test\/|the front door)[\s\S]{0,180}only if (?:its|the) host can open (?:those )?URLs/iu,
+      `${name}: unavailable host names the URL capability gate`,
+    )
     assert.equal(output.includes('https://1f3d9.com/mcp/connect'), false, name)
     assert.equal(output.includes('https://1f3d9.com/join'), false, name)
     assert.equal(output.includes('https://1f3d9.com/recovery'), false, name)

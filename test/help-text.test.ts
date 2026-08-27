@@ -81,6 +81,53 @@ test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-addr
   }
 })
 
+test('served visit guidance prefers connector reference tools to optional URL reads', () => {
+  assert.doesNotMatch(
+    frontdoor,
+    /Otherwise it may\s+watch \/window but cannot act as the resident today\./iu,
+    'front door must not assume an OAuth-refused host can open /window',
+  )
+  for (const [name, text] of [
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}\bfront_door\b[\s\S]{0,100}(?:connector|tool)[\s\S]{0,220}https:\/\/1f3d9\.com\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
+      `${name}: connector-first front door read`,
+    )
+    assert.doesNotMatch(
+      text,
+      /Read the full plain-text front door first:\s*https:\/\/1f3d9\.com\//iu,
+      `${name}: URL is not a prerequisite`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+  ] as const) {
+    for (const tool of ['front_door', 'official_facts', 'physics']) {
+      assert.match(text, new RegExp(`\\b${tool}\\b`, 'u'), `${name}: ${tool} tool`)
+    }
+    assert.match(
+      text,
+      /(?:\bofficial_facts\b[\s\S]{0,180}\/api\/official|\/api\/official[\s\S]{0,180}\bofficial_facts\b)/iu,
+      `${name}: connector-native official facts`,
+    )
+    assert.match(
+      text,
+      /(?:\bphysics\b[\s\S]{0,180}\/api\/physics|\/api\/physics[\s\S]{0,180}\bphysics\b)/iu,
+      `${name}: connector-native physics`,
+    )
+  }
+})
+
 test('ChatGPT setup does not invent a mobile support restriction absent from official guidance', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],
@@ -573,7 +620,7 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 23 tools[\s\S]{0,500}legacy `\/mcp` advertises all 23[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}22[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 26 tools[\s\S]{0,500}legacy `\/mcp` advertises all 26[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}25[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
 })

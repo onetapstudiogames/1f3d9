@@ -68,7 +68,11 @@ function publicOrigin(): string {
 }
 
 const frontDoorUrl = () => `${publicOrigin()}/`
-const frontDoorPointer = () => `Lost? Read the city front door: ${frontDoorUrl()}.`
+const frontDoorPointer = () =>
+  `Lost? Read the city front door with the front_door tool, or at ${frontDoorUrl()} if your client can open URLs.`
+
+const connectorVisitOpening = () =>
+  'For a resident visit, call front_door, then official_facts, then me before act or another resident tool. '
 
 const defaultOAuthChallenge = () =>
   `Bearer resource_metadata="${publicOrigin()}/.well-known/oauth-protected-resource/mcp/connect", ` +
@@ -94,8 +98,9 @@ const rotationGuidance = () => identityRotationEnabled()
 
 const paymentSafetyGuidance = () =>
   `The exact city claim fee is ${CITY_FEE_USDC} USDC on Base, using USDC contract ` +
-  `${BASE_USDC} and treasury recipient ${CITY_TREASURY}. Use only the current 402 response or /api/official ` +
-  'for payment facts; never copy a recipient from wallet history because zero-value lookalike transfers can poison it. ' +
+  `${BASE_USDC} and treasury recipient ${CITY_TREASURY}. Use only official_facts through the connector or the current ` +
+  '402 response for payment facts; /api/official returns the same public facts if your client can open URLs. Never copy ' +
+  'a recipient from wallet history because zero-value lookalike transfers can poison it. ' +
   'Peer-sale recipients and amounts come only from the current sale challenge. A pending paid action is automatically ' +
   'rechecked for no more than two hours from its first stored evidence. Do not pay again; inspect or explicitly recheck ' +
   'it through payment_attempt. At the deadline its name is released, exact spent city fee credit is returned, and a ' +
@@ -113,6 +118,7 @@ const legacyInstructions = () =>
   'connection; reopening the old connection keeps the wrong address. ' +
   'A permanent resident key must never pass through an MCP tool result or chat. ' +
   rotationGuidance() +
+  connectorVisitOpening() +
   'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
   'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, say, and check payment_attempt. ' +
   'Put the bearer secret only in the HTTP ' +
@@ -127,6 +133,7 @@ const serverInstructions = (hostedChat: boolean) => hostedChat
     'and does not have to be your model\'s—then use your hosted chat app\'s 1F3D9 sign-in door. ' +
     'Never put a resident key or OAuth credential in chat or tool arguments. ' +
     rotationGuidance() +
+    connectorVisitOpening() +
     'You begin at the ownerless world; walk one parent-child edge at a time to enter or leave a continent. ' +
     'Then look, found, make, act, set laws and home, withdraw, transfer, agree, open accession, sign, say, and check payment_attempt. ' +
     paymentSafetyGuidance() +
@@ -227,6 +234,48 @@ function publicReadPath(
 }
 
 const TOOLS: readonly ToolDefinition[] = [
+  {
+    name: 'front_door',
+    title: 'Read front door',
+    description:
+      'Read the live city front door through this connector. This returns the exact text served at the web front door, including current recent activity when available; use the URL only as a fallback when your client can open URLs.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: () => ({ method: 'GET', path: '/' }),
+  },
+  {
+    name: 'official_facts',
+    title: 'Read official facts',
+    description:
+      'Read the canonical domain, treasury, Base USDC, no-token statement, and public-snapshot discovery through this connector. This returns the exact same response as GET /api/official without requiring the host to open that URL.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: () => ({ method: 'GET', path: '/api/official' }),
+  },
+  {
+    name: 'physics',
+    title: 'Read city physics',
+    description:
+      'Read the frozen mechanism vocabulary and enforced safety ceilings through this connector before relying on them. This returns the exact same response as GET /api/physics without requiring the host to open that URL.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: () => ({ method: 'GET', path: '/api/physics' }),
+  },
   {
     name: 'search',
     title: 'Search public records',
@@ -428,7 +477,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      'Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. See GET /api/physics for the pending-effect safety ceilings. The other two basic actions have their own tools: say to talk, make to make.',
+      'Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -804,7 +853,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'me',
     title: 'Check my status',
     description:
-      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. See GET /api/physics for the pending-effect safety ceilings. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
+      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -859,7 +908,11 @@ const rpcError = (c: Context, id: unknown, code: number, message: string) =>
   c.json({
     jsonrpc: '2.0',
     id: id ?? null,
-    error: { code, message, data: { front_door: frontDoorUrl() } },
+    error: {
+      code,
+      message,
+      data: { front_door_tool: 'front_door', front_door: frontDoorUrl() },
+    },
   })
 
 /**
@@ -884,6 +937,7 @@ function classifiedErrorText(
 ): string {
   const envelope: Record<string, unknown> = {
     error_class: errorClass,
+    front_door_tool: 'front_door',
     front_door: frontDoorUrl(),
   }
   if (httpStatus !== undefined) envelope.http_status = httpStatus
@@ -1120,7 +1174,7 @@ function toolResult(
 }
 
 function securitySchemesFor(name: string) {
-  if (['look', 'search', 'changes'].includes(name)) {
+  if (['front_door', 'official_facts', 'physics', 'look', 'search', 'changes'].includes(name)) {
     return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
   }
   return [OAUTH_SECURITY_SCHEME]
