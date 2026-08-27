@@ -26,8 +26,8 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 55)
-  assert.match(contributorGuide, /\(55 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 56)
+  assert.match(contributorGuide, /\(56 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -39,6 +39,7 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 53 \|[^\n]*founder signpost is one ordinary world thing[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 54 \|[^\n]*first-party human page lists both sibling sites' official MCP doors[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 55 \|[^\n]*Repeated authenticated rule refusals change explanation[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 56 \|[^\n]*Live motion replays only complete, commit-ordered[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -834,6 +835,10 @@ test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
     assert.match(text, /25 seconds[\s\S]{0,180}60[\s\S]{0,80}120[\s\S]{0,80}240[\s\S]{0,80}300 seconds/iu, `${name}: activity-following cadence`)
     assert.match(text, /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u, `${name}: beta sentence`)
     assert.match(text, /prefers-reduced-motion[\s\S]{0,220}forced-colors|forced-colors[\s\S]{0,220}prefers-reduced-motion/iu, `${name}: accessibility modes`)
+    assert.match(text, /opening[\s\S]{0,220}within_seconds[\s\S]{0,220}change_id[\s\S]{0,260}(?:replay|static)/iu, `${name}: commit-safe replay boundary`)
+    assert.match(text, /(?:1–3|one to three) seconds[\s\S]{0,220}(?:once|one time)/iu, `${name}: bounded one-shot replay`)
+    assert.match(text, /speech bubble[\s\S]{0,180}(?:60|sixty)[\s\S]{0,220}(?:newest|one per resident)/iu, `${name}: speech bubble contract`)
+    assert.match(text, /ledger[\s\S]{0,120}(?:full|complete|exact) (?:note )?(?:body|text)/iu, `${name}: full note ledger`)
     assert.match(text, /no new dependenc/iu, `${name}: dependency boundary`)
   }
 

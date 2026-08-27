@@ -154,7 +154,23 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_JS, /state\.view === 'live'/u)
 
   const shipped = `${WINDOW_HTML}\n${WINDOW_JS}`
-  assert.doesNotMatch(shipped, /type="range"|zoom-slider|speech-bubble|sprite|pinch|pan-control/iu)
+  assert.doesNotMatch(shipped, /type="range"|zoom-slider|pinch|pan-control/iu)
+  assert.match(WINDOW_JS, /live-replay-portrait/u)
+  assert.match(WINDOW_JS, /live-speech-bubble/u)
+  assert.match(WINDOW_JS, /prefers-reduced-motion: reduce/u)
+  assert.match(WINDOW_CSS, /\.live-replay-portrait[\s\S]*?live-recorded-glide/u)
+  assert.match(
+    WINDOW_CSS,
+    /\.live-speech-bubble\s*\{[\s\S]*?background:\s*var\(--paper-light\)[\s\S]*?border:\s*2px solid var\(--line\)[\s\S]*?border-radius:\s*0/u,
+  )
+  assert.doesNotMatch(WINDOW_CSS, /live-speech-arrive/u)
+  assert.match(WINDOW_JS, /recorded endpoints[^\n]*drawn-in glide/u)
+  assert.match(WINDOW_JS, /pulse on a thing[^\n]*recorded use/u)
+  assert.match(WINDOW_JS, /record\.detail\.status !== 'applied'/u)
+  assert.match(WINDOW_JS, /safeExactText\(payload\?\.note\?\.body/u)
+  assert.match(WINDOW_JS, /function liveDisplayedThings/u)
+  assert.match(WINDOW_JS, /if \(!node\.dataset\.focusKey\) node\.dataset\.focusKey/u)
+  assert.match(WINDOW_JS, /state\.resident && actor !== state\.resident/u)
   assert.doesNotMatch(WINDOW_CSS, /position:\s*fixed[^}]*live-|100vw[^}]*live-/iu)
 })
 
@@ -167,6 +183,7 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   }
   assert.match(WINDOW_JS, /\/api\/events/u)
   assert.match(WINDOW_JS, /after_change_marker/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('within_seconds', String\(LIVE_MOVE_LIFETIME_MS \/ 1000\)\)/u)
   assert.match(WINDOW_JS, /\/api\/changes/u)
   assert.match(WINDOW_JS, /\/api\/drawing\//u)
   assert.match(WINDOW_JS, /\/api\/note\//u)
@@ -188,6 +205,10 @@ test('the live plate states its honest timing and drawing rules in shipped code'
     /function scheduleLiveClock\(\)[\s\S]*?renderLiveAging\(\)[\s\S]*?setTimeout\(scheduleLiveClock, 1000\)/u,
   )
   assert.match(WINDOW_CSS, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-pulse/u)
+  assert.match(
+    WINDOW_CSS,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-replay-portrait[\s\S]*?animation:\s*none/u,
+  )
   assert.match(WINDOW_CSS, /@media \(forced-colors: active\)[\s\S]*?\.live-plate/u)
   assert.match(
     WINDOW_CSS,
@@ -313,6 +334,10 @@ test('deliberate navigation makes canonical history and refresh keeps reading st
   assert.match(WINDOW_JS, /if \(current === path && !window\.location\.hash\) return true/)
   assert.match(WINDOW_JS, /window\.addEventListener\('popstate', syncStateFromLocation\)/)
   assert.match(WINDOW_JS, /navigate\(\{ view, placeId, detail: null \}\)/)
+  assert.match(
+    WINDOW_JS,
+    /function syncStateFromLocation\(\)[\s\S]*?previousReplayScope[\s\S]*?settleLiveReplays\(\)/u,
+  )
   assert.match(WINDOW_JS, /placeId: safeId\(nodes\.placeFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   assert.match(WINDOW_JS, /resident: safeHandle\(nodes\.residentFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   // Expanded bodies are keyed state, and focus lands back on the rebuilt

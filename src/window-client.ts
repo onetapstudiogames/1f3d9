@@ -65,6 +65,43 @@ export function windowLiveTraceOpacity(at: number, now: number, lifetime: number
   return Math.max(0, Math.min(1, 1 - Math.max(0, now - at) / lifetime))
 }
 
+export function windowLiveReplayDuration(
+  distance: number,
+  remainingLifetime = Number.POSITIVE_INFINITY,
+): number {
+  const duration = !Number.isFinite(distance)
+    ? 1_000
+    : Math.round(Math.min(3_000, Math.max(1_000, 1_000 + Math.max(0, distance) * 14)))
+  if (Number.isNaN(remainingLifetime) || remainingLifetime < 1_000) return 0
+  return Math.min(duration, Math.floor(remainingLifetime))
+}
+
+export function windowLiveReplayOrder<T extends Readonly<{
+  change_id?: string
+  id?: number
+  at: Date
+}>>(values: readonly T[], cutoff: number): T[] {
+  return values.filter(value => value.at.getTime() >= cutoff).sort((left, right) => {
+    const leftIsChange = left.change_id !== undefined
+    const rightIsChange = right.change_id !== undefined
+    if (leftIsChange !== rightIsChange) return leftIsChange ? 1 : -1
+    if (left.change_id !== undefined && right.change_id !== undefined) {
+      const leftMarker = BigInt(left.change_id)
+      const rightMarker = BigInt(right.change_id)
+      return leftMarker < rightMarker ? -1 : leftMarker > rightMarker ? 1 : 0
+    }
+    if (left.id !== undefined && right.id !== undefined) return left.id - right.id
+    return left.at.getTime() - right.at.getTime()
+  })
+}
+
+export function windowLiveSpeechLine(value: string, maximum = 60): string {
+  const [firstLine = ''] = value.split(/\r\n?|\n/u, 1)
+  const characters = Array.from(firstLine)
+  if (characters.length <= maximum) return firstLine
+  return characters.slice(0, Math.max(0, maximum - 1)).join('') + '…'
+}
+
 export function parseWindowSleeperPlaceIds(
   value: string | null,
   maximumLength = 8_192,
@@ -383,6 +420,9 @@ const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
 const WINDOW_LIVE_TRACE_OPACITY_JS = windowLiveTraceOpacity.toString()
+const WINDOW_LIVE_REPLAY_DURATION_JS = windowLiveReplayDuration.toString()
+const WINDOW_LIVE_REPLAY_ORDER_JS = windowLiveReplayOrder.toString()
+const WINDOW_LIVE_SPEECH_LINE_JS = windowLiveSpeechLine.toString()
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -392,6 +432,7 @@ export const WINDOW_JS = `(() => {
   const LIVE_MOVE_LIFETIME_MS = 1800000
   const LIVE_NOTE_LIFETIME_MS = 600000
   const LIVE_PULSE_MS = 600
+  const LIVE_NOTE_REPLAY_MS = 650
   const LIVE_OPENING_PAGE_LIMIT = 200
   const LIVE_PORTRAIT_LIMIT = 6
   const REQUEST_TIMEOUT_MS = 10000
@@ -408,6 +449,7 @@ export const WINDOW_JS = `(() => {
   const SAFE_EFFECT_STATUSES = new Set(['applied', 'skipped', 'failed'])
   const EVENT_ERROR_LIMIT = 500
   const UNSAFE_EVENT_ERROR = 'the recorded cause could not be shown safely'
+  const LIVE_MOTION_PREFERENCE = window.matchMedia('(prefers-reduced-motion: reduce)')
   const mergeWindowRows = ${MERGE_WINDOW_ROWS_JS}
   const mergeResidentRows = ${MERGE_RESIDENT_ROWS_JS}
   const windowPlaceLabel = ${WINDOW_PLACE_LABEL_JS}
@@ -425,6 +467,9 @@ export const WINDOW_JS = `(() => {
   const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
   const windowLiveTraceOpacity = ${WINDOW_LIVE_TRACE_OPACITY_JS}
+  const windowLiveReplayDuration = ${WINDOW_LIVE_REPLAY_DURATION_JS}
+  const windowLiveReplayOrder = ${WINDOW_LIVE_REPLAY_ORDER_JS}
+  const windowLiveSpeechLine = ${WINDOW_LIVE_SPEECH_LINE_JS}
 
   const nodes = {
     status: document.getElementById('window-status'),
@@ -532,8 +577,10 @@ export const WINDOW_JS = `(() => {
       openingMarker: null, openingEvents: [], openingLoaded: false, openingLoading: false,
       openingComplete: false, openingError: false, streamError: false, streamMarker: null,
       changes: [], drawings: {}, noteBodies: {},
-      highlightedKey: null, pulsedKeys: [], quietReads: 0, nextReadAt: null,
+      highlightedKey: null, quietReads: 0, nextReadAt: null,
       lastChangeAt: null, clockTimer: 0,
+      replayQueues: {}, replayActive: {}, replayPositions: {},
+      replaySeenKeys: [], replayRevealedKeys: [],
     },
   }
 
@@ -1194,10 +1241,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return values.slice(0, maximum).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
+      const changeId = raw.change_id == null ? null : safeChangeMarker(raw.change_id)
       const actor = safeHandle(raw.actor)
       const verb = SAFE_EVENT_KINDS.get(raw.kind)
       const at = safeDate(raw.at)
-      if (!id || !actor || !verb || !at) return []
+      if (!id || (raw.change_id != null && !changeId) || !actor || !verb || !at) return []
       const source = raw.detail && typeof raw.detail === 'object' ? raw.detail : {}
       const detail = Object.fromEntries(SAFE_EVENT_DETAIL_IDS.flatMap(key => {
         const value = safeId(source[key])
@@ -1226,7 +1274,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
           detail.error = UNSAFE_EVENT_ERROR
         }
       }
-      return [{ id, actor, kind: raw.kind, verb, at, detail }]
+      return [{ id, ...(changeId ? { change_id: changeId } : {}),
+        actor, kind: raw.kind, verb, at, detail }]
     })
   }
 
@@ -1267,7 +1316,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (record.kind === 'note' && record.detail.note_id && record.detail.place_id) return 'note'
     if ((record.kind === 'thing_created' || record.kind === 'thing_crafted') &&
         record.detail.place_id) return 'make'
-    if (record.kind !== 'action' || (record.detail.status && record.detail.status !== 'applied')) {
+    if (record.kind !== 'action' || record.detail.status !== 'applied') {
       return null
     }
     if ((record.detail.action === 'move' || record.detail.action === 'go_home') &&
@@ -1279,12 +1328,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function liveRecords() {
-    const records = [...state.live.openingEvents, ...state.live.changes]
-    return records.sort((left, right) => right.at.getTime() - left.at.getTime())
+    const records = new Map()
+    for (const record of [...state.live.changes, ...state.live.openingEvents]) {
+      records.set(liveTraceKey(record), record)
+    }
+    return windowLiveReplayOrder([...records.values()], Number.NEGATIVE_INFINITY).reverse()
   }
 
   function liveRecordLifetime(record) {
     return liveRecordType(record) === 'note' ? LIVE_NOTE_LIFETIME_MS : LIVE_MOVE_LIFETIME_MS
+  }
+
+  function liveRecordIsRecent(record, now = Date.now()) {
+    return windowLiveTraceOpacity(record.at.getTime(), now, liveRecordLifetime(record)) > 0
   }
 
   function liveRecordPlaceId(record) {
@@ -1292,6 +1348,84 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (type === 'move') return record.detail.to_place_id || null
     if (record.detail.place_id) return record.detail.place_id
     return null
+  }
+
+  function liveMotionReduced() {
+    return LIVE_MOTION_PREFERENCE.matches
+  }
+
+  function liveReplayRecordIsRevealed(record) {
+    if (record.change_id && !state.live.openingLoaded) return false
+    const key = liveTraceKey(record)
+    return !state.live.replaySeenKeys.includes(key) ||
+      state.live.replayRevealedKeys.includes(key)
+  }
+
+  function liveReplayHeldKeys() {
+    return new Set([
+      ...Object.values(state.live.replayQueues).flat().map(liveTraceKey),
+      ...Object.values(state.live.replayActive).map(active => active.key),
+    ])
+  }
+
+  function queueLiveReplays(records) {
+    const now = Date.now()
+    const recentKeys = new Set(liveRecords().filter(record =>
+      liveRecordIsRecent(record, now)).map(liveTraceKey))
+    const heldKeys = liveReplayHeldKeys()
+    const seen = new Set(state.live.replaySeenKeys.filter(key =>
+      recentKeys.has(key) || heldKeys.has(key)))
+    const revealed = new Set(state.live.replayRevealedKeys.filter(key =>
+      recentKeys.has(key) || heldKeys.has(key)))
+    const additions = windowLiveReplayOrder(records, Number.NEGATIVE_INFINITY).filter(record => {
+      const key = liveTraceKey(record)
+      if (!record.change_id || !liveRecordType(record) || !liveRecordIsRecent(record, now) ||
+          seen.has(key)) return false
+      seen.add(key)
+      if (state.resident && record.actor !== state.resident) {
+        revealed.add(key)
+        return false
+      }
+      return true
+    })
+    if (!additions.length &&
+        seen.size === state.live.replaySeenKeys.length &&
+        revealed.size === state.live.replayRevealedKeys.length) return
+
+    if (liveMotionReduced()) {
+      for (const record of additions) revealed.add(liveTraceKey(record))
+      state = { ...state, live: {
+        ...state.live,
+        replaySeenKeys: Object.freeze([...seen]),
+        replayRevealedKeys: Object.freeze([...revealed]),
+      } }
+      return
+    }
+
+    const queues = Object.fromEntries(Object.entries(state.live.replayQueues)
+      .map(([actor, queue]) => [actor, [...queue]]))
+    for (const record of additions) {
+      queues[record.actor] = Object.freeze([...(queues[record.actor] || []), record])
+    }
+    state = { ...state, live: {
+      ...state.live,
+      replayQueues: Object.freeze(queues),
+      replaySeenKeys: Object.freeze([...seen]),
+      replayRevealedKeys: Object.freeze([...revealed]),
+    } }
+  }
+
+  function settleLiveReplays() {
+    const keys = new Set([
+      ...state.live.replaySeenKeys,
+      ...liveReplayHeldKeys(),
+    ])
+    state = { ...state, live: {
+      ...state.live,
+      replayQueues: {}, replayActive: {}, replayPositions: {},
+      replaySeenKeys: Object.freeze([...keys]),
+      replayRevealedKeys: Object.freeze([...keys]),
+    } }
   }
 
   function livePlaceAnchor(placeId, focusId, children) {
@@ -1451,7 +1585,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       })
       if (!response.ok) throw new Error('note unavailable')
       const payload = await response.json()
-      const body = safeText(payload?.note?.body, null, 4000, false)
+      const body = safeExactText(payload?.note?.body, null, 4000, false)
       if (!body || safeId(payload?.note?.id) !== noteId) throw new Error('invalid note')
       if (state.live.noteBodies[key] !== loading) return
       state = { ...state, live: { ...state.live, noteBodies: {
@@ -2215,6 +2349,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       detailRequestRevision += 1
     }
     resetShareFeedback()
+    const leavesReplayPlate = previousView === 'live' && (
+      (Object.hasOwn(next, 'view') && next.view !== 'live') ||
+      (Object.hasOwn(next, 'placeId') && next.placeId !== state.placeId) ||
+      (Object.hasOwn(next, 'resident') && next.resident !== state.resident)
+    )
+    if (leavesReplayPlate && liveReplayHeldKeys().size) settleLiveReplays()
     state = { ...state, ...next }
     writeLocation(!rovingTabActivation, openingDetail ? { windowDetailEntry: true } : null)
     renderAll()
@@ -3116,12 +3256,57 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.liveBreadcrumbs.replaceChildren(...parts)
   }
 
-  function livePortraitGrid(residents, label) {
+  function liveSpeechBubbles(records) {
+    const bubbles = new Map()
+    const claimedActors = new Set()
+    for (const record of records) {
+      if (liveRecordType(record) !== 'note' || !liveReplayRecordIsRevealed(record) ||
+          claimedActors.has(record.actor)) continue
+      claimedActors.add(record.actor)
+      const noteId = record.detail.note_id
+      const entry = state.live.noteBodies[String(noteId)]
+      if (!entry && noteId) void loadLiveNote(noteId)
+      if (!entry?.body) continue
+      bubbles.set(record.actor, Object.freeze({
+        record,
+        text: windowLiveSpeechLine(entry.body),
+      }))
+    }
+    return bubbles
+  }
+
+  function liveSpeechBubbleNode(bubble) {
+    const node = element('span', 'live-speech-bubble', bubble.text)
+    node.setAttribute('aria-hidden', 'true')
+    node.dataset.liveAt = String(bubble.record.at.getTime())
+    node.dataset.liveLifetime = String(LIVE_NOTE_LIFETIME_MS)
+    node.style.opacity = String(windowLiveTraceOpacity(
+      bubble.record.at.getTime(), Date.now(), LIVE_NOTE_LIFETIME_MS))
+    return node
+  }
+
+  function livePortraitShell(portrait, bubble, className = 'live-portrait-wrap') {
+    const shell = element('span', className)
+    shell.append(portrait)
+    if (bubble) shell.append(liveSpeechBubbleNode(bubble))
+    return shell
+  }
+
+  function liveReplayActorHasOverlay(handle) {
+    return Object.hasOwn(state.live.replayPositions, handle)
+  }
+
+  function livePortraitGrid(residents, label, bubbles, placeId) {
     const grid = element('div', 'live-portrait-grid')
     grid.setAttribute('aria-label', label)
     const ordered = [...residents.filter(resident => !resident.asleep),
       ...residents.filter(resident => resident.asleep)]
-    for (const resident of ordered.slice(0, LIVE_PORTRAIT_LIMIT)) {
+    const staticResidents = ordered.filter(resident =>
+      !liveReplayActorHasOverlay(resident.handle))
+    const overlayCount = Object.values(state.live.replayPositions)
+      .filter(replayPlaceId => replayPlaceId === placeId).length
+    const staticLimit = Math.max(0, LIVE_PORTRAIT_LIMIT - overlayCount)
+    for (const resident of staticResidents.slice(0, staticLimit)) {
       const portrait = element('button', resident.asleep
         ? 'live-portrait asleep'
         : 'live-portrait')
@@ -3133,16 +3318,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
         drawingNode('resident', resident.id, resident.handle, false),
         element('span', 'live-portrait-name', resident.handle),
       )
-      grid.append(portrait)
+      grid.append(livePortraitShell(portrait, bubbles?.get(resident.handle)))
     }
-    if (ordered.length > LIVE_PORTRAIT_LIMIT) {
+    if (staticResidents.length > staticLimit) {
       grid.append(element('span', 'live-portrait-more', '+' +
-        String(ordered.length - LIVE_PORTRAIT_LIMIT) + ' more'))
+        String(staticResidents.length - staticLimit) + ' more'))
     }
     return grid
   }
 
-  function livePlaceCard(snapshot, place) {
+  function livePlaceCard(snapshot, place, bubbles) {
     const card = element('article', 'live-island')
     card.dataset.placeId = String(place.id)
     const terrain = liveTerrain(place)
@@ -3161,8 +3346,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     card.append(terrain, open, element('p', 'live-island-owner', owner))
     const residents = residentsAt(snapshot, place.id)
     if (residents.length) {
-      card.append(livePortraitGrid(residents, 'Residents inside ' + place.name))
+      card.append(livePortraitGrid(
+        residents, 'Residents inside ' + place.name, bubbles, place.id))
     }
+    const shelf = liveThingShelf(snapshot, place)
+    if (shelf) card.append(shelf)
     return card
   }
 
@@ -3181,7 +3369,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function liveThingShelf(snapshot, place) {
-    const things = snapshot.things.filter(thing => thing.place_id === place.id).slice(0, 12)
+    const things = liveDisplayedThings(snapshot, place.id)
     if (!things.length) return null
     const shelf = element('section', 'live-thing-shelf')
     shelf.setAttribute('aria-label', 'Things shown inside ' + place.name)
@@ -3190,6 +3378,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       specimen.href = '/api/thing/' + String(thing.id)
       specimen.title = 'Read ' + thing.name
       specimen.dataset.focusKey = 'live-thing:' + String(thing.id)
+      specimen.dataset.liveThingId = String(thing.id)
+      specimen.dataset.liveThingPlaceId = String(thing.place_id)
+      const pulse = Object.values(state.live.replayActive).find(active =>
+        active.type === 'use' && active.record.detail.source_thing_id === thing.id &&
+        active.record.detail.place_id === thing.place_id)
+      if (pulse) {
+        specimen.classList.add('live-pulse')
+        specimen.dataset.livePulseFor = pulse.key
+        bindLiveHighlight(specimen, pulse.key, 'pulse')
+      }
       specimen.append(
         drawingNode('thing', thing.id, thing.name, false),
         element('span', 'live-thing-name', thing.name),
@@ -3197,6 +3395,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       shelf.append(specimen)
     }
     return shelf
+  }
+
+  function liveDisplayedThings(snapshot, placeId) {
+    return snapshot.things.filter(thing => thing.place_id === placeId).slice(0, 12)
   }
 
   function renderLiveResidentPage() {
@@ -3279,6 +3481,222 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  function liveReplayPoint(placeId, focus, children) {
+    const anchor = livePlaceAnchor(placeId, focus.id, children)
+    return liveAnchorPoint(anchor, focus.id, children)
+  }
+
+  function liveReplayMoveGeometry(record, focus, children) {
+    const from = liveReplayPoint(record.detail.from_place_id, focus, children)
+    const to = liveReplayPoint(record.detail.to_place_id, focus, children)
+    if (!from || !to || (from.x === to.x && from.y === to.y)) return null
+    return Object.freeze({ from, to })
+  }
+
+  function completeLiveReplay(actor, key) {
+    const held = state.live.replayActive[actor]
+    if (!held || held.key !== key) return
+    const active = { ...state.live.replayActive }
+    const positions = { ...state.live.replayPositions }
+    delete active[actor]
+    if (held.type === 'move') positions[actor] = held.toPlaceId
+    if (!state.live.replayQueues[actor]?.length) delete positions[actor]
+    state = { ...state, live: {
+      ...state.live,
+      replayActive: Object.freeze(active),
+      replayPositions: Object.freeze(positions),
+    } }
+    if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+  }
+
+  function liveReplayThingIsDisplayed(record, snapshot, focus, children) {
+    if (liveRecordType(record) !== 'use') return false
+    const placeId = record.detail.place_id
+    if (placeId !== focus.id && !children.some(place => place.id === placeId)) return false
+    return liveDisplayedThings(snapshot, placeId).some(thing =>
+      thing.id === record.detail.source_thing_id && thing.place_id === placeId)
+  }
+
+  function startLiveReplays() {
+    if (state.view !== 'live' || document.hidden || !state.snapshot) return
+    if (state.live.streamMarker && !markerCovers(state.changeMarker, state.live.streamMarker)) return
+    if (liveMotionReduced()) {
+      if (liveReplayHeldKeys().size) {
+        settleLiveReplays()
+        renderLive(state.snapshot)
+      }
+      return
+    }
+    const focus = liveFocusPlace(state.snapshot)
+    if (!focus) return
+    const children = liveChildren(state.snapshot, focus)
+    const now = Date.now()
+    const queues = Object.fromEntries(Object.entries(state.live.replayQueues)
+      .map(([actor, queue]) => [actor, [...queue]]))
+    const active = { ...state.live.replayActive }
+    const positions = { ...state.live.replayPositions }
+    const revealed = new Set(state.live.replayRevealedKeys)
+    const starts = []
+    let changed = false
+
+    for (const actor of Object.keys(queues)) {
+      if (active[actor]) continue
+      if (state.resident && actor !== state.resident) {
+        for (const record of queues[actor]) revealed.add(liveTraceKey(record))
+        delete queues[actor]
+        delete positions[actor]
+        changed = true
+        continue
+      }
+      let queue = windowLiveReplayOrder(queues[actor], Number.NEGATIVE_INFINITY)
+        .filter(record => liveRecordIsRecent(record, now))
+      if (queue.length !== queues[actor].length) changed = true
+      while (queue.length) {
+        const record = queue[0]
+        const type = liveRecordType(record)
+        const key = liveTraceKey(record)
+        const point = liveReplayPoint(liveRecordPlaceId(record), focus, children)
+        if (type === 'note' && point) {
+          const noteId = record.detail.note_id
+          const entry = state.live.noteBodies[String(noteId)]
+          if (!entry) {
+            if (noteId) void loadLiveNote(noteId)
+            break
+          }
+          if (entry.loading) break
+        }
+
+        if (type === 'move') {
+          const resident = displayedResidents(state.snapshot)
+            .find(candidate => candidate.handle === actor)
+          const geometry = resident ? liveReplayMoveGeometry(record, focus, children) : null
+          if (!geometry) {
+            queue = queue.slice(1)
+            changed = true
+            revealed.add(key)
+            continue
+          }
+          const fromPlaceId = record.detail.from_place_id
+          const overlaysAtStart = Object.values(positions)
+            .filter(placeId => placeId === fromPlaceId).length
+          if (overlaysAtStart >= LIVE_PORTRAIT_LIMIT) break
+          const distance = Math.hypot(
+            geometry.to.x - geometry.from.x,
+            geometry.to.y - geometry.from.y,
+          )
+          const remainingLifetime = record.at.getTime() + liveRecordLifetime(record) - now
+          const duration = windowLiveReplayDuration(distance, remainingLifetime)
+          if (!duration) {
+            queue = queue.slice(1)
+            changed = true
+            revealed.add(key)
+            continue
+          }
+          queue = queue.slice(1)
+          changed = true
+          revealed.add(key)
+          positions[actor] = fromPlaceId
+          active[actor] = Object.freeze({
+            key, record, type,
+            fromPlaceId,
+            toPlaceId: record.detail.to_place_id,
+            startedAt: Date.now(), duration,
+          })
+          starts.push(Object.freeze({ actor, key, duration }))
+          break
+        }
+
+        queue = queue.slice(1)
+        changed = true
+        revealed.add(key)
+        const canReplayHere = point && (type !== 'use' ||
+          liveReplayThingIsDisplayed(record, state.snapshot, focus, children))
+        if (!canReplayHere) continue
+        const duration = type === 'note' ? LIVE_NOTE_REPLAY_MS : LIVE_PULSE_MS
+        const remainingLifetime = record.at.getTime() + liveRecordLifetime(record) - now
+        if (remainingLifetime < duration) continue
+        active[actor] = Object.freeze({
+          key, record, type, placeId: liveRecordPlaceId(record),
+          startedAt: Date.now(), duration,
+        })
+        starts.push(Object.freeze({ actor, key, duration }))
+        break
+      }
+      if (queue.length) queues[actor] = Object.freeze(queue)
+      else delete queues[actor]
+      if (!active[actor] && !queue.length) delete positions[actor]
+    }
+    if (!changed) return
+    state = { ...state, live: {
+      ...state.live,
+      replayQueues: Object.freeze(queues),
+      replayActive: Object.freeze(active),
+      replayPositions: Object.freeze(positions),
+      replayRevealedKeys: Object.freeze([...revealed]),
+    } }
+    renderLive(state.snapshot)
+    for (const start of starts) {
+      window.setTimeout(() => completeLiveReplay(start.actor, start.key), start.duration)
+    }
+  }
+
+  function renderLiveReplayPortraits(layer, snapshot, focus, children, bubbles) {
+    for (const [actor, placeId] of Object.entries(state.live.replayPositions)) {
+      if (state.resident && actor !== state.resident) continue
+      const resident = displayedResidents(snapshot).find(candidate => candidate.handle === actor)
+      if (!resident) continue
+      const held = state.live.replayActive[actor]
+      let point = liveReplayPoint(placeId, focus, children)
+      let destination = null
+      let remaining = 0
+      if (held?.type === 'move') {
+        const geometry = liveReplayMoveGeometry(held.record, focus, children)
+        if (!geometry) continue
+        const progress = Math.max(0, Math.min(1,
+          (Date.now() - held.startedAt) / held.duration))
+        point = Object.freeze({
+          x: geometry.from.x + (geometry.to.x - geometry.from.x) * progress,
+          y: geometry.from.y + (geometry.to.y - geometry.from.y) * progress,
+        })
+        destination = geometry.to
+        remaining = Math.max(0, held.duration - (Date.now() - held.startedAt))
+      }
+      if (!point) continue
+      const portrait = element('button', resident.asleep
+        ? 'live-portrait asleep'
+        : 'live-portrait')
+      portrait.type = 'button'
+      portrait.dataset.focusKey = 'live-resident:' + actor
+      portrait.title = 'Follow ' + actor
+      const shell = livePortraitShell(
+        portrait,
+        bubbles.get(actor),
+        'live-portrait-wrap live-replay-portrait',
+      )
+      shell.dataset.liveReplayKey = held?.key || ''
+      if (held) {
+        shell.dataset.liveAt = String(held.record.at.getTime())
+        shell.dataset.liveLifetime = String(liveRecordLifetime(held.record))
+      }
+      shell.style.left = String(point.x) + '%'
+      shell.style.top = String(point.y) + '%'
+      if (destination && remaining > 0) {
+        shell.style.setProperty('--live-replay-to-x', String(destination.x) + '%')
+        shell.style.setProperty('--live-replay-to-y', String(destination.y) + '%')
+        shell.style.animationDuration = String(remaining) + 'ms'
+        shell.dataset.fromPlaceId = String(held.fromPlaceId)
+        shell.dataset.toPlaceId = String(held.toPlaceId)
+        shell.dataset.replayDuration = String(held.duration)
+      }
+      portrait.addEventListener('click', () => chooseResident(actor))
+      portrait.append(
+        drawingNode('resident', resident.id, actor, false),
+        element('span', 'live-portrait-name', actor),
+      )
+      layer.append(shell)
+    }
+  }
+
   function visibleLiveRecords(snapshot, focus, children) {
     const now = Date.now()
     return liveRecords().filter(record => {
@@ -3299,7 +3717,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function bindLiveHighlight(node, key, surface) {
     node.dataset.liveKey = key
-    node.dataset.focusKey = 'live-record:' + surface + ':' + key
+    if (!node.dataset.focusKey) node.dataset.focusKey = 'live-record:' + surface + ':' + key
     node.dataset.highlighted = String(state.live.highlightedKey === key)
     node.addEventListener('mouseenter', () => setLiveHighlight(key))
     node.addEventListener('mouseleave', () => setLiveHighlight(null))
@@ -3309,7 +3727,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state.live.highlightedKey === key ? null : key))
   }
 
-  function renderLiveTraceLayer(snapshot, focus, children, records) {
+  function renderLiveTraceLayer(snapshot, focus, children, records, bubbles) {
     const layer = element('div', 'live-trace-layer')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.classList.add('live-traces')
@@ -3335,6 +3753,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     for (const record of records) {
       const type = liveRecordType(record)
       const key = liveTraceKey(record)
+      if (!liveReplayRecordIsRevealed(record)) continue
       const opacity = windowLiveTraceOpacity(
         record.at.getTime(), Date.now(), liveRecordLifetime(record))
       if (type === 'move') {
@@ -3376,7 +3795,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         mark.setAttribute('aria-label', 'Show ' + record.actor + "'s note in the plate ledger")
         bindLiveHighlight(mark, key, 'mark')
         layer.append(mark)
-      } else if (state.live.pulsedKeys.includes(key)) {
+      } else if (type === 'make' && state.live.replayActive[record.actor]?.key === key) {
         const pulse = element('span', 'live-action-mark live-pulse', type === 'make' ? '+' : '×')
         pulse.style.left = String(point.x) + '%'
         pulse.style.top = String(point.y) + '%'
@@ -3389,6 +3808,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     }
     layer.prepend(svg)
+    renderLiveReplayPortraits(layer, snapshot, focus, children, bubbles)
     return layer
   }
 
@@ -3408,10 +3828,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const entry = state.live.noteBodies[String(noteId)]
       if (!entry && noteId) void loadLiveNote(noteId)
       if (entry?.body) {
-        const firstLine = entry.body.split(String.fromCharCode(10))[0]
-        return record.actor + ': ' + (firstLine.endsWith(String.fromCharCode(13))
-          ? firstLine.slice(0, -1)
-          : firstLine)
+        return record.actor + ': ' + entry.body
       }
       if (entry?.error) return record.actor + "'s note #" + String(noteId) + ' could not be read.'
       return 'Reading ' + record.actor + "'s note #" + String(noteId) + '…'
@@ -3511,7 +3928,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderLiveHistoryStatus()
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    const cutoff = Date.now() - LIVE_MOVE_LIFETIME_MS
     let events = startingEvents
     let beforeId = null
     let heldMarker = null
@@ -3521,6 +3937,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       while (!complete) {
         const url = new URL('/api/events', window.location.origin)
         url.searchParams.set('limit', String(LIVE_OPENING_PAGE_LIMIT))
+        url.searchParams.set('within_seconds', String(LIVE_MOVE_LIFETIME_MS / 1000))
         url.searchParams.set('after_change_marker', heldMarker || requestMarker)
         if (beforeId) url.searchParams.set('before_id', String(beforeId))
         const response = await fetch(url.pathname + url.search, {
@@ -3536,11 +3953,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
         if (!heldMarker) heldMarker = pageMarker
         const incoming = normalizeEvents(payload.events, LIVE_OPENING_PAGE_LIMIT)
-        events = mergeWindowRows(events, incoming)
-        const oldest = incoming.length
-          ? Math.min(...incoming.map(event => event.at.getTime()))
-          : Number.POSITIVE_INFINITY
-        if (payload.has_more !== true || oldest <= cutoff) {
+        const covered = incoming.filter(event => event.change_id &&
+          BigInt(event.change_id) <= BigInt(heldMarker))
+        events = mergeWindowRows(events, covered)
+        if (payload.has_more !== true) {
           complete = true
           break
         }
@@ -3598,6 +4014,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     } finally {
       window.clearTimeout(timeout)
+      if (state.live.openingComplete && !state.live.openingError) {
+        queueLiveReplays([...state.live.openingEvents, ...state.live.changes])
+      }
       if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
       if (heldMarker && !markerCovers(state.changeMarker, heldMarker)) void refreshCity()
     }
@@ -3699,6 +4118,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const children = liveChildren(snapshot, focus)
     const records = visibleLiveRecords(snapshot, focus, children)
+    const bubbles = liveSpeechBubbles(records)
     renderLiveBreadcrumbs(snapshot, focus)
 
     const plate = element('section', 'live-plate')
@@ -3708,7 +4128,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       element('p', 'block-number', 'LIVE PLATE / PLACE #' + String(focus.id)),
       element('h3', 'live-plate-title', focus.name),
       element('p', 'live-plate-legend',
-        'brick dash = recorded move · yellow number = public note · hatch = browser stand-in'),
+        'brick dash = recorded endpoints + drawn-in glide · yellow number + speech box = public note · brick pulse on a thing = recorded use · hatch = browser stand-in'),
     )
     const ground = element('div', 'live-plate-ground')
     ground.append(liveTerrain(focus))
@@ -3716,12 +4136,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
       resident.current_place_id === focus.id &&
       (!state.resident || resident.handle === state.resident))
     if (directResidents.length) {
-      ground.append(livePortraitGrid(directResidents, 'Residents standing directly in ' + focus.name))
+      ground.append(livePortraitGrid(
+        directResidents,
+        'Residents standing directly in ' + focus.name,
+        bubbles,
+        focus.id,
+      ))
     }
     const islands = element('div', 'live-islands')
     islands.style.setProperty('--live-columns', String(liveIslandColumnCount(children.length)))
     if (children.length) {
-      islands.append(...children.map(place => livePlaceCard(snapshot, place)))
+      islands.append(...children.map(place => livePlaceCard(snapshot, place, bubbles)))
     } else {
       islands.append(element('p', 'live-room-empty',
         directResidents.length
@@ -3731,7 +4156,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     ground.append(islands)
     const shelf = liveThingShelf(snapshot, focus)
     if (shelf) ground.append(shelf)
-    ground.append(renderLiveTraceLayer(snapshot, focus, children, records))
+    ground.append(renderLiveTraceLayer(snapshot, focus, children, records, bubbles))
     plate.append(caption, ground)
     nodes.livePlates.replaceChildren(plate)
     renderLiveLedger(snapshot, focus, children, records)
@@ -3741,6 +4166,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     restoreFocus(focusKey, null, null)
     if (!state.live.openingLoaded && !state.live.openingLoading) {
       void loadLiveOpeningHistory(snapshot, false)
+    }
+    if (Object.keys(state.live.replayQueues).length) {
+      window.queueMicrotask(startLiveReplays)
     }
   }
 
@@ -5690,9 +6118,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? incoming.filter(change => BigInt(change.change_id) > BigInt(openingMarker))
       : incoming
     const known = new Set(state.live.changes.map(change => change.change_id))
-    const pulsedKeys = streamIncoming.filter(change =>
-      !known.has(change.change_id) && ['make', 'use'].includes(liveRecordType(change)))
-      .map(liveTraceKey)
+    const replayIncoming = state.live.openingLoaded
+      ? streamIncoming.filter(change => !known.has(change.change_id))
+      : []
     const cutoff = Date.now() - LIVE_MOVE_LIFETIME_MS
     const merged = Object.freeze(mergeLiveChanges(state.live.changes, streamIncoming)
       .filter(change => change.at.getTime() >= cutoff &&
@@ -5720,22 +6148,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ? hadEvents ? 0 : quietReadsBefore + 1
           : 0,
         lastChangeAt: latestAt || null,
-        pulsedKeys: pulsedKeys.length
-          ? Object.freeze([...new Set([...state.live.pulsedKeys, ...pulsedKeys])])
-          : state.live.pulsedKeys,
       },
     }
+    if (replayIncoming.length) queueLiveReplays(replayIncoming)
     if ((incoming.length || hadStreamError) && state.view === 'live' && state.snapshot) {
       renderLive(state.snapshot)
-    }
-    if (pulsedKeys.length) {
-      window.setTimeout(() => {
-        const expired = new Set(pulsedKeys)
-        state = { ...state, live: { ...state.live,
-          pulsedKeys: Object.freeze(state.live.pulsedKeys.filter(key => !expired.has(key))),
-        } }
-        if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
-      }, LIVE_PULSE_MS)
     }
     return state.view === 'live'
       ? windowLivePollDelay(hadEvents, quietReadsBefore)
@@ -5930,7 +6347,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         failures,
         live: {
           ...state.live,
-          streamMarker: state.changeMarker || state.live.streamMarker,
+          // A failed snapshot did not prove the new rows belong to a completed
+          // view. Re-read them from the last completed marker; queued keys stay
+          // held and cannot replay twice when the covering snapshot succeeds.
+          streamMarker: state.changeMarker,
         },
       }
       nextDelay = Math.min(BASE_REFRESH_MS * Math.pow(2, failures), MAX_REFRESH_MS)
@@ -6058,7 +6478,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
   })
   function syncStateFromLocation() {
     const previousView = state.view
+    const previousReplayScope = [state.view, state.placeId, state.resident].join(':')
     const nextLocationState = readLocationState()
+    const nextReplayScope = [
+      nextLocationState.view, nextLocationState.placeId, nextLocationState.resident,
+    ].join(':')
+    if (previousReplayScope !== nextReplayScope && liveReplayHeldKeys().size) {
+      settleLiveReplays()
+    }
     if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
     if (
       nextLocationState.detail?.kind !== state.detail?.kind ||
@@ -6084,11 +6511,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
   document.addEventListener('visibilitychange', () => {
     window.clearTimeout(state.pollTimer)
     if (document.hidden) {
+      if (liveReplayHeldKeys().size) settleLiveReplays()
       state = { ...state, pollTimer: 0, live: { ...state.live, nextReadAt: null } }
       renderLiveClock()
     } else {
       void refreshCity()
     }
+  })
+  LIVE_MOTION_PREFERENCE.addEventListener?.('change', () => {
+    if (LIVE_MOTION_PREFERENCE.matches) settleLiveReplays()
+    if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
   })
 
   state = { ...state, ...readLocationState() }

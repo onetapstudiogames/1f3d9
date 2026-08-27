@@ -646,9 +646,16 @@ button { color: inherit; }
 .live-island-owner { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.65rem; }
 .live-portrait-grid { display: flex; flex-wrap: wrap; gap: 0.38rem; align-items: start; }
 .live-island > .live-portrait-grid { margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px dashed var(--paper-line); }
-.live-portrait {
+.live-portrait-wrap {
+  position: relative;
   display: grid;
+  flex: 0 0 3.1rem;
   width: 3.1rem;
+}
+.live-portrait {
+  position: relative;
+  display: grid;
+  width: 100%;
   min-height: 24px;
   padding: 0.2rem;
   color: var(--ink);
@@ -661,6 +668,37 @@ button { color: inherit; }
   overflow: hidden;
   font: 750 0.48rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
   text-overflow: ellipsis;
+}
+.live-replay-portrait {
+  position: absolute;
+  z-index: 4;
+  width: 3.1rem;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  animation-name: live-recorded-glide;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+.live-speech-bubble {
+  position: absolute;
+  z-index: 5;
+  inset-block-end: calc(100% + 0.38rem);
+  inset-inline-start: 50%;
+  width: max-content;
+  min-width: 6rem;
+  max-width: min(12rem, 46vw);
+  padding: 0.38rem 0.45rem;
+  transform: translateX(-50%);
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  border-radius: 0;
+  box-shadow: 3px 3px 0 rgba(32, 56, 47, 0.22);
+  pointer-events: none;
+  font: 750 0.58rem/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 .live-portrait-more {
   align-self: center;
@@ -757,7 +795,7 @@ button { color: inherit; }
   cursor: default;
 }
 .live-ledger-number { color: var(--signal); font: 900 0.68rem ui-monospace, monospace; }
-.live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; font-size: 0.72rem; line-height: 1.5; }
+.live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 0.72rem; line-height: 1.5; }
 .live-ledger-time { color: var(--sky); font: 0.58rem ui-monospace, monospace; white-space: nowrap; }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
 .live-roster-list .resident-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); justify-content: normal; align-items: center; }
@@ -766,6 +804,10 @@ button { color: inherit; }
 @keyframes live-print-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--brick); }
   50% { box-shadow: 0 0 0 10px transparent; }
+}
+
+@keyframes live-recorded-glide {
+  to { left: var(--live-replay-to-x); top: var(--live-replay-to-y); }
 }
 
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
@@ -1288,13 +1330,16 @@ button { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
   .live-action-mark.live-pulse { display: none !important; animation: none !important; }
+  .live-thing-specimen.live-pulse { animation: none !important; }
+  .live-replay-portrait, .live-speech-bubble { animation: none !important; transition: none !important; }
   .live-trail { transition: none !important; }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
   .note-card, .agreement-card, .live-plate, .live-island, .live-portrait,
-  .drawing-grid { border-color: CanvasText; box-shadow: none; }
+  .live-speech-bubble, .drawing-grid { border-color: CanvasText; box-shadow: none; }
   .live-trail { stroke: LinkText; }
   .live-footnote-mark, .live-action-mark { color: ButtonText; background: ButtonFace; }
+  .live-speech-bubble { color: CanvasText; background: Canvas; }
 }
 `

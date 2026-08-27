@@ -19,7 +19,7 @@ test('inside-place event history includes the selected place and its descendants
 
   await loadPublicEventCollectionRows(
     query,
-    { kind: null, actor: null, placeId: 7, includeDescendants: true },
+    { kind: null, actor: null, placeId: 7, includeDescendants: true, withinSeconds: 1_800 },
     page,
   )
 
@@ -27,7 +27,10 @@ test('inside-place event history includes the selected place and its descendants
   assert.match(statement, /child\.parent_id = selected\.id/i)
   assert.match(statement, /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
   assert.match(statement, /note\.place_id IN \(SELECT id FROM selected_places\)/i)
-  assert.deepEqual(values, [null, null, 7, null, 11])
+  assert.match(statement, /JOIN public_change_log change ON change\.event_id = event\.id/iu)
+  assert.match(statement, /change\.change_id::text AS change_id/iu)
+  assert.match(statement, /event\.at\s*>=\s*transaction_timestamp\(\)[\s\S]*interval '1 second'/iu)
+  assert.deepEqual(values, [null, null, 7, null, 11, 1_800])
 })
 
 const page: PublicPage = Object.freeze({

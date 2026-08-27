@@ -2540,6 +2540,20 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         }
       }
 
+      const expiredNote = await client.query<{ id: number }>(
+        `INSERT INTO events (kind, actor, detail, at)
+         VALUES ('note', 'resident-2', '{}'::jsonb, now() - interval '31 minutes')
+         RETURNING id`,
+      )
+      const recentEvents = await loadPublicEventCollectionRows(
+        executePublicQuery,
+        { kind: 'note', actor: 'resident-2', placeId: null, withinSeconds: 1_800 },
+        completePage,
+      )
+      assert.ok(recentEvents.rows.some(row => row.id === noteEcho))
+      assert.ok(!recentEvents.rows.some(row => row.id === expiredNote.rows[0]!.id))
+      assert.ok(recentEvents.rows.every(row => typeof row.change_id === 'string'))
+
       // Market-bridge kinds are public window life: the snapshot must carry
       // them once its 30-second module cache expires.
       const windowModule: WindowModule = await import('../../src/window.ts')

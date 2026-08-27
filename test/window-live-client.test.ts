@@ -4,6 +4,9 @@ import {
   normalizeWindowDrawing,
   windowLivePlateChildren,
   windowLivePollDelay,
+  windowLiveReplayDuration,
+  windowLiveReplayOrder,
+  windowLiveSpeechLine,
   windowLiveTraceOpacity,
 } from '../src/window-client.ts'
 
@@ -53,4 +56,65 @@ test('trace opacity ages honestly and expires at its stated lifetime', () => {
   assert.equal(windowLiveTraceOpacity(1_000, 6_000, 10_000), 0.5)
   assert.equal(windowLiveTraceOpacity(1_000, 11_000, 10_000), 0)
   assert.equal(windowLiveTraceOpacity(2_000, 1_000, 10_000), 1)
+})
+
+test('recorded movement replay lasts one to three seconds and scales with trail length', () => {
+  assert.equal(windowLiveReplayDuration(0), 1_000)
+  assert.equal(windowLiveReplayDuration(50), 1_700)
+  assert.equal(windowLiveReplayDuration(10_000), 3_000)
+  assert.equal(windowLiveReplayDuration(Number.NaN), 1_000)
+  assert.equal(windowLiveReplayDuration(100, 1_250), 1_250)
+  assert.equal(windowLiveReplayDuration(100, 999), 0)
+})
+
+test('replay keeps recorded order and refuses records beyond the trace edge', () => {
+  const records = Object.freeze([
+    Object.freeze({ change_id: '13', at: new Date(13_000), label: 'use' }),
+    Object.freeze({ change_id: '11', at: new Date(11_000), label: 'move' }),
+    Object.freeze({ change_id: '12', at: new Date(12_000), label: 'note' }),
+    Object.freeze({ change_id: '10', at: new Date(9_999), label: 'outside' }),
+  ])
+
+  assert.deepEqual(
+    windowLiveReplayOrder(records, 10_000).map(record => record.label),
+    ['move', 'note', 'use'],
+  )
+  assert.deepEqual(records.map(record => record.label), ['use', 'move', 'note', 'outside'])
+
+  const openingRows = Object.freeze([
+    Object.freeze({ id: 103, at: new Date(12_000), label: 'later event id' }),
+    Object.freeze({ id: 101, at: new Date(12_000), label: 'earlier event id' }),
+  ])
+  assert.deepEqual(
+    windowLiveReplayOrder(openingRows, 10_000).map(record => record.label),
+    ['earlier event id', 'later event id'],
+  )
+
+  const mixedRows = Object.freeze([
+    Object.freeze({ change_id: '12', at: new Date(10_500), label: 'second change' }),
+    Object.freeze({ id: 102, at: new Date(12_000), label: 'second opening event' }),
+    Object.freeze({ change_id: '11', at: new Date(13_000), label: 'first change' }),
+    Object.freeze({ id: 101, at: new Date(11_000), label: 'first opening event' }),
+  ])
+  const expected = ['first opening event', 'second opening event', 'first change', 'second change']
+  for (const permutation of [mixedRows, [...mixedRows].reverse(), [
+    mixedRows[1]!, mixedRows[3]!, mixedRows[0]!, mixedRows[2]!,
+  ]]) {
+    assert.deepEqual(windowLiveReplayOrder(permutation, 10_000).map(record => record.label), expected)
+  }
+})
+
+test('speech bubbles keep only the first line and use an honest 60-character ellipsis cap', () => {
+  assert.equal(windowLiveSpeechLine('first line\nsecond line'), 'first line')
+  assert.equal(windowLiveSpeechLine('first line\r\nsecond line'), 'first line')
+  assert.equal(windowLiveSpeechLine('short line'), 'short line')
+
+  const exactLine = 'x'.repeat(60)
+  assert.equal(windowLiveSpeechLine(exactLine), exactLine)
+  assert.equal(windowLiveSpeechLine(exactLine + 'x'), 'x'.repeat(59) + '…')
+
+  const longLine = '🙂'.repeat(60) + 'tail that is not shown'
+  const bubble = windowLiveSpeechLine(longLine)
+  assert.equal(Array.from(bubble).length, 60)
+  assert.equal(bubble, '🙂'.repeat(59) + '…')
 })

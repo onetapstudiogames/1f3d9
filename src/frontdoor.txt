@@ -542,7 +542,7 @@ Authenticated /api/me also keeps its existing personal page metadata rather than
 anonymous common total/byte fields.
 
   GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
-                  &after_change_marker=
+                  &after_change_marker=&within_seconds=
   GET /treasury?before_id=&limit=
   GET /api/map?view=outline&parent_id=
               &before_subplace_id=&limit=&subplace_limit=&after_change_marker=
@@ -564,6 +564,9 @@ anonymous common total/byte fields.
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
               &before_offer_id=&offer_limit=&before_credit_id=&credit_limit=
               &before_gift_id=&gift_limit=
+
+Every /api/events item carries its commit-safe change_id. Optional within_seconds accepts
+1 through 1800 and filters every page to that recent server-time slice.
 
 after_change_marker is accepted by the map outline, window outline/history, events, and
 paged or focused resident presence reads.
@@ -690,13 +693,20 @@ blank stays blank, and the immutable world uses its labelled browser stand-in. E
 mass shows at most six portrait specimens and then +N more; the occupancy board keeps the
 complete loaded list.
 
-The first Live read pages marker-covered /api/events backward to the 30-minute trace edge,
-then follows every /api/changes page from its held cursor. Stated move and go_home endpoints
-make dashed 30-minute trails. Notes make numbered 10-minute footnote marks; the linked
-ledger separately fetches the note's exact first line. A newly observed make or use gets
-one 600 ms pulse. Give keeps its typed transfer event and consume keeps its typed
-thing_withdrawn event; neither receives an invented Live mark. The page never guesses a
-route, position, used thing, note text, or intermediate frame.
+The first Live read pages marker-covered /api/events?within_seconds=1800 through the
+complete 30-minute trace slice. Each event carries its commit-safe change_id, so opening
+history and later /api/changes rows share one deduplicated order and replay once in
+ascending change order for each resident. An incomplete opening slice stays static. Stated
+move and go_home endpoints make dashed
+30-minute trails; a portrait glides once along that exact straight trail for a distance-
+scaled one to three seconds. Notes make numbered 10-minute footnote marks and one square
+speech bubble per resident; the newest revealed note wins, and its first line is capped at
+60 characters with an honest ellipsis. The linked ledger separately keeps the exact full
+note body. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
+source_thing_id at its committed place_id; an unavailable exact specimen gets no guessed
+visual. Give keeps its typed transfer event and consume keeps its typed thing_withdrawn
+event; neither receives an invented Live mark. The only drawn-in position is the disclosed
+straight frame between recorded move endpoints.
 
 The ordinary window reads every 60 seconds. While Live is visible, a read with events
 schedules 25 seconds; quiet reads back off through 60, 120, 240, then 300 seconds. Reads
@@ -707,10 +717,11 @@ Exactly one BETA chip says: This view is new. It draws the same public record as
 other tab — if it disagrees with them, they are right.
 
 At the existing mobile breakpoint, plate, ledger, and roster stack vertically. Under
-prefers-reduced-motion, pulses stop. Under forced-colors, borders, trails, marks, hatch,
-focus, and labels remain distinct. Cut absolutely: infinite or full-viewport terrain,
-continuous zoom, idle animation, speech bubbles, sprite interpolation, guessed movement,
-and any new dependency.
+prefers-reduced-motion, replay and pulses stop while final trails, note marks, and bubbles
+appear immediately. Under forced-colors, borders, trails, marks, bubbles, hatch, focus,
+and labels remain distinct. Cut absolutely: infinite or full-viewport terrain, continuous
+zoom, idle animation, looping sprite movement, interpolation beyond one recorded endpoint
+glide, guessed routes, and any new dependency.
 
 ACTION REQUESTS
 ---------------

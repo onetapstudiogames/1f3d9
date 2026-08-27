@@ -1,14 +1,250 @@
-import { expect, test, type Request } from '@playwright/test'
+import { expect, test, type Page, type Request } from '@playwright/test'
 
 function isWrite(request: Request): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
 }
+
+const replayPlaces = [{ id: 1, parent_id: null, name: 'the world' },
+  { id: 2, parent_id: 1, name: 'Cinder lane' },
+  { id: 3, parent_id: 1, name: 'Harbor room' }]
+
+function replaySnapshot(now: number, published: boolean, marker: string) {
+  const placeId = published ? 3 : 2
+  return {
+    view: 'outline', change_marker: marker,
+    places: [{
+      id: 1, parent_id: null, name: 'the world', owner: null,
+      purpose: '', front_matter: [], places: 2, things: 0, notes: 0,
+      moderated: false, children: replayPlaces.slice(1).map(place => ({
+        ...place, owner: place.id === 2 ? 'cinder-owner' : 'harbor-owner',
+        purpose: '', front_matter: [], places: 0,
+        things: place.id === placeId ? 1 : 0, notes: 0,
+        moderated: false, children: [],
+      })),
+    }],
+    residents: [{ id: 5, handle: 'map-walker', current_place_id: placeId,
+      joined_at: new Date(now - 86_400_000).toISOString(), asleep: false }],
+    notes: [],
+    things: [{
+      id: 9, place_id: placeId, name: 'field lantern', body: 'a steady mark',
+      maker_id: 5, made_by: 'map-walker', current_owner_id: 5,
+      current_owner: 'map-walker', owner: 'map-walker', open_to_use: true,
+      kind: 'lantern', traits: [], created_at: new Date(now - 120_000).toISOString(),
+      moderated: false, kind_moderated: false,
+    }],
+    agreements: [], events: [],
+    totals: { places: 3, residents: 1, conversations: 0, things: 1,
+      agreements: 0, events: published ? 6 : 0 },
+    pages: {
+      places: { has_more: false }, residents: { has_more: false },
+      notes: { has_more: false }, things: { has_more: false },
+      agreements: { has_more: false }, events: { has_more: false },
+    },
+    refreshed_at: new Date(now).toISOString(),
+  }
+}
+
+async function installReplayRoutes(page: Page, now: number) {
+  let published = false
+  const currentMarker = () => published ? '16' : '10'
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('view') === 'directory') {
+      await route.fulfill({ json: {
+        view: 'directory', places: replayPlaces,
+        residents: [{ id: 5, handle: 'map-walker' }],
+      } })
+      return
+    }
+    const requested = url.searchParams.get('after_change_marker')
+    const marker = requested ?? currentMarker()
+    await route.fulfill({ json: replaySnapshot(now, marker === '16', marker) })
+  })
+  await page.route('**/api/changes**', async route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    if (since === null) {
+      await route.fulfill({ json: { change_marker: currentMarker() } })
+      return
+    }
+    if (since === '10' && published) {
+      await route.fulfill({ json: {
+        change_marker: '16', unchanged: false, has_more: false, next_since: '16',
+        changes: [{
+          change_id: '11', created_at: new Date(now).toISOString(), kind: 'action',
+          actor: 'map-walker', detail: {
+            action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
+          },
+        }, {
+          change_id: '12', created_at: new Date(now).toISOString(), kind: 'note',
+          actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
+        }, {
+          change_id: '13', created_at: new Date(now).toISOString(), kind: 'note',
+          actor: 'map-walker', detail: { place_id: 3, note_id: 78 },
+        }, {
+          change_id: '14', created_at: new Date(now).toISOString(), kind: 'action',
+          actor: 'map-walker', detail: {
+            action: 'use', status: 'applied', place_id: 3, source_thing_id: 9,
+          },
+        }, {
+          change_id: '15', created_at: new Date(now).toISOString(), kind: 'action',
+          actor: 'map-walker', detail: {
+            action: 'move', from_place_id: 3, to_place_id: 2,
+          },
+        }, {
+          change_id: '16', created_at: new Date(now - 600_001).toISOString(), kind: 'note',
+          actor: 'map-walker', detail: { place_id: 3, note_id: 79 },
+        }],
+      } })
+      return
+    }
+    await route.fulfill({ json: {
+      change_marker: currentMarker(), unchanged: true, has_more: false,
+      next_since: currentMarker(), changes: [],
+    } })
+  })
+  await page.route('**/api/events**', async route => {
+    await route.fulfill({ json: {
+      change_marker: currentMarker(), has_more: false, next_before_id: null, events: [],
+    } })
+  })
+  await page.route('**/api/residents**', async route => {
+    const marker = new URL(route.request().url()).searchParams.get('after_change_marker')
+      ?? currentMarker()
+    await route.fulfill({ json: {
+      change_marker: marker,
+      residents: replaySnapshot(now, marker === '16', marker).residents,
+      total: 1, has_more: false, next_before_id: null,
+    } })
+  })
+  await page.route('**/api/note/77', route => route.fulfill({ json: {
+    note: { id: 77, body: 'Earlier line\nEarlier detail stays in the ledger.' },
+  } }))
+  await page.route('**/api/note/78', route => route.fulfill({ json: {
+    note: { id: 78, body: 'L'.repeat(61) + '\nLatest detail stays in the ledger.' },
+  } }))
+  await page.route('**/api/note/79', route => route.fulfill({ json: {
+    note: { id: 79, body: 'Too old to replay' },
+  } }))
+  await page.route('**/api/drawing/**', async route => {
+    const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(
+      new URL(route.request().url()).pathname,
+    )
+    await route.fulfill(match ? { json: {
+      type: match[1], id: Number(match[2]), source: null, drawing: null,
+    } } : { status: 404, json: { error: 'drawing not found' } })
+  })
+  return { publish: () => { published = true } }
+}
+
+test('new change rows replay once in recorded order and leave truthful residue', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  fixture.publish()
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  const replay = page.locator('.live-replay-portrait')
+  await expect(replay).toHaveCount(1)
+  await expect(replay).toHaveAttribute('data-live-replay-key', 'change:11')
+  const duration = Number(await replay.getAttribute('data-replay-duration'))
+  expect(duration).toBeGreaterThanOrEqual(1_000)
+  expect(duration).toBeLessThanOrEqual(3_000)
+  const trail = page.locator('.live-trail')
+  await expect(trail).toHaveCount(1)
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+  await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+  const start = await replay.evaluate((node, line) => ({
+    left: Number.parseFloat((node as HTMLElement).style.left),
+    top: Number.parseFloat((node as HTMLElement).style.top),
+    x1: Number(line.getAttribute('x1')),
+    y1: Number(line.getAttribute('y1')),
+  }), await trail.elementHandle())
+  expect(Math.abs(start.left - start.x1)).toBeLessThan(1)
+  expect(Math.abs(start.top - start.y1)).toBeLessThan(1)
+
+  const replayPosition = () => replay.evaluate(node => {
+    const ground = node.closest('.live-plate-ground')!.getBoundingClientRect()
+    const box = node.getBoundingClientRect()
+    return {
+      x: ((box.left + box.width / 2 - ground.left) / ground.width) * 100,
+      y: ((box.top + box.height / 2 - ground.top) / ground.height) * 100,
+    }
+  })
+  await expect.poll(async () => (await replayPosition()).x, { timeout: duration })
+    .toBeGreaterThan(35)
+  const midpoint = await replayPosition()
+  expect(midpoint.x).toBeGreaterThan(35)
+  expect(midpoint.x).toBeLessThan(65)
+  expect(Math.abs(midpoint.y - 67)).toBeLessThan(2)
+
+  await page.clock.fastForward(duration)
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
+  await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+  await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+
+  await page.clock.fastForward(650)
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
+  await expect(page.locator('.live-speech-bubble')).toHaveText('L'.repeat(59) + '…')
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(1)
+  await expect(page.locator('#live-ledger')).toContainText('Latest detail stays in the ledger.')
+
+  await page.clock.fastForward(650)
+  const pulsedThing = page.locator('.live-thing-specimen.live-pulse')
+  await expect(pulsedThing).toHaveCount(1)
+  await expect(pulsedThing).toHaveAttribute('data-live-thing-id', '9')
+  await expect(pulsedThing).toHaveAttribute('data-live-thing-place-id', '3')
+  await expect(pulsedThing).toHaveAttribute('data-live-pulse-for', 'change:14')
+  await expect(page.locator('.live-action-mark')).toHaveCount(0)
+
+  await page.clock.fastForward(600)
+  await expect(replay).toHaveCount(0)
+  await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+  await expect(trail).toHaveCount(1)
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
+  await expect(page.locator('#live-ledger')).not.toContainText('Too old to replay')
+  await expect(page.locator('#live-ledger')).not.toContainText('moved: Harbor room → Cinder lane')
+  const platePortrait = page.locator('#live-plates .live-portrait')
+  await expect(platePortrait).toHaveAccessibleName(/map-walker/u)
+  await expect(platePortrait).not.toHaveAccessibleName(/Earlier|L{10}/u)
+
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.clock.fastForward(100)
+  await expect(replay).toHaveCount(0)
+  await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+  await expect(trail).toHaveCount(1)
+  await page.clock.fastForward(600_001)
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+  await expect(trail).toHaveCount(1)
+})
+
+test('reduced motion shows new records statically without replay animation', async ({ page }) => {
+  const now = Date.now()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  fixture.publish()
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(page.locator('.live-trail')).toHaveCount(1)
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
+  await expect(page.locator('.live-speech-bubble')).toHaveText('L'.repeat(59) + '…')
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+  await expect(page.locator('.live-speech-bubble')).toHaveCSS('animation-name', 'none')
+})
 
 test('the Live tab draws verified recent marks, drills through plates, and never draws the world root', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
   const worldDrawingRequests: string[] = []
   const changeCursors: Array<string | null> = []
+  const eventWindows: Array<string | null> = []
   const snapshotMarkers: Array<string | null> = []
   const writes: string[] = []
   let moderationPublished = false
@@ -141,23 +377,24 @@ test('the Live tab draws verified recent marks, drills through plates, and never
     } })
   })
   await page.route('**/api/events**', async route => {
+    eventWindows.push(new URL(route.request().url()).searchParams.get('within_seconds'))
     await route.fulfill({ json: {
       change_marker: '13', has_more: false, next_before_id: null,
       events: [{
-        id: 103, at: new Date(now - 30_000).toISOString(), kind: 'action',
+        id: 103, change_id: '13', at: new Date(now - 30_000).toISOString(), kind: 'action',
         actor: 'map-walker', detail: {
           action: 'use', status: 'applied', place_id: 3, source_thing_id: 9,
         },
       }, {
-        id: 102, at: new Date(now - 60_000).toISOString(), kind: 'note',
+        id: 102, change_id: '12', at: new Date(now - 60_000).toISOString(), kind: 'note',
         actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
       }, {
-        id: 101, at: new Date(now - 120_000).toISOString(), kind: 'action',
+        id: 101, change_id: '11', at: new Date(now - 120_000).toISOString(), kind: 'action',
         actor: 'map-walker', detail: {
           action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
         },
       }, {
-        id: 100, at: new Date(now - 590_000).toISOString(), kind: 'note',
+        id: 100, change_id: '10', at: new Date(now - 590_000).toISOString(), kind: 'note',
         actor: 'archive-walker', detail: { place_id: 2, note_id: 78 },
       }],
     } })
@@ -215,7 +452,20 @@ test('the Live tab draws verified recent marks, drills through plates, and never
   await expect(page.locator('.live-plate-title')).toHaveText('the world')
   await expect(page.locator('#live-plates .live-island')).toHaveCount(2)
   await expect(page.locator('.live-trail')).toHaveCount(1)
+  const openingReplay = page.locator('.live-replay-portrait')
+  await expect(openingReplay).toHaveCount(1)
+  await expect(openingReplay).toHaveAttribute('data-live-replay-key', 'change:11')
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
+  const openingDuration = Number(await openingReplay.getAttribute('data-replay-duration'))
+  expect(openingDuration).toBeGreaterThanOrEqual(1_000)
+  expect(openingDuration).toBeLessThanOrEqual(3_000)
+  await page.clock.fastForward(openingDuration)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
+  await page.clock.fastForward(650)
+  await expect(openingReplay).toHaveCount(0)
+  await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(1)
+  await expect(page.locator('.live-speech-bubble')).toHaveText('A bell answers')
   await expect(page.locator('#live-ledger')).toContainText('A bell answers')
   await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Harbor room')
   await expect(page.locator('#live-ledger')).toContainText('used thing #9 in Harbor room')
@@ -230,6 +480,7 @@ test('the Live tab draws verified recent marks, drills through plates, and never
     .locator('.live-island-terrain')
   await expect(cinderTerrain.locator('.drawing-authored')).toHaveCount(8)
   expect(changeCursors.slice(0, 3)).toEqual([null, '10', '11'])
+  expect(eventWindows).toEqual(['1800'])
   await expect.poll(() => snapshotMarkers).toContain('13')
   expect(worldDrawingRequests).toEqual([])
 

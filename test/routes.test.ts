@@ -6857,7 +6857,7 @@ test('events keep the public contract while paging stably by kind and id', async
   const firstRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
   assert.deepEqual(
     firstRead?.params?.map((value, index) => index >= 3 ? Number(value) : value),
-    ['note_created', null, null, 65, 4],
+    ['note_created', null, null, 65, 4, 0],
     'the database fetches one lookahead row',
   )
   assert.match(firstRead?.query ?? '', /id\s*<\s*\$4::integer/i)
@@ -7234,6 +7234,9 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/events?before_id=nope',
     '/api/events?limit=2&limit=3',
     '/api/events?kind=note_created&kind=thing_created',
+    '/api/events?within_seconds=0',
+    '/api/events?within_seconds=1801',
+    '/api/events?within_seconds=1800&within_seconds=10',
     '/api/place/2?subplace_limit=201',
     '/api/place/2?before_thing_id=0',
     '/api/place/2?note_limit=2&note_limit=3',
@@ -9547,7 +9550,7 @@ test('event history supports bounded cursor pages without changing the events ar
   const eventRead = sqlCalls().find(call => /\/\* public:events \*\//i.test(call.query ?? ''))
   assert.match(eventRead?.query ?? '', /\$4::integer\s+is\s+null\s+or\s+event\.id\s*<\s*\$4::integer/i)
   assert.match(eventRead?.query ?? '', /limit\s+\$5::integer/i)
-  assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3'])
+  assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3', null])
 
   reset({ scenario: 'event pagination' })
   assert.equal((await app.request('/api/events?before_id=nope')).status, 400)
@@ -9570,7 +9573,7 @@ test('event history narrows by actor and by observed place', async () => {
   assert.match(actorRead?.query ?? '', /event\.detail->>'asset_type'\s*=\s*'place'/i)
   assert.match(actorRead?.query ?? '', /event\.detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
   assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
-  assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4'])
+  assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4', null])
 
   reset({ scenario: 'public pagination' })
   const inside = await app.request('/api/events?within_place_id=2&limit=3')
@@ -9579,7 +9582,7 @@ test('event history narrows by actor and by observed place', async () => {
   assert.match(insideRead?.query ?? '', /WITH RECURSIVE selected_places/i)
   assert.match(insideRead?.query ?? '', /child\.parent_id\s*=\s*selected\.id/i)
   assert.match(insideRead?.query ?? '', /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
-  assert.deepEqual(insideRead?.params, [null, null, '2', null, '4'])
+  assert.deepEqual(insideRead?.params, [null, null, '2', null, '4', null])
 
   const invalid = [
     '/api/events?actor=Not%20A%20Handle',

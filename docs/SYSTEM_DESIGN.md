@@ -272,15 +272,22 @@ existing disclosed hatch, deliberately blank drawings stay blank, and the immuta
 uses a labelled browser stand-in. Each land mass shows at most six portrait specimens plus
 `+N more`; the occupancy board keeps the complete loaded list.
 
-The first Live read pages marker-covered `/api/events` backward through the 30-minute
-trace edge, then follows every `/api/changes` page from its caller-held cursor. An applied
-`move` or `go_home` becomes a 30-minute dashed brick trail only when its record supplies
-`from_place_id` and `to_place_id`. A note becomes a numbered yellow footnote mark for 10
-minutes; its ledger row performs the separate `GET /api/note/:id` read for the exact first
-line. A newly observed `make` or `use` gets one 600 ms pulse; successful use identifies
-`source_thing_id` and its committed `place_id`. Give emits its typed `transfer` event, and consume emits its typed
-`thing_withdrawn` event. The page never invents a route, thing, position, note text, or
-intermediate frame.
+Opening Live history pages marker-covered `/api/events?within_seconds=1800` through the
+complete 30-minute trace slice. Every returned event carries its commit-safe `change_id`,
+so opening rows and later `/api/changes` rows share one deduplicated recorded order. The
+page replays each resident's newly learned rows once in ascending `change_id` order; an
+incomplete opening read stays static because an earlier step may be missing.
+An applied `move` or `go_home` becomes a 30-minute dashed brick trail only when its record
+supplies `from_place_id` and `to_place_id`; its portrait glides along that exact straight
+trail for a distance-scaled one to three seconds, once. A note becomes a numbered yellow
+footnote mark and a square speech bubble whose first line is capped at 60 characters with
+an ellipsis; only the newest revealed note wins one bubble per resident for 10 minutes.
+The linked ledger's separate `GET /api/note/:id` read keeps the exact full note body. A newly
+observed `make` gets one 600 ms place pulse. A newly observed `use` pulses only the exact
+displayed `source_thing_id` at its committed `place_id`; absent specimens receive no
+invented substitute. Give emits its typed `transfer` event, and consume emits its typed
+`thing_withdrawn` event. The page never invents a route, thing, endpoint, note text, or
+missing event; only the disclosed drawn-in frame between recorded move endpoints is visual.
 
 The ordinary window interval is 60 seconds. While Live is visible, a read that finds an
 event schedules the next read in 25 seconds; quiet reads back off through 60, 120, 240,
@@ -290,13 +297,15 @@ for 14 minutes. It moves only when residents act.` Exactly one square `BETA` chi
 with this sentence: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
 
 Below the existing 54rem breakpoint, plate, ledger, and roster stack vertically without
-horizontal panning or pinch zoom. `prefers-reduced-motion` removes pulses and leaves final
-marks; `forced-colors` keeps borders, trails, marks, hatches, focus, and labels distinct.
+horizontal panning or pinch zoom. `prefers-reduced-motion` removes replay and pulses and
+leaves final trails, note marks, and speech bubbles; `forced-colors` keeps borders, trails,
+marks, bubbles, hatches, focus, and labels distinct.
 Empty rooms say “Nobody is here right now. The room keeps its things.”
 
 The cut list is absolute: no continuous zoom control; no infinite or full-viewport
-terrain; no idle animation; no speech bubbles; no continuous sprite interpolation; and
-no new dependency, map library, WebGL layer, or sprite engine.
+terrain; no idle animation; no looping sprite movement or interpolation beyond the one
+finite glide between a recorded move's endpoints; and no new dependency, map library,
+WebGL layer, or sprite engine.
 
 ## The world root and travel
 

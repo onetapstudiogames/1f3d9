@@ -160,7 +160,10 @@ body or the complete private event detail.
   requires the separate public `GET /api/note/:id` read.
 
 The Live tab draws only facts a record states. It never guesses a route between
-places, a thing used, a note body, an intermediate position, or a missing event.
+places, a thing used, a note body, or a missing event. The one disclosed visual
+in-between is a straight glide along the already drawn trail between a committed
+move record's stated endpoints; the endpoints are recorded fact and the glide is
+browser presentation.
 
 ## 5. The Live tab is a cartographic plate
 
@@ -190,25 +193,37 @@ not a simulation of the present.
 
 ### Honest recent marks
 
-On first entry the page reads marker-covered `/api/events` pages backward until
-the 30-minute trace edge. It then follows every page of `/api/changes` from its
-held cursor. If history cannot be completed, the plate names the incomplete edge
-and draws only records it verified.
+Opening Live history reads every marker-covered
+`/api/events?within_seconds=1800` page. The bounded event rows carry their
+commit-safe `change_id`, so opening history and every later `/api/changes` page
+share one deduplicated recorded order. Newly learned rows replay once in
+ascending `change_id` order for each resident. If opening history cannot be
+completed, the plate names the incomplete edge and draws its verified rows
+statically rather than replaying a sequence that may be missing an earlier step.
 
 - Applied `move` and `go_home` records draw dashed brick trails with arrowheads
-  from their stated old place to their stated new place. They fade over 30
-  minutes.
-- Public notes draw numbered signal-yellow footnote marks for 10 minutes. The
-  synchronized ledger fetches the chosen note and shows its exact first line;
-  hovering, focusing, or tapping either side highlights the other.
-- Newly observed `make` and `use` records receive one 600 ms mark, then become
-  still. Their truthful ledger rows remain in the 30-minute recent record.
+  from their stated old place to their stated new place. A newly learned move
+  slides the resident portrait along that exact straight trail for a distance-
+  scaled one to three seconds, once, then leaves the trail as 30-minute residue.
+- Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
+  note's replay step, a square 2px-ink speech bubble appears beside the speaker
+  with the first line capped at 60 characters, including an honest ellipsis.
+  Only the newest revealed note supplies one bubble per resident. Bubble and mark
+  fade on the same 10-minute record clock. The synchronized ledger separately
+  fetches and keeps the exact full note body; highlighting still links both sides.
+- A newly observed `make` receives one 600 ms place mark. A newly observed `use`
+  pulses only the displayed `source_thing_id` specimen at the record's committed
+  `place_id`; if that exact specimen is unavailable, the page skips the visual
+  instead of guessing. Each then becomes still while its truthful ledger row
+  remains in the 30-minute recent record.
 - `give` remains a typed `transfer` event and `consume` a typed
   `thing_withdrawn` event in the public event ledger. The Live plate does not
   invent a mark, path, or animation for either.
 
-There is no idle bobbing, blinking, particle field, breathing terrain, sprite
-walk, or interpolation between polls. Stillness is a truthful state.
+There is no idle bobbing, blinking, particle field, breathing terrain, looping
+sprite walk, or invented route between polls. Only a newly learned committed
+move receives the disclosed endpoint-to-endpoint glide. Stillness returns after
+each resident's finite queue and remains a truthful state.
 
 ### Cadence and honesty clock
 
@@ -243,9 +258,10 @@ vertically. On a phone, world view is a vertical list of continent plates, each
 with its tiled drawing as the band/header. Plates remain full-width within the
 observatory frame; there is no pinch zoom, horizontal pan, or full-screen canvas.
 
-Under `prefers-reduced-motion`, pulses stop and records render at their final
-state. Under `forced-colors`, plate borders, trails, marks, hatches, focus, and
-labels remain distinguishable without depending on authored colour alone.
+Under `prefers-reduced-motion`, replay and pulses stop; trails, note marks, and
+speech bubbles render immediately at their final static state. Under
+`forced-colors`, plate borders, trails, marks, bubbles, hatches, focus, and labels
+remain distinguishable without depending on authored colour alone.
 
 ## 6. Absolute cuts
 
@@ -254,8 +270,8 @@ These are not deferred enhancements. They are outside the design:
 - a zoom slider or continuous zoom;
 - infinite or full-viewport terrain, and tiling outside plate borders;
 - idle or ambient animation;
-- speech bubbles over portraits;
-- continuous sprite movement or guessed interpolation between polls;
+- looping or continuous sprite movement, arbitrary routes, or interpolation
+  beyond the one finite glide between a recorded move's endpoints;
 - map, WebGL, sprite-engine, or other new dependencies.
 
 The implementation uses the existing DOM/SVG/CSS, window tokens, fetch logic,

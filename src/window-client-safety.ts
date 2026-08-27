@@ -36,6 +36,14 @@ export const WINDOW_CLIENT_SAFETY_JS = `
     return trimmed.slice(0, maximum || 120)
   }
 
+  function safeExactText(value, fallback, maximum, allowEmpty) {
+    if (typeof value !== 'string') return fallback
+    if ((!allowEmpty && !value.trim()) || value.length > maximum || hasUnsafeText(value)) {
+      return fallback
+    }
+    return value
+  }
+
   function safeHandle(value) {
     return typeof value === 'string' && SAFE_HANDLE.test(value) ? value : null
   }
