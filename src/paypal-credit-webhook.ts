@@ -13,6 +13,7 @@ import {
   type PayPalCreditStoreDatabase,
 } from './paypal-credit-store.ts'
 import {
+  PayPalWebhookSignatureError,
   parsePayPalRenewal,
   verifyPayPalWebhook,
   type PayPalEnvironment,
@@ -204,11 +205,22 @@ export async function applyVerifiedPayPalWebhook(
   headers: Headers,
   dependencies: PayPalWebhookApplicationDependencies,
 ): Promise<'credited' | 'ignored' | PayPalDisputeApplicationOutcome> {
-  const verified = await verifyPayPalWebhook(
-    dependencies.environment,
-    { rawBody, headers },
-    dependencies.fetcher ?? fetch,
-  )
+  let verified: boolean
+  try {
+    verified = await verifyPayPalWebhook(
+      dependencies.environment,
+      { rawBody, headers },
+      dependencies.fetcher ?? fetch,
+    )
+  } catch (error) {
+    if (error instanceof PayPalWebhookSignatureError) {
+      throw new PayPalWebhookApplicationError(
+        401,
+        'PayPal webhook signature was not verified.',
+      )
+    }
+    throw error
+  }
   if (!verified) {
     throw new PayPalWebhookApplicationError(401, 'PayPal webhook signature was not verified.')
   }
