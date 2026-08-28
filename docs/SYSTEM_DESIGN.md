@@ -272,24 +272,29 @@ past. This is a cartographic plate, not a game viewport or simulated present.
 The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
 ground; an ordinary unset place uses the disclosed hatch, deliberately blank stays blank,
 and the immutable world uses its stored founder-authored drawing. After the lightweight
-directory is complete, direct children receive fixed rectangular plots in creation-ID
-order. Allocation is append-stable: a later child takes new ground and never moves an
-existing plot. No coordinate is stored. Residents walk above the ground and plots; one
+directory is complete, direct children receive natural, non-grid rectangular plots in
+creation-ID order. Allocation is append-stable: a later child takes open ground and never
+moves an existing plot. No coordinate is stored. Direct residents and named things use
+stable, naturally scattered positions across the available ground instead of a corner
+shelf; adding a later ID does not move an earlier mark. Residents walk above the ground and plots; one
 committed move visibly carries the walker between its fixed endpoints.
 
 Wheel zoom, two-pointer pinch zoom, one-pointer pan, and `Fit` transform only this viewer's
 plate from the scale required to fit the whole current survey through 2.2; append-stable
 growth may take Fit below 0.05, zoom-out never reverses, and there is never a slider. Place clicks still
 drill through shareable tree breadcrumbs. Far zoom shows resident sprites without name
-tags. At a readable zoom, or on pointer hover, tap, keyboard focus, or browser-local Focus,
-a shown tag contains the complete untruncated handle. The focused resident is always
-labelled and lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
+tags. At a readable zoom, pointer hover or keyboard focus brings a covered item forward.
+On touch screens, the first tap brings an item forward and the second tap opens it. A shown
+tag contains the complete untruncated handle. The focused resident is always labelled and
+lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
 and their tooltip carries the complete place name. A plot outside the visible camera may
 skip painting until it returns; this culling changes no fixed coordinate, selection, exact
 count, or public record. An unoverflowed place shows up to six residents
-and six things. Overflow protects badge ground, leaving four resident walker positions and
-five thing specimens, and reports every omission as an exact `+N more` with an intentional
-absorption edge. A viewer-local resident focus is stored only in browser `localStorage`,
+and six things. Overflow protects control ground, leaving four resident walker positions
+and five thing specimens, and reports every omission as an exact `+N more` control. Using
+that control reveals the omitted loaded residents or named things, continues a pending
+thing-names page when one exists, and rearranges the scene so every represented item stays
+reachable. A viewer-local resident focus is stored only in browser `localStorage`,
 not in the URL or city. Focus and the shareable Follow filter clear one another. Finite
 plate positions prioritize the chosen resident and only interaction residents and things
 safely named by public records: a transfer's `asset_id`, an applied use's
@@ -310,8 +315,12 @@ then sums direct counts across each displayed subtree. Live paints after the com
 directory and resident census, before thing names finish. It requests exactly one newest
 names page with `collection=things&within_place_id=<selected-place-id>&limit=50`; that
 recursive scope includes the selected place and every descendant. It never follows that cursor automatically
-or treats those specimens as the count. Loading or failure leaves the plate and exact `+N`
-visible with a retry for names; a missing or contradictory survey prints no exact badge.
+without a viewer request or treats those specimens as the count. `Show more` may follow the
+retained cursor to reveal requested names. Loading or failure leaves the plate and exact
+`+N` visible with a retry for names; a missing or contradictory survey prints no exact badge.
+Live does not block on a redundant focused-place outline when the complete directory and
+marker-covered survey already contain the chosen place. Every actually required directory,
+census, history, or names failure retains its own retry.
 
 Live automatically follows no more than eight 200-row resident-presence pages (1,600
 residents) and eight 200-row marker-covered `/api/events?within_seconds=1800` pages (1,600
@@ -321,9 +330,14 @@ remain; opening events stay static instead of replaying. Hidden tabs pause both 
 continuations.
 
 Every returned opening event carries its commit-safe `change_id`, so opening rows and
-later `/api/changes` rows share one deduplicated recorded order. The page replays each
-resident's newly learned rows once in ascending `change_id` order after opening history is
-complete; an incomplete opening read stays static because an earlier step may be missing.
+later `/api/changes` rows share one deduplicated recorded order. Opening rows paint their
+settled residue without replay. After that baseline, each resident's newly learned rows
+replay once in ascending `change_id` order while the tab stays visible; the first
+successful catch-up after a hidden tab also settles directly without stale replay. An
+incomplete opening read stays static because an earlier step may be missing. Different
+residents may replay concurrently. Normal activity is distributed across the
+time before the next read; when a batch is too busy to finish in that budget, repeated small
+actions are shortened or grouped while each resident's recorded order remains intact.
 An applied `move` or `go_home` draws a dashed brick trail only when its record supplies
 `from_place_id` and `to_place_id`; its portrait walks along that exact straight trail for
 a distance-scaled 3.2 to 8 seconds, once. Presentation ink then fades for 4.5 seconds

@@ -9,8 +9,15 @@ import {
   windowLivePollDelay,
   windowLiveReplayDuration,
   windowLiveReplayOrder,
+  windowLiveReplayPace,
+  windowLiveReplayStartOffsets,
   windowLivePruneTrailStarts,
+  windowLiveScatterSurfaceHeight,
+  windowLiveSeparatedPoints,
+  windowLiveScatteredPoint,
+  windowLiveScatteredPoints,
   windowLiveSpeechLine,
+  windowLiveTouchActivation,
   windowLiveTraceOpacity,
 } from '../src/window-client.ts'
 
@@ -60,6 +67,7 @@ type LiveClientExports = Readonly<{
     capacity: number,
     pinnedIds: readonly number[],
     exactTotal?: number,
+    preferredIds?: readonly number[],
   ) => Readonly<{
     visible: readonly CapacityRow[]
     overflowCount: number
@@ -118,7 +126,11 @@ test('surveyed plots keep every existing rectangle when later-created places tak
   ])
   const appended = Object.freeze([
     ...places,
-    Object.freeze({ id: 40, parent_id: 1, name: 'new ground' }),
+    ...Array.from({ length: 9 }, (_, index) => Object.freeze({
+      id: 40 + index,
+      parent_id: 1,
+      name: `new ground ${index + 1}`,
+    })),
   ])
   const normalize = (plots: readonly SurveyedPlot[]) => [...plots]
     .sort((left, right) => left.id - right.id)
@@ -135,7 +147,7 @@ test('surveyed plots keep every existing rectangle when later-created places tak
   const expanded = normalize(surveyedPlots(appended, 1))
   assert.deepEqual(original.map(plot => plot.id), [4, 9, 21])
   assert.deepEqual(reordered, original)
-  assert.deepEqual(expanded.filter(plot => plot.id !== 40), original)
+  assert.deepEqual(expanded.filter(plot => plot.id < 40), original)
   assert.deepEqual(places.map(place => place.id), [21, 4, 9, 7])
 
   for (const plot of expanded) {
@@ -152,6 +164,169 @@ test('surveyed plots keep every existing rectangle when later-created places tak
       assert.equal(overlaps, false, `plots ${left.id} and ${right.id} overlap`)
     }
   }
+
+  const distinctLefts = new Set(expanded.map(plot => plot.x))
+  const distinctTops = new Set(expanded.map(plot => plot.y))
+  assert.ok(distinctLefts.size > 4, 'the survey must not collapse into four rigid columns')
+  assert.ok(distinctTops.size > 4, 'the survey must use naturally varied vertical positions')
+})
+
+test('direct residents and things receive stable scattered points across the available room', () => {
+  const first = windowLiveScatteredPoints(18, 1_100, 680, 73, 56)
+  const repeated = windowLiveScatteredPoints(18, 1_100, 680, 73, 56)
+  const appended = windowLiveScatteredPoints(24, 1_100, 680, 73, 56)
+
+  assert.deepEqual(repeated, first)
+  assert.deepEqual(appended.slice(0, first.length), first)
+  assert.ok(new Set(first.map(point => point.x)).size > 8)
+  assert.ok(new Set(first.map(point => point.y)).size > 8)
+  for (const point of first) {
+    assert.ok(point.x >= 56 && point.x <= 1_100 - 56)
+    assert.ok(point.y >= 56 && point.y <= 680 - 56)
+  }
+})
+
+test('a resident or thing keeps the same point when the visible set changes', () => {
+  const original = windowLiveScatteredPoint(21, 220, 148, 73, 26)
+  const repeated = windowLiveScatteredPoint(21, 220, 148, 73, 26)
+  const neighbour = windowLiveScatteredPoint(22, 220, 148, 73, 26)
+
+  assert.deepEqual(repeated, original)
+  assert.notDeepEqual(neighbour, original)
+  assert.ok(original.x >= 26 && original.x <= 220 - 26)
+  assert.ok(original.y >= 26 && original.y <= 148 - 26)
+})
+
+test('crowded residents keep append-stable separated points away from control ground', () => {
+  const reserved = Object.freeze([
+    Object.freeze({ x: 116, y: 104, width: 104, height: 44 }),
+  ])
+  const first = windowLiveSeparatedPoints(
+    Object.freeze([21, 22, 23, 24]),
+    220,
+    148,
+    73,
+    40,
+    40,
+    8,
+    1,
+    reserved,
+  )
+  const appended = windowLiveSeparatedPoints(
+    Object.freeze([5, 20, 21, 22, 23, 24]),
+    220,
+    148,
+    73,
+    40,
+    40,
+    8,
+    1,
+    reserved,
+    first,
+  )
+  const rectangle = (point: Readonly<{ x: number; y: number }>) => ({
+    left: point.x - 20,
+    right: point.x + 20,
+    top: point.y - 40,
+    bottom: point.y,
+  })
+
+  for (const id of [21, 22, 23, 24]) {
+    assert.deepEqual(appended[String(id)], first[String(id)])
+  }
+  const rectangles = Object.values(appended).map(rectangle)
+  for (const [index, left] of rectangles.entries()) {
+    for (const right of rectangles.slice(index + 1)) {
+      assert.equal(
+        left.left < right.right && left.right > right.left &&
+          left.top < right.bottom && left.bottom > right.top,
+        false,
+      )
+    }
+    assert.equal(
+      left.left < 220 && left.right > 116 && left.top < 148 && left.bottom > 104,
+      false,
+    )
+  }
+})
+
+test('crowded things use the whole plot without covering Show more', () => {
+  const reserved = Object.freeze([
+    Object.freeze({ x: 116, y: 104, width: 104, height: 44 }),
+  ])
+  const points = windowLiveSeparatedPoints(
+    Object.freeze([20, 21, 22, 23, 24]),
+    220,
+    148,
+    97,
+    94,
+    32,
+    6,
+    0.5,
+    reserved,
+  )
+  const rectangles = Object.values(points).map(point => ({
+    left: point.x - 47,
+    right: point.x + 47,
+    top: point.y - 16,
+    bottom: point.y + 16,
+  }))
+
+  assert.equal(rectangles.length, 5)
+  for (const [index, left] of rectangles.entries()) {
+    for (const right of rectangles.slice(index + 1)) {
+      assert.equal(
+        left.left < right.right && left.right > right.left &&
+          left.top < right.bottom && left.bottom > right.top,
+        false,
+      )
+    }
+    assert.equal(
+      left.left < 220 && left.right > 116 && left.top < 148 && left.bottom > 104,
+      false,
+    )
+  }
+})
+
+test('expanded root crowds reserve enough new ground for every loaded item', () => {
+  const residentHeight = windowLiveScatterSurfaceHeight(680, 1_100, 1_600, 50, 50, 12)
+  const thingHeight = windowLiveScatterSurfaceHeight(680, 1_100, 400, 144, 48, 12, true)
+
+  assert.ok(residentHeight > 680)
+  assert.ok(thingHeight > 680)
+  assert.equal(Object.keys(windowLiveSeparatedPoints(
+    Array.from({ length: 1_600 }, (_, index) => index + 1),
+    1_100,
+    residentHeight,
+    20,
+    50,
+    50,
+    12,
+    1,
+    [{ x: 0, y: 0, width: 1_100, height: 680 }],
+  )).length, 1_600)
+  assert.equal(Object.keys(windowLiveSeparatedPoints(
+    Array.from({ length: 400 }, (_, index) => index + 1),
+    1_100,
+    thingHeight,
+    40,
+    144,
+    48,
+    12,
+    0.5,
+    [
+      { x: 0, y: 0, width: 1_100, height: 680 },
+      { x: 1_100 - 116, y: thingHeight - 52, width: 116, height: 52 },
+    ],
+  )).length, 400)
+})
+
+test('touch activation brings a covered item forward before a second tap opens it', () => {
+  assert.equal(windowLiveTouchActivation('mouse', null, 'resident:7'), 'open')
+  assert.equal(windowLiveTouchActivation('pen', null, 'resident:7'), 'open')
+  assert.equal(windowLiveTouchActivation('touch', null, 'resident:7'), 'bring-forward')
+  assert.equal(windowLiveTouchActivation('touch', 'resident:7', 'resident:7'), 'open')
+  assert.equal(windowLiveTouchActivation('touch', 'thing:9', 'resident:7'), 'bring-forward')
 })
 
 test('live plot visibility keeps the viewport and overscan while Fit includes the whole survey', () => {
@@ -276,6 +451,39 @@ test('recorded movement is visibly slower than the mockup and still scales with 
   assert.equal(windowLiveReplayDuration(50, middle + 1_000), middle)
 })
 
+test('replay pacing spreads normal activity and catches busy scenes up before the next read', () => {
+  const normal = windowLiveReplayPace(4, 24_000)
+  const busy = windowLiveReplayPace(40, 24_000)
+
+  assert.ok(normal.startGapMs >= 1_000)
+  assert.ok(normal.actionDurationMs >= 600)
+  assert.ok(busy.startGapMs < normal.startGapMs)
+  assert.ok(busy.actionDurationMs < normal.actionDurationMs)
+  assert.ok(busy.startGapMs * 39 + busy.actionDurationMs <= 24_000)
+  assert.deepEqual(windowLiveReplayPace(0, 24_000), {
+    startGapMs: 0,
+    actionDurationMs: 0,
+  })
+})
+
+test('replay start offsets keep recorded-together actors together and spread later groups', () => {
+  const at = new Date('2026-08-28T12:00:00.000Z')
+  const later = new Date('2026-08-28T12:00:02.000Z')
+  const offsets = windowLiveReplayStartOffsets([
+    { actor: 'first', at },
+    { actor: 'second', at },
+    { actor: 'first', at: later },
+    { actor: 'third', at: later },
+  ], 25_000)
+  const third = offsets.third ?? -1
+
+  assert.equal(offsets.first, 0)
+  assert.equal(offsets.second, 0)
+  assert.ok(third >= 1_000)
+  assert.ok(third < 25_000)
+  assert.deepEqual(windowLiveReplayStartOffsets([], 25_000), {})
+})
+
 test('resident capacity reserves the focused resident and interaction partner with an exact count', () => {
   const selectCapacity = liveClientExports.windowLiveCapacitySelection
   assert.equal(typeof selectCapacity, 'function')
@@ -305,6 +513,37 @@ test('capacity remains physically bounded when focus has more pins than slots', 
 
   assert.deepEqual(selection.visible.map(row => row.id), [3, 4])
   assert.equal(selection.overflowCount, 2)
+})
+
+test('capacity can preserve preferred visible IDs without mutating either page', () => {
+  const selectCapacity = liveClientExports.windowLiveCapacitySelection
+  assert.equal(typeof selectCapacity, 'function')
+  if (!selectCapacity) return
+
+  const first = Object.freeze([
+    Object.freeze({ id: 7, label: 'seven' }),
+    Object.freeze({ id: 3, label: 'three' }),
+    Object.freeze({ id: 11, label: 'eleven' }),
+  ])
+  const appended = Object.freeze([
+    Object.freeze({ id: 19, label: 'nineteen' }),
+    ...first,
+  ])
+
+  const initial = selectCapacity(first, 2, Object.freeze([]))
+  const next = selectCapacity(
+    appended,
+    2,
+    Object.freeze([]),
+    appended.length,
+    Object.freeze(initial.visible.map(row => row.id)),
+  )
+
+  assert.deepEqual(initial.visible.map(row => row.id), [7, 3])
+  assert.deepEqual(next.visible.map(row => row.id), [7, 3])
+  assert.equal(next.overflowCount, 2)
+  assert.deepEqual(first.map(row => row.id), [7, 3, 11])
+  assert.deepEqual(appended.map(row => row.id), [19, 7, 3, 11])
 })
 
 test('thing capacity reserves the focused interaction thing with an exact count', () => {
