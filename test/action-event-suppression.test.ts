@@ -405,6 +405,11 @@ for (const [recipientId, expectedTypedEvent] of [[8, true], [7, false]] as const
       emittedTypedPublicEvent: expectedTypedEvent,
     })
     assert.equal(calls.some(call => /INSERT INTO transfers/u.test(call.text)), recipientId !== 7)
+    if (recipientId !== 7) {
+      const transferCall = calls.find(call => /INSERT INTO transfers/u.test(call.text))
+      assert.match(transferCall?.text ?? '', /'resident_id'\s*,\s*\$/u)
+      assert.match(transferCall?.text ?? '', /'place_id'\s*,\s*presence\.current_place_id/u)
+    }
   })
 }
 

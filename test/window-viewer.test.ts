@@ -84,7 +84,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
 })
 
 test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
-  const views = ['map', 'place', 'conversations', 'happenings', 'agreements', 'archive']
+  const views = ['map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive']
   for (const view of views) {
     const panel = WINDOW_HTML.match(
       new RegExp(`<section id="${view}-panel"[\\s\\S]*?<\\/section>`),
@@ -143,7 +143,8 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_HTML, /id="live-panel"[\s\S]*?aria-labelledby="live-tab"/u)
   for (const id of [
     'live-clock', 'live-breadcrumbs', 'live-plates', 'live-ledger',
-    'live-roster', 'live-resident-page',
+    'live-roster', 'live-resident-page', 'live-viewport', 'live-stage',
+    'live-fit', 'live-pause', 'live-focus-status',
   ]) assert.match(WINDOW_HTML, new RegExp(`id="${id}"`))
   assert.equal((WINDOW_HTML.match(/>BETA</gu) ?? []).length, 1)
   assert.match(
@@ -154,7 +155,24 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_JS, /state\.view === 'live'/u)
 
   const shipped = `${WINDOW_HTML}\n${WINDOW_JS}`
-  assert.doesNotMatch(shipped, /type="range"|zoom-slider|pinch|pan-control/iu)
+  assert.doesNotMatch(shipped, /type="range"|zoom-slider/iu)
+  assert.match(WINDOW_JS, /addEventListener\('wheel'/u)
+  assert.match(WINDOW_JS, /addEventListener\('pointerdown'/u)
+  assert.match(WINDOW_JS, /addEventListener\('pointermove'/u)
+  assert.match(WINDOW_JS, /LIVE_FOCUS_STORAGE_KEY/u)
+  assert.match(WINDOW_JS, /localStorage\.getItem\(LIVE_FOCUS_STORAGE_KEY\)/u)
+  assert.match(WINDOW_JS, /localStorage\.setItem\(LIVE_FOCUS_STORAGE_KEY/u)
+  assert.match(WINDOW_JS, /data-live-focus-resident/u)
+  assert.match(WINDOW_JS, /live-overflow-absorbing/u)
+  assert.match(WINDOW_JS, /LIVE_TRAIL_LIFETIME_MS\s*=\s*[3-8]_?\d{3}/u)
+  assert.match(
+    WINDOW_JS,
+    /function renderLiveAging\(\)[\s\S]*?windowLivePruneTrailStarts\(\s*state\.live\.trailStarts/u,
+  )
+  assert.match(WINDOW_JS, /data-live-overflow-count/u)
+  assert.match(WINDOW_JS, /thingsPage\.loading\s*\|\|\s*!thingsPage\.initialized\s*\|\|\s*thingsPage\.hasMore/u)
+  assert.match(WINDOW_CSS, /\.live-viewport\s*\{[\s\S]*?touch-action:\s*none/u)
+  assert.match(WINDOW_CSS, /\.live-stage\s*\{[\s\S]*?transform-origin:\s*0 0/u)
   assert.match(WINDOW_JS, /live-replay-portrait/u)
   assert.match(WINDOW_JS, /live-speech-bubble/u)
   assert.match(WINDOW_JS, /prefers-reduced-motion: reduce/u)
@@ -192,7 +210,7 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   assert.match(WINDOW_CSS, /\.drawing-undrawn/u)
   assert.match(
     WINDOW_CSS,
-    /\.live-terrain\s*>\s*\.drawing-grid:first-child\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
+    /\.live-plot-terrain\s*>\s*\.drawing-grid:first-child\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
   )
   assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
   assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
@@ -209,10 +227,10 @@ test('the live plate states its honest timing and drawing rules in shipped code'
     WINDOW_CSS,
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-replay-portrait[\s\S]*?animation:\s*none/u,
   )
-  assert.match(WINDOW_CSS, /@media \(forced-colors: active\)[\s\S]*?\.live-plate/u)
+  assert.match(WINDOW_CSS, /@media \(forced-colors: active\)[\s\S]*?\.live-stage-shell/u)
   assert.match(
     WINDOW_CSS,
-    /@media \(max-width: 54rem\)[\s\S]*?\.live-islands\s*\{[^}]*grid-template-columns:\s*1fr[^}]*\}[\s\S]*?\.live-island-terrain/u,
+    /@media \(max-width: 54rem\)[\s\S]*?\.live-layout\s*\{[^}]*display:\s*block[^}]*\}[\s\S]*?\.live-viewport/u,
   )
 })
 

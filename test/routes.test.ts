@@ -5408,6 +5408,8 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
   assert.equal(gift.status, 200, await gift.clone().text())
   const giftWrite = sqlCalls().find(call => /WITH\s+recipient[\s\S]*moved_asset/i.test(call.query ?? ''))
   assert.match(giftWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*recipient\.id/i)
+  assert.match(giftWrite?.query ?? '', /'resident_id'\s*,\s*\$3::?integer/iu)
+  assert.match(giftWrite?.query ?? '', /'place_id'\s*,\s*actor_presence\.current_place_id/iu)
   assert.doesNotMatch(giftWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 
   reset({ scenario: 'offer lock' })

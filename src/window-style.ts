@@ -491,7 +491,14 @@ button { color: inherit; }
   border-bottom: 3px solid var(--line);
   font: 750 0.68rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
-.live-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.live-breadcrumbs {
+  display: flex;
+  flex: 1 1 18rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
 .live-breadcrumb {
   min-width: 24px;
   min-height: 24px;
@@ -507,7 +514,24 @@ button { color: inherit; }
 }
 .live-breadcrumb[aria-current="location"] { color: var(--signal); text-decoration: none; }
 .live-breadcrumb-separator { color: var(--paper-line); }
-.live-clock { margin: 0; color: var(--paper-light); }
+.live-camera-controls { display: flex; flex: 0 0 auto; gap: 0.45rem; align-items: center; }
+.live-control-button {
+  min-height: 2.35rem;
+  padding: 0.42rem 0.7rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  border-radius: 0;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.42);
+  cursor: pointer;
+  font: 900 0.64rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.live-control-button:hover { background: var(--paper-light); }
+.live-control-button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.42); }
+.live-control-button[aria-pressed="true"] { color: var(--paper-light); background: var(--brick); }
+.live-clock { flex: 0 1 24rem; margin: 0; color: var(--paper-light); text-align: end; }
 .live-history-status {
   min-height: 2.5rem;
   margin: 0;
@@ -530,26 +554,127 @@ button { color: inherit; }
   text-underline-offset: 0.18em;
 }
 .live-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
-.live-stage { min-width: 0; background: var(--night-soft); }
-.live-plates { min-height: 28rem; padding: clamp(1rem, 3vw, 2rem); }
-.live-plate {
+.live-stage-shell {
   min-width: 0;
-  overflow: hidden;
+  padding: 0.65rem;
   color: var(--ink);
   background: var(--paper);
   border: 4px solid var(--line);
-  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.36);
+  box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.42);
 }
-.live-plate-caption {
+.live-viewport {
+  position: relative;
+  height: min(72vh, 42.5rem);
+  min-height: 30rem;
+  overflow: hidden;
+  color: var(--paper-light);
+  background: var(--night);
+  border: 3px solid var(--line);
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+}
+.live-viewport[data-live-dragging="true"] { cursor: grabbing; }
+.live-stage {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: var(--live-stage-width, 87.5rem);
+  height: var(--live-stage-height, 61.25rem);
+  min-width: 0;
+  overflow: visible;
+  background: var(--night);
+  transform-origin: 0 0;
+  will-change: transform;
+  isolation: isolate;
+}
+.live-world-ground {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.8fr);
-  gap: 0.25rem 1rem;
-  padding: 0.75rem 0.9rem;
+  grid-template-columns: repeat(auto-fill, var(--live-world-tile, 3.5rem));
+  grid-auto-rows: var(--live-world-tile, 3.5rem);
+  align-content: start;
+  overflow: hidden;
+  background-color: var(--night);
+  background-image:
+    linear-gradient(rgba(148, 199, 188, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 199, 188, 0.08) 1px, transparent 1px);
+  background-size: var(--live-world-tile, 3.5rem) var(--live-world-tile, 3.5rem);
+  image-rendering: pixelated;
+}
+.live-world-ground > .drawing-grid {
+  width: var(--live-world-tile, 3.5rem);
+  height: var(--live-world-tile, 3.5rem);
+}
+.live-plates {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  min-height: 0;
+  padding: 0;
+  pointer-events: none;
+}
+.live-plates > .loading-row {
+  position: absolute;
+  inset: 1rem auto auto 1rem;
+  max-width: 24rem;
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--line);
+}
+.live-map-caption {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 100%;
+  gap: 0.25rem;
+  padding: 0.65rem 0.8rem;
   color: var(--paper-light);
   background: var(--forest-deep);
-  border-bottom: 3px solid var(--line);
+  border: 3px solid var(--line);
+  border-bottom: 0;
+  pointer-events: none;
 }
-.live-plate-caption .block-number { grid-column: 1 / -1; margin: 0; }
+.live-map-caption .block-number,
+.live-map-caption .live-plate-title,
+.live-map-caption .live-plate-legend { margin: 0; }
+.live-map-caption .live-plate-title { font-size: 1.35rem; }
+.live-map-caption .live-plate-legend { color: var(--sky); }
+.live-stage-readout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.85fr);
+  gap: 0.65rem 1rem;
+  align-items: center;
+  min-height: 3.2rem;
+  padding: 0.55rem 0.65rem 0;
+  font: 750 0.62rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-camera-help, .live-focus-status { margin: 0; }
+.live-camera-help { color: var(--muted); }
+.live-focus-status {
+  justify-self: end;
+  color: var(--forest-deep);
+  font-weight: 850;
+  text-align: end;
+}
+.live-focus-status[data-focused="true"]::before { content: "FOCUS / "; color: var(--brick); }
+.live-focus-clear {
+  min-height: 24px;
+  margin-inline-start: 0.4rem;
+  padding: 0;
+  color: var(--brick-deep);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
 .live-plate-title {
   margin: 0;
   overflow-wrap: anywhere;
@@ -561,14 +686,6 @@ button { color: inherit; }
   margin: 0;
   color: var(--sky);
   font: 0.62rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
-}
-.live-plate-ground { position: relative; isolation: isolate; padding: clamp(0.75rem, 2vw, 1.25rem); }
-.live-terrain {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  overflow: hidden;
-  border: 2px solid var(--line);
-  background: var(--paper-light);
 }
 .drawing-grid {
   display: block;
@@ -602,50 +719,7 @@ button { color: inherit; }
 .drawing-loading { opacity: 0.72; }
 .drawing-unavailable { border-style: solid; }
 .drawing-authored rect { vector-effect: non-scaling-stroke; }
-.live-terrain .drawing-undrawn-label { display: none; }
-.live-terrain > .drawing-grid:first-child .drawing-undrawn-label { display: block; }
-.live-plate-ground > .live-portrait-grid { margin-top: 0.75rem; }
-.live-islands {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: repeat(var(--live-columns, 1), minmax(0, 1fr));
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-.live-island {
-  min-width: 0;
-  padding: 0.6rem;
-  background: var(--paper-light);
-  border: 2px solid var(--line);
-  box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.16);
-}
-.live-island-open {
-  display: flex;
-  gap: 0.65rem;
-  align-items: center;
-  width: 100%;
-  min-height: 44px;
-  padding: 0.55rem 0 0;
-  color: var(--forest-deep);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  text-align: start;
-}
-.live-island-open::after { content: "→"; margin-inline-start: auto; color: var(--brick); }
-.live-island-terrain { grid-template-columns: repeat(8, minmax(0, 1fr)); }
-.live-island-name {
-  overflow-wrap: anywhere;
-  font-family: "Arial Narrow", "Aptos Narrow", system-ui, sans-serif;
-  font-size: 1.05rem;
-  font-weight: 900;
-  line-height: 1;
-  text-transform: uppercase;
-}
-.live-island-owner { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.65rem; }
 .live-portrait-grid { display: flex; flex-wrap: wrap; gap: 0.38rem; align-items: start; }
-.live-island > .live-portrait-grid { margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px dashed var(--paper-line); }
 .live-portrait-wrap {
   position: relative;
   display: grid;
@@ -665,24 +739,16 @@ button { color: inherit; }
 }
 .live-portrait.asleep { opacity: 0.48; }
 .live-portrait-name {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   font: 750 0.48rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
   text-overflow: ellipsis;
-}
-.live-replay-portrait {
-  position: absolute;
-  z-index: 4;
-  width: 3.1rem;
-  margin: 0;
-  transform: translate(-50%, -50%);
-  pointer-events: auto;
-  animation-name: live-recorded-glide;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
+  white-space: nowrap;
 }
 .live-speech-bubble {
   position: absolute;
-  z-index: 5;
+  z-index: 20;
   inset-block-end: calc(100% + 0.38rem);
   inset-inline-start: 50%;
   width: max-content;
@@ -699,14 +765,6 @@ button { color: inherit; }
   font: 750 0.58rem/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
   overflow-wrap: anywhere;
   text-align: start;
-}
-.live-portrait-more {
-  align-self: center;
-  padding: 0.28rem 0.4rem;
-  color: var(--paper-light);
-  background: var(--forest);
-  border: 2px solid var(--line);
-  font: 800 0.55rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 .live-room-empty {
   margin: 0;
@@ -739,16 +797,6 @@ button { color: inherit; }
   text-decoration: none;
 }
 .live-thing-name { overflow-wrap: anywhere; }
-.live-trace-layer { position: absolute; z-index: 2; inset: 0; pointer-events: none; }
-.live-traces { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.live-trail {
-  stroke: var(--brick);
-  stroke-width: 1.25;
-  stroke-dasharray: 3 2;
-  vector-effect: non-scaling-stroke;
-  pointer-events: stroke;
-  cursor: pointer;
-}
 .live-trace-arrowhead { fill: var(--brick); }
 .live-footnote-mark, .live-action-mark {
   position: absolute;
@@ -800,6 +848,278 @@ button { color: inherit; }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
 .live-roster-list .resident-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); justify-content: normal; align-items: center; }
 .live-roster-list .resident-number { grid-column: 2; }
+.live-focus-interactions {
+  margin: 0 0 1rem;
+  padding: 0.7rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 3px solid var(--line);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.38);
+}
+.live-focus-interactions h3 { margin: 0.2rem 0; font-size: 1.1rem; text-transform: uppercase; }
+.live-focus-interactions-copy { margin: 0 0 0.55rem; font: 750 0.62rem/1.45 ui-monospace, monospace; }
+.live-focus-resident-card {
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: center;
+  margin: 0 0 0.55rem;
+  padding: 0.38rem;
+  color: var(--paper-light);
+  background: var(--forest-deep);
+  border: 2px solid var(--line);
+}
+.live-focus-resident-card .drawing-grid { width: 2.4rem; border: 1px solid var(--paper-line); }
+.live-focus-resident-card-copy { display: grid; min-width: 0; gap: 0.12rem; }
+.live-focus-resident-card-name {
+  overflow: hidden;
+  font: 900 0.68rem ui-monospace, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-focus-resident-card-location { font: 750 0.58rem/1.35 ui-monospace, monospace; }
+.live-focus-thing-list { display: grid; gap: 0.3rem; }
+.live-focus-thing-card {
+  min-height: 24px;
+  padding: 0.28rem 0.38rem;
+  overflow-wrap: anywhere;
+  color: var(--paper-light);
+  background: var(--forest-deep);
+  border: 2px solid var(--line);
+  font: 850 0.62rem/1.35 ui-monospace, monospace;
+  text-decoration: none;
+}
+.live-focus-thing-card:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
+.live-roster-list [data-live-focus-resident] { outline: 4px solid var(--signal); outline-offset: 2px; }
+.live-roster-list [data-live-focus-partner] { outline: 3px solid var(--sky); outline-offset: 1px; }
+[data-live-focus-thing] { outline: 3px solid var(--sky); outline-offset: 1px; }
+
+/* The live plate is a surveyed map: plots stay put and every moving mark sits above them. */
+.live-plot {
+  position: absolute;
+  z-index: 2;
+  min-width: 8rem;
+  min-height: 6rem;
+  overflow: visible;
+  color: var(--ink);
+  background: #20423a;
+  border: 3px solid var(--line);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.48);
+  pointer-events: auto;
+  image-rendering: pixelated;
+}
+.live-plot[data-place-kind="continent"] {
+  border-width: 4px;
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5);
+}
+.live-plot[data-undrawn="true"] { background: transparent; border-style: dashed; box-shadow: none; }
+.live-plot-terrain {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  align-content: start;
+  overflow: hidden;
+  background-color: #20423a;
+  image-rendering: pixelated;
+}
+.live-plot-terrain .drawing-undrawn-label { display: none; }
+.live-plot-terrain > .drawing-grid:first-child .drawing-undrawn-label { display: block; }
+.live-plot-open {
+  position: absolute;
+  z-index: 8;
+  inset: -0.8rem auto auto 0.55rem;
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  max-width: calc(100% - 1.1rem);
+  min-height: 1.75rem;
+  padding: 0.18rem 0.5rem;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  border-radius: 0;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.42);
+  cursor: pointer;
+  font: 900 0.62rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-plot-open::after { content: "→"; flex: 0 0 auto; color: var(--brick); }
+.live-plot-open:hover { background: var(--signal); }
+.live-plot-owner {
+  position: absolute;
+  z-index: 7;
+  inset: 1.1rem auto auto 0.45rem;
+  max-width: calc(100% - 0.9rem);
+  margin: 0;
+  padding: 0.1rem 0.28rem;
+  overflow: hidden;
+  color: var(--ink);
+  background: rgba(255, 249, 232, 0.88);
+  font: 800 0.5rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-plot > .live-portrait-grid {
+  position: absolute;
+  z-index: 7;
+  inset: 0;
+  padding: 0;
+  pointer-events: none;
+}
+.live-plot > .live-thing-shelf {
+  position: absolute;
+  z-index: 6;
+  inset: 2.45rem 0.45rem auto 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.24rem;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+}
+.live-plot .live-thing-specimen {
+  grid-template-columns: 1.55rem minmax(0, 1fr);
+  min-width: 0;
+  padding: 0.12rem;
+  background: rgba(255, 249, 232, 0.94);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+.live-plot .live-thing-name {
+  overflow: hidden;
+  font-size: 0.44rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-walker-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.live-walker-layer { z-index: 12; }
+.live-walker, .live-replay-portrait {
+  position: absolute;
+  z-index: 12;
+  display: grid;
+  width: 3.1rem;
+  margin: 0;
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+  will-change: left, top;
+}
+.live-plot .live-walker { width: 2.5rem; }
+.live-replay-portrait {
+  z-index: 18;
+  animation-name: live-recorded-glide;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+.live-root-walkers .live-resident-more { inset: 5.2rem auto auto 22rem; }
+.live-focus-thing-shelf {
+  position: absolute;
+  z-index: 9;
+  inset: 1rem 1rem auto auto;
+  width: 32rem;
+  max-width: calc(100% - 2rem);
+  margin: 0;
+  padding: 0.45rem;
+  background: rgba(13, 37, 31, 0.72);
+  border: 2px solid var(--line);
+  pointer-events: auto;
+}
+.live-stage-empty {
+  position: absolute;
+  z-index: 8;
+  inset: 8rem auto auto 1rem;
+  max-width: 24rem;
+  color: var(--paper-light);
+  background: rgba(13, 37, 31, 0.78);
+  pointer-events: none;
+}
+.live-walker .live-portrait, .live-replay-portrait .live-portrait {
+  background: var(--paper-light);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
+}
+.live-replay-portrait .live-portrait {
+  background: var(--signal);
+}
+.live-walker[data-live-focus-resident] .live-portrait,
+.live-replay-portrait[data-live-focus-resident] .live-portrait {
+  outline: 4px solid var(--signal);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 rgba(0, 0, 0, 0.5);
+}
+.live-walker.asleep, .live-replay-portrait.asleep { opacity: 0.56; }
+.live-resident-more, .live-thing-more {
+  position: absolute;
+  z-index: 14;
+  min-width: max-content;
+  padding: 0.2rem 0.42rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
+  font: 900 0.58rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-resident-more::before, .live-thing-more::before {
+  content: "";
+  position: absolute;
+  width: 0.72rem;
+  height: 0.72rem;
+  inset: -0.36rem auto auto -0.36rem;
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 0.28rem 0.2rem 0 var(--forest);
+}
+.live-resident-more { inset: auto 0.38rem 0.38rem auto; }
+.live-thing-more { background: var(--sky); }
+.live-thing-shelf > .live-thing-more {
+  position: static;
+  align-self: center;
+  justify-self: end;
+}
+.live-overflow-absorbing { animation: live-overflow-absorb 480ms steps(4, end) both; }
+.live-trace-layer {
+  position: absolute;
+  z-index: 10;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.live-traces {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.live-trail {
+  stroke: var(--brick);
+  stroke-width: 2.5;
+  stroke-dasharray: 7 6;
+  stroke-linecap: square;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: pointer;
+  transition: opacity 420ms linear;
+}
+.live-trail-inking, .live-trail[data-replaying="true"] {
+  animation: live-trail-ink var(--live-trail-duration, 3.2s) linear both;
+}
+.live-speech-bubble::after {
+  content: "";
+  position: absolute;
+  inset: 100% auto auto 0.7rem;
+  border: 0.32rem solid transparent;
+  border-top-color: var(--line);
+}
 
 @keyframes live-print-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--brick); }
@@ -808,6 +1128,18 @@ button { color: inherit; }
 
 @keyframes live-recorded-glide {
   to { left: var(--live-replay-to-x); top: var(--live-replay-to-y); }
+}
+
+@keyframes live-overflow-absorb {
+  0% { opacity: 1; transform: scale(0.84); background: var(--brick); color: #fff; }
+  55% { opacity: 1; transform: scale(1.16); background: var(--signal); color: var(--ink); }
+  100% { opacity: 1; transform: scale(1); background: var(--signal); color: var(--ink); }
+}
+
+@keyframes live-trail-ink {
+  from { stroke-dashoffset: 36; opacity: 0; }
+  16% { opacity: 1; }
+  to { stroke-dashoffset: 0; opacity: 1; }
 }
 
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); }
@@ -1278,10 +1610,11 @@ button { color: inherit; }
 @media (max-width: 54rem) {
   .map-layout { grid-template-columns: 1fr; }
   .live-layout { display: block; }
-  .live-plates { padding: 0.8rem; }
-  .live-islands { grid-template-columns: 1fr; }
-  .live-island-terrain { grid-template-columns: repeat(8, minmax(0, 1fr)); }
-  .live-plate-caption { grid-template-columns: 1fr; }
+  .live-stage-shell { padding: 0.5rem; }
+  .live-viewport { height: min(68vh, 38rem); min-height: 26rem; }
+  .live-plates { padding: 0; }
+  .live-stage-readout { grid-template-columns: 1fr; }
+  .live-focus-status { justify-self: start; text-align: start; }
   .live-plate-legend { align-self: auto; }
   .live-roster-board { border-block-start: 4px solid var(--line); border-inline-start: 0; }
   .roster-board { border-block-start: 4px solid var(--line); border-inline-start: 0; }
@@ -1311,9 +1644,13 @@ button { color: inherit; }
   .activity-time, .activity-context { grid-column: 1; }
   .place-map { padding: 0.55rem; }
   .live-instrument-strip { align-items: flex-start; }
-  .live-clock { flex-basis: 100%; }
-  .live-terrain { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .live-island-terrain { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .live-breadcrumbs { flex-basis: 100%; }
+  .live-camera-controls { flex: 1 1 auto; }
+  .live-control-button { flex: 1 1 8rem; }
+  .live-clock { flex-basis: 100%; text-align: start; }
+  .live-stage-shell { padding: 0.38rem; }
+  .live-viewport { height: min(64vh, 32rem); min-height: 22rem; }
+  .live-stage-readout { padding-inline: 0.25rem; }
   .live-ledger-row { grid-template-columns: 2rem minmax(0, 1fr); }
   .live-ledger-time { grid-column: 2; }
   .conversation-mode { align-items: stretch; }
@@ -1331,15 +1668,21 @@ button { color: inherit; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
   .live-action-mark.live-pulse { display: none !important; animation: none !important; }
   .live-thing-specimen.live-pulse { animation: none !important; }
-  .live-replay-portrait, .live-speech-bubble { animation: none !important; transition: none !important; }
-  .live-trail { transition: none !important; }
+  .live-walker, .live-replay-portrait, .live-overflow-absorbing,
+  .live-speech-bubble { animation: none !important; transition: none !important; }
+  .live-trail, .live-trail-inking { animation: none !important; transition: none !important; }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
-  .note-card, .agreement-card, .live-plate, .live-island, .live-portrait,
-  .live-speech-bubble, .drawing-grid { border-color: CanvasText; box-shadow: none; }
+  .note-card, .agreement-card, .live-stage-shell,
+  .live-viewport, .live-plot, .live-portrait, .live-speech-bubble,
+  .live-resident-more, .live-thing-more, .live-control-button,
+  .drawing-grid { border-color: CanvasText; box-shadow: none; }
+  .live-world-ground, .live-plot-terrain { forced-color-adjust: none; }
+  .live-plot-open, .live-focus-clear { color: LinkText; }
   .live-trail { stroke: LinkText; }
-  .live-footnote-mark, .live-action-mark { color: ButtonText; background: ButtonFace; }
+  .live-footnote-mark, .live-action-mark, .live-resident-more,
+  .live-thing-more, .live-control-button { color: ButtonText; background: ButtonFace; }
   .live-speech-bubble { color: CanvasText; background: Canvas; }
 }
 `

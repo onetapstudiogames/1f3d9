@@ -1,9 +1,47 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { isDeepStrictEqual } from 'node:util'
 
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const migrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
+const worldRootDrawingMigrationUrl = new URL(
+  '../db/migrations/20260827_world_root_drawing.sql',
+  import.meta.url,
+)
+
+const FOUNDER_WORLD_DRAWING = Object.freeze({
+  palette: Object.freeze(['#0b1714', '#123026', '#1c4434']),
+  indices: Object.freeze([
+    0, 0, 0, 0, 0, 0, 0, 0,
+    null, 0, 1, 0, 0, 0, 0, 0,
+    null, 0, 0, 0, 0, 0, 1, 0,
+    0, null, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, null, 0, 1, 0, 0, 0,
+    0, 0, null, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 1, 0, 0,
+  ]),
+})
+
+function sqlJsonbValues(sql: string): unknown[] {
+  return [...sql.matchAll(/'(\{[^']+\})'\s*::\s*jsonb/giu)].flatMap(match => {
+    try {
+      return [JSON.parse(match[1]!) as unknown]
+    } catch {
+      return []
+    }
+  })
+}
+
+function assertIncludesFounderWorldDrawing(sql: string, label: string): void {
+  assert.equal(FOUNDER_WORLD_DRAWING.indices.length, 64)
+  assert.equal(
+    sqlJsonbValues(sql).some(value => isDeepStrictEqual(value, FOUNDER_WORLD_DRAWING)),
+    true,
+    `${label} must store the exact approved 64-cell founder drawing`,
+  )
+}
 
 test('fresh and upgraded databases share one strict nullable drawing contract', async () => {
   const [schema, migration] = await Promise.all([
@@ -53,11 +91,33 @@ test('drawing storage is overwrite-only, nullable, and carries no default or his
   assert.doesNotMatch(migration, /UPDATE\s+(?:residents|places|things|kind_revisions)\s+SET\s+drawing/iu)
 })
 
-test('the world shape and immutable topology continue to forbid a stored drawing', async () => {
-  const schema = await readFile(schemaUrl, 'utf8')
+test('the world stores the exact founder drawing while ordinary topology writes stay forbidden', async () => {
+  const [schema, drawingsMigration, worldRootDrawingMigration] = await Promise.all([
+    readFile(schemaUrl, 'utf8'),
+    readFile(migrationUrl, 'utf8'),
+    readFile(worldRootDrawingMigrationUrl, 'utf8'),
+  ])
+
+  assertIncludesFounderWorldDrawing(schema, 'fresh and upgraded schema')
+  assertIncludesFounderWorldDrawing(worldRootDrawingMigration, 'world-root drawing migration')
+  for (const [name, sql] of [
+    ['fresh and upgraded schema', schema],
+    ['drawings migration', drawingsMigration],
+    ['world-root drawing migration', worldRootDrawingMigration],
+  ] as const) {
+    assert.doesNotMatch(
+      sql,
+      /CONSTRAINT\s+places_world_shape[\s\S]{0,700}place_kind\s*=\s*'world'[\s\S]{0,500}drawing\s+IS\s+NULL/iu,
+      name,
+    )
+  }
   assert.match(
-    schema,
-    /CONSTRAINT\s+places_world_shape[\s\S]{0,700}place_kind\s*=\s*'world'[\s\S]{0,500}drawing\s+IS\s+NULL/iu,
+    worldRootDrawingMigration,
+    /ALTER\s+TABLE\s+places\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+places_world_shape/iu,
+  )
+  assert.match(
+    worldRootDrawingMigration,
+    /ALTER\s+TABLE\s+places\s+(?:ADD\s+)?CONSTRAINT\s+places_world_shape/iu,
   )
   assert.match(
     schema,

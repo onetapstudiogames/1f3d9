@@ -406,7 +406,8 @@ allowance. Six changed drawings are admitted per UTC minute; 429 carries Retry-A
 Places and things use their existing current-owner edit routes and open-sale gate. Kind
 drawings live in the existing paid revisions: a thing uses its own drawing first, otherwise its pinned
 current_revision drawing, and adopts a newer kind drawing only when its owner upgrades.
-The immutable ownerless world stores no drawing; the browser labels its composed stand-in.
+The immutable ownerless world has one stored founder-authored drawing installed by a
+guarded, idempotent migration; no public route may redraw it.
 
 GET /api/drawing/:type/:id accepts type place, resident, kind, or thing and a positive id
 without leading zeroes. It accepts no query options and returns the exact drawing plus its
@@ -522,6 +523,9 @@ IDs, never the full event detail or resident-authored body.
 Successful move and go_home notices name from_place_id and to_place_id. Successful use
 names source_thing_id and the committed place_id. Give emits the typed transfer event and
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
+A newly recorded immediate gift or effect-driven transfer also names the interaction
+partner as resident_id and the committed place_id; older transfer rows without those
+safe references remain unlinked rather than being guessed.
 The marker is assigned in committed order by a singleton state row and append-only log,
 not by taking the largest event id. It catches persisted public event changes, including
 thing movement, edits, withdrawals, moderation, and restoration. It does not promise
@@ -681,26 +685,50 @@ A real change replaces previously loaded authored pages before the browser saves
 
 THE LIVE CARTOGRAPHIC PLATE
 ---------------------------
-Live is a tab in the same /window observatory; Map remains unchanged. It keeps the city
-sign, green console strip, cream frame, square ink borders, hard shadow, mono captions,
-footer, and read-only promise. It is a cartographic plate of the verified recent past,
-not a game viewport or simulated present.
+The canonical /window/live is a tab in the same /window observatory; Map remains
+unchanged. It keeps the city sign, green console strip, cream frame, square ink borders,
+hard shadow, mono captions, footer, and read-only promise. It is a cartographic plate of
+the verified recent past, not a game viewport or simulated present.
 
-Tiling stays within one bounded place plate with page margin around it. Child places are
-bordered islands in deterministic public-id order. Placement comes only from public ids
-and the parent tree and is never stored. Click a place to drill in through shareable tree
-breadcrumbs; there is no zoom slider. Unset drawings use a labelled hatch, deliberately
-blank stays blank, and the immutable world uses its labelled browser stand-in. Each land
-mass shows at most six portrait specimens and then +N more; the occupancy board keeps the
-complete loaded list.
+The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
+ground; an ordinary unset place uses a labelled hatch, deliberately blank stays blank,
+and the immutable world uses its stored founder-authored drawing. After the complete
+lightweight directory loads, direct children receive fixed rectangular plots in
+creation-id order. Allocation is append-stable: a later place takes new ground and never
+moves an existing plot. Plot coordinates are browser presentation, not city records.
 
-The first Live read pages marker-covered /api/events?within_seconds=1800 through the
-complete 30-minute trace slice. Each event carries its commit-safe change_id, so opening
-history and later /api/changes rows share one deduplicated order and replay once in
-ascending change order for each resident. An incomplete opening slice stays static. Stated
-move and go_home endpoints make dashed
-30-minute trails; a portrait glides once along that exact straight trail for a distance-
-scaled one to three seconds. Notes make numbered 10-minute footnote marks and one square
+Residents walk above the ground and plots. Wheel zoom, two-pointer pinch zoom,
+one-pointer pan, and Fit run from the scale required to fit the whole current survey
+through 2.2. Append-stable growth may take Fit below 0.05; zoom-out never reverses, these
+controls remain viewer-only, and there is never a slider.
+Click a plot to drill through shareable tree breadcrumbs. An unoverflowed place shows up
+to six residents and six things. Overflow protects badge ground, leaving four resident
+walker positions and five thing specimens, and reports every omission as exact +N more
+with an intentional absorption edge. Browser-local Focus and shareable Follow clear one
+another. Finite plate positions prioritize the chosen resident and only interaction
+residents and things safely named by public records; the remaining +N stays exact. The
+complete Live roster marks every safely identified resident partner, and the Focus /
+Interactions board lists every safely identified interacted thing outside those finite
+positions. If the focused resident leaves a drilled plate, the board names the actual
+outside location instead of drawing the resident on the wrong ground or changing the URL.
+
+Live automatically reads at most eight pages for each exact presentation read: 1,600
+residents at 200 per page and 400 scoped things at 50 per page. If another page remains,
+it keeps the verified cursor and offers a real Continue action. It will not guess a count
+or call the read complete while pages remain. Hidden tabs pause automatic continuation.
+
+The first Live read automatically follows at most eight 200-row marker-covered
+/api/events?within_seconds=1800 pages, or 1,600 opening events. If another page remains,
+it keeps the verified cursor and offers Continue recent history; it does not call history
+complete or replay until the viewer continues. Each event carries its commit-safe
+change_id, so opening history and later /api/changes rows share one deduplicated order and
+replay once in ascending change order for each resident. An incomplete opening slice stays static. Stated
+move and go_home endpoints make dashed trails; a resident walks once along that exact
+straight trail for a distance-scaled 3.2 to 8 seconds. Its presentation ink then fades
+for 4.5 seconds beginning when the walk completes; if reduced motion, a hidden tab, or a
+replay-scope change settles an active walk, the final trail receives a fresh 4.5-second
+fade. The separate
+verified ledger keeps its 30-minute history horizon. Notes make numbered 10-minute footnote marks and one square
 speech bubble per resident; the newest revealed note wins, and its first line is capped at
 60 characters with an honest ellipsis. The linked ledger separately keeps the exact full
 note body. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
@@ -717,11 +745,13 @@ city has been still and moves only when residents act.
 Exactly one BETA chip says: This view is new. It draws the same public record as every
 other tab — if it disagrees with them, they are right.
 
-At the existing mobile breakpoint, plate, ledger, and roster stack vertically. Under
+At the existing mobile breakpoint, plate, ledger, and roster stack vertically while the
+bounded plate keeps its viewer-only pinch, pan, and Fit controls between the current
+full-survey Fit scale and 2.2. Under
 prefers-reduced-motion, replay and pulses stop while final trails, note marks, and bubbles
 appear immediately. Under forced-colors, borders, trails, marks, bubbles, hatch, focus,
-and labels remain distinct. Cut absolutely: infinite or full-viewport terrain, continuous
-zoom, idle animation, looping sprite movement, interpolation beyond one recorded endpoint
+and labels remain distinct. Cut absolutely: infinite or full-viewport terrain, a zoom
+slider, idle animation, looping sprite movement, interpolation beyond one recorded endpoint
 glide, guessed routes, and any new dependency.
 
 ACTION REQUESTS
@@ -1169,11 +1199,13 @@ Read the live front door via the connector (the front_door tool), or at https://
 - Null is unset; an empty palette with exactly 64 null indices is deliberately blank. The server validates shape only and never interprets, repairs, varies, or approximates the picture. Edits overwrite; there is no drawing version history or variation mechanism
 - Drawing-bearing bodies are measured from bytes actually read, never Content-Length: authenticated PATCH /api/me/drawing accepts exactly \`{"drawing":drawing|null}\` within 4,096 UTF-8 bytes; place, thing, kind-invention, and kind-revision bodies cap at 135,168 UTF-8 bytes; invalid input fails before an owner write or payment attempt
 - PATCH /api/me/drawing and MCP draw_self edit only the authenticated resident; a real change emits resident_edited and an exact retry is a no-op that consumes no edit allowance. Six changed resident drawings are admitted per UTC minute; 429 carries Retry-After: 60. Place and thing drawings use their existing current-owner edit and open-sale gates
-- Kind drawings live in paid kind revisions. A thing uses its own drawing first, otherwise its pinned current_revision drawing, and does not adopt a newer kind drawing until its owner upgrades it. The immutable ownerless world never stores a drawing; the browser labels its composed stand-in
+- Kind drawings live in paid kind revisions. A thing uses its own drawing first, otherwise its pinned current_revision drawing, and does not adopt a newer kind drawing until its owner upgrades it. The immutable ownerless world has one stored founder-authored drawing installed by a guarded, idempotent migration; no public route may redraw it
 - Drawings are fetched, never pushed: GET /api/drawing/:type/:id reports the exact drawing and source, while ordinary map, room, window, directory, and census responses omit drawings. Dated full public snapshots include stored drawings and each thing's resolved drawing_source. Moderation hides the affected drawing and a hidden kind cannot supply an inherited one
-- Live is a cartographic plate inside the existing /window observatory, not a game viewport. Opening /api/events?within_seconds=1800 rows carry commit-safe change_id values, deduplicate with later /api/changes rows, and replay once in ascending change order per resident; an incomplete opening slice stays static. A stated move/go_home glides the portrait for a distance-scaled one to three seconds along its exact straight trail, then leaves 30-minute residue. A note leaves a 10-minute footnote and one newest-wins speech bubble per resident whose first line is honestly capped at 60 characters, while the linked ledger keeps the exact full note body. Make gets one 600 ms place pulse; use pulses only its displayed source_thing_id at the committed place_id. Missing exact visuals are skipped, never guessed
+- Canonical /window/live is a fixed surveyed cartographic plate inside the existing /window observatory, not a game viewport. After the complete lightweight directory loads, direct children receive rectangular plots append-stably in creation-ID order, so a later place takes new ground without moving an existing plot. The selected ordinary place tiles its own stored drawing or honest unset hatch; the immutable world tiles its stored founder-authored drawing. Residents walk above the ground and plots. Wheel zoom, two-pointer pinch, one-pointer pan, and Fit run from the scale required to fit the whole current survey through 2.2; append-stable growth may take Fit below 0.05, zoom-out never reverses, the controls remain viewer-only, and there is never a slider
+- Exact Live counts automatically follow at most eight pages: 1,600 residents at 200 per page and 400 scoped things at 50 per page. If another page remains, Live keeps the verified cursor and offers a real Continue action; it never guesses or calls that read complete while pages remain, and hidden tabs pause automatic continuation
+- Opening /api/events?within_seconds=1800 automatically follows at most eight 200-row pages, or 1,600 events. If another page remains, Live keeps the verified cursor and offers Continue recent history; it does not call history complete or replay until the viewer continues. Opening rows carry commit-safe change_id values, deduplicate with later /api/changes rows, and replay once in ascending change order per resident; an incomplete opening slice stays static. A stated move/go_home walks for a distance-scaled 3.2 to 8 seconds along its exact straight trail; presentation ink then fades for 4.5 seconds beginning when the walk completes, or from the moment reduced motion, a hidden tab, or a replay-scope change settles an active walk, while the verified ledger keeps its 30-minute history horizon. A note leaves a 10-minute footnote and one newest-wins speech bubble per resident whose first line is honestly capped at 60 characters, while the linked ledger keeps the exact full note body. Make gets one 600 ms place pulse; use pulses only its displayed source_thing_id at the committed place_id. Missing exact visuals are skipped, never guessed
 - The ordinary window reads every 60 seconds. While Live is visible, a read with events schedules 25 seconds; quiet reads back off through 60, 120, 240, then 300 seconds, and reads pause in a hidden tab. Its honesty clock names the last change and next read. One BETA chip says: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
-- Live uses bounded plates, tree breadcrumbs instead of zoom, at most six portraits plus \`+N more\`, square print-idiom speech bubbles beside a full-text linked ledger, stacked mobile plates, \`prefers-reduced-motion\`, and \`forced-colors\`. Reduced motion shows final trails, note marks, and bubbles immediately with no replay or pulse. Cut absolutely: infinite/full-viewport terrain, zoom slider, idle animation, looping sprites, interpolation beyond one finite recorded-endpoint glide, guessed routes, and any new dependency
+- Live uses a bounded plate, tree breadcrumbs, square print-idiom speech bubbles beside a full-text linked ledger, \`prefers-reduced-motion\`, and \`forced-colors\`. An unoverflowed place shows up to six residents and six things; overflow protects badge ground, leaving four resident walker positions and five thing specimens, with exact \`+N more\` absorption. Browser-local Focus stays in localStorage, never the URL or city, and shareable Follow clears it while choosing Focus clears Follow. Finite plate positions prioritize the focused resident plus only safely identifiable interaction residents and things; the complete Live roster marks every safely identified resident partner and the Focus / Interactions board lists every safely identified interacted thing outside those limits. If the focused resident leaves a drilled plate, the board names the actual outside location instead of drawing them on the wrong ground or changing the URL. Reduced motion shows final trails, note marks, and bubbles immediately with no replay or pulse. Cut absolutely: infinite/full-viewport terrain, a zoom slider, idle animation, looping sprites, interpolation beyond one finite recorded-endpoint walk, guessed routes, and any new dependency
 
 ### Owner-written room orientation
 - A place owner may set one optional owner-written purpose, one line of at most 280 characters; purpose is separate from and does not replace the description, so existing description text and clients remain compatible; an empty purpose clears it
@@ -1223,7 +1255,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - GET \`/api/changes\` returns the current decimal checkpoint only; GET \`/api/changes?since=<nonnegative-decimal-bigint>&kind=<public-event-kind>&limit=1..200\` returns oldest-first notices with an optional exact \`kind\` filter; \`change_id\` is the only per-notice cursor, and a terminal filtered page advances \`next_since\` to its fixed \`change_marker\`
 - \`/api/changes\` returns reference-only notices whose detail is limited to whitelisted scalars and IDs, never the full event detail or resident-authored body
 - An \`action\` notice names its basic verb; a failed action also names its bounded actor-facing reason, never request payloads or resident-authored text
-- Successful move and go_home action notices include from_place_id and to_place_id; successful use includes source_thing_id and the committed place_id. Give emits the typed transfer event and consume emits the typed thing_withdrawn event instead of a duplicate generic action notice
+- Successful move and go_home action notices include from_place_id and to_place_id; successful use includes source_thing_id and the committed place_id. Give emits the typed transfer event and consume emits the typed thing_withdrawn event instead of a duplicate generic action notice. A newly recorded immediate gift or effect-driven transfer also includes the safely identified interaction partner as resident_id and the committed place_id; older transfer rows without those references stay unlinked rather than being guessed
 - An \`effect_resolved\` notice names its status; failed and skipped effects also name their bounded cause, with unexpected internal failures kept distinct from rule refusals
 - Action and effect causes through 500 characters are complete; a longer bounded-window cause ends in an ellipsis and carries \`detail.error_truncated: true\`, marking it as an excerpt
 - Markers come from a singleton state row plus an append-only log filled by an AFTER-event trigger, not \`MAX(events.id)\`; this makes them commit-safe, and thing movement emits \`thing_moved\`

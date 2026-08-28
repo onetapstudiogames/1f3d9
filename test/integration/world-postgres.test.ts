@@ -39,6 +39,11 @@ const sql = (async (
   return result.rows as Record<string, unknown>[]
 }) as unknown as IntegrationSql
 
+sql.query = async (text, values = []) => {
+  assert.ok(database, 'the PostgreSQL test client must be connected')
+  return (await database.query(text, [...values])).rows as Record<string, unknown>[]
+}
+
 function transactionSql(client: PoolClient): TaggedSql {
   const tagged = (async (
     strings: TemplateStringsArray,
@@ -290,11 +295,113 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
 
     const { Hono } = await import('hono')
     const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+    const { executeEffects } = await import('../../src/engine-effects.ts')
     const { mountSocietyRoutes } = await import('../../src/society.ts')
     const { mountWorldRoutes } = await import('../../src/world.ts')
     const app = new Hono()
     mountSocietyRoutes(app)
     mountWorldRoutes(app)
+
+    await t.test('gift and effect transfers publish their interaction resident and place', async () => {
+      const roomId = await resetDatabase()
+      await database!.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+        VALUES
+          (1, $1, $1),
+          (2, $1, NULL)
+      `, [roomId])
+      await database!.query(`
+        INSERT INTO things (id, place_id, name, body, owner_id, maker_id)
+        VALUES (2, $1, 'effect gift', 'transferred by a thing effect', 1, 1)
+      `, [roomId])
+
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      let giftResponse: Response
+      try {
+        giftResponse = await app.request('/api/transfer', {
+          method: 'POST',
+          headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+          body: JSON.stringify({ type: 'thing', id: 1, to_handle: 'neighbor' }),
+        })
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
+      assert.equal(giftResponse.status, 200, await giftResponse.clone().text())
+
+      const effectsApplied = await executeEffects([{
+        effect: 'transfer',
+        target: 'source',
+        to: 'recipient',
+      }], {
+        actionId: null,
+        actorId: 1,
+        actorHandle: 'founder',
+        placeId: roomId,
+        sourceThingId: 2,
+        sharedSourceThingId: null,
+        target: null,
+        destinationPlaceId: null,
+        recipientId: 2,
+        sourceTraitId: null,
+        lawAuthority: null,
+        parentEffectId: null,
+        generation: 0,
+        logicalAt: new Date(),
+      }, sql)
+      assert.equal(effectsApplied, 1)
+
+      const committed = await database!.query(`
+        SELECT event.actor, event.detail->>'mode' AS mode,
+          (event.detail->>'resident_id')::integer AS resident_id,
+          (event.detail->>'place_id')::integer AS place_id,
+          coalesce(event.detail->>'asset_type', event.detail->>'type') AS asset_type,
+          coalesce(
+            (event.detail->>'asset_id')::integer,
+            (event.detail->>'id')::integer
+          ) AS asset_id,
+          thing.owner_id
+        FROM events event
+        JOIN things thing ON thing.id = coalesce(
+          (event.detail->>'asset_id')::integer,
+          (event.detail->>'id')::integer
+        )
+        WHERE event.kind = 'transfer'
+        ORDER BY event.id
+      `)
+      assert.deepEqual(committed.rows, [
+        {
+          actor: 'founder',
+          mode: 'gift',
+          resident_id: 2,
+          place_id: roomId,
+          asset_type: 'thing',
+          asset_id: 1,
+          owner_id: 2,
+        },
+        {
+          actor: 'founder',
+          mode: 'effect',
+          resident_id: 2,
+          place_id: roomId,
+          asset_type: 'thing',
+          asset_id: 2,
+          owner_id: 2,
+        },
+      ])
+    })
 
     await t.test('the reported parent and child both accept make through the public route', async () => {
       const existingRoomId = await resetDatabase()

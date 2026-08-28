@@ -580,6 +580,11 @@ CREATE TABLE IF NOT EXISTS places (
     CHECK (active_offer_id IS NULL OR active_offer_id > 0),
   CONSTRAINT places_no_self_parent CHECK (parent_id IS NULL OR parent_id <> id),
   CONSTRAINT places_drawing_valid CHECK (valid_city_drawing(drawing)),
+  CONSTRAINT places_world_drawing_exact CHECK (
+    place_kind <> 'world'
+    OR drawing IS NOT DISTINCT FROM
+      '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb
+  ),
   CONSTRAINT places_world_shape CHECK (
     (
       place_kind = 'world'
@@ -587,7 +592,6 @@ CREATE TABLE IF NOT EXISTS places (
       AND name = 'the world'
       AND owner_id IS NULL
       AND active_offer_id IS NULL
-      AND drawing IS NULL
       AND NOT open_to_building
       AND NOT open_to_things
       AND NOT open_to_notes
@@ -686,12 +690,13 @@ DROP INDEX IF EXISTS places_frontier_name;
 
 INSERT INTO places (
   parent_id, place_kind, name, description, owner_id,
-  open_to_building, open_to_things, open_to_notes, active_offer_id
+  open_to_building, open_to_things, open_to_notes, active_offer_id, drawing
 )
 SELECT
   NULL, 'world', 'the world',
   '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.',
-  NULL, FALSE, FALSE, FALSE, NULL
+  NULL, FALSE, FALSE, FALSE, NULL,
+  '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM places WHERE place_kind = 'world')
 ON CONFLICT DO NOTHING;
 
@@ -711,6 +716,70 @@ WHERE continent.place_kind = 'continent'
   AND continent.id <> world.id;
 
 ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
+ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_drawing_exact;
+
+-- The ownerless world's founder-authored ground is installed only by the full
+-- local schema or its separately reviewed remote migration. Existing topology
+-- protection is opened for this exact idempotent write and restored immediately.
+DO $world_root_drawing_upgrade$
+DECLARE
+  founder_drawing CONSTANT JSONB :=
+    '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb;
+  world_count INTEGER;
+  valid_world_count INTEGER;
+  topology_trigger_count INTEGER;
+  enabled_topology_trigger_count INTEGER;
+BEGIN
+  IF NOT valid_city_drawing(founder_drawing) THEN
+    RAISE EXCEPTION 'founder world drawing is invalid';
+  END IF;
+
+  SELECT count(*),
+         count(*) FILTER (
+           WHERE parent_id IS NULL
+             AND owner_id IS NULL
+             AND name = 'the world'
+             AND active_offer_id IS NULL
+             AND NOT open_to_building
+             AND NOT open_to_things
+             AND NOT open_to_notes
+             AND (drawing IS NULL OR drawing = founder_drawing)
+         )
+  INTO world_count, valid_world_count
+  FROM places
+  WHERE place_kind = 'world';
+
+  IF world_count <> 1 OR valid_world_count <> 1 THEN
+    RAISE EXCEPTION 'world-root topology must be exact before its drawing is installed';
+  END IF;
+
+  SELECT count(*), count(*) FILTER (WHERE tgenabled = 'O')
+  INTO topology_trigger_count, enabled_topology_trigger_count
+  FROM pg_trigger
+  WHERE tgrelid = 'places'::regclass
+    AND tgname = 'places_protect_topology_write'
+    AND NOT tgisinternal;
+
+  IF topology_trigger_count > 1
+    OR enabled_topology_trigger_count <> topology_trigger_count THEN
+    RAISE EXCEPTION 'world-root topology protection trigger must be enabled';
+  END IF;
+
+  IF topology_trigger_count = 1 THEN
+    EXECUTE 'ALTER TABLE places DISABLE TRIGGER places_protect_topology_write';
+  END IF;
+
+  UPDATE places
+  SET drawing = founder_drawing
+  WHERE place_kind = 'world'
+    AND drawing IS DISTINCT FROM founder_drawing;
+
+  IF topology_trigger_count = 1 THEN
+    EXECUTE 'ALTER TABLE places ENABLE TRIGGER places_protect_topology_write';
+  END IF;
+END
+$world_root_drawing_upgrade$;
+
 ALTER TABLE places
   ADD CONSTRAINT places_world_shape CHECK (
     (
@@ -719,7 +788,6 @@ ALTER TABLE places
       AND name = 'the world'
       AND owner_id IS NULL
       AND active_offer_id IS NULL
-      AND drawing IS NULL
       AND NOT open_to_building
       AND NOT open_to_things
       AND NOT open_to_notes
@@ -732,6 +800,12 @@ ALTER TABLE places
     )
   ) NOT VALID;
 ALTER TABLE places VALIDATE CONSTRAINT places_world_shape;
+ALTER TABLE places ADD CONSTRAINT places_world_drawing_exact CHECK (
+  place_kind <> 'world'
+  OR drawing IS NOT DISTINCT FROM
+    '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb
+) NOT VALID;
+ALTER TABLE places VALIDATE CONSTRAINT places_world_drawing_exact;
 
 CREATE UNIQUE INDEX IF NOT EXISTS places_sibling_name
   ON places (parent_id, lower(name)) WHERE parent_id IS NOT NULL;

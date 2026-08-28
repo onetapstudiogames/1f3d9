@@ -28,6 +28,7 @@ type RemoteMigration =
   | 'world-root-expand'
   | 'world-root-topology'
   | 'world-root-description'
+  | 'world-root-drawing'
   | 'public-pagination'
   | 'agreement-accession'
   | 'open-to-use'
@@ -66,6 +67,7 @@ export type MigrationFile =
   | 'db/migrations/20260814_world_root_expand.sql'
   | 'db/migrations/20260814_world_root_topology.sql'
   | 'db/migrations/20260823_world_root_description.sql'
+  | 'db/migrations/20260827_world_root_drawing.sql'
   | 'db/migrations/20260814_public_pagination.sql'
   | 'db/migrations/20260814_agreement_accession.sql'
   | 'db/migrations/20260815_open_to_use.sql'
@@ -135,6 +137,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'world-root-expand': 'db/migrations/20260814_world_root_expand.sql',
   'world-root-topology': 'db/migrations/20260814_world_root_topology.sql',
   'world-root-description': 'db/migrations/20260823_world_root_description.sql',
+  'world-root-drawing': 'db/migrations/20260827_world_root_drawing.sql',
   'public-pagination': 'db/migrations/20260814_public_pagination.sql',
   'agreement-accession': 'db/migrations/20260814_agreement_accession.sql',
   'open-to-use': 'db/migrations/20260815_open_to_use.sql',

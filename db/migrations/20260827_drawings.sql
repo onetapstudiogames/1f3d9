@@ -103,30 +103,6 @@ CREATE TABLE IF NOT EXISTS resident_drawing_rate_limits (
 CREATE INDEX IF NOT EXISTS resident_drawing_rate_limits_expiry
   ON resident_drawing_rate_limits (minute, resident_id);
 
--- The ownerless world uses a composed browser stand-in and can never acquire a
--- stored drawing. Its existing immutable topology trigger remains the write guard.
-ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
-ALTER TABLE places ADD CONSTRAINT places_world_shape CHECK (
-  (
-    place_kind = 'world'
-    AND parent_id IS NULL
-    AND name = 'the world'
-    AND owner_id IS NULL
-    AND active_offer_id IS NULL
-    AND drawing IS NULL
-    AND NOT open_to_building
-    AND NOT open_to_things
-    AND NOT open_to_notes
-  )
-  OR
-  (
-    place_kind IN ('continent', 'place')
-    AND parent_id IS NOT NULL
-    AND owner_id IS NOT NULL
-  )
-) NOT VALID;
-ALTER TABLE places VALIDATE CONSTRAINT places_world_shape;
-
 -- Resident presentation can be hidden without erasing the public identity row.
 ALTER TABLE moderation_actions DROP CONSTRAINT IF EXISTS moderation_actions_target_type_check;
 DO $moderation_actions_resident_target$

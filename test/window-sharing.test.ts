@@ -62,6 +62,8 @@ test('share metadata uses only Vercel’s exact injected Preview deployment orig
 
 test('window share paths are clean, stable, and preserve the reproducible public question', () => {
   assert.equal(windowSharePath(BASE_STATE), '/window/map')
+  assert.equal(windowSharePath({ ...BASE_STATE, view: 'live', placeId: 310 }),
+    '/window/live?place=310')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'place', placeId: 310 }), '/window/place/310')
   assert.equal(windowSharePath({
     ...BASE_STATE,
@@ -185,6 +187,12 @@ test('shared Archive questions use the public search byte, normalization, and le
 })
 
 test('server-visible share requests round-trip canonical paths and reject unknown shapes', () => {
+  const live = parseWindowShareRequest('/window/live', '?place=310')
+  assert.ok(live)
+  assert.equal(live.canonicalPath, '/window/live?place=310')
+  assert.equal(live.state.view, 'live')
+  assert.equal(live.state.placeId, 310)
+
   const place = parseWindowShareRequest('/window/place/310', '')
   assert.ok(place)
   assert.equal(place.canonicalPath, '/window/place/310')

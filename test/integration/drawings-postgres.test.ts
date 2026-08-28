@@ -22,11 +22,32 @@ const migrationDdl = await readFile(
   new URL('../../db/migrations/20260827_drawings.sql', import.meta.url),
   'utf8',
 )
+const worldRootDrawingMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260827_world_root_drawing.sql', import.meta.url),
+  'utf8',
+)
+const worldRootTopologyMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260814_world_root_topology.sql', import.meta.url),
+  'utf8',
+)
 
 const blankIndices = (): null[] => Array.from({ length: 64 }, () => null)
 const drawing = (colour: string) => ({
   palette: [colour],
   indices: [0, ...blankIndices().slice(1)],
+})
+const founderWorldDrawing = Object.freeze({
+  palette: Object.freeze(['#0b1714', '#123026', '#1c4434']),
+  indices: Object.freeze([
+    0, 0, 0, 0, 0, 0, 0, 0,
+    null, 0, 1, 0, 0, 0, 0, 0,
+    null, 0, 0, 0, 0, 0, 1, 0,
+    0, null, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, null, 0, 1, 0, 0, 0,
+    0, 0, null, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 1, 0, 0,
+  ]),
 })
 
 function docker(args: readonly string[], allowFailure = false): string {
@@ -64,6 +85,37 @@ async function rejectsCheck(client: Client, candidate: unknown): Promise<void> {
   )
 }
 
+async function installLegacyNullWorldDrawing(client: Client): Promise<void> {
+  await client.query(`
+    BEGIN;
+    ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
+    ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_drawing_exact;
+    ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
+    UPDATE places SET drawing = NULL WHERE place_kind = 'world';
+    ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
+    ALTER TABLE places ADD CONSTRAINT places_world_shape CHECK (
+      (
+        place_kind = 'world'
+        AND parent_id IS NULL
+        AND name = 'the world'
+        AND owner_id IS NULL
+        AND active_offer_id IS NULL
+        AND drawing IS NULL
+        AND NOT open_to_building
+        AND NOT open_to_things
+        AND NOT open_to_notes
+      )
+      OR (
+        place_kind IN ('continent', 'place')
+        AND parent_id IS NOT NULL
+        AND owner_id IS NOT NULL
+      )
+    ) NOT VALID;
+    ALTER TABLE places VALIDATE CONSTRAINT places_world_shape;
+    COMMIT;
+  `)
+}
+
 test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawings', async t => {
   const runId = `${process.pid}-${randomBytes(5).toString('hex')}`
   const container = `1f3d9-drawings-${runId}`
@@ -91,8 +143,60 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   })
 
   await client.query(schemaDdl)
+  const freshWorld = (await client.query<{ id: number; drawing: unknown }>(`
+    SELECT id, drawing FROM places WHERE place_kind = 'world'
+  `)).rows[0]!
+  assert.deepEqual(freshWorld.drawing, founderWorldDrawing)
+
   await client.query(migrationDdl)
   await client.query(migrationDdl)
+  await installLegacyNullWorldDrawing(client)
+  await client.query(worldRootDrawingMigrationDdl)
+  await client.query(worldRootDrawingMigrationDdl)
+  await client.query(migrationDdl)
+  await client.query(worldRootTopologyMigrationDdl)
+  await client.query(worldRootTopologyMigrationDdl)
+
+  const migratedWorld = (await client.query<{ id: number; drawing: unknown }>(`
+    SELECT id, drawing FROM places WHERE place_kind = 'world'
+  `)).rows[0]!
+  assert.deepEqual(migratedWorld, freshWorld)
+  assert.deepEqual((await client.query<{ conname: string; convalidated: boolean }>(`
+    SELECT conname, convalidated FROM pg_constraint
+    WHERE conrelid = 'places'::regclass
+      AND conname IN ('places_world_shape', 'places_world_drawing_exact')
+    ORDER BY conname
+  `)).rows, [
+    { conname: 'places_world_drawing_exact', convalidated: true },
+    { conname: 'places_world_shape', convalidated: true },
+  ])
+  assert.deepEqual((await client.query<{ tgenabled: string }>(`
+    SELECT tgenabled FROM pg_trigger
+    WHERE tgrelid = 'places'::regclass
+      AND tgname = 'places_protect_topology_write'
+      AND NOT tgisinternal
+  `)).rows, [{ tgenabled: 'O' }])
+
+  await client.query('BEGIN')
+  try {
+    await client.query('ALTER TABLE places DISABLE TRIGGER places_protect_topology_write')
+    await assert.rejects(
+      client.query(
+        "UPDATE places SET drawing = $1::jsonb WHERE place_kind = 'world'",
+        [JSON.stringify(drawing('#174d3c'))],
+      ),
+      (error: unknown) => (error as { code?: string }).code === '23514',
+    )
+  } finally {
+    await client.query('ROLLBACK')
+  }
+
+  await installLegacyNullWorldDrawing(client)
+  await client.query(schemaDdl)
+  await client.query(schemaDdl)
+  assert.deepEqual((await client.query<{ id: number; drawing: unknown }>(`
+    SELECT id, drawing FROM places WHERE place_kind = 'world'
+  `)).rows[0], freshWorld)
 
   const columns = (await client.query<{
     table_name: string
@@ -177,9 +281,9 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     ),
     (error: unknown) => (error as { code?: string }).code === '55000',
   )
-  assert.equal(
+  assert.deepEqual(
     (await client.query<{ drawing: unknown }>("SELECT drawing FROM places WHERE place_kind = 'world'")).rows[0]?.drawing,
-    null,
+    founderWorldDrawing,
   )
 
   await client.query(`
@@ -195,6 +299,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   ).rows[0]!.payload
 
   assert.deepEqual((await snapshot('residents', 1)).drawing, replacement)
+  assert.deepEqual((await snapshot('places', freshWorld.id)).drawing, founderWorldDrawing)
   assert.deepEqual((await snapshot('places', placeId)).drawing, placeDrawing)
   assert.deepEqual((await snapshot('kinds', kindId)).drawing, kindDrawing)
   assert.deepEqual((await snapshot('things', ownThingId)).drawing, thingDrawing)
@@ -242,6 +347,14 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   mountDrawingRoutes(drawingApp, {
     database,
     authenticate: async (_context: Context) => drawingOwner,
+  })
+  const worldDrawingRead = await drawingApp.request(`/api/drawing/place/${freshWorld.id}`)
+  assert.equal(worldDrawingRead.status, 200)
+  assert.deepEqual(await worldDrawingRead.json(), {
+    type: 'place',
+    id: freshWorld.id,
+    drawing: founderWorldDrawing,
+    source: 'place',
   })
   const admittedColours = ['#101010', '#202020', '#303030', '#404040', '#505050', '#606060']
   for (const colour of admittedColours) {

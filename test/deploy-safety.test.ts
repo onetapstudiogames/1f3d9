@@ -851,7 +851,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|world-root-description\|public-pagination/u,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|world-root-description\|world-root-drawing\|public-pagination/u,
   )
 })
 

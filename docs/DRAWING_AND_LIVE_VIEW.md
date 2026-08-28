@@ -87,9 +87,11 @@ configuration, a drawing remains on the place after ownership changes; the new
 owner may replace it. “Owner-set” does not claim the current owner authored an
 inherited drawing.
 
-The world root is the exception. It is ownerless and immutable behind the
-topology trigger, so no route or migration writes a world drawing. The Live tab
-uses a disclosed composed browser stand-in for world ground.
+The world root is the exception to resident editing, not to stored art. It is
+ownerless and remains immutable behind the topology trigger, so no public route
+may redraw it. A guarded, idempotent founder migration sets its one reviewed
+drawing. Live fetches that stored drawing through the same public drawing read;
+it does not compose a second browser-only world image.
 
 ### Things and kind revisions
 
@@ -155,7 +157,10 @@ body or the complete private event detail.
 - A successful `use` action notice names its `source_thing_id` and the committed
   `place_id`; the live plate never guesses a historical location from the thing's current place.
 - `give` is represented by its typed `transfer` event, and `consume` by its typed
-  `thing_withdrawn` event; neither also emits a duplicate generic action event.
+  `thing_withdrawn` event; neither also emits a duplicate generic action event. A
+  newly recorded immediate gift or effect-driven transfer also names the safely
+  identified interaction partner as `resident_id` and its committed `place_id`.
+  Older transfer rows without both references stay unlinked rather than being guessed.
 - A `note` event names `note_id` and `place_id`. Reading its exact first line
   requires the separate public `GET /api/note/:id` read.
 
@@ -167,7 +172,8 @@ browser presentation.
 
 ## 5. The Live tab is a cartographic plate
 
-Live is one tab in the existing `/window` observatory. The Map tab remains. Live
+Live is the canonical `/window/live` tab in the existing `/window` observatory.
+The Map tab remains. Live
 inherits the same city sign, dark-green console strip, cream frame, square ink
 borders, hard shadow, mono captions, footer, loading language, and read-only
 promise. It is a cartographic plate of the recent past, not a game viewport and
@@ -175,36 +181,73 @@ not a simulation of the present.
 
 ### Plates and navigation
 
-- Tiling stays inside one bounded place plate. Page margin separates plates;
-  there is no infinite terrain and no full-viewport authored background.
-- Direct children become bordered islands ordered deterministically by public
-  ID. Placement is derived in the browser from public IDs and the parent tree;
-  no layout or coordinate is stored.
-- Clicking a place drills into its plate. A shareable breadcrumb follows the
-  actual tree. There is no continuous zoom control.
-- A place drawing tiles its own ground. An unset drawing uses the existing
-  diagonal hatch and an `undrawn` label. The immutable world uses its separately
-  labelled browser stand-in.
-- Resident portraits are bordered specimen cards, not walking sprites. A land
-  mass shows at most six, followed by `+N more`; the complete loaded list remains
-  in the occupancy board. Sleeping residents keep the existing dim and circle
-  idiom.
-- Things appear as linked specimens and fetch their resolved drawing separately.
+- The selected focus place supplies one bounded surveyed ground. Its stored
+  drawing tiles that ground; an ordinary unset place uses the existing diagonal
+  hatch and an `undrawn` label. The immutable world root uses its stored,
+  founder-authored drawing. Deliberately blank remains blank.
+- Live completes the lightweight public directory before allocating the focus
+  place's direct children. Their fixed rectangular plots follow creation-ID
+  order. Allocation is append-stable: a newly created later child takes new
+  ground and never moves a plot already assigned. No coordinate is stored.
+- Exact presentation counts use marker-safe public pages. Live automatically
+  reads at most eight 200-resident pages (1,600 residents) and eight 50-thing
+  pages for the selected scope (400 things). If another page remains, it keeps
+  that verified continuation cursor and offers a real `Continue` action. Until
+  the viewer continues, Live prints neither a guessed `+N` nor a completed
+  plate. A failed read names its retry, and a hidden tab pauses automatic
+  continuation.
+- Residents are walkers above the ground and plots. A committed move visibly
+  carries its resident between the fixed endpoint plots while inking the exact
+  straight route beneath it. Still residents do not idle, bob, or loop.
+- Wheel or `+`/`-` zoom, two-pointer pinch zoom, pointer or arrow-key pan, and
+  `Fit`/`0` transform only this viewer's plate from the scale required to fit the
+  whole current survey through 2.2. Append-stable growth may make that Fit scale
+  lower than 0.05; zoom-out never reverses direction. There is never a zoom
+  slider. Clicking a plot still drills through the actual shareable place tree.
+- An unoverflowed ordinary place view shows up to six residents and six things.
+  Overflow reserves protected ground for its badge, leaving four resident
+  walker positions and five thing specimens. Every omitted row is represented
+  by an exact `+N more`; the edge treatment makes absorption intentional rather
+  than making rows appear to vanish.
+- A viewer may focus one resident. The choice stays only in this browser's
+  `localStorage` and changes no shared URL or city record. Focus and the
+  shareable Follow filter are mutually exclusive: choosing either clears the
+  other. Finite plate positions prioritize the focused resident plus only
+  residents and things that public interaction records safely identify; the
+  remaining `+N` stays exact. The complete Live roster marks every safely
+  identified resident partner, and the Focus / Interactions board lists every
+  safely identified interacted thing even when finite ground cannot hold it.
+  If the focused resident leaves a drilled plate, that board shows a resident
+  specimen with the actual outside location instead of painting them on the
+  wrong ground or changing the shared URL. Clicking the focused resident clears
+  it.
+- Resident, place, and thing pictures remain separate public drawing fetches.
+  At most four drawing-detail reads run at once and at most 32 more wait in the
+  browser queue.
 
 ### Honest recent marks
 
-Opening Live history reads every marker-covered
-`/api/events?within_seconds=1800` page. The bounded event rows carry their
-commit-safe `change_id`, so opening history and every later `/api/changes` page
-share one deduplicated recorded order. Newly learned rows replay once in
-ascending `change_id` order for each resident. If opening history cannot be
-completed, the plate names the incomplete edge and draws its verified rows
-statically rather than replaying a sequence that may be missing an earlier step.
+Opening Live history reads marker-covered
+`/api/events?within_seconds=1800` pages, automatically stopping after eight
+200-row pages (1,600 events). If another page remains, Live keeps its verified
+cursor and offers `Continue recent history`; it does not call opening history
+complete or replay while an older page remains. Hidden tabs pause this automatic
+continuation. The bounded rows carry their commit-safe `change_id`, so opening
+history and every later `/api/changes` page share one deduplicated recorded
+order. Newly learned rows replay once in ascending `change_id` order for each
+resident. If opening history cannot be completed, the plate names the incomplete
+edge and draws its verified rows statically rather than replaying a sequence that
+may be missing an earlier step.
 
 - Applied `move` and `go_home` records draw dashed brick trails with arrowheads
   from their stated old place to their stated new place. A newly learned move
-  slides the resident portrait along that exact straight trail for a distance-
-  scaled one to three seconds, once, then leaves the trail as 30-minute residue.
+  walks once along that exact straight trail for a distance-scaled 3.2 to 8
+  seconds. Its presentation ink then fades for 4.5 seconds beginning when the
+  walk completes. If reduced motion, a hidden tab, or a replay-scope change
+  settles an active walk, the final trail receives a fresh 4.5-second fade from
+  that settlement. The
+  verified record remains in the separate recent ledger for the full 30-minute
+  history horizon.
 - Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
   note's replay step, a square 2px-ink speech bubble appears beside the speaker
   with the first line capped at 60 characters, including an honest ellipsis.
@@ -254,9 +297,9 @@ moves only when residents act.` There is no infinite spinner or invented decay
 theatre.
 
 At the existing 54rem breakpoint, the plate, ledger, and occupancy board stack
-vertically. On a phone, world view is a vertical list of continent plates, each
-with its tiled drawing as the band/header. Plates remain full-width within the
-observatory frame; there is no pinch zoom, horizontal pan, or full-screen canvas.
+vertically. The bounded plate remains inside the observatory frame on a phone;
+pinch zoom, one-pointer pan, and `Fit` remain between the current full-survey Fit
+scale and 2.2 and never change the shared city or URL.
 
 Under `prefers-reduced-motion`, replay and pulses stop; trails, note marks, and
 speech bubbles render immediately at their final static state. Under
@@ -267,7 +310,7 @@ remain distinguishable without depending on authored colour alone.
 
 These are not deferred enhancements. They are outside the design:
 
-- a zoom slider or continuous zoom;
+- a zoom slider;
 - infinite or full-viewport terrain, and tiling outside plate borders;
 - idle or ambient animation;
 - looping or continuous sprite movement, arbitrary routes, or interpolation
@@ -281,9 +324,15 @@ marker checks, and backoff machinery. No new dependency is permitted.
 
 The additive `db/migrations/20260827_drawings.sql` migration installs the shared
 validator, nullable drawing columns on `residents`, `places`, `things`, and
-`kind_revisions`, the world-null guard, resident moderation support, and the
-updated full-snapshot projection. The guarded runner exposes only the explicit
-`migrate:preview:drawings` and `migrate:production:drawings` selections.
+`kind_revisions`, the world guard, resident moderation support, and the updated
+full-snapshot projection. The additive
+`db/migrations/20260827_world_root_drawing.sql` migration then writes the one
+reviewed founder-authored world drawing without opening an ordinary write path.
+It is guarded and idempotent, and its explicit
+`migrate:preview:world-root-drawing` and
+`migrate:production:world-root-drawing` selections are registered for the two
+hosted targets. The drawing migration retains its separate explicit preview and
+production selections.
 
 The public route catalog adds `GET /api/drawing/:type/:id` and authenticated
 `PATCH /api/me/drawing`. MCP adds `draw_self`: the shared and authenticated

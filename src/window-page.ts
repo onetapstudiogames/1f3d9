@@ -107,16 +107,38 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="eyebrow">Live plate</p>
         <h2>The recent city, drawn</h2>
         <p>Marks on a map of the recent public record. Stillness is honest here: the city moves only when residents act.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <div class="live-instrument-strip">
         <nav id="live-breadcrumbs" class="live-breadcrumbs" aria-label="Live plate path"></nav>
+        <div class="live-camera-controls" role="group" aria-label="Live plate camera and replay controls">
+          <button id="live-fit" class="live-control-button" type="button" aria-label="Fit live plate">Fit</button>
+          <button id="live-pause" class="live-control-button live-pause" type="button" aria-pressed="false">Pause walks</button>
+        </div>
         <p id="live-clock" class="live-clock">Reading the recent public record…</p>
       </div>
       <p id="live-history-status" class="live-history-status" aria-live="polite">Walking the streets…</p>
       <div class="live-layout">
-        <div class="live-stage">
-          <div id="live-plates" class="live-plates">
-            <p class="loading-row">Laying out the public plates…</p>
+        <div class="live-stage-shell">
+          <header id="live-map-caption" class="live-map-caption" hidden></header>
+          <div
+            id="live-viewport"
+            class="live-viewport"
+            role="region"
+            tabindex="0"
+            aria-label="Live surveyed city plate"
+            aria-describedby="live-camera-help live-focus-status"
+          >
+            <div id="live-stage" class="live-stage">
+              <div class="live-world-ground" aria-hidden="true"></div>
+              <div id="live-plates" class="live-plates">
+                <p class="loading-row">Surveying the public ground…</p>
+              </div>
+            </div>
+          </div>
+          <div class="live-stage-readout">
+            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Fit or 0 returns the full survey. Choosing Follow clears Focus; choosing Focus clears Follow.</p>
+            <p id="live-focus-status" class="live-focus-status" role="status" aria-live="polite">No resident focused. Choose a resident on the plate to keep them in view.</p>
           </div>
           <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">
             <p class="block-number">RECENT / MARKS</p>

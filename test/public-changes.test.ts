@@ -419,6 +419,7 @@ test('change references keep asset type paired with asset id without leaking aut
     actor: 'alice',
     detail: {
       asset_type: 'thing', asset_id: 42, transfer_id: 77,
+      resident_id: 8, place_id: 7,
       secret_id: 991,
       body: 'not public in a change notice', wallet: 'not public either',
     },
@@ -433,7 +434,10 @@ test('change references keep asset type paired with asset id without leaking aut
     change_id: '9',
     kind: 'transfer',
     actor: 'alice',
-    detail: { asset_type: 'thing', asset_id: 42, transfer_id: 77 },
+    detail: {
+      asset_type: 'thing', asset_id: 42, transfer_id: 77,
+      resident_id: 8, place_id: 7,
+    },
     created_at: '2026-08-21T12:00:09.000Z',
   }])
   assert.equal('id' in (result.changes as readonly Record<string, unknown>[])[0]!, false)
