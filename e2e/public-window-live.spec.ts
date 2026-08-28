@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 
 function isWrite(request: Request): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
@@ -110,6 +110,8 @@ async function installReplayRoutes(
     drawingDelayMs?: number
     drawingPlaceCount?: number
     openingDelayMs?: number
+    holdOpeningPage?: boolean
+    holdOpeningRequest?: number
     residentDelayMs?: number
     thingDelayMs?: number
     moveBurst?: number
@@ -123,6 +125,10 @@ async function installReplayRoutes(
     surveyTotalMismatch?: boolean
     coercibleSurveyThing?: false | null | '' | '0'
     thingFailure?: boolean
+    omitFocusedPlaceFromOutline?: boolean
+    omitFocusedPlaceFromSurvey?: boolean
+    focusedPlaceAvailable?: boolean
+    initialResidentPlaceId?: number
   }> = {},
 ) {
   let published = false
@@ -131,6 +137,7 @@ async function installReplayRoutes(
   let openingEventRequests = 0
   let windowRequests = 0
   let changeRequests = 0
+  let thingNamesUnavailable = Boolean(controls.thingFailure)
   const openingBeforeIds: Array<string | null> = []
   const thingWithinPlaceIds: Array<string | null> = []
   const thingLimits: Array<string | null> = []
@@ -139,18 +146,30 @@ async function installReplayRoutes(
   let activeDrawingRequests = 0
   let maximumDrawingRequests = 0
   let drawingRequests = 0
+  let focusedPlaceRequests = 0
   const drawingRequestPaths: string[] = []
   let releaseHeldThingPage = () => {}
   const heldThingPage = new Promise<void>(resolve => {
     releaseHeldThingPage = resolve
   })
-  const currentMarker = () => controls.simultaneousMoves
-    ? String(1_000 + controls.simultaneousMoves)
-    : published ? controls.secondArrival ? '17' : '16' : '10'
+  let releaseHeldOpeningPage = () => {}
+  const heldOpeningPage = new Promise<void>(resolve => {
+    releaseHeldOpeningPage = resolve
+  })
+  let heldEmptyChangeRequests = 0
+  let heldEmptyChangeGate: Promise<void> | null = null
+  let releaseHeldEmptyChange = () => {}
+  const currentMarker = () => published
+    ? controls.simultaneousMoves
+      ? String(1_000 + controls.simultaneousMoves)
+      : controls.secondArrival ? '17' : '16'
+    : '10'
   const controlledResidentRows = (marker: string) => [
     ...replayResidentRows(
       now,
-      marker === '10' ? controls.openingMovement ? 3 : 2 : 4,
+      marker === '10'
+        ? controls.initialResidentPlaceId ?? (controls.openingMovement ? 3 : 2)
+        : 4,
     ).map(resident => {
       const placed = controls.secondArrival && resident.id === replayCrowd[0]!.id
         ? { ...resident, current_place_id: marker === '10' ? 2 : 4 }
@@ -173,6 +192,31 @@ async function installReplayRoutes(
     name: `Drawing plot ${index + 1}`,
   }))
   const directoryPlaces = [...replayPlaces, ...drawingPlaces]
+  await page.route('**/api/map**', async route => {
+    focusedPlaceRequests += 1
+    const url = new URL(route.request().url())
+    const parentId = Number(url.searchParams.get('parent_id'))
+    if (controls.focusedPlaceAvailable && parentId === 4) {
+      await route.fulfill({ json: {
+        change_marker: currentMarker(),
+        place: {
+          id: 4,
+          parent_id: 3,
+          name: 'Lantern nook',
+          owner: 'harbor-owner',
+          purpose: '',
+          front_matter: [],
+          places: 0,
+          things: 1,
+          notes: 0,
+          moderated: false,
+          children: [],
+        },
+      } })
+      return
+    }
+    await route.fulfill({ status: 503, json: { error: 'focused place unavailable' } })
+  })
   await page.route('**/api/window**', async route => {
     windowRequests += 1
     const url = new URL(route.request().url())
@@ -196,7 +240,7 @@ async function installReplayRoutes(
       if (controls.thingDelayMs) {
         await new Promise(resolve => setTimeout(resolve, controls.thingDelayMs))
       }
-      if (controls.thingFailure) {
+      if (thingNamesUnavailable) {
         await route.fulfill({ status: 503, json: { error: 'named things unavailable' } })
         return
       }
@@ -263,22 +307,39 @@ async function installReplayRoutes(
           ],
         }
       : ordinarySnapshot
-    const surveyedSnapshot = controls.surveyTotalMismatch
+    const outlinedSnapshot = controls.omitFocusedPlaceFromOutline
       ? {
           ...baseSnapshot,
-          live_survey: baseSnapshot.live_survey.map(place => place.id === 2
+          places: baseSnapshot.places.map(place => ({
+            ...place,
+            children: place.children.map(child => child.id === 3
+              ? { ...child, children: [] }
+              : child),
+          })),
+        }
+      : baseSnapshot
+    const surveyedSnapshot = controls.surveyTotalMismatch
+      ? {
+          ...outlinedSnapshot,
+          live_survey: outlinedSnapshot.live_survey.map(place => place.id === 2
             ? { ...place, things: Math.max(0, place.things - 1) }
             : place),
         }
-      : baseSnapshot
-    const snapshot = Object.hasOwn(controls, 'coercibleSurveyThing')
+      : outlinedSnapshot
+    const focusedPlaceSurveySnapshot = controls.omitFocusedPlaceFromSurvey
       ? {
           ...surveyedSnapshot,
-          live_survey: surveyedSnapshot.live_survey.map(place => place.id === 1
+          live_survey: surveyedSnapshot.live_survey.filter(place => place.id !== 4),
+        }
+      : surveyedSnapshot
+    const snapshot = Object.hasOwn(controls, 'coercibleSurveyThing')
+      ? {
+          ...focusedPlaceSurveySnapshot,
+          live_survey: focusedPlaceSurveySnapshot.live_survey.map(place => place.id === 1
             ? { ...place, things: controls.coercibleSurveyThing }
             : place),
         }
-      : surveyedSnapshot
+      : focusedPlaceSurveySnapshot
     const residents = controlledResidentRows(marker)
     await route.fulfill({ json: {
       ...snapshot,
@@ -300,45 +361,67 @@ async function installReplayRoutes(
       await route.fulfill({ json: { change_marker: currentMarker() } })
       return
     }
+    if (since !== null && !published && heldEmptyChangeGate) {
+      const gate = heldEmptyChangeGate
+      heldEmptyChangeGate = null
+      heldEmptyChangeRequests += 1
+      await gate
+      await route.fulfill({ json: {
+        change_marker: '10', unchanged: true, has_more: false,
+        next_since: '10', changes: [],
+      } })
+      return
+    }
     if (since === '10' && published) {
       const publishedMarker = currentMarker()
+      const publishedChanges = controls.simultaneousMoves
+        ? Array.from({ length: controls.simultaneousMoves }, (_, index) => ({
+            change_id: String(1_001 + index),
+            created_at: new Date(now).toISOString(),
+            kind: 'action',
+            actor: `walker-burst-${index + 1}`,
+            detail: {
+              action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
+            },
+          }))
+        : [{
+            change_id: '11', created_at: new Date(now - (
+              controls.staggeredArrivalDeadlines ? 1_792_300 : 0
+            )).toISOString(), kind: 'action',
+            actor: 'map-walker', detail: {
+              action: 'move', status: 'applied', from_place_id: 2, to_place_id: 4,
+            },
+          }, ...(controls.movementOnly ? [] : [{
+            change_id: '12', created_at: new Date(now).toISOString(), kind: 'note',
+            actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
+          }, {
+            change_id: '13', created_at: new Date(now).toISOString(), kind: 'note',
+            actor: 'map-walker', detail: { place_id: 3, note_id: 78 },
+          }, {
+            change_id: '14', created_at: new Date(now).toISOString(), kind: 'action',
+            actor: 'map-walker', detail: {
+              action: 'use', status: 'applied',
+              place_id: controls.useThingId ? 3 : 4,
+              source_thing_id: controls.useThingId ?? 9,
+            },
+          }, {
+            change_id: '15', created_at: new Date(now).toISOString(), kind: 'action',
+            actor: 'map-walker', detail: {
+              action: 'move', from_place_id: 3, to_place_id: 2,
+            },
+          }, {
+            change_id: '16', created_at: new Date(now - 600_001).toISOString(), kind: 'note',
+            actor: 'map-walker', detail: { place_id: 3, note_id: 79 },
+          }]), ...(controls.secondArrival ? [{
+            change_id: '17', created_at: new Date(now).toISOString(), kind: 'action',
+            actor: replayCrowd[0]!.handle, detail: {
+              action: 'move', status: 'applied', from_place_id: 2, to_place_id: 4,
+            },
+          }] : [])]
       await route.fulfill({ json: {
         change_marker: publishedMarker, unchanged: false, has_more: false,
         next_since: publishedMarker,
-        changes: [{
-          change_id: '11', created_at: new Date(now - (
-            controls.staggeredArrivalDeadlines ? 1_792_300 : 0
-          )).toISOString(), kind: 'action',
-          actor: 'map-walker', detail: {
-            action: 'move', status: 'applied', from_place_id: 2, to_place_id: 4,
-          },
-        }, ...(controls.movementOnly ? [] : [{
-          change_id: '12', created_at: new Date(now).toISOString(), kind: 'note',
-          actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
-        }, {
-          change_id: '13', created_at: new Date(now).toISOString(), kind: 'note',
-          actor: 'map-walker', detail: { place_id: 3, note_id: 78 },
-        }, {
-          change_id: '14', created_at: new Date(now).toISOString(), kind: 'action',
-          actor: 'map-walker', detail: {
-            action: 'use', status: 'applied',
-            place_id: controls.useThingId ? 3 : 4,
-            source_thing_id: controls.useThingId ?? 9,
-          },
-        }, {
-          change_id: '15', created_at: new Date(now).toISOString(), kind: 'action',
-          actor: 'map-walker', detail: {
-            action: 'move', from_place_id: 3, to_place_id: 2,
-          },
-        }, {
-          change_id: '16', created_at: new Date(now - 600_001).toISOString(), kind: 'note',
-          actor: 'map-walker', detail: { place_id: 3, note_id: 79 },
-        }]), ...(controls.secondArrival ? [{
-          change_id: '17', created_at: new Date(now).toISOString(), kind: 'action',
-          actor: replayCrowd[0]!.handle, detail: {
-            action: 'move', status: 'applied', from_place_id: 2, to_place_id: 4,
-          },
-        }] : [])],
+        changes: publishedChanges,
       } })
       return
     }
@@ -350,6 +433,9 @@ async function installReplayRoutes(
   await page.route('**/api/events**', async route => {
     openingEventRequests += 1
     openingBeforeIds.push(new URL(route.request().url()).searchParams.get('before_id'))
+    if (controls.holdOpeningPage || controls.holdOpeningRequest === openingEventRequests) {
+      await heldOpeningPage
+    }
     if (controls.openingDelayMs) {
       await new Promise(resolve => setTimeout(resolve, controls.openingDelayMs))
     }
@@ -388,7 +474,7 @@ async function installReplayRoutes(
     await route.fulfill({ json: {
       change_marker: controls.openingMarker ?? currentMarker(),
       has_more: false, next_before_id: null,
-      events: controls.simultaneousMoves
+      events: controls.simultaneousMoves && published
         ? Array.from({ length: controls.simultaneousMoves }, (_, index) => ({
             id: 1_000 + index,
             change_id: String(1_001 + index),
@@ -541,8 +627,66 @@ async function installReplayRoutes(
     maximumDrawingRequests: () => maximumDrawingRequests,
     drawingRequests: () => drawingRequests,
     drawingRequestPaths: () => [...drawingRequestPaths],
+    focusedPlaceRequests: () => focusedPlaceRequests,
+    holdNextEmptyChange: () => {
+      heldEmptyChangeGate = new Promise<void>(resolve => {
+        releaseHeldEmptyChange = resolve
+      })
+    },
+    heldEmptyChangeRequests: () => heldEmptyChangeRequests,
+    releaseHeldEmptyChange: () => releaseHeldEmptyChange(),
+    recoverThingNames: () => { thingNamesUnavailable = false },
+    releaseHeldOpeningPage,
     releaseHeldThingPage,
   }
+}
+
+async function publishReplayChanges(
+  page: Page,
+  fixture: Awaited<ReturnType<typeof installReplayRoutes>>,
+) {
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect.poll(fixture.changeRequests).toBeGreaterThan(0)
+  const requestsBeforePublish = fixture.changeRequests()
+  fixture.publish()
+  await expect.poll(async () => {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    return fixture.changeRequests()
+  }).toBeGreaterThan(requestsBeforePublish)
+}
+
+async function liveResidentPositions(plot: Locator) {
+  return plot.evaluate(node => {
+    const plotBox = node.getBoundingClientRect()
+    return [...node.querySelectorAll('.live-walker')].map(shell => {
+      const box = (shell as HTMLElement).getBoundingClientRect()
+      const handle = (shell.querySelector('[data-live-resident-handle]') as HTMLElement | null)
+        ?.dataset.liveResidentHandle ?? ''
+      return {
+        key: handle,
+        x: box.left + box.width / 2 - plotBox.left,
+        y: box.top + box.height / 2 - plotBox.top,
+        width: plotBox.width,
+        height: plotBox.height,
+      }
+    })
+  })
+}
+
+async function liveThingPositions(plot: Locator) {
+  return plot.evaluate(node => {
+    const plotBox = node.getBoundingClientRect()
+    return [...node.querySelectorAll('.live-thing-specimen')].map(thing => {
+      const box = (thing as HTMLElement).getBoundingClientRect()
+      return {
+        key: (thing as HTMLElement).dataset.liveThingId ?? '',
+        x: box.left + box.width / 2 - plotBox.left,
+        y: box.top + box.height / 2 - plotBox.top,
+        width: plotBox.width,
+        height: plotBox.height,
+      }
+    })
+  })
 }
 
 test('Live paints exact surveyed counts and Focus ids while named thing cards load', async ({ page }) => {
@@ -598,6 +742,149 @@ test('Live paints exact surveyed counts and Focus ids while named thing cards lo
     .toContainText('Thing #91 · recorded in Harbor room')
 })
 
+test('Live uses the complete survey when an unnecessary focused-place detail read fails', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    omitFocusedPlaceFromOutline: true,
+  })
+  await page.goto('/window/live?place=4')
+
+  await expect(page.locator('.live-plate-title')).toHaveText('Lantern nook')
+  await expect(page.locator('#live-plates')).not.toContainText('could not be loaded')
+  await expect(page.getByRole('button', { name: 'Retry loading this place' })).toHaveCount(0)
+  expect(fixture.focusedPlaceRequests()).toBeLessThanOrEqual(1)
+})
+
+test('Live uses the complete survey for a followed resident when place detail fails', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    omitFocusedPlaceFromOutline: true,
+    initialResidentPlaceId: 4,
+  })
+  await page.goto('/window/live?resident=map-walker')
+
+  await expect(page.locator('.live-plate-title')).toHaveText('Lantern nook')
+  await expect(page.locator('#live-plates')).not.toContainText('could not be loaded')
+  await expect(page.getByRole('button', { name: 'Retry loading this place' })).toHaveCount(0)
+  expect(fixture.focusedPlaceRequests()).toBeLessThanOrEqual(1)
+})
+
+test('Live still loads a selected place through the focused-place path when the survey does not cover it', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    omitFocusedPlaceFromOutline: true,
+    omitFocusedPlaceFromSurvey: true,
+    focusedPlaceAvailable: true,
+  })
+  await page.goto('/window/live?place=4')
+
+  await expect(page.locator('.live-plate-title')).toHaveText('Lantern nook')
+  await expect(page.locator('#live-plates')).not.toContainText('could not be loaded')
+  await expect(page.getByRole('button', { name: 'Retry loading this place' })).toHaveCount(0)
+  await expect.poll(fixture.focusedPlaceRequests).toBeGreaterThan(0)
+})
+
+test('Live hover and keyboard focus bring covered places, residents, and things forward', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const plot = page.locator('.live-plot[data-place-id="3"]')
+  const plotOpen = plot.locator('.live-plot-open')
+  await plot.hover()
+  await expect(plot).toHaveCSS('z-index', '24')
+  await page.locator('#live-viewport').focus()
+  await plotOpen.focus()
+  await expect(plot).toHaveCSS('z-index', '24')
+
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  const residentShell = resident.locator('xpath=..')
+  await resident.hover()
+  await expect(residentShell).toHaveCSS('z-index', '30')
+  await page.locator('#live-viewport').focus()
+  await resident.focus()
+  await expect(residentShell).toHaveCSS('z-index', '30')
+
+  const thing = page.locator('[data-live-thing-id="9"]').first()
+  await thing.hover()
+  await expect(thing).toHaveCSS('z-index', '45')
+  await page.locator('#live-viewport').focus()
+  await thing.focus()
+  await expect(thing).toHaveCSS('z-index', '45')
+})
+
+test('Live first touch raises covered items and second touch opens them', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  const shell = resident.locator('xpath=..')
+  await resident.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await resident.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(shell).toHaveAttribute('data-live-raised', 'true')
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+
+  await resident.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await resident.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-1')
+
+  const thing = page.locator('[data-live-thing-id="9"]').first()
+  await thing.evaluate(node => node.addEventListener('click', event => {
+    ;(node as HTMLElement).dataset.testDefaultPrevented = String(event.defaultPrevented)
+    event.preventDefault()
+  }))
+  await thing.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await thing.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(thing).toHaveAttribute('data-live-raised', 'true')
+  await expect(thing).toHaveAttribute('data-test-default-prevented', 'true')
+  await thing.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await thing.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(thing).toHaveAttribute('data-test-default-prevented', 'false')
+  await expect(thing).toHaveAttribute('href', '/api/thing/9')
+
+  const plot = page.locator('.live-plot[data-place-id="2"]')
+  const open = plot.locator('.live-plot-open')
+  const urlBeforeFirstPlaceTap = page.url()
+  await open.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await open.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(plot).toHaveAttribute('data-live-raised', 'true')
+  expect(page.url()).toBe(urlBeforeFirstPlaceTap)
+  await open.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await open.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+})
+
+test('Live Show more reveals every loaded resident and thing instead of leaving a dead badge', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const harbor = page.locator('.live-plot[data-place-id="3"]')
+  const harborBefore = await liveResidentPositions(harbor)
+  await harbor.getByRole('button', { name: 'Show 3 more residents' }).click()
+  await expect(harbor.locator('.live-walker')).toHaveCount(7)
+  await expect(harbor.locator('.live-resident-more')).toHaveCount(0)
+  await expect(harbor.locator('.live-walker-layer-expanded')).toHaveCount(1)
+  await expect(harbor.locator('[data-live-resident-handle="harbor-5"]').first()).toBeVisible()
+  await expect(harbor.locator('[data-live-resident-handle="harbor-6"]').first()).toBeVisible()
+  await expect(harbor.locator('[data-live-resident-handle="harbor-7"]').first()).toBeVisible()
+  const harborAfter = await liveResidentPositions(harbor)
+  expect(harborAfter).toHaveLength(7)
+  expect(new Set(harborAfter.map(point =>
+    `${Math.round(point.x)}:${Math.round(point.y)}`)).size).toBe(harborAfter.length)
+
+  const cinder = page.locator('.live-plot[data-place-id="2"]')
+  const cinderBefore = await liveThingPositions(cinder)
+  await cinder.getByRole('button', { name: 'Show 2 more things' }).click()
+  await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
+  await expect(cinder.locator('.live-thing-more')).toHaveCount(0)
+  await expect(cinder.locator('[data-live-thing-id="22"]').first()).toBeVisible()
+  await expect(cinder.locator('[data-live-thing-id="23"]').first()).toBeVisible()
+  const cinderAfter = await liveThingPositions(cinder)
+  expect(cinderAfter).toHaveLength(7)
+  expect(new Set(cinderAfter.map(point =>
+    `${Math.round(point.x)}:${Math.round(point.y)}`)).size).toBe(cinderAfter.length)
+  expect(cinderAfter.length).toBeGreaterThan(cinderBefore.length)
+})
+
 test('Live refuses exact thing badges when the fixed survey disagrees', async ({ page }) => {
   await installReplayRoutes(page, Date.now(), 'complete', 0, {
     surveyTotalMismatch: true,
@@ -640,8 +927,14 @@ test('Live keeps exact surveyed counts when newest thing names fail', async ({ p
   )
   await page.getByRole('button', { name: 'Retry named thing cards' }).click()
   await expect.poll(fixture.thingPageRequests).toBe(2)
+  await expect(page.getByRole('button', { name: 'Retry named thing cards' })).toBeVisible()
   await expect(page.locator('.live-plot[data-place-id="2"] .live-thing-more'))
     .toHaveText('+5 more')
+  fixture.recoverThingNames()
+  await page.getByRole('button', { name: 'Retry named thing cards' }).click()
+  await expect.poll(fixture.thingPageRequests).toBe(3)
+  await expect(page.getByRole('button', { name: 'Retry named thing cards' })).toHaveCount(0)
+  await expect(page.locator('.live-thing-specimen')).not.toHaveCount(0)
 })
 
 test('Live does not chase a repeated cursor after its bounded named thing page', async ({ page }) => {
@@ -701,6 +994,17 @@ test('Live pauses automatic opening-history paging after eight valid pages', asy
   )
 })
 
+test('Live paints opening history as residue without replaying stale backlog', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    openingMovement: true,
+  })
+  await page.goto('/window#view=live')
+
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect(page.locator('.live-trail')).toHaveCount(1)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+})
+
 test('Live does not continue resident census reads while hidden and resumes when visible', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     residentPaging: 'long', residentDelayMs: 500,
@@ -749,6 +1053,127 @@ test('Live does not continue opening-history reads while hidden and resumes when
     document.dispatchEvent(new Event('visibilitychange'))
   })
   await expect.poll(fixture.openingEventRequests).toBeGreaterThan(1)
+})
+
+test('Live catches up after a hidden tab without replaying the hidden backlog', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  const readsBeforeCatchUp = fixture.changeRequests()
+  fixture.publish()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+
+  await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeCatchUp)
+  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+})
+
+test('an empty read already in flight cannot consume hidden-backlog suppression', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  fixture.holdNextEmptyChange()
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect.poll(fixture.heldEmptyChangeRequests).toBe(1)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  fixture.publish()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  const readsBeforeRelease = fixture.changeRequests()
+  fixture.releaseHeldEmptyChange()
+
+  await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeRelease)
+  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
+  await page.waitForTimeout(300)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+})
+
+test('a final opening page completed while hidden cannot release queued stale motion', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    holdOpeningPage: true,
+    openingMarker: '10',
+  })
+  await page.goto('/window#view=live')
+  await expect.poll(fixture.openingEventRequests).toBe(1)
+
+  fixture.publish()
+  const readsBeforePublish = fixture.changeRequests()
+  await expect.poll(async () => {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    return fixture.changeRequests()
+  }).toBeGreaterThan(readsBeforePublish)
+  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  const readsBeforeVisibleCatchUp = fixture.changeRequests()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeVisibleCatchUp)
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  fixture.releaseHeldOpeningPage()
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  await page.waitForTimeout(300)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+})
+
+test('a hidden multi-page opening continuation keeps pre-hide pending changes static', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    openingPaging: 'long',
+    openingMarker: '10',
+    openingDelayMs: 100,
+    holdOpeningRequest: 2,
+  })
+  await page.goto('/window#view=live')
+  await expect.poll(fixture.openingEventRequests).toBe(2)
+
+  fixture.publish()
+  const readsBeforePublish = fixture.changeRequests()
+  await expect.poll(async () => {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    return fixture.changeRequests()
+  }).toBeGreaterThan(readsBeforePublish)
+  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  fixture.releaseHeldOpeningPage()
+  await page.waitForTimeout(150)
+  expect(fixture.openingEventRequests()).toBe(2)
+
+  const readsBeforeVisibleCatchUp = fixture.changeRequests()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeVisibleCatchUp)
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect.poll(fixture.openingEventRequests).toBe(9)
+
+  await page.waitForTimeout(300)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
 })
 
 test('Live finishes one named thing page while hidden and does not start another', async ({ page }) => {
@@ -815,6 +1240,52 @@ test('Live drops queued drawings from the old plate before reading a newly opene
   expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
 })
 
+test('repeatable Live proof scene shows crowd reflow, recovery, concurrent movement, speech, and use', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+    secondArrival: true,
+    thingFailure: true,
+    useThingId: 20,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const retry = page.getByRole('button', { name: 'Retry named thing cards' })
+  await expect(retry).toBeVisible()
+  await retry.click()
+  await expect.poll(fixture.thingPageRequests).toBe(2)
+  await expect(retry).toBeVisible()
+  fixture.recoverThingNames()
+  await retry.click()
+  await expect.poll(fixture.thingPageRequests).toBe(3)
+  await expect(retry).toHaveCount(0)
+
+  const cinder = page.locator('.live-plot[data-place-id="2"]')
+  await cinder.getByRole('button', { name: 'Show 2 more things' }).click()
+  await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
+
+  await publishReplayChanges(page, fixture)
+  const replays = page.locator('.live-replay-portrait')
+  let concurrentReplayKeys: Array<string | undefined> = []
+  await expect.poll(async () => {
+    concurrentReplayKeys = await replays.evaluateAll(nodes => nodes.map(node =>
+      (node as HTMLElement).dataset.liveReplayKey))
+    return new Set(concurrentReplayKeys).size
+  }).toBe(2)
+
+  let sawSpeech = false
+  let sawUse = false
+  for (let elapsed = 0; elapsed < 24_000; elapsed += 500) {
+    await page.clock.runFor(500)
+    sawSpeech ||= await page.locator('.live-speech-bubble').count() > 0
+    sawUse ||= await page.locator('.live-thing-specimen.live-pulse').count() > 0
+  }
+  expect(sawSpeech).toBe(true)
+  expect(sawUse).toBe(true)
+  await expect(replays).toHaveCount(0)
+})
+
 test('new change rows replay once in recorded order and leave truthful residue', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
@@ -822,8 +1293,7 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
-  fixture.publish()
-  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await publishReplayChanges(page, fixture)
   const replay = page.locator('.live-replay-portrait')
   await expect(replay).toHaveCount(1)
   await expect(replay).toHaveAttribute('data-live-replay-key', 'change:11')
@@ -938,13 +1408,14 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await page.clock.fastForward(651)
   const pulsedThing = page.locator('.live-thing-specimen.live-pulse')
   await expect(pulsedThing).toHaveCount(0)
-  await expect(page.locator('[data-place-id="3"] [data-live-thing-id="9"]')).toHaveCount(0)
+  const stableLantern = page.locator('[data-place-id="3"] [data-live-thing-id="9"]')
+  await expect(stableLantern).toHaveCount(1)
+  await expect(stableLantern).not.toHaveClass(/live-pulse/u)
   await expect(page.locator('.live-action-mark')).toHaveCount(0)
 
   await page.clock.fastForward(600)
   await expect(replay).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
-  await expect(trail).toHaveCount(1)
   const settledWalker = page.locator(
     '[data-place-id="3"] [data-live-resident-handle="map-walker"]',
   ).first()
@@ -959,8 +1430,8 @@ test('new change rows replay once in recorded order and leave truthful residue',
       y: (box.bottom - ground.top) / scale,
     }
   })
-  expect(Math.abs(settledPoint.x - Number(await trail.getAttribute('x2')))).toBeLessThan(1)
-  expect(Math.abs(settledPoint.y - Number(await trail.getAttribute('y2')))).toBeLessThan(1)
+  expect(Math.abs(settledPoint.x - start.x2)).toBeLessThan(1)
+  expect(Math.abs(settledPoint.y - start.y2)).toBeLessThan(1)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   await expect(page.locator('#live-ledger')).not.toContainText('Too old to replay')
   await expect(page.locator('#live-ledger')).not.toContainText('moved: Harbor room → Cinder lane')
@@ -972,7 +1443,6 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await page.clock.fastForward(100)
   await expect(replay).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
-  await expect(trail).toHaveCount(1)
   await page.clock.fastForward(600_001)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
@@ -1038,6 +1508,9 @@ test('a later crowded arrival keeps its full absorption window', async ({ page }
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   const replays = page.locator('.live-replay-portrait[data-replay-duration]')
+  await expect(replays).toHaveCount(1)
+  await expect(replays).toHaveAttribute('data-live-replay-key', 'change:11')
+  await page.clock.runFor(4_100)
   let durations: number[] = []
   await expect.poll(async () => {
     durations = await replays.evaluateAll(nodes => nodes.map(node =>
@@ -1049,12 +1522,12 @@ test('a later crowded arrival keeps its full absorption window', async ({ page }
   expect(lastDuration! - firstDuration!).toBeGreaterThanOrEqual(400)
   expect(lastDuration! - firstDuration!).toBeLessThan(900)
 
-  await page.clock.runFor(lastDuration! + 1)
+  await page.clock.runFor(lastDuration!)
   const absorptionBadge = page.locator('[data-place-id="3"] .live-resident-more')
   await expect(absorptionBadge).toHaveClass(/live-overflow-absorbing/u)
-  await page.clock.runFor(450)
+  await page.clock.runFor(250)
   await expect(absorptionBadge).toHaveClass(/live-overflow-absorbing/u)
-  await page.clock.runFor(450)
+  await page.clock.runFor(250)
   await expect(absorptionBadge).not.toHaveClass(/live-overflow-absorbing/u)
 })
 
@@ -1077,23 +1550,23 @@ test('focused use pulses the exact pinned nested thing', async ({ page }) => {
   await expect(pinnedThing).toHaveClass(/live-pulse/u)
 })
 
-test('an unshown sixth thing never consumes visible replay time', async ({ page }) => {
+test('an unshown thing never consumes visible replay time', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
-  const fixture = await installReplayRoutes(page, now, 'complete', 0, { useThingId: 21 })
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, { useThingId: 22 })
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await expect(page.locator('[data-place-id="3"] .live-thing-more')).toHaveText('+3 more')
-  await expect(page.locator('[data-place-id="3"] [data-live-thing-id="21"]')).toHaveCount(0)
+  await expect(page.locator('[data-place-id="3"] [data-live-thing-id="22"]')).toHaveCount(0)
   const movement = page.locator('.live-replay-portrait[data-live-replay-key="change:11"]')
   const movementDuration = Number(await movement.getAttribute('data-replay-duration'))
   await page.clock.runFor(movementDuration + 1 + 650 + 1 + 650 + 1)
   await expect(page.locator('.live-replay-portrait[data-live-replay-key="change:14"]'))
     .toHaveCount(0)
-  await expect(page.locator('#live-ledger')).toContainText('used thing #21')
+  await expect(page.locator('#live-ledger')).toContainText('used thing #22')
 })
 
 test('focus keeps every exact interaction visible outside finite plate slots', async ({ page }) => {
@@ -1533,13 +2006,20 @@ test('the plate hard-caps trail ink and removes it at the fade edge without trim
 test('sixty-four simultaneous walks complete in one painted batch', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
-  await installReplayRoutes(page, now, 'complete', 0, { simultaneousMoves: 64 })
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+    simultaneousMoves: 64,
+  })
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  await publishReplayChanges(page, fixture)
   const replays = page.locator('.live-replay-portrait')
-  await expect(replays).toHaveCount(64)
-  const durations = await replays.evaluateAll(nodes => nodes.map(node =>
-    Number((node as HTMLElement).dataset.replayDuration)))
+  let durations: number[] = []
+  await expect.poll(async () => {
+    durations = await replays.evaluateAll(nodes => nodes.map(node =>
+      Number((node as HTMLElement).dataset.replayDuration)))
+    return durations.length
+  }).toBe(64)
   expect(new Set(durations).size).toBe(1)
   await page.locator('#live-viewport').evaluate(async viewport => {
     const anchor = document.querySelector('.live-replay-portrait')!.getBoundingClientRect()
@@ -1612,9 +2092,17 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
 })
 
 test('a moving resident returning to readable ground receives a bounded label refresh', async ({ page }) => {
-  await installReplayRoutes(page, Date.now(), 'complete', 0, { simultaneousMoves: 64 })
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+    simultaneousMoves: 64,
+  })
   await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  await publishReplayChanges(page, fixture)
   const replays = page.locator('.live-replay-portrait')
+  await expect.poll(() => replays.count()).toBeGreaterThan(0)
   await expect(replays).toHaveCount(64)
   await page.locator('#live-viewport').evaluate(async viewport => {
     const rect = viewport.getBoundingClientRect()
@@ -1670,12 +2158,15 @@ test('a moving resident returning to readable ground receives a bounded label re
 test('turning on reduced motion mid-walk preserves the final fading trail', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
-  await installReplayRoutes(page, now, 'complete', 0, { openingMovement: true })
+  const fixture = await installReplayRoutes(page, now)
   await page.goto('/window#view=live')
-  await expect(page.locator('.live-replay-portrait')).toHaveAttribute(
-    'data-live-replay-key',
-    'change:9',
-  )
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  await publishReplayChanges(page, fixture)
+  const replay = page.locator('.live-replay-portrait')
+  await expect.poll(() => replay.count()).toBeGreaterThan(0)
+  await expect(replay).toHaveCount(1)
+  await expect(replay).toHaveAttribute('data-live-replay-key', 'change:11')
 
   await page.clock.runFor(2_000)
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -1911,17 +2402,8 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   expect(captionClearOfViewport).toBe(true)
   await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
   await expect(page.locator('.live-trail')).toHaveCount(1)
-  const openingReplay = page.locator('.live-replay-portrait')
-  await expect(openingReplay).toHaveCount(1)
-  await expect(openingReplay).toHaveAttribute('data-live-replay-key', 'change:11')
-  await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
-  const openingDuration = Number(await openingReplay.getAttribute('data-replay-duration'))
-  expect(openingDuration).toBeGreaterThanOrEqual(3_200)
-  expect(openingDuration).toBeLessThanOrEqual(8_000)
-  await page.clock.runFor(openingDuration + 1)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
-  await page.clock.fastForward(650)
-  await expect(openingReplay).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(1)
   await expect(page.locator('.live-speech-bubble')).toHaveText('A bell answers')

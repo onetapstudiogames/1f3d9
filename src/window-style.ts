@@ -931,8 +931,11 @@ button { color: inherit; }
 }
 .live-plot[data-live-culled="true"] { display: none; }
 .live-plot:has(.live-walker:hover),
-.live-plot:has(.live-walker:focus-within) { z-index: 3; }
+.live-plot:has(.live-walker:focus-within),
+.live-plot:hover,
+.live-plot:focus-within { z-index: 24; }
 .live-plot[data-live-focus-plot="true"] { z-index: 4; }
+.live-plot[data-live-raised="true"] { z-index: 42; }
 .live-plot[data-place-kind="continent"] {
   border-width: 4px;
   box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5);
@@ -1012,22 +1015,25 @@ button { color: inherit; }
 .live-plot > .live-thing-shelf {
   position: absolute;
   z-index: 6;
-  inset: 2.45rem 0.45rem auto 0.45rem;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.24rem;
+  inset: 0;
+  display: block;
   max-height: none;
   margin: 0;
   padding: 0;
   overflow: visible;
   border: 0;
+  pointer-events: none;
 }
 .live-plot .live-thing-specimen {
+  position: absolute;
+  width: 5.8rem;
   grid-template-columns: 1.55rem minmax(0, 1fr);
   min-width: 0;
   padding: 0.12rem;
+  transform: translate(-50%, -50%);
   background: rgba(255, 249, 232, 0.94);
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
 }
 .live-plot .live-thing-name {
   overflow: hidden;
@@ -1035,12 +1041,45 @@ button { color: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.live-thing-specimen:hover,
+.live-thing-specimen:focus-visible,
+.live-thing-specimen[data-live-raised="true"] {
+  z-index: 45;
+  min-width: max-content;
+  max-width: 20rem;
+}
+.live-thing-specimen:hover .live-thing-name,
+.live-thing-specimen:focus-visible .live-thing-name,
+.live-thing-specimen[data-live-raised="true"] .live-thing-name {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.live-thing-shelf-expanded {
+  z-index: 28 !important;
+  width: min(30rem, calc(100vw - 3rem));
+  max-height: 20rem !important;
+  padding: 0.45rem !important;
+  overflow: auto !important;
+  background: rgba(13, 37, 31, 0.94);
+  border: 2px solid var(--line) !important;
+}
 .live-walker-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 .live-walker-layer { z-index: 12; }
+.live-plot > .live-walker-layer-expanded {
+  z-index: 29;
+  inset: 0 auto auto 0;
+  max-width: min(30rem, calc(100vw - 3rem));
+  max-height: 20rem;
+  overflow: auto;
+  background: rgba(13, 37, 31, 0.94);
+  border: 2px solid var(--line);
+  pointer-events: auto;
+}
 .live-walker, .live-replay-portrait {
   position: absolute;
   z-index: 12;
@@ -1055,6 +1094,8 @@ button { color: inherit; }
 .live-replay-portrait:hover, .live-replay-portrait:focus-within { z-index: 30; }
 .live-walker[data-live-focus-resident],
 .live-replay-portrait[data-live-focus-resident] { z-index: 40; }
+.live-walker[data-live-raised="true"],
+.live-replay-portrait[data-live-raised="true"] { z-index: 44; }
 .live-plot .live-walker { width: 2.5rem; height: 2.5rem; }
 .live-replay-portrait {
   z-index: 18;
@@ -1063,7 +1104,7 @@ button { color: inherit; }
   animation-timing-function: linear;
   animation-fill-mode: forwards;
 }
-.live-root-walkers .live-resident-more { inset: 5.2rem auto auto 22rem; }
+.live-root-walkers .live-resident-more { inset: auto 0.75rem 0.75rem auto; }
 .live-focus-thing-shelf {
   position: absolute;
   z-index: 9;
@@ -1074,6 +1115,34 @@ button { color: inherit; }
   padding: 0.45rem;
   background: rgba(13, 37, 31, 0.72);
   border: 2px solid var(--line);
+  pointer-events: auto;
+}
+.live-root-thing-shelf {
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+.live-focus-thing-shelf.live-root-thing-shelf.live-thing-shelf-expanded {
+  max-height: none !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  background: transparent;
+  border: 0 !important;
+}
+.live-root-thing-shelf > .live-thing-specimen {
+  position: absolute;
+  width: 9rem;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.live-focus-thing-shelf.live-root-thing-shelf > .live-thing-more {
+  position: absolute;
+  inset: auto 1rem 1rem auto;
   pointer-events: auto;
 }
 .live-stage-empty {
@@ -1109,6 +1178,8 @@ button { color: inherit; }
   border: 2px solid var(--line);
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
   font: 900 0.58rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  cursor: pointer;
+  pointer-events: auto;
 }
 .live-resident-more::before, .live-thing-more::before {
   content: "";
@@ -1126,6 +1197,10 @@ button { color: inherit; }
   position: static;
   align-self: center;
   justify-self: end;
+}
+.live-plot > .live-thing-shelf > .live-thing-more {
+  position: absolute;
+  inset: auto 0.38rem 0.38rem auto;
 }
 .live-overflow-absorbing { animation: live-overflow-absorb 480ms steps(4, end) both; }
 .live-trace-layer {

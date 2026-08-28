@@ -186,9 +186,11 @@ not a simulation of the present.
   hatch and an `undrawn` label. The immutable world root uses its stored,
   founder-authored drawing. Deliberately blank remains blank.
 - Live completes the lightweight public directory before allocating the focus
-  place's direct children. Their fixed rectangular plots follow creation-ID
-  order. Allocation is append-stable: a newly created later child takes new
-  ground and never moves a plot already assigned. No coordinate is stored.
+  place's direct children. Their natural, non-grid rectangular plots follow
+  creation-ID order. Allocation is append-stable: a newly created later child
+  takes open ground and never moves a plot already assigned. Direct residents
+  and named things spread through the available room in stable positions rather
+  than collecting in one corner. No coordinate is stored.
 - Exact resident presentation counts still use marker-safe public pages. Live
   automatically reads at most eight 200-resident pages (1,600 residents); if
   another page remains, it keeps that verified cursor and offers a real
@@ -210,7 +212,9 @@ not a simulation of the present.
   lower than 0.05; zoom-out never reverses direction. There is never a zoom
   slider. Clicking a plot still drills through the actual shareable place tree.
 - Resident name tags follow this viewer's scale and attention. Far zoom shows
-  resident sprites without tags. At a readable zoom, or while a resident has
+  resident sprites without tags. Pointer hover and keyboard focus bring any
+  covered place, resident, or thing forward. On touch, the first tap brings the
+  item forward and the second opens it. At a readable zoom, or while a resident has
   pointer hover, tap, keyboard focus, or browser-local Focus, its tag shows the
   full handle without truncation. A focused resident is always labelled and
   lifted above neighbouring marks. Plot nameplates remain single-line ellipses
@@ -221,8 +225,9 @@ not a simulation of the present.
 - An unoverflowed ordinary place view shows up to six residents and six things.
   Overflow reserves protected ground for its badge, leaving four resident
   walker positions and five thing specimens. Every omitted row is represented
-  by an exact `+N more`; the edge treatment makes absorption intentional rather
-  than making rows appear to vanish.
+  by an exact `+N more`. `Show more` reveals every loaded omission, may continue
+  the retained names cursor, and reflows the room while keeping every represented
+  item reachable.
 - A viewer may focus one resident. The choice stays only in this browser's
   `localStorage` and changes no shared URL or city record. Focus and the
   shareable Follow filter are mutually exclusive: choosing either clears the
@@ -253,10 +258,12 @@ cursor and offers `Continue recent history`; it does not call opening history
 complete or replay while an older page remains. Hidden tabs pause this automatic
 continuation. The bounded rows carry their commit-safe `change_id`, so opening
 history and every later `/api/changes` page share one deduplicated recorded
-order. Newly learned rows replay once in ascending `change_id` order for each
-resident. If opening history cannot be completed, the plate names the incomplete
-edge and draws its verified rows statically rather than replaying a sequence that
-may be missing an earlier step.
+order. Opening rows draw settled residue without replay. Each resident's newly learned rows
+replay once in ascending `change_id` order while the tab remains visible. The
+first successful catch-up after a hidden tab also settles directly,
+so hidden activity never returns as stale replay. If opening history cannot be
+completed, the plate names the incomplete edge and draws its verified rows
+statically rather than replaying a sequence that may be missing an earlier step.
 
 - Applied `move` and `go_home` records draw dashed brick trails with arrowheads
   from their stated old place to their stated new place. A newly learned move

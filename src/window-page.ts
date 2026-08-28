@@ -138,7 +138,7 @@ export const WINDOW_HTML = `<!doctype html>
             <div id="live-label-layer" class="live-label-layer" aria-hidden="true"></div>
           </div>
           <div class="live-stage-readout">
-            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Fit or 0 returns the full survey. Far zoom shows resident sprites without tags; zoom in, hover, tap, or use keyboard focus to show a full name. Focus keeps that resident labelled on top. Plot nameplates shorten visually and keep their full names in tooltips. Choosing Follow clears Focus; choosing Focus clears Follow.</p>
+            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Fit or 0 returns the full survey. Far zoom shows resident sprites without tags; zoom in, hover, or use keyboard focus to bring an item forward. On a touch screen, tap once to bring an item forward and again to open it. Focus keeps that resident labelled on top. Show more reveals the people or things folded into a crowded place. Plot nameplates shorten visually and keep their full names in tooltips. Choosing Follow clears Focus; choosing Focus clears Follow.</p>
             <p id="live-focus-status" class="live-focus-status" role="status" aria-live="polite">No resident focused. Choose a resident on the plate to keep them in view.</p>
           </div>
           <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">
