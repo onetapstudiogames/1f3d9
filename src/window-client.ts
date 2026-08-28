@@ -1084,6 +1084,7 @@ export const WINDOW_JS = `(() => {
     live: {
       openingMarker: null, openingEvents: [], openingLoaded: false, openingLoading: false,
       openingComplete: false, openingPaused: false, openingError: false,
+      openingReplaySuppressed: false,
       openingNextBeforeId: null, streamError: false, streamMarker: null,
       changes: [], drawings: {}, noteBodies: {},
       highlightedKey: null, quietReads: 0, nextReadAt: null,
@@ -1109,6 +1110,8 @@ export const WINDOW_JS = `(() => {
   let liveReplayCompletionFrame = 0
   let liveReplayCompletions = Object.freeze([])
   let liveReplayStartTimer = 0
+  let liveVisibilityRevision = 0
+  let liveWasHidden = document.hidden
   let liveTrailExpiryTimer = 0
   let livePointers = Object.freeze({})
   let liveResidentVisibleIdsByPlaceId = Object.freeze({})
@@ -6040,6 +6043,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   async function loadLiveOpeningHistory(snapshot, force) {
     if (state.view !== 'live' || document.hidden || state.live.openingLoading ||
         (state.live.openingLoaded && !force)) return
+    const visibilityRevisionAtStart = liveVisibilityRevision
     const requestMarker = state.live.openingMarker || snapshot.changeMarker || state.changeMarker
     if (!requestMarker) return
     const startingEvents = force ? state.live.openingEvents : []
@@ -6055,6 +6059,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         openingComplete: false,
         openingPaused: false,
         openingError: false,
+        openingReplaySuppressed: force ? state.live.openingReplaySuppressed : false,
         openingNextBeforeId: startingBeforeId,
         changes: state.live.openingMarker ? state.live.changes : [],
         streamMarker: state.live.openingMarker ? state.live.streamMarker : requestMarker,
@@ -6138,6 +6143,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
           openingComplete: complete,
           openingPaused: automaticPaused,
           openingError: false,
+          openingReplaySuppressed: state.live.openingReplaySuppressed ||
+            visibilityRevisionAtStart !== liveVisibilityRevision,
           openingNextBeforeId: beforeId,
           changes,
           streamMarker,
@@ -6159,6 +6166,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
           openingComplete: false,
           openingPaused: false,
           openingError: true,
+          openingReplaySuppressed: state.live.openingReplaySuppressed ||
+            visibilityRevisionAtStart !== liveVisibilityRevision,
           openingNextBeforeId: beforeId,
           changes,
           streamMarker: markerCovers(state.live.streamMarker, streamBase)
@@ -6175,7 +6184,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         queueLiveReplays(state.live.openingEvents, false)
         queueLiveReplays(
           state.live.changes,
-          !document.hidden && !state.live.suppressReplayOnNextRead,
+          !document.hidden && !state.live.suppressReplayOnNextRead &&
+            !state.live.openingReplaySuppressed &&
+            visibilityRevisionAtStart === liveVisibilityRevision,
         )
       }
       if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
@@ -8385,6 +8396,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   async function checkPublicChanges() {
+    const visibilityRevision = liveVisibilityRevision
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
@@ -8428,7 +8440,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         marker = heldMarker
         unchanged = unchanged && payload.unchanged === true
         if (!startingMarker) {
-          return Object.freeze({ status: 'unchanged', marker, changes: Object.freeze([]) })
+          return Object.freeze({
+            status: 'unchanged', marker, changes: Object.freeze([]), visibilityRevision,
+          })
         }
         const incoming = normalizeLiveChanges(payload.changes)
         if (incoming.some(change =>
@@ -8452,9 +8466,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         status: changes.length || marker !== startingMarker || !unchanged ? 'changed' : 'unchanged',
         marker,
         changes,
+        visibilityRevision,
       })
     } catch {
-      return Object.freeze({ status: 'unavailable', marker: null, changes: Object.freeze([]) })
+      return Object.freeze({
+        status: 'unavailable', marker: null, changes: Object.freeze([]), visibilityRevision,
+      })
     } finally {
       window.clearTimeout(timeout)
     }
@@ -8489,9 +8506,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function commitLiveChangeRead(changeState) {
+    const visibilityInterrupted = Number.isSafeInteger(changeState.visibilityRevision) &&
+      changeState.visibilityRevision !== liveVisibilityRevision
     if (changeState.status === 'unavailable') {
       state = { ...state, live: { ...state.live, streamError: true } }
-      return BASE_REFRESH_MS
+      return visibilityInterrupted ? 0 : BASE_REFRESH_MS
     }
     const incoming = changeState.changes || []
     const hadStreamError = state.live.streamError
@@ -8500,7 +8519,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? incoming.filter(change => BigInt(change.change_id) > BigInt(openingMarker))
       : incoming
     const known = new Set(state.live.changes.map(change => change.change_id))
-    const suppressReplay = state.live.suppressReplayOnNextRead || document.hidden
+    const suppressReplay = state.live.suppressReplayOnNextRead || document.hidden ||
+      visibilityInterrupted
     const replayIncoming = state.live.openingLoaded && !suppressReplay
       ? streamIncoming.filter(change => !known.has(change.change_id))
       : []
@@ -8518,7 +8538,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       incoming,
     )
     const quietReadsBefore = state.live.quietReads
-    const nextDelay = state.view === 'live'
+    const nextDelay = visibilityInterrupted
+      ? 0
+      : state.view === 'live'
       ? windowLivePollDelay(hadEvents, quietReadsBefore)
       : BASE_REFRESH_MS
     state = {
@@ -8535,7 +8557,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           : 0,
         lastChangeAt: latestAt || null,
         nextReadAt: document.hidden ? null : Date.now() + nextDelay,
-        suppressReplayOnNextRead: document.hidden,
+        suppressReplayOnNextRead: document.hidden || visibilityInterrupted,
       },
     }
     if (suppressReplay && streamIncoming.length) {
@@ -8978,12 +9000,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   })
   document.addEventListener('visibilitychange', () => {
+    const hidden = document.hidden
+    if (hidden !== liveWasHidden) {
+      liveWasHidden = hidden
+      liveVisibilityRevision += 1
+    }
     window.clearTimeout(state.pollTimer)
-    if (document.hidden) {
+    if (hidden) {
       if (liveReplayHeldKeys().size) settleLiveReplays()
       state = { ...state, pollTimer: 0, live: {
         ...state.live,
         nextReadAt: null,
+        openingReplaySuppressed: true,
         suppressReplayOnNextRead: true,
       } }
       renderLiveClock()

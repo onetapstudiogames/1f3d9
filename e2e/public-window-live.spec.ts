@@ -111,6 +111,7 @@ async function installReplayRoutes(
     drawingPlaceCount?: number
     openingDelayMs?: number
     holdOpeningPage?: boolean
+    holdOpeningRequest?: number
     residentDelayMs?: number
     thingDelayMs?: number
     moveBurst?: number
@@ -432,7 +433,9 @@ async function installReplayRoutes(
   await page.route('**/api/events**', async route => {
     openingEventRequests += 1
     openingBeforeIds.push(new URL(route.request().url()).searchParams.get('before_id'))
-    if (controls.holdOpeningPage) await heldOpeningPage
+    if (controls.holdOpeningPage || controls.holdOpeningRequest === openingEventRequests) {
+      await heldOpeningPage
+    }
     if (controls.openingDelayMs) {
       await new Promise(resolve => setTimeout(resolve, controls.openingDelayMs))
     }
@@ -1128,6 +1131,46 @@ test('a final opening page completed while hidden cannot release queued stale mo
   await expect(page.locator('#window-status')).toContainText('Watching')
   fixture.releaseHeldOpeningPage()
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  await page.waitForTimeout(300)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+})
+
+test('a hidden multi-page opening continuation keeps pre-hide pending changes static', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    openingPaging: 'long',
+    openingMarker: '10',
+    openingDelayMs: 100,
+    holdOpeningRequest: 2,
+  })
+  await page.goto('/window#view=live')
+  await expect.poll(fixture.openingEventRequests).toBe(2)
+
+  fixture.publish()
+  const readsBeforePublish = fixture.changeRequests()
+  await expect.poll(async () => {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    return fixture.changeRequests()
+  }).toBeGreaterThan(readsBeforePublish)
+  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  fixture.releaseHeldOpeningPage()
+  await page.waitForTimeout(150)
+  expect(fixture.openingEventRequests()).toBe(2)
+
+  const readsBeforeVisibleCatchUp = fixture.changeRequests()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeVisibleCatchUp)
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect.poll(fixture.openingEventRequests).toBe(9)
 
   await page.waitForTimeout(300)
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
