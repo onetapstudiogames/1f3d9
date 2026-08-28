@@ -14,6 +14,13 @@ const RESOURCE_IDENTIFIER = /^[A-Za-z0-9._:-]{1,255}$/u
 const REQUEST_IDENTIFIER = /^[A-Za-z0-9._:-]{8,108}$/u
 const PAYPAL_CERTIFICATE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
 
+export class PayPalWebhookSignatureError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PayPalWebhookSignatureError'
+  }
+}
+
 export type PayPalEnvironment = Readonly<Record<string, string | undefined>>
 
 export type PayPalReadiness =
@@ -224,12 +231,17 @@ function paypalCertificateUrl(
   paypalEnvironment: 'sandbox' | 'live',
 ): string {
   const label = 'PayPal certificate URL'
-  const parsedText = text(value, label, 500)
+  let parsedText: string
+  try {
+    parsedText = text(value, label, 500)
+  } catch {
+    throw new PayPalWebhookSignatureError(`${label} is invalid`)
+  }
   let parsed: URL
   try {
     parsed = new URL(parsedText)
   } catch {
-    throw new Error(`${label} is invalid`)
+    throw new PayPalWebhookSignatureError(`${label} is invalid`)
   }
   const expectedHost = paypalEnvironment === 'sandbox'
     ? 'api.sandbox.paypal.com'
@@ -247,7 +259,7 @@ function paypalCertificateUrl(
     || parsed.search
     || parsed.hash
     || !PAYPAL_CERTIFICATE_ID.test(certificateId)
-  ) throw new Error(`${label} is invalid`)
+  ) throw new PayPalWebhookSignatureError(`${label} is invalid`)
   return parsed.href
 }
 
@@ -500,7 +512,12 @@ export async function capturePayPalCreditOrder(
 }
 
 function webhookHeader(headers: Headers, name: string): string {
-  return text(headers.get(name), `PayPal ${name} header`, 8_192)
+  const label = `PayPal ${name} header`
+  try {
+    return text(headers.get(name), label, 8_192)
+  } catch {
+    throw new PayPalWebhookSignatureError(`${label} is invalid`)
+  }
 }
 
 function rawWebhookJson(rawBody: Buffer): string {

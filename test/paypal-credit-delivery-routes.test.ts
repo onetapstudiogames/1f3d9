@@ -160,6 +160,31 @@ test('unverified PayPal webhooks cannot create credit, ledger rows, or delivery 
   }
 })
 
+test('an unsigned dispute webhook is rejected as unverified before network or city writes', async () => {
+  const database = new MemoryPayPalDatabase()
+  const { app, paypal } = configuredApp(database)
+  const response = await app.request('/api/city-credit/paypal/webhook', postRaw(
+    disputeWebhook({
+      eventId: 'WH-UNSIGNED-DISPUTE-1',
+      eventKind: 'CUSTOMER.DISPUTE.CREATED',
+      disputeId: 'PP-D-UNSIGNED-1',
+    }),
+    { 'content-type': 'application/json' },
+  ))
+
+  assert.equal(response.status, 401, await response.clone().text())
+  assert.deepEqual(await response.json(), {
+    error: 'PayPal webhook signature was not verified.',
+  })
+  assert.equal(paypal.calls.length, 0, 'unsigned evidence must not reach PayPal')
+  assert.equal(database.purchases.size, 0)
+  assert.equal(database.events.size, 0)
+  assert.equal(database.disputes.size, 0)
+  assert.equal(database.disputeEvents.size, 0)
+  assert.equal(database.disputeReceipts.size, 0)
+  assert.equal(database.founderNotes.size, 0)
+})
+
 test('unverified dispute webhooks cannot freeze or record a delivered gift', async t => {
   const cases = [
     {
