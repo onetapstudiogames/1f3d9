@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
 
+import { issueCityFeeCredit, type CityCreditDatabase } from '../../src/city-credit.ts'
 import type { Resident } from '../../src/core.ts'
 import type { TaggedSql } from '../../src/engine.ts'
 
@@ -38,6 +39,11 @@ const sql = (async (
   }
   return result.rows as Record<string, unknown>[]
 }) as unknown as IntegrationSql
+
+sql.query = async (text, values = []) => {
+  assert.ok(database, 'the PostgreSQL test client must be connected')
+  return (await database.query(text, [...values])).rows as Record<string, unknown>[]
+}
 
 function transactionSql(client: PoolClient): TaggedSql {
   const tagged = (async (
@@ -295,6 +301,81 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     const app = new Hono()
     mountSocietyRoutes(app)
     mountWorldRoutes(app)
+
+    await t.test('twelve immediate paid kind requests complete through the real public route', async () => {
+      await resetDatabase()
+      const creditDatabase: CityCreditDatabase = {
+        query: async (text, params = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+      }
+      for (let index = 0; index < 12; index += 1) {
+        const issued = await issueCityFeeCredit(creditDatabase, {
+          founderId: 1,
+          residentId: 2,
+          sourceKey: `route-burst-kind-credit-${index}`,
+          reason: `fund route burst kind ${index}`,
+        })
+        assert.equal(issued.disposition, 'created')
+      }
+
+      for (let index = 0; index < 12; index += 1) {
+        const name = `route-burst-kind-${index.toString().padStart(2, '0')}`
+        const response = await app.request('/api/kind', {
+          method: 'POST',
+          headers: {
+            ...bearer(neighborSecret),
+            'content-type': 'application/json',
+            'X-1F3D9-FEE-CREDIT': `route-burst-kind-request-${index}`,
+          },
+          body: JSON.stringify({
+            name,
+            description: `Immediate route completion proof ${index}.`,
+            traits: [],
+            recipe: [],
+          }),
+        })
+        assert.equal(response.status, 201, `request ${index}: ${await response.clone().text()}`)
+        const body = await response.json() as {
+          readonly kind: { readonly name: string }
+          readonly city_fee_credit: { readonly spent_usdc: string }
+        }
+        assert.equal(body.kind.name, name)
+        assert.equal(body.city_fee_credit.spent_usdc, '1.000000')
+      }
+
+      const finalState = await database!.query<{
+        completed_attempts: number
+        spend_entries: number
+        return_entries: number
+        kind_count: number
+        event_count: number
+        balance_units: string
+      }>(`
+        SELECT
+          (SELECT count(*)::int FROM payment_attempts
+            WHERE actor_id = 2 AND operation = 'kind_invention' AND status = 'completed')
+            AS completed_attempts,
+          (SELECT count(*)::int FROM city_credit_entries
+            WHERE resident_id = 2 AND entry_kind = 'spend') AS spend_entries,
+          (SELECT count(*)::int FROM city_credit_entries
+            WHERE resident_id = 2 AND entry_kind = 'return') AS return_entries,
+          (SELECT count(*)::int FROM kinds
+            WHERE owner_id = 2 AND name LIKE 'route-burst-kind-%') AS kind_count,
+          (SELECT count(*)::int FROM events
+            WHERE actor = 'neighbor' AND kind = 'kind_invented') AS event_count,
+          (SELECT balance_units::text FROM city_credit_accounts WHERE resident_id = 2)
+            AS balance_units
+      `)
+      assert.deepEqual(finalState.rows, [{
+        completed_attempts: 12,
+        spend_entries: 12,
+        return_entries: 0,
+        kind_count: 12,
+        event_count: 12,
+        balance_units: '0',
+      }])
+    })
 
     await t.test('the reported parent and child both accept make through the public route', async () => {
       const existingRoomId = await resetDatabase()
