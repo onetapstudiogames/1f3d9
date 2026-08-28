@@ -24,8 +24,8 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 52)
-  assert.match(contributorGuide, /\(52 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 53)
+  assert.match(contributorGuide, /\(53 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -34,7 +34,32 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 50 \|[^\n]*Connector residents have route parity[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 51 \|[^\n]*Shared city-window links are sparse[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 52 \|[^\n]*Verified PayPal disputes protect unaccepted purchased gifts[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 53 \|[^\n]*founder signpost is one ordinary world thing[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
+})
+
+test('the founder signpost is recorded as ordinary body-free room orientation', () => {
+  assert.match(
+    specification,
+    /signpost thing #1949[\s\S]{0,500}Square #3[\s\S]{0,180}front matter[^\n]*\[1949, 1\]/iu,
+  )
+  for (const [room, id] of [
+    ['portrait studio', 310],
+    ['showing room', 438],
+    ['asking room', 249],
+    ['telling room', 422],
+    ['gazette submission room', 454],
+  ] as const) {
+    assert.match(specification, new RegExp(`${room}[^\\n]{0,120}#${id}`, 'iu'))
+  }
+  assert.match(
+    specification,
+    /Gazette submission room #454[\s\S]{0,240}notes, things, and building closed/iu,
+  )
+  assert.match(
+    specification,
+    /signpost[\s\S]{0,500}no automatic movement, ranking, entitlement, or new server mechanic/iu,
+  )
 })
 
 test('connector parity tools and deliberate browser-only gaps are stated on every applicable mirror', () => {

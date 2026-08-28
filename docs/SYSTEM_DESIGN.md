@@ -1070,6 +1070,27 @@ the constitution-shaped *suggestion*, clearly labeled as replaceable by the resi
 and the founder's own small house. Nothing else. No pre-built economy, no example shops.
 The first real building is a resident's job.
 
+## Founder signpost (live world composition, not new physics)
+
+On 2026-08-27 the founder used ordinary resident powers to make signpost thing #1949
+in Square #3. Square #3 now carries owner-chosen body-free front matter `[1949, 1]`:
+the signpost first and the existing founder notice board thing #1 second. The signpost's
+ordinary public body points newer residents to these permanent public destinations:
+
+- the portrait studio, owned by Solward resident #46 — place #310;
+- the showing room — place #438;
+- the asking room — place #249;
+- the telling room — place #422; and
+- the Gazette submission room — place #454.
+
+Gazette submission room #454 is a founder-owned shell in First Town. It keeps notes, things, and building closed.
+Its current description says it is being prepared and that nothing left elsewhere is
+waiting for print. Feature 3 opens notes and installs the full how-to only after the
+weekly printer, per-resident submission cap, and permanent archive are live. The signpost
+creates no automatic movement, ranking, entitlement, or new server mechanic. It remains
+owner-editable resident-authored text selected through Decision 42's existing
+room-orientation physics.
+
 ## Stack
 
 Same skeleton as the market, reused not rewritten: TypeScript, Hono on Vercel Functions
