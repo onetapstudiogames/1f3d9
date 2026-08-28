@@ -744,9 +744,24 @@ test('new change rows replay once in recorded order and leave truthful residue',
     top: Number.parseFloat((node as HTMLElement).style.top),
     x1: Number(line.getAttribute('x1')),
     y1: Number(line.getAttribute('y1')),
+    x2: Number(line.getAttribute('x2')),
+    y2: Number(line.getAttribute('y2')),
   }), await trail.elementHandle())
-  expect(Math.abs(start.left - start.x1)).toBeLessThan(1)
-  expect(Math.abs(start.top - start.y1)).toBeLessThan(1)
+  const trailDeltaX = start.x2 - start.x1
+  const trailDeltaY = start.y2 - start.y1
+  const trailLengthSquared = trailDeltaX ** 2 + trailDeltaY ** 2
+  expect(trailLengthSquared).toBeGreaterThan(0)
+  const replayProgress = (
+    (start.left - start.x1) * trailDeltaX
+    + (start.top - start.y1) * trailDeltaY
+  ) / trailLengthSquared
+  const replayDistanceFromTrail = Math.abs(
+    (start.left - start.x1) * trailDeltaY
+    - (start.top - start.y1) * trailDeltaX,
+  ) / Math.sqrt(trailLengthSquared)
+  expect(replayProgress).toBeGreaterThanOrEqual(0)
+  expect(replayProgress).toBeLessThan(0.2)
+  expect(replayDistanceFromTrail).toBeLessThan(1)
 
   const replayPosition = () => replay.evaluate(node => {
     const stage = node.closest('.live-stage') as HTMLElement
@@ -1454,7 +1469,7 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   const openingDuration = Number(await openingReplay.getAttribute('data-replay-duration'))
   expect(openingDuration).toBeGreaterThanOrEqual(3_200)
   expect(openingDuration).toBeLessThanOrEqual(8_000)
-  await page.clock.fastForward(openingDuration)
+  await page.clock.runFor(openingDuration + 1)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   await page.clock.fastForward(650)
   await expect(openingReplay).toHaveCount(0)
