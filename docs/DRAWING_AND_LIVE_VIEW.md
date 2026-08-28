@@ -205,12 +205,15 @@ not a simulation of the present.
   with a named retry; an incomplete or contradictory survey prints no exact badge.
 - Residents are walkers above the ground and plots. A committed move visibly
   carries its resident between the fixed endpoint plots while inking the exact
-  straight route beneath it. Still residents do not idle, bob, or loop.
+  straight route beneath it. A resident or thing changes position only when a
+  recorded city event says it moved. Still residents do not idle, bob, or loop.
 - Wheel or `+`/`-` zoom, two-pointer pinch zoom, pointer or arrow-key pan, and
-  `Fit`/`0` transform only this viewer's plate from the scale required to fit the
-  whole current survey through 2.2. Append-stable growth may make that Fit scale
-  lower than 0.05; zoom-out never reverses direction. There is never a zoom
-  slider. Clicking a plot still drills through the actual shareable place tree.
+  the visible `Center` control transform only this viewer's plate from a hard
+  furthest-out scale of 0.8 through 2.2. `Center` or `0` returns to scale 1 around
+  the focused resident or raised item when one exists, otherwise around readable
+  home ground for the current place. It never shrinks the whole survey into view.
+  There is no Fit control or zoom slider. Clicking a plot still drills through
+  the actual shareable place tree.
 - Resident name tags follow this viewer's scale and attention. Far zoom shows
   resident sprites without tags. Pointer hover and keyboard focus bring any
   covered place, resident, or thing forward. On touch, the first tap brings the
@@ -220,14 +223,18 @@ not a simulation of the present.
   lifted above neighbouring marks. Plot nameplates remain single-line ellipses
   while their tooltip carries the complete place name.
 - A plot outside the visible camera may skip painting until the viewer pans it
-  back into view. That culling is presentation-only: it changes no fixed plot
-  assignment, resident or thing selection, exact count, or public record.
+  back into view. Detailed plots are drawn only in and just beyond the visible
+  camera; every farther plot remains a finger-sized reachable marker. Live never
+  switches to drawing every detailed plot at once. That camera budgeting is
+  presentation-only: it changes no fixed plot assignment, resident or thing
+  selection, exact count, or public record.
 - An unoverflowed ordinary place view shows up to six residents and six things.
   Overflow reserves protected ground for its badge, leaving four resident
   walker positions and five thing specimens. Every omitted row is represented
-  by an exact `+N more`. `Show more` reveals every loaded omission, may continue
-  the retained names cursor, and reflows the room while keeping every represented
-  item reachable.
+  by an exact `+N more`. `Show more` reveals every loaded omission directly on
+  the live ground, may continue the retained names cursor, and extends and
+  naturally reflows that scene without a modal, scroll window, or dropped item.
+  Resident and thing controls reserve separate finger-sized ground.
 - A viewer may focus one resident. The choice stays only in this browser's
   `localStorage` and changes no shared URL or city record. Focus and the
   shareable Follow filter are mutually exclusive: choosing either clears the
@@ -248,6 +255,11 @@ not a simulation of the present.
 - Resident, place, and thing pictures remain separate public drawing fetches.
   At most four drawing-detail reads run at once and at most 32 more wait in the
   browser queue.
+- A selected or followed place uses the complete marker-covered survey when that
+  survey already proves the place. If a required focused-place, directory,
+  resident-census, history, thing-name, or drawing read fails, its visible Retry
+  starts that exact read again; background refresh does not silently consume the
+  failure state.
 
 ### Honest recent marks
 
@@ -326,8 +338,17 @@ theatre.
 
 At the existing 54rem breakpoint, the plate, ledger, and occupancy board stack
 vertically. The bounded plate remains inside the observatory frame on a phone;
-pinch zoom, one-pointer pan, and `Fit` remain between the current full-survey Fit
-scale and 2.2 and never change the shared city or URL.
+pinch zoom, one-pointer pan, visible zoom controls, and `Center` remain between
+0.8 and 2.2 and never change the shared city or URL. Phone Live also has a CSS
+full-screen mode with a visible exit; Escape or browser Back exits that mode
+before navigating away.
+
+On Vercel preview builds only, a visible `Run proof scene` control starts the
+same repeatable in-memory crowded plate every time. It demonstrates concurrent
+recorded movement, speech, thing use, inline resident and thing Show more, a
+forced room-load failure, and a working Retry without waiting for live traffic.
+Production omits this control. Reduced motion presents the same final evidence
+without animated replay.
 
 Under `prefers-reduced-motion`, replay and pulses stop; trails, note marks, and
 speech bubbles render immediately at their final static state. Under

@@ -516,7 +516,7 @@ button { color: inherit; }
 .live-breadcrumb-separator { color: var(--paper-line); }
 .live-camera-controls { display: flex; flex: 0 0 auto; gap: 0.45rem; align-items: center; }
 .live-control-button {
-  min-height: 2.35rem;
+  min-height: 2.75rem;
   padding: 0.42rem 0.7rem;
   color: var(--ink);
   background: var(--signal);
@@ -531,6 +531,7 @@ button { color: inherit; }
 .live-control-button:hover { background: var(--paper-light); }
 .live-control-button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.42); }
 .live-control-button[aria-pressed="true"] { color: var(--paper-light); background: var(--brick); }
+.live-proof { background: var(--sky); }
 .live-clock { flex: 0 1 24rem; margin: 0; color: var(--paper-light); text-align: end; }
 .live-history-status {
   min-height: 2.5rem;
@@ -616,6 +617,12 @@ button { color: inherit; }
   background: var(--signal);
   box-shadow: 0 0 0 2px var(--line), 3px 3px 0 rgba(0, 0, 0, 0.46);
 }
+.live-resident-tag[data-live-intent="true"] { z-index: 4; }
+.live-resident-tag[data-live-raised="true"] {
+  z-index: 6;
+  background: var(--signal);
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 rgba(0, 0, 0, 0.5);
+}
 .live-world-ground {
   position: absolute;
   z-index: 0;
@@ -644,8 +651,11 @@ button { color: inherit; }
   padding: 0;
   pointer-events: none;
 }
-.live-plates > .loading-row {
+.live-plates > .loading-row,
+.live-plates > .error-row,
+.live-plates > .empty-row {
   position: absolute;
+  z-index: 80;
   inset: 1rem auto auto 1rem;
   max-width: 24rem;
   margin: 0;
@@ -653,6 +663,7 @@ button { color: inherit; }
   color: var(--ink);
   background: var(--signal);
   border: 2px solid var(--line);
+  pointer-events: auto;
 }
 .live-map-caption {
   position: relative;
@@ -703,6 +714,50 @@ button { color: inherit; }
   text-decoration: underline;
   text-underline-offset: 0.18em;
 }
+body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
+.window-frame:has(> #live-panel[data-live-fullscreen="true"]) {
+  animation: none;
+  transform: none;
+}
+#live-panel[data-live-fullscreen="true"] {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex !important;
+  flex-direction: column;
+  width: 100vw;
+  height: 100dvh;
+  overflow: auto;
+  color: var(--ink);
+  background: var(--paper);
+  animation: none;
+  transform: none;
+}
+#live-panel[data-live-fullscreen="true"] > .live-heading { display: none; }
+#live-panel[data-live-fullscreen="true"] > .live-instrument-strip {
+  position: sticky;
+  z-index: 80;
+  top: 0;
+  flex: 0 0 auto;
+}
+#live-panel[data-live-fullscreen="true"] > .live-history-status { flex: 0 0 auto; }
+#live-panel[data-live-fullscreen="true"] > .live-layout {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+#live-panel[data-live-fullscreen="true"] .live-stage-shell {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+#live-panel[data-live-fullscreen="true"] .live-viewport {
+  flex: 1 1 auto;
+  height: calc(100dvh - 12rem);
+  min-height: 18rem;
+}
+#live-panel[data-live-fullscreen="true"] .live-roster-board { display: none; }
 .live-plate-title {
   margin: 0;
   overflow-wrap: anywhere;
@@ -809,6 +864,7 @@ button { color: inherit; }
   grid-template-columns: 2.5rem minmax(0, 6rem);
   gap: 0.4rem;
   align-items: center;
+  min-height: 3.5rem;
   padding: 0.3rem;
   color: var(--ink);
   background: var(--paper-light);
@@ -929,13 +985,44 @@ button { color: inherit; }
   pointer-events: auto;
   image-rendering: pixelated;
 }
-.live-plot[data-live-culled="true"] { display: none; }
 .live-plot:has(.live-walker:hover),
 .live-plot:has(.live-walker:focus-within),
+.live-plot:has(.live-thing-specimen:hover),
+.live-plot:has(.live-thing-specimen:focus-visible),
+.live-plot:has([data-live-raised="true"]),
 .live-plot:hover,
-.live-plot:focus-within { z-index: 24; }
+.live-plot:focus-within { z-index: 60; }
 .live-plot[data-live-focus-plot="true"] { z-index: 4; }
 .live-plot[data-live-raised="true"] { z-index: 42; }
+.live-plot[data-live-detail="false"] {
+  width: 3.5rem !important;
+  height: 3.5rem !important;
+  min-width: 3.5rem;
+  min-height: 3.5rem;
+  background: var(--forest);
+  border-style: solid;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.48);
+}
+.live-plot[data-live-detail="false"] > :not(.live-plot-open) { display: none; }
+.live-plot[data-live-detail="false"] > .live-plot-open {
+  inset: 0;
+  justify-content: center;
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  padding: 0.2rem;
+  overflow: hidden;
+  text-align: center;
+}
+.live-plot[data-live-detail="false"] .live-plot-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .live-plot[data-place-kind="continent"] {
   border-width: 4px;
   box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5);
@@ -1024,6 +1111,11 @@ button { color: inherit; }
   border: 0;
   pointer-events: none;
 }
+.live-plot > .live-thing-shelf:has(.live-thing-specimen:hover),
+.live-plot > .live-thing-shelf:has(.live-thing-specimen:focus-visible),
+.live-plot > .live-thing-shelf:has(.live-thing-specimen[data-live-raised="true"]) {
+  z-index: 64;
+}
 .live-plot .live-thing-specimen {
   position: absolute;
   width: 5.8rem;
@@ -1055,14 +1147,12 @@ button { color: inherit; }
   text-overflow: clip;
   white-space: normal;
 }
-.live-thing-shelf-expanded {
-  z-index: 28 !important;
-  width: min(30rem, calc(100vw - 3rem));
-  max-height: 20rem !important;
-  padding: 0.45rem !important;
-  overflow: auto !important;
-  background: rgba(13, 37, 31, 0.94);
-  border: 2px solid var(--line) !important;
+.live-thing-shelf[data-live-expanded="true"] {
+  z-index: 28;
+  max-height: none;
+  overflow: visible;
+  background: transparent;
+  border: 0;
 }
 .live-walker-layer {
   position: absolute;
@@ -1070,22 +1160,22 @@ button { color: inherit; }
   pointer-events: none;
 }
 .live-walker-layer { z-index: 12; }
-.live-plot > .live-walker-layer-expanded {
+.live-plot > .live-walker-layer[data-live-expanded="true"] {
   z-index: 29;
-  inset: 0 auto auto 0;
-  max-width: min(30rem, calc(100vw - 3rem));
-  max-height: 20rem;
-  overflow: auto;
-  background: rgba(13, 37, 31, 0.94);
-  border: 2px solid var(--line);
-  pointer-events: auto;
+  inset: auto;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
 }
 .live-walker, .live-replay-portrait {
   position: absolute;
   z-index: 12;
   display: grid;
-  width: 3.1rem;
-  height: 3.1rem;
+  width: 3.5rem;
+  height: 3.5rem;
   margin: 0;
   transform: translate(-50%, -100%);
   pointer-events: auto;
@@ -1096,7 +1186,7 @@ button { color: inherit; }
 .live-replay-portrait[data-live-focus-resident] { z-index: 40; }
 .live-walker[data-live-raised="true"],
 .live-replay-portrait[data-live-raised="true"] { z-index: 44; }
-.live-plot .live-walker { width: 2.5rem; height: 2.5rem; }
+.live-plot .live-walker { width: 3.5rem; height: 3.5rem; }
 .live-replay-portrait {
   z-index: 18;
   will-change: transform;
@@ -1105,6 +1195,9 @@ button { color: inherit; }
   animation-fill-mode: forwards;
 }
 .live-root-walkers .live-resident-more { inset: auto 0.75rem 0.75rem auto; }
+.live-root-walkers:has(.live-walker:hover),
+.live-root-walkers:has(.live-walker:focus-within),
+.live-root-walkers:has(.live-walker[data-live-raised="true"]) { z-index: 64; }
 .live-focus-thing-shelf {
   position: absolute;
   z-index: 9;
@@ -1127,13 +1220,16 @@ button { color: inherit; }
   border: 0;
   pointer-events: none;
 }
-.live-focus-thing-shelf.live-root-thing-shelf.live-thing-shelf-expanded {
+.live-focus-thing-shelf.live-root-thing-shelf[data-live-expanded="true"] {
   max-height: none !important;
   padding: 0 !important;
   overflow: visible !important;
   background: transparent;
   border: 0 !important;
 }
+.live-root-thing-shelf:has(.live-thing-specimen:hover),
+.live-root-thing-shelf:has(.live-thing-specimen:focus-visible),
+.live-root-thing-shelf:has(.live-thing-specimen[data-live-raised="true"]) { z-index: 64; }
 .live-root-thing-shelf > .live-thing-specimen {
   position: absolute;
   width: 9rem;
@@ -1147,7 +1243,7 @@ button { color: inherit; }
 }
 .live-plates:has(> .live-root-walkers .live-resident-more)
   > .live-root-thing-shelf > .live-thing-more {
-  inset: auto 1rem 3.5rem auto;
+  inset: auto 1rem 5rem auto;
 }
 .live-stage-empty {
   position: absolute;
@@ -1158,6 +1254,23 @@ button { color: inherit; }
   background: rgba(13, 37, 31, 0.78);
   pointer-events: none;
 }
+.live-proof-load {
+  position: absolute;
+  z-index: 72;
+  display: grid;
+  width: min(18rem, calc(100vw - 4rem));
+  gap: 0.35rem;
+  padding: 0.65rem;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 3px solid var(--line);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.48);
+  pointer-events: auto;
+  font: 750 0.62rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-proof-load-failed { background: var(--signal); }
+.live-proof-load-ready { background: var(--sky); }
+.live-proof-load .selection-retry { min-height: 2.75rem; }
 .live-walker .live-portrait, .live-replay-portrait .live-portrait {
   background: var(--paper-light);
   box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
@@ -1176,6 +1289,7 @@ button { color: inherit; }
   position: absolute;
   z-index: 14;
   min-width: max-content;
+  min-height: 3.5rem;
   padding: 0.2rem 0.42rem;
   color: var(--ink);
   background: var(--signal);
@@ -1207,7 +1321,7 @@ button { color: inherit; }
   inset: auto 0.38rem 0.38rem auto;
 }
 .live-plot:has(.live-resident-more) > .live-thing-shelf > .live-thing-more {
-  inset: auto 0.38rem -1.85rem auto;
+  inset: auto 0.38rem -4rem auto;
 }
 .live-overflow-absorbing { animation: live-overflow-absorb 480ms steps(4, end) both; }
 .live-trace-layer {

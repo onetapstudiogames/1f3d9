@@ -4,6 +4,33 @@ function isWrite(request: Request): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
 }
 
+async function panLiveTargetIntoView(page: Page, target: Locator): Promise<void> {
+  const viewport = page.locator('#live-viewport')
+  await viewport.focus()
+  for (let attempt = 0; attempt < 48; attempt += 1) {
+    const [viewportBox, targetBox] = await Promise.all([
+      viewport.boundingBox(),
+      target.boundingBox(),
+    ])
+    if (!viewportBox || !targetBox) throw new Error('live camera target has no geometry')
+    const margin = 6
+    if (targetBox.x >= viewportBox.x + margin && targetBox.y >= viewportBox.y + margin &&
+        targetBox.x + targetBox.width <= viewportBox.x + viewportBox.width - margin &&
+        targetBox.y + targetBox.height <= viewportBox.y + viewportBox.height - margin) return
+    const targetX = targetBox.x + targetBox.width / 2
+    const targetY = targetBox.y + targetBox.height / 2
+    const viewportX = viewportBox.x + viewportBox.width / 2
+    const viewportY = viewportBox.y + viewportBox.height / 2
+    if (Math.abs(targetX - viewportX) > 20) {
+      await viewport.press(targetX > viewportX ? 'ArrowRight' : 'ArrowLeft')
+    }
+    if (Math.abs(targetY - viewportY) > 20) {
+      await viewport.press(targetY > viewportY ? 'ArrowDown' : 'ArrowUp')
+    }
+  }
+  throw new Error('live camera could not pan the requested target into view')
+}
+
 const replayPlaces = [{ id: 1, parent_id: null, name: 'the world' },
   { id: 2, parent_id: 1, name: 'Cinder lane' },
   { id: 3, parent_id: 1, name: 'Harbor room' },
@@ -128,6 +155,7 @@ async function installReplayRoutes(
     omitFocusedPlaceFromOutline?: boolean
     omitFocusedPlaceFromSurvey?: boolean
     focusedPlaceAvailable?: boolean
+    focusedPlaceFailures?: number
     initialResidentPlaceId?: number
     crowdPlaceId?: number
   }> = {},
@@ -148,6 +176,7 @@ async function installReplayRoutes(
   let maximumDrawingRequests = 0
   let drawingRequests = 0
   let focusedPlaceRequests = 0
+  let focusedPlaceFailuresRemaining = controls.focusedPlaceFailures ?? 0
   const drawingRequestPaths: string[] = []
   let releaseHeldThingPage = () => {}
   const heldThingPage = new Promise<void>(resolve => {
@@ -201,7 +230,7 @@ async function installReplayRoutes(
     focusedPlaceRequests += 1
     const url = new URL(route.request().url())
     const parentId = Number(url.searchParams.get('parent_id'))
-    if (controls.focusedPlaceAvailable && parentId === 4) {
+    if (controls.focusedPlaceAvailable && parentId === 4 && focusedPlaceFailuresRemaining <= 0) {
       await route.fulfill({ json: {
         change_marker: currentMarker(),
         place: {
@@ -220,6 +249,7 @@ async function installReplayRoutes(
       } })
       return
     }
+    focusedPlaceFailuresRemaining = Math.max(0, focusedPlaceFailuresRemaining - 1)
     await route.fulfill({ status: 503, json: { error: 'focused place unavailable' } })
   })
   await page.route('**/api/window**', async route => {
@@ -802,6 +832,39 @@ test('Live still loads a selected place through the focused-place path when the 
   await expect.poll(fixture.focusedPlaceRequests).toBeGreaterThan(0)
 })
 
+for (const retryCase of [
+  {
+    name: 'selected place',
+    url: '/window/live?place=4',
+    controls: {},
+  },
+  {
+    name: 'followed resident place',
+    url: '/window/live?resident=map-walker',
+    controls: { initialResidentPlaceId: 4 },
+  },
+] as const) {
+  test(`Live ${retryCase.name} Retry starts a fresh place request and recovers`, async ({ page }) => {
+    const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+      omitFocusedPlaceFromOutline: true,
+      omitFocusedPlaceFromSurvey: true,
+      focusedPlaceAvailable: true,
+      focusedPlaceFailures: 1,
+      ...retryCase.controls,
+    })
+    await page.goto(retryCase.url)
+
+    const retry = page.getByRole('button', { name: 'Retry loading this place' })
+    await expect(retry).toBeVisible()
+    const requestsBeforeRetry = fixture.focusedPlaceRequests()
+    await retry.click()
+    await expect.poll(fixture.focusedPlaceRequests).toBeGreaterThan(requestsBeforeRetry)
+    await expect(retry).toHaveCount(0)
+    await expect(page.locator('.live-plate-title')).toHaveText('Lantern nook')
+    await expect(page.locator('#live-plates')).not.toContainText('could not be loaded')
+  })
+}
+
 test('Live hover and keyboard focus bring covered places, residents, and things forward', async ({ page }) => {
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
@@ -810,18 +873,36 @@ test('Live hover and keyboard focus bring covered places, residents, and things 
   const plot = page.locator('.live-plot[data-place-id="3"]')
   const plotOpen = plot.locator('.live-plot-open')
   await plot.hover()
-  await expect(plot).toHaveCSS('z-index', '24')
+  await expect(plot).toHaveCSS('z-index', '60')
   await page.locator('#live-viewport').focus()
   await plotOpen.focus()
-  await expect(plot).toHaveCSS('z-index', '24')
+  await expect(plot).toHaveCSS('z-index', '60')
 
   const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
   const residentShell = resident.locator('xpath=..')
+  const residentTag = page.locator(
+    '#live-label-layer [data-live-resident-tag="harbor-1"]',
+  )
   await resident.hover()
   await expect(residentShell).toHaveCSS('z-index', '30')
+  await expect(residentTag).toBeVisible()
+  await expect.poll(async () => residentTag.evaluate(tag => {
+    const own = Number(getComputedStyle(tag).zIndex)
+    const peers = [...tag.parentElement!.querySelectorAll<HTMLElement>('.live-resident-tag')]
+      .filter(peer => peer !== tag)
+      .map(peer => Number(getComputedStyle(peer).zIndex))
+    return own > Math.max(0, ...peers)
+  })).toBe(true)
   await page.locator('#live-viewport').focus()
   await resident.focus()
   await expect(residentShell).toHaveCSS('z-index', '30')
+  await expect.poll(async () => residentTag.evaluate(tag => {
+    const own = Number(getComputedStyle(tag).zIndex)
+    const peers = [...tag.parentElement!.querySelectorAll<HTMLElement>('.live-resident-tag')]
+      .filter(peer => peer !== tag)
+      .map(peer => Number(getComputedStyle(peer).zIndex))
+    return own > Math.max(0, ...peers)
+  })).toBe(true)
 
   const thing = page.locator('[data-live-thing-id="9"]').first()
   await thing.hover()
@@ -838,9 +919,20 @@ test('Live first touch raises covered items and second touch opens them', async 
 
   const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
   const shell = resident.locator('xpath=..')
+  const residentTag = page.locator(
+    '#live-label-layer [data-live-resident-tag="harbor-1"]',
+  )
   await resident.dispatchEvent('pointerdown', { pointerType: 'touch' })
   await resident.dispatchEvent('click', { pointerType: 'touch' })
   await expect(shell).toHaveAttribute('data-live-raised', 'true')
+  await expect(residentTag).toHaveAttribute('data-live-raised', 'true')
+  await expect.poll(async () => residentTag.evaluate(tag => {
+    const own = Number(getComputedStyle(tag).zIndex)
+    const peers = [...tag.parentElement!.querySelectorAll<HTMLElement>('.live-resident-tag')]
+      .filter(peer => peer !== tag)
+      .map(peer => Number(getComputedStyle(peer).zIndex))
+    return own > Math.max(0, ...peers)
+  })).toBe(true)
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
 
   await resident.dispatchEvent('pointerdown', { pointerType: 'touch' })
@@ -887,6 +979,7 @@ test('a cancelled touch does not consume the next keyboard activation', async ({
 })
 
 test('Live Show more reveals every loaded resident and thing instead of leaving a dead badge', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
@@ -896,7 +989,8 @@ test('Live Show more reveals every loaded resident and thing instead of leaving 
   await harbor.getByRole('button', { name: 'Show 3 more residents' }).click()
   await expect(harbor.locator('.live-walker')).toHaveCount(7)
   await expect(harbor.locator('.live-resident-more')).toHaveCount(0)
-  await expect(harbor.locator('.live-walker-layer-expanded')).toHaveCount(1)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(harbor.locator('.live-walker-layer-expanded')).toHaveCount(0)
   await expect(harbor.locator('[data-live-resident-handle="harbor-5"]').first()).toBeVisible()
   await expect(harbor.locator('[data-live-resident-handle="harbor-6"]').first()).toBeVisible()
   await expect(harbor.locator('[data-live-resident-handle="harbor-7"]').first()).toBeVisible()
@@ -907,9 +1001,13 @@ test('Live Show more reveals every loaded resident and thing instead of leaving 
 
   const cinder = page.locator('.live-plot[data-place-id="2"]')
   const cinderBefore = await liveThingPositions(cinder)
-  await cinder.getByRole('button', { name: 'Show 2 more things' }).click()
+  const cinderMore = cinder.getByRole('button', { name: 'Show 2 more things' })
+  await panLiveTargetIntoView(page, cinderMore)
+  await cinderMore.click()
   await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
   await expect(cinder.locator('.live-thing-more')).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(cinder.locator('.live-thing-shelf-expanded')).toHaveCount(0)
   await expect(cinder.locator('[data-live-thing-id="22"]').first()).toBeVisible()
   await expect(cinder.locator('[data-live-thing-id="23"]').first()).toBeVisible()
   const cinderAfter = await liveThingPositions(cinder)
@@ -917,6 +1015,88 @@ test('Live Show more reveals every loaded resident and thing instead of leaving 
   expect(new Set(cinderAfter.map(point =>
     `${Math.round(point.x)}:${Math.round(point.y)}`)).size).toBe(cinderAfter.length)
   expect(cinderAfter.length).toBeGreaterThan(cinderBefore.length)
+  const expandedSurfaces = await page.locator(
+    '.live-plot[data-place-id="2"] .live-thing-shelf, ' +
+    '.live-plot[data-place-id="3"] .live-walker-layer',
+  ).evaluateAll(nodes => nodes.map(node => ({
+    overflowX: getComputedStyle(node).overflowX,
+    overflowY: getComputedStyle(node).overflowY,
+  })))
+  expect(expandedSurfaces.every(surface =>
+    !['auto', 'scroll'].includes(surface.overflowX) &&
+    !['auto', 'scroll'].includes(surface.overflowY))).toBe(true)
+})
+
+test('phone Live keeps direct residents in readable home ground instead of the far world edge', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    initialResidentPlaceId: 1,
+    crowdPlaceId: 1,
+    drawingPlaceCount: 80,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const homeGeometry = await page.locator('#live-stage').evaluate(stage => {
+    const stageBox = stage.getBoundingClientRect()
+    const residents = [...stage.querySelectorAll<HTMLElement>(
+      '.live-root-walkers .live-walker',
+    )].map(resident => {
+      const box = resident.getBoundingClientRect()
+      return (box.left + box.width / 2 - stageBox.left) /
+        Number((stage as HTMLElement).dataset.liveScale ?? '1')
+    })
+    return {
+      stageWidth: (stage as HTMLElement).scrollWidth,
+      residentXs: residents,
+    }
+  })
+  expect(homeGeometry.residentXs.length).toBeGreaterThan(0)
+  expect(Math.max(...homeGeometry.residentXs)).toBeLessThanOrEqual(1_100)
+  expect(Math.max(...homeGeometry.residentXs)).toBeLessThan(homeGeometry.stageWidth / 2)
+})
+
+test('phone full-screen Live has a clear exit and browser Back exits before navigating away', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  const originalUrl = page.url()
+
+  const enter = page.getByRole('button', { name: 'Enter full-screen Live' })
+  await expect(enter).toBeVisible()
+  await enter.click()
+  const fullScreenPanel = page.locator('#live-panel[data-live-fullscreen="true"]')
+  await expect(fullScreenPanel).toBeVisible()
+  const fullScreenBounds = await fullScreenPanel.boundingBox()
+  expect(fullScreenBounds).not.toBeNull()
+  expect(fullScreenBounds!.x).toBeLessThanOrEqual(1)
+  expect(fullScreenBounds!.y).toBeLessThanOrEqual(1)
+  expect(fullScreenBounds!.width).toBeGreaterThanOrEqual(389)
+  expect(fullScreenBounds!.height).toBeGreaterThanOrEqual(843)
+
+  await page.getByRole('button', { name: 'Exit full-screen Live' }).click()
+  await expect(page.locator('#live-panel[data-live-fullscreen="true"]')).toHaveCount(0)
+  expect(page.url()).toBe(originalUrl)
+
+  await page.getByRole('button', { name: 'Enter full-screen Live' }).click()
+  await expect(fullScreenPanel).toBeVisible()
+  await page.goBack()
+  await expect(page.locator('#live-panel[data-live-fullscreen="true"]')).toHaveCount(0)
+  expect(page.url()).toBe(originalUrl)
+})
+
+test('desktop full-screen Live gives the hidden roster column back to the scene', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await page.getByRole('button', { name: 'Enter full-screen Live' }).click()
+
+  const geometry = await page.locator('#live-panel').evaluate(panel => {
+    const panelBox = panel.getBoundingClientRect()
+    const stageBox = panel.querySelector('.live-stage-shell')!.getBoundingClientRect()
+    return { panelWidth: panelBox.width, stageWidth: stageBox.width }
+  })
+  expect(geometry.stageWidth).toBeGreaterThanOrEqual(geometry.panelWidth - 2)
 })
 
 test('Live Show more keeps keyboard focus and stays operable while more thing pages remain', async ({ page }) => {
@@ -939,7 +1119,9 @@ test('Live Show more keeps keyboard focus and stays operable while more thing pa
   await thingMore.focus()
   await thingMore.press('Enter')
   await expect.poll(fixture.thingPageRequests).toBe(2)
+  await expect(page.locator('[data-live-thing-id="99"]')).toBeVisible()
   await expect(thingMore).toBeVisible()
+  await expect(thingMore).toHaveAttribute('aria-busy', 'false')
   await expect.poll(() => page.evaluate(() =>
     (document.activeElement as HTMLElement | null)?.dataset.focusKey ?? null,
   )).toBe('live-thing-overflow:2')
@@ -1305,7 +1487,7 @@ test('Live bounds concurrent note detail reads during a visible burst', async ({
   expect(fixture.maximumNoteRequests()).toBeLessThanOrEqual(4)
 })
 
-test('Live bounds concurrent drawing reads during a visible plate render', async ({ page }) => {
+test('Live renders nearby detail and reachable distant markers without drawing the whole world', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     drawingDelayMs: 20,
     drawingPlaceCount: 80,
@@ -1313,10 +1495,24 @@ test('Live bounds concurrent drawing reads during a visible plate render', async
   await page.goto('/window#view=live')
 
   await expect.poll(fixture.maximumDrawingRequests).toBeGreaterThan(0)
-  await expect.poll(() => page.locator('.drawing-loading').count(), { timeout: 15_000 }).toBe(0)
+  await expect.poll(() => page.locator(
+    '.live-plot[data-live-detail="true"] .drawing-loading, ' +
+    '.live-world-ground .drawing-loading, .live-root-walkers .drawing-loading, ' +
+    '.live-root-thing-shelf .drawing-loading',
+  ).count(), { timeout: 15_000 }).toBe(0)
   await expect.poll(fixture.activeDrawingRequests).toBe(0)
-  expect(fixture.drawingRequests()).toBeGreaterThan(36)
+  await expect(page.locator('.live-plot[data-live-detail="true"]')).not.toHaveCount(0)
+  const distantPlots = page.locator('.live-plot[data-live-detail="false"]')
+  await expect(distantPlots).not.toHaveCount(0)
+  expect(fixture.drawingRequests()).toBeGreaterThan(0)
+  expect(fixture.drawingRequests()).toBeLessThan(80)
   expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
+
+  const markerTarget = distantPlots.first().locator('.live-plot-open')
+  const markerBox = await markerTarget.boundingBox()
+  expect(markerBox).not.toBeNull()
+  expect(markerBox!.width).toBeGreaterThanOrEqual(44)
+  expect(markerBox!.height).toBeGreaterThanOrEqual(44)
 })
 
 test('Live drops queued drawings from the old plate before reading a newly opened plate', async ({ page }) => {
@@ -1337,33 +1533,33 @@ test('Live drops queued drawings from the old plate before reading a newly opene
   expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
 })
 
-test('repeatable Live proof scene shows crowd reflow, recovery, concurrent movement, speech, and use', async ({ page }) => {
+test('discoverable preview proof scene visibly demonstrates every Live behavior and Retry', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
-  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
-    secondArrival: true,
-    thingFailure: true,
-    useThingId: 20,
-  })
+  await installReplayRoutes(page, now)
   await page.goto('/window#view=live')
-  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const proofButton = page.getByRole('button', { name: 'Run preview proof scene' })
+  await expect(proofButton).toBeVisible()
+  await proofButton.click()
+  const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
+  await expect(proofPanel).toBeVisible()
 
-  const retry = page.getByRole('button', { name: 'Retry named thing cards' })
+  const retry = page.getByRole('button', { name: 'Retry proof room' })
   await expect(retry).toBeVisible()
   await retry.click()
-  await expect.poll(fixture.thingPageRequests).toBe(2)
-  await expect(retry).toBeVisible()
-  fixture.recoverThingNames()
-  await retry.click()
-  await expect.poll(fixture.thingPageRequests).toBe(3)
   await expect(retry).toHaveCount(0)
 
-  const cinder = page.locator('.live-plot[data-place-id="2"]')
-  await cinder.getByRole('button', { name: 'Show 2 more things' }).click()
-  await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
+  const residentMore = proofPanel.getByRole('button', { name: /Show .* more residents/u })
+  const thingMore = proofPanel.getByRole('button', { name: /Show .* more things/u })
+  await expect(residentMore).toBeVisible()
+  await expect(thingMore).toBeVisible()
+  await residentMore.click()
+  await thingMore.click()
+  await expect(proofPanel.getByRole('dialog')).toHaveCount(0)
+  await expect(proofPanel.locator('.live-walker')).toHaveCount(7)
+  await expect(proofPanel.locator('.live-thing-specimen')).toHaveCount(7)
 
-  await publishReplayChanges(page, fixture)
-  const replays = page.locator('.live-replay-portrait')
+  const replays = proofPanel.locator('.live-replay-portrait')
   let concurrentReplayKeys: Array<string | undefined> = []
   await expect.poll(async () => {
     concurrentReplayKeys = await replays.evaluateAll(nodes => nodes.map(node =>
@@ -1381,6 +1577,42 @@ test('repeatable Live proof scene shows crowd reflow, recovery, concurrent movem
   expect(sawSpeech).toBe(true)
   expect(sawUse).toBe(true)
   await expect(replays).toHaveCount(0)
+
+  await proofButton.click()
+  await expect(proofPanel).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
+})
+
+test('preview proof scene has a static reduced-motion alternative', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await page.getByRole('button', { name: 'Run preview proof scene' }).click()
+
+  const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
+  await expect(proofPanel).toBeVisible()
+  await expect(proofPanel.locator('.live-replay-portrait')).toHaveCount(0)
+  await expect(proofPanel.locator('.live-walker')).not.toHaveCount(0)
+  await expect(proofPanel.locator('.live-thing-specimen')).not.toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
+  await expect(proofPanel.locator('#live-ledger')).toContainText(/moved|spoke|used/u)
+})
+
+test('preview proof failure stays with the Retry room instead of covering the crowd', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await page.getByRole('button', { name: 'Run preview proof scene' }).click()
+
+  await page.locator('#place-filter').selectOption('9103')
+  await expect(page.locator('.live-plate-title')).toHaveText('Crowded activity workshop')
+  await expect(page.locator('.live-proof-load')).toHaveCount(0)
+
+  await page.locator('#place-filter').selectOption('9104')
+  await expect(page.locator('.live-plate-title')).toHaveText('Retry room')
+  const retry = page.getByRole('button', { name: 'Retry proof room' })
+  await expect(retry).toBeVisible()
+  await retry.click()
+  await expect(page.locator('.live-proof-load-ready')).toContainText('loaded on Retry')
 })
 
 test('new change rows replay once in recorded order and leave truthful residue', async ({ page }) => {
@@ -1740,7 +1972,9 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
   await page.locator('#resident-filter').selectOption('harbor-7')
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
   expect(await page.evaluate(() => localStorage.getItem('1f3d9:window:live-focus'))).toBeNull()
-  await page.locator('[data-live-resident-handle="harbor-7"]').first().click()
+  const filteredResident = page.locator('[data-live-resident-handle="harbor-7"]').first()
+  await panLiveTargetIntoView(page, filteredResident)
+  await filteredResident.click()
   await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-7')
   await expect(page).toHaveURL(/\/window\/live\?place=3$/u)
 })
@@ -1892,10 +2126,26 @@ test('resident tags follow zoom and intent while terrain and camera writes stay 
   const viewport = page.locator('#live-viewport')
   await viewport.focus()
   for (let index = 0; index < 16; index += 1) await viewport.press('ArrowRight')
-  await expect.poll(() => page.locator('.live-plot[data-live-culled="true"]').count())
+  await expect.poll(() => page.locator('.live-plot[data-live-detail="false"]').count())
     .toBeGreaterThan(0)
-  await page.getByRole('button', { name: 'Fit live plate' }).click()
-  await expect(page.locator('.live-plot[data-live-culled="true"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Zoom out' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Center live view' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /fit/i })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  const centeredFocus = await focusedWalker.evaluate(node => {
+    const resident = node.getBoundingClientRect()
+    const viewportBox = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    return {
+      x: Math.abs((resident.left + resident.width / 2) -
+        (viewportBox.left + viewportBox.width / 2)),
+      y: Math.abs((resident.top + resident.height / 2) -
+        (viewportBox.top + viewportBox.height / 2)),
+    }
+  })
+  expect(centeredFocus.x).toBeLessThanOrEqual(80)
+  expect(centeredFocus.y).toBeLessThanOrEqual(80)
+  expect(Number(await stage.getAttribute('data-live-scale'))).toBeGreaterThanOrEqual(0.8)
   await expect(page.locator('#live-focus-status')).toContainText(`Focused on ${maximumReplayHandle}`)
   expect(await page.locator('.live-plot[data-place-id="3"]').evaluate(plot => ({
     left: (plot as HTMLElement).style.left,
@@ -1912,7 +2162,11 @@ test('focus keeps a truthful specimen visible after its resident leaves the dril
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
   await page.locator('.live-plot[data-place-id="2"] .live-plot-open').click()
-  await page.locator('[data-live-resident-handle="map-walker"]').first().click()
+  const mapWalker = page.locator(
+    '#live-roster [data-live-resident-handle="map-walker"]',
+  ).first()
+  await expect(mapWalker).toBeVisible()
+  await mapWalker.click()
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
 
@@ -2011,7 +2265,7 @@ test('resident focus persists locally, pins exact interactions, and camera zoom 
   await viewport.dispatchEvent('pointerup', {
     pointerId: 2, pointerType: 'touch', isPrimary: false, clientX: 430, clientY: 220,
   })
-  await page.getByRole('button', { name: 'Fit live plate' }).click()
+  await page.getByRole('button', { name: 'Center live view' }).click()
 
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
@@ -2617,38 +2871,24 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     ;(stage as HTMLElement).style.setProperty('--live-stage-height', '20000px')
     ;(stage as HTMLElement).dataset.liveStageHeight = '20000'
   })
-  await page.getByRole('button', { name: 'Fit live plate' }).click()
-  await expect.poll(async () => Number(await narrowStage.getAttribute('data-live-scale')))
-    .toBeLessThan(0.05)
-  const narrowFit = await narrowStage.evaluate(stage => {
-    const plate = stage.getBoundingClientRect()
-    const viewport = stage.closest('#live-viewport')!.getBoundingClientRect()
-    return {
-      left: plate.left >= viewport.left - 1,
-      right: plate.right <= viewport.right + 1,
-      top: plate.top >= viewport.top - 1,
-      bottom: plate.bottom <= viewport.bottom + 1,
-    }
-  })
-  expect(narrowFit).toEqual({ left: true, right: true, top: true, bottom: true })
+  await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Zoom out' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Center live view' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /fit/i })).toHaveCount(0)
   const narrowViewport = page.locator('#live-viewport')
   const readNarrowScale = async () => Number(await narrowStage.getAttribute('data-live-scale'))
-  const refitNarrowPlate = async () => {
-    await page.getByRole('button', { name: 'Fit live plate' }).click()
-    await expect.poll(readNarrowScale).toBeLessThan(0.05)
-    return readNarrowScale()
+  const minimumReadableScale = 0.8
+  for (let index = 0; index < 24; index += 1) {
+    await page.getByRole('button', { name: 'Zoom out' }).click()
   }
-
-  let fitScale = await refitNarrowPlate()
+  expect(await readNarrowScale()).toBeGreaterThanOrEqual(minimumReadableScale)
   await narrowViewport.dispatchEvent('wheel', { clientX: 160, clientY: 240, deltaY: 240 })
-  expect(await readNarrowScale()).toBeLessThanOrEqual(fitScale)
+  expect(await readNarrowScale()).toBeGreaterThanOrEqual(minimumReadableScale)
 
-  fitScale = await refitNarrowPlate()
   await narrowViewport.focus()
   await narrowViewport.press('-')
-  expect(await readNarrowScale()).toBeLessThanOrEqual(fitScale)
+  expect(await readNarrowScale()).toBeGreaterThanOrEqual(minimumReadableScale)
 
-  fitScale = await refitNarrowPlate()
   await narrowViewport.dispatchEvent('pointerdown', {
     pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: 80, clientY: 240,
   })
@@ -2658,13 +2898,26 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await narrowViewport.dispatchEvent('pointermove', {
     pointerId: 2, pointerType: 'touch', isPrimary: false, clientX: 200, clientY: 240,
   })
-  expect(await readNarrowScale()).toBeLessThanOrEqual(fitScale)
+  expect(await readNarrowScale()).toBeGreaterThanOrEqual(minimumReadableScale)
   await narrowViewport.dispatchEvent('pointerup', {
     pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: 80, clientY: 240,
   })
   await narrowViewport.dispatchEvent('pointerup', {
     pointerId: 2, pointerType: 'touch', isPrimary: false, clientX: 200, clientY: 240,
   })
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  expect(await readNarrowScale()).toBeGreaterThanOrEqual(minimumReadableScale)
+  const centeredWorld = await narrowStage.evaluate(stage => {
+    const world = stage.getBoundingClientRect()
+    const viewport = stage.closest('#live-viewport')!.getBoundingClientRect()
+    return {
+      worldStillWider: world.width > viewport.width * 1.5,
+      worldStillTaller: world.height > viewport.height * 1.5,
+    }
+  })
+  expect(centeredWorld).toEqual({ worldStillWider: true, worldStillTaller: true })
+  await expect(page.locator('.live-plot[data-live-detail="true"]')).not.toHaveCount(0)
+  await expect(page.locator('.live-plot[data-live-detail="false"]')).not.toHaveCount(0)
 
   const cinderOwner = page.locator('.live-plot[data-place-id="2"] .live-plot-owner')
   await expect(cinderOwner).toHaveCSS('pointer-events', 'none')
@@ -2681,8 +2934,10 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
       delete liveStage.dataset.liveStageHeight
     }
   }, naturalStageHeight)
-  await page.getByRole('button', { name: 'Fit live plate' }).click()
-  await page.locator('.live-plot[data-place-id="2"] .live-plot-open').click()
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  const cinderOpen = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await panLiveTargetIntoView(page, cinderOpen)
+  await cinderOpen.click()
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
   await expect(page.locator('.live-breadcrumb[aria-current="location"]')).toHaveText('Cinder lane')
   const thingSpecimen = page.locator('.live-thing-specimen')

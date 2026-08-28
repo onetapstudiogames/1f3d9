@@ -277,24 +277,29 @@ creation-ID order. Allocation is append-stable: a later child takes open ground 
 moves an existing plot. No coordinate is stored. Direct residents and named things use
 stable, naturally scattered positions across the available ground instead of a corner
 shelf; adding a later ID does not move an earlier mark. Residents walk above the ground and plots; one
-committed move visibly carries the walker between its fixed endpoints.
+committed move visibly carries the walker between its fixed endpoints. Residents and things
+change position only when a recorded city event says they moved.
 
-Wheel zoom, two-pointer pinch zoom, one-pointer pan, and `Fit` transform only this viewer's
-plate from the scale required to fit the whole current survey through 2.2; append-stable
-growth may take Fit below 0.05, zoom-out never reverses, and there is never a slider. Place clicks still
-drill through shareable tree breadcrumbs. Far zoom shows resident sprites without name
-tags. At a readable zoom, pointer hover or keyboard focus brings a covered item forward.
+Wheel zoom, two-pointer pinch zoom, one-pointer pan, visible `+`/`-` controls, and `Center`
+transform only this viewer's plate between a hard 0.8 furthest-out scale and 2.2. `Center`
+or `0` returns to scale 1 around the focused resident or raised item when one exists,
+otherwise around readable home ground for the current place; it never fits the whole
+survey. There is no Fit control or slider. Place clicks still drill through shareable tree
+breadcrumbs. Far zoom shows resident sprites without name tags. At a readable zoom,
+pointer hover or keyboard focus brings the complete item and its complete label above peers.
 On touch screens, the first tap brings an item forward and the second tap opens it. A shown
 tag contains the complete untruncated handle. The focused resident is always labelled and
 lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
-and their tooltip carries the complete place name. A plot outside the visible camera may
-skip painting until it returns; this culling changes no fixed coordinate, selection, exact
-count, or public record. An unoverflowed place shows up to six residents
+and their tooltip carries the complete place name. Detailed plots are drawn only in and just
+beyond the visible camera; every farther plot remains a finger-sized reachable marker, and
+Live never enters an all-detailed mode. Camera budgeting changes no fixed coordinate,
+selection, exact count, or public record. An unoverflowed place shows up to six residents
 and six things. Overflow protects control ground, leaving four resident walker positions
 and five thing specimens, and reports every omission as an exact `+N more` control. Using
-that control reveals the omitted loaded residents or named things, continues a pending
-thing-names page when one exists, and rearranges the scene so every represented item stays
-reachable. A viewer-local resident focus is stored only in browser `localStorage`,
+that control reveals the omitted loaded residents or named things inline on the live ground,
+continues a pending thing-names page when one exists, and extends and naturally rearranges
+the scene without a modal, scroll window, or dropped item. Resident and thing controls keep
+separate finger-sized ground. A viewer-local resident focus is stored only in browser `localStorage`,
 not in the URL or city. Focus and the shareable Follow filter clear one another. Finite
 plate positions prioritize the chosen resident and only interaction residents and things
 safely named by public records: a transfer's `asset_id`, an applied use's
@@ -320,7 +325,8 @@ retained cursor to reveal requested names. Loading or failure leaves the plate a
 `+N` visible with a retry for names; a missing or contradictory survey prints no exact badge.
 Live does not block on a redundant focused-place outline when the complete directory and
 marker-covered survey already contain the chosen place. Every actually required directory,
-census, history, or names failure retains its own retry.
+census, focused-place, history, names, or drawing failure retains a visible retry that starts
+that exact read again; background refresh does not silently consume the failure state.
 
 Live automatically follows no more than eight 200-row resident-presence pages (1,600
 residents) and eight 200-row marker-covered `/api/events?within_seconds=1800` pages (1,600
@@ -369,12 +375,19 @@ presence, including any viewer-requested continuation. Exact thing overflow uses
 validated marker-covered `live_survey`, not named-card page completeness. A failed names
 page leaves a named retry without clearing the plate or exact `+N`. Below the existing 54rem
 breakpoint, plate, ledger, and roster stack vertically;
-viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, and `Fit`/`0` remain between
-the current full-survey Fit scale and 2.2 on the bounded plate.
+viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, visible zoom controls, and
+`Center`/`0` remain between 0.8 and 2.2 on the bounded plate. Phone Live has a CSS full-screen
+mode with a visible exit; Escape or browser Back exits that mode before navigating away.
 `prefers-reduced-motion` removes replay and pulses and
 leaves final trails, note marks, and speech bubbles; `forced-colors` keeps borders, trails,
 marks, bubbles, hatches, focus, and labels distinct.
 Empty rooms say “Nobody is here right now. The room keeps its things.”
+
+Vercel preview builds, and only preview builds, expose a visible repeatable proof-scene
+control. Its in-memory plate demonstrates concurrent recorded movement, speech, thing use,
+a crowded room, inline resident and thing Show more, a forced place-load failure, and a
+working Retry without waiting for live traffic. Re-running resets the same scene. Reduced
+motion renders its final static evidence without replay.
 
 The cut list is absolute: no zoom slider; no infinite or full-viewport
 terrain; no idle animation; no looping sprite movement or interpolation beyond the one

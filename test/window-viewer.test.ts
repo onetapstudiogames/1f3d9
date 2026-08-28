@@ -144,7 +144,8 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   for (const id of [
     'live-clock', 'live-breadcrumbs', 'live-plates', 'live-ledger',
     'live-roster', 'live-resident-page', 'live-viewport', 'live-stage',
-    'live-fit', 'live-pause', 'live-focus-status',
+    'live-zoom-in', 'live-zoom-out', 'live-center', 'live-fullscreen',
+    'live-proof', 'live-pause', 'live-focus-status',
   ]) assert.match(WINDOW_HTML, new RegExp(`id="${id}"`))
   assert.equal((WINDOW_HTML.match(/>BETA</gu) ?? []).length, 1)
   assert.match(
@@ -155,6 +156,7 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_JS, /state\.view === 'live'/u)
 
   const shipped = `${WINDOW_HTML}\n${WINDOW_JS}`
+  assert.doesNotMatch(shipped, /Fit live|live-fit|fitLivePlate|windowLiveFitScale/u)
   assert.doesNotMatch(shipped, /type="range"|zoom-slider/iu)
   assert.match(WINDOW_JS, /addEventListener\('wheel'/u)
   assert.match(WINDOW_JS, /addEventListener\('pointerdown'/u)
@@ -253,7 +255,7 @@ test('the share link round-trips every reproducible window question', () => {
   assert.match(WINDOW_JS, /nodes\.archiveType\.value = state\.archive\.type/)
   assert.match(WINDOW_JS, /state\.view === 'archive'[\s\S]{0,240}loadArchive\(true, true\)/)
   assert.match(WINDOW_JS, /loadArchive\(true, true\)/)
-  assert.match(WINDOW_JS, /directorySearch[^\n]*params\.set\('find'/)
+  assert.match(WINDOW_JS, /directorySearch:\s*state\.directorySearch/)
   assert.doesNotMatch(
     WINDOW_JS,
     /params\.get\('sleepers'\)[\s\S]{0,160}\.slice\(/,
@@ -1507,6 +1509,8 @@ test('Preview metadata trusts Vercel system URLs instead of the request Host', a
   assert.match(previewHtml, new RegExp(`<meta property="og:url" content="https://${previewHost}/window/thing/401">`, 'u'))
   assert.match(previewHtml, new RegExp(`<meta property="og:image" content="https://${previewHost}/share/thing.png">`, 'u'))
   assert.match(previewHtml, new RegExp(`<meta name="twitter:image" content="https://${previewHost}/share/thing.png">`, 'u'))
+  assert.match(previewHtml, /id="live-proof"[^>]*data-preview-available="true"/u)
+  assert.doesNotMatch(previewHtml, /id="live-proof"[^>]*hidden/u)
   assert.doesNotMatch(previewHtml, /evil\.example|1f3d9-hosted-chat-preview/u)
 
   const productionApp = new Hono()
@@ -1524,5 +1528,6 @@ test('Preview metadata trusts Vercel system URLs instead of the request Host', a
   const productionHtml = await (await productionApp.request('https://evil.example/window/thing/401')).text()
   assert.match(productionHtml, /href="https:\/\/1f3d9\.com\/window\/thing\/401"/u)
   assert.match(productionHtml, /content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
+  assert.match(productionHtml, /id="live-proof"[^>]*data-preview-available="false"[^>]*hidden/u)
   assert.doesNotMatch(productionHtml, /evil\.example|onetapstudiogames-projects/u)
 })

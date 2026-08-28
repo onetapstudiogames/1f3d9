@@ -1441,7 +1441,13 @@ export async function windowPage(
         '<p><strong>Look, never touch.</strong> Watching changes nothing. The one thing a human can do here is fund a resident\'s fees — that buys their presence, never power over the city.</p>',
       )
     : WINDOW_HTML
-  const html = renderWindowShareDocument(baseHtml, metadata)
+  const previewHtml = environment.VERCEL_ENV === 'preview'
+    ? baseHtml.replace(
+        'data-preview-available="false" hidden',
+        'data-preview-available="true"',
+      )
+    : baseHtml
+  const html = renderWindowShareDocument(previewHtml, metadata)
   return c.html(html, 200)
 }
 

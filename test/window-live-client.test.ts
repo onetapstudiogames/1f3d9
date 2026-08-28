@@ -4,7 +4,6 @@ import * as windowClientModule from '../src/window-client.ts'
 import {
   normalizeWindowDrawing,
   windowLiveClampZoomScale,
-  windowLiveFitScale,
   windowLivePlateChildren,
   windowLivePollDelay,
   windowLiveReplayDuration,
@@ -48,6 +47,19 @@ type LiveViewportBounds = Readonly<{
 }>
 
 type LiveClientExports = Readonly<{
+  windowLiveCenterCamera?: (
+    viewportWidth: number,
+    viewportHeight: number,
+    targetX: number,
+    targetY: number,
+    preferredScale: number,
+    minimumScale: number,
+    maximumScale: number,
+  ) => Readonly<{ scale: number; offsetX: number; offsetY: number }> | null
+  windowLiveDirectGroundWidth?: (
+    stageWidth: number,
+    readableWidth: number,
+  ) => number
   windowLiveResidentLabelMode?: (
     scale: number,
     readableThreshold: number,
@@ -60,7 +72,6 @@ type LiveClientExports = Readonly<{
     plots: readonly SurveyedPlot[],
     viewport: LiveViewportBounds,
     overscan: number,
-    includeAll?: boolean,
   ) => readonly SurveyedPlot[]
   windowLiveCapacitySelection?: (
     rows: readonly CapacityRow[],
@@ -184,6 +195,46 @@ test('direct residents and things receive stable scattered points across the ava
     assert.ok(point.x >= 56 && point.x <= 1_100 - 56)
     assert.ok(point.y >= 56 && point.y <= 680 - 56)
   }
+})
+
+test('direct residents and things stay on readable ground when the surveyed stage grows', () => {
+  const directGroundWidth = liveClientExports.windowLiveDirectGroundWidth
+  assert.equal(typeof directGroundWidth, 'function')
+  if (!directGroundWidth) return
+
+  assert.equal(directGroundWidth(720, 1_100), 720)
+  assert.equal(directGroundWidth(1_100, 1_100), 1_100)
+  assert.equal(directGroundWidth(20_000, 1_100), 1_100)
+  assert.equal(directGroundWidth(Number.NaN, 1_100), 0)
+  assert.equal(directGroundWidth(20_000, -1), 0)
+
+  const stageWidth = 20_000
+  const groundWidth = directGroundWidth(stageWidth, 1_100)
+  const residentPoints = windowLiveSeparatedPoints(
+    Array.from({ length: 18 }, (_, index) => index + 1),
+    groundWidth,
+    680,
+    73,
+    50,
+    50,
+    12,
+    1,
+  )
+  const thingPoints = windowLiveSeparatedPoints(
+    Array.from({ length: 10 }, (_, index) => index + 1),
+    groundWidth,
+    680,
+    97,
+    94,
+    32,
+    12,
+    0.5,
+  )
+
+  assert.equal(Object.keys(residentPoints).length, 18)
+  assert.equal(Object.keys(thingPoints).length, 10)
+  assert.ok(Math.max(...Object.values(residentPoints).map(point => point.x)) < 1_100)
+  assert.ok(Math.max(...Object.values(thingPoints).map(point => point.x)) < 1_100)
 })
 
 test('a resident or thing keeps the same point when the visible set changes', () => {
@@ -329,7 +380,7 @@ test('touch activation brings a covered item forward before a second tap opens i
   assert.equal(windowLiveTouchActivation('touch', 'thing:9', 'resident:7'), 'bring-forward')
 })
 
-test('live plot visibility keeps the viewport and overscan while Fit includes the whole survey', () => {
+test('live plot detail stays camera-bounded while distant plots remain marker candidates', () => {
   const visiblePlots = liveClientExports.windowLiveVisiblePlots
   assert.equal(typeof visiblePlots, 'function')
   if (!visiblePlots) return
@@ -343,11 +394,19 @@ test('live plot visibility keeps the viewport and overscan while Fit includes th
   ])
   const viewport = Object.freeze({ left: 0, top: 0, right: 100, bottom: 100 })
 
-  const culled = visiblePlots(plots, viewport, 12)
-  const fitted = visiblePlots(plots, viewport, 12, true)
+  const detailed = visiblePlots(plots, viewport, 12)
+  const legacySurveyAttempt = (visiblePlots as unknown as (
+    candidates: readonly SurveyedPlot[],
+    bounds: LiveViewportBounds,
+    overscan: number,
+    includeAll: boolean,
+  ) => readonly SurveyedPlot[])(plots, viewport, 12, true)
+  const detailedIds = new Set(detailed.map(plot => plot.id))
+  const markerIds = plots.filter(plot => !detailedIds.has(plot.id)).map(plot => plot.id)
 
-  assert.deepEqual(culled.map(plot => plot.id), [2, 3, 5])
-  assert.deepEqual(fitted.map(plot => plot.id), [1, 2, 3, 4, 5])
+  assert.deepEqual(detailed.map(plot => plot.id), [2, 3, 5])
+  assert.deepEqual(markerIds, [1, 4])
+  assert.deepEqual(legacySurveyAttempt, detailed, 'no camera mode may draw every detailed plot')
   assert.deepEqual(plots.map(plot => plot.id), [1, 2, 3, 4, 5])
 })
 
@@ -367,22 +426,29 @@ test('trace opacity ages honestly and expires at its stated lifetime', () => {
   assert.equal(windowLiveTraceOpacity(2_000, 1_000, 10_000), 1)
 })
 
-test('dynamic Fit scale follows the whole unbounded survey', () => {
-  const hugeSurvey = windowLiveFitScale(320, 352, 1_100, 20_000, 2.2)
-  assert.equal(hugeSurvey, 328 / 20_000)
-  assert.ok(hugeSurvey! < 0.05)
-  assert.equal(
-    windowLiveFitScale(1_200, 800, 1_100, 680, 2.2),
-    Math.min(2.2, 1_176 / 1_100, 776 / 680),
+test('Center keeps a readable scale around its target without fitting the whole survey', () => {
+  const centerCamera = liveClientExports.windowLiveCenterCamera
+  assert.equal(typeof centerCamera, 'function')
+  if (!centerCamera) return
+
+  assert.deepEqual(
+    centerCamera(320, 352, 19_000, 12_000, 1, 0.8, 2.2),
+    Object.freeze({ scale: 1, offsetX: -18_840, offsetY: -11_824 }),
   )
-  assert.equal(windowLiveFitScale(320, 352, 0, 20_000, 2.2), null)
+  assert.deepEqual(
+    centerCamera(320, 352, 550, 340, 0.01, 0.8, 2.2),
+    Object.freeze({ scale: 0.8, offsetX: -280, offsetY: -96 }),
+  )
+  assert.equal(centerCamera(0, 352, 550, 340, 1, 0.8, 2.2), null)
+  assert.equal(centerCamera(320, 352, Number.NaN, 340, 1, 0.8, 2.2), null)
 })
 
-test('zoom-out never raises the camera above its current or full-survey floor', () => {
-  assert.equal(windowLiveClampZoomScale(0.01, 0.0164, 0.0164, 2.2), 0.0164)
-  assert.equal(windowLiveClampZoomScale(0.004, 0.005, 0.02, 2.2), 0.005)
-  assert.equal(windowLiveClampZoomScale(0.5, 0.25, 0.1, 2.2), 0.5)
-  assert.equal(windowLiveClampZoomScale(9, 1, 0.1, 2.2), 2.2)
+test('zoom has a fixed readable floor independent of surveyed stage bounds', () => {
+  assert.equal(windowLiveClampZoomScale(0.01, 0.8, 2.2), 0.8)
+  assert.equal(windowLiveClampZoomScale(0.8, 0.8, 2.2), 0.8)
+  assert.equal(windowLiveClampZoomScale(1.4, 0.8, 2.2), 1.4)
+  assert.equal(windowLiveClampZoomScale(9, 0.8, 2.2), 2.2)
+  assert.equal(windowLiveClampZoomScale(Number.NaN, 0.8, 2.2), 0.8)
 })
 
 test('resident label mode changes only at the readable zoom threshold and fails closed', () => {

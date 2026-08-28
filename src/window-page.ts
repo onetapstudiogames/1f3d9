@@ -112,8 +112,12 @@ export const WINDOW_HTML = `<!doctype html>
       <div class="live-instrument-strip">
         <nav id="live-breadcrumbs" class="live-breadcrumbs" aria-label="Live plate path"></nav>
         <div class="live-camera-controls" role="group" aria-label="Live plate camera and replay controls">
-          <button id="live-fit" class="live-control-button" type="button" aria-label="Fit live plate">Fit</button>
+          <button id="live-zoom-out" class="live-control-button" type="button" aria-label="Zoom out">−</button>
+          <button id="live-zoom-in" class="live-control-button" type="button" aria-label="Zoom in">+</button>
+          <button id="live-center" class="live-control-button" type="button" aria-label="Center live view">Center</button>
+          <button id="live-fullscreen" class="live-control-button" type="button" aria-label="Enter full-screen Live" aria-pressed="false">Full screen</button>
           <button id="live-pause" class="live-control-button live-pause" type="button" aria-pressed="false">Pause walks</button>
+          <button id="live-proof" class="live-control-button live-proof" type="button" aria-label="Run preview proof scene" data-preview-available="false" hidden>Run proof scene</button>
         </div>
         <p id="live-clock" class="live-clock">Reading the recent public record…</p>
       </div>
@@ -138,7 +142,7 @@ export const WINDOW_HTML = `<!doctype html>
             <div id="live-label-layer" class="live-label-layer" aria-hidden="true"></div>
           </div>
           <div class="live-stage-readout">
-            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Fit or 0 returns the full survey. Far zoom shows resident sprites without tags; zoom in, hover, or use keyboard focus to bring an item forward. On a touch screen, tap once to bring an item forward and again to open it. Focus keeps that resident labelled on top. Show more reveals the people or things folded into a crowded place. Plot nameplates shorten visually and keep their full names in tooltips. Choosing Follow clears Focus; choosing Focus clears Follow.</p>
+            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Center or 0 returns to a readable view around the current place or focused item; it never shrinks the whole place to fit. Distant places stay as reachable markers until they approach the camera. Hover or keyboard focus brings a complete item and label forward. On touch, tap once to bring a covered item forward and again to open it. Show more reveals people or things on the live ground without a window.</p>
             <p id="live-focus-status" class="live-focus-status" role="status" aria-live="polite">No resident focused. Choose a resident on the plate to keep them in view.</p>
           </div>
           <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">

@@ -26,8 +26,8 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 59)
-  assert.match(contributorGuide, /\(59 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 60)
+  assert.match(contributorGuide, /\(60 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -43,6 +43,7 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 57 \|[^\n]*Live is a fixed surveyed world plate[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 58 \|[^\n]*Live separates exact thing counts from named thing specimens[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 59 \|[^\n]*Live keeps fixed geography while making every represented item reachable[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 60 \|[^\n]*Live uses a readable camera and an inline scene[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
