@@ -185,6 +185,45 @@ test('an unsigned dispute webhook is rejected as unverified before network or ci
   assert.equal(database.founderNotes.size, 0)
 })
 
+test('malformed PayPal signature headers are rejected before network or city writes', async t => {
+  const cases = [
+    ['auth algorithm', 'paypal-auth-algo', 'SHA256 with RSA'],
+    ['transmission id', 'paypal-transmission-id', '123456'],
+    ['transmission signature', 'paypal-transmission-sig', '123456'],
+    ['transmission time', 'paypal-transmission-time', 'not-a-date'],
+    ['impossible transmission date', 'paypal-transmission-time', '2026-02-30T12:00:00Z'],
+    ['impossible transmission offset', 'paypal-transmission-time', '2026-08-28T12:00:00+99:99'],
+    ['certificate URL', 'paypal-cert-url', 'https://example.com/cert.pem'],
+  ] as const
+
+  for (const [name, header, value] of cases) {
+    await t.test(name, async () => {
+      const database = new MemoryPayPalDatabase()
+      const { app, paypal } = configuredApp(database)
+      const response = await app.request('/api/city-credit/paypal/webhook', postRaw(
+        disputeWebhook({
+          eventId: `WH-MALFORMED-${header}`,
+          eventKind: 'CUSTOMER.DISPUTE.CREATED',
+          disputeId: `PP-D-MALFORMED-${header}`,
+        }),
+        { ...WEBHOOK_HEADERS, [header]: value },
+      ))
+
+      assert.equal(response.status, 401, await response.clone().text())
+      assert.deepEqual(await response.json(), {
+        error: 'PayPal webhook signature was not verified.',
+      })
+      assert.equal(paypal.calls.length, 0, 'malformed evidence must not reach PayPal')
+      assert.equal(database.purchases.size, 0)
+      assert.equal(database.events.size, 0)
+      assert.equal(database.disputes.size, 0)
+      assert.equal(database.disputeEvents.size, 0)
+      assert.equal(database.disputeReceipts.size, 0)
+      assert.equal(database.founderNotes.size, 0)
+    })
+  }
+})
+
 test('unverified dispute webhooks cannot freeze or record a delivered gift', async t => {
   const cases = [
     {
