@@ -852,6 +852,19 @@ test('Live first touch raises covered items and second touch opens them', async 
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
 })
 
+test('a cancelled touch does not consume the next keyboard activation', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const open = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await open.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await open.dispatchEvent('pointercancel', { pointerType: 'touch' })
+  await open.focus()
+  await open.evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+})
+
 test('Live Show more reveals every loaded resident and thing instead of leaving a dead badge', async ({ page }) => {
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
@@ -883,6 +896,34 @@ test('Live Show more reveals every loaded resident and thing instead of leaving 
   expect(new Set(cinderAfter.map(point =>
     `${Math.round(point.x)}:${Math.round(point.y)}`)).size).toBe(cinderAfter.length)
   expect(cinderAfter.length).toBeGreaterThan(cinderBefore.length)
+})
+
+test('Live Show more keeps keyboard focus and stays operable while more thing pages remain', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'long', 0, {
+    surveyTotalMismatch: true,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText(
+    'Exact +N thing counts are unavailable',
+  )
+
+  const residentMore = page.locator('.live-plot[data-place-id="3"] .live-resident-more')
+  await residentMore.focus()
+  await residentMore.press('Enter')
+  await expect(page.locator('.live-plot[data-place-id="3"] .live-walker')).toHaveCount(7)
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id ?? null)).toBe('live-plates')
+
+  const thingMore = page.locator('.live-plot[data-place-id="2"] .live-thing-more')
+  await expect.poll(fixture.thingPageRequests).toBe(1)
+  await thingMore.focus()
+  await thingMore.press('Enter')
+  await expect.poll(fixture.thingPageRequests).toBe(2)
+  await expect(thingMore).toBeVisible()
+  await expect.poll(() => page.evaluate(() =>
+    (document.activeElement as HTMLElement | null)?.dataset.focusKey ?? null,
+  )).toBe('live-thing-overflow:2')
+  await thingMore.press('Enter')
+  await expect.poll(fixture.thingPageRequests).toBe(3)
 })
 
 test('Live refuses exact thing badges when the fixed survey disagrees', async ({ page }) => {

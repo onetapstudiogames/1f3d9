@@ -1094,6 +1094,7 @@ export const WINDOW_JS = `(() => {
       replaySeenKeys: [], replayRevealedKeys: [],
       focusResident: null, paused: false, absorptionEndsAtByPlaceId: {}, trailStarts: {},
       raisedItemKey: null, expandedResidentPlaceIds: [], expandedThingPlaceIds: [],
+      focusRestoreKey: null, focusRestoreFallbackId: null,
       suppressReplayOnNextRead: false,
     },
   }
@@ -1178,6 +1179,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     control.addEventListener('pointerdown', event => {
       control.dataset.livePointerType = event.pointerType || ''
     })
+    control.addEventListener('pointercancel', () => {
+      delete control.dataset.livePointerType
+    })
     control.addEventListener('click', event => {
       const pointerType = event.pointerType || control.dataset.livePointerType || ''
       delete control.dataset.livePointerType
@@ -1196,6 +1200,32 @@ ${WINDOW_CLIENT_SAFETY_JS}
         open()
       }
     })
+  }
+
+  function requestLiveFocusRestore(focusKey, fallbackId = 'live-plates') {
+    state = {
+      ...state,
+      live: {
+        ...state.live,
+        focusRestoreKey: focusKey,
+        focusRestoreFallbackId: fallbackId,
+      },
+    }
+  }
+
+  function flushLiveFocusRestore() {
+    const focusKey = state.live.focusRestoreKey
+    const fallbackId = state.live.focusRestoreFallbackId
+    if (!focusKey) return
+    state = {
+      ...state,
+      live: {
+        ...state.live,
+        focusRestoreKey: null,
+        focusRestoreFallbackId: null,
+      },
+    }
+    window.queueMicrotask(() => restoreFocus(focusKey, null, fallbackId || null))
   }
 
   function renderLiveFocusStatus() {
@@ -4832,6 +4862,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const badge = element('button', 'live-overflow-badge live-resident-more',
         '+' + String(overflowCount) + ' more')
       badge.type = 'button'
+      badge.dataset.focusKey = 'live-resident-overflow:' + String(placeId)
       badge.setAttribute('aria-label', 'Show ' + String(overflowCount) + ' more residents')
       badge.setAttribute('data-live-overflow-count', String(overflowCount))
       badge.title = String(residents.length) + ' residents here; showing ' +
@@ -4840,6 +4871,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         badge.classList.add('live-overflow-absorbing')
       }
       badge.addEventListener('click', () => {
+        requestLiveFocusRestore(badge.dataset.focusKey || '', 'live-plates')
         state = { ...state, live: { ...state.live,
           expandedResidentPlaceIds: Object.freeze([
             ...new Set([...state.live.expandedResidentPlaceIds, placeId]),
@@ -4973,6 +5005,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const pinned = new Set(pinnedIds)
     const shelf = element('section', 'live-thing-shelf')
     const expanded = state.live.expandedThingPlaceIds.includes(place.id)
+    const entry = historyEntry('things', liveThingFilters(focusId))
     const isRoot = place.id === focusId
     const survey = liveStageSurvey(livePlaceRows(snapshot), focusId)
     const itemWidth = isRoot ? 144 : 94
@@ -5070,18 +5103,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
       bindLiveActivation(specimen, specimen, itemKey, null)
       shelf.append(specimen)
     }
-    if (exactTotal === null && things.length > selection.visible.length) {
+    if (exactTotal === null && (things.length > selection.visible.length || entry.hasMore)) {
       const badge = element('button', 'live-overflow-badge live-thing-more',
         'more · count unavailable')
       badge.type = 'button'
+      badge.dataset.focusKey = 'live-thing-overflow:' + String(place.id)
       badge.setAttribute('aria-label', 'Show more things; exact count unavailable')
       badge.title = 'Some named things are folded here; the exact count is unavailable.'
-      badge.addEventListener('click', () => expandLiveThings(place.id, focusId))
+      badge.addEventListener('click', () =>
+        expandLiveThings(place.id, focusId, badge.dataset.focusKey || ''))
       shelf.append(badge)
     } else if (selection.overflowCount) {
       const badge = element('button', 'live-overflow-badge live-thing-more',
         '+' + String(selection.overflowCount) + ' more')
       badge.type = 'button'
+      badge.dataset.focusKey = 'live-thing-overflow:' + String(place.id)
       badge.setAttribute('aria-label', 'Show ' + String(selection.overflowCount) + ' more things')
       badge.setAttribute('data-live-overflow-count', String(selection.overflowCount))
       badge.title = String(exactTotal) + ' things here; showing ' +
@@ -5090,13 +5126,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         active.type === 'make' && liveRecordPlaceId(active.record) === place.id)) {
         badge.classList.add('live-overflow-absorbing')
       }
-      badge.addEventListener('click', () => expandLiveThings(place.id, focusId))
+      badge.addEventListener('click', () =>
+        expandLiveThings(place.id, focusId, badge.dataset.focusKey || ''))
       shelf.append(badge)
     }
     return shelf
   }
 
-  function expandLiveThings(placeId, focusId) {
+  function expandLiveThings(placeId, focusId, focusKey) {
+    requestLiveFocusRestore(focusKey, 'live-plates')
     state = { ...state, live: { ...state.live,
       expandedThingPlaceIds: Object.freeze([
         ...new Set([...state.live.expandedThingPlaceIds, placeId]),
@@ -6507,6 +6545,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderLiveHistoryStatus()
     scheduleLiveClock()
     restoreFocus(focusKey, null, null)
+    flushLiveFocusRestore()
     if (!state.live.openingLoaded && !state.live.openingLoading) {
       void loadLiveOpeningHistory(snapshot, Boolean(
         state.live.openingNextBeforeId || state.live.openingEvents.length))
