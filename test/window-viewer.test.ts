@@ -213,7 +213,7 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   assert.match(WINDOW_CSS, /\.drawing-undrawn/u)
   assert.match(
     WINDOW_CSS,
-    /\.live-plot-terrain\s*>\s*\.drawing-grid:first-child\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
+    /\.live-plot-terrain\s*>\s*\.drawing-grid\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
   )
   assert.match(
     WINDOW_CSS,

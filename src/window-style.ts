@@ -588,14 +588,39 @@ button { color: inherit; }
   will-change: transform;
   isolation: isolate;
 }
+.live-label-layer {
+  position: absolute;
+  z-index: 50;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.live-resident-tag {
+  position: absolute;
+  z-index: 1;
+  width: max-content;
+  max-width: none;
+  padding: 0.2rem 0.3rem;
+  overflow: visible;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.38);
+  font: 800 0.72rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.live-resident-tag[data-live-packed="false"] { visibility: hidden; }
+.live-resident-tag[data-live-focus-resident] {
+  z-index: 2;
+  background: var(--signal);
+  box-shadow: 0 0 0 2px var(--line), 3px 3px 0 rgba(0, 0, 0, 0.46);
+}
 .live-world-ground {
   position: absolute;
   z-index: 0;
   inset: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, var(--live-world-tile, 3.5rem));
-  grid-auto-rows: var(--live-world-tile, 3.5rem);
-  align-content: start;
+  display: block;
   overflow: hidden;
   background-color: var(--night);
   background-image:
@@ -605,8 +630,11 @@ button { color: inherit; }
   image-rendering: pixelated;
 }
 .live-world-ground > .drawing-grid {
-  width: var(--live-world-tile, 3.5rem);
-  height: var(--live-world-tile, 3.5rem);
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
 }
 .live-plates {
   position: absolute;
@@ -718,7 +746,6 @@ button { color: inherit; }
 }
 .drawing-loading { opacity: 0.72; }
 .drawing-unavailable { border-style: solid; }
-.drawing-authored rect { vector-effect: non-scaling-stroke; }
 .live-portrait-grid { display: flex; flex-wrap: wrap; gap: 0.38rem; align-items: start; }
 .live-portrait-wrap {
   position: relative;
@@ -730,6 +757,7 @@ button { color: inherit; }
   position: relative;
   display: grid;
   width: 100%;
+  aspect-ratio: 1;
   min-height: 24px;
   padding: 0.2rem;
   color: var(--ink);
@@ -737,15 +765,8 @@ button { color: inherit; }
   border: 2px solid var(--line);
   cursor: pointer;
 }
+.live-portrait > .drawing-grid { height: 100%; aspect-ratio: auto; }
 .live-portrait.asleep { opacity: 0.48; }
-.live-portrait-name {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  font: 750 0.48rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .live-speech-bubble {
   position: absolute;
   z-index: 20;
@@ -908,6 +929,10 @@ button { color: inherit; }
   pointer-events: auto;
   image-rendering: pixelated;
 }
+.live-plot[data-live-culled="true"] { display: none; }
+.live-plot:has(.live-walker:hover),
+.live-plot:has(.live-walker:focus-within) { z-index: 3; }
+.live-plot[data-live-focus-plot="true"] { z-index: 4; }
 .live-plot[data-place-kind="continent"] {
   border-width: 4px;
   box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5);
@@ -917,15 +942,21 @@ button { color: inherit; }
   position: absolute;
   z-index: 0;
   inset: 0;
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  align-content: start;
+  display: block;
   overflow: hidden;
   background-color: #20423a;
   image-rendering: pixelated;
 }
+.live-plot-terrain > .drawing-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+.live-plot-terrain > canvas.drawing-grid { height: auto; }
 .live-plot-terrain .drawing-undrawn-label { display: none; }
-.live-plot-terrain > .drawing-grid:first-child .drawing-undrawn-label { display: block; }
+.live-plot-terrain > .drawing-grid .drawing-undrawn-label { display: block; }
 .live-plot-open {
   position: absolute;
   z-index: 8;
@@ -950,6 +981,12 @@ button { color: inherit; }
 }
 .live-plot-open::after { content: "→"; flex: 0 0 auto; color: var(--brick); }
 .live-plot-open:hover { background: var(--signal); }
+.live-plot-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .live-plot-owner {
   position: absolute;
   z-index: 7;
@@ -1009,14 +1046,19 @@ button { color: inherit; }
   z-index: 12;
   display: grid;
   width: 3.1rem;
+  height: 3.1rem;
   margin: 0;
   transform: translate(-50%, -100%);
   pointer-events: auto;
-  will-change: left, top;
 }
-.live-plot .live-walker { width: 2.5rem; }
+.live-walker:hover, .live-walker:focus-within,
+.live-replay-portrait:hover, .live-replay-portrait:focus-within { z-index: 30; }
+.live-walker[data-live-focus-resident],
+.live-replay-portrait[data-live-focus-resident] { z-index: 40; }
+.live-plot .live-walker { width: 2.5rem; height: 2.5rem; }
 .live-replay-portrait {
   z-index: 18;
+  will-change: transform;
   animation-name: live-recorded-glide;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
@@ -1128,7 +1170,12 @@ button { color: inherit; }
 }
 
 @keyframes live-recorded-glide {
-  to { left: var(--live-replay-to-x); top: var(--live-replay-to-y); }
+  to {
+    transform: translate(
+      calc(-50% + var(--live-replay-delta-x, 0px)),
+      calc(-100% + var(--live-replay-delta-y, 0px))
+    );
+  }
 }
 
 @keyframes live-overflow-absorb {
@@ -1678,7 +1725,7 @@ button { color: inherit; }
   .note-card, .agreement-card, .live-stage-shell,
   .live-viewport, .live-plot, .live-portrait, .live-speech-bubble,
   .live-resident-more, .live-thing-more, .live-control-button,
-  .drawing-grid { border-color: CanvasText; box-shadow: none; }
+  .drawing-grid, .live-resident-tag { border-color: CanvasText; box-shadow: none; }
   .live-world-ground, .live-plot-terrain { forced-color-adjust: none; }
   .live-plot-open, .live-focus-clear { color: LinkText; }
   .live-trail { stroke: LinkText; }

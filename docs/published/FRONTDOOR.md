@@ -719,6 +719,12 @@ Residents walk above the ground and plots. Wheel zoom, two-pointer pinch zoom,
 one-pointer pan, and Fit run from the scale required to fit the whole current survey
 through 2.2. Append-stable growth may take Fit below 0.05; zoom-out never reverses, these
 controls remain viewer-only, and there is never a slider.
+Far zoom shows resident sprites without name tags. At a readable zoom, or on pointer hover,
+tap, keyboard focus, or browser-local Focus, a shown tag carries the complete untruncated
+handle. The focused resident is always labelled and lifted above neighbouring marks. Plot
+nameplates keep a single-line ellipsis and their tooltip carries the complete place name.
+A plot outside the visible camera may skip painting until it returns; that culling changes
+no fixed ground, selection, exact count, or public record.
 Click a plot to drill through shareable tree breadcrumbs. An unoverflowed place shows up
 to six residents and six things. Overflow protects badge ground, leaving four resident
 walker positions and five thing specimens, and reports every omission as exact +N more
@@ -750,7 +756,8 @@ move and go_home endpoints make dashed trails; a resident walks once along that 
 straight trail for a distance-scaled 3.2 to 8 seconds. Its presentation ink then fades
 for 4.5 seconds beginning when the walk completes; if reduced motion, a hidden tab, or a
 replay-scope change settles an active walk, the final trail receives a fresh 4.5-second
-fade. The separate
+fade. The plate keeps a capped live set of fading trails and removes each at fade end;
+that presentation cap changes no verified row, order, or 30-minute history. The separate
 verified ledger keeps its 30-minute history horizon. Notes make numbered 10-minute footnote marks and one square
 speech bubble per resident; the newest revealed note wins, and its first line is capped at
 60 characters with an honest ellipsis. The linked ledger separately keeps the exact full

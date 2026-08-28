@@ -108,9 +108,12 @@ async function installReplayRoutes(
     secondArrival?: boolean
     movementOnly?: boolean
     drawingDelayMs?: number
+    drawingPlaceCount?: number
     openingDelayMs?: number
     residentDelayMs?: number
     thingDelayMs?: number
+    moveBurst?: number
+    simultaneousMoves?: number
     useThingId?: number
     manyFocusInteractions?: boolean
     openingMovement?: boolean
@@ -135,28 +138,47 @@ async function installReplayRoutes(
   let maximumNoteRequests = 0
   let activeDrawingRequests = 0
   let maximumDrawingRequests = 0
+  let drawingRequests = 0
+  const drawingRequestPaths: string[] = []
   let releaseHeldThingPage = () => {}
   const heldThingPage = new Promise<void>(resolve => {
     releaseHeldThingPage = resolve
   })
-  const currentMarker = () => published ? controls.secondArrival ? '17' : '16' : '10'
-  const controlledResidentRows = (marker: string) => replayResidentRows(
-    now,
-    marker === '10' ? controls.openingMovement ? 3 : 2 : 4,
-  ).map(resident => {
-    const placed = controls.secondArrival && resident.id === replayCrowd[0]!.id
-      ? { ...resident, current_place_id: marker === '10' ? 2 : 4 }
-      : resident
-    return controls.maximumHandle && resident.id === replayCrowd[3]!.id
-      ? { ...placed, handle: controls.maximumHandle }
-      : placed
-  })
+  const currentMarker = () => controls.simultaneousMoves
+    ? String(1_000 + controls.simultaneousMoves)
+    : published ? controls.secondArrival ? '17' : '16' : '10'
+  const controlledResidentRows = (marker: string) => [
+    ...replayResidentRows(
+      now,
+      marker === '10' ? controls.openingMovement ? 3 : 2 : 4,
+    ).map(resident => {
+      const placed = controls.secondArrival && resident.id === replayCrowd[0]!.id
+        ? { ...resident, current_place_id: marker === '10' ? 2 : 4 }
+        : resident
+      return controls.maximumHandle && resident.id === replayCrowd[3]!.id
+        ? { ...placed, handle: controls.maximumHandle }
+        : placed
+    }),
+    ...Array.from({ length: controls.simultaneousMoves ?? 0 }, (_, index) => ({
+      id: 1_000 + index,
+      handle: `walker-burst-${index + 1}`,
+      current_place_id: 3,
+      joined_at: new Date(now - 172_800_000 - index).toISOString(),
+      asleep: false,
+    })),
+  ]
+  const drawingPlaces = Array.from({ length: controls.drawingPlaceCount ?? 0 }, (_, index) => ({
+    id: 100 + index,
+    parent_id: 1,
+    name: `Drawing plot ${index + 1}`,
+  }))
+  const directoryPlaces = [...replayPlaces, ...drawingPlaces]
   await page.route('**/api/window**', async route => {
     windowRequests += 1
     const url = new URL(route.request().url())
     if (url.searchParams.get('view') === 'directory') {
       await route.fulfill({ json: {
-        view: 'directory', places: replayPlaces,
+        view: 'directory', places: directoryPlaces,
         residents: controlledResidentRows(currentMarker()).map(resident => ({
           id: resident.id, handle: resident.handle,
         })),
@@ -212,7 +234,35 @@ async function installReplayRoutes(
       } })
       return
     }
-    const baseSnapshot = replaySnapshot(now, marker !== '10', marker)
+    const ordinarySnapshot = replaySnapshot(now, marker !== '10', marker)
+    const baseSnapshot = drawingPlaces.length
+      ? {
+          ...ordinarySnapshot,
+          places: ordinarySnapshot.places.map(place => ({
+            ...place,
+            places: place.places + drawingPlaces.length,
+            children: [...place.children, ...drawingPlaces.map(extra => ({
+              ...extra,
+              owner: 'drawing-owner',
+              purpose: '',
+              front_matter: [],
+              places: 0,
+              things: 0,
+              notes: 0,
+              moderated: false,
+              children: [],
+            }))],
+          })),
+          totals: {
+            ...ordinarySnapshot.totals,
+            places: ordinarySnapshot.totals.places + drawingPlaces.length,
+          },
+          live_survey: [
+            ...ordinarySnapshot.live_survey,
+            ...drawingPlaces.map(place => ({ ...place, things: 0 })),
+          ],
+        }
+      : ordinarySnapshot
     const surveyedSnapshot = controls.surveyTotalMismatch
       ? {
           ...baseSnapshot,
@@ -336,8 +386,29 @@ async function installReplayRoutes(
       return
     }
     await route.fulfill({ json: {
-      change_marker: currentMarker(), has_more: false, next_before_id: null,
-      events: noteBurst ? Array.from({ length: noteBurst }, (_, index) => ({
+      change_marker: controls.openingMarker ?? currentMarker(),
+      has_more: false, next_before_id: null,
+      events: controls.simultaneousMoves
+        ? Array.from({ length: controls.simultaneousMoves }, (_, index) => ({
+            id: 1_000 + index,
+            change_id: String(1_001 + index),
+            at: new Date(now).toISOString(),
+            kind: 'action',
+            actor: `walker-burst-${index + 1}`,
+            detail: {
+              action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
+            },
+          }))
+        : controls.moveBurst ? Array.from({ length: controls.moveBurst }, (_, index) => ({
+        id: 500 + index, change_id: String(index + 1),
+        at: new Date(now - index).toISOString(), kind: 'action',
+        actor: index % (replayCrowd.length + 1) === 0
+          ? 'map-walker'
+          : replayCrowd[(index - 1) % replayCrowd.length]!.handle,
+        detail: {
+          action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
+        },
+      })) : noteBurst ? Array.from({ length: noteBurst }, (_, index) => ({
         id: 300 + index, change_id: String(index + 1),
         at: new Date(now - index).toISOString(), kind: 'note',
         actor: `burst-${index + 1}`,
@@ -440,6 +511,8 @@ async function installReplayRoutes(
       return
     }
     activeDrawingRequests += 1
+    drawingRequests += 1
+    drawingRequestPaths.push(new URL(route.request().url()).pathname)
     maximumDrawingRequests = Math.max(maximumDrawingRequests, activeDrawingRequests)
     try {
       if (controls.drawingDelayMs) {
@@ -466,6 +539,8 @@ async function installReplayRoutes(
     maximumNoteRequests: () => maximumNoteRequests,
     activeDrawingRequests: () => activeDrawingRequests,
     maximumDrawingRequests: () => maximumDrawingRequests,
+    drawingRequests: () => drawingRequests,
+    drawingRequestPaths: () => [...drawingRequestPaths],
     releaseHeldThingPage,
   }
 }
@@ -710,12 +785,33 @@ test('Live bounds concurrent note detail reads during a visible burst', async ({
 
 test('Live bounds concurrent drawing reads during a visible plate render', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
-    drawingDelayMs: 80,
+    drawingDelayMs: 20,
+    drawingPlaceCount: 80,
   })
   await page.goto('/window#view=live')
 
   await expect.poll(fixture.maximumDrawingRequests).toBeGreaterThan(0)
+  await expect.poll(() => page.locator('.drawing-loading').count(), { timeout: 15_000 }).toBe(0)
   await expect.poll(fixture.activeDrawingRequests).toBe(0)
+  expect(fixture.drawingRequests()).toBeGreaterThan(36)
+  expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
+})
+
+test('Live drops queued drawings from the old plate before reading a newly opened plate', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    drawingDelayMs: 2_000,
+    drawingPlaceCount: 80,
+  })
+  await page.goto('/window#view=live')
+  await expect.poll(fixture.activeDrawingRequests).toBe(4)
+
+  await page.locator('.live-plot[data-place-id="179"] .live-plot-open')
+    .evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page).toHaveURL(/\/window\/live\?place=179$/u)
+  await expect.poll(
+    () => fixture.drawingRequestPaths().includes('/api/drawing/place/179'),
+    { timeout: 3_000 },
+  ).toBe(true)
   expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
 })
 
@@ -739,6 +835,27 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
+  await replay.locator('.live-portrait').evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+  await expect(page.locator('#live-label-layer [data-live-resident-tag="map-walker"]'))
+    .toBeVisible()
+  await page.evaluate(() => {
+    const trackedWindow = window as Window & { liveLabelChildMutations?: number }
+    trackedWindow.liveLabelChildMutations = 0
+    new MutationObserver(records => {
+      trackedWindow.liveLabelChildMutations = Number(trackedWindow.liveLabelChildMutations) +
+        records.filter(record => record.type === 'childList').length
+    }).observe(document.querySelector('#live-label-layer')!, { childList: true })
+  })
+  const replayStack = await page.locator('.live-trace-layer').evaluate(layer => ({
+    replay: Number(getComputedStyle(layer).zIndex),
+    focusedPlot: Number(getComputedStyle(
+      document.querySelector('.live-plot[data-live-focus-plot="true"]')!).zIndex),
+    neighborPlot: Number(getComputedStyle(
+      document.querySelector('.live-plot[data-live-focus-plot="false"]')!).zIndex),
+  }))
+  expect(replayStack.replay).toBeGreaterThan(replayStack.focusedPlot)
+  expect(replayStack.focusedPlot).toBeGreaterThan(replayStack.neighborPlot)
   const start = await replay.evaluate((node, line) => ({
     left: Number.parseFloat((node as HTMLElement).style.left),
     top: Number.parseFloat((node as HTMLElement).style.top),
@@ -781,6 +898,23 @@ test('new change rows replay once in recorded order and leave truthful residue',
   expect(midpoint.x).toBeGreaterThan(minimumX)
   expect(midpoint.x).toBeLessThan(maximumX)
   expect(midpoint.y).toBeGreaterThan(0)
+  const focusedTag = page.locator(
+    '#live-label-layer [data-live-resident-tag="map-walker"]',
+  )
+  await expect.poll(async () => {
+    const portraitBounds = await replay.locator('.live-portrait').boundingBox()
+    const tagBounds = await focusedTag.boundingBox()
+    if (!portraitBounds || !tagBounds) return Number.POSITIVE_INFINITY
+    return Math.abs(
+      portraitBounds.x + portraitBounds.width / 2 -
+      (tagBounds.x + tagBounds.width / 2),
+    )
+  }).toBeLessThan(3)
+  expect(await page.evaluate(() => Number(
+    (window as Window & { liveLabelChildMutations?: number }).liveLabelChildMutations,
+  ))).toBeLessThanOrEqual(1)
+  await replay.locator('.live-portrait').evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
 
   await page.clock.fastForward(duration + 1)
   const absorbedResidents = page.locator('[data-place-id="3"] .live-resident-more')
@@ -1012,15 +1146,15 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
       })
     }))
   expect(rootWalkersOverlap).toBe(false)
-  const maximumHandleName = page.locator(
-    `.live-root-walkers [data-live-resident-handle="${maximumReplayHandle}"] .live-portrait-name`,
+  const maximumHandlePortrait = page.locator(
+    `.live-root-walkers [data-live-resident-handle="${maximumReplayHandle}"]`,
   )
-  await expect(maximumHandleName).toHaveCSS('white-space', 'nowrap')
-  const maximumHandleShellHeight = await maximumHandleName.evaluate(node =>
-    node.closest('.live-walker')!.getBoundingClientRect().height)
-  const shortHandleShellHeight = await page.locator(
-    '.live-root-walkers [data-live-resident-handle="harbor-5"] .live-portrait-name',
-  ).evaluate(node => node.closest('.live-walker')!.getBoundingClientRect().height)
+  await expect(maximumHandlePortrait).toHaveAttribute('aria-label', `Focus on ${maximumReplayHandle}`)
+  const [maximumHandleShellHeight, shortHandleShellHeight] = await page.locator(
+    '.live-root-walkers',
+  ).evaluate((root, handles) => handles.map(handle => root.querySelector(
+    `[data-live-resident-handle="${handle}"]`,
+  )!.closest('.live-walker')!.getBoundingClientRect().height), [maximumReplayHandle, 'harbor-5'])
   expect(Math.abs(maximumHandleShellHeight - shortHandleShellHeight)).toBeLessThanOrEqual(1)
   const rootBubbleBounds = await page.locator('.live-root-walkers .live-speech-bubble')
     .first().evaluate(node => {
@@ -1039,6 +1173,165 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
   await page.locator('[data-live-resident-handle="harbor-7"]').first().click()
   await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-7')
   await expect(page).toHaveURL(/\/window\/live\?place=3$/u)
+})
+
+test('resident tags follow zoom and intent while terrain and camera writes stay bounded', async ({ page }) => {
+  const now = Date.now()
+  await installReplayRoutes(page, now, 'complete', 0, { maximumHandle: maximumReplayHandle })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const stage = page.locator('#live-stage')
+  await expect(stage).toHaveAttribute('data-live-label-mode', 'far')
+  await expect(page.locator('.live-world-ground > .drawing-grid')).toHaveCount(1)
+  await expect(page.locator('.live-plot-terrain > .drawing-grid')).toHaveCount(2)
+
+  const focusedWalker = page.locator(
+    `#live-plates [data-live-resident-handle="${maximumReplayHandle}"]`,
+  ).first()
+  const focusedTag = page.locator(
+    `#live-label-layer [data-live-resident-tag="${maximumReplayHandle}"]`,
+  )
+  await expect(focusedTag).toHaveCount(0)
+  await focusedWalker.hover()
+  await expect(focusedTag).toBeVisible()
+  await expect(focusedTag).toHaveText(maximumReplayHandle)
+  await expect(focusedTag).toHaveCSS('text-overflow', 'clip')
+  await expect(focusedTag).toHaveCSS('overflow', 'visible')
+  await expect(focusedTag).toHaveCSS('white-space', 'nowrap')
+
+  await focusedWalker.click()
+  await page.mouse.move(1, 1)
+  await expect(focusedTag).toBeVisible()
+  await focusedWalker.evaluate(node => {
+    const bubble = document.createElement('span')
+    bubble.className = 'live-speech-bubble'
+    bubble.textContent = 'A bubble must leave the full name readable.'
+    node.closest('.live-walker')!.append(bubble)
+  })
+  const neighborWalker = page.locator(
+    '#live-plates [data-live-resident-handle="harbor-3"]',
+  ).first()
+  await neighborWalker.hover()
+  const neighborTag = page.locator('#live-label-layer [data-live-resident-tag="harbor-3"]')
+  await expect(neighborTag).toBeVisible()
+  const labelsOverlap = await focusedTag.evaluate((node, neighbor) => {
+    const first = node.getBoundingClientRect()
+    const second = neighbor.getBoundingClientRect()
+    return first.left < second.right && first.right > second.left &&
+      first.top < second.bottom && first.bottom > second.top
+  }, await neighborTag.elementHandle())
+  expect(labelsOverlap).toBe(false)
+  const tagCoversBubble = await focusedTag.evaluate(node => {
+    const tag = node.getBoundingClientRect()
+    const bubble = document.querySelector('.live-speech-bubble')!.getBoundingClientRect()
+    return tag.left < bubble.right && tag.right > bubble.left &&
+      tag.top < bubble.bottom && tag.bottom > bubble.top
+  })
+  expect(tagCoversBubble).toBe(false)
+  const [focusedZ, neighborZ] = await Promise.all([
+    focusedTag.evaluate(node => Number(getComputedStyle(node).zIndex)),
+    neighborTag.evaluate(node => Number(getComputedStyle(node).zIndex)),
+  ])
+  expect(focusedZ).toBeGreaterThan(neighborZ)
+
+  const plotNameplate = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await expect(plotNameplate).toHaveAttribute('title', 'Open the live plate for Cinder lane')
+  await expect(plotNameplate.locator('.live-plot-name')).toHaveCSS('text-overflow', 'ellipsis')
+
+  const cameraAttributeWrites = await page.locator('#live-viewport').evaluate(async viewport => {
+    const liveStage = document.querySelector('#live-stage')!
+    let writes = 0
+    const observer = new MutationObserver(records => { writes += records.length })
+    observer.observe(liveStage, { attributes: true })
+    for (let index = 0; index < 32; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, clientX: 320, clientY: 220, deltaY: -4,
+      }))
+    }
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    observer.disconnect()
+    return writes
+  })
+  expect(cameraAttributeWrites).toBeLessThanOrEqual(5)
+
+  await page.locator('#live-viewport').evaluate(async viewport => {
+    const rect = viewport.getBoundingClientRect()
+    for (let index = 0; index < 12; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        deltaY: -160,
+      }))
+    }
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  await expect(stage).toHaveAttribute('data-live-label-mode', 'readable')
+  const packedLabels = await page.locator('#live-viewport').evaluate(() => {
+    const viewport = document.querySelector('#live-label-layer')!.getBoundingClientRect()
+    const handles = [...document.querySelectorAll<HTMLElement>(
+      '#live-plates .live-portrait[data-live-resident-handle]',
+    )].flatMap(portrait => {
+      const rect = portrait.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0 && rect.right > viewport.left &&
+        rect.left < viewport.right && rect.bottom > viewport.top && rect.top < viewport.bottom
+        ? [portrait.dataset.liveResidentHandle!]
+        : []
+    }).sort()
+    const tags = [...document.querySelectorAll<HTMLElement>('#live-label-layer .live-resident-tag')]
+    const tagRects = tags.map(tag => ({
+      handle: tag.dataset.liveResidentTag!,
+      rect: tag.getBoundingClientRect(),
+      packed: tag.dataset.livePacked,
+      fontSize: Number.parseFloat(getComputedStyle(tag).fontSize),
+      full: tag.scrollWidth <= tag.clientWidth && getComputedStyle(tag).textOverflow === 'clip',
+    }))
+    const collisions = tagRects.flatMap((left, index) => tagRects.slice(index + 1)
+      .filter(right => left.rect.left < right.rect.right && left.rect.right > right.rect.left &&
+        left.rect.top < right.rect.bottom && left.rect.bottom > right.rect.top)
+      .map(right => [left.handle, right.handle]))
+    const bubbles = [...document.querySelectorAll<HTMLElement>('.live-speech-bubble')]
+      .map(bubble => bubble.getBoundingClientRect())
+    const bubbleCollisions = tagRects.filter(tag => bubbles.some(bubble =>
+      tag.rect.left < bubble.right && tag.rect.right > bubble.left &&
+      tag.rect.top < bubble.bottom && tag.rect.bottom > bubble.top)).map(tag => tag.handle)
+    return {
+      handles,
+      tagHandles: tagRects.map(tag => tag.handle).sort(),
+      allPacked: tagRects.every(tag => tag.packed === 'true'),
+      allReadable: tagRects.every(tag => tag.fontSize >= 11),
+      allFull: tagRects.every(tag => tag.full),
+      collisions,
+      bubbleCollisions,
+    }
+  })
+  expect(packedLabels.tagHandles).toEqual(packedLabels.handles)
+  expect(packedLabels.allPacked).toBe(true)
+  expect(packedLabels.allReadable).toBe(true)
+  expect(packedLabels.allFull).toBe(true)
+  expect(packedLabels.collisions).toEqual([])
+  expect(packedLabels.bubbleCollisions).toEqual([])
+
+  const fixedPlotState = await page.locator('.live-plot[data-place-id="3"]').evaluate(plot => ({
+    left: (plot as HTMLElement).style.left,
+    top: (plot as HTMLElement).style.top,
+    overflow: plot.querySelector('.live-resident-more')?.textContent,
+  }))
+  const viewport = page.locator('#live-viewport')
+  await viewport.focus()
+  for (let index = 0; index < 16; index += 1) await viewport.press('ArrowRight')
+  await expect.poll(() => page.locator('.live-plot[data-live-culled="true"]').count())
+    .toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Fit live plate' }).click()
+  await expect(page.locator('.live-plot[data-live-culled="true"]')).toHaveCount(0)
+  await expect(page.locator('#live-focus-status')).toContainText(`Focused on ${maximumReplayHandle}`)
+  expect(await page.locator('.live-plot[data-place-id="3"]').evaluate(plot => ({
+    left: (plot as HTMLElement).style.left,
+    top: (plot as HTMLElement).style.top,
+    overflow: plot.querySelector('.live-resident-more')?.textContent,
+  }))).toEqual(fixedPlotState)
 })
 
 test('focus keeps a truthful specimen visible after its resident leaves the drilled plate', async ({ page }) => {
@@ -1216,6 +1509,162 @@ test('reduced motion shows new records statically without replay animation', asy
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCSS('animation-name', 'none')
+})
+
+test('the plate hard-caps trail ink and removes it at the fade edge without trimming the ledger', async ({ page }) => {
+  const now = Date.now()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now, 'complete', 0, {
+    moveBurst: 120,
+    openingMarker: '120',
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  await expect.poll(() => page.locator('.live-trail').count()).toBeGreaterThan(0)
+  expect(await page.locator('.live-trail').count()).toBe(96)
+  await expect(page.locator('.live-ledger-row')).toHaveCount(120)
+  await page.clock.fastForward(4_501)
+  await expect(page.locator('.live-trail')).toHaveCount(0)
+  await expect(page.locator('.live-ledger-row')).toHaveCount(120)
+})
+
+test('sixty-four simultaneous walks complete in one painted batch', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now, 'complete', 0, { simultaneousMoves: 64 })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const replays = page.locator('.live-replay-portrait')
+  await expect(replays).toHaveCount(64)
+  const durations = await replays.evaluateAll(nodes => nodes.map(node =>
+    Number((node as HTMLElement).dataset.replayDuration)))
+  expect(new Set(durations).size).toBe(1)
+  await page.locator('#live-viewport').evaluate(async viewport => {
+    const anchor = document.querySelector('.live-replay-portrait')!.getBoundingClientRect()
+    for (let index = 0; index < 12; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: anchor.left + anchor.width / 2,
+        clientY: anchor.top + anchor.height / 2,
+        deltaY: -160,
+      }))
+    }
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  await expect(page.locator('#live-stage')).toHaveAttribute('data-live-label-mode', 'readable')
+  await expect.poll(() => page.locator(
+    '#live-label-layer [data-live-packed="true"][data-live-resident-tag^="walker-burst-"]',
+  ).count()).toBeGreaterThan(0)
+  await page.evaluate(() => {
+    const heldWindow = window as typeof window & {
+      liveLabelGeometryReads?: number
+      liveOriginalClientRect?: typeof Element.prototype.getBoundingClientRect
+    }
+    heldWindow.liveLabelGeometryReads = 0
+    heldWindow.liveOriginalClientRect = Element.prototype.getBoundingClientRect
+    Element.prototype.getBoundingClientRect = function () {
+      if (this.matches(
+        '#live-label-layer, .live-portrait, .live-speech-bubble, .live-resident-tag',
+      )) heldWindow.liveLabelGeometryReads! += 1
+      return heldWindow.liveOriginalClientRect!.call(this)
+    }
+  })
+  await page.waitForTimeout(750)
+  const labelGeometryReads = await page.evaluate(() => {
+    const heldWindow = window as typeof window & {
+      liveLabelGeometryReads?: number
+      liveOriginalClientRect?: typeof Element.prototype.getBoundingClientRect
+    }
+    Element.prototype.getBoundingClientRect = heldWindow.liveOriginalClientRect!
+    return heldWindow.liveLabelGeometryReads ?? 0
+  })
+  expect(labelGeometryReads).toBeLessThan(1_000)
+  await page.evaluate(() => {
+    const heldWindow = window as typeof window & {
+      liveCompletionMutations?: number
+      liveCompletionObserver?: MutationObserver
+    }
+    heldWindow.liveCompletionMutations = 0
+    heldWindow.liveCompletionObserver = new MutationObserver(records => {
+      heldWindow.liveCompletionMutations! += records.length
+    })
+    heldWindow.liveCompletionObserver.observe(document.querySelector('#live-plates')!, {
+      childList: true,
+    })
+  })
+
+  await page.clock.fastForward(durations[0]! + 20)
+  await expect(replays).toHaveCount(0)
+  const completionMutations = await page.evaluate(() => {
+    const heldWindow = window as typeof window & {
+      liveCompletionMutations?: number
+      liveCompletionObserver?: MutationObserver
+    }
+    heldWindow.liveCompletionObserver?.disconnect()
+    return heldWindow.liveCompletionMutations ?? 0
+  })
+  expect(completionMutations).toBeLessThanOrEqual(2)
+  await expect(page.locator('.live-ledger-row')).toHaveCount(64)
+  await expect(page.locator('.live-trail')).toHaveCount(64)
+})
+
+test('a moving resident returning to readable ground receives a bounded label refresh', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, { simultaneousMoves: 64 })
+  await page.goto('/window#view=live')
+  const replays = page.locator('.live-replay-portrait')
+  await expect(replays).toHaveCount(64)
+  await page.locator('#live-viewport').evaluate(async viewport => {
+    const rect = viewport.getBoundingClientRect()
+    for (let index = 0; index < 12; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        deltaY: -160,
+      }))
+    }
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  const returningReplay = replays.first()
+  const returningHandle = await returningReplay.locator('[data-live-resident-handle]')
+    .getAttribute('data-live-resident-handle')
+  await returningReplay.evaluate((node, handle) => {
+    const shell = node as HTMLElement
+    const stage = document.querySelector('#live-stage') as HTMLElement
+    const viewport = document.querySelector('#live-viewport') as HTMLElement
+    const scale = Number(stage.dataset.liveScale)
+    const offsetX = Number(stage.dataset.liveOffsetX)
+    const offsetY = Number(stage.dataset.liveOffsetY)
+    shell.style.animation = 'none'
+    shell.style.left = String((viewport.clientWidth / 2 - offsetX) / scale) + 'px'
+    shell.style.top = String((viewport.clientHeight / 2 - offsetY) / scale) + 'px'
+    shell.dataset.liveFocusResident = String(handle)
+    ;(node.querySelector('.live-portrait') as HTMLElement).focus()
+  }, returningHandle)
+  await expect(page.locator(
+    `#live-label-layer [data-live-resident-tag="${returningHandle}"]`,
+  )).toBeVisible()
+  await replays.evaluateAll(nodes => nodes.forEach(node => {
+    ;(node as HTMLElement).style.display = 'none'
+  }))
+  await page.waitForTimeout(50)
+  await returningReplay.evaluate(node => {
+    ;(node as HTMLElement).style.display = ''
+  })
+  expect(await returningReplay.evaluate(node => {
+    const portrait = node.getBoundingClientRect()
+    const viewport = document.querySelector('#live-label-layer')!.getBoundingClientRect()
+    return portrait.right > viewport.left && portrait.left < viewport.right &&
+      portrait.bottom > viewport.top && portrait.top < viewport.bottom
+  })).toBe(true)
+
+  await expect(page.locator(
+    `#live-label-layer [data-live-resident-tag="${returningHandle}"]`,
+  )).toBeVisible({ timeout: 750 })
 })
 
 test('turning on reduced motion mid-walk preserves the final fading trail', async ({ page }) => {
@@ -1480,13 +1929,27 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Harbor room')
   await expect(page.locator('#live-ledger')).toContainText('used thing #9 in Harbor room')
   await expect(page.locator('#live-ledger')).not.toContainText('used thing #9 in Cinder lane')
-  await expect(page.locator('.live-world-ground .drawing-authored').first()).toBeVisible()
+  const worldDrawing = page.locator('.live-world-ground .drawing-authored').first()
+  await expect(worldDrawing).toBeVisible()
+  const worldPixels = await worldDrawing.evaluate(node => {
+    const canvas = node as HTMLCanvasElement
+    return {
+      tag: canvas.tagName,
+      width: canvas.width,
+      height: canvas.height,
+      first: [...canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data],
+    }
+  })
+  expect(worldPixels).toEqual({ tag: 'CANVAS', width: 160, height: 104,
+    first: [23, 77, 60, 255] })
   const harbor = page.locator('.live-plot[data-place-id="3"]')
   await expect(harbor).toHaveAttribute('data-undrawn', 'true')
   await expect(harbor).toHaveAttribute('data-place-kind', 'continent')
   await expect(harbor.locator('.live-plot-owner')).toHaveText('undrawn · kept by harbor-owner')
   const cinderTerrain = page.locator('.live-plot[data-place-id="2"] .live-plot-terrain')
   await expect(cinderTerrain.locator('.drawing-authored').first()).toBeVisible()
+  await expect(cinderTerrain.locator('canvas.drawing-authored')).toHaveAttribute('width', '64')
+  await expect(cinderTerrain.locator('canvas.drawing-authored')).toHaveAttribute('height', '40')
   expect(changeCursors.slice(0, 3)).toEqual([null, '10', '11'])
   expect(eventWindows).toEqual(['1800'])
   await expect.poll(() => snapshotMarkers).toContain('13')
@@ -1576,6 +2039,8 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     ;(stage as HTMLElement).dataset.liveStageHeight = '20000'
   })
   await page.getByRole('button', { name: 'Fit live plate' }).click()
+  await expect.poll(async () => Number(await narrowStage.getAttribute('data-live-scale')))
+    .toBeLessThan(0.05)
   const narrowFit = await narrowStage.evaluate(stage => {
     const plate = stage.getBoundingClientRect()
     const viewport = stage.closest('#live-viewport')!.getBoundingClientRect()
@@ -1591,9 +2056,8 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   const readNarrowScale = async () => Number(await narrowStage.getAttribute('data-live-scale'))
   const refitNarrowPlate = async () => {
     await page.getByRole('button', { name: 'Fit live plate' }).click()
-    const scale = await readNarrowScale()
-    expect(scale).toBeLessThan(0.05)
-    return scale
+    await expect.poll(readNarrowScale).toBeLessThan(0.05)
+    return readNarrowScale()
   }
 
   let fitScale = await refitNarrowPlate()

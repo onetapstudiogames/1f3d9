@@ -80,6 +80,32 @@ export function windowLiveSurveyedPlots<T extends Readonly<{
     })))
 }
 
+export function windowLiveVisiblePlots<T extends Readonly<{
+  x: number
+  y: number
+  width: number
+  height: number
+}>>(
+  plots: readonly T[],
+  viewport: Readonly<{ left: number; top: number; right: number; bottom: number }>,
+  overscan: number,
+  includeAll = false,
+): readonly T[] {
+  if (includeAll) return Object.freeze([...plots])
+  if (![viewport.left, viewport.top, viewport.right, viewport.bottom, overscan]
+    .every(Number.isFinite) || viewport.right < viewport.left ||
+      viewport.bottom < viewport.top || overscan < 0) return Object.freeze([])
+  const left = viewport.left - overscan
+  const top = viewport.top - overscan
+  const right = viewport.right + overscan
+  const bottom = viewport.bottom + overscan
+  return Object.freeze(plots.filter(plot =>
+    [plot.x, plot.y, plot.width, plot.height].every(Number.isFinite) &&
+    plot.width > 0 && plot.height > 0 &&
+    plot.x + plot.width >= left && plot.x <= right &&
+    plot.y + plot.height >= top && plot.y <= bottom))
+}
+
 export function windowLiveCapacitySelection<T extends Readonly<{ id: number }>>(
   rows: readonly T[],
   capacity: number,
@@ -148,6 +174,15 @@ export function windowLiveClampZoomScale(
   )
 }
 
+export function windowLiveResidentLabelMode(
+  scale: number,
+  readableThreshold: number,
+): 'far' | 'readable' {
+  if (!Number.isFinite(scale) || scale <= 0 ||
+      !Number.isFinite(readableThreshold) || readableThreshold <= 0) return 'far'
+  return scale >= readableThreshold ? 'readable' : 'far'
+}
+
 export function windowLivePruneTrailStarts(
   starts: Readonly<Record<string, number>>,
   now: number,
@@ -161,6 +196,25 @@ export function windowLivePruneTrailStarts(
   return entries.length === Object.keys(starts).length
     ? starts
     : Object.freeze(Object.fromEntries(entries))
+}
+
+export function windowLiveSelectTrailKeys(
+  keys: readonly string[],
+  capacity: number,
+  protectedKeys: readonly string[],
+): readonly string[] {
+  const limit = Number.isFinite(capacity) ? Math.max(0, Math.floor(capacity)) : 0
+  if (!limit || !keys.length) return Object.freeze([])
+  const uniqueKeys = [...new Set(keys)]
+  const availableKeys = new Set(uniqueKeys)
+  const protectedSet = new Set(protectedKeys.filter(key => availableKeys.has(key)))
+  const protectedInOrder = uniqueKeys.filter(key => protectedSet.has(key)).slice(0, limit)
+  const ordinaryLimit = Math.max(0, limit - protectedInOrder.length)
+  const selected = new Set([
+    ...uniqueKeys.filter(key => !protectedSet.has(key)).slice(0, ordinaryLimit),
+    ...protectedInOrder,
+  ])
+  return Object.freeze(uniqueKeys.filter(key => selected.has(key)).slice(0, limit))
 }
 
 export function windowLiveReplayDuration(
@@ -517,12 +571,15 @@ const WINDOW_SHARE_PATH_JS = windowSharePath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
 const WINDOW_LIVE_SURVEYED_PLOTS_JS = windowLiveSurveyedPlots.toString()
+const WINDOW_LIVE_VISIBLE_PLOTS_JS = windowLiveVisiblePlots.toString()
 const WINDOW_LIVE_CAPACITY_SELECTION_JS = windowLiveCapacitySelection.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
 const WINDOW_LIVE_TRACE_OPACITY_JS = windowLiveTraceOpacity.toString()
 const WINDOW_LIVE_FIT_SCALE_JS = windowLiveFitScale.toString()
 const WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS = windowLiveClampZoomScale.toString()
+const WINDOW_LIVE_RESIDENT_LABEL_MODE_JS = windowLiveResidentLabelMode.toString()
 const WINDOW_LIVE_PRUNE_TRAIL_STARTS_JS = windowLivePruneTrailStarts.toString()
+const WINDOW_LIVE_SELECT_TRAIL_KEYS_JS = windowLiveSelectTrailKeys.toString()
 const WINDOW_LIVE_REPLAY_DURATION_JS = windowLiveReplayDuration.toString()
 const WINDOW_LIVE_REPLAY_ORDER_JS = windowLiveReplayOrder.toString()
 const WINDOW_LIVE_SPEECH_LINE_JS = windowLiveSpeechLine.toString()
@@ -547,6 +604,10 @@ export const WINDOW_JS = `(() => {
   const LIVE_THING_LIMIT = 6
   const LIVE_FOCUS_STORAGE_KEY = '1f3d9:window:live-focus'
   const LIVE_CAMERA_MAX_SCALE = 2.2
+  const LIVE_LABEL_READABLE_SCALE = 1.6
+  const LIVE_LABEL_FULL_REFRESH_MS = 250
+  const LIVE_PLOT_OVERSCAN = 160
+  const LIVE_TRAIL_DOM_LIMIT = 96
   const REQUEST_TIMEOUT_MS = 10000
   const MAX_FORWARD_RECONCILE_PAGES = 8
   const MAX_AUTO_HISTORY_PAGES = 8
@@ -579,12 +640,15 @@ export const WINDOW_JS = `(() => {
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
   const windowLiveSurveyedPlots = ${WINDOW_LIVE_SURVEYED_PLOTS_JS}
+  const windowLiveVisiblePlots = ${WINDOW_LIVE_VISIBLE_PLOTS_JS}
   const windowLiveCapacitySelection = ${WINDOW_LIVE_CAPACITY_SELECTION_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
   const windowLiveTraceOpacity = ${WINDOW_LIVE_TRACE_OPACITY_JS}
   const windowLiveFitScale = ${WINDOW_LIVE_FIT_SCALE_JS}
   const windowLiveClampZoomScale = ${WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS}
+  const windowLiveResidentLabelMode = ${WINDOW_LIVE_RESIDENT_LABEL_MODE_JS}
   const windowLivePruneTrailStarts = ${WINDOW_LIVE_PRUNE_TRAIL_STARTS_JS}
+  const windowLiveSelectTrailKeys = ${WINDOW_LIVE_SELECT_TRAIL_KEYS_JS}
   const windowLiveReplayDuration = ${WINDOW_LIVE_REPLAY_DURATION_JS}
   const windowLiveReplayOrder = ${WINDOW_LIVE_REPLAY_ORDER_JS}
   const windowLiveSpeechLine = ${WINDOW_LIVE_SPEECH_LINE_JS}
@@ -600,6 +664,7 @@ export const WINDOW_JS = `(() => {
     liveHistoryStatus: document.getElementById('live-history-status'),
     liveViewport: document.getElementById('live-viewport'),
     liveStage: document.getElementById('live-stage'),
+    liveLabelLayer: document.getElementById('live-label-layer'),
     liveWorldGround: document.querySelector('#live-stage > .live-world-ground'),
     liveFit: document.getElementById('live-fit'),
     livePause: document.getElementById('live-pause'),
@@ -714,6 +779,15 @@ export const WINDOW_JS = `(() => {
     scale: 1, offsetX: 0, offsetY: 0, stageId: null, fitted: false,
     panStart: null, pinchStart: null,
   })
+  let liveCameraFrame = 0
+  let liveLabelFrame = 0
+  let liveLabelNeedsFullRefresh = true
+  let liveLabelLastFullRefresh = 0
+  let liveLabelRefreshTimer = 0
+  const liveLabelDimensions = new WeakMap()
+  let liveReplayCompletionFrame = 0
+  let liveReplayCompletions = Object.freeze([])
+  let liveTrailExpiryTimer = 0
   let livePointers = Object.freeze({})
   let liveNoteQueue = Object.freeze([])
   let liveNoteFetches = 0
@@ -804,14 +878,254 @@ ${WINDOW_CLIENT_SAFETY_JS}
           value, liveCamera.scale, fullSurveyScale, LIVE_CAMERA_MAX_SCALE)
   }
 
-  function applyLiveCamera(next) {
-    liveCamera = Object.freeze({ ...liveCamera, ...next })
+  function liveScreenRectsOverlap(left, right, gap = 3) {
+    return left.left < right.right + gap && left.right + gap > right.left &&
+      left.top < right.bottom + gap && left.bottom + gap > right.top
+  }
+
+  function renderLiveResidentLabels(frameTime) {
+    liveLabelFrame = 0
+    if (!nodes.liveLabelLayer || !nodes.liveStage || !nodes.livePlates ||
+        state.view !== 'live') return
+    const fullRefresh = liveLabelNeedsFullRefresh ||
+      frameTime - liveLabelLastFullRefresh >= LIVE_LABEL_FULL_REFRESH_MS
+    liveLabelNeedsFullRefresh = false
+    if (fullRefresh) {
+      liveLabelLastFullRefresh = frameTime
+      if (liveLabelRefreshTimer) {
+        window.clearTimeout(liveLabelRefreshTimer)
+        liveLabelRefreshTimer = 0
+      }
+    }
+    const readable = nodes.liveStage.dataset.liveLabelMode === 'readable'
+    const activeElement = document.activeElement
+    const layerRect = nodes.liveLabelLayer.getBoundingClientRect()
+    const existingTags = new Map([...nodes.liveLabelLayer.querySelectorAll(
+      '[data-live-resident-tag]')].map(tag => [tag.dataset.liveResidentTag, tag]))
+    const residents = [...nodes.livePlates.querySelectorAll(
+      '.live-walker .live-portrait[data-live-resident-handle], ' +
+      '.live-replay-portrait .live-portrait[data-live-resident-handle]')]
+      .flatMap(portrait => {
+        const shell = portrait.closest('.live-walker, .live-replay-portrait')
+        if (!shell) return []
+        const focused = shell.hasAttribute('data-live-focus-resident')
+        const intent = shell.matches(':hover') || portrait === activeElement ||
+          portrait.contains(activeElement)
+        if (!readable && !focused && !intent) return []
+        const handle = portrait.dataset.liveResidentHandle
+        if (!handle) return []
+        const existingTag = existingTags.get(handle)
+        const priority = focused ? 0 : intent ? 1 : 2
+        const moving = shell.classList.contains('live-replay-portrait') &&
+          shell.hasAttribute('data-replay-duration')
+        if (!fullRefresh && priority === 2 && existingTag?.dataset.livePacked !== 'true') {
+          return [{ existingTag, focused, handle, measured: false, moving,
+            portraitRect: null, priority }]
+        }
+        const portraitRect = portrait.getBoundingClientRect()
+        const visible = portraitRect.width > 0 && portraitRect.height > 0 &&
+          portraitRect.right > layerRect.left && portraitRect.left < layerRect.right &&
+          portraitRect.bottom > layerRect.top && portraitRect.top < layerRect.bottom
+        const tag = existingTag || element('span', 'live-resident-tag', handle)
+        return [{
+          existingTag: tag,
+          focused,
+          handle,
+          measured: true,
+          tag,
+          portraitRect: visible ? portraitRect : null,
+          moving,
+          priority,
+        }]
+      })
+    const candidates = residents.filter(candidate => candidate.portraitRect && candidate.tag)
+      .sort((left, right) => left.priority - right.priority ||
+        left.portraitRect.top - right.portraitRect.top ||
+        left.portraitRect.left - right.portraitRect.left)
+    const movingResidents = residents.some(resident => resident.moving)
+    const occupied = [...nodes.livePlates.querySelectorAll('.live-speech-bubble')]
+      .flatMap(bubble => {
+        const rect = bubble.getBoundingClientRect()
+        if (!(rect.width > 0 && rect.height > 0)) return []
+        return [{
+          left: rect.left - layerRect.left,
+          right: rect.right - layerRect.left,
+          top: rect.top - layerRect.top,
+          bottom: rect.bottom - layerRect.top,
+        }]
+      })
+    for (const resident of residents) {
+      if (resident.measured && resident.existingTag) {
+        resident.existingTag.dataset.livePacked = 'false'
+      }
+    }
+    for (const candidate of candidates) {
+      if (!candidate.tag.dataset.liveResidentTag) {
+        candidate.tag.dataset.liveResidentTag = candidate.handle
+      }
+      if (candidate.focused) candidate.tag.dataset.liveFocusResident = candidate.handle
+      else delete candidate.tag.dataset.liveFocusResident
+    }
+    if (fullRefresh) {
+      const labels = candidates.map(candidate => candidate.tag)
+      const heldLabels = [...nodes.liveLabelLayer.children]
+      if (labels.length !== heldLabels.length ||
+          labels.some((label, index) => label !== heldLabels[index])) {
+        nodes.liveLabelLayer.replaceChildren(...labels)
+      }
+    }
+    if (!candidates.length) {
+      if (movingResidents || !fullRefresh) scheduleLiveResidentLabelRefresh()
+      return
+    }
+
+    const margin = 4
+    const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value))
+    for (const candidate of candidates) {
+      if (!liveLabelDimensions.has(candidate.tag)) {
+        const tagRect = candidate.tag.getBoundingClientRect()
+        liveLabelDimensions.set(candidate.tag, Object.freeze({
+          width: tagRect.width,
+          height: tagRect.height,
+        }))
+      }
+    }
+    for (const candidate of candidates) {
+      const { width, height } = liveLabelDimensions.get(candidate.tag)
+      const maximumLeft = Math.max(margin, layerRect.width - margin - width)
+      const maximumTop = Math.max(margin, layerRect.height - margin - height)
+      const anchorLeft = candidate.portraitRect.left - layerRect.left +
+        (candidate.portraitRect.width - width) / 2
+      const aboveTop = candidate.portraitRect.top - layerRect.top - height - 5
+      const belowTop = candidate.portraitRect.bottom - layerRect.top + 5
+      const stepY = height + 5
+      const stepX = Math.max(36, width * 0.55)
+      const positions = []
+      const seen = new Set()
+      const offer = (left, top) => {
+        const held = Object.freeze({
+          left: clamp(left, margin, maximumLeft),
+          top: clamp(top, margin, maximumTop),
+        })
+        const key = held.left.toFixed(2) + ':' + held.top.toFixed(2)
+        if (seen.has(key)) return
+        seen.add(key)
+        positions.push(held)
+      }
+      const laneLimit = candidate.priority < 2 ? 20 : 8
+      for (let lane = 0; lane < laneLimit; lane += 1) {
+        for (const horizontal of [0, -stepX, stepX]) {
+          offer(anchorLeft + horizontal, aboveTop - lane * stepY)
+          offer(anchorLeft + horizontal, belowTop + lane * stepY)
+        }
+      }
+      let chosen = positions.find(position => {
+        const rect = {
+          left: position.left,
+          right: position.left + width,
+          top: position.top,
+          bottom: position.top + height,
+        }
+        return !occupied.some(other => liveScreenRectsOverlap(rect, other))
+      })
+      if (!chosen && candidate.priority < 2) {
+        const verticalStep = height + 5
+        for (let top = margin; top <= maximumTop && !chosen; top += verticalStep) {
+          for (let left = margin; left <= maximumLeft; left += 8) {
+            const rect = { left, right: left + width, top, bottom: top + height }
+            if (!occupied.some(other => liveScreenRectsOverlap(rect, other))) {
+              chosen = Object.freeze({ left, top })
+              break
+            }
+          }
+        }
+      }
+      if (!chosen) continue
+      candidate.tag.style.left = String(chosen.left) + 'px'
+      candidate.tag.style.top = String(chosen.top) + 'px'
+      candidate.tag.dataset.livePacked = 'true'
+      occupied.push(Object.freeze({
+        left: chosen.left,
+        right: chosen.left + width,
+        top: chosen.top,
+        bottom: chosen.top + height,
+      }))
+    }
+    if (candidates.some(candidate => candidate.moving &&
+        candidate.tag.dataset.livePacked === 'true')) {
+      scheduleLiveResidentLabels()
+    } else if (movingResidents || !fullRefresh) {
+      scheduleLiveResidentLabelRefresh()
+    }
+  }
+
+  function scheduleLiveResidentLabelRefresh() {
+    if (liveLabelRefreshTimer || state.view !== 'live' || document.hidden) return
+    liveLabelRefreshTimer = window.setTimeout(() => {
+      liveLabelRefreshTimer = 0
+      scheduleLiveResidentLabels(true)
+    }, LIVE_LABEL_FULL_REFRESH_MS)
+  }
+
+  function scheduleLiveResidentLabels(fullRefresh = false) {
+    if (fullRefresh) {
+      liveLabelNeedsFullRefresh = true
+      if (liveLabelRefreshTimer) {
+        window.clearTimeout(liveLabelRefreshTimer)
+        liveLabelRefreshTimer = 0
+      }
+    }
+    if (!nodes.liveLabelLayer || liveLabelFrame) return
+    liveLabelFrame = window.requestAnimationFrame(renderLiveResidentLabels)
+  }
+
+  function syncLivePlotVisibility() {
+    if (!nodes.liveViewport || !nodes.livePlates || !(liveCamera.scale > 0)) return
+    const plots = [...nodes.livePlates.querySelectorAll('.live-plot')].flatMap(node => {
+      const plot = {
+        id: safeId(node.dataset.placeId),
+        x: Number(node.dataset.livePlotX),
+        y: Number(node.dataset.livePlotY),
+        width: Number(node.dataset.livePlotWidth),
+        height: Number(node.dataset.livePlotHeight),
+      }
+      return plot.id ? [plot] : []
+    })
+    const viewport = Object.freeze({
+      left: -liveCamera.offsetX / liveCamera.scale,
+      top: -liveCamera.offsetY / liveCamera.scale,
+      right: (nodes.liveViewport.clientWidth - liveCamera.offsetX) / liveCamera.scale,
+      bottom: (nodes.liveViewport.clientHeight - liveCamera.offsetY) / liveCamera.scale,
+    })
+    const visibleIds = new Set(windowLiveVisiblePlots(
+      plots, viewport, LIVE_PLOT_OVERSCAN, liveCamera.fitted).map(plot => plot.id))
+    for (const node of nodes.livePlates.querySelectorAll('.live-plot')) {
+      const culled = !visibleIds.has(safeId(node.dataset.placeId))
+      if (node.dataset.liveCulled !== String(culled)) {
+        node.dataset.liveCulled = String(culled)
+      }
+    }
+  }
+
+  function commitLiveCamera() {
+    liveCameraFrame = 0
     if (!nodes.liveStage) return
-    nodes.liveStage.style.transform = 'translate(' + String(liveCamera.offsetX) + 'px, ' +
-      String(liveCamera.offsetY) + 'px) scale(' + String(liveCamera.scale) + ')'
+    const previousLabelMode = nodes.liveStage.dataset.liveLabelMode
+    nodes.liveStage.style.transform = 'translate3d(' + String(liveCamera.offsetX) + 'px, ' +
+      String(liveCamera.offsetY) + 'px, 0) scale(' + String(liveCamera.scale) + ')'
     nodes.liveStage.dataset.liveScale = String(liveCamera.scale)
     nodes.liveStage.dataset.liveOffsetX = String(liveCamera.offsetX)
     nodes.liveStage.dataset.liveOffsetY = String(liveCamera.offsetY)
+    const labelMode = windowLiveResidentLabelMode(liveCamera.scale, LIVE_LABEL_READABLE_SCALE)
+    nodes.liveStage.dataset.liveLabelMode = labelMode
+    syncLivePlotVisibility()
+    scheduleLiveResidentLabels(previousLabelMode !== labelMode)
+  }
+
+  function applyLiveCamera(next) {
+    liveCamera = Object.freeze({ ...liveCamera, ...next })
+    if (!nodes.liveStage || liveCameraFrame) return
+    liveCameraFrame = window.requestAnimationFrame(commitLiveCamera)
   }
 
   function fitLivePlate() {
@@ -1911,7 +2225,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       settled = true
     } finally {
       window.clearTimeout(timeout)
-      if (settled && state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+      if (settled && state.view === 'live') refreshLiveDrawingNodes(type, id)
     }
   }
 
@@ -1927,9 +2241,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
     liveDrawingFetches += 1
     void fetchLiveDrawing(request.type, request.id).finally(() => {
       liveDrawingFetches = Math.max(0, liveDrawingFetches - 1)
+      refillLiveDrawingQueue()
       drainLiveDrawingQueue()
     })
     drainLiveDrawingQueue()
+  }
+
+  function refillLiveDrawingQueue() {
+    if (state.view !== 'live') {
+      liveDrawingQueue = Object.freeze([])
+      return
+    }
+    const queuedKeys = new Set()
+    const requests = []
+    for (const held of document.querySelectorAll(
+      '#live-panel [data-live-drawing-type][data-live-drawing-id]')) {
+      if (requests.length >= LIVE_DRAWING_QUEUE_LIMIT) break
+      const type = held.dataset.liveDrawingType
+      const id = safeId(held.dataset.liveDrawingId)
+      if (!['place', 'resident', 'thing'].includes(type) || !id) continue
+      const key = liveDrawingKey(type, id)
+      if (state.live.drawings[key] || queuedKeys.has(key)) continue
+      queuedKeys.add(key)
+      requests.push(Object.freeze({ type, id, key }))
+    }
+    liveDrawingQueue = Object.freeze(requests)
   }
 
   function loadLiveDrawing(type, id) {
@@ -1944,49 +2280,118 @@ ${WINDOW_CLIENT_SAFETY_JS}
     drainLiveDrawingQueue()
   }
 
-  function drawingNode(type, id, label) {
-    const entry = state.live.drawings[liveDrawingKey(type, id)]
+  function refreshLiveDrawingNodes(type, id) {
+    const key = liveDrawingKey(type, id)
+    for (const held of document.querySelectorAll('[data-live-drawing-key="' + key + '"]')) {
+      const replacement = drawingNode(
+        type,
+        id,
+        held.dataset.liveDrawingLabel || type,
+        Number(held.dataset.liveDrawingColumns) || 1,
+        Number(held.dataset.liveDrawingRows) || 1,
+      )
+      for (const className of held.classList) {
+        if (className.startsWith('live-')) replacement.classList.add(className)
+      }
+      replacement.style.width = held.style.width
+      replacement.style.height = held.style.height
+      if (held.hasAttribute('aria-hidden')) {
+        replacement.setAttribute('aria-hidden', held.getAttribute('aria-hidden'))
+      }
+      held.replaceWith(replacement)
+    }
+    if (type !== 'place') return
+    const entry = state.live.drawings[key]
+    const undrawn = Boolean(entry?.loaded && entry.drawing === null)
+    for (const card of nodes.livePlates?.querySelectorAll(
+      '.live-plot[data-place-id="' + String(id) + '"]') || []) {
+      card.dataset.undrawn = String(undrawn)
+      const owner = card.querySelector('.live-plot-owner')
+      if (!owner) continue
+      const plain = String(owner.textContent || '').replace(/^undrawn · /u, '')
+      owner.textContent = undrawn ? 'undrawn · ' + plain : plain
+    }
+  }
+
+  function paintedDrawingNode(drawing, columns, rows) {
+    const tile = document.createElement('canvas')
+    tile.width = 8
+    tile.height = 8
+    const tileContext = tile.getContext('2d')
+    if (!tileContext) return null
+    tileContext.imageSmoothingEnabled = false
+    drawing.indices.forEach((paletteIndex, index) => {
+      if (paletteIndex === null) return
+      tileContext.fillStyle = drawing.palette[paletteIndex]
+      tileContext.fillRect(index % 8, Math.floor(index / 8), 1, 1)
+    })
+    const canvas = document.createElement('canvas')
+    canvas.classList.add('drawing-grid', 'drawing-authored')
+    canvas.width = columns * 8
+    canvas.height = rows * 8
+    const context = canvas.getContext('2d')
+    const pattern = context?.createPattern(tile, 'repeat')
+    if (!context || !pattern) return null
+    context.imageSmoothingEnabled = false
+    context.fillStyle = pattern
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    return canvas
+  }
+
+  function drawingNode(type, id, label, columns = 1, rows = 1) {
+    const key = liveDrawingKey(type, id)
+    const entry = state.live.drawings[key]
     if (!entry) void loadLiveDrawing(type, id)
+    const safeColumns = Number.isSafeInteger(columns) && columns > 0
+      ? Math.min(2_048, columns)
+      : 1
+    const safeRows = Number.isSafeInteger(rows) && rows > 0
+      ? Math.min(2_048, rows)
+      : 1
+    const identify = node => {
+      node.dataset.liveDrawingKey = key
+      node.dataset.liveDrawingType = type
+      node.dataset.liveDrawingId = String(id)
+      node.dataset.liveDrawingLabel = label
+      node.dataset.liveDrawingColumns = String(safeColumns)
+      node.dataset.liveDrawingRows = String(safeRows)
+      return node
+    }
     if (entry?.error) {
       const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
       unavailable.setAttribute('role', 'img')
       unavailable.setAttribute('aria-label', label + ' drawing could not be read')
       unavailable.append(element('span', 'drawing-undrawn-label', 'drawing unavailable'))
-      return unavailable
+      return identify(unavailable)
     }
     if (!entry?.loaded) {
       const loading = element('span', 'drawing-grid drawing-undrawn drawing-loading')
       loading.setAttribute('role', 'img')
       loading.setAttribute('aria-label', 'Reading ' + label + ' drawing')
       loading.append(element('span', 'drawing-undrawn-label', 'reading drawing'))
-      return loading
+      return identify(loading)
     }
     if (entry.drawing === null) {
       const standIn = element('span', 'drawing-grid drawing-undrawn')
       standIn.setAttribute('role', 'img')
       standIn.setAttribute('aria-label', label + ' is undrawn')
       standIn.append(element('span', 'drawing-undrawn-label', 'undrawn'))
-      return standIn
+      return identify(standIn)
     }
     const drawing = entry.drawing
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    svg.classList.add('drawing-grid', 'drawing-authored')
-    svg.setAttribute('viewBox', '0 0 8 8')
-    svg.setAttribute('role', 'img')
+    const sprite = paintedDrawingNode(drawing, safeColumns, safeRows)
+    if (!sprite) {
+      const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
+      unavailable.setAttribute('role', 'img')
+      unavailable.setAttribute('aria-label', label + ' drawing could not be painted')
+      unavailable.append(element('span', 'drawing-undrawn-label', 'drawing unavailable'))
+      return identify(unavailable)
+    }
+    sprite.setAttribute('role', 'img')
     const blank = drawing.indices.every(index => index === null)
-    svg.setAttribute('aria-label', label + (blank ? ' is deliberately blank' : ' has an authored drawing'))
-    svg.setAttribute('shape-rendering', 'crispEdges')
-    drawing.indices.forEach((paletteIndex, index) => {
-      if (paletteIndex === null) return
-      const square = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
-      square.setAttribute('x', String(index % 8))
-      square.setAttribute('y', String(Math.floor(index / 8)))
-      square.setAttribute('width', '1')
-      square.setAttribute('height', '1')
-      square.setAttribute('fill', drawing.palette[paletteIndex])
-      svg.append(square)
-    })
-    return svg
+    sprite.setAttribute('aria-label', label +
+      (blank ? ' is deliberately blank' : ' has an authored drawing'))
+    return identify(sprite)
   }
 
   async function fetchLiveNote(noteId) {
@@ -3951,12 +4356,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       portrait.title = state.live.focusResident === resident.handle
         ? 'Clear focus from ' + resident.handle
         : 'Focus on ' + resident.handle
+      portrait.setAttribute('aria-label', portrait.title)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
       portrait.addEventListener('click', () => toggleLiveFocusResident(resident.handle))
-      portrait.append(
-        drawingNode('resident', resident.id, resident.handle),
-        element('span', 'live-portrait-name', resident.handle),
-      )
+      portrait.append(drawingNode('resident', resident.id, resident.handle))
       const shell = livePortraitShell(
         portrait,
         bubbles?.get(resident.handle),
@@ -3988,14 +4391,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return grid
   }
 
-  function liveTiledDrawing(place, className, count) {
+  function liveTiledDrawing(place, className, columns, rows, tileSize = null) {
     const terrain = element('div', className)
     terrain.setAttribute('aria-label', 'Drawing tiled inside ' + place.name)
-    for (let index = 0; index < count; index += 1) {
-      const tile = drawingNode('place', place.id, place.name)
-      tile.setAttribute('aria-hidden', index === 0 ? 'false' : 'true')
-      terrain.append(tile)
+    const tile = drawingNode('place', place.id, place.name, columns, rows)
+    tile.classList.add('live-tiled-drawing')
+    if (tileSize) {
+      tile.style.width = String(columns * tileSize) + 'px'
+      tile.style.height = String(rows * tileSize) + 'px'
     }
+    terrain.append(tile)
     return terrain
   }
 
@@ -4140,11 +4545,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function livePlacePlot(snapshot, focus, place, plot, bubbles, records, interactionThings) {
     const card = element('article', 'live-plot')
     card.dataset.placeId = String(place.id)
+    card.dataset.livePlotX = String(plot.x)
+    card.dataset.livePlotY = String(plot.y)
+    card.dataset.livePlotWidth = String(plot.width)
+    card.dataset.livePlotHeight = String(plot.height)
     card.style.left = String(plot.x) + 'px'
     card.style.top = String(plot.y) + 'px'
     card.style.width = String(plot.width) + 'px'
     card.style.height = String(plot.height) + 'px'
-    const terrain = liveTiledDrawing(place, 'live-plot-terrain', 40)
+    const terrain = liveTiledDrawing(place, 'live-plot-terrain', 8, 5)
     const open = element('button', 'live-plot-open')
     open.type = 'button'
     open.dataset.focusKey = 'live-place:' + String(place.id)
@@ -4161,6 +4570,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : 'Place #' + String(place.id)
     card.append(terrain, open, element('p', 'live-plot-owner', owner))
     const residents = residentsAt(snapshot, place.id)
+    card.dataset.liveFocusPlot = String(residents.some(resident =>
+      resident.handle === state.live.focusResident))
     if (residents.length) {
       card.append(livePortraitGrid(
         residents,
@@ -4354,27 +4765,55 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return Object.freeze({ from, to })
   }
 
-  function completeLiveReplay(actor, key) {
+  function queueLiveReplayCompletion(actor, key) {
     const held = state.live.replayActive[actor]
-    if (!held || held.key !== key) return
+    if (!held || held.key !== key || liveReplayCompletions.some(completion =>
+      completion.actor === actor && completion.key === key)) return
+    liveReplayCompletions = Object.freeze([
+      ...liveReplayCompletions,
+      Object.freeze({ actor, key }),
+    ])
+    if (!liveReplayCompletionFrame) {
+      liveReplayCompletionFrame = window.requestAnimationFrame(flushLiveReplayCompletions)
+    }
+  }
+
+  function flushLiveReplayCompletions() {
+    liveReplayCompletionFrame = 0
+    const completions = liveReplayCompletions
+    liveReplayCompletions = Object.freeze([])
+    if (!completions.length) return
     const active = { ...state.live.replayActive }
     const positions = { ...state.live.replayPositions }
     const trailStarts = { ...state.live.trailStarts }
     const absorptionEndsAtByPlaceId = { ...state.live.absorptionEndsAtByPlaceId }
     const focus = state.snapshot ? liveFocusPlace(state.snapshot) : null
     const children = focus && state.snapshot ? liveChildren(state.snapshot, focus) : []
-    const absorbingPlaceId = held.type === 'move' && focus
-      ? livePlaceAnchor(held.toPlaceId, focus.id, children)
-      : null
-    delete active[actor]
-    if (held.type === 'move') {
-      positions[actor] = held.toPlaceId
-      trailStarts[key] = Date.now()
-      if (absorbingPlaceId) {
-        absorptionEndsAtByPlaceId[String(absorbingPlaceId)] = Date.now() + LIVE_ABSORPTION_MS
+    const now = Date.now()
+    const absorptionDeadlines = new Map()
+    let changed = false
+    for (const completion of completions) {
+      const held = active[completion.actor]
+      if (!held || held.key !== completion.key) continue
+      const absorbingPlaceId = held.type === 'move' && focus
+        ? livePlaceAnchor(held.toPlaceId, focus.id, children)
+        : null
+      delete active[completion.actor]
+      if (held.type === 'move') {
+        positions[completion.actor] = held.toPlaceId
+        trailStarts[completion.key] = now
+        if (absorbingPlaceId) {
+          const deadline = now + LIVE_ABSORPTION_MS
+          absorptionEndsAtByPlaceId[String(absorbingPlaceId)] = deadline
+          absorptionDeadlines.set(String(absorbingPlaceId), deadline)
+        }
       }
+      if (!state.live.replayQueues[completion.actor]?.length) {
+        delete positions[completion.actor]
+      }
+      changed = true
     }
-    if (!state.live.replayQueues[actor]?.length) delete positions[actor]
+    if (!changed) return
     state = { ...state, live: {
       ...state.live,
       replayActive: Object.freeze(active),
@@ -4383,15 +4822,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       absorptionEndsAtByPlaceId: Object.freeze(absorptionEndsAtByPlaceId),
     } }
     if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
-    const absorptionEndsAt = absorbingPlaceId
-      ? absorptionEndsAtByPlaceId[String(absorbingPlaceId)]
-      : null
-    if (absorptionEndsAt) {
+    for (const [placeId, absorptionEndsAt] of absorptionDeadlines) {
       window.setTimeout(() => {
-        if (!absorbingPlaceId ||
-            state.live.absorptionEndsAtByPlaceId[String(absorbingPlaceId)] !== absorptionEndsAt) return
+        if (state.live.absorptionEndsAtByPlaceId[placeId] !== absorptionEndsAt) return
         const remaining = { ...state.live.absorptionEndsAtByPlaceId }
-        delete remaining[String(absorbingPlaceId)]
+        delete remaining[placeId]
         state = { ...state, live: {
           ...state.live,
           absorptionEndsAtByPlaceId: Object.freeze(remaining),
@@ -4538,7 +4973,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     } }
     renderLive(state.snapshot)
     for (const start of starts) {
-      window.setTimeout(() => completeLiveReplay(start.actor, start.key), start.duration)
+      window.setTimeout(() => queueLiveReplayCompletion(start.actor, start.key), start.duration)
     }
   }
 
@@ -4573,6 +5008,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       portrait.title = state.live.focusResident === actor
         ? 'Clear focus from ' + actor
         : 'Focus on ' + actor
+      portrait.setAttribute('aria-label', portrait.title)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === actor))
       const shell = livePortraitShell(
         portrait,
@@ -4590,18 +5026,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       shell.style.left = String(point.x) + 'px'
       shell.style.top = String(point.y) + 'px'
       if (destination && remaining > 0) {
-        shell.style.setProperty('--live-replay-to-x', String(destination.x) + 'px')
-        shell.style.setProperty('--live-replay-to-y', String(destination.y) + 'px')
+        shell.style.setProperty('--live-replay-delta-x', String(destination.x - point.x) + 'px')
+        shell.style.setProperty('--live-replay-delta-y', String(destination.y - point.y) + 'px')
         shell.style.animationDuration = String(remaining) + 'ms'
         shell.dataset.fromPlaceId = String(held.fromPlaceId)
         shell.dataset.toPlaceId = String(held.toPlaceId)
         shell.dataset.replayDuration = String(held.duration)
       }
       portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
-      portrait.append(
-        drawingNode('resident', resident.id, actor),
-        element('span', 'live-portrait-name', actor),
-      )
+      portrait.append(drawingNode('resident', resident.id, actor))
       layer.append(shell)
     }
   }
@@ -4656,6 +5089,29 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  function scheduleLiveTrailExpiry() {
+    window.clearTimeout(liveTrailExpiryTimer)
+    liveTrailExpiryTimer = 0
+    if (state.view !== 'live' || !nodes.livePlates) return
+    const trails = [...nodes.livePlates.querySelectorAll('.live-trail')]
+    const nextExpiry = Math.min(...trails.map(trail =>
+      Number(trail.dataset.liveAt) + Number(trail.dataset.liveLifetime)))
+    if (!Number.isFinite(nextExpiry)) return
+    liveTrailExpiryTimer = window.setTimeout(() => {
+      liveTrailExpiryTimer = 0
+      const now = Date.now()
+      for (const trail of nodes.livePlates?.querySelectorAll('.live-trail') || []) {
+        if (Number(trail.dataset.liveAt) + Number(trail.dataset.liveLifetime) > now) continue
+        const active = document.activeElement
+        const movesFocus = active === trail || trail.contains(active)
+        const key = trail.dataset.liveKey
+        trail.remove()
+        if (movesFocus) moveLiveFocusAfterExpiry(key)
+      }
+      scheduleLiveTrailExpiry()
+    }, Math.max(0, nextExpiry - Date.now()) + 1)
+  }
+
   function renderLiveTraceLayer(snapshot, focus, children, records, bubbles, survey) {
     const layer = element('div', 'live-trace-layer')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -4679,6 +5135,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     svg.append(definitions)
 
     const noteNumbers = new Map(records.map((record, index) => [liveTraceKey(record), index + 1]))
+    const trailKeys = new Set(windowLiveSelectTrailKeys(
+      records.filter(record => liveRecordType(record) === 'move' &&
+        liveReplayRecordIsRevealed(record)).map(liveTraceKey),
+      LIVE_TRAIL_DOM_LIMIT,
+      [...liveReplayHeldKeys()],
+    ))
     for (const record of records) {
       const type = liveRecordType(record)
       const key = liveTraceKey(record)
@@ -4686,6 +5148,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const recordOpacity = windowLiveTraceOpacity(
         record.at.getTime(), Date.now(), liveRecordLifetime(record))
       if (type === 'move') {
+        if (!trailKeys.has(key)) continue
         const geometry = liveReplayMoveGeometry(record, snapshot, focus, children)
         const from = geometry?.from
         const to = geometry?.to
@@ -5268,8 +5731,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
     if (nodes.liveWorldGround) {
       const tileSize = 56
-      const tileCount = Math.ceil(survey.width / tileSize) * Math.ceil(survey.height / tileSize)
-      const tiled = liveTiledDrawing(focus, 'live-world-ground-tiles', tileCount)
+      const tiled = liveTiledDrawing(
+        focus,
+        'live-world-ground-tiles',
+        Math.ceil(survey.width / tileSize),
+        Math.ceil(survey.height / tileSize),
+        tileSize,
+      )
       nodes.liveWorldGround.replaceChildren(...tiled.children)
       nodes.liveWorldGround.title = focus.name + ' authored ground'
     }
@@ -5309,6 +5777,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     plateParts.push(renderLiveTraceLayer(snapshot, focus, children, records, bubbles, survey))
     nodes.livePlates.replaceChildren(...plateParts)
+    scheduleLiveResidentLabels(true)
+    scheduleLiveTrailExpiry()
 
     if (stageChanged) {
       applyLiveCamera({
@@ -5323,6 +5793,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     renderLiveLedger(snapshot, focus, children, records)
     renderLiveRoster(snapshot, focus, records, interactionThings)
+    refillLiveDrawingQueue()
+    drainLiveDrawingQueue()
     renderLiveHistoryStatus()
     scheduleLiveClock()
     restoreFocus(focusKey, null, null)
@@ -7769,6 +8241,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       endLivePointer(event)
       if (!livePointerValues().length && nodes.liveViewport) {
         nodes.liveViewport.dataset.liveDragging = 'false'
+      }
+    })
+  }
+  for (const eventName of ['pointerover', 'pointerout', 'focusin', 'focusout']) {
+    nodes.livePlates?.addEventListener(eventName, event => {
+      if (event.target?.closest?.('.live-walker, .live-replay-portrait')) {
+        scheduleLiveResidentLabels(true)
       }
     })
   }

@@ -33,10 +33,27 @@ type CapacityRow = Readonly<{
   label: string
 }>
 
+type LiveViewportBounds = Readonly<{
+  left: number
+  top: number
+  right: number
+  bottom: number
+}>
+
 type LiveClientExports = Readonly<{
+  windowLiveResidentLabelMode?: (
+    scale: number,
+    readableThreshold: number,
+  ) => 'far' | 'readable'
   windowLiveSurveyedPlots?: (
     places: readonly SurveyedPlace[],
     parentId: number,
+  ) => readonly SurveyedPlot[]
+  windowLiveVisiblePlots?: (
+    plots: readonly SurveyedPlot[],
+    viewport: LiveViewportBounds,
+    overscan: number,
+    includeAll?: boolean,
   ) => readonly SurveyedPlot[]
   windowLiveCapacitySelection?: (
     rows: readonly CapacityRow[],
@@ -47,6 +64,11 @@ type LiveClientExports = Readonly<{
     visible: readonly CapacityRow[]
     overflowCount: number
   }>
+  windowLiveSelectTrailKeys?: (
+    keys: readonly string[],
+    capacity: number,
+    protectedKeys: readonly string[],
+  ) => readonly string[]
 }>
 
 const liveClientExports = windowClientModule as unknown as LiveClientExports
@@ -132,6 +154,28 @@ test('surveyed plots keep every existing rectangle when later-created places tak
   }
 })
 
+test('live plot visibility keeps the viewport and overscan while Fit includes the whole survey', () => {
+  const visiblePlots = liveClientExports.windowLiveVisiblePlots
+  assert.equal(typeof visiblePlots, 'function')
+  if (!visiblePlots) return
+
+  const plots = Object.freeze([
+    Object.freeze({ id: 1, x: -30, y: 20, width: 15, height: 15 }),
+    Object.freeze({ id: 2, x: 10, y: 10, width: 20, height: 20 }),
+    Object.freeze({ id: 3, x: 106, y: 25, width: 20, height: 20 }),
+    Object.freeze({ id: 4, x: 130, y: 25, width: 20, height: 20 }),
+    Object.freeze({ id: 5, x: 20, y: 108, width: 20, height: 20 }),
+  ])
+  const viewport = Object.freeze({ left: 0, top: 0, right: 100, bottom: 100 })
+
+  const culled = visiblePlots(plots, viewport, 12)
+  const fitted = visiblePlots(plots, viewport, 12, true)
+
+  assert.deepEqual(culled.map(plot => plot.id), [2, 3, 5])
+  assert.deepEqual(fitted.map(plot => plot.id), [1, 2, 3, 4, 5])
+  assert.deepEqual(plots.map(plot => plot.id), [1, 2, 3, 4, 5])
+})
+
 test('live polling follows activity and backs off through quiet without exceeding five minutes', () => {
   assert.equal(windowLivePollDelay(true, 99), 25_000)
   assert.equal(windowLivePollDelay(false, 0), 60_000)
@@ -166,6 +210,22 @@ test('zoom-out never raises the camera above its current or full-survey floor', 
   assert.equal(windowLiveClampZoomScale(9, 1, 0.1, 2.2), 2.2)
 })
 
+test('resident label mode changes only at the readable zoom threshold and fails closed', () => {
+  const labelMode = liveClientExports.windowLiveResidentLabelMode
+  assert.equal(typeof labelMode, 'function')
+  if (!labelMode) return
+
+  const readableThreshold = 1.6
+  assert.equal(labelMode(readableThreshold - Number.EPSILON, readableThreshold), 'far')
+  assert.equal(labelMode(readableThreshold, readableThreshold), 'readable')
+  assert.equal(labelMode(2.2, readableThreshold), 'readable')
+
+  for (const invalidScale of [Number.NaN, Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY, 0, -0.01]) {
+    assert.equal(labelMode(invalidScale, readableThreshold), 'far')
+  }
+})
+
 test('expired trail starts are pruned without mutation', () => {
   const expired = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => [
     `expired:${index}`, index,
@@ -177,6 +237,29 @@ test('expired trail starts are pruned without mutation', () => {
   assert.equal(Object.keys(starts).length, 1_003)
   assert.equal(Object.isFrozen(pruned), true)
   assert.equal(windowLivePruneTrailStarts(pruned, 10_000, 4_500, ['active']), pruned)
+})
+
+test('trail selection stays hard-capped and keeps active keys ahead of older ink', () => {
+  const selectTrailKeys = liveClientExports.windowLiveSelectTrailKeys
+  assert.equal(typeof selectTrailKeys, 'function')
+  if (!selectTrailKeys) return
+
+  const keys = Object.freeze([
+    'change:120',
+    'change:119',
+    'change:118',
+    'change:5',
+    'change:4',
+  ])
+  const protectedKeys = Object.freeze(['change:5'])
+  const selected = selectTrailKeys(keys, 3, protectedKeys)
+
+  assert.deepEqual(selected, ['change:120', 'change:119', 'change:5'])
+  assert.equal(selected.length, 3)
+  assert.ok(selected.includes('change:5'))
+  assert.equal(Object.isFrozen(selected), true)
+  assert.deepEqual(keys, ['change:120', 'change:119', 'change:118', 'change:5', 'change:4'])
+  assert.deepEqual(protectedKeys, ['change:5'])
 })
 
 test('recorded movement is visibly slower than the mockup and still scales with distance', () => {

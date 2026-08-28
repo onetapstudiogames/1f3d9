@@ -209,6 +209,15 @@ not a simulation of the present.
   whole current survey through 2.2. Append-stable growth may make that Fit scale
   lower than 0.05; zoom-out never reverses direction. There is never a zoom
   slider. Clicking a plot still drills through the actual shareable place tree.
+- Resident name tags follow this viewer's scale and attention. Far zoom shows
+  resident sprites without tags. At a readable zoom, or while a resident has
+  pointer hover, tap, keyboard focus, or browser-local Focus, its tag shows the
+  full handle without truncation. A focused resident is always labelled and
+  lifted above neighbouring marks. Plot nameplates remain single-line ellipses
+  while their tooltip carries the complete place name.
+- A plot outside the visible camera may skip painting until the viewer pans it
+  back into view. That culling is presentation-only: it changes no fixed plot
+  assignment, resident or thing selection, exact count, or public record.
 - An unoverflowed ordinary place view shows up to six residents and six things.
   Overflow reserves protected ground for its badge, leaving four resident
   walker positions and five thing specimens. Every omitted row is represented
@@ -255,7 +264,9 @@ may be missing an earlier step.
   seconds. Its presentation ink then fades for 4.5 seconds beginning when the
   walk completes. If reduced motion, a hidden tab, or a replay-scope change
   settles an active walk, the final trail receives a fresh 4.5-second fade from
-  that settlement. The
+  that settlement. The plate keeps only a capped live set of this fading ink and
+  removes each trail when its fade ends. That visual cap never truncates,
+  reorders, or removes the verified history. The
   verified record remains in the separate recent ledger for the full 30-minute
   history horizon.
 - Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the

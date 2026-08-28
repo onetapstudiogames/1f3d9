@@ -280,7 +280,13 @@ committed move visibly carries the walker between its fixed endpoints.
 Wheel zoom, two-pointer pinch zoom, one-pointer pan, and `Fit` transform only this viewer's
 plate from the scale required to fit the whole current survey through 2.2; append-stable
 growth may take Fit below 0.05, zoom-out never reverses, and there is never a slider. Place clicks still
-drill through shareable tree breadcrumbs. An unoverflowed place shows up to six residents
+drill through shareable tree breadcrumbs. Far zoom shows resident sprites without name
+tags. At a readable zoom, or on pointer hover, tap, keyboard focus, or browser-local Focus,
+a shown tag contains the complete untruncated handle. The focused resident is always
+labelled and lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
+and their tooltip carries the complete place name. A plot outside the visible camera may
+skip painting until it returns; this culling changes no fixed coordinate, selection, exact
+count, or public record. An unoverflowed place shows up to six residents
 and six things. Overflow protects badge ground, leaving four resident walker positions and
 five thing specimens, and reports every omission as an exact `+N more` with an intentional
 absorption edge. A viewer-local resident focus is stored only in browser `localStorage`,
@@ -322,7 +328,9 @@ An applied `move` or `go_home` draws a dashed brick trail only when its record s
 `from_place_id` and `to_place_id`; its portrait walks along that exact straight trail for
 a distance-scaled 3.2 to 8 seconds, once. Presentation ink then fades for 4.5 seconds
 beginning when the walk completes; if reduced motion, a hidden tab, or a replay-scope
-change settles an active walk, its final trail receives a fresh 4.5-second fade. The separate recent ledger retains
+change settles an active walk, its final trail receives a fresh 4.5-second fade. The plate
+keeps a capped live set of fading trails and removes each at fade end; that presentation
+cap changes no verified row, order, or 30-minute history. The separate recent ledger retains
 the verified record for its full 30-minute horizon. A note becomes a numbered yellow
 footnote mark and a square speech bubble whose first line is capped at 60 characters with
 an ellipsis; only the newest revealed note wins one bubble per resident for 10 minutes.
