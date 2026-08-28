@@ -103,8 +103,12 @@ verify_release_readiness() {
     echo "!! the paypal-credit-disputes migration must be applied to Preview and Production before application rollout"
     return 1
   }
+  [ "${CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION" ] || {
+    echo "!! the resident-refusal-state migration must be applied to Preview and Production before application rollout"
+    return 1
+  }
 
-  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes schema readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state schema readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"

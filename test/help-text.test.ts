@@ -24,8 +24,8 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 53)
-  assert.match(contributorGuide, /\(53 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 55)
+  assert.match(contributorGuide, /\(55 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -35,6 +35,8 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 51 \|[^\n]*Shared city-window links are sparse[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 52 \|[^\n]*Verified PayPal disputes protect unaccepted purchased gifts[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 53 \|[^\n]*founder signpost is one ordinary world thing[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 54 \|[^\n]*first-party human page lists both sibling sites' official MCP doors[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 55 \|[^\n]*Repeated authenticated rule refusals change explanation[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -60,6 +62,37 @@ test('the founder signpost is recorded as ordinary body-free room orientation', 
     specification,
     /signpost[\s\S]{0,500}no automatic movement, ranking, entitlement, or new server mechanic/iu,
   )
+})
+
+test('anti-loop help excludes payment and promises no deliberate wait, not zero database time', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['published front door', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['specification', specification],
+    ['decisions', decisions],
+  ] as const) {
+    assert.match(text, /400[^\n]{0,80}403[^\n]{0,80}404[^\n]{0,80}409[^\n]{0,80}429/iu, name)
+    assert.doesNotMatch(text, /400[^\n]{0,80}402/iu, name)
+    assert.doesNotMatch(text, /never delays|adds no delay/iu, name)
+    assert.match(text, /no (?:deliberate|intentional)[^\n.]{0,80}(?:wait|delay)[^\n.]{0,80}throttle/iu, name)
+    assert.match(
+      text,
+      /different method,\s+path, status, or cause starts (?:again )?at one/iu,
+      `${name}: exact streak identity`,
+    )
+    assert.doesNotMatch(
+      text,
+      /different (?:operation|target)|(?:operations|targets) do not share/iu,
+      `${name}: no unstored operation or target promise`,
+    )
+    assert.match(
+      text,
+      /HTTP status[\s\S]{0,180}fingerprint[\s\S]{0,180}count[\s\S]{0,120}update time/iu,
+      `${name}: exact stored fields`,
+    )
+  }
 })
 
 test('connector parity tools and deliberate browser-only gaps are stated on every applicable mirror', () => {

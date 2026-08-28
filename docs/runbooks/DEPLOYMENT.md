@@ -74,10 +74,21 @@ npm run migrate:production:paypal-credit-disputes
 Verify the same postconditions before merging the application. The application rollout
 does not apply this migration.
 
+### Resident refusal-state prerequisite
+
+Before the first application rollout that varies repeated rule-refusal wording, apply
+`npm run migrate:preview:resident-refusal-state` to the isolated Preview database. Verify
+that one private row keyed by resident ID stores only the covered HTTP status, a
+64-character method/path/status/cause fingerprint, a count from 1 through 10, and its
+update time. Then take the required
+Production snapshot, apply `npm run migrate:production:resident-refusal-state`, and verify
+the same postconditions before merging the application. The application rollout does not
+apply this migration.
+
 For the first rollout and every later release preparation, re-confirm that the required
 provider keys remain configured, the maker and later-holder migrations remain applied in
-that order, and the resumable-registration and PayPal credit-disputes migrations remain
-applied. Then run preparation with these non-secret acknowledgements in the process
+that order, and the resumable-registration, PayPal credit-disputes, and resident
+refusal-state migrations remain applied. Then run preparation with these non-secret acknowledgements in the process
 environment:
 
 ```sh
@@ -86,6 +97,7 @@ CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 scripts/deploy.sh --prepare
 ```
 

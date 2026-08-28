@@ -31,7 +31,11 @@ function section(html: string, id: string): string {
   return match[1]!
 }
 
-function assertIndexablePage(response: Response, html: string, path: '/about' | '/setup'): void {
+function assertIndexablePage(
+  response: Response,
+  html: string,
+  path: '/about' | '/setup' | '/tools',
+): void {
   assert.equal(response.status, 200)
   assert.match(response.headers.get('content-type') ?? '', /^text\/html\b/iu)
   assert.equal(response.headers.get('x-robots-tag'), 'index, follow')
@@ -67,7 +71,7 @@ async function pngDimensions(path: string): Promise<readonly [number, number]> {
   return [view.getUint32(16), view.getUint32(20)]
 }
 
-async function readyHumanPage(path: '/about' | '/setup'): Promise<Response> {
+async function readyHumanPage(path: '/about' | '/setup' | '/tools' | '/help'): Promise<Response> {
   const humanPages = new Hono()
   mountHumanPages(humanPages, { hostedChatSigninReady: () => true })
   return humanPages.request(path)
@@ -261,8 +265,56 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /\/rotate[^.]{0,180}(?:exposed|leaked|shared|seen)/iu)
 })
 
-test('both pages use ordinary sentences instead of decorative section numbers and slogans', async () => {
-  for (const path of ['/about', '/setup'] as const) {
+test('tools lists both official connector doors and skills with connector-first guidance', async () => {
+  const response = await readyHumanPage('/tools')
+  const html = await response.text()
+  assertIndexablePage(response, html, '/tools')
+
+  for (const url of [
+    'https://1f3d9.com/mcp/connect',
+    'https://1f3d9.com/mcp',
+    'https://github.com/onetapstudiogames/1f3d9-citylife',
+    'https://1f3ea.com/mcp/connect',
+    'https://1f3ea.com/mcp',
+    'https://github.com/onetapstudiogames/1f3ea-marketplace',
+  ]) {
+    assert.match(html, new RegExp(`href="${url.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}"`, 'u'), url)
+  }
+
+  const text = visibleText(html)
+  const frontDoor = text.indexOf('front_door')
+  const officialFacts = text.indexOf('official_facts')
+  const me = text.indexOf('me', officialFacts)
+  assert.ok(frontDoor >= 0 && frontDoor < officialFacts && officialFacts < me)
+  assert.match(text, /(?:connector|MCP)[^.]{0,100}first/iu)
+  assert.match(text, /web[^.]{0,160}fallback[^.]{0,160}(?:client|host)[^.]{0,80}open URLs/iu)
+  assert.match(text, /never[^.]{0,120}(?:resident|merchant) key[^.]{0,120}(?:chat|URL|tool argument)/iu)
+  assert.match(text, /market[^.]{0,220}feature-gated[^.]{0,160}front door[^.]{0,120}setup guidance/iu)
+  assert.match(html, /href="https:\/\/1f3ea\.com\/"/iu)
+  assert.doesNotMatch(html, /href="https:\/\/1f3ea\.com\/help"/iu)
+})
+
+test('tools states when the city hosted connector is unavailable on this deployment', async () => {
+  const humanPages = new Hono()
+  mountHumanPages(humanPages, { hostedChatSigninReady: () => false })
+  const response = await humanPages.request('/tools')
+  const html = await response.text()
+  assertIndexablePage(response, html, '/tools')
+  assert.match(
+    visibleText(html),
+    /city hosted connector[^.]{0,160}unavailable on this deployment today/iu,
+  )
+  assert.match(html, /href="https:\/\/1f3d9\.com\/mcp\/connect"/iu)
+})
+
+test('the anti-loop human pointer reaches the existing setup help', async () => {
+  const response = await readyHumanPage('/help')
+  assert.equal(response.status, 302)
+  assert.equal(response.headers.get('location'), '/setup')
+})
+
+test('all guide pages use ordinary sentences instead of decorative section numbers and slogans', async () => {
+  for (const path of ['/about', '/setup', '/tools'] as const) {
     const response = await readyHumanPage(path)
     const html = await response.text()
     const text = visibleText(html)
@@ -320,5 +372,5 @@ test('the plain-text front door and broad robots permission remain unchanged', a
   const robotsText = await robots.text()
   assert.equal(robots.status, 200)
   assert.match(robotsText, /Allow:\s*\//iu)
-  assert.doesNotMatch(robotsText, /Disallow:\s*\/(?:about|setup)\b/iu)
+  assert.doesNotMatch(robotsText, /Disallow:\s*\/(?:about|setup|tools)\b/iu)
 })

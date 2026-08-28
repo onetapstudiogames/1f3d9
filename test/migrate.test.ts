@@ -29,6 +29,8 @@ const runtimeLogsMigrationFile =
   'db/migrations/20260826_runtime_logs.sql' as const
 const resumableRegistrationMigrationFile =
   'db/migrations/20260826_resumable_registration.sql' as const
+const residentRefusalMigrationFile =
+  'db/migrations/20260827_resident_refusal_state.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -678,6 +680,65 @@ test('resumable registration is one explicit guarded transactional preview or pr
   assert.match(
     packageJson.scripts?.['migrate:production:resumable-registration'] ?? '',
     /--migration resumable-registration/u,
+  )
+})
+
+test('resident refusal state is bounded, private, and one explicit transactional migration', () => {
+  const freshTable = schemaStatement('resident_refusal_state')
+  const migration = migrationDdl(residentRefusalMigrationFile)
+
+  for (const ddl of [freshTable, migration]) {
+    assert.match(ddl, /resident_id\s+INTEGER\s+PRIMARY\s+KEY[\s\S]*REFERENCES\s+residents\s*\(id\)/iu)
+    assert.match(ddl, /http_status\s+SMALLINT[\s\S]*400[\s\S]*403[\s\S]*404[\s\S]*409[\s\S]*429/iu)
+    assert.doesNotMatch(ddl, /http_status[\s\S]{0,180}\b402\b/iu)
+    assert.match(ddl, /cause_hash\s+TEXT[\s\S]*\^\[0-9a-f\]\{64\}\$/iu)
+    assert.match(ddl, /repetition_count\s+SMALLINT[\s\S]*BETWEEN\s+1\s+AND\s+10/iu)
+    assert.doesNotMatch(ddl, /\bcause\s+TEXT\b/iu)
+  }
+  assert.equal(
+    prepareMigrationExecution(residentRefusalMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const baseEnvironment = {
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+  }
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'resident-refusal-state'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, residentRefusalMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'resident-refusal-state'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'resident-refusal-state-release',
+    },
+  )
+  assert.equal(production.migrationFile, residentRefusalMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:resident-refusal-state'] ?? '',
+    /--migration resident-refusal-state/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:resident-refusal-state'] ?? '',
+    /--migration resident-refusal-state/u,
   )
 })
 

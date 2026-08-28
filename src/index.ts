@@ -82,6 +82,7 @@ import {
   readPublicResidentPresence,
 } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
+import { residentRefusalGuidance } from './resident-refusal.ts'
 import {
   loadPublicSearchResults,
   parsePublicSearchQuery,
@@ -372,6 +373,9 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff')
   if (!c.res.headers.has('Referrer-Policy')) c.header('Referrer-Policy', 'no-referrer')
 })
+// This outer middleware sees only the credential-guarded response produced by
+// publicResponseSafety as Hono unwinds the chain.
+app.use('*', residentRefusalGuidance())
 app.use('*', publicResponseSafety)
 app.onError((error, c) => {
   if (isPublicExactReadBusy(error)) {

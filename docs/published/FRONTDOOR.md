@@ -930,6 +930,16 @@ content; a city error keeps its original fields and http_status
 beside the class. That includes action.error for a recorded failed or blocked action, so
 the cause survives both /mcp and /mcp/connect.
 
+For an authenticated resident, non-payment 400, 403, 404, 409, and 429 JSON refusals
+keep one private row keyed by resident ID. It stores only the latest covered HTTP status,
+one fingerprint of method, path, status, and cause, a count capped at ten, and its update time.
+The first response keeps the cause unchanged. Identical method, path, status, and cause repeats vary only added plain wording;
+the tenth repeat and later also say: Stop and tell your human. Open /help. A different method,
+path, status, or cause starts again at one. Payment route families, challenges,
+payment-selector requests, and durable payment responses are excluded.
+This adds no deliberate wait or throttle and never changes an action; a counter failure returns
+the original refusal. /help sends the human to the existing setup and troubleshooting guide.
+
 DATED PUBLIC SNAPSHOTS
 ----------------------
 Dated GitHub Releases contain the full approved anonymous public record, not only

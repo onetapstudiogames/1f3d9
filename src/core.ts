@@ -39,6 +39,7 @@ export type OAuthResidentResolver = (accessToken: string) => Promise<Resident | 
 let oauthResidentResolver: OAuthResidentResolver | null = null
 let passiveOAuthResidentResolver: OAuthResidentResolver | null = null
 const hostedConnectorRequests = new WeakSet<Request>()
+const authenticatedResidentRequests = new WeakMap<Request, number>()
 
 export function setOAuthResidentResolver(resolver: OAuthResidentResolver | null): void {
   oauthResidentResolver = resolver
@@ -57,6 +58,18 @@ export function setPassiveOAuthResidentResolver(resolver: OAuthResidentResolver 
  */
 export function allowOAuthForHostedConnectorRequest(request: Request): void {
   hostedConnectorRequests.add(request)
+}
+
+/** Keep authenticated identity on this request only, never in response text or process logs. */
+export function bindAuthenticatedResident(request: Request, residentId: number): void {
+  if (!Number.isSafeInteger(residentId) || residentId < 1) {
+    throw new Error('authenticated resident id must be a positive integer')
+  }
+  authenticatedResidentRequests.set(request, residentId)
+}
+
+export function authenticatedResidentId(request: Request): number | null {
+  return authenticatedResidentRequests.get(request) ?? null
 }
 
 export function isHostedConnectorRequest(request: Request): boolean {
@@ -81,23 +94,30 @@ function bearerToken(c: Context): string | null {
   return match?.[1] ?? null
 }
 
+function rememberAuthenticatedResident(c: Context, resident: Resident | null): Resident | null {
+  if (resident) bindAuthenticatedResident(c.req.raw, resident.id)
+  return resident
+}
+
 export async function authRootKey(c: Context): Promise<Resident | null> {
   const token = bearerToken(c)
   if (!token?.startsWith(SECRET_PREFIX)) return null
-  return residentBySecret(token)
+  return rememberAuthenticatedResident(c, await residentBySecret(token))
 }
 
 export async function auth(c: Context): Promise<Resident | null> {
   const token = bearerToken(c)
   if (!token) return null
-  if (token.startsWith(SECRET_PREFIX)) return residentBySecret(token)
+  if (token.startsWith(SECRET_PREFIX)) {
+    return rememberAuthenticatedResident(c, await residentBySecret(token))
+  }
   if (
     process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true' &&
     token.startsWith('1f3d9_at_') &&
     hostedConnectorRequests.has(c.req.raw) &&
     oauthResidentResolver
   ) {
-    return oauthResidentResolver(token)
+    return rememberAuthenticatedResident(c, await oauthResidentResolver(token))
   }
   return null
 }
@@ -106,14 +126,16 @@ export async function auth(c: Context): Promise<Resident | null> {
 export async function authPassive(c: Context): Promise<Resident | null> {
   const token = bearerToken(c)
   if (!token) return null
-  if (token.startsWith(SECRET_PREFIX)) return residentBySecretPassive(token)
+  if (token.startsWith(SECRET_PREFIX)) {
+    return rememberAuthenticatedResident(c, await residentBySecretPassive(token))
+  }
   if (
     process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true' &&
     token.startsWith('1f3d9_at_') &&
     hostedConnectorRequests.has(c.req.raw) &&
     passiveOAuthResidentResolver
   ) {
-    return passiveOAuthResidentResolver(token)
+    return rememberAuthenticatedResident(c, await passiveOAuthResidentResolver(token))
   }
   return null
 }

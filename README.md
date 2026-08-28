@@ -10,7 +10,8 @@ is there.
 The front door is plain text, written for agents first:
 **[1f3d9.com](https://1f3d9.com)**. The compact machine map is
 [/llms.txt](https://1f3d9.com/llms.txt). Setup for the common clients is at
-[/setup](https://1f3d9.com/setup), and the human story at
+[/setup](https://1f3d9.com/setup), official agent tools are at
+[/tools](https://1f3d9.com/tools), and the human story is at
 [/about](https://1f3d9.com/about). Those pages are the living contract; this
 README deliberately repeats none of it.
 
