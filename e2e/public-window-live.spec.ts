@@ -129,6 +129,7 @@ async function installReplayRoutes(
     omitFocusedPlaceFromSurvey?: boolean
     focusedPlaceAvailable?: boolean
     initialResidentPlaceId?: number
+    crowdPlaceId?: number
   }> = {},
 ) {
   let published = false
@@ -174,9 +175,13 @@ async function installReplayRoutes(
       const placed = controls.secondArrival && resident.id === replayCrowd[0]!.id
         ? { ...resident, current_place_id: marker === '10' ? 2 : 4 }
         : resident
-      return controls.maximumHandle && resident.id === replayCrowd[3]!.id
-        ? { ...placed, handle: controls.maximumHandle }
+      const crowded = controls.crowdPlaceId && replayCrowd.some(candidate =>
+        candidate.id === resident.id)
+        ? { ...placed, current_place_id: controls.crowdPlaceId }
         : placed
+      return controls.maximumHandle && resident.id === replayCrowd[3]!.id
+        ? { ...crowded, handle: controls.maximumHandle }
+        : crowded
     }),
     ...Array.from({ length: controls.simultaneousMoves ?? 0 }, (_, index) => ({
       id: 1_000 + index,
@@ -689,6 +694,22 @@ async function liveThingPositions(plot: Locator) {
   })
 }
 
+async function expectControlsDoNotOverlap(residentMore: Locator, thingMore: Locator) {
+  const [residentBox, thingBox] = await Promise.all([
+    residentMore.boundingBox(),
+    thingMore.boundingBox(),
+  ])
+  expect(residentBox).not.toBeNull()
+  expect(thingBox).not.toBeNull()
+  if (!residentBox || !thingBox) return
+  expect(
+    residentBox.x < thingBox.x + thingBox.width &&
+      residentBox.x + residentBox.width > thingBox.x &&
+      residentBox.y < thingBox.y + thingBox.height &&
+      residentBox.y + residentBox.height > thingBox.y,
+  ).toBe(false)
+}
+
 test('Live paints exact surveyed counts and Focus ids while named thing cards load', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     holdThingPage: true,
@@ -924,6 +945,41 @@ test('Live Show more keeps keyboard focus and stays operable while more thing pa
   )).toBe('live-thing-overflow:2')
   await thingMore.press('Enter')
   await expect.poll(fixture.thingPageRequests).toBe(3)
+})
+
+test('Live keeps both Show more controls separate and operable in one crowded place', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, { crowdPlaceId: 2 })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const cinder = page.locator('.live-plot[data-place-id="2"]')
+  const residentMore = cinder.locator('.live-resident-more')
+  const thingMore = cinder.locator('.live-thing-more')
+  await expect(residentMore).toBeVisible()
+  await expect(thingMore).toBeVisible()
+  await expectControlsDoNotOverlap(residentMore, thingMore)
+
+  await thingMore.click()
+  await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
+  await cinder.locator('.live-resident-more').click()
+  await expect(cinder.locator('.live-walker')).toHaveCount(8)
+})
+
+test('Live keeps focused-place Show more controls separate and operable', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, { crowdPlaceId: 2 })
+  await page.goto('/window/live?place=2')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const residentMore = page.locator('.live-root-walkers .live-resident-more')
+  const thingMore = page.locator('.live-root-thing-shelf .live-thing-more')
+  await expect(residentMore).toBeVisible()
+  await expect(thingMore).toBeVisible()
+  await expectControlsDoNotOverlap(residentMore, thingMore)
+
+  await thingMore.click()
+  await expect(page.locator('.live-root-thing-shelf .live-thing-specimen')).toHaveCount(7)
+  await page.locator('.live-root-walkers .live-resident-more').click()
+  await expect(page.locator('.live-root-walkers .live-walker')).toHaveCount(8)
 })
 
 test('Live refuses exact thing badges when the fixed survey disagrees', async ({ page }) => {

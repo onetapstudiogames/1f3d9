@@ -1145,6 +1145,10 @@ button { color: inherit; }
   inset: auto 1rem 1rem auto;
   pointer-events: auto;
 }
+.live-plates:has(> .live-root-walkers .live-resident-more)
+  > .live-root-thing-shelf > .live-thing-more {
+  inset: auto 1rem 3.5rem auto;
+}
 .live-stage-empty {
   position: absolute;
   z-index: 8;
@@ -1201,6 +1205,9 @@ button { color: inherit; }
 .live-plot > .live-thing-shelf > .live-thing-more {
   position: absolute;
   inset: auto 0.38rem 0.38rem auto;
+}
+.live-plot:has(.live-resident-more) > .live-thing-shelf > .live-thing-more {
+  inset: auto 0.38rem -1.85rem auto;
 }
 .live-overflow-absorbing { animation: live-overflow-absorb 480ms steps(4, end) both; }
 .live-trace-layer {
