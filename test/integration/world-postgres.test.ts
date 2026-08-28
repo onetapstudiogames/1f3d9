@@ -38,6 +38,10 @@ const sql = (async (
   }
   return result.rows as Record<string, unknown>[]
 }) as unknown as IntegrationSql
+sql.query = async (text: string, values: readonly unknown[] = []) => {
+  assert.ok(database, 'the PostgreSQL test client must be connected')
+  return (await database.query(text, [...values])).rows as Record<string, unknown>[]
+}
 
 function transactionSql(client: PoolClient): TaggedSql {
   const tagged = (async (
@@ -295,6 +299,80 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     const app = new Hono()
     mountSocietyRoutes(app)
     mountWorldRoutes(app)
+
+    await t.test('generic place, gift, and offer routes cannot alter the closed Gazette shell', async () => {
+      const ordinaryRoomId = await resetDatabase()
+      const continentId = Number((await database!.query<{ parent_id: number }>(
+        'SELECT parent_id FROM places WHERE id = $1',
+        [ordinaryRoomId],
+      )).rows[0]!.parent_id)
+      assert.equal(continentId, 2, 'the Gazette contract owns city place #2 as its parent')
+      await database!.query(`
+        INSERT INTO places (
+          id, parent_id, place_kind, name, description, purpose, owner_id,
+          open_to_building, open_to_things, open_to_notes
+        ) VALUES (
+          454, 2, 'place', 'the gazette submission room',
+          'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+          '', 1, FALSE, FALSE, FALSE
+        );
+        INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+        VALUES (1, 454, 454), (2, 454, 454);
+      `)
+
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      let responses: readonly Response[]
+      try {
+        responses = await Promise.all([
+          app.request('/api/place/454', {
+            method: 'PATCH',
+            headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+            body: JSON.stringify({ description: 'generic route edit' }),
+          }),
+          app.request('/api/transfer', {
+            method: 'POST',
+            headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'place', id: 454, to_handle: 'neighbor' }),
+          }),
+          app.request('/api/transfer/offer', {
+            method: 'POST',
+            headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+            body: JSON.stringify({
+              type: 'place',
+              id: 454,
+              to_handle: 'neighbor',
+              price_usdc: 1,
+              seller_wallet: `0x${'1'.repeat(40)}`,
+            }),
+          }),
+        ])
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
+
+      for (const response of responses) assert.ok(response.status >= 400)
+      assert.deepEqual((await database!.query(`
+        SELECT gazette_submission_room_state(place) AS state,
+          (SELECT count(*)::integer FROM transfers WHERE asset_type = 'place' AND asset_id = 454)
+            AS transfers,
+          (SELECT count(*)::integer FROM transfer_offers
+            WHERE asset_type = 'place' AND asset_id = 454) AS offers
+        FROM places place WHERE place.id = 454
+      `)).rows[0], { state: 'closed', transfers: 0, offers: 0 })
+    })
 
     await t.test('the reported parent and child both accept make through the public route', async () => {
       const existingRoomId = await resetDatabase()

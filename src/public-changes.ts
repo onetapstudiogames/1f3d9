@@ -8,6 +8,7 @@ import {
   PUBLIC_EVENT_DETAIL_ID_FIELDS,
   PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
   PUBLIC_EVENT_KINDS,
+  isPublicSystemEventActor,
 } from './public-events.ts'
 
 const PUBLIC_CHANGE_PAGE_DEFAULT = 10
@@ -160,7 +161,9 @@ function publicChange(row: Readonly<Record<string, unknown>>): Readonly<Record<s
   const changeId = parsePublicChangeMarker(row.change_id == null ? null : String(row.change_id))
   if (changeId === null) return null
   if (typeof row.kind !== 'string' || !PUBLIC_CHANGE_KIND_SET.has(row.kind)) return null
-  if (typeof row.actor !== 'string' || !HANDLE_RE.test(row.actor)) return null
+  if (typeof row.actor !== 'string' || !(
+    HANDLE_RE.test(row.actor) || isPublicSystemEventActor(row.actor)
+  )) return null
   return Object.freeze({
     change_id: changeId,
     kind: row.kind,

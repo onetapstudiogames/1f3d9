@@ -1,5 +1,6 @@
 // Apply the idempotent city schema to DATABASE_URL.
 // Usage: DATABASE_URL=... npm run migrate
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { neon } from '@neondatabase/serverless'
@@ -58,6 +59,8 @@ type RemoteMigration =
   | 'resumable-registration'
   | 'paypal-credit-disputes'
   | 'resident-refusal-state'
+  | 'gazette'
+  | 'gazette-room-activation'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -95,6 +98,8 @@ export type MigrationFile =
   | 'db/migrations/20260826_resumable_registration.sql'
   | 'db/migrations/20260827_paypal_credit_disputes.sql'
   | 'db/migrations/20260827_resident_refusal_state.sql'
+  | 'db/migrations/20260827_gazette.sql'
+  | 'db/migrations/20260827_gazette_room_activation.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -105,6 +110,10 @@ export type MigrationRun = Readonly<{
   databaseUrl: string
   migrationFile: MigrationFile
   executionMode: MigrationExecutionMode
+  liveDeployment?: Readonly<{
+    origin: string
+    commit: string
+  }>
   preview?: Readonly<{
     projectId: string
     branchId: string
@@ -126,8 +135,28 @@ const PREPAID_CITY_CREDIT_ACKNOWLEDGEMENT =
   'INSTALL_PREPAID_CITY_CREDIT_AND_PAYPAL_CUSTODY'
 const PAYPAL_CREDIT_DISPUTES_ACKNOWLEDGEMENT =
   'INSTALL_PAYPAL_CREDIT_DISPUTE_CUSTODY'
+const GAZETTE_ACKNOWLEDGEMENT =
+  'INSTALL_GAZETTE_ARCHIVE_AND_SUBMISSION_LIMIT'
+const GAZETTE_ROOM_ACTIVATION_ACKNOWLEDGEMENT =
+  'OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT'
 const CITY_CREDIT = Object.freeze({ 'city-credit': '20260822_city_credit.sql' } as const)
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
+const GIT_COMMIT = /^[0-9a-f]{40}$/u
+const GAZETTE_PREVIEW_HOST =
+  /^1f3d9-[a-z0-9]{9}-onetapstudiogames-projects\.vercel\.app$/u
+const GAZETTE_PREVIEW_ORIGIN_ERROR =
+  "Gazette Preview activation requires GAZETTE_PREVIEW_ORIGIN as this project's " +
+  'immutable HTTPS Vercel deployment origin ' +
+  '(https://1f3d9-<9 lowercase alphanumeric deployment id>-' +
+  'onetapstudiogames-projects.vercel.app)'
+type GitCommand = (args: readonly string[]) => string
+
+const directGitCommand: GitCommand = args => execFileSync('git', [...args], {
+  cwd: new URL('..', import.meta.url),
+  encoding: 'utf8',
+  windowsHide: true,
+  shell: false,
+})
 const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'hosted-chat-signin': 'db/migrations/20260813_hosted_chat_signin.sql',
   'world-root-expand': 'db/migrations/20260814_world_root_expand.sql',
@@ -163,6 +192,8 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
   'paypal-credit-disputes': 'db/migrations/20260827_paypal_credit_disputes.sql',
   'resident-refusal-state': 'db/migrations/20260827_resident_refusal_state.sql',
+  gazette: 'db/migrations/20260827_gazette.sql',
+  'gazette-room-activation': 'db/migrations/20260827_gazette_room_activation.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
@@ -172,6 +203,38 @@ const NONTRANSACTIONAL_MIGRATION_FILES = new Set<MigrationFile>([
   EVENTS_PRESENCE_INDEX_MIGRATION_FILE,
   PUBLIC_SEARCH_INDEX_MIGRATION_FILE,
 ])
+
+function gazetteLiveDeployment(
+  migration: RemoteMigration,
+  target: MigrationTarget,
+  environment: MigrationEnvironment,
+): MigrationRun['liveDeployment'] {
+  if (migration !== 'gazette-room-activation') return undefined
+  const commit = environment.GAZETTE_DEPLOYMENT_COMMIT ?? ''
+  if (!GIT_COMMIT.test(commit)) {
+    throw new Error('Gazette room activation requires GAZETTE_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters')
+  }
+  if (target === 'production') {
+    return Object.freeze({ origin: 'https://1f3d9.com', commit })
+  }
+
+  const rawOrigin = environment.GAZETTE_PREVIEW_ORIGIN ?? ''
+  let origin: URL
+  try {
+    origin = new URL(rawOrigin)
+  } catch {
+    throw new Error(GAZETTE_PREVIEW_ORIGIN_ERROR)
+  }
+  if (
+    rawOrigin !== origin.origin ||
+    origin.protocol !== 'https:' || origin.username || origin.password || origin.port ||
+    origin.pathname !== '/' || origin.search || origin.hash ||
+    !GAZETTE_PREVIEW_HOST.test(origin.hostname)
+  ) {
+    throw new Error(GAZETTE_PREVIEW_ORIGIN_ERROR)
+  }
+  return Object.freeze({ origin: origin.origin, commit })
+}
 
 function namedArgument(args: readonly string[], name: string): string | undefined {
   const prefix = `--${name}=`
@@ -270,6 +333,25 @@ export function resolveMigrationRun(
       PAYPAL_CREDIT_DISPUTES_ACKNOWLEDGEMENT,
     )
   }
+  if (
+    migration === 'gazette'
+    && environment.CONFIRM_GAZETTE !== GAZETTE_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      'Gazette migration requires CONFIRM_GAZETTE=' + GAZETTE_ACKNOWLEDGEMENT,
+    )
+  }
+  if (
+    migration === 'gazette-room-activation'
+    && environment.CONFIRM_GAZETTE_ROOM_ACTIVATION
+      !== GAZETTE_ROOM_ACTIVATION_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      'Gazette room activation requires CONFIRM_GAZETTE_ROOM_ACTIVATION=' +
+      GAZETTE_ROOM_ACTIVATION_ACKNOWLEDGEMENT,
+    )
+  }
+  const liveDeployment = gazetteLiveDeployment(migration, target, environment)
 
   if (target === 'preview') {
     if (environment.CONFIRM_PREVIEW_MIGRATION !== PREVIEW_ACKNOWLEDGEMENT) {
@@ -298,6 +380,7 @@ export function resolveMigrationRun(
       ),
       migrationFile,
       executionMode: migrationExecutionMode(migrationFile),
+      ...(liveDeployment ? { liveDeployment } : {}),
       preview: { projectId, branchId, productionBranchId },
     }
   }
@@ -321,11 +404,95 @@ export function resolveMigrationRun(
     ),
     migrationFile,
     executionMode: migrationExecutionMode(migrationFile),
+    ...(liveDeployment ? { liveDeployment } : {}),
     snapshot: {
       projectId: requiredIdentifier(environment.NEON_PROJECT_ID, 'NEON_PROJECT_ID'),
       branchId: requiredIdentifier(environment.NEON_PRODUCTION_BRANCH_ID, 'NEON_PRODUCTION_BRANCH_ID'),
       name: snapshotName,
     },
+  }
+}
+
+/** Prove the activation source and DDL come from the exact clean candidate commit. */
+export function verifyGazetteLocalCandidate(
+  expectedCommit: string,
+  git: GitCommand = directGitCommand,
+): void {
+  if (!GIT_COMMIT.test(expectedCommit)) {
+    throw new Error(
+      'Gazette room activation requires GAZETTE_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters',
+    )
+  }
+
+  let worktreeState: string
+  try {
+    worktreeState = git(['status', '--porcelain=v1', '--untracked-files=all'])
+  } catch {
+    throw new Error(
+      'Gazette room activation could not prove a clean local candidate, including tracked and untracked files; room #454 remains closed',
+    )
+  }
+  if (worktreeState !== '') {
+    throw new Error(
+      'Gazette room activation requires a clean local candidate, including tracked and untracked files; room #454 remains closed',
+    )
+  }
+
+  let localCommit: string
+  try {
+    localCommit = git(['rev-parse', '--verify', 'HEAD^{commit}']).trim()
+  } catch {
+    throw new Error(
+      'Gazette room activation could not prove a full lowercase Git HEAD; room #454 remains closed',
+    )
+  }
+  if (!GIT_COMMIT.test(localCommit)) {
+    throw new Error(
+      'Gazette room activation could not prove a full lowercase Git HEAD; room #454 remains closed',
+    )
+  }
+  if (localCommit !== expectedCommit) {
+    throw new Error(
+      'GAZETTE_DEPLOYMENT_COMMIT does not match the clean local candidate HEAD; room #454 remains closed',
+    )
+  }
+}
+
+/** Prove the exact application commit is serving before room #454 can open. */
+export async function verifyGazetteDeployment(
+  expected: NonNullable<MigrationRun['liveDeployment']>,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  const response = await fetcher(`${expected.origin}/api/official`, {
+    method: 'GET',
+    redirect: 'error',
+    cache: 'no-store',
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(10_000),
+  })
+  const cacheControl = response.headers.get('cache-control') ?? ''
+  if (
+    response.status !== 200 ||
+    !/^application\/json(?:;|$)/iu.test(response.headers.get('content-type') ?? '') ||
+    !cacheControl.split(',').some(value => value.trim().toLowerCase() === 'no-store')
+  ) {
+    throw new Error('Gazette deployment proof was not an exact no-store JSON response')
+  }
+  const text = await response.text()
+  if (Buffer.byteLength(text, 'utf8') > 65_536) {
+    throw new Error('Gazette deployment proof response was too large')
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    throw new Error('Gazette deployment proof was not valid JSON')
+  }
+  const deployedCommit = body && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>).deployment_commit
+    : null
+  if (deployedCommit !== expected.commit) {
+    throw new Error('Gazette deployed commit did not match GAZETTE_DEPLOYMENT_COMMIT; room #454 remains closed')
   }
 }
 
@@ -817,28 +984,96 @@ export async function applyMigration(
   return execution.statements.length
 }
 
-async function main(): Promise<void> {
-  const run = resolveMigrationRun(process.argv.slice(2), process.env)
+type MigrationOperations = Readonly<{
+  verifyGazetteLocalCandidate: (expectedCommit: string) => void | Promise<void>
+  verifyGazetteDeployment: (
+    expected: NonNullable<MigrationRun['liveDeployment']>,
+  ) => Promise<void>
+  verifyPreviewDatabaseTarget: (
+    preview: NonNullable<MigrationRun['preview']>,
+    databaseUrl: string,
+    apiKey: string,
+  ) => Promise<void>
+  prepareProductionMigration: (
+    snapshot: NonNullable<MigrationRun['snapshot']>,
+    databaseUrl: string,
+    apiKey: string,
+  ) => Promise<string>
+  applyMigration: (
+    databaseUrl: string,
+    migrationFile: MigrationFile,
+    ddl: string,
+  ) => Promise<number>
+}>
 
-  if (run.target === 'preview') {
-    await verifyPreviewDatabaseTarget(
-      run.preview!,
-      run.databaseUrl,
-      process.env.NEON_API_KEY!,
-    )
-    console.log('verified isolated preview database target')
-  } else if (run.target === 'production') {
-    const snapshotId = await prepareProductionMigration(
-      run.snapshot!,
-      run.databaseUrl,
-      process.env.NEON_API_KEY!,
-    )
-    console.log(`verified production snapshot ${snapshotId}`)
+const DEFAULT_MIGRATION_OPERATIONS: MigrationOperations = Object.freeze({
+  verifyGazetteLocalCandidate,
+  verifyGazetteDeployment,
+  verifyPreviewDatabaseTarget,
+  prepareProductionMigration,
+  applyMigration,
+})
+
+/**
+ * Run one resolved migration. Gazette activation first binds the source and DDL
+ * to a clean local candidate, then proves the application once before target
+ * preparation and again after it; the second live proof is the last awaited
+ * operation before the room-opening DDL starts.
+ */
+export async function executeMigrationRun(
+  run: MigrationRun,
+  ddl: string,
+  apiKey: string,
+  operations: MigrationOperations = DEFAULT_MIGRATION_OPERATIONS,
+): Promise<Readonly<{ statementCount: number; snapshotId?: string }>> {
+  if (run.liveDeployment) {
+    await operations.verifyGazetteLocalCandidate(run.liveDeployment.commit)
+    await operations.verifyGazetteDeployment(run.liveDeployment)
   }
 
+  let snapshotId: string | undefined
+  if (run.target === 'preview') {
+    await operations.verifyPreviewDatabaseTarget(run.preview!, run.databaseUrl, apiKey)
+  } else if (run.target === 'production') {
+    snapshotId = await operations.prepareProductionMigration(
+      run.snapshot!,
+      run.databaseUrl,
+      apiKey,
+    )
+  }
+
+  if (run.liveDeployment) {
+    await operations.verifyGazetteDeployment(run.liveDeployment)
+  }
+  const statementCount = await operations.applyMigration(
+    run.databaseUrl,
+    run.migrationFile,
+    ddl,
+  )
+  return snapshotId === undefined
+    ? Object.freeze({ statementCount })
+    : Object.freeze({ statementCount, snapshotId })
+}
+
+async function main(): Promise<void> {
+  const run = resolveMigrationRun(process.argv.slice(2), process.env)
   const ddl = readFileSync(new URL(`../${run.migrationFile}`, import.meta.url), 'utf8')
-  const statementCount = await applyMigration(run.databaseUrl, run.migrationFile, ddl)
-  console.log(`applied ${statementCount} statements from ${run.migrationFile} to ${run.target}`)
+  const result = await executeMigrationRun(
+    run,
+    ddl,
+    process.env.NEON_API_KEY ?? '',
+  )
+  if (run.liveDeployment) {
+    console.log(
+      `verified clean local Gazette candidate and live application commit ${run.liveDeployment.commit} before and after database preparation`,
+    )
+  }
+  if (run.target === 'preview') {
+    console.log('verified isolated preview database target')
+  } else if (run.target === 'production') {
+    console.log(`verified production snapshot ${result.snapshotId}`)
+  }
+  console.log(`applied ${result.statementCount} statements from ${run.migrationFile} to ${run.target}`)
 }
 
 const entrypoint = process.argv[1]

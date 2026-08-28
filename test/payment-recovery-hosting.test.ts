@@ -9,10 +9,12 @@ test('Vercel invokes the bounded payment recovery endpoint every five minutes', 
     crons?: Array<{ path: string; schedule: string }>
     functions?: Record<string, { maxDuration?: number; includeFiles?: string }>
   }
-  assert.deepEqual(configuration.crons, [{
+  assert.deepEqual(configuration.crons?.find(cron => (
+    cron.path === '/api/internal/payment-recovery'
+  )), {
     path: '/api/internal/payment-recovery',
     schedule: '*/5 * * * *',
-  }])
+  })
   assert.equal(configuration.functions?.['api/index.ts']?.includeFiles, 'src/**')
   assert.equal(configuration.functions?.['api/index.ts']?.maxDuration, 300)
 })
@@ -34,10 +36,12 @@ test('the deployment checklist requires the cron secret in both hosted environme
 
 test('the recovery job is bearer-protected, bounded, overlap-safe, and identifier-free', () => {
   const routes = read('../src/payment-recovery-routes.ts')
+  const cronAuth = read('../src/cron-auth.ts')
   const state = read('../src/payment-attempts.ts')
-  assert.match(routes, /CRON_SECRET/u)
+  assert.match(cronAuth, /CRON_SECRET/u)
   assert.match(routes, /Authorization|authorization/u)
-  assert.match(routes, /timingSafeEqual/u)
+  assert.match(routes, /cronBearerAuthorization/u)
+  assert.match(cronAuth, /timingSafeEqual/u)
   assert.match(routes, /RECOVERY_BATCH_LIMIT\s*=\s*10/u)
   assert.match(routes, /Cache-Control[^\n]*no-store|no-store/iu)
   assert.match(state, /lease_expires_at/iu)

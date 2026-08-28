@@ -30,12 +30,21 @@ export function publicLabel(value: unknown, maximum = 120): string | null {
 
 export function publicText(
   value: unknown,
-  options: { maximumCharacters?: number; maximumBytes?: number; allowEmpty?: boolean } = {},
+  options: {
+    maximumCharacters?: number
+    maximumBytes?: number
+    allowEmpty?: boolean
+    allowWhitespaceOnly?: boolean
+  } = {},
 ): string | null {
   if (typeof value !== 'string') return null
-  const normalized = value.trim()
-  if (!options.allowEmpty && !normalized) return null
-  if (options.maximumCharacters != null && normalized.length > options.maximumCharacters) return null
+  const trimmed = value.trim()
+  if (!options.allowEmpty && value.length === 0) return null
+  if (!options.allowEmpty && !options.allowWhitespaceOnly && !trimmed) return null
+  if (
+    options.maximumCharacters != null
+    && Array.from(value).length > options.maximumCharacters
+  ) return null
   if (options.maximumBytes != null && Buffer.byteLength(value, 'utf8') > options.maximumBytes) return null
   return unsafePublicText(value) ? null : value
 }

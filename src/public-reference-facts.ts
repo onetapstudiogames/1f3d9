@@ -12,6 +12,7 @@ import {
   PUBLIC_SNAPSHOT_OFFLINE_VERIFIER,
   PUBLIC_SNAPSHOT_RELEASES,
 } from './public-snapshot-discovery.ts'
+import { PUBLIC_SNAPSHOT_FORMAT_VERSION } from './public-snapshot-format.ts'
 import {
   BASIC_ACTIONS,
   EFFECT_BRICKS,
@@ -35,6 +36,7 @@ export interface DomainConfiguration {
 export interface PublicOfficialFactsOptions {
   readonly domain: string
   readonly marketOrigin?: string | undefined
+  readonly deploymentCommit?: string | undefined
   readonly identityBrowserReady: boolean
   readonly identityRecoveryEnabled: boolean
   readonly identityRotationEnabled: boolean
@@ -55,6 +57,9 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
   const marketOrigin = input.marketOrigin ?? DEFAULT_MARKET_ORIGIN
   return Object.freeze({
     domain,
+    deployment_commit: /^[0-9a-f]{40}$/u.test(input.deploymentCommit ?? '')
+      ? input.deploymentCommit
+      : null,
     treasury: TREASURY,
     network: NETWORK,
     usdc_contract: USDC,
@@ -77,7 +82,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
     market: marketOrigin,
     city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
     public_snapshots: Object.freeze({
-      format_version: 1,
+      format_version: PUBLIC_SNAPSHOT_FORMAT_VERSION,
       releases: PUBLIC_SNAPSHOT_RELEASES,
       format: PUBLIC_SNAPSHOT_FORMAT_DOCUMENTATION,
       verifier: PUBLIC_SNAPSHOT_OFFLINE_VERIFIER,

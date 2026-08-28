@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import {
   COLLISION_CONFLICT_MESSAGE,
@@ -9,6 +8,7 @@ import {
   PaymentAttemptConflictError,
   PaymentAttemptEvidenceConflictError,
 } from './payment-attempts.ts'
+import { cronBearerAuthorization } from './cron-auth.ts'
 import type {
   PaymentRecoveryAttempt,
   PaymentRecoveryBatchResult,
@@ -17,7 +17,6 @@ import type {
 import { paymentRecoveryErrorFields } from './payment-recovery.ts'
 
 const PAYMENT_ATTEMPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/u
-const CRON_SECRET = /^[\x21-\x7e]{32,512}$/u
 const MAX_EMPTY_BODY_BYTES = 1_024
 const RECOVERY_BATCH_LIMIT = 10
 const RECHECK_UNAVAILABLE = 'payment attempt recheck is temporarily unavailable; retry this same attempt without paying again'
@@ -74,22 +73,6 @@ async function hasEmptyObjectBody(c: Context): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-function configuredCronSecret(environment: Readonly<Record<string, string | undefined>>): string | null {
-  const secret = environment.CRON_SECRET
-  return secret && CRON_SECRET.test(secret) ? secret : null
-}
-
-function bearerValue(c: Context): string | null {
-  const match = (c.req.header('authorization') ?? '').match(/^Bearer ([^\s]+)$/u)
-  return match?.[1] ?? null
-}
-
-function constantTimeEqual(left: string, right: string): boolean {
-  const leftHash = createHash('sha256').update(left, 'utf8').digest()
-  const rightHash = createHash('sha256').update(right, 'utf8').digest()
-  return timingSafeEqual(leftHash, rightHash)
 }
 
 function recheckStatus(outcome: PaymentRecoveryOutcome): 200 | 202 {
@@ -192,10 +175,12 @@ export function mountPaymentRecoveryRoutes<Attempt>(
   app.get('/api/internal/payment-recovery', async c => {
     privateHeaders(c)
     if (!noQueryOptions(c)) return err(c, 400, 'payment recovery accepts no query options')
-    const expected = configuredCronSecret(deps.environment)
-    if (!expected) return err(c, 503, 'payment recovery is unavailable')
-    const supplied = bearerValue(c)
-    if (!supplied || !constantTimeEqual(supplied, expected)) {
+    const authorization = cronBearerAuthorization(
+      deps.environment,
+      c.req.header('authorization'),
+    )
+    if (authorization === 'unavailable') return err(c, 503, 'payment recovery is unavailable')
+    if (authorization !== 'authorized') {
       return err(c, 401, 'payment recovery authorization failed')
     }
     const result = await deps.runBatch(RECOVERY_BATCH_LIMIT)

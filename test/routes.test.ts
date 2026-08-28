@@ -30,6 +30,7 @@ process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
 process.env.BASE_RPC_URL = 'https://base-rpc.test'
 process.env.FACILITATOR_URL = 'https://facilitator.test'
 process.env.LATER_HOLDER_CURSOR_KEY = LATER_HOLDER_CURSOR_KEY
+process.env.VERCEL_GIT_COMMIT_SHA = 'e'.repeat(40)
 
 const TREASURY = process.env.TREASURY_ADDRESS
 const SELLER_WALLET = '0x1111111111111111111111111111111111111111'
@@ -183,6 +184,7 @@ interface FakeState {
   openToBuilding: boolean
   openToThings: boolean
   openToNotes: boolean
+  gazetteActivated: boolean
   quota: { things: boolean; notes: boolean; agreements: boolean }
   agreementParties: string[]
   agreementAcceded: string[]
@@ -269,6 +271,7 @@ const initialState = (): FakeState => ({
   openToBuilding: false,
   openToThings: false,
   openToNotes: false,
+  gazetteActivated: false,
   quota: { things: true, notes: true, agreements: true },
   agreementParties: ['tiny-lantern', 'neighbor'],
   agreementAcceded: [],
@@ -392,6 +395,9 @@ function selectedPlacePermission(
     } : {}),
     ...(query.includes('as place_permits_notes') ? {
       place_permits_notes: row.owner_id === state.actorId || row.open_to_notes,
+    } : {}),
+    ...(query.includes('as gazette_submissions_open') ? {
+      gazette_submissions_open: state.openToNotes && state.gazetteActivated,
     } : {}),
   }
 }
@@ -699,6 +705,22 @@ function roomPurposeIn(params: readonly unknown[]): string | null {
 
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (state.scenario === 'protected Gazette dependencies') {
+    const constraint = q.includes('insert into place_law_changes')
+      ? 'gazette_submission_room_laws'
+      : q.includes('insert into places')
+        ? 'gazette_submission_room_children'
+        : q.includes('insert into things')
+          ? 'gazette_submission_room_things'
+          : null
+    if (constraint) {
+      throw Object.assign(new Error('private database constraint detail'), {
+        code: '23514',
+        constraint,
+      })
+    }
+  }
+  if (/^(?:savepoint|release savepoint|rollback to savepoint)\b/u.test(q)) return []
   recordPayment(query, params)
 
   if (q.includes('insert into resident_refusal_state')) {
@@ -2215,12 +2237,22 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('things_today = things_today + 1')) return state.quota.things ? [{ id: state.actorId }] : []
   if (q.includes('notes_today = notes_today + 1') && q.includes('insert into notes')) {
     if (!state.quota.notes) return []
+    const requestedPlaceId = Number(params[2] ?? state.currentPlaceId ?? 2)
+    if (requestedPlaceId === 454 && !state.gazetteActivated) {
+      return [{
+        id: null,
+        place_exists: true,
+        place_permits_notes: true,
+        gazette_activated: false,
+        note_quota_spent: false,
+      }]
+    }
     const note = {
       id: state.nextNoteId,
-      place_id: Number(params[0] ?? 2),
-      author_id: Number(params[1] ?? state.actorId),
-      author: String(params[5] ?? state.actorHandle),
-      body: String(params[4] ?? 'hello from the square'),
+      place_id: requestedPlaceId,
+      author_id: state.actorId,
+      author: String(params.at(-1) ?? state.actorHandle),
+      body: String(params.at(-3) ?? 'hello from the square'),
       created_at: '2026-08-11T00:00:00.000Z',
     }
     state = { ...state, recentNote: note, nextNoteId: state.nextNoteId + 1 }
@@ -2872,12 +2904,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       : []
   }
   if (q.includes('insert into notes')) {
-    const taggedNoteAction = q.includes('/* note-action:create */')
     return [{
       id: 51,
       place_id: Number(params[0] ?? 2),
-      author: String(params[taggedNoteAction ? 5 : 4] ?? state.actorHandle),
-      body: String(params[taggedNoteAction ? 4 : 3] ?? 'hello from the square'),
+      author: String(params[4] ?? state.actorHandle),
+      body: String(params[3] ?? 'hello from the square'),
       created_at: '2026-08-11T00:00:00.000Z',
     }]
   }
@@ -3601,6 +3632,70 @@ test('note validation distinguishes place errors and preserves valid Unicode exa
   })
 })
 
+test('note character limits count exact stored whitespace at both boundaries', async () => {
+  reset({ scenario: 'note validation' })
+  const whitespaceOnlyBody = '   '
+  const whitespaceOnly = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: whitespaceOnlyBody }),
+  })
+  assert.equal(whitespaceOnly.status, 201)
+  assert.equal(
+    (await whitespaceOnly.json() as { note: { body: string } }).note.body,
+    whitespaceOnlyBody,
+  )
+
+  reset({ scenario: 'note validation' })
+  const overLimitBody = ` ${'x'.repeat(3_999)} `
+  const overLimit = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: overLimitBody }),
+  })
+  assert.equal(overLimit.status, 400)
+  assert.deepEqual(await overLimit.json(), { error: 'body must be 1-4000 safe characters' })
+  assert.equal(inserted('notes'), 0)
+
+  reset({ scenario: 'note validation' })
+  const exactLimitBody = ` ${'x'.repeat(3_998)} `
+  const exactLimit = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: exactLimitBody }),
+  })
+  assert.equal(exactLimit.status, 201)
+  assert.equal(
+    (await exactLimit.json() as { note: { body: string } }).note.body,
+    exactLimitBody,
+  )
+
+  reset({ scenario: 'note validation' })
+  const exactUnicodeLimit = '😀'.repeat(4_000)
+  const acceptedUnicode = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: exactUnicodeLimit }),
+  })
+  assert.equal(acceptedUnicode.status, 201)
+  assert.equal(
+    (await acceptedUnicode.json() as { note: { body: string } }).note.body,
+    exactUnicodeLimit,
+  )
+
+  reset({ scenario: 'note validation' })
+  const overUnicodeLimit = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 2, body: '😀'.repeat(4_001) }),
+  })
+  assert.equal(overUnicodeLimit.status, 400)
+  assert.deepEqual(
+    await overUnicodeLimit.json(),
+    { error: 'body must be 1-4000 safe characters' },
+  )
+})
+
 test('an identical note retry returns the first note without quota, writes, or events', async () => {
   reset({ scenario: 'note retry', openToNotes: true })
   const request = () => app.request('/api/note', {
@@ -3661,6 +3756,76 @@ test('an identical note retry replays before later place permission changes', as
   const replayBody = await replay.json() as { note: Record<string, unknown> }
 
   assert.deepEqual(replayBody.note, firstBody.note)
+  assert.equal(inserted('notes'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(inserted('action_runs'), 0)
+})
+
+test('a Gazette same-body replay survives the print boundary gates without a new submission', async () => {
+  reset({
+    scenario: 'note retry',
+    currentPlaceId: 454,
+    placeOwnerId: 1,
+    openToNotes: true,
+    gazetteActivated: true,
+  })
+  const post = (body: string) => app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 454, body }),
+  })
+
+  const first = await post('Exact Gazette submission. 🗞️')
+  assert.equal(first.status, 201)
+  const firstBody = await first.json() as { note: Record<string, unknown> }
+
+  state = {
+    ...state,
+    calls: [],
+    currentPlaceId: 2,
+    placeOwnerId: 8,
+    openToNotes: false,
+    quota: { ...state.quota, notes: false },
+  }
+  const replay = await post('Exact Gazette submission. 🗞️')
+  assert.equal(replay.status, 200)
+  assert.deepEqual((await replay.json() as { note: Record<string, unknown> }).note, firstBody.note)
+  assert.equal(inserted('notes'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(inserted('action_runs'), 0)
+  assert.equal(
+    sqlCalls().some(call => /\/\* note-action:create \*\//iu.test(call.query ?? '')),
+    false,
+  )
+
+  const changed = await post('Exact Gazette submission. 🗞️ ')
+  assert.equal(changed.status, 409)
+  assert.deepEqual(await changed.json(), {
+    error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+  })
+})
+
+test('the founder cannot submit to the closed Gazette shell before its canonical activation', async () => {
+  reset({
+    scenario: 'closed Gazette shell',
+    actorId: 1,
+    actorHandle: 'founder',
+    currentPlaceId: 454,
+    placeOwnerId: 1,
+    openToNotes: false,
+    gazetteActivated: false,
+  })
+
+  const response = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 454, body: 'Must wait for activation.' }),
+  })
+
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+  })
   assert.equal(inserted('notes'), 0)
   assert.equal(inserted('events'), 0)
   assert.equal(inserted('action_runs'), 0)
@@ -8038,6 +8203,7 @@ test('official facts, events, residents, and treasury are public and anti-token'
     network: string
     token: null
     statement: string
+    deployment_commit: string
     public_snapshots: {
       format_version: number
       releases: string
@@ -8053,10 +8219,12 @@ test('official facts, events, residents, and treasury are public and anti-token'
   assert.equal(facts.treasury.toLowerCase(), TREASURY)
   assert.equal(facts.network, 'base')
   assert.equal(facts.token, null)
+  assert.equal(facts.deployment_commit, 'e'.repeat(40))
+  assert.match(official.headers.get('cache-control') ?? '', /no-store/iu)
   assert.match(facts.statement, /no .*token|there is no/i)
   assert.deepEqual(facts.public_snapshots, {
-    format_version: 1,
-    releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
+    format_version: 2,
+    releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-',
     format: 'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md',
     verifier: 'https://github.com/onetapstudiogames/1f3d9/blob/main/scripts/verify-public-snapshot.ts',
     cadence: 'daily at 08:17 UTC via the enabled workflow (cron 17 8 * * *)',
@@ -8528,6 +8696,45 @@ test('a place owner replaces local laws while a visitor cannot legislate there',
   })
   assert.equal(rejected.status, 403)
   assert.deepEqual(await rejected.json(), { error: 'only the place owner may change its laws' })
+})
+
+test('all Gazette room dependency writes return one protected-service refusal', async () => {
+  const expected = {
+    error: 'Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things',
+  }
+  const requests = [
+    ['/api/place/454/laws', 'PUT', { traits: ['war-zone'] }],
+    ['/api/place', 'POST', {
+      parent_id: 454,
+      name: 'forbidden child',
+      description: '',
+      open_to_building: false,
+      open_to_things: false,
+      open_to_notes: false,
+    }],
+    ['/api/thing', 'POST', {
+      place_id: 454,
+      name: 'forbidden thing',
+      body: '',
+    }],
+  ] as const
+
+  for (const [path, method, body] of requests) {
+    reset({
+      scenario: 'protected Gazette dependencies',
+      placeOwnerId: 7,
+      openToBuilding: true,
+      openToThings: true,
+      currentPlaceId: 454,
+    })
+    const response = await app.request(path, {
+      method,
+      headers: authHeaders(),
+      body: JSON.stringify(body),
+    })
+    assert.equal(response.status, 409, `${path}: ${await response.clone().text()}`)
+    assert.deepEqual(await response.json(), expected, path)
+  }
 })
 
 test('go_home remains available when ordinary movement is actively blocked', async () => {

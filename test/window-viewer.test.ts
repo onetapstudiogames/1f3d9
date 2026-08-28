@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import * as windowModule from '../src/window.ts'
 import * as windowClientModule from '../src/window-client.ts'
 import { WINDOW_JS, PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS } from '../src/window-client.ts'
@@ -41,7 +42,9 @@ function cssVariable(name: string): string {
 
 test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /role="tablist"/)
-  for (const view of ['map', 'place', 'conversations', 'happenings', 'agreements']) {
+  for (const view of [
+    'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+  ]) {
     assert.match(WINDOW_HTML, new RegExp(`data-view="${view}"`))
     assert.match(WINDOW_HTML, new RegExp(`id="${view}-panel"`))
   }
@@ -84,7 +87,9 @@ test('the human window exposes organized, linkable, read-only views', () => {
 })
 
 test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
-  const views = ['map', 'place', 'conversations', 'happenings', 'agreements', 'archive']
+  const views = [
+    'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+  ]
   for (const view of views) {
     const panel = WINDOW_HTML.match(
       new RegExp(`<section id="${view}-panel"[\\s\\S]*?<\\/section>`),
@@ -119,6 +124,102 @@ test('public search controls state their accepted shape, limits, normalization, 
   )
 })
 
+test('the Gazette tab states its weekly source, permanent archive, and first honest empty state', () => {
+  const tab = WINDOW_HTML.match(/<button[^>]*data-view="gazette"[^>]*>[\s\S]*?<\/button>/u)?.[0] ?? ''
+  assert.match(tab, /id="gazette-tab"/u)
+  assert.match(tab, /role="tab"/u)
+  assert.match(tab, /aria-controls="gazette-panel"/u)
+  assert.match(tab, />\s*Gazette\s*</u)
+
+  const panel = WINDOW_HTML.match(
+    /<section id="gazette-panel"[\s\S]*?<\/section>/u,
+  )?.[0] ?? ''
+  assert.match(panel, /role="tabpanel"/u)
+  assert.match(panel, /aria-labelledby="gazette-tab"/u)
+  assert.match(panel, /<h2[^>]*>The Gazette<\/h2>/u)
+  assert.match(panel, /Every Monday at 16:00 UTC/iu)
+  assert.match(panel, /href="\/window\/place\/454"[^>]*>Room #454<\/a>/u)
+  assert.match(panel, /permanent public archive/iu)
+  assert.match(panel, /never deleted, edited, moved, or copied/iu)
+  assert.match(
+    panel,
+    /id="gazette-submission-status"[^>]*role="status"[^>]*aria-live="polite"/u,
+  )
+
+  assert.match(WINDOW_JS, /\/api\/gazette/u)
+  assert.match(WINDOW_JS, /payload\.submission_room\.place_id\s*!==\s*454/u)
+  assert.match(
+    WINDOW_JS,
+    /typeof payload\.submission_room\.submissions_open\s*!==\s*'boolean'/u,
+  )
+  assert.match(WINDOW_JS, /submissionsOpen:\s*payload\.submission_room\.submissions_open/u)
+  assert.match(WINDOW_JS, /Room #454 is open for Gazette submissions\./u)
+  assert.match(
+    WINDOW_JS,
+    /Room #454 is closed for Gazette submissions\. Wait until this notice says open before submitting\./u,
+  )
+  assert.match(WINDOW_JS, /safeGazetteStoredText\(rawEntry\.body,\s*65536\)/u)
+  assert.match(WINDOW_JS, /first_print_at/u)
+  assert.match(WINDOW_JS, /before_issue_number/u)
+  assert.match(WINDOW_JS, /after_ordinal/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('limit'/u)
+  assert.match(WINDOW_JS, /Load older issues/u)
+  assert.match(WINDOW_JS, /Load more entries/u)
+  assert.match(
+    WINDOW_JS,
+    /No Gazette issues have printed yet\. The first print is scheduled for Monday, 31 August 2026 at 16:00 UTC\./u,
+  )
+  assert.match(
+    WINDOW_CSS,
+    /\.gazette-entry-body\s*\{[\s\S]*?white-space:\s*pre-wrap;[\s\S]*?unicode-bidi:\s*plaintext;/u,
+  )
+
+  for (const loaderName of ['loadGazetteIssues', 'loadGazetteIssue']) {
+    const loaderStart = WINDOW_JS.indexOf(`async function ${loaderName}`)
+    const loaderEnd = WINDOW_JS.indexOf('\n  async function ', loaderStart + 1)
+    assert.notEqual(loaderStart, -1, `${loaderName} must exist`)
+    const loader = WINDOW_JS.slice(loaderStart, loaderEnd === -1 ? undefined : loaderEnd)
+    assert.match(loader, /cache:\s*'no-store'/u, `${loaderName} must bypass browser caches`)
+  }
+})
+
+test('every public Gazette API response is explicitly uncached', async () => {
+  const { Hono } = await import('hono')
+  const { mountGazetteRoutes } = await import('../src/gazette-routes.ts')
+  const app = new Hono()
+  mountGazetteRoutes(app, {
+    readSubmissionRoomState: async () => ({ submissionsOpen: true }),
+    listIssues: async () => ({
+      issues: [],
+      hasMore: false,
+      nextBeforeIssueNumber: null,
+    }),
+    readIssue: async ({ issueNumber }) => issueNumber === 7
+      ? {
+          issue: {
+            issue_number: 7,
+            scheduled_for: '2026-10-12T16:00:00.000Z',
+            printed_at: '2026-10-12T16:00:02.000Z',
+            header: 'Permanent issue 7.',
+            entry_count: 0,
+          },
+          entries: [],
+          hasMore: false,
+          nextAfterOrdinal: null,
+        }
+      : null,
+    database: null,
+    printGazetteIssuesDue: async () => undefined,
+    environment: {},
+  })
+
+  for (const path of ['/api/gazette', '/api/gazette/7', '/api/gazette/8', '/api/gazette/0']) {
+    const response = await app.request(path)
+    assert.equal(response.headers.get('cache-control'), 'no-store', path)
+    assert.equal(response.headers.get('pragma'), 'no-cache', path)
+  }
+})
+
 test('share controls copy absolute canonical paths and visibly report clipboard refusal', () => {
   assert.match(WINDOW_JS, /navigator\.clipboard\.writeText/u)
   assert.match(WINDOW_JS, /new URL\(path, window\.location\.origin\)\.href/u)
@@ -140,7 +241,7 @@ test('detail sharing reports inside the modal and navigation invalidates stale f
 
 test('the share link round-trips every reproducible window question', () => {
   for (const parameter of [
-    'view', 'place', 'resident', 'context', 'q', 'mode', 'type', 'find', 'sleepers',
+    'view', 'place', 'resident', 'context', 'q', 'mode', 'type', 'find', 'sleepers', 'issue',
   ]) {
     assert.match(WINDOW_JS, new RegExp(`params\\.(?:get|set)\\('${parameter}'`))
   }
@@ -174,7 +275,9 @@ test('every active panel has one shared page heading and compliant window primit
   const main = WINDOW_HTML.match(/<main id="city-main"[\s\S]*?<\/main>/u)?.[0] ?? ''
   assert.match(main, /<h1 class="window-title">The City Window<\/h1>/)
   assert.equal((main.match(/<h1\b/gu) ?? []).length, 1)
-  for (const panel of ['map', 'place', 'conversations', 'happenings', 'agreements', 'archive']) {
+  for (const panel of [
+    'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+  ]) {
     const content = main.match(new RegExp(`<section id="${panel}-panel"[\\s\\S]*?<\\/section>`))?.[0] ?? ''
     assert.match(content, /<h2\b/)
     assert.doesNotMatch(content, /<h1\b/)
@@ -312,6 +415,7 @@ test('the window covers the whole public life of the city', () => {
   assert.ok(PUBLIC_EVENT_KINDS.includes('home_set'))
   assert.ok(PUBLIC_EVENT_KINDS.includes('agreement_accession'))
   assert.ok(PUBLIC_EVENT_KINDS.includes('payment_repair'))
+  assert.ok(PUBLIC_EVENT_KINDS.includes('gazette_printed'))
   assert.equal(
     PUBLIC_EVENT_LABELS.payment_repair,
     'recorded a host payment correction',
@@ -323,7 +427,7 @@ test('the window covers the whole public life of the city', () => {
     'register', 'rotate', 'home_set', 'place_created', 'place_edited',
     'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
     'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',
-    'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note',
+    'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note', 'gazette_printed',
     'agreement', 'agreement_accession', 'agreement_sign', 'transfer',
     'transfer_offer', 'sale', 'transfer_cancel', 'world_listed', 'world_sale',
     'world_cancel', 'payment_repair', 'flag', 'moderation',
@@ -384,6 +488,10 @@ test('public action happenings preserve meaning and collapse only consecutive re
 test('the /api/window route carries honest bounded causes without exporting its private shaper', () => {
   assert.equal(Object.hasOwn(windowModule, 'publicWindowEvent'), false)
   const rows = [
+    { id: 15, kind: 'gazette_printed', actor: 'the Gazette printer', detail: {
+      issue_number: 7, place_id: 454, entry_count: 3,
+      body: 'must not leak from the Gazette event',
+    } },
     { id: 14, kind: 'payment_repair', detail: {
       action: 'credit_dispute_seller_favour', resident_id: 1,
       dispute_id: 'PP-D-PRIVATE', purchase_id: 77, reason: 'private operator context',
@@ -431,7 +539,7 @@ test('the /api/window route carries honest bounded causes without exporting its 
   ].map(row => ({
     ...row,
     at: `2026-08-26T12:00:${String(row.id).padStart(2, '0')}.000Z`,
-    actor: 'tiny-lantern',
+    actor: 'actor' in row ? row.actor : 'tiny-lantern',
   }))
   const databaseUrl = new URL('../src/db.ts', import.meta.url).href
   const windowUrl = new URL('../src/window.ts', import.meta.url).href
@@ -470,10 +578,19 @@ test('the /api/window route carries honest bounded causes without exporting its 
     script,
   ], { cwd: new URL('..', import.meta.url), encoding: 'utf8' })) as Array<{
     id: number
+    actor: string
+    kind: string
     detail: Record<string, unknown>
   }>
   const detail = (id: number) => events.find(event => event.id === id)?.detail ?? {}
 
+  assert.deepEqual(events.find(event => event.id === 15), {
+    id: 15,
+    at: '2026-08-26T12:00:15.000Z',
+    kind: 'gazette_printed',
+    actor: 'the Gazette printer',
+    detail: { place_id: 454, issue_number: 7, entry_count: 3 },
+  })
   assert.deepEqual(detail(14), { action: 'credit_dispute_seller_favour' })
   assert.deepEqual(detail(13), { action: 'credit_dispute_buyer_favour' })
   assert.equal(detail(10).error, 'the recipe needs a lit trait here')
@@ -1333,8 +1450,17 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
 })
 
 test('canonical window pages render current public metadata and self-contained images', async () => {
+  const windowSource = readFileSync(new URL('../src/window.ts', import.meta.url), 'utf8')
+  const gazetteExistenceReader = windowSource.match(
+    /async function readLiveWindowGazetteIssue[\s\S]*?\n\}\n\nexport async function windowPage/u,
+  )?.[0] ?? ''
+  assert.match(gazetteExistenceReader, /FROM gazette_issues/u)
+  assert.match(gazetteExistenceReader, /issue_number = \$1::integer/u)
+  assert.doesNotMatch(gazetteExistenceReader, /gazette_issue_entries|\bnotes\b|\bbody\b/u)
+
   const { Hono } = await import('hono')
   const reads: Array<{ kind: string; id: number }> = []
+  const gazetteIssueReads: number[] = []
   const app = new Hono()
   app.get('/window/:kind/:id', c => windowModule.windowPage(c, false, async detail => {
     reads.push(detail)
@@ -1342,10 +1468,20 @@ test('canonical window pages render current public metadata and self-contained i
       ? { name: 'field lantern', made_by: 'archive-smith', body: 'A current public inscription from the city.' }
       : null
   }))
-  app.get('/window/:view', c => windowModule.windowPage(c, false, async detail => {
-    reads.push(detail)
-    return null
-  }))
+  app.get('/window/:view', c => windowModule.windowPage(
+    c,
+    false,
+    async detail => {
+      reads.push(detail)
+      return null
+    },
+    undefined,
+    async issueNumber => {
+      gazetteIssueReads.push(issueNumber)
+      if (issueNumber === 9) throw new Error('temporary Gazette lookup failure')
+      return issueNumber === 7
+    },
+  ))
   app.get('/share/thing.png', c => windowModule.windowShareImage(c, 'thing'))
 
   const response = await app.request('/window/thing/401')
@@ -1364,6 +1500,36 @@ test('canonical window pages render current public metadata and self-contained i
   const staticView = await app.request('/window/happenings')
   assert.equal(staticView.status, 200)
   assert.equal(reads.length, 2, 'a body-free view must not load a detail record')
+
+  const gazetteIssue = await app.request('/window/gazette?issue=7')
+  assert.equal(gazetteIssue.status, 200)
+  const gazetteHtml = await gazetteIssue.text()
+  assert.match(gazetteHtml, /<title>The Gazette · Issue 7 — 1F3D9<\/title>/u)
+  assert.match(
+    gazetteHtml,
+    /<link rel="canonical" href="https:\/\/1f3d9\.com\/window\/gazette\?issue=7">/u,
+  )
+  assert.equal(reads.length, 2, 'a body-free issue unfurl must not load resident note text')
+  assert.deepEqual(gazetteIssueReads, [7])
+
+  const missingGazetteIssue = await app.request('/window/gazette?issue=8')
+  assert.equal(missingGazetteIssue.status, 200)
+  const missingGazetteHtml = await missingGazetteIssue.text()
+  assert.match(missingGazetteHtml, /<title>The Gazette · Issue 8 is unavailable — 1F3D9<\/title>/u)
+  assert.match(missingGazetteHtml, /not publicly available now/iu)
+  assert.deepEqual(gazetteIssueReads, [7, 8])
+  assert.equal(reads.length, 2, 'Gazette existence checks must never read resident note text')
+
+  const unverifiedGazetteIssue = await app.request('/window/gazette?issue=9')
+  assert.equal(unverifiedGazetteIssue.status, 200)
+  const unverifiedGazetteHtml = await unverifiedGazetteIssue.text()
+  assert.match(
+    unverifiedGazetteHtml,
+    /<title>The Gazette · Issue 9 could not be checked — 1F3D9<\/title>/u,
+  )
+  assert.match(unverifiedGazetteHtml, /availability could not be checked right now/iu)
+  assert.doesNotMatch(unverifiedGazetteHtml, /not publicly available now/iu)
+  assert.deepEqual(gazetteIssueReads, [7, 8, 9])
 
   const image = await app.request('/share/thing.png')
   assert.equal(image.status, 200)

@@ -355,6 +355,8 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_GAZETTE_SCHEMA_MIGRATION:
+    'APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
@@ -437,6 +439,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION',
     'CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION="${6-}"',
     'export CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION',
+    'CONFIRM_GAZETTE_SCHEMA_MIGRATION="${7-}"',
+    'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -457,6 +461,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_RESUMABLE_REGISTRATION_MIGRATION ?? '',
         readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
         readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
+        readiness.CONFIRM_GAZETTE_SCHEMA_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -529,6 +534,24 @@ test('preparation requires provider-key and migration readiness before any relea
   assert.match(
     `${missingResidentRefusalState.stdout}\n${missingResidentRefusalState.stderr}`,
     /resident-refusal-state.*migration.*Preview and Production.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingGazette = fixture.run({ CONFIRM_GAZETTE_SCHEMA_MIGRATION: '' })
+  assert.notEqual(missingGazette.status, 0)
+  assert.match(
+    `${missingGazette.stdout}\n${missingGazette.stderr}`,
+    /Gazette schema.*was applied.*Preview and Production.*while room #454 was closed/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const wrongGazetteState = fixture.run({
+    CONFIRM_GAZETTE_SCHEMA_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  })
+  assert.notEqual(wrongGazetteState.status, 0)
+  assert.match(
+    `${wrongGazetteState.stdout}\n${wrongGazetteState.stderr}`,
+    /Gazette schema.*was applied.*Preview and Production.*while room #454 was closed/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
 })

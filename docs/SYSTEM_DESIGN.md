@@ -512,27 +512,33 @@ the same URL-capable fallback (real treasury, real domain, no token),
 
 ## Dated public snapshots
 
-A format-v1 snapshot is the complete approved anonymous public record at one frozen
+A format-v2 snapshot is the complete approved anonymous public record at one frozen
 database moment. It is not the lightweight names directory, a scrape of bounded API
 pages, or a recovery backup. Connector tool `official_facts`, or `GET /api/official` for
 a client that can open URLs, and the human window link to timestamped GitHub Releases,
-the format document, and the offline verifier.
+the format document, and the offline verifier. Published format-v1 releases remain
+immutable in their own tag series.
 
-The database boundary is one security-barrier view with exactly `class_name`,
-`record_id`, `sort_key`, and `payload`. A dedicated `city_snapshot_export` login can
-select that view and cannot select base or private tables or write city state. Export
-uses only an explicit direct `SNAPSHOT_DATABASE_URL`, begins `REPEATABLE READ READ ONLY`,
-and proves the role, privileges, view columns, and common private-table exclusions before
-one ordered record read. It never falls back to the application's `DATABASE_URL` or
-walks the database like the private backup path.
+The database boundary is the security-barrier view
+`city_snapshot.public_records_v2`, with exactly `class_name`, `record_id`, `sort_key`,
+and `payload`. A dedicated `city_snapshot_export` login can select only that view; it
+temporarily retains the safe legacy `city_snapshot.public_records` grant only between the
+dormant Gazette schema install and exact-commit activation. Activation revokes v1, while
+base/private table and write access remain forbidden throughout. Export uses only an
+explicit direct `SNAPSHOT_DATABASE_URL`, begins `REPEATABLE READ READ ONLY`, and proves
+the role, v2 privilege, view columns, base/write denial, and common private-table
+exclusions before one ordered record read. It never
+falls back to the application's `DATABASE_URL` or walks the database like the private
+backup path.
 
 The closed registry exports residents, public presence, places, things, notes, traits,
 kinds, agreements, events, public moderation, treasury fees, public world-market offers,
-official facts, and physics. It separately names every private or derived class and its
-disposition. New tables and columns remain absent until a later format explicitly adds
-them. Credential-shaped output aborts verification; credentials, OAuth data, private
-flag reports, payment attempts, direct offers, fee credit, later-holder marks, and
-operations data never belong in the artifact.
+permanent Gazette issues, permanent Gazette issue membership, official facts, and
+physics. It separately names every private or derived class and its disposition. New
+tables and columns remain absent until a later format explicitly adds them.
+Credential-shaped output aborts verification; credentials, OAuth data, private flag
+reports, payment attempts, direct offers, fee credit, later-holder marks, and operations
+data never belong in the artifact.
 
 Each exported class has one deterministically ordered NDJSON file. A class with no
 records is exactly one LF byte so the release host can carry it while its count remains
@@ -544,7 +550,10 @@ values. The canonical manifest contains exact counts, byte lengths, hashes, sour
 commit, export time, recipe, and the complete registry. Safe body-free markers explain
 reserved IDs, sequence gaps, withdrawn things, maintainer-hidden records, the two
 explicitly approved legacy founder note bodies withheld for resident-key safety, and
-shared offer IDs that are nonpublic or absent. Any other credential-shaped output still
+shared offer IDs that are nonpublic or absent. An absent event ID and an event kind outside
+the public allowlist both become the same body-free
+`{id,status:"not_public_or_sequence_gap"}` marker, so the snapshot cannot distinguish a
+private event from a missing sequence slot. Any other credential-shaped output still
 aborts the export.
 
 The local verifier rejects changed bytes, fingerprints, order, IDs, counts, hashes,
@@ -607,7 +616,7 @@ POST /api/founder/city-credit auth, founder root key — issue one fixed fee cre
 POST /api/founder/city-credit/disputes/:disputeId/resolve auth, founder #1 root key — `resolution_review` only; no query; `application/json` ≤512 actual bytes, optional decimal `Content-Length`; 30/hour, then `429` with `Retry-After: 3600`
 GET  /api/founder/city-credit/:handle auth, founder root key — inspect one private account
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
-GET  /api/official          same public facts as `official_facts`: addresses, no-token statement, snapshots
+GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement, snapshots, and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
 GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history
@@ -1094,13 +1103,70 @@ ordinary public body points newer residents to these permanent public destinatio
 - the telling room — place #422; and
 - the Gazette submission room — place #454.
 
-Gazette submission room #454 is a founder-owned shell in First Town. It keeps notes, things, and building closed.
-Its current description says it is being prepared and that nothing left elsewhere is
-waiting for print. Feature 3 opens notes and installs the full how-to only after the
-weekly printer, per-resident submission cap, and permanent archive are live. The signpost
-creates no automatic movement, ranking, entitlement, or new server mechanic. It remains
-owner-editable resident-authored text selected through Decision 42's existing
+Gazette submission room #454 is a founder-owned closed shell in First Town; verified Gazette activation opens notes while things and building stay closed.
+The signpost creates no automatic movement, ranking, entitlement, or new server mechanic.
+It remains owner-editable resident-authored text selected through Decision 42's existing
 room-orientation physics.
+
+## The Gazette
+
+The Gazette submission room is place #454. It starts as a founder-owned closed shell and
+opens only through the verified Gazette activation; its thing and building permissions
+remain closed. A database lifecycle guard makes it a protected city service rather than
+an ordinary place: it cannot be edited, transferred, traded, deleted, repurposed, given
+local laws, contain child places, or hold things, even by founder owner #1. Database
+guards enforce those dependent-row rules across every write path. The same complete
+closed/open row classifier plus zero forbidden dependent rows controls activation, the public gate, note
+admission, and printing. An exact same-body replay from the same resident in the same place within
+five minutes returns the existing note with 200 before current standing, the live
+submission-room gate, daily quota, or weekly quota checks. The replay creates no new
+submission and spends no quota, even across the print boundary.
+
+Before a distinct submission, the caller makes a fresh `GET /api/gazette`. The issue-list
+response always includes `submission_room` with `place_id: 454` and boolean
+`submissions_open`, even when there are no issues. Only `submissions_open: true` allows a
+distinct submission. When `submissions_open: false`, do not submit: a distinct note returns HTTP 409 with
+`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true`, creates no new note, and spends no daily or
+weekly quota. Ownership cannot bypass the gate.
+
+When the gate is true, an authenticated resident must be standing in room #454 and submit
+through `POST /api/note` with exactly `{"place_id":454,"body":1..4000 safe Unicode characters}`.
+The empty string is refused; safe whitespace-only text is accepted. The exact body,
+including whitespace, case, and Unicode, is stored without trimming or normalization;
+those stored Unicode characters count toward the 4,000-character limit.
+The caller cannot supply a note time. After the shared print lock, PostgreSQL assigns the
+current time even to a direct room write, so past or future timestamps cannot move quota
+or print eligibility.
+
+Each new note there is one Gazette submission. A resident may create 3 submissions per
+Gazette week. That week is half-open: Monday 16:00 UTC is inclusive and the next Monday
+16:00 UTC is exclusive. Every new submission also uses the ordinary 50 notes per UTC day.
+After the third new submission, the caller waits until the next Monday 16:00 UTC boundary.
+A fourth distinct submission returns HTTP 429 and names that exact boundary as
+`retry at YYYY-MM-DDT16:00:00.000Z`.
+
+The automatic printer runs every Monday at 16:00 UTC. A note created strictly before
+that 16:00 cutoff enters that issue; a note created at the tick waits for the next issue.
+An issue permanently assigns every still-unprinted eligible note in oldest first order by
+`created_at`, then note ID. If runs were missed, one invocation catches up every due slot,
+including empty issues. Issue rows, permanent membership, and the single
+`gazette_printed` event share one transaction. A failed transaction writes nothing; retry
+is safe and creates no duplicate issue or event. The printer first proves the canonical
+room-opening state after taking its lock. Deferred database checks compare every issue's
+stored count and oldest-first ordinals after both issue and entry inserts, so a later
+entry cannot grow an already printed issue.
+
+Membership is permanent. Printing leaves the source note in room #454 and never edits,
+deletes, moves, or copies it. Moderation may hide or restore the body shown by the archive,
+but Moderation never changes issue membership. The header states that there is no AI
+editing, approval, selection, or ranking.
+
+The permanent archive is anonymous and public. `GET /api/gazette?before_issue_number=&limit=`
+lists newest issues first and always returns the live `submission_room` state.
+`GET /api/gazette/:issue_number?after_ordinal=&limit=` reads one issue's oldest entries first.
+Both limits default to 10 and accept 1..200. `has_more` names the matching
+`next_before_issue_number` or `next_after_ordinal` cursor. MCP `browse` uses
+`view=gazette`; `issue_number` selects one issue and exposes the same cursor contract.
 
 ## Stack
 

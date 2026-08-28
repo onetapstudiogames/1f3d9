@@ -44,7 +44,7 @@ test('snapshot database selection is explicit and never falls back to an app dat
   }
 })
 
-test('export uses one frozen read-only transaction and verifies the restricted role', async () => {
+test('export uses one frozen read-only transaction through the exact dual-view Gazette transition', async () => {
   const calls: Array<{ text: string; values?: readonly unknown[] }> = []
   const client: SnapshotDatabaseClient = {
     connect: async () => undefined,
@@ -55,6 +55,7 @@ test('export uses one frozen read-only transaction and verifies the restricted r
           current_user: 'city_snapshot_export',
           transaction_read_only: 'on',
           can_read_view: true,
+          can_read_legacy_view: true,
           can_read_residents: false,
           can_write_residents: false,
           can_read_public_base: false,
@@ -64,13 +65,38 @@ test('export uses one frozen read-only transaction and verifies the restricted r
         }] }
       }
       if (/snapshot-export:records/iu.test(text)) {
-        return { rows: [{
-          class_name: 'residents',
-          record_id: '1',
-          sort_key: '1',
-          payload: { id: 1, status: 'exported', handle: 'founder' },
-          exported_at: '2026-08-23T12:34:56.000Z',
-        }] }
+        return { rows: [
+          {
+            class_name: 'gazette_issue_entries',
+            record_id: '19',
+            sort_key: '19',
+            payload: {
+              id: 19, status: 'exported', issue_number: 1, ordinal: 1,
+              note_id: 19, author_id: 2, author: 'writer',
+              created_at: '2026-08-31T15:59:59.000Z',
+            },
+            exported_at: '2026-08-23T12:34:56.000Z',
+          },
+          {
+            class_name: 'gazette_issues',
+            record_id: '1',
+            sort_key: '1',
+            payload: {
+              id: 1, status: 'exported', issue_number: 1,
+              scheduled_for: '2026-08-31T16:00:00.000Z',
+              printed_at: '2026-08-31T16:00:01.000Z',
+              header: 'THE GAZETTE — ISSUE 1', entry_count: 1, event_id: 41,
+            },
+            exported_at: '2026-08-23T12:34:56.000Z',
+          },
+          {
+            class_name: 'residents',
+            record_id: '1',
+            sort_key: '1',
+            payload: { id: 1, status: 'exported', handle: 'founder' },
+            exported_at: '2026-08-23T12:34:56.000Z',
+          },
+        ] }
       }
       return { rows: [] }
     },
@@ -85,14 +111,28 @@ test('export uses one frozen read-only transaction and verifies the restricted r
       client,
     })
     assert.equal(result.counts.residents, 1)
+    assert.equal(result.counts.gazette_issues, 1)
+    assert.equal(result.counts.gazette_issue_entries, 1)
     assert.match(calls[0]!.text, /BEGIN[\s\S]*REPEATABLE READ[\s\S]*READ ONLY/iu)
     assert.match(calls.at(-1)!.text, /COMMIT/iu)
     assert.equal(calls.filter(call => /snapshot-export:records/iu.test(call.text)).length, 1)
     assert.equal(calls.some(call => /SELECT\s+\*/iu.test(call.text)), false)
+    assert.match(
+      calls.find(call => /snapshot-export:records/iu.test(call.text))!.text,
+      /FROM city_snapshot\.public_records_v2 records/iu,
+    )
+    assert.match(
+      calls.find(call => /snapshot-export:attest-role/iu.test(call.text))!.text,
+      /city_snapshot\.public_records'[\s\S]+can_read_legacy_view/iu,
+    )
+    assert.match(
+      calls.find(call => /snapshot-export:attest-role/iu.test(call.text))!.text,
+      /public\.resident_refusal_state/iu,
+    )
     const officialFile = await readFile(join(root, 'official.ndjson'), 'utf8')
     const officialEnvelope = JSON.parse(officialFile.trim()) as {
       record: {
-        public_snapshots: { scope: string }
+        public_snapshots: { scope: string; format_version: number; releases: string }
         later_holder_discovery: { method: string }
         market_bridge: { payment_reconcile: string }
       }
@@ -100,6 +140,11 @@ test('export uses one frozen read-only transaction and verifies the restricted r
     assert.equal(
       officialEnvelope.record.public_snapshots.scope,
       'the full approved anonymous public record, not only the names directory',
+    )
+    assert.equal(officialEnvelope.record.public_snapshots.format_version, 2)
+    assert.equal(
+      officialEnvelope.record.public_snapshots.releases,
+      'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-',
     )
     assert.equal(officialEnvelope.record.later_holder_discovery.method, 'POST')
     assert.match(officialEnvelope.record.market_bridge.payment_reconcile, /\/api\/world\/offer\/:id\/reconcile$/u)
@@ -123,6 +168,7 @@ test('credential-shaped public text aborts before any snapshot bundle is written
         current_user: 'city_snapshot_export',
         transaction_read_only: 'on',
         can_read_view: true,
+        can_read_legacy_view: false,
         can_read_residents: false,
         can_write_residents: false,
         can_read_public_base: false,
@@ -184,6 +230,7 @@ test('the two approved legacy founder note bodies are represented but not export
         current_user: 'city_snapshot_export',
         transaction_read_only: 'on',
         can_read_view: true,
+        can_read_legacy_view: false,
         can_read_residents: false,
         can_write_residents: false,
         can_read_public_base: false,
@@ -260,6 +307,7 @@ test('an approved legacy note exclusion stops if its immutable metadata drifts',
           current_user: 'city_snapshot_export',
           transaction_read_only: 'on',
           can_read_view: true,
+          can_read_legacy_view: false,
           can_read_residents: false,
           can_write_residents: false,
           can_read_public_base: false,
@@ -301,6 +349,7 @@ test('export refuses a role with base-table read or write access', async () => {
         current_user: 'city_snapshot_export',
         transaction_read_only: 'on',
         can_read_view: true,
+        can_read_legacy_view: false,
         can_read_residents: true,
         can_write_residents: false,
         can_read_public_base: true,
