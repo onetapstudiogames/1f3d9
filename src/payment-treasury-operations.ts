@@ -160,7 +160,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
     WHERE attempt.target_key = 'frontier:' ||
       CASE WHEN jsonb_typeof(attempt.request_json->'parent_id') = 'null'
         THEN 'root' ELSE attempt.request_json->>'parent_id' END ||
-      ':' || attempt.request_json->>'name'
+      ':' || (attempt.request_json->>'name')
   ), frontier_parent AS MATERIALIZED (
     SELECT request.public_id AS attempt_id, root.id AS parent_id
     FROM frontier_request request
@@ -283,7 +283,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           FROM jsonb_array_elements(attempt.request_json->'recipe') ingredient(value)
         ) <= 1024
       ELSE false END
-      AND attempt.target_key = 'kind-invention:' || attempt.request_json->>'name'
+      AND attempt.target_key = 'kind-invention:' || (attempt.request_json->>'name')
   ), new_kind AS (
     INSERT INTO kinds (name, owner_id, current_revision)
     SELECT request.request_json->>'name', request.actor_id, 1
