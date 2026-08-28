@@ -961,6 +961,7 @@ button { color: inherit; }
   color: var(--ink);
   background: rgba(255, 249, 232, 0.88);
   font: 800 0.5rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  pointer-events: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

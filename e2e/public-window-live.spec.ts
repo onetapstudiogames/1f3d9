@@ -1375,6 +1375,10 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
 
   await page.setViewportSize({ width: 320, height: 720 })
   const narrowStage = page.locator('#live-stage')
+  const naturalStageHeight = await narrowStage.evaluate(stage => ({
+    style: (stage as HTMLElement).style.getPropertyValue('--live-stage-height'),
+    data: (stage as HTMLElement).dataset.liveStageHeight ?? '',
+  }))
   await narrowStage.evaluate(stage => {
     ;(stage as HTMLElement).style.setProperty('--live-stage-height', '20000px')
     ;(stage as HTMLElement).dataset.liveStageHeight = '20000'
@@ -1427,6 +1431,22 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     pointerId: 2, pointerType: 'touch', isPrimary: false, clientX: 200, clientY: 240,
   })
 
+  const cinderOwner = page.locator('.live-plot[data-place-id="2"] .live-plot-owner')
+  await expect(cinderOwner).toHaveCSS('pointer-events', 'none')
+  await narrowStage.evaluate((stage, naturalHeight) => {
+    const liveStage = stage as HTMLElement
+    if (naturalHeight.style) {
+      liveStage.style.setProperty('--live-stage-height', naturalHeight.style)
+    } else {
+      liveStage.style.removeProperty('--live-stage-height')
+    }
+    if (naturalHeight.data) {
+      liveStage.dataset.liveStageHeight = naturalHeight.data
+    } else {
+      delete liveStage.dataset.liveStageHeight
+    }
+  }, naturalStageHeight)
+  await page.getByRole('button', { name: 'Fit live plate' }).click()
   await page.locator('.live-plot[data-place-id="2"] .live-plot-open').click()
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
   await expect(page.locator('.live-breadcrumb[aria-current="location"]')).toHaveText('Cinder lane')

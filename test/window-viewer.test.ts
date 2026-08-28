@@ -212,6 +212,11 @@ test('the live plate states its honest timing and drawing rules in shipped code'
     WINDOW_CSS,
     /\.live-plot-terrain\s*>\s*\.drawing-grid:first-child\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
   )
+  assert.match(
+    WINDOW_CSS,
+    /\.live-plot-owner\s*\{[^}]*pointer-events:\s*none/u,
+    'noninteractive plot chrome must not block the place opener',
+  )
   assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
   assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
   assert.match(WINDOW_JS, /resident_edited[\s\S]{0,180}resident:/u)
