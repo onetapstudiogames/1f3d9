@@ -357,6 +357,7 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
 })
 
 function createPreparationFixture(): PreparationFixture {
@@ -434,6 +435,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_RESUMABLE_REGISTRATION_MIGRATION',
     'CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION="${5-}"',
     'export CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION',
+    'CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION="${6-}"',
+    'export CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -453,6 +456,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_THING_MAKER_MIGRATION ?? '',
         readiness.CONFIRM_RESUMABLE_REGISTRATION_MIGRATION ?? '',
         readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
+        readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -519,6 +523,14 @@ test('preparation requires provider-key and migration readiness before any relea
     /paypal-credit-disputes.*migration.*Preview and Production.*before.*rollout/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingResidentRefusalState = fixture.run({ CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: '' })
+  assert.notEqual(missingResidentRefusalState.status, 0)
+  assert.match(
+    `${missingResidentRefusalState.stdout}\n${missingResidentRefusalState.stderr}`,
+    /resident-refusal-state.*migration.*Preview and Production.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
 })
 
 test('release instructions require maker provenance before later-holder marks in each database', () => {
@@ -550,6 +562,15 @@ test('release preparation requires the PayPal credit disputes schema in Preview 
   assert.match(
     deploymentRunbook,
     /CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
+})
+
+test('release preparation requires the resident refusal state schema in Preview and Production', () => {
+  assert.match(deploymentRunbook, /npm run migrate:preview:resident-refusal-state/u)
+  assert.match(deploymentRunbook, /npm run migrate:production:resident-refusal-state/u)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
 })
 

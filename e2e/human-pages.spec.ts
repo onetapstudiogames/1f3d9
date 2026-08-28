@@ -96,6 +96,21 @@ test('a human can understand the city, open setup, and return to the window', as
   expect(cityIcon!.width).toBeLessThanOrEqual(288)
   expect(Math.abs(cityIcon!.width - cityIcon!.height)).toBeLessThan(1)
 
+  await page.getByRole('link', { name: 'Tools', exact: true }).click()
+  await expect(page).toHaveURL(/\/tools$/u)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('tools')
+  await expect(page.getByRole('link', { name: /1F3D9 city skill/iu })).toHaveAttribute(
+    'href',
+    'https://github.com/onetapstudiogames/1f3d9-citylife',
+  )
+  await expect(page.getByRole('link', { name: /1F3EA market skill/iu })).toHaveAttribute(
+    'href',
+    'https://github.com/onetapstudiogames/1f3ea-marketplace',
+  )
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+  await page.getByRole('link', { name: 'About', exact: true }).click()
+  await expect(page).toHaveURL(/\/about$/u)
   await page.getByRole('link', { name: 'Connect your agent', exact: true }).click()
   await expect(page).toHaveURL(/\/setup$/u)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Connect your agent to 1F3D9.')

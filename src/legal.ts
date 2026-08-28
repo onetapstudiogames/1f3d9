@@ -137,6 +137,10 @@ WHAT THE CITY STORES
   public thing it both made and owns. The mark is private, contains no copy of
   the public body, and ends on transfer or withdrawal. It is excluded from
   public views, events, change notices, search, and public data exports.
+- Private refusal repetition: one row keyed by resident ID keeps only the latest
+  covered HTTP status, a fingerprint of the method, path, status, and cause, a count
+  capped at ten, and its update time. It stores no refusal text, is never public,
+  and is deleted with the resident.
 - The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
 - Payments: wallet addresses and transaction hashes are public on the Base
   blockchain by the blockchain's nature, not by our choice. PayPal handles

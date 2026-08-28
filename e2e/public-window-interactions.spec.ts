@@ -747,6 +747,8 @@ test('real window route loads its production assets and renders the public snaps
     'Humans talk about this place at reddit.com/r/TheAiCity.',
   )
   await expect(page.locator('.window-footer')).not.toContainText('reddit.com/r/TheAiCity')
+  await expect(page.locator('.window-footer').getByRole('link', { name: 'The market window' }))
+    .toHaveAttribute('href', 'https://1f3ea.com/window')
 })
 
 test('selected Place labels and preserves owner-chosen body-free front matter without reading things', async ({ page }) => {

@@ -153,6 +153,11 @@ interface FakeRecentNote {
   body: string
   created_at: string
 }
+interface FakeResidentRefusalState {
+  httpStatus: number
+  causeHash: string
+  repetitionCount: number
+}
 interface FakeFounderPayPalDispute {
   dispute_id: string
   state: 'open' | 'resolved_seller' | 'resolved_against_seller' | 'resolution_review'
@@ -248,6 +253,7 @@ interface FakeState {
   laterHolderItems: FakeLaterHolderItem[]
   recentNote: FakeRecentNote | null
   nextNoteId: number
+  residentRefusalStates: Map<number, FakeResidentRefusalState>
   actionResolved?: boolean
 }
 
@@ -336,6 +342,7 @@ const initialState = (): FakeState => ({
   }],
   recentNote: null,
   nextNoteId: 52,
+  residentRefusalStates: new Map(),
 })
 
 let state = initialState()
@@ -693,6 +700,21 @@ function roomPurposeIn(params: readonly unknown[]): string | null {
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
   recordPayment(query, params)
+
+  if (q.includes('insert into resident_refusal_state')) {
+    const residentId = Number(params[0])
+    const httpStatus = Number(params[1])
+    const causeHash = String(params[2])
+    const previous = state.residentRefusalStates.get(residentId)
+    const repetitionCount = previous?.httpStatus === httpStatus
+      && previous.causeHash === causeHash
+      ? Math.min(previous.repetitionCount + 1, 10)
+      : 1
+    const residentRefusalStates = new Map(state.residentRefusalStates)
+    residentRefusalStates.set(residentId, { httpStatus, causeHash, repetitionCount })
+    state = { ...state, residentRefusalStates }
+    return [{ repetition_count: repetitionCount }]
+  }
 
   if (q.includes('front_matter_thing_ids') && q.includes('select')
       && /\b(?:from|join)\s+things\b/iu.test(q)
@@ -4415,6 +4437,10 @@ test('the legal pages answer as plain text naming the operator', async () => {
     assert.match(body, /adam@twamd\.com/)
     assert.doesNotMatch(body, /1f3d9_(?:sk|at|rt|ac|rc)_/)
   }
+  const privacy = await (await app.request('/privacy')).text()
+  assert.match(privacy, /private refusal[^.]{0,180}(?:status|fingerprint)[^.]{0,180}count/iu)
+  assert.match(privacy, /HTTP status, a fingerprint of the method, path, status, and cause/iu)
+  assert.match(privacy, /refusal[^.]{0,220}(?:deleted|deletion)[^.]{0,100}resident/iu)
 })
 
 test('busy places serve the newest notes and expose an older-note cursor', async () => {
@@ -5315,6 +5341,11 @@ test('generic transfer claim and cancel routes cannot operate on a world offer',
     method: 'POST', headers: authHeaders(),
   })
   assert.equal(cancel.status, 404)
+  assert.equal(
+    sqlCalls().some(call => /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? '')),
+    false,
+    'sale claim and cancel refusals stay outside anti-loop state',
+  )
   assert.equal(networkCalled('base-rpc.test'), false)
 })
 
@@ -5540,6 +5571,11 @@ test('a completed direct-sale replay rejects a different buyer wallet without se
   })
   assert.equal(replay.status, 409, await replay.clone().text())
   assert.match(await replay.text(), /buyer_wallet does not match the settled payment/i)
+  assert.equal(
+    sqlCalls().some(call => /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? '')),
+    false,
+    'a replay-bound refusal stays outside anti-loop state',
+  )
   assert.equal(state.calls.filter(call => call.url.includes('/settle')).length, settlementsBeforeReplay)
 })
 
@@ -6522,9 +6558,13 @@ test('city fee credit selection rejects insufficient balance, mixed rails, and f
   assert.equal(state.paymentAttempts.size, 0)
   assert.equal(networkCalled('/verify'), false)
   assert.equal(networkCalled('/settle'), false)
+  const mixedRefusalWrites = sqlCalls().filter(call =>
+    /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? ''))
+  assert.equal(mixedRefusalWrites.length, 0, 'payment-rail refusals stay outside anti-loop state')
   const mixedStorageWrites = sqlCalls().filter(call =>
     /\b(?:insert|update|delete)\b/iu.test(call.query ?? '')
-      && !/update\s+residents\s+set\s+things_today/iu.test(call.query ?? ''))
+      && !/update\s+residents\s+set\s+things_today/iu.test(call.query ?? '')
+      && !/insert\s+into\s+resident_refusal_state/iu.test(call.query ?? ''))
   assert.equal(
     mixedStorageWrites.length,
     0,
@@ -6543,6 +6583,24 @@ test('city fee credit selection rejects insufficient balance, mixed rails, and f
   assert.equal(state.cityCreditBalances.get(7), 1_000_000n)
   assert.equal(state.cityCreditEntries.length, 0)
   assert.equal(state.paymentAttempts.size, 0)
+})
+
+test('verified passive root identity alone selects the private refusal counter', async () => {
+  reset()
+  const refusal = await app.request('/api/me?unexpected=1', { headers: authHeaders() })
+  assert.equal(refusal.status, 400, await refusal.clone().text())
+  const write = sqlCalls().find(call =>
+    /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? ''))
+  assert.deepEqual(write?.params?.slice(0, 2).map(Number), [7, 400])
+  assert.match(String(write?.params?.[2] ?? ''), /^[0-9a-f]{64}$/u)
+
+  reset({ authValid: false })
+  const unauthorized = await app.request('/api/me?unexpected=1', { headers: authHeaders() })
+  assert.equal(unauthorized.status, 401)
+  assert.equal(
+    sqlCalls().some(call => /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? '')),
+    false,
+  )
 })
 
 test('every city-credit fee action fails validation before debit', async () => {
@@ -6604,6 +6662,11 @@ test('every post-debit city-credit fee failure appends one exact return and repl
     assert.equal(replay.status, 409, `${creditCase.label}: ${await replay.clone().text()}`)
     assertCityCreditNoStore(replay, `${creditCase.label} returned replay`)
     assert.equal(await replay.text(), firstText, creditCase.label)
+    assert.equal(
+      sqlCalls().filter(call => /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? '')).length,
+      0,
+      `${creditCase.label}: byte-exact payment replay must stay outside anti-loop state`,
+    )
     assert.equal(state.cityCreditBalances.get(7), 1_000_000n, creditCase.label)
     assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
     assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1, creditCase.label)

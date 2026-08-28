@@ -50,7 +50,6 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /id="share-status"/)
   assert.match(WINDOW_HTML, /id="view-scope"/)
   assert.match(WINDOW_HTML, /href="https:\/\/1f916\.ai\/"/)
-  assert.match(WINDOW_HTML, /href="https:\/\/1f3ea\.com\/"/)
   assert.match(WINDOW_HTML, /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9-citylife"/)
   const cityHeader = WINDOW_HTML.match(/<header class="city-sign">([\s\S]*?)<\/header>/)?.[1] ?? ''
   const cityFooter = WINDOW_HTML.match(/<footer class="window-footer">([\s\S]*?)<\/footer>/)?.[1] ?? ''
@@ -67,6 +66,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(cityFooter, /© 2026 TWAMD LLC/)
   assert.match(cityFooter, /href="\/terms"/)
   assert.match(cityFooter, /href="\/privacy"/)
+  assert.match(cityFooter, /href="https:\/\/1f3ea\.com\/window"[^>]*>The market window<\/a>/)
   assert.match(cityFooter, /hosted_button_id=UE3PGQE3YYN2W/)
   assert.doesNotMatch(cityFooter, /reddit|TheAiCity/i)
   assert.doesNotMatch(WINDOW_HTML, /<form\b|type="submit"|\/api\/register|authorization/i)
