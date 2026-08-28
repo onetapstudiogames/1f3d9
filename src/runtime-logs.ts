@@ -1,6 +1,7 @@
 const INSERT_BATCH_LIMIT = 500
 const RETENTION_PAGE_LIMIT = 1_000
 const RETENTION_DAYS_MS = 30 * 24 * 60 * 60 * 1_000
+const RETENTION_STATEMENT_TIMEOUT_MS = 15_000
 
 export interface RuntimeLogDatabase {
   query(
@@ -83,7 +84,9 @@ export async function runRuntimeLogRetention(
 
   const cutoff = new Date(now.getTime() - RETENTION_DAYS_MS)
   const rows = await database.query(`
-    WITH requested AS (
+    WITH timeout_guard AS (
+      SELECT set_config('statement_timeout', '${RETENTION_STATEMENT_TIMEOUT_MS}', true) AS applied
+    ), requested AS (
       SELECT (
         date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
       ) AS retention_hour
@@ -98,7 +101,8 @@ export async function runRuntimeLogRetention(
     ), expired AS MATERIALIZED (
       SELECT log.id
       FROM runtime_logs AS log
-      WHERE EXISTS (SELECT 1 FROM claimed)
+      WHERE EXISTS (SELECT 1 FROM timeout_guard)
+        AND EXISTS (SELECT 1 FROM claimed)
         AND log.received_at < $2::timestamptz
       ORDER BY log.received_at, log.id
       LIMIT $3

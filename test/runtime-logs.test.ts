@@ -69,6 +69,7 @@ test('the five-minute cron wrapper opens one small UTC retention slot per hour',
     await runRuntimeLogRetention(database, new Date('2026-03-17T12:04:59.999Z')),
     { ran: true, deleted: 3 },
   )
+  assert.match(calls[0]!.text, /set_config\(\s*'statement_timeout'\s*,\s*'15000'\s*,\s*true\s*\)/iu)
   assert.match(calls[0]!.text, /INSERT\s+INTO\s+runtime_log_retention_state/iu)
   assert.match(calls[0]!.text, /ON\s+CONFLICT\s*\(singleton\)\s+DO\s+UPDATE/iu)
   assert.match(calls[0]!.text, /received_at\s*<\s*\$2/iu)

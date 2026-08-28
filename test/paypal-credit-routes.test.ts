@@ -118,6 +118,30 @@ test('unusable declared lengths reject before DB or network work', async () => {
   assert.equal(paypal.calls.length, 0)
 })
 
+test('missing PayPal signature headers answer 401 before any PayPal verification call', async () => {
+  const { app, database, paypal } = configuredApp()
+  const response = await app.request('/api/city-credit/paypal/webhook', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'live-probe-dispute',
+      event_type: 'CUSTOMER.DISPUTE.CREATED',
+      resource: {
+        dispute_id: 'PP-D-LIVE-PROBE',
+        status: 'WAITING_FOR_SELLER_RESPONSE',
+        disputed_transactions: [{ seller_transaction_id: 'LIVE-PROBE-CAPTURE' }],
+      },
+    }),
+  })
+
+  assert.equal(response.status, 401, await response.clone().text())
+  assert.deepEqual(await response.json(), {
+    error: 'PayPal webhook signature was not verified.',
+  })
+  assert.equal(paypal.calls.length, 0)
+  assert.equal(database.calls.length, 1, 'the route still spends one bounded webhook rate slot')
+})
+
 test('headerless bodies are refused with their real causes: empty names empty, oversized names the bound', async () => {
   // Production traffic carries no Content-Length, so these two messages are
   // the only voice of the body rules a live caller can ever hear.

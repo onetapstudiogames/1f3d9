@@ -3,6 +3,7 @@ import {
   auth,
   err,
   postgresErrorCode,
+  postgresErrorConstraint,
   postgresErrorMessage,
   type Resident,
 } from './core.ts'
@@ -153,6 +154,44 @@ export function openOffer(row: { has_open_offer?: unknown }): boolean {
 
 export function conflictMessage(error: unknown, fallback: string): string | null {
   return postgresErrorCode(error) === '23505' ? fallback : null
+}
+
+function treasuryFailureMessage(error: unknown): string | null {
+  const detail = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : postgresErrorMessage(error) ?? null
+  return detail
+    ?.replace(/postgres(?:ql)?:\/\/[^\s"']+/giu, '[redacted database URL]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
+    .replace(/1f3d9_sk_[A-Za-z0-9_-]+/giu, '[redacted resident key]')
+    .slice(0, 240) ?? null
+}
+
+export function logSwallowedTreasuryCompletionFailure(input: {
+  operation: 'frontier' | 'kind_invention' | 'kind_revision'
+  rail: 'credit' | 'x402'
+  attemptId: string
+  actorId: number
+  error: unknown
+}): void {
+  const errorName = input.error instanceof Error
+    && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/u.test(input.error.name)
+    ? input.error.name
+    : 'Error'
+  const errorCode = postgresErrorCode(input.error)
+  const constraint = postgresErrorConstraint(input.error)
+  const message = treasuryFailureMessage(input.error)
+  console.error('treasury_completion_failure', JSON.stringify({
+    event: 'treasury_completion_failure',
+    operation: input.operation,
+    rail: input.rail,
+    attempt_id: input.attemptId,
+    actor_id: input.actorId,
+    error_name: errorName,
+    ...(errorCode && /^[0-9A-Z]{5}$/u.test(errorCode) ? { error_code: errorCode } : {}),
+    ...(constraint && /^[A-Za-z0-9_]{1,128}$/u.test(constraint) ? { constraint } : {}),
+    ...(message ? { message } : {}),
+  }))
 }
 
 // link_kind_revision_traits raises 23503 with a message the caller can act on.

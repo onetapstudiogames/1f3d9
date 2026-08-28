@@ -158,6 +158,11 @@ interface FakeResidentRefusalState {
   causeHash: string
   repetitionCount: number
 }
+interface FakeTreasuryCompletionFailure {
+  code: string
+  message: string
+  constraint?: string
+}
 interface FakeFounderPayPalDispute {
   dispute_id: string
   state: 'open' | 'resolved_seller' | 'resolved_against_seller' | 'resolution_review'
@@ -237,6 +242,7 @@ interface FakeState {
   flagSlotsUsed: Record<string, number>
   failPaidWriteOnce: boolean
   interruptTreasuryCompletionOnce: boolean
+  treasuryCompletionFailure: FakeTreasuryCompletionFailure | null
   treasuryCompletionHeader?: string
   placeDescription: string
   roomPurpose: string
@@ -323,6 +329,7 @@ const initialState = (): FakeState => ({
   flagSlotsUsed: {},
   failPaidWriteOnce: false,
   interruptTreasuryCompletionOnce: false,
+  treasuryCompletionFailure: null,
   placeDescription: 'a place made from words',
   roomPurpose: '',
   frontMatterThingIds: [],
@@ -1731,6 +1738,14 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       : new Date(attempt.recovery_deadline_at).getTime()
     if (deadline != null && deadline <= Date.now()) {
       return [{ state: 'deadline_passed', attempt_id: attemptId }]
+    }
+    if (state.treasuryCompletionFailure) {
+      const failure = state.treasuryCompletionFailure
+      state = { ...state, treasuryCompletionFailure: null }
+      throw Object.assign(new Error(failure.message), {
+        code: failure.code,
+        ...(failure.constraint ? { constraint: failure.constraint } : {}),
+      })
     }
     if (deadline == null || state.failPaidWriteOnce || !attempt.request_json) {
       if (state.failPaidWriteOnce) state = { ...state, failPaidWriteOnce: false }
@@ -6673,6 +6688,61 @@ test('every post-debit city-credit fee failure appends one exact return and repl
     assert.equal(cityCreditDomainWriteCount(), 1, `${creditCase.label}: replay repeated the failed domain write`)
     assert.equal(networkCalled('/settle'), false, creditCase.label)
   }
+})
+
+test('a paid kind invention logs its swallowed PostgreSQL failure before returning city fee credit', async t => {
+  reset({
+    scenario: 'paid claims',
+    cityCreditBalances: new Map([[7, 1_000_000n]]),
+    treasuryCompletionFailure: {
+      code: '23514',
+      message: 'city credit response body does not match its canonical response',
+      constraint: 'payment_attempts_response_shape',
+    },
+  })
+  const logged: unknown[][] = []
+  t.mock.method(console, 'error', (...values: unknown[]) => {
+    logged.push(values)
+  })
+  const response = await app.request('/api/kind', {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'X-1F3D9-FEE-CREDIT': 'wave4-kind-log-0001',
+    },
+    body: JSON.stringify({
+      name: 'logged-credit-kind',
+      description: 'prove the SQLSTATE is kept',
+      traits: [],
+      recipe: [],
+    }),
+  })
+
+  assert.equal(response.status, 503, await response.clone().text())
+  assert.deepEqual(await response.json(), {
+    error: 'kind invention failed before completion; city fee credit returned',
+    city_fee_credit: 'credit_returned',
+    returned_usdc: '1.000000',
+  })
+  assert.equal(state.cityCreditBalances.get(7), 1_000_000n)
+  assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1)
+  assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1)
+  assert.equal(logged.length, 1)
+  assert.equal(logged[0]?.[0], 'treasury_completion_failure')
+  const record = JSON.parse(String(logged[0]?.[1])) as Record<string, unknown>
+  assert.deepEqual({
+    event: record.event,
+    operation: record.operation,
+    rail: record.rail,
+    error_code: record.error_code,
+    constraint: record.constraint,
+  }, {
+    event: 'treasury_completion_failure',
+    operation: 'kind_invention',
+    rail: 'credit',
+    error_code: '23514',
+    constraint: 'payment_attempts_response_shape',
+  })
 })
 
 test('concurrent duplicate city-credit fee calls make one debit and one domain effect for every action', async () => {

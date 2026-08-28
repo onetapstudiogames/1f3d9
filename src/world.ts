@@ -31,6 +31,7 @@ import {
   hasOnly,
   isResponse,
   jsonBody,
+  logSwallowedTreasuryCompletionFailure,
   openOffer,
   reconcileTreasuryCompletionNoEffect,
   returnFailedTreasuryFee,
@@ -575,6 +576,15 @@ export function mountWorldRoutes(app: Hono): void {
       )
     } catch (error) {
       const message = conflictMessage(error, 'place name or payment proof already used')
+      if (fee.rail === 'credit' || message) {
+        logSwallowedTreasuryCompletionFailure({
+          operation: 'frontier',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          actorId: resident.id,
+          error,
+        })
+      }
       if (fee.rail === 'credit') {
         return await returnFailedTreasuryFee(
           fee,
@@ -891,6 +901,15 @@ export function mountWorldRoutes(app: Hono): void {
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
       const message = conflictMessage(error, 'kind name or payment proof already used')
+      if (fee.rail === 'credit' || unknownTrait || message) {
+        logSwallowedTreasuryCompletionFailure({
+          operation: 'kind_invention',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          actorId: resident.id,
+          error,
+        })
+      }
       if (fee.rail === 'credit') {
         return await returnFailedTreasuryFee(
           fee,
@@ -995,6 +1014,15 @@ export function mountWorldRoutes(app: Hono): void {
     } catch (error) {
       const unknownTrait = unknownTraitMessage(error)
       const message = conflictMessage(error, 'payment proof already used')
+      if (fee.rail === 'credit' || unknownTrait || message) {
+        logSwallowedTreasuryCompletionFailure({
+          operation: 'kind_revision',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          actorId: resident.id,
+          error,
+        })
+      }
       if (fee.rail === 'credit') {
         return await returnFailedTreasuryFee(
           fee,

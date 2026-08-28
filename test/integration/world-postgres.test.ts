@@ -38,6 +38,10 @@ const sql = (async (
   }
   return result.rows as Record<string, unknown>[]
 }) as unknown as IntegrationSql
+sql.query = async (text, values = []) => {
+  assert.ok(database, 'the PostgreSQL test client must be connected')
+  return (await database.query(text, [...values])).rows as Record<string, unknown>[]
+}
 
 function transactionSql(client: PoolClient): TaggedSql {
   const tagged = (async (
@@ -289,12 +293,18 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     })
 
     const { Hono } = await import('hono')
+    const { issueCityFeeCredit } = await import('../../src/city-credit.ts')
     const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
     const { mountSocietyRoutes } = await import('../../src/society.ts')
     const { mountWorldRoutes } = await import('../../src/world.ts')
     const app = new Hono()
     mountSocietyRoutes(app)
     mountWorldRoutes(app)
+    const cityCreditDatabase = {
+      query: async (text: string, params: readonly unknown[] | unknown[] = []) => (
+        await database!.query(text, [...params])
+      ).rows as Record<string, unknown>[],
+    }
 
     await t.test('the reported parent and child both accept make through the public route', async () => {
       const existingRoomId = await resetDatabase()
@@ -399,6 +409,145 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
         { action_place_id: 112, thing_place_id: 112, event_place_id: '112', status: 'applied' },
         { action_place_id: 173, thing_place_id: 173, event_place_id: '173', status: 'applied' },
       ])
+    })
+
+    await t.test('twelve immediate paid kind inventions complete through the public route in real PostgreSQL', async () => {
+      await resetDatabase()
+      for (let index = 0; index < 12; index += 1) {
+        const issued = await issueCityFeeCredit(cityCreditDatabase, {
+          founderId: 1,
+          residentId: 2,
+          sourceKey: `route-kind-burst-credit-${index.toString().padStart(2, '0')}`,
+          reason: `fund immediate route kind invention ${index}`,
+        })
+        assert.equal(issued.disposition, 'created')
+      }
+
+      const responses = []
+      for (let index = 0; index < 12; index += 1) {
+        responses.push(await app.request('/api/kind', {
+          method: 'POST',
+          headers: {
+            ...bearer(neighborSecret),
+            'content-type': 'application/json',
+            'X-1F3D9-FEE-CREDIT': `route-kind-burst-request-${index.toString().padStart(2, '0')}`,
+          },
+          body: JSON.stringify({
+            name: `route-kind-burst-${index.toString().padStart(2, '0')}`,
+            description: `Immediate route kind invention ${index}.`,
+            traits: [],
+            recipe: [],
+          }),
+        }))
+      }
+
+      for (const [index, response] of responses.entries()) {
+        assert.equal(response.status, 201, `request ${index}: ${await response.clone().text()}`)
+        const body = await response.json() as {
+          kind: { owner_id: number; name: string }
+          city_fee_credit: { spent_usdc: string }
+        }
+        assert.equal(body.kind.owner_id, 2)
+        assert.equal(body.kind.name, `route-kind-burst-${index.toString().padStart(2, '0')}`)
+        assert.equal(body.city_fee_credit.spent_usdc, '1.000000')
+      }
+
+      const finalState = await database!.query<{
+        completed_attempts: number
+        spend_entries: number
+        return_entries: number
+        kind_count: number
+        balance_units: string
+      }>(`
+        SELECT
+          (SELECT count(*)::int FROM payment_attempts WHERE actor_id = 2 AND status = 'completed')
+            AS completed_attempts,
+          (SELECT count(*)::int FROM city_credit_entries WHERE resident_id = 2 AND entry_kind = 'spend')
+            AS spend_entries,
+          (SELECT count(*)::int FROM city_credit_entries WHERE resident_id = 2 AND entry_kind = 'return')
+            AS return_entries,
+          (SELECT count(*)::int FROM kinds WHERE owner_id = 2 AND name LIKE 'route-kind-burst-%')
+            AS kind_count,
+          (SELECT balance_units::text FROM city_credit_accounts WHERE resident_id = 2)
+            AS balance_units
+      `)
+      assert.deepEqual(finalState.rows, [{
+        completed_attempts: 12,
+        spend_entries: 12,
+        return_entries: 0,
+        kind_count: 12,
+        balance_units: '0',
+      }])
+    })
+
+    await t.test('twelve concurrent paid kind inventions complete through the public route in real PostgreSQL', async () => {
+      await resetDatabase()
+      for (let index = 0; index < 12; index += 1) {
+        const issued = await issueCityFeeCredit(cityCreditDatabase, {
+          founderId: 1,
+          residentId: 2,
+          sourceKey: `route-kind-concurrent-credit-${index.toString().padStart(2, '0')}`,
+          reason: `fund concurrent route kind invention ${index}`,
+        })
+        assert.equal(issued.disposition, 'created')
+      }
+
+      const responses = await Promise.all(
+        Array.from({ length: 12 }, async (_, index) => (
+          await app.request('/api/kind', {
+            method: 'POST',
+            headers: {
+              ...bearer(neighborSecret),
+              'content-type': 'application/json',
+              'X-1F3D9-FEE-CREDIT': `route-kind-concurrent-request-${index.toString().padStart(2, '0')}`,
+            },
+            body: JSON.stringify({
+              name: `route-kind-concurrent-${index.toString().padStart(2, '0')}`,
+              description: `Concurrent route kind invention ${index}.`,
+              traits: [],
+              recipe: [],
+            }),
+          })
+        )),
+      )
+
+      for (const [index, response] of responses.entries()) {
+        assert.equal(response.status, 201, `request ${index}: ${await response.clone().text()}`)
+        const body = await response.json() as {
+          kind: { owner_id: number; name: string }
+          city_fee_credit: { spent_usdc: string }
+        }
+        assert.equal(body.kind.owner_id, 2)
+        assert.equal(body.kind.name, `route-kind-concurrent-${index.toString().padStart(2, '0')}`)
+        assert.equal(body.city_fee_credit.spent_usdc, '1.000000')
+      }
+
+      const finalState = await database!.query<{
+        completed_attempts: number
+        spend_entries: number
+        return_entries: number
+        kind_count: number
+        balance_units: string
+      }>(`
+        SELECT
+          (SELECT count(*)::int FROM payment_attempts WHERE actor_id = 2 AND status = 'completed')
+            AS completed_attempts,
+          (SELECT count(*)::int FROM city_credit_entries WHERE resident_id = 2 AND entry_kind = 'spend')
+            AS spend_entries,
+          (SELECT count(*)::int FROM city_credit_entries WHERE resident_id = 2 AND entry_kind = 'return')
+            AS return_entries,
+          (SELECT count(*)::int FROM kinds WHERE owner_id = 2 AND name LIKE 'route-kind-concurrent-%')
+            AS kind_count,
+          (SELECT balance_units::text FROM city_credit_accounts WHERE resident_id = 2)
+            AS balance_units
+      `)
+      assert.deepEqual(finalState.rows, [{
+        completed_attempts: 12,
+        spend_entries: 12,
+        return_entries: 0,
+        kind_count: 12,
+        balance_units: '0',
+      }])
     })
 
     await t.test('an existing agreement stays closed until its creator opts in', async () => {

@@ -14,6 +14,7 @@ import {
 import {
   capturePayPalCreditOrder, createPayPalCreditOrder, createWeeklyAllowancePlan,
   createWeeklyAllowanceProduct, createWeeklyAllowanceSubscription,
+  PayPalWebhookSignatureError,
   paypalHostedApprovalUrl, paypalReadiness,
   type PayPalEnvironment,
 } from './paypal-credit.ts'
@@ -407,6 +408,9 @@ function responseFailure(
         : error.message,
       ...error.details,
     }, error.status)
+  }
+  if (error instanceof PayPalWebhookSignatureError) {
+    return c.json({ error: 'PayPal webhook signature was not verified.' }, 401)
   }
   if (error instanceof PayPalCreditStoreConflictError || error instanceof PrepaidCreditConflictError) {
     if (operation === 'webhook') {
