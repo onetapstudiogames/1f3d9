@@ -4816,11 +4816,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       tab.tabIndex = active ? 0 : -1
       if (active && tab.parentElement) {
         const tabList = tab.parentElement
-        const left = tab.offsetLeft
-        const right = left + tab.offsetWidth
-        if (left < tabList.scrollLeft) tabList.scrollLeft = left
-        if (right > tabList.scrollLeft + tabList.clientWidth) {
-          tabList.scrollLeft = right - tabList.clientWidth
+        const tabBox = tab.getBoundingClientRect()
+        const tabListBox = tabList.getBoundingClientRect()
+        if (tabBox.left < tabListBox.left) {
+          tabList.scrollLeft -= Math.ceil(tabListBox.left - tabBox.left)
+        } else if (tabBox.right > tabListBox.right) {
+          tabList.scrollLeft += Math.ceil(tabBox.right - tabListBox.right)
         }
       }
     }
