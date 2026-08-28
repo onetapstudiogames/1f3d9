@@ -42,6 +42,7 @@ type LiveClientExports = Readonly<{
     rows: readonly CapacityRow[],
     capacity: number,
     pinnedIds: readonly number[],
+    exactTotal?: number,
   ) => Readonly<{
     visible: readonly CapacityRow[]
     overflowCount: number
@@ -240,6 +241,22 @@ test('thing capacity reserves the focused interaction thing with an exact count'
   assert.deepEqual(selection.visible.map(row => row.id).sort((a, b) => a - b), [10, 14])
   assert.equal(selection.overflowCount, 3)
   assert.deepEqual(things.map(row => row.id), [10, 11, 12, 13, 14])
+})
+
+test('thing capacity counts unloaded survey rows without inventing specimens', () => {
+  const selectCapacity = liveClientExports.windowLiveCapacitySelection
+  assert.equal(typeof selectCapacity, 'function')
+  if (!selectCapacity) return
+
+  const loaded = Object.freeze([
+    Object.freeze({ id: 20, label: 'loaded twenty' }),
+    Object.freeze({ id: 21, label: 'loaded twenty-one' }),
+  ])
+  const selection = selectCapacity(loaded, 5, Object.freeze([]), 8)
+
+  assert.deepEqual(selection.visible.map(row => row.id), [20, 21])
+  assert.equal(selection.overflowCount, 6)
+  assert.deepEqual(loaded.map(row => row.id), [20, 21])
 })
 
 test('capacity stays bounded when focus pins exceed the ordinary slot count', () => {

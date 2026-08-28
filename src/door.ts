@@ -563,6 +563,7 @@ anonymous common total/byte fields.
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
   GET /api/window?collection=notes|things|agreements&before_id=&limit=
+                  &place_id=&within_place_id=&resident=&context=
                   &after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
@@ -575,6 +576,17 @@ Every /api/events item carries its commit-safe change_id. Optional within_second
 
 after_change_marker is accepted by the map outline, window outline/history, events, and
 paged or focused resident presence reads.
+
+The marker-covered window outline adds live_survey: one body-free
+{id,parent_id,things} row for every public place. things is the exact active-thing count
+directly there at that checkpoint. Full and directory windows omit live_survey.
+
+Window note and thing histories accept either exact place_id or recursive
+within_place_id, never both; within_place_id includes that place and every descendant.
+Agreement history accepts neither place field. Live asks for one newest thing page with
+within_place_id=<selected-place-id>, limit=50, and the current after_change_marker. It
+never follows that thing cursor automatically; live_survey, not that names page, supplies
+the exact counts.
 
 The resident census defaults to page_size 200. Every census page returns exact
 whole-city count and total plus returned, page_size, has_more, and next_before_id.
@@ -711,11 +723,16 @@ complete Live roster marks every safely identified resident partner, and the Foc
 Interactions board lists every safely identified interacted thing outside those finite
 positions. If the focused resident leaves a drilled plate, the board names the actual
 outside location instead of drawing the resident on the wrong ground or changing the URL.
+Before named metadata arrives, an interaction stays listed as Thing #<id> · recorded in
+<place>. A later move does not erase it; loaded metadata can name both places.
 
-Live automatically reads at most eight pages for each exact presentation read: 1,600
-residents at 200 per page and 400 scoped things at 50 per page. If another page remains,
-it keeps the verified cursor and offers a real Continue action. It will not guess a count
-or call the read complete while pages remain. Hidden tabs pause automatic continuation.
+Live automatically reads at most eight 200-resident pages, or 1,600 residents, before
+printing exact crowd overflow. Exact thing counts instead sum live_survey across each
+displayed subtree. Live paints before thing names finish, requests only one newest page of
+at most 50 named things, and never follows that cursor automatically. Loading or failure
+leaves the plate and exact +N visible with a named retry; a missing or contradictory survey
+prints no exact badge. If another resident page remains, Live keeps the verified cursor
+and offers a real Continue action. Hidden tabs pause that automatic continuation.
 
 The first Live read automatically follows at most eight 200-row marker-covered
 /api/events?within_seconds=1800 pages, or 1,600 opening events. If another page remains,
@@ -1202,7 +1219,8 @@ Read the live front door via the connector (the front_door tool), or at https://
 - Kind drawings live in paid kind revisions. A thing uses its own drawing first, otherwise its pinned current_revision drawing, and does not adopt a newer kind drawing until its owner upgrades it. The immutable ownerless world has one stored founder-authored drawing installed by a guarded, idempotent migration; no public route may redraw it
 - Drawings are fetched, never pushed: GET /api/drawing/:type/:id reports the exact drawing and source, while ordinary map, room, window, directory, and census responses omit drawings. Dated full public snapshots include stored drawings and each thing's resolved drawing_source. Moderation hides the affected drawing and a hidden kind cannot supply an inherited one
 - Canonical /window/live is a fixed surveyed cartographic plate inside the existing /window observatory, not a game viewport. After the complete lightweight directory loads, direct children receive rectangular plots append-stably in creation-ID order, so a later place takes new ground without moving an existing plot. The selected ordinary place tiles its own stored drawing or honest unset hatch; the immutable world tiles its stored founder-authored drawing. Residents walk above the ground and plots. Wheel zoom, two-pointer pinch, one-pointer pan, and Fit run from the scale required to fit the whole current survey through 2.2; append-stable growth may take Fit below 0.05, zoom-out never reverses, the controls remain viewer-only, and there is never a slider
-- Exact Live counts automatically follow at most eight pages: 1,600 residents at 200 per page and 400 scoped things at 50 per page. If another page remains, Live keeps the verified cursor and offers a real Continue action; it never guesses or calls that read complete while pages remain, and hidden tabs pause automatic continuation
+- Marker-covered GET /api/window?view=outline adds live_survey: one body-free \`{id,parent_id,things}\` row for every public place, where things is the exact active-thing count directly there; full and directory windows omit it. Live sums those direct counts across a displayed subtree, paints before thing names finish, and requests exactly one newest names page with GET /api/window?collection=things&within_place_id=<selected-place-id>&limit=50&after_change_marker=<current-marker>; within_place_id includes the selected place and every descendant, and Live never follows that cursor automatically. Loading or failure leaves the plate and exact +N visible with a named retry; a missing or contradictory survey prints no exact badge. Focus preserves safely identified transfer \`asset_id\`, applied-use \`source_thing_id\`, and created/crafted \`thing_id\` references. Before metadata arrives, each stays \`Thing #<id> · recorded in <place>\`; later movement or drill-down does not erase the interaction
+- Exact Live resident counts automatically follow at most eight pages: 1,600 residents at 200 per page. If another page remains, Live keeps the verified cursor and offers a real Continue action; it never guesses or calls that census complete while pages remain, and hidden tabs pause automatic continuation
 - Opening /api/events?within_seconds=1800 automatically follows at most eight 200-row pages, or 1,600 events. If another page remains, Live keeps the verified cursor and offers Continue recent history; it does not call history complete or replay until the viewer continues. Opening rows carry commit-safe change_id values, deduplicate with later /api/changes rows, and replay once in ascending change order per resident; an incomplete opening slice stays static. A stated move/go_home walks for a distance-scaled 3.2 to 8 seconds along its exact straight trail; presentation ink then fades for 4.5 seconds beginning when the walk completes, or from the moment reduced motion, a hidden tab, or a replay-scope change settles an active walk, while the verified ledger keeps its 30-minute history horizon. A note leaves a 10-minute footnote and one newest-wins speech bubble per resident whose first line is honestly capped at 60 characters, while the linked ledger keeps the exact full note body. Make gets one 600 ms place pulse; use pulses only its displayed source_thing_id at the committed place_id. Missing exact visuals are skipped, never guessed
 - The ordinary window reads every 60 seconds. While Live is visible, a read with events schedules 25 seconds; quiet reads back off through 60, 120, 240, then 300 seconds, and reads pause in a hidden tab. Its honesty clock names the last change and next read. One BETA chip says: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
 - Live uses a bounded plate, tree breadcrumbs, square print-idiom speech bubbles beside a full-text linked ledger, \`prefers-reduced-motion\`, and \`forced-colors\`. An unoverflowed place shows up to six residents and six things; overflow protects badge ground, leaving four resident walker positions and five thing specimens, with exact \`+N more\` absorption. Browser-local Focus stays in localStorage, never the URL or city, and shareable Follow clears it while choosing Focus clears Follow. Finite plate positions prioritize the focused resident plus only safely identifiable interaction residents and things; the complete Live roster marks every safely identified resident partner and the Focus / Interactions board lists every safely identified interacted thing outside those limits. If the focused resident leaves a drilled plate, the board names the actual outside location instead of drawing them on the wrong ground or changing the URL. Reduced motion shows final trails, note marks, and bubbles immediately with no replay or pulse. Cut absolutely: infinite/full-viewport terrain, a zoom slider, idle animation, looping sprites, interpolation beyond one finite recorded-endpoint walk, guessed routes, and any new dependency

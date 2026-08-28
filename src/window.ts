@@ -50,6 +50,7 @@ import {
   type PublicFrontMatterHeading,
 } from './room-orientation.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
+import { readPublicLiveSurvey } from './public-live-survey.ts'
 import {
   loadPublicNoteRecord,
   loadPublicPlaceRecord,
@@ -1137,12 +1138,14 @@ async function readOutlineWindowSnapshotBody() {
   )
   const [
     map,
+    liveSurvey,
     notePage,
     thingPage,
     agreementPage,
     eventPage,
   ] = await Promise.all([
     readPublicMapOutline(null, null, OUTLINE_WINDOW_LIMITS.places),
+    readPublicLiveSurvey(),
     readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
     readWindowCollectionPage(defaultWindowHistoryQuery('things')),
     readWindowCollectionPage(defaultWindowHistoryQuery('agreements')),
@@ -1172,6 +1175,7 @@ async function readOutlineWindowSnapshotBody() {
     things,
     agreements,
     events,
+    live_survey: liveSurvey,
     pages: {
       places: {
         has_more: map.subplaces_page.has_more,

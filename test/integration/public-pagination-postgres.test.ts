@@ -2133,6 +2133,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         things: Array<{ id: number }>
         agreements: Array<{ id: number }>
         events: Array<{ id: number }>
+        live_survey?: Array<{ id: number; parent_id: number | null; things: number }>
         pages: {
           places?: { has_more: boolean; next_before_subplace_id: number | null }
           residents?: { has_more: boolean; next_before_id: number | null }
@@ -2150,6 +2151,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.equal(legacyResponse.status, 200)
       const legacy = await legacyResponse.json() as WindowSnapshotBody
       assert.equal(Object.hasOwn(legacy, 'view'), false)
+      assert.equal(Object.hasOwn(legacy, 'live_survey'), false)
       assert.equal(placeTreeCount(legacy.places), city.placeCount)
       assert.equal(legacy.residents.length, city.residentCount)
 
@@ -2157,6 +2159,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.equal(explicitFullResponse.status, 200)
       const explicitFull = await explicitFullResponse.json() as WindowSnapshotBody
       assert.equal(explicitFull.view, 'full')
+      assert.equal(Object.hasOwn(explicitFull, 'live_survey'), false)
       for (const collection of [
         'places', 'residents', 'notes', 'things', 'agreements', 'events',
       ] as const) {
@@ -2167,6 +2170,17 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.equal(outlineResponse.status, 200)
       const snapshot = await outlineResponse.json() as WindowSnapshotBody
       assert.equal(snapshot.view, 'outline')
+      const expectedLiveSurvey = (
+        await postgres.client.query<{ id: number; parent_id: number | null; things: number }>(`
+          SELECT place.id, place.parent_id, totals.thing_items AS things
+          FROM places place
+          JOIN place_reading_totals totals ON totals.place_id = place.id
+          ORDER BY place.id
+        `)
+      ).rows
+      assert.deepEqual(snapshot.live_survey, expectedLiveSurvey)
+      assert.equal(snapshot.live_survey?.every(place =>
+        Object.keys(place).sort().join(',') === 'id,parent_id,things'), true)
       assert.equal(snapshot.places.length, 1)
       assert.equal(snapshot.places[0]?.id, city.worldPlaceId)
       assert.deepEqual(

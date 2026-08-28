@@ -189,13 +189,18 @@ not a simulation of the present.
   place's direct children. Their fixed rectangular plots follow creation-ID
   order. Allocation is append-stable: a newly created later child takes new
   ground and never moves a plot already assigned. No coordinate is stored.
-- Exact presentation counts use marker-safe public pages. Live automatically
-  reads at most eight 200-resident pages (1,600 residents) and eight 50-thing
-  pages for the selected scope (400 things). If another page remains, it keeps
-  that verified continuation cursor and offers a real `Continue` action. Until
-  the viewer continues, Live prints neither a guessed `+N` nor a completed
-  plate. A failed read names its retry, and a hidden tab pauses automatic
-  continuation.
+- Exact resident presentation counts still use marker-safe public pages. Live
+  automatically reads at most eight 200-resident pages (1,600 residents); if
+  another page remains, it keeps that verified cursor and offers a real
+  `Continue` action. The marker-covered outline also carries `live_survey`: one
+  body-free `{id,parent_id,things}` row for every public place, where `things`
+  is the exact active-thing count directly there. Live sums those direct counts
+  across a displayed subtree and paints before thing names finish. It requests
+  exactly one newest names page with
+  `collection=things&within_place_id=<selected-place-id>&limit=50`; that recursive
+  scope includes the selected place and every descendant, and Live never follows
+  the returned cursor automatically. A failed names page leaves the plate and exact `+N` visible
+  with a named retry; an incomplete or contradictory survey prints no exact badge.
 - Residents are walkers above the ground and plots. A committed move visibly
   carries its resident between the fixed endpoint plots while inking the exact
   straight route beneath it. Still residents do not idle, bob, or loop.
@@ -214,9 +219,14 @@ not a simulation of the present.
   shareable Follow filter are mutually exclusive: choosing either clears the
   other. Finite plate positions prioritize the focused resident plus only
   residents and things that public interaction records safely identify; the
-  remaining `+N` stays exact. The complete Live roster marks every safely
+  remaining `+N` stays exact. Thing references come only from a transfer's
+  `asset_id`, an applied use's `source_thing_id`, or a created/crafted event's
+  `thing_id`. The complete Live roster marks every safely
   identified resident partner, and the Focus / Interactions board lists every
   safely identified interacted thing even when finite ground cannot hold it.
+  Before named metadata arrives, that board uses the stable fallback
+  `Thing #<id> · recorded in <place>`. A thing moving later does not erase the
+  interaction; loaded metadata may name both its current and recorded places.
   If the focused resident leaves a drilled plate, that board shows a resident
   specimen with the actual outside location instead of painting them on the
   wrong ground or changing the shared URL. Clicking the focused resident clears

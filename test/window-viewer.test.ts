@@ -170,7 +170,10 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
     /function renderLiveAging\(\)[\s\S]*?windowLivePruneTrailStarts\(\s*state\.live\.trailStarts/u,
   )
   assert.match(WINDOW_JS, /data-live-overflow-count/u)
-  assert.match(WINDOW_JS, /thingsPage\.loading\s*\|\|\s*!thingsPage\.initialized\s*\|\|\s*thingsPage\.hasMore/u)
+  assert.match(WINDOW_JS, /function liveSurveyIsComplete/u)
+  assert.match(WINDOW_JS, /Exact \+N thing counts come from the fixed survey/u)
+  assert.match(WINDOW_JS, /!thingsPage\.loading\s*&&\s*!thingsPage\.initialized/u)
+  assert.doesNotMatch(WINDOW_JS, /Reading every public thing in this plate/u)
   assert.match(WINDOW_CSS, /\.live-viewport\s*\{[\s\S]*?touch-action:\s*none/u)
   assert.match(WINDOW_CSS, /\.live-stage\s*\{[\s\S]*?transform-origin:\s*0 0/u)
   assert.match(WINDOW_JS, /live-replay-portrait/u)

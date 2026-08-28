@@ -26,8 +26,8 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 57)
-  assert.match(contributorGuide, /\(57 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 58)
+  assert.match(contributorGuide, /\(58 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -41,6 +41,7 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 55 \|[^\n]*Repeated authenticated rule refusals change explanation[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 56 \|[^\n]*Live motion replays only complete, commit-ordered[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 57 \|[^\n]*Live is a fixed surveyed world plate[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 58 \|[^\n]*Live separates exact thing counts from named thing specimens[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -826,6 +827,22 @@ test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
     assert.match(text, /\bsource_thing_id\b/iu, `${name}: used thing reference`)
     assert.match(text, /\bsource_thing_id\b[\s\S]{0,120}\bplace_id\b/iu, `${name}: committed use place`)
     assert.match(text, /give[\s\S]{0,180}\btransfer\b[\s\S]{0,220}consume[\s\S]{0,180}\bthing_withdrawn\b/iu, `${name}: typed give and consume events`)
+    assert.match(text, /\blive_survey\b/iu, `${name}: compact exact thing survey`)
+    assert.match(
+      text,
+      /body-free[\s\S]{0,180}(?:(?:direct|directly)[\s\S]{0,100}(?:active )?thing count|(?:active )?thing count[\s\S]{0,100}(?:direct|directly))/iu,
+      `${name}: body-free direct thing counts`,
+    )
+    assert.match(
+      text,
+      /one[\s\S]{0,100}(?:newest|named)[\s\S]{0,100}(?:50|fifty)[\s\S]{0,180}(?:never|does not)[\s\S]{0,100}(?:cursor|second page)/iu,
+      `${name}: one bounded named-thing page`,
+    )
+    assert.match(
+      text,
+      /Thing #(?:23|<id>)[\s\S]{0,100}recorded in/iu,
+      `${name}: Focus fallback keeps a stable thing id and recorded place`,
+    )
   }
 
   for (const [name, text] of [

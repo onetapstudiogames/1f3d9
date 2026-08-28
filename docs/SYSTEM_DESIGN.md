@@ -286,21 +286,33 @@ five thing specimens, and reports every omission as an exact `+N more` with an i
 absorption edge. A viewer-local resident focus is stored only in browser `localStorage`,
 not in the URL or city. Focus and the shareable Follow filter clear one another. Finite
 plate positions prioritize the chosen resident and only interaction residents and things
-safely named by public records; the remaining `+N` stays exact. The complete Live roster
+safely named by public records: a transfer's `asset_id`, an applied use's
+`source_thing_id`, or a created/crafted event's `thing_id`. The remaining `+N` stays exact. The complete Live roster
 marks every safely identified resident partner, while the Focus / Interactions board lists
 every safely identified interacted thing outside those finite positions. Separate
 drawing-detail reads run with at most four active and 32 waiting in the browser. If the
 focused resident leaves a drilled plate, the board names the resident's actual outside
 location instead of adding them to that plate's occupancy, moving the ground, or changing
-the shared URL.
+the shared URL. Before named thing metadata arrives, the board uses
+`Thing #<id> · recorded in <place>`. Later movement does not erase that interaction;
+loaded metadata may name both the current and recorded places.
 
-Live automatically follows no more than eight pages for each completeness read: eight
-200-row resident-presence pages (1,600 residents), eight 50-row scoped-thing pages (400
-things), and eight 200-row marker-covered `/api/events?within_seconds=1800` pages (1,600
-opening events). When a response still has another page, Live retains its verified cursor
-and presents a real Continue action. It neither guesses a count nor calls a collection or
-opening history complete while pages remain; opening events stay static instead of
-replaying. Hidden tabs pause all three automatic continuations.
+The marker-covered outline carries `live_survey`: one body-free
+`{id,parent_id,things}` row for every public place, where `things` is the exact active-thing
+count directly there at that checkpoint. The browser verifies its topology and global sum,
+then sums direct counts across each displayed subtree. Live paints after the complete
+directory and resident census, before thing names finish. It requests exactly one newest
+names page with `collection=things&within_place_id=<selected-place-id>&limit=50`; that
+recursive scope includes the selected place and every descendant. It never follows that cursor automatically
+or treats those specimens as the count. Loading or failure leaves the plate and exact `+N`
+visible with a retry for names; a missing or contradictory survey prints no exact badge.
+
+Live automatically follows no more than eight 200-row resident-presence pages (1,600
+residents) and eight 200-row marker-covered `/api/events?within_seconds=1800` pages (1,600
+opening events). When either response still has another page, Live retains its verified
+cursor and presents a real Continue action. It never calls those reads complete while pages
+remain; opening events stay static instead of replaying. Hidden tabs pause both automatic
+continuations.
 
 Every returned opening event carries its commit-safe `change_id`, so opening rows and
 later `/api/changes` rows share one deduplicated recorded order. The page replays each
@@ -330,9 +342,10 @@ then 300 seconds. Reads pause while the browser tab is hidden. The visible clock
 for 14 minutes. It moves only when residents act.` Exactly one square `BETA` chip appears
 with this sentence: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
 
-Before printing exact resident or thing overflow, Live completes marker-safe public
-resident presence and scoped thing pages, including any viewer-requested continuation;
-failure leaves a named retry instead of a guessed `+N`. Below the existing 54rem
+Before printing exact resident overflow, Live completes marker-safe public resident
+presence, including any viewer-requested continuation. Exact thing overflow uses only the
+validated marker-covered `live_survey`, not named-card page completeness. A failed names
+page leaves a named retry without clearing the plate or exact `+N`. Below the existing 54rem
 breakpoint, plate, ledger, and roster stack vertically;
 viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, and `Fit`/`0` remain between
 the current full-survey Fit scale and 2.2 on the bounded plate.
@@ -865,6 +878,8 @@ work-budget guard before map or history reads begin. The initial recent
 notes, things, agreements, and events stay at 10 per collection; their existing Load
 older controls page backward without changing what is public. Watching one
 place fetches that place plus every nested place as its real bounded server-side slice.
+Only this marker-covered outline response adds `live_survey`, the complete body-free
+direct active-thing counts described above. Legacy/full and directory responses omit it.
 The complete picker is searchable, groups each continent under `Inside <name>`, and lists
 the continent itself first as `<name> — the whole continent`. Following one resident
 fetches that resident's slice and bounded same-place context notes so

@@ -18,6 +18,18 @@ const replayThings = [20, 21, 22, 23, 24, 25, 26, 9].map(id => ({
   name: id === 9 ? 'field lantern' : `harbor keepsake ${id}`,
 }))
 
+function replayPlaceScopeIds(rootId: number) {
+  return new Set(replayPlaces.filter(place => {
+    if (place.id === rootId) return true
+    let parentId: number | null = place.parent_id
+    while (parentId !== null) {
+      if (parentId === rootId) return true
+      parentId = replayPlaces.find(candidate => candidate.id === parentId)?.parent_id ?? null
+    }
+    return false
+  }).map(place => place.id))
+}
+
 function replayResidentRows(now: number, placeId: number) {
   return [{ id: 5, handle: 'map-walker', current_place_id: placeId,
     joined_at: new Date(now - 86_400_000).toISOString(), asleep: false },
@@ -61,8 +73,8 @@ function replaySnapshot(now: number, published: boolean, marker: string) {
         }] : [],
       })),
     }],
-    // The ordinary outline is deliberately bounded. Live must complete the
-    // public census and scoped thing pages before printing an exact +N.
+    // The ordinary outline is deliberately bounded. Live uses the compact
+    // fixed survey for exact +N while one scoped named-card page loads.
     residents: residents.slice(0, 3),
     notes: [],
     things: things.slice(0, 2),
@@ -75,6 +87,11 @@ function replaySnapshot(now: number, published: boolean, marker: string) {
       notes: { has_more: false }, things: { has_more: true, next_before_id: things[1]!.id },
       agreements: { has_more: false }, events: { has_more: false },
     },
+    live_survey: replayPlaces.map(place => ({
+      id: place.id,
+      parent_id: place.parent_id,
+      things: things.filter(thing => thing.place_id === place.id).length,
+    })),
     refreshed_at: new Date(now).toISOString(),
   }
 }
@@ -99,6 +116,10 @@ async function installReplayRoutes(
     openingMovement?: boolean
     maximumHandle?: string
     staggeredArrivalDeadlines?: boolean
+    holdThingPage?: boolean
+    surveyTotalMismatch?: boolean
+    coercibleSurveyThing?: false | null | '' | '0'
+    thingFailure?: boolean
   }> = {},
 ) {
   let published = false
@@ -108,10 +129,16 @@ async function installReplayRoutes(
   let windowRequests = 0
   let changeRequests = 0
   const openingBeforeIds: Array<string | null> = []
+  const thingWithinPlaceIds: Array<string | null> = []
+  const thingLimits: Array<string | null> = []
   let activeNoteRequests = 0
   let maximumNoteRequests = 0
   let activeDrawingRequests = 0
   let maximumDrawingRequests = 0
+  let releaseHeldThingPage = () => {}
+  const heldThingPage = new Promise<void>(resolve => {
+    releaseHeldThingPage = resolve
+  })
   const currentMarker = () => published ? controls.secondArrival ? '17' : '16' : '10'
   const controlledResidentRows = (marker: string) => replayResidentRows(
     now,
@@ -140,8 +167,16 @@ async function installReplayRoutes(
     const marker = requested ?? currentMarker()
     if (url.searchParams.get('collection') === 'things') {
       thingPageRequests += 1
+      const withinPlaceId = url.searchParams.get('within_place_id')
+      thingWithinPlaceIds.push(withinPlaceId)
+      thingLimits.push(url.searchParams.get('limit'))
+      if (controls.holdThingPage) await heldThingPage
       if (controls.thingDelayMs) {
         await new Promise(resolve => setTimeout(resolve, controls.thingDelayMs))
+      }
+      if (controls.thingFailure) {
+        await route.fulfill({ status: 503, json: { error: 'named things unavailable' } })
+        return
       }
       if (thingPaging !== 'complete') {
         if (thingPaging === 'stale' && thingPageRequests <= 2) {
@@ -165,16 +200,35 @@ async function installReplayRoutes(
         return
       }
       const placeId = marker === '10' ? 2 : 3
+      const scope = replayPlaceScopeIds(Number(withinPlaceId))
+      const things = replayThingRows(now, placeId)
+        .filter(thing => scope.has(thing.place_id))
       await route.fulfill({ json: {
         change_marker: marker,
-        things: replayThingRows(now, placeId),
-        total: replayThings.length,
+        things,
+        total: things.length,
         has_more: false,
         next_before_id: null,
       } })
       return
     }
-    const snapshot = replaySnapshot(now, marker !== '10', marker)
+    const baseSnapshot = replaySnapshot(now, marker !== '10', marker)
+    const surveyedSnapshot = controls.surveyTotalMismatch
+      ? {
+          ...baseSnapshot,
+          live_survey: baseSnapshot.live_survey.map(place => place.id === 2
+            ? { ...place, things: Math.max(0, place.things - 1) }
+            : place),
+        }
+      : baseSnapshot
+    const snapshot = Object.hasOwn(controls, 'coercibleSurveyThing')
+      ? {
+          ...surveyedSnapshot,
+          live_survey: surveyedSnapshot.live_survey.map(place => place.id === 1
+            ? { ...place, things: controls.coercibleSurveyThing }
+            : place),
+        }
+      : surveyedSnapshot
     const residents = controlledResidentRows(marker)
     await route.fulfill({ json: {
       ...snapshot,
@@ -298,6 +352,16 @@ async function installReplayRoutes(
           },
         })),
         {
+          id: 408, change_id: '9', at: new Date(now - 29_000).toISOString(), kind: 'action',
+          actor: 'map-walker', detail: {
+            action: 'use', status: 'applied', place_id: 3, source_thing_id: 90,
+          },
+        },
+        {
+          id: 409, change_id: '10', at: new Date(now - 28_000).toISOString(),
+          kind: 'thing_created', actor: 'map-walker', detail: { thing_id: 91, place_id: 3 },
+        },
+        {
           id: 399, change_id: '1', at: new Date(now - 30_000).toISOString(), kind: 'note',
           actor: controls.maximumHandle ?? replayCrowd[3]!.handle,
           detail: { place_id: 3, note_id: 77 },
@@ -391,6 +455,8 @@ async function installReplayRoutes(
   return {
     publish: () => { published = true },
     thingPageRequests: () => thingPageRequests,
+    thingWithinPlaceIds: () => [...thingWithinPlaceIds],
+    thingLimits: () => [...thingLimits],
     residentPageRequests: () => residentPageRequests,
     openingEventRequests: () => openingEventRequests,
     openingBeforeIds: () => [...openingBeforeIds],
@@ -400,26 +466,131 @@ async function installReplayRoutes(
     maximumNoteRequests: () => maximumNoteRequests,
     activeDrawingRequests: () => activeDrawingRequests,
     maximumDrawingRequests: () => maximumDrawingRequests,
+    releaseHeldThingPage,
   }
 }
 
-test('Live stops a repeated things cursor instead of repeating public reads', async ({ page }) => {
+test('Live paints exact surveyed counts and Focus ids while named thing cards load', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    holdThingPage: true,
+    manyFocusInteractions: true,
+  })
+  try {
+    await page.goto('/window#view=live')
+    await expect.poll(fixture.thingPageRequests).toBe(1)
+    expect(fixture.thingWithinPlaceIds()).toEqual(['1'])
+    expect(fixture.thingLimits()).toEqual(['50'])
+
+    await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+    await expect(page.locator('.live-plot[data-place-id="2"] .live-thing-more'))
+      .toHaveText('+5 more')
+    await expect(page.locator('.live-plot[data-place-id="2"] .live-thing-more'))
+      .toHaveAttribute('data-live-overflow-count', '5')
+    await expect(page.locator('#live-history-status')).toContainText(
+      'Exact +N thing counts come from the fixed survey while newest named cards load',
+    )
+
+    await expect(page.locator('#live-history-status')).toContainText('history is complete')
+    await page.locator('[data-live-resident-handle="map-walker"]').first().click()
+    await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+    await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(9)
+    await expect(page.locator('#live-focus-interactions [data-live-focus-thing="23"]'))
+      .toContainText('Thing #23 · recorded in Harbor room')
+    await expect(page.locator('#live-focus-interactions [data-live-focus-thing="90"]'))
+      .toContainText('Thing #90 · recorded in Harbor room')
+    await expect(page.locator('#live-focus-interactions [data-live-focus-thing="91"]'))
+      .toContainText('Thing #91 · recorded in Harbor room')
+  } finally {
+    fixture.releaseHeldThingPage()
+  }
+
+  await expect(page.locator('.live-plot[data-place-id="2"] .live-thing-more'))
+    .toHaveText('+2 more')
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing="23"]'))
+    .toContainText('harbor keepsake 23 · now in Cinder lane · recorded in Harbor room')
+
+  await page.locator('[data-place-id="3"] .live-plot-open').click()
+  await expect.poll(fixture.thingPageRequests).toBe(2)
+  expect(fixture.thingWithinPlaceIds()).toEqual(['1', '3'])
+  expect(fixture.thingLimits()).toEqual(['50', '50'])
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(9)
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing="23"]'))
+    .toContainText('Thing #23 · recorded in Harbor room')
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing="90"]'))
+    .toContainText('Thing #90 · recorded in Harbor room')
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing="91"]'))
+    .toContainText('Thing #91 · recorded in Harbor room')
+})
+
+test('Live refuses exact thing badges when the fixed survey disagrees', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    surveyTotalMismatch: true,
+  })
+  await page.goto('/window#view=live')
+
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+  await expect(page.locator('#live-history-status')).toContainText(
+    'Exact +N thing counts are unavailable',
+  )
+  await expect(page.locator('.live-thing-more')).toContainText('count unavailable')
+  await expect(page.locator('.live-thing-more[data-live-overflow-count]')).toHaveCount(0)
+})
+
+test('Live rejects a coercible nonnumeric survey count instead of printing exact badges', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    coercibleSurveyThing: false,
+  })
+  await page.goto('/window#view=live')
+
+  await expect(page.getByRole('button', { name: 'Retry reading the public city view' }))
+    .toBeVisible()
+  await expect(page.locator('#live-plates')).toContainText(
+    'The current public city view could not be read.',
+  )
+  await expect(page.locator('.live-thing-more[data-live-overflow-count]')).toHaveCount(0)
+})
+
+test('Live keeps exact surveyed counts when newest thing names fail', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    thingFailure: true,
+  })
+  await page.goto('/window#view=live')
+
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+  await expect(page.locator('.live-plot[data-place-id="2"] .live-thing-more'))
+    .toHaveText('+5 more')
+  await expect(page.locator('#live-history-status')).toContainText(
+    'Exact +N thing counts stay verified, but newest named thing cards could not be read',
+  )
+  await page.getByRole('button', { name: 'Retry named thing cards' }).click()
+  await expect.poll(fixture.thingPageRequests).toBe(2)
+  await expect(page.locator('.live-plot[data-place-id="2"] .live-thing-more'))
+    .toHaveText('+5 more')
+})
+
+test('Live does not chase a repeated cursor after its bounded named thing page', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'stale')
   await page.goto('/window#view=live')
 
-  await expect(page.getByRole('button', { name: 'Retry the complete things count' })).toBeVisible()
-  await expect.poll(fixture.thingPageRequests).toBe(2)
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+  await expect(page.locator('#live-history-status')).toContainText('one-page limit of 50')
+  await expect.poll(fixture.thingPageRequests).toBe(1)
+  await page.waitForTimeout(250)
+  expect(fixture.thingPageRequests()).toBe(1)
 })
 
-test('Live pauses automatic things paging after eight valid pages', async ({ page }) => {
+test('Live stops after one named thing page while the fixed survey keeps exact counts', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'long')
   await page.goto('/window#view=live')
 
-  await expect(page.locator('#live-plates')).toContainText(
-    'Automatic counting pauses after 400 public things',
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+  await expect(page.locator('#live-history-status')).toContainText(
+    'exact +N includes every other public thing in this plate',
   )
-  await expect(page.getByRole('button', { name: 'Continue the exact things count' })).toBeVisible()
-  await expect.poll(fixture.thingPageRequests).toBe(8)
+  await expect.poll(fixture.thingPageRequests).toBe(1)
+  await page.waitForTimeout(250)
+  expect(fixture.thingPageRequests()).toBe(1)
 })
 
 test('Live pauses automatic resident paging after eight valid pages', async ({ page }) => {
@@ -505,7 +676,7 @@ test('Live does not continue opening-history reads while hidden and resumes when
   await expect.poll(fixture.openingEventRequests).toBeGreaterThan(1)
 })
 
-test('Live does not continue things reads while hidden and resumes when visible', async ({ page }) => {
+test('Live finishes one named thing page while hidden and does not start another', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'long', 0, {
     thingDelayMs: 500,
   })
@@ -523,7 +694,8 @@ test('Live does not continue things reads while hidden and resumes when visible'
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
     document.dispatchEvent(new Event('visibilitychange'))
   })
-  await expect.poll(fixture.thingPageRequests).toBeGreaterThan(1)
+  await page.waitForTimeout(650)
+  expect(fixture.thingPageRequests()).toBe(1)
 })
 
 test('Live bounds concurrent note detail reads during a visible burst', async ({ page }) => {
@@ -787,10 +959,15 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
 
   await page.locator('[data-live-resident-handle="map-walker"]').first().click()
   await expect(page.locator('#live-roster [data-live-focus-partner]')).toHaveCount(7)
-  await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(7)
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(9)
   const thingIds = await page.locator('#live-focus-interactions [data-live-focus-thing]')
     .evaluateAll(nodes => nodes.map(node => Number((node as HTMLElement).dataset.liveFocusThing)))
-  expect([...thingIds].sort((left, right) => left - right)).toEqual([20, 21, 22, 23, 24, 25, 26])
+  expect([...thingIds].sort((left, right) => left - right))
+    .toEqual([20, 21, 22, 23, 24, 25, 26, 90, 91])
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing="90"]'))
+    .toContainText('Thing #90 · recorded in Harbor room')
+  await expect(page.locator('#live-focus-interactions [data-live-focus-thing="91"]'))
+    .toContainText('Thing #91 · recorded in Harbor room')
   const focusedThingLink = page.locator(
     '#live-focus-interactions [data-live-focus-thing="21"]',
   )

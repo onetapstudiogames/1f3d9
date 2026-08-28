@@ -562,6 +562,7 @@ anonymous common total/byte fields.
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
   GET /api/window?collection=notes|things|agreements&before_id=&limit=
+                  &place_id=&within_place_id=&resident=&context=
                   &after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
@@ -574,6 +575,17 @@ Every /api/events item carries its commit-safe change_id. Optional within_second
 
 after_change_marker is accepted by the map outline, window outline/history, events, and
 paged or focused resident presence reads.
+
+The marker-covered window outline adds live_survey: one body-free
+{id,parent_id,things} row for every public place. things is the exact active-thing count
+directly there at that checkpoint. Full and directory windows omit live_survey.
+
+Window note and thing histories accept either exact place_id or recursive
+within_place_id, never both; within_place_id includes that place and every descendant.
+Agreement history accepts neither place field. Live asks for one newest thing page with
+within_place_id=<selected-place-id>, limit=50, and the current after_change_marker. It
+never follows that thing cursor automatically; live_survey, not that names page, supplies
+the exact counts.
 
 The resident census defaults to page_size 200. Every census page returns exact
 whole-city count and total plus returned, page_size, has_more, and next_before_id.
@@ -710,11 +722,16 @@ complete Live roster marks every safely identified resident partner, and the Foc
 Interactions board lists every safely identified interacted thing outside those finite
 positions. If the focused resident leaves a drilled plate, the board names the actual
 outside location instead of drawing the resident on the wrong ground or changing the URL.
+Before named metadata arrives, an interaction stays listed as Thing #<id> · recorded in
+<place>. A later move does not erase it; loaded metadata can name both places.
 
-Live automatically reads at most eight pages for each exact presentation read: 1,600
-residents at 200 per page and 400 scoped things at 50 per page. If another page remains,
-it keeps the verified cursor and offers a real Continue action. It will not guess a count
-or call the read complete while pages remain. Hidden tabs pause automatic continuation.
+Live automatically reads at most eight 200-resident pages, or 1,600 residents, before
+printing exact crowd overflow. Exact thing counts instead sum live_survey across each
+displayed subtree. Live paints before thing names finish, requests only one newest page of
+at most 50 named things, and never follows that cursor automatically. Loading or failure
+leaves the plate and exact +N visible with a named retry; a missing or contradictory survey
+prints no exact badge. If another resident page remains, Live keeps the verified cursor
+and offers a real Continue action. Hidden tabs pause that automatic continuation.
 
 The first Live read automatically follows at most eight 200-row marker-covered
 /api/events?within_seconds=1800 pages, or 1,600 opening events. If another page remains,

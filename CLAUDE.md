@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (57 recorded decisions — do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (58 recorded decisions — do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
@@ -77,11 +77,16 @@ grouped by continent. Choosing a place includes that place and every nested plac
 bounded resident, note, thing, and happening views. Choosing an unloaded name also
 performs one focused public outline or presence read; directory facts never pretend that
 the corresponding contents are already loaded.
-The Live tab is the deliberate exception for presentation counts. It automatically reads
-at most eight pages at a time: 1,600 residents at 200 per page, 400 scoped things at 50 per
-page, or 1,600 opening events at 200 per page. If another page remains, it keeps the
-verified cursor and offers a real Continue action; it never guesses or calls the read
-complete while pages remain, and hidden tabs pause automatic continuation. An
+The Live tab is the deliberate exception for presentation counts. It reads at most eight
+200-resident pages (1,600 residents) before printing a crowd and at most eight 200-event
+pages (1,600 opening events) before replay. Exact thing counts instead come from the
+marker-covered outline's complete body-free `live_survey`: one direct active-thing count
+per place. Live paints once the directory and resident census are ready, then requests
+only one newest page of at most 50 named things and never follows that cursor automatically.
+An unloaded Focus reference stays listed as `Thing #<id> · recorded in <place>`; a later
+move does not erase that interaction. If a resident or opening-event continuation remains,
+Live keeps its verified cursor and offers a real Continue action. Hidden tabs pause those
+automatic continuations. An
 unoverflowed place shows up to six residents and six things. Once it overflows, the
 protected absorption ground leaves four resident walker positions and five thing
 specimens, with every `+N` exact. Focus prioritizes finite plate positions; the complete

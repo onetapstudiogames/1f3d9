@@ -250,6 +250,7 @@ interface FakeState {
   exactTotalsSuccessfulReads: number
   publicChangeMarker: string
   publicReadMarkerRaces: number
+  publicReadMarkerRaceNeedle: string | null
   laterHolderItems: FakeLaterHolderItem[]
   recentNote: FakeRecentNote | null
   nextNoteId: number
@@ -335,6 +336,7 @@ const initialState = (): FakeState => ({
   exactTotalsSuccessfulReads: 0,
   publicChangeMarker: '9',
   publicReadMarkerRaces: 0,
+  publicReadMarkerRaceNeedle: null,
   laterHolderItems: [{
     mark_id: '2', id: 41, title: 'porch lantern', place_id: 2,
     place_title: 'Lantern Town', date: '2026-08-11T00:00:00.000000Z',
@@ -1221,16 +1223,20 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('/* public:changes-checkpoint */')) {
     return [{ checkpoint: state.publicChangeMarker }]
   }
-  if (state.publicReadMarkerRaces > 0 && [
-    '/* public:map-outline */',
-    '/* public:residents */',
-    '/* public:resident-presence */',
-    '/* public:events */',
-    'from notes note',
-    'from things thing',
-    'from agreements agreement',
-    '/* public:window-outline-totals */',
-  ].some(marker => q.includes(marker))) {
+  const publicReadMarkerRaceNeedle = state.publicReadMarkerRaceNeedle
+  if (state.publicReadMarkerRaces > 0 && (publicReadMarkerRaceNeedle
+    ? q.includes(publicReadMarkerRaceNeedle)
+    : [
+        '/* public:map-outline */',
+        '/* public:residents */',
+        '/* public:resident-presence */',
+        '/* public:events */',
+        'from notes note',
+        'from things thing',
+        'from agreements agreement',
+        '/* public:window-outline-totals */',
+        '/* public:window-live-survey */',
+      ].some(marker => q.includes(marker)))) {
     state = {
       ...state,
       publicChangeMarker: (BigInt(state.publicChangeMarker) + 1n).toString(),
@@ -1243,6 +1249,16 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       kind: 'action', actor: 'tiny-lantern',
       detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
     }]
+  }
+  if (q.includes('/* public:window-live-survey */')) {
+    const places = state.scenario === 'window outline'
+      ? [mapOutlineParent(1), ...mapOutlineRows().sort((left, right) => left.id - right.id)]
+      : [placeRow(1, null), placeRow(2, 1), placeRow(3, 1)]
+    return places.map(place => ({
+      id: place.id,
+      parent_id: place.parent_id,
+      things: place.things,
+    }))
   }
 
   // Once the action resolution committed, every later presence read breaks.
@@ -3980,7 +3996,8 @@ test('window reads retry an interleaved public commit instead of labeling newer 
       name: 'outline snapshot',
       scenario: 'window outline',
       path: '/api/window?view=outline&after_change_marker=20',
-      dataPattern: /\/\* public:residents \*\//iu,
+      dataPattern: /\/\* public:window-live-survey \*\//iu,
+      raceNeedle: '/* public:window-live-survey */',
     },
     {
       name: 'focused or paged map',
@@ -4020,6 +4037,7 @@ test('window reads retry an interleaved public commit instead of labeling newer 
         scenario: entry.scenario,
         publicChangeMarker: '20',
         publicReadMarkerRaces: 1,
+        publicReadMarkerRaceNeedle: 'raceNeedle' in entry ? entry.raceNeedle : null,
       })
       const response = await app.request(entry.path)
       assert.equal(response.status, 200, entry.name)
@@ -4027,6 +4045,11 @@ test('window reads retry an interleaved public commit instead of labeling newer 
         (await response.json() as { change_marker?: string }).change_marker,
         '21',
         `${entry.name} returns the checkpoint proven around its accepted rows`,
+      )
+      assert.equal(
+        state.publicReadMarkerRaces,
+        0,
+        `${entry.name} crosses its named data read rather than an earlier neighbor`,
       )
       assert.ok(
         sqlCalls().filter(call => entry.dataPattern.test(call.query ?? '')).length >= 2,
@@ -4123,6 +4146,7 @@ test('the legacy full window stays exact and explicit full shares its snapshot c
     assert.equal(legacyResponse.status, 200)
     const legacy = await legacyResponse.json() as Record<string, unknown>
     assert.equal(Object.hasOwn(legacy, 'view'), false)
+    assert.equal(Object.hasOwn(legacy, 'live_survey'), false)
     assert.equal(legacy.map_complete, false)
     const callsAfterLegacy = sqlCalls().length
 
@@ -4130,6 +4154,7 @@ test('the legacy full window stays exact and explicit full shares its snapshot c
     assert.equal(explicitResponse.status, 200)
     const explicit = await explicitResponse.json() as Record<string, unknown>
     assert.equal(explicit.view, 'full')
+    assert.equal(Object.hasOwn(explicit, 'live_survey'), false)
     assert.deepEqual(
       Object.fromEntries(Object.entries(explicit).filter(([key]) => key !== 'view')),
       legacy,
@@ -4171,6 +4196,7 @@ test('the outline window bounds its map and presence pages without changing rece
         kind: string
         detail: Record<string, number | string>
       }>
+      live_survey: Array<{ id: number; parent_id: number | null; things: number }>
       pages: {
         places: { has_more: boolean; next_before_subplace_id: number | null }
         residents: { has_more: boolean; next_before_id: number | null }
@@ -4182,6 +4208,15 @@ test('the outline window bounds its map and presence pages without changing rece
     }
     assert.equal(body.view, 'outline')
     assert.equal(body.change_marker, '9')
+    assert.deepEqual(
+      body.live_survey.map(place => place.id),
+      [1, ...recentIds(160).reverse()],
+      'the marker-covered survey carries every place, not only the bounded map page',
+    )
+    assert.equal(body.live_survey.every(place => (
+      Object.keys(place).sort().join(',') === 'id,parent_id,things' &&
+      Number.isSafeInteger(place.things) && place.things >= 0
+    )), true, 'the compact survey exposes only topology and direct thing counts')
     assert.deepEqual(body.places.map(place => place.id), [1])
     assert.deepEqual(body.places[0]?.children.map(place => place.id), recentIds(160).slice(0, 10))
     assert.equal(body.places[0]?.children.every(place => (
@@ -4284,6 +4319,7 @@ test('the directory window is one cached, moderated, body-free statement with ex
       residents: Array<Record<string, unknown>>
     }
     assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents', 'view'])
+    assert.equal(Object.hasOwn(directory, 'live_survey'), false)
     assert.equal(directory.view, 'directory')
     assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
     assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id', 'type'])
@@ -4386,7 +4422,7 @@ test('a busy outline-window census starts no secondary public reads', async () =
     assert.deepEqual(await response.json(), {
       error: 'exact public totals are temporarily busy; retry',
     })
-    const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
+    const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|public:window-live-survey|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
     assert.equal(
       secondaryRead,
       undefined,
@@ -4416,7 +4452,7 @@ test('busy outline-window global totals stop before map or history reads', async
       call.query?.includes('/* public:budgeted-exact */'))
     assert.equal(budgetedReads.length, 2, 'census passes before global totals reject')
     const secondaryRead = sqlCalls().find(call =>
-      /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
+      /public:map-(?:parent|outline)|public:window-live-survey|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
     assert.equal(
       secondaryRead,
       undefined,

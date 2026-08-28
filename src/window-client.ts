@@ -84,8 +84,12 @@ export function windowLiveCapacitySelection<T extends Readonly<{ id: number }>>(
   rows: readonly T[],
   capacity: number,
   pinnedIds: readonly number[],
+  exactTotal = rows.length,
 ): Readonly<{ visible: readonly T[]; overflowCount: number }> {
   const limit = Number.isFinite(capacity) ? Math.max(0, Math.floor(capacity)) : 0
+  const total = Number.isSafeInteger(exactTotal) && exactTotal >= rows.length
+    ? exactTotal
+    : rows.length
   const availableIds = new Set(rows.map(row => row.id))
   const selected = new Set<number>()
   for (const id of pinnedIds) {
@@ -97,7 +101,7 @@ export function windowLiveCapacitySelection<T extends Readonly<{ id: number }>>(
     selected.add(row.id)
   }
   const visible = Object.freeze(rows.filter(row => selected.has(row.id)))
-  return Object.freeze({ visible, overflowCount: Math.max(0, rows.length - visible.length) })
+  return Object.freeze({ visible, overflowCount: Math.max(0, total - visible.length) })
 }
 
 export function windowLivePollDelay(hadEvents: boolean, quietReads: number): number {
@@ -1458,6 +1462,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  function normalizeLiveSurvey(values) {
+    if (values === undefined) return Object.freeze([])
+    if (!Array.isArray(values)) throw new Error('invalid public live survey')
+    const seen = new Set()
+    const rows = values.map(raw => {
+      if (!raw || typeof raw !== 'object') throw new Error('invalid public live survey')
+      const id = safeId(raw.id)
+      const parentId = raw.parent_id === null ? null : safeId(raw.parent_id)
+      const things = raw.things
+      if (!id || (raw.parent_id !== null && !parentId) || parentId === id || seen.has(id) ||
+          typeof things !== 'number' || !Number.isSafeInteger(things) || things < 0) {
+        throw new Error('invalid public live survey')
+      }
+      seen.add(id)
+      return Object.freeze({ id, parent_id: parentId, things })
+    })
+    return Object.freeze(rows)
+  }
+
   function normalizeResidents(values) {
     if (!Array.isArray(values)) return []
     return values.flatMap(raw => {
@@ -2085,6 +2108,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const things = normalizeThings(payload.things)
     const agreements = normalizeAgreements(payload.agreements)
     const events = normalizeEvents(payload.events)
+    const liveSurvey = normalizeLiveSurvey(payload.live_survey)
     const shown = {
       places: flattenPlaces(places, []).length,
       residents: residents.length,
@@ -2124,6 +2148,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       things,
       agreements,
       events,
+      liveSurvey,
       shown,
       totals,
       pages,
@@ -3686,6 +3711,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return Object.freeze([...rows.values()])
   }
 
+  function liveSurveyIsComplete(snapshot) {
+    if (!state.directory.loaded || !snapshot.liveSurvey?.length ||
+        snapshot.liveSurvey.length !== state.directory.places.length) return false
+    const directoryById = new Map(state.directory.places.map(place => [place.id, place]))
+    const topologyMatches = snapshot.liveSurvey.every(place => {
+      const directoryPlace = directoryById.get(place.id)
+      return directoryPlace && directoryPlace.parent_id === place.parent_id
+    })
+    const surveyedThings = snapshot.liveSurvey.reduce((total, place) => total + place.things, 0)
+    return topologyMatches && Number.isSafeInteger(surveyedThings) &&
+      surveyedThings === snapshot.totals.things
+  }
+
+  function liveSurveyThingTotal(snapshot, placeId, includeDescendants) {
+    if (!liveSurveyIsComplete(snapshot)) return null
+    const placeIds = includeDescendants ? placeScopeSet(placeId, snapshot) : new Set([placeId])
+    return snapshot.liveSurvey.reduce((total, place) =>
+      placeIds.has(place.id) ? total + place.things : total, 0)
+  }
+
+  function liveExactThingTotal(snapshot, placeId, loadedCount, includeDescendants) {
+    const surveyedTotal = liveSurveyThingTotal(snapshot, placeId, includeDescendants)
+    return surveyedTotal !== null && surveyedTotal >= loadedCount ? surveyedTotal : null
+  }
+
   function liveFocusPlace(snapshot) {
     const chosen = selectedPlace(snapshot)
     if (chosen) return chosen
@@ -3845,34 +3895,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return Object.freeze([...pins])
   }
 
-  function livePinnedThingIds(snapshot, records, placeId) {
-    const handle = state.live.focusResident
-    if (!handle) return []
-    const focused = displayedResidents(snapshot).find(resident => resident.handle === handle)
-    const placeIds = placeScopeSet(placeId, snapshot)
+  function livePinnedThingIds(snapshot, records, placeId, interactionThings = null) {
     const focus = liveFocusPlace(snapshot)
-    const things = focus
-      ? historyEntry('things', liveThingFilters(focus.id)).rows
-      : []
-    const pins = new Set()
-    const focusRecords = new Map([...records, ...liveInteractionRecords()]
-      .map(record => [liveTraceKey(record), record]))
-    for (const record of focusRecords.values()) {
-      if (record.kind === 'transfer' && record.detail.asset_type === 'thing') {
-        const involvesFocus = record.actor === handle ||
-          (focused && record.detail.resident_id === focused.id)
-        if (involvesFocus) {
-          const thing = things.find(candidate => candidate.id === record.detail.asset_id)
-          if (thing && placeIds.has(thing.place_id)) pins.add(thing.id)
-        }
-        continue
-      }
-      if (record.actor !== handle) continue
-      if (!placeIds.has(liveRecordPlaceId(record))) continue
-      if (record.detail.source_thing_id) pins.add(record.detail.source_thing_id)
-      if (record.detail.thing_id) pins.add(record.detail.thing_id)
-    }
-    return Object.freeze([...pins])
+    if (!focus) return []
+    const placeIds = placeScopeSet(placeId, snapshot)
+    const things = interactionThings || liveFocusInteractionThings(snapshot, focus, records)
+    return Object.freeze(things
+      .filter(thing => placeIds.has(thing.place_id))
+      .map(thing => thing.id))
   }
 
   function liveResidentReplayPoint(snapshot, placeId, actor, focus, children) {
@@ -3979,34 +4009,90 @@ ${WINDOW_CLIENT_SAFETY_JS}
       .filter(thing => placeIds.has(thing.place_id))
   }
 
-  function liveThingSelection(things, pinnedIds) {
-    const capacity = things.length > LIVE_THING_LIMIT ? LIVE_THING_LIMIT - 1 : LIVE_THING_LIMIT
-    return windowLiveCapacitySelection(things, capacity, pinnedIds)
+  function liveThingSelection(things, pinnedIds, exactTotal) {
+    const total = exactTotal === null ? things.length : exactTotal
+    const capacity = total > LIVE_THING_LIMIT ? LIVE_THING_LIMIT - 1 : LIVE_THING_LIMIT
+    return windowLiveCapacitySelection(things, capacity, pinnedIds, total)
   }
 
-  function liveThingPresentation(snapshot, placeId, records, focusId, includeDescendants = false) {
+  function liveThingPresentation(
+    snapshot,
+    placeId,
+    records,
+    focusId,
+    includeDescendants = false,
+    interactionThings = null,
+  ) {
     const things = liveDisplayedThings(snapshot, placeId, focusId, includeDescendants)
-    const pinnedIds = livePinnedThingIds(snapshot, records, placeId)
+    const pinnedIds = livePinnedThingIds(snapshot, records, placeId, interactionThings)
+    const exactTotal = liveExactThingTotal(
+      snapshot, placeId, things.length, includeDescendants)
     return Object.freeze({
       things,
       pinnedIds,
-      selection: liveThingSelection(things, pinnedIds),
+      exactTotal,
+      selection: liveThingSelection(things, pinnedIds, exactTotal),
     })
   }
 
   function liveFocusInteractionThings(snapshot, focus, records) {
+    const handle = state.live.focusResident
+    if (!handle) return Object.freeze([])
+    const focused = displayedResidents(snapshot).find(resident => resident.handle === handle)
+    const focusScope = placeScopeSet(focus.id, snapshot)
     const things = historyEntry('things', liveThingFilters(focus.id)).rows
     const thingsById = new Map(things.map(thing => [thing.id, thing]))
-    return livePinnedThingIds(snapshot, records, focus.id)
-      .map(id => thingsById.get(id))
-      .filter(Boolean)
+    const references = new Map()
+    const addReference = (id, recordedPlaceId) => {
+      if (!id || references.has(id)) return
+      const thing = thingsById.get(id)
+      const interactionPlaceId = recordedPlaceId || thing?.place_id || null
+      if (!interactionPlaceId || !focusScope.has(interactionPlaceId)) return
+      references.set(id, Object.freeze({
+        id,
+        place_id: thing?.place_id || interactionPlaceId,
+        recorded_place_id: interactionPlaceId,
+        name: thing?.name || null,
+        loaded: Boolean(thing),
+      }))
+    }
+    const focusRecords = [...new Map([...records, ...liveInteractionRecords()]
+      .map(record => [liveTraceKey(record), record])).values()]
+      .sort((left, right) => {
+        const timeOrder = right.at.getTime() - left.at.getTime()
+        if (timeOrder) return timeOrder
+        const leftKey = liveTraceKey(left)
+        const rightKey = liveTraceKey(right)
+        return leftKey < rightKey ? 1 : leftKey > rightKey ? -1 : 0
+      })
+    for (const record of focusRecords) {
+      if (record.kind === 'transfer' && record.detail.asset_type === 'thing') {
+        const involvesFocus = record.actor === handle ||
+          (focused && record.detail.resident_id === focused.id)
+        if (involvesFocus) addReference(record.detail.asset_id, record.detail.place_id)
+        continue
+      }
+      if (record.actor !== handle) continue
+      const recordedPlaceId = liveRecordPlaceId(record)
+      addReference(record.detail.source_thing_id, recordedPlaceId)
+      addReference(record.detail.thing_id, recordedPlaceId)
+    }
+    return Object.freeze([...references.values()])
   }
 
-  function liveThingShelf(snapshot, place, records, focusId, includeDescendants = false) {
+  function liveThingShelf(
+    snapshot,
+    place,
+    records,
+    focusId,
+    includeDescendants = false,
+    interactionThings = null,
+  ) {
     const presentation = liveThingPresentation(
-      snapshot, place.id, records, focusId, includeDescendants)
-    const { things, pinnedIds, selection } = presentation
-    if (!things.length) return null
+      snapshot, place.id, records, focusId, includeDescendants, interactionThings)
+    const { things, pinnedIds, exactTotal, selection } = presentation
+    if (!things.length && exactTotal !== null && exactTotal === 0) return null
+    if (!things.length && exactTotal === null) return null
     const pinned = new Set(pinnedIds)
     const shelf = element('section', 'live-thing-shelf')
     shelf.setAttribute('aria-label', 'Things shown inside ' + place.name)
@@ -4032,11 +4118,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
       )
       shelf.append(specimen)
     }
-    if (selection.overflowCount) {
+    if (exactTotal === null && things.length > selection.visible.length) {
+      const badge = element('span', 'live-overflow-badge live-thing-more', 'more · count unavailable')
+      badge.title = 'Some named things are folded here; the exact count is unavailable.'
+      shelf.append(badge)
+    } else if (selection.overflowCount) {
       const badge = element('span', 'live-overflow-badge live-thing-more', '+' +
         String(selection.overflowCount) + ' more')
       badge.setAttribute('data-live-overflow-count', String(selection.overflowCount))
-      badge.title = String(things.length) + ' things here; showing ' +
+      badge.title = String(exactTotal) + ' things here; showing ' +
         String(selection.visible.length)
       if (Object.values(state.live.replayActive).some(active =>
         active.type === 'make' && liveRecordPlaceId(active.record) === place.id)) {
@@ -4047,7 +4137,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return shelf
   }
 
-  function livePlacePlot(snapshot, focus, place, plot, bubbles, records) {
+  function livePlacePlot(snapshot, focus, place, plot, bubbles, records, interactionThings) {
     const card = element('article', 'live-plot')
     card.dataset.placeId = String(place.id)
     card.style.left = String(plot.x) + 'px'
@@ -4080,7 +4170,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         livePinnedResidentIds(snapshot, records, place.id),
       ))
     }
-    const shelf = liveThingShelf(snapshot, place, records, focus.id, true)
+    const shelf = liveThingShelf(snapshot, place, records, focus.id, true, interactionThings)
     if (shelf) card.append(shelf)
     return card
   }
@@ -4120,13 +4210,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.liveResidentPage.replaceChildren(...parts)
   }
 
-  function liveFocusInteractionsPanel(snapshot, focus, records) {
+  function liveFocusInteractionsPanel(snapshot, focus, records, interactionThings) {
     const handle = state.live.focusResident
     if (!handle) return null
     const partnerIds = new Set(livePinnedResidentIds(snapshot, records, focus.id))
     const focused = displayedResidents(snapshot).find(resident => resident.handle === handle)
     if (focused) partnerIds.delete(focused.id)
-    const things = liveFocusInteractionThings(snapshot, focus, records)
+    const things = interactionThings || liveFocusInteractionThings(snapshot, focus, records)
     const panel = element('section', 'live-focus-interactions')
     panel.id = 'live-focus-interactions'
     panel.append(
@@ -4164,14 +4254,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const list = element('div', 'live-focus-thing-list')
     for (const thing of things) {
       const place = placeReference(snapshot, thing.place_id)
-      const link = element('a', 'live-focus-thing-card', thing.name +
-        (place ? ' · ' + place.name : ' · place #' + String(thing.place_id)))
+      const recordedPlace = placeReference(snapshot, thing.recorded_place_id)
+      const location = place ? place.name : 'place #' + String(thing.place_id)
+      const recordedLocation = recordedPlace
+        ? recordedPlace.name
+        : 'place #' + String(thing.recorded_place_id)
+      const movedSinceInteraction = thing.loaded && thing.place_id !== thing.recorded_place_id
+      const label = thing.loaded
+        ? thing.name + (movedSinceInteraction
+          ? ' · now in ' + location + ' · recorded in ' + recordedLocation
+          : ' · ' + location)
+        : 'Thing #' + String(thing.id) + ' · recorded in ' + recordedLocation
+      const link = element('a', 'live-focus-thing-card', label)
       link.href = '/api/thing/' + String(thing.id)
+      link.title = thing.loaded ? 'Read ' + thing.name : 'Read Thing #' + String(thing.id)
       link.dataset.focusKey = 'live-focus-thing:' + String(thing.id)
       link.dataset.liveFocusThing = String(thing.id)
       const pulse = Object.values(state.live.replayActive).find(active =>
         active.type === 'use' && active.record.detail.source_thing_id === thing.id &&
-        active.record.detail.place_id === thing.place_id)
+        active.record.detail.place_id === thing.recorded_place_id)
       if (pulse) {
         link.classList.add('live-pulse')
         link.dataset.livePulseFor = pulse.key
@@ -4183,18 +4284,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return panel
   }
 
-  function renderLiveRoster(snapshot, focus) {
+  function renderLiveRoster(snapshot, focus, records, interactionThings) {
     if (!nodes.liveRoster) return
     renderLiveResidentPage()
     const scope = placeScopeSet(focus.id, snapshot)
     const residents = displayedResidents(snapshot).filter(resident =>
       scope.has(resident.current_place_id) &&
       (!state.resident || resident.handle === state.resident))
-    const children = liveChildren(snapshot, focus)
-    const records = visibleLiveRecords(snapshot, focus, children)
     const pinned = new Set(livePinnedResidentIds(snapshot, records, focus.id))
     const parts = []
-    const focusPanel = liveFocusInteractionsPanel(snapshot, focus, records)
+    const focusPanel = liveFocusInteractionsPanel(snapshot, focus, records, interactionThings)
     if (focusPanel) parts.push(focusPanel)
     if (!residents.length) {
       const empty = element('p', 'empty-row', 'Nobody is here right now. The room keeps its things.')
@@ -4309,12 +4408,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!anchorId) return false
     const includeDescendants = anchorId !== focus.id
     const records = visibleLiveRecords(snapshot, focus, children)
+    const interactionThings = liveFocusInteractionThings(snapshot, focus, records)
     const presentation = liveThingPresentation(
-      snapshot, anchorId, records, focus.id, includeDescendants)
+      snapshot, anchorId, records, focus.id, includeDescendants, interactionThings)
     const matches = thing => thing.id === record.detail.source_thing_id &&
-      thing.place_id === placeId
+      (thing.place_id === placeId || thing.recorded_place_id === placeId)
     return presentation.selection.visible.some(matches) ||
-      liveFocusInteractionThings(snapshot, focus, records).some(matches)
+      interactionThings.some(matches)
   }
 
   function startLiveReplays() {
@@ -4750,6 +4850,40 @@ ${WINDOW_CLIENT_SAFETY_JS}
       retry.addEventListener('click', () => void refreshCity())
       parts.push(retry)
     }
+    const snapshot = state.snapshot
+    const focus = snapshot ? liveFocusPlace(snapshot) : null
+    if (snapshot && focus) {
+      const thingFilters = liveThingFilters(focus.id)
+      const thingsPage = historyEntry('things', thingFilters)
+      const namedThingCount = liveDisplayedThings(
+        snapshot, focus.id, focus.id, true).length
+      const exactThingTotal = liveExactThingTotal(
+        snapshot, focus.id, namedThingCount, true)
+      if (exactThingTotal === null) {
+        parts.push(document.createTextNode(
+          ' Exact +N thing counts are unavailable because the fixed survey is incomplete or disagrees with the named cards.'
+        ))
+      } else if (thingsPage.error) {
+        parts.push(document.createTextNode(
+          ' Exact +N thing counts stay verified, but newest named thing cards could not be read. '
+        ))
+        const retry = element('button', 'live-history-retry', 'Retry named thing cards')
+        retry.type = 'button'
+        retry.dataset.focusKey = 'live-things-retry'
+        retry.addEventListener('click', () => void loadHistory('things', thingFilters))
+        parts.push(retry)
+      } else if (thingsPage.loading || !thingsPage.initialized) {
+        parts.push(document.createTextNode(
+          ' Exact +N thing counts come from the fixed survey while newest named cards load. ' +
+          'The named-card sample stops after one page of at most 50 public things.'
+        ))
+      } else if (thingsPage.hasMore) {
+        parts.push(document.createTextNode(
+          ' Showing the newest ' + String(thingsPage.rows.length) +
+          ' named thing cards, from a one-page limit of 50; exact +N includes every other public thing in this plate.'
+        ))
+      }
+    }
     nodes.liveHistoryStatus.replaceChildren(...parts)
   }
 
@@ -5107,34 +5241,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const thingFilters = liveThingFilters(focus.id)
     const thingsPage = historyEntry('things', thingFilters)
-    if (thingsPage.loading || !thingsPage.initialized || thingsPage.hasMore ||
-        thingsPage.error || thingsPage.automaticPaused) {
-      renderLivePopulationGate(
-        thingsPage.automaticPaused
-          ? 'Automatic counting pauses after 400 public things. Continue the exact count to read the next pages; this viewer will not guess while pages remain.'
-          : thingsPage.error
-          ? 'The complete public things in this plate could not be read, so this viewer will not print a guessed things count.'
-          : 'Reading every public thing in this plate before printing exact things counts…',
-        thingsPage.automaticPaused
-          ? 'Continue the exact things count'
-          : 'Retry the complete things count',
-        thingsPage.error || thingsPage.automaticPaused
-          ? () => void loadHistory('things', thingFilters)
-          : null,
-      )
-      if (!thingsPage.loading && (!thingsPage.initialized || thingsPage.hasMore) &&
-          !thingsPage.error && !thingsPage.automaticPaused && !document.hidden) {
-        window.queueMicrotask(() => {
-          if (state.view === 'live' && !document.hidden) {
-            void loadHistory('things', thingFilters, true)
-          }
-        })
-      }
-      restoreFocus(focusKey, null, null)
-      return
-    }
     const children = liveChildren(snapshot, focus)
     const records = visibleLiveRecords(snapshot, focus, children)
+    const interactionThings = liveFocusInteractionThings(snapshot, focus, records)
     const bubbles = liveSpeechBubbles(records)
     const survey = liveStageSurvey(livePlaceRows(snapshot), focus.id)
     const stageId = String(focus.id)
@@ -5168,7 +5277,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const plateParts = []
     for (const plot of survey.plots) {
       const place = children.find(candidate => candidate.id === plot.id)
-      if (place) plateParts.push(livePlacePlot(snapshot, focus, place, plot, bubbles, records))
+      if (place) {
+        plateParts.push(livePlacePlot(
+          snapshot, focus, place, plot, bubbles, records, interactionThings))
+      }
     }
     const directResidents = displayedResidents(snapshot).filter(resident =>
       resident.current_place_id === focus.id &&
@@ -5183,7 +5295,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         'live-walker-layer live-root-walkers',
       ))
     }
-    const focusShelf = liveThingShelf(snapshot, focus, records, focus.id)
+    const focusShelf = liveThingShelf(
+      snapshot, focus, records, focus.id, false, interactionThings)
     if (focusShelf) {
       focusShelf.classList.add('live-focus-thing-shelf')
       plateParts.push(focusShelf)
@@ -5209,13 +5322,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
       applyLiveCamera({ stageId })
     }
     renderLiveLedger(snapshot, focus, children, records)
-    renderLiveRoster(snapshot, focus)
+    renderLiveRoster(snapshot, focus, records, interactionThings)
     renderLiveHistoryStatus()
     scheduleLiveClock()
     restoreFocus(focusKey, null, null)
     if (!state.live.openingLoaded && !state.live.openingLoading) {
       void loadLiveOpeningHistory(snapshot, Boolean(
         state.live.openingNextBeforeId || state.live.openingEvents.length))
+    }
+    if (!thingsPage.loading && !thingsPage.initialized && !thingsPage.error &&
+        !document.hidden) {
+      window.queueMicrotask(() => {
+        const latest = historyEntry('things', thingFilters)
+        if (state.view === 'live' && !document.hidden && !latest.loading &&
+            !latest.initialized && !latest.error) {
+          void loadHistory('things', thingFilters)
+        }
+      })
     }
     if (Object.keys(state.live.replayQueues).length) {
       window.queueMicrotask(startLiveReplays)
