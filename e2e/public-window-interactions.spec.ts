@@ -3918,12 +3918,25 @@ test('Gazette renders attributed notes verbatim and pages issues and entries on 
   await expect(panel.locator('[data-share-scope="view"]')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true)
-  const tabWithinScroller = await tab.evaluate(element => {
+  const tabReachability = await tab.evaluate(element => {
     const tabBox = element.getBoundingClientRect()
-    const tabListBox = element.parentElement?.getBoundingClientRect()
-    return Boolean(tabListBox && tabBox.left >= tabListBox.left && tabBox.right <= tabListBox.right)
+    const tabList = element.parentElement
+    const tabListBox = tabList?.getBoundingClientRect()
+    return {
+      withinScroller: Boolean(
+        tabListBox && tabBox.left >= tabListBox.left && tabBox.right <= tabListBox.right,
+      ),
+      tab: { left: tabBox.left, right: tabBox.right },
+      scroller: tabListBox ? {
+        left: tabListBox.left,
+        right: tabListBox.right,
+        scrollLeft: tabList?.scrollLeft,
+        scrollWidth: tabList?.scrollWidth,
+        clientWidth: tabList?.clientWidth,
+      } : null,
+    }
   })
-  expect(tabWithinScroller).toBe(true)
+  expect(tabReachability.withinScroller, JSON.stringify(tabReachability)).toBe(true)
   expect(requests.filter(url => url.pathname === '/api/gazette')).toHaveLength(2)
   expect(requests.filter(url => url.pathname === '/api/gazette/7')).toHaveLength(2)
 })

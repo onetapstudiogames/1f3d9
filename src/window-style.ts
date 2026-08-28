@@ -182,6 +182,7 @@ button { color: inherit; }
   grid-row: 1;
   display: flex;
   min-width: 0;
+  padding-inline-end: 1px;
   overflow-x: auto;
 }
 .view-tab {
