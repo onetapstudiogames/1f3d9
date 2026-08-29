@@ -13,6 +13,16 @@ const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/u
 const RESOURCE_IDENTIFIER = /^[A-Za-z0-9._:-]{1,255}$/u
 const REQUEST_IDENTIFIER = /^[A-Za-z0-9._:-]{8,108}$/u
 const PAYPAL_CERTIFICATE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
+const PAYPAL_WEBHOOK_ALGORITHM = /^[A-Za-z0-9]+$/u
+const PAYPAL_WEBHOOK_TRANSMISSION = /^(?!\d+$)\w+\S+$/u
+const PAYPAL_WEBHOOK_TIME = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):([0-5]\d|60)(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/u
+
+export class PayPalWebhookSignatureError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PayPalWebhookSignatureError'
+  }
+}
 
 export type PayPalEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -224,12 +234,17 @@ function paypalCertificateUrl(
   paypalEnvironment: 'sandbox' | 'live',
 ): string {
   const label = 'PayPal certificate URL'
-  const parsedText = text(value, label, 500)
+  let parsedText: string
+  try {
+    parsedText = text(value, label, 500)
+  } catch {
+    throw new PayPalWebhookSignatureError(`${label} is invalid`)
+  }
   let parsed: URL
   try {
     parsed = new URL(parsedText)
   } catch {
-    throw new Error(`${label} is invalid`)
+    throw new PayPalWebhookSignatureError(`${label} is invalid`)
   }
   const expectedHost = paypalEnvironment === 'sandbox'
     ? 'api.sandbox.paypal.com'
@@ -247,7 +262,7 @@ function paypalCertificateUrl(
     || parsed.search
     || parsed.hash
     || !PAYPAL_CERTIFICATE_ID.test(certificateId)
-  ) throw new Error(`${label} is invalid`)
+  ) throw new PayPalWebhookSignatureError(`${label} is invalid`)
   return parsed.href
 }
 
@@ -499,8 +514,58 @@ export async function capturePayPalCreditOrder(
   })
 }
 
-function webhookHeader(headers: Headers, name: string): string {
-  return text(headers.get(name), `PayPal ${name} header`, 8_192)
+function invalidWebhookSignatureField(label: string): never {
+  throw new PayPalWebhookSignatureError(`${label} is invalid`)
+}
+
+function webhookHeader(
+  headers: Headers,
+  name: string,
+  maximum: number,
+  pattern?: RegExp,
+): string {
+  const label = `PayPal ${name} header`
+  let parsed: string
+  try {
+    parsed = text(headers.get(name), label, maximum)
+  } catch {
+    invalidWebhookSignatureField(label)
+  }
+  if (pattern && !pattern.test(parsed)) invalidWebhookSignatureField(label)
+  return parsed
+}
+
+function webhookTransmissionTime(headers: Headers): string {
+  const name = 'paypal-transmission-time'
+  const label = `PayPal ${name} header`
+  const parsed = webhookHeader(headers, name, 100, PAYPAL_WEBHOOK_TIME)
+  const match = PAYPAL_WEBHOOK_TIME.exec(parsed)
+  if (!match) invalidWebhookSignatureField(label)
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, zone] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const second = Number(secondText)
+  if (zone!.toUpperCase() !== 'Z') {
+    const offsetHour = Number(zone!.slice(1, 3))
+    const offsetMinute = Number(zone!.slice(4, 6))
+    if (offsetHour > 23 || offsetMinute > 59) invalidWebhookSignatureField(label)
+  }
+  const leapSecond = second === 60
+  const wall = new Date(0)
+  wall.setUTCFullYear(year, month - 1, day)
+  wall.setUTCHours(hour, minute, leapSecond ? 59 : second, 0)
+  if (
+    wall.getUTCFullYear() !== year
+    || wall.getUTCMonth() !== month - 1
+    || wall.getUTCDate() !== day
+    || wall.getUTCHours() !== hour
+    || wall.getUTCMinutes() !== minute
+    || wall.getUTCSeconds() !== (leapSecond ? 59 : second)
+  ) invalidWebhookSignatureField(label)
+  return parsed
 }
 
 function rawWebhookJson(rawBody: Buffer): string {
@@ -529,14 +594,29 @@ export async function verifyPayPalWebhook(
   const configuration = requiredConfiguration(environment)
   const rawEvent = rawWebhookJson(input.rawBody)
   const fields = {
-    auth_algo: webhookHeader(input.headers, 'paypal-auth-algo'),
+    auth_algo: webhookHeader(
+      input.headers,
+      'paypal-auth-algo',
+      100,
+      PAYPAL_WEBHOOK_ALGORITHM,
+    ),
     cert_url: paypalCertificateUrl(
-      webhookHeader(input.headers, 'paypal-cert-url'),
+      webhookHeader(input.headers, 'paypal-cert-url', 500),
       configuration.environment,
     ),
-    transmission_id: webhookHeader(input.headers, 'paypal-transmission-id'),
-    transmission_sig: webhookHeader(input.headers, 'paypal-transmission-sig'),
-    transmission_time: webhookHeader(input.headers, 'paypal-transmission-time'),
+    transmission_id: webhookHeader(
+      input.headers,
+      'paypal-transmission-id',
+      50,
+      PAYPAL_WEBHOOK_TRANSMISSION,
+    ),
+    transmission_sig: webhookHeader(
+      input.headers,
+      'paypal-transmission-sig',
+      500,
+      PAYPAL_WEBHOOK_TRANSMISSION,
+    ),
+    transmission_time: webhookTransmissionTime(input.headers),
     webhook_id: configuration.webhookId,
   }
   const serializedFields = JSON.stringify(fields)

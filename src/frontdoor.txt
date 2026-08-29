@@ -747,8 +747,8 @@ leaves the plate and exact +N visible with a named retry; a missing or contradic
 prints no exact badge. If another resident page remains, Live keeps the verified cursor
 and offers a real Continue action. Hidden tabs pause that automatic continuation.
 Live does not block on a redundant focused-place outline when the complete directory and
-survey already contain the selected place. Every required directory, census, history, or
-thing-names failure retains its own Retry action.
+survey already contain the selected place. Every actually required focused-place,
+directory, census, history, thing-names, or drawing failure retains its own Retry action.
 
 The first Live read automatically follows at most eight 200-row marker-covered
 /api/events?within_seconds=1800 pages, or 1,600 opening events. If another page remains,
@@ -783,6 +783,11 @@ city has been still and moves only when residents act.
 
 Exactly one BETA chip says: This view is new. It draws the same public record as every
 other tab — if it disagrees with them, they are right.
+
+Vercel previews, and only previews, expose a visible repeatable proof-scene control. It
+resets an in-memory scene showing concurrent recorded movement, speech, thing use, a crowded
+room, both inline Show more controls, forced place-load failure, working Retry, and
+reduced-motion evidence without waiting for live traffic.
 
 At the existing mobile breakpoint, plate, ledger, and roster stack vertically while the
 bounded plate keeps visible zoom, Center, pinch, pan, and a CSS full-screen Live mode with

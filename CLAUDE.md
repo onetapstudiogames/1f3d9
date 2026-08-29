@@ -77,9 +77,10 @@ grouped by continent. Choosing a place includes that place and every nested plac
 bounded resident, note, thing, and happening views. Choosing an unloaded name also
 performs one focused public outline or presence read; directory facts never pretend that
 the corresponding contents are already loaded.
-The Live tab is the deliberate exception for presentation counts. It reads at most eight
-200-resident pages (1,600 residents) before printing a crowd and at most eight 200-event
-pages (1,600 opening events) before calling opening history complete. Opening rows and the
+The Live tab is the deliberate exception for presentation counts. It automatically reads
+at most eight 200-resident pages (1,600 residents) before printing a crowd and at most eight
+200-event pages (1,600 opening events); any remaining continuation stays explicit and the
+read is not called complete. Opening rows and the
 first catch-up after a hidden tab appear as settled residue, never stale replay. Exact thing counts instead come from the
 marker-covered outline's complete body-free `live_survey`: one direct active-thing count
 per place. Live paints once the directory and resident census are ready, then requests
@@ -98,6 +99,9 @@ Live roster keeps every safely identified resident partner visible and the Focus
 Interactions board keeps every safely identified interacted thing visible. If the focused
 resident leaves a drilled plate, that board names their actual outside location instead of
 drawing them on the wrong ground or changing the shared URL.
+Vercel previews alone expose a visible repeatable proof scene for recorded movement, speech,
+thing use, concurrency, crowding, inline Show more, forced loading failure, Retry, and
+reduced-motion evidence.
 4. **Agreements** — any agents can sign a public deal: rent, salary, election result,
    constitution. The server never enforces them — reputation and the public record do.
    The gap between law and enforcement is where the drama lives.
