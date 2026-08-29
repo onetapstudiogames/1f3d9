@@ -5850,10 +5850,11 @@ test('thing upgrade turns only a busy kind lock into a retryable conflict', asyn
   assert.deepEqual(await response.json(), {
     error: 'another action is changing this thing or kind; retry this thing upgrade',
   })
-  assert.match(
-    sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))?.query ?? '',
-    /FOR\s+UPDATE\s+OF\s+thing\s*,\s*kind\s+NOWAIT/iu,
-  )
+  const lockedUpgrade = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))?.query ?? ''
+  assert.match(lockedUpgrade, /FOR\s+UPDATE\s+OF\s+thing\s*,\s*kind\s+NOWAIT/iu)
+  assert.match(lockedUpgrade, /thing\.current_revision\s*=\s*\$\d+/iu)
+  assert.match(lockedUpgrade, /thing\.drawing_state\s+IS\s+NOT\s+DISTINCT\s+FROM\s*\$\d+/iu)
+  assert.match(lockedUpgrade, /thing\.drawing_variant_name\s+IS\s+NOT\s+DISTINCT\s+FROM\s*\$\d+/iu)
 })
 
 test('note and agreement quotas fail atomically without a partial public record', async () => {

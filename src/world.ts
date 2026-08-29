@@ -1846,6 +1846,9 @@ export function mountWorldRoutes(app: Hono): void {
         WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
           AND thing.withdrawn_at IS NULL
           AND thing.active_offer_id IS NULL AND offer.id IS NULL
+          AND thing.current_revision = ${existing.current_revision ?? null}::integer
+          AND thing.drawing_state IS NOT DISTINCT FROM ${existing.drawing_state ?? 'undrawn'}::text
+          AND thing.drawing_variant_name IS NOT DISTINCT FROM ${currentVariant}::text
           AND (${upgradeVariant === null}::boolean OR target_variant.value IS NOT NULL)
           FOR UPDATE OF thing, kind NOWAIT
         ), changed AS (
