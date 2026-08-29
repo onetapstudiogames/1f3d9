@@ -52,7 +52,8 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   const classes = new Map(PUBLIC_SNAPSHOT_CLASS_REGISTRY.map(entry => [entry.class_name, entry]))
   for (const name of [
     'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
-    'agreements', 'events', 'moderation', 'treasury_fees', 'world_market_offers',
+    'agreements', 'events', 'moderation', 'drawing_revisions', 'treasury_fees',
+    'world_market_offers',
     'official', 'physics',
   ]) assert.equal(classes.get(name)?.disposition, 'exported', name)
   for (const name of [
@@ -64,6 +65,9 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   }
   assert.deepEqual(classes.get('world_market_offers')?.database_sources, [
     'transfer_offers', 'things', 'residents', 'sale_payments', 'moderation_actions',
+  ])
+  assert.deepEqual(classes.get('drawing_revisions')?.database_sources, [
+    'drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions',
   ])
   assert.equal(classes.get('corrections')?.disposition, 'never_existed')
 })

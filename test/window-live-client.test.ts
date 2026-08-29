@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import * as windowClientModule from '../src/window-client.ts'
 import {
   normalizeWindowDrawing,
@@ -47,6 +48,17 @@ type LiveViewportBounds = Readonly<{
 }>
 
 type LiveClientExports = Readonly<{
+  windowDrawingStateLabel?: (
+    state: 'undrawn' | 'refused' | 'in_progress' | 'complete',
+    drawing: Readonly<{ palette: readonly string[]; indices: readonly (number | null)[] }> | null,
+  ) => 'Undrawn' | 'Refused' | 'In progress' | 'Blank' | 'Complete'
+  windowDrawingSourceLabel?: (source: Readonly<{
+    source: 'none' | 'resident' | 'place' | 'thing' | 'kind_base' | 'kind_variant'
+    kind_id?: number
+    kind_name?: string
+    revision?: number
+    variant_name?: string
+  }> | null) => string
   windowLiveCenterCamera?: (
     viewportWidth: number,
     viewportHeight: number,
@@ -91,6 +103,81 @@ type LiveClientExports = Readonly<{
 }>
 
 const liveClientExports = windowClientModule as unknown as LiveClientExports
+
+test('drawing presentation labels all five owner-chosen states without inferring progress', () => {
+  const stateLabel = liveClientExports.windowDrawingStateLabel
+  assert.equal(typeof stateLabel, 'function')
+  if (!stateLabel) return
+
+  const blank = Object.freeze({
+    palette: Object.freeze([]),
+    indices: Object.freeze(Array(64).fill(null) as null[]),
+  })
+  const pixels = Object.freeze({
+    palette: Object.freeze(['#102030']),
+    indices: Object.freeze(Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null)),
+  })
+
+  assert.equal(stateLabel('undrawn', null), 'Undrawn')
+  assert.equal(stateLabel('refused', null), 'Refused')
+  assert.equal(stateLabel('in_progress', blank), 'In progress')
+  assert.equal(stateLabel('in_progress', pixels), 'In progress')
+  assert.equal(stateLabel('complete', blank), 'Blank')
+  assert.equal(stateLabel('complete', pixels), 'Complete')
+})
+
+test('drawing provenance labels own work and the exact pinned kind source', () => {
+  const sourceLabel = liveClientExports.windowDrawingSourceLabel
+  assert.equal(typeof sourceLabel, 'function')
+  if (!sourceLabel) return
+
+  assert.equal(sourceLabel(null), '')
+  assert.equal(sourceLabel(Object.freeze({ source: 'thing' })), 'Own drawing')
+  assert.equal(sourceLabel(Object.freeze({
+    source: 'kind_base', kind_id: 7, kind_name: 'lantern', revision: 3,
+  })), 'Kind lantern · revision 3 · base')
+  assert.equal(sourceLabel(Object.freeze({
+    source: 'kind_variant', kind_id: 7, kind_name: 'lantern', revision: 3,
+    variant_name: 'ember glow',
+  })), 'Kind lantern · revision 3 · variant ember glow')
+})
+
+test('typed thing refusal projections clear a pinned variant before Live parses provenance', () => {
+  const compact = (value: string) => value.replace(/\s+/gu, ' ')
+  const drawingRoute = compact(readFileSync(
+    new URL('../src/drawings.ts', import.meta.url),
+    'utf8',
+  ))
+  const freshSchema = compact(readFileSync(
+    new URL('../db/schema.sql', import.meta.url),
+    'utf8',
+  ))
+  const migration = compact(readFileSync(
+    new URL('../db/migrations/20260828_drawing_contract.sql', import.meta.url),
+    'utf8',
+  ))
+
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /else if \(variantName\) return null/u,
+    'Live must reject variant provenance outside an effective kind variant',
+  )
+  assert.match(
+    drawingRoute,
+    /CASE WHEN thing\.drawing_state = 'undrawn' AND selected\.variant IS NOT NULL AND coalesce\(kind_moderation\.action, 'restore'\) <> 'remove' THEN thing\.drawing_variant_name ELSE NULL END AS variant_name/u,
+    'the HTTP drawing projection must emit a variant only for inherited kind-variant state',
+  )
+  for (const [label, sql] of [
+    ['fresh schema', freshSchema],
+    ['drawing-contract migration', migration],
+  ] as const) {
+    assert.match(
+      sql,
+      /CASE WHEN thing\.drawing_state = 'undrawn' AND selected_variant\.value IS NOT NULL AND coalesce\(thing_kind_hidden\.action, 'restore'\) <> 'remove' THEN thing\.drawing_variant_name ELSE NULL END AS variant_name/u,
+      `${label} snapshot projection must emit a variant only for effective kind-variant state`,
+    )
+  }
+})
 
 test('drawing normalization preserves exact colours and distinguishes blank from undrawn', () => {
   const drawing = normalizeWindowDrawing({

@@ -229,7 +229,10 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       AND attempt.request_json ?& ARRAY['name', 'description', 'traits', 'recipe']
       AND NOT EXISTS (
         SELECT 1 FROM jsonb_object_keys(attempt.request_json) key
-        WHERE key <> ALL(ARRAY['name', 'description', 'traits', 'recipe', 'drawing']::text[])
+        WHERE key <> ALL(ARRAY[
+          'name', 'description', 'traits', 'recipe',
+          'drawing', 'drawing_state', 'drawing_description', 'drawing_variants'
+        ]::text[])
       )
       AND jsonb_typeof(attempt.request_json->'name') = 'string'
       AND (attempt.request_json->>'name') ~ '^[a-z0-9][a-z0-9_-]{0,63}$'
@@ -284,9 +287,54 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         ) <= 1024
       ELSE false END
       AND (
-        NOT attempt.request_json ? 'drawing'
-        OR attempt.request_json->'drawing' = 'null'::jsonb
-        OR valid_city_drawing(attempt.request_json->'drawing')
+        (
+          NOT attempt.request_json ? 'drawing'
+          AND NOT attempt.request_json ? 'drawing_state'
+          AND NOT attempt.request_json ? 'drawing_description'
+        )
+        OR (
+          attempt.request_json->'drawing' = 'null'::jsonb
+          AND NOT attempt.request_json ? 'drawing_state'
+          AND NOT attempt.request_json ? 'drawing_description'
+        )
+        OR (
+          jsonb_typeof(attempt.request_json->'drawing') = 'string'
+          AND attempt.request_json->>'drawing' = 'REFUSE'
+          AND NOT attempt.request_json ? 'drawing_state'
+          AND jsonb_typeof(attempt.request_json->'drawing_description') = 'string'
+          AND octet_length(attempt.request_json->>'drawing_description') <= 280
+        )
+        OR (
+          valid_city_drawing(attempt.request_json->'drawing')
+          AND jsonb_typeof(attempt.request_json->'drawing_state') = 'string'
+          AND attempt.request_json->>'drawing_state' IN ('in_progress', 'complete')
+          AND jsonb_typeof(attempt.request_json->'drawing_description') = 'string'
+          AND octet_length(attempt.request_json->>'drawing_description') <= 280
+        )
+      )
+      AND (
+        NOT attempt.request_json ? 'drawing_variants'
+        OR CASE WHEN jsonb_typeof(attempt.request_json->'drawing_variants') = 'array' THEN
+          jsonb_array_length(attempt.request_json->'drawing_variants') <= 8
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(attempt.request_json->'drawing_variants') variant(value)
+            WHERE jsonb_typeof(variant.value) <> 'object'
+              OR NOT variant.value ?& ARRAY['name', 'drawing', 'drawing_state', 'drawing_description']
+              OR (SELECT count(*) FROM jsonb_object_keys(variant.value)) <> 4
+              OR jsonb_typeof(variant.value->'name') <> 'string'
+              OR octet_length(variant.value->>'name') NOT BETWEEN 1 AND 64
+              OR NOT valid_city_drawing(variant.value->'drawing')
+              OR jsonb_typeof(variant.value->'drawing_state') <> 'string'
+              OR variant.value->>'drawing_state' NOT IN ('in_progress', 'complete')
+              OR jsonb_typeof(variant.value->'drawing_description') <> 'string'
+              OR octet_length(variant.value->>'drawing_description') > 280
+          )
+          AND jsonb_array_length(attempt.request_json->'drawing_variants') = (
+            SELECT count(DISTINCT variant.value->>'name')
+            FROM jsonb_array_elements(attempt.request_json->'drawing_variants') variant(value)
+          )
+        ELSE false END
       )
       AND attempt.target_key = 'kind-invention:' || (attempt.request_json->>'name')
   ), new_kind AS (
@@ -296,7 +344,10 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
     ON CONFLICT DO NOTHING
     RETURNING *
   ), new_kind_revision AS (
-    INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe, drawing)
+    INSERT INTO kind_revisions (
+      kind_id, revision, description, traits, recipe,
+      drawing, drawing_state, drawing_description, drawing_variants
+    )
     SELECT kind.id, 1, request.request_json->>'description',
       ARRAY(
         SELECT trait.value #>> '{}'
@@ -307,10 +358,61 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       request.request_json->'recipe',
       CASE WHEN NOT request.request_json ? 'drawing'
           OR request.request_json->'drawing' = 'null'::jsonb
+          OR request.request_json->>'drawing' = 'REFUSE'
         THEN NULL ELSE request.request_json->'drawing' END
+      , CASE
+          WHEN NOT request.request_json ? 'drawing'
+            OR request.request_json->'drawing' = 'null'::jsonb THEN 'undrawn'
+          WHEN request.request_json->>'drawing' = 'REFUSE' THEN 'refused'
+          ELSE request.request_json->>'drawing_state'
+        END
+      , CASE WHEN NOT request.request_json ? 'drawing'
+          OR request.request_json->'drawing' = 'null'::jsonb
+        THEN NULL ELSE request.request_json->>'drawing_description' END
+      , CASE WHEN NOT request.request_json ? 'drawing_variants' THEN '[]'::jsonb
+        ELSE (
+          SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'name', variant.value->>'name',
+            'drawing', variant.value->'drawing',
+            'state', variant.value->>'drawing_state',
+            'description', variant.value->>'drawing_description'
+          ) ORDER BY variant.position), '[]'::jsonb)
+          FROM jsonb_array_elements(request.request_json->'drawing_variants')
+            WITH ORDINALITY variant(value, position)
+        ) END
     FROM new_kind kind
     JOIN kind_invention_shaped request ON true
-    RETURNING kind_id, revision, description, traits, recipe, drawing
+    RETURNING kind_id, revision, description, traits, recipe,
+      drawing, drawing_state, drawing_description, drawing_variants
+  ), new_kind_drawing_revisions AS (
+    INSERT INTO drawing_revisions (
+      target_type, target_id, slot_variant_name,
+      prior_state, prior_description, prior_drawing, prior_source,
+      prior_kind_id, prior_kind_revision, prior_variant_name,
+      current_state, current_description, current_drawing, current_source,
+      current_kind_id, current_kind_revision, current_variant_name,
+      author_id, author_relation
+    )
+    SELECT 'kind', revision.kind_id, NULL::text,
+      'undrawn', NULL::text, NULL::jsonb, 'none',
+      NULL::integer, NULL::integer, NULL::text,
+      revision.drawing_state, revision.drawing_description, revision.drawing, 'kind_base',
+      revision.kind_id, revision.revision, NULL::text,
+      request.actor_id, 'kind_owner'
+    FROM new_kind_revision revision
+    JOIN kind_invention_shaped request ON true
+    WHERE revision.drawing_state <> 'undrawn'
+    UNION ALL
+    SELECT 'kind', revision.kind_id, variant.value->>'name',
+      'undrawn', NULL::text, NULL::jsonb, 'none',
+      NULL::integer, NULL::integer, NULL::text,
+      variant.value->>'state', variant.value->>'description', variant.value->'drawing',
+      'kind_variant', revision.kind_id, revision.revision, variant.value->>'name',
+      request.actor_id, 'kind_owner'
+    FROM new_kind_revision revision
+    JOIN kind_invention_shaped request ON true
+    CROSS JOIN LATERAL jsonb_array_elements(revision.drawing_variants) variant(value)
+    RETURNING id
   ), kind_invention_result AS MATERIALIZED (
     SELECT request.public_id AS attempt_id, request.actor_id, request.actor_handle,
       request.operation, request.method, request.tx_hash, request.payer_wallet,
@@ -329,7 +431,11 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'id', kind.id, 'name', kind.name, 'owner_id', kind.owner_id,
         'owner', request.actor_handle, 'revision', revision.revision,
         'description', revision.description, 'traits', revision.traits,
-        'recipe', revision.recipe, 'drawing', revision.drawing, 'created_at', kind.created_at
+        'recipe', revision.recipe, 'drawing', revision.drawing,
+        'drawing_state', revision.drawing_state,
+        'drawing_description', revision.drawing_description,
+        'drawing_variants', revision.drawing_variants,
+        'created_at', kind.created_at
       )) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
@@ -352,7 +458,10 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       AND attempt.request_json ?& ARRAY['kind_id', 'description', 'traits', 'recipe']
       AND NOT EXISTS (
         SELECT 1 FROM jsonb_object_keys(attempt.request_json) key
-        WHERE key <> ALL(ARRAY['kind_id', 'description', 'traits', 'recipe', 'drawing']::text[])
+        WHERE key <> ALL(ARRAY[
+          'kind_id', 'description', 'traits', 'recipe',
+          'drawing', 'drawing_state', 'drawing_description', 'drawing_variants'
+        ]::text[])
       )
       AND jsonb_typeof(attempt.request_json->'kind_id') = 'number'
       AND (attempt.request_json->>'kind_id') ~ '^[1-9][0-9]*$'
@@ -379,9 +488,54 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         )
       ELSE false END
       AND (
-        NOT attempt.request_json ? 'drawing'
-        OR attempt.request_json->'drawing' = 'null'::jsonb
-        OR valid_city_drawing(attempt.request_json->'drawing')
+        (
+          NOT attempt.request_json ? 'drawing'
+          AND NOT attempt.request_json ? 'drawing_state'
+          AND NOT attempt.request_json ? 'drawing_description'
+        )
+        OR (
+          attempt.request_json->'drawing' = 'null'::jsonb
+          AND NOT attempt.request_json ? 'drawing_state'
+          AND NOT attempt.request_json ? 'drawing_description'
+        )
+        OR (
+          jsonb_typeof(attempt.request_json->'drawing') = 'string'
+          AND attempt.request_json->>'drawing' = 'REFUSE'
+          AND NOT attempt.request_json ? 'drawing_state'
+          AND jsonb_typeof(attempt.request_json->'drawing_description') = 'string'
+          AND octet_length(attempt.request_json->>'drawing_description') <= 280
+        )
+        OR (
+          valid_city_drawing(attempt.request_json->'drawing')
+          AND jsonb_typeof(attempt.request_json->'drawing_state') = 'string'
+          AND attempt.request_json->>'drawing_state' IN ('in_progress', 'complete')
+          AND jsonb_typeof(attempt.request_json->'drawing_description') = 'string'
+          AND octet_length(attempt.request_json->>'drawing_description') <= 280
+        )
+      )
+      AND (
+        NOT attempt.request_json ? 'drawing_variants'
+        OR CASE WHEN jsonb_typeof(attempt.request_json->'drawing_variants') = 'array' THEN
+          jsonb_array_length(attempt.request_json->'drawing_variants') <= 8
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(attempt.request_json->'drawing_variants') variant(value)
+            WHERE jsonb_typeof(variant.value) <> 'object'
+              OR NOT variant.value ?& ARRAY['name', 'drawing', 'drawing_state', 'drawing_description']
+              OR (SELECT count(*) FROM jsonb_object_keys(variant.value)) <> 4
+              OR jsonb_typeof(variant.value->'name') <> 'string'
+              OR octet_length(variant.value->>'name') NOT BETWEEN 1 AND 64
+              OR NOT valid_city_drawing(variant.value->'drawing')
+              OR jsonb_typeof(variant.value->'drawing_state') <> 'string'
+              OR variant.value->>'drawing_state' NOT IN ('in_progress', 'complete')
+              OR jsonb_typeof(variant.value->'drawing_description') <> 'string'
+              OR octet_length(variant.value->>'drawing_description') > 280
+          )
+          AND jsonb_array_length(attempt.request_json->'drawing_variants') = (
+            SELECT count(DISTINCT variant.value->>'name')
+            FROM jsonb_array_elements(attempt.request_json->'drawing_variants') variant(value)
+          )
+        ELSE false END
       )
       AND CASE WHEN jsonb_typeof(attempt.request_json->'recipe') = 'array' THEN
         jsonb_array_length(attempt.request_json->'recipe') <= 64
@@ -425,7 +579,10 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         (kind.current_revision + 1)::text
     FOR UPDATE OF kind
   ), revised_kind_revision AS (
-    INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe, drawing)
+    INSERT INTO kind_revisions (
+      kind_id, revision, description, traits, recipe,
+      drawing, drawing_state, drawing_description, drawing_variants
+    )
     SELECT kind.id, kind.current_revision + 1,
       request.request_json->>'description',
       ARRAY(
@@ -437,16 +594,119 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       request.request_json->'recipe',
       CASE WHEN NOT request.request_json ? 'drawing'
           OR request.request_json->'drawing' = 'null'::jsonb
+          OR request.request_json->>'drawing' = 'REFUSE'
         THEN NULL ELSE request.request_json->'drawing' END
+      , CASE
+          WHEN NOT request.request_json ? 'drawing'
+            OR request.request_json->'drawing' = 'null'::jsonb THEN 'undrawn'
+          WHEN request.request_json->>'drawing' = 'REFUSE' THEN 'refused'
+          ELSE request.request_json->>'drawing_state'
+        END
+      , CASE WHEN NOT request.request_json ? 'drawing'
+          OR request.request_json->'drawing' = 'null'::jsonb
+        THEN NULL ELSE request.request_json->>'drawing_description' END
+      , CASE WHEN NOT request.request_json ? 'drawing_variants' THEN '[]'::jsonb
+        ELSE (
+          SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'name', variant.value->>'name',
+            'drawing', variant.value->'drawing',
+            'state', variant.value->>'drawing_state',
+            'description', variant.value->>'drawing_description'
+          ) ORDER BY variant.position), '[]'::jsonb)
+          FROM jsonb_array_elements(request.request_json->'drawing_variants')
+            WITH ORDINALITY variant(value, position)
+        ) END
     FROM locked_kind kind
     JOIN kind_revision_shaped request ON request.public_id = kind.attempt_id
     ON CONFLICT DO NOTHING
-    RETURNING kind_id, revision, description, traits, recipe, drawing
+    RETURNING kind_id, revision, description, traits, recipe,
+      drawing, drawing_state, drawing_description, drawing_variants
   ), changed_kind AS (
     UPDATE kinds kind SET current_revision = revision.revision
     FROM revised_kind_revision revision
     WHERE kind.id = revision.kind_id
     RETURNING kind.*
+  ), revised_kind_drawing_revisions AS (
+    INSERT INTO drawing_revisions (
+      target_type, target_id, slot_variant_name,
+      prior_state, prior_description, prior_drawing, prior_source,
+      prior_kind_id, prior_kind_revision, prior_variant_name,
+      current_state, current_description, current_drawing, current_source,
+      current_kind_id, current_kind_revision, current_variant_name,
+      author_id, author_relation
+    )
+    SELECT 'kind', current.kind_id, NULL,
+      prior.drawing_state, prior.drawing_description, prior.drawing,
+      CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'kind_base' END,
+      CASE WHEN prior.drawing_state = 'undrawn' THEN NULL ELSE prior.kind_id END,
+      CASE WHEN prior.drawing_state = 'undrawn' THEN NULL ELSE prior.revision END,
+      NULL,
+      current.drawing_state, current.drawing_description, current.drawing,
+      CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'kind_base' END,
+      CASE WHEN current.drawing_state = 'undrawn' THEN NULL ELSE current.kind_id END,
+      CASE WHEN current.drawing_state = 'undrawn' THEN NULL ELSE current.revision END,
+      NULL,
+      request.actor_id, 'kind_owner'
+    FROM revised_kind_revision current
+    JOIN locked_kind locked ON locked.id = current.kind_id
+    JOIN kind_revisions prior
+      ON prior.kind_id = locked.id AND prior.revision = locked.current_revision
+    JOIN kind_revision_shaped request ON request.public_id = locked.attempt_id
+    WHERE ROW(
+      prior.drawing_state, prior.drawing_description, prior.drawing,
+      CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'kind_base' END,
+      CASE WHEN prior.drawing_state = 'undrawn' THEN NULL ELSE prior.kind_id END,
+      CASE WHEN prior.drawing_state = 'undrawn' THEN NULL ELSE prior.revision END
+    ) IS DISTINCT FROM ROW(
+      current.drawing_state, current.drawing_description, current.drawing,
+      CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'kind_base' END,
+      CASE WHEN current.drawing_state = 'undrawn' THEN NULL ELSE current.kind_id END,
+      CASE WHEN current.drawing_state = 'undrawn' THEN NULL ELSE current.revision END
+    )
+    UNION ALL
+    SELECT 'kind', current.kind_id, coalesce(prior_variant.name, current_variant.name),
+      coalesce(prior_variant.state, 'undrawn'), prior_variant.description,
+      prior_variant.drawing,
+      CASE WHEN prior_variant.name IS NULL THEN 'none' ELSE 'kind_variant' END,
+      CASE WHEN prior_variant.name IS NULL THEN NULL ELSE prior.kind_id END,
+      CASE WHEN prior_variant.name IS NULL THEN NULL ELSE prior.revision END,
+      prior_variant.name,
+      coalesce(current_variant.state, 'undrawn'), current_variant.description,
+      current_variant.drawing,
+      CASE WHEN current_variant.name IS NULL THEN 'none' ELSE 'kind_variant' END,
+      CASE WHEN current_variant.name IS NULL THEN NULL ELSE current.kind_id END,
+      CASE WHEN current_variant.name IS NULL THEN NULL ELSE current.revision END,
+      current_variant.name,
+      request.actor_id, 'kind_owner'
+    FROM revised_kind_revision current
+    JOIN locked_kind locked ON locked.id = current.kind_id
+    JOIN kind_revisions prior
+      ON prior.kind_id = locked.id AND prior.revision = locked.current_revision
+    JOIN kind_revision_shaped request ON request.public_id = locked.attempt_id
+    CROSS JOIN LATERAL (
+      SELECT variant.value->>'name' AS name
+      FROM jsonb_array_elements(prior.drawing_variants) variant(value)
+      UNION
+      SELECT variant.value->>'name' AS name
+      FROM jsonb_array_elements(current.drawing_variants) variant(value)
+    ) slot
+    LEFT JOIN LATERAL (
+      SELECT variant.value->>'name' AS name,
+        variant.value->>'state' AS state,
+        variant.value->>'description' AS description,
+        variant.value->'drawing' AS drawing
+      FROM jsonb_array_elements(prior.drawing_variants) variant(value)
+      WHERE variant.value->>'name' = slot.name
+    ) prior_variant ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT variant.value->>'name' AS name,
+        variant.value->>'state' AS state,
+        variant.value->>'description' AS description,
+        variant.value->'drawing' AS drawing
+      FROM jsonb_array_elements(current.drawing_variants) variant(value)
+      WHERE variant.value->>'name' = slot.name
+    ) current_variant ON TRUE
+    RETURNING id
   ), kind_revision_result AS MATERIALIZED (
     SELECT request.public_id AS attempt_id, request.actor_id, request.actor_handle,
       request.operation, request.method, request.tx_hash, request.payer_wallet,
@@ -465,7 +725,11 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'id', kind.id, 'name', kind.name, 'owner_id', kind.owner_id,
         'owner', request.actor_handle, 'revision', revision.revision,
         'description', revision.description, 'traits', revision.traits,
-        'recipe', revision.recipe, 'drawing', revision.drawing, 'created_at', kind.created_at
+        'recipe', revision.recipe, 'drawing', revision.drawing,
+        'drawing_state', revision.drawing_state,
+        'drawing_description', revision.drawing_description,
+        'drawing_variants', revision.drawing_variants,
+        'created_at', kind.created_at
       )) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(

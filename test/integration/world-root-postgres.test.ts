@@ -278,9 +278,11 @@ test('world-root schema and migration invariants hold in PostgreSQL', async t =>
         database,
          `INSERT INTO places (
            parent_id, place_kind, name, owner_id,
-           open_to_building, open_to_things, open_to_notes, drawing
+           open_to_building, open_to_things, open_to_notes,
+           drawing, drawing_state, drawing_description
          )
-         SELECT NULL, 'world', 'the world', NULL, FALSE, FALSE, FALSE, drawing
+         SELECT NULL, 'world', 'the world', NULL, FALSE, FALSE, FALSE,
+                drawing, drawing_state, drawing_description
          FROM places WHERE id = $1`,
         [worldId],
         '23505',

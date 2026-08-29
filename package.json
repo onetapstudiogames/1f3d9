@@ -62,6 +62,7 @@
     "migrate:preview:paypal-credit-disputes": "node --experimental-strip-types scripts/migrate.ts --target preview --migration paypal-credit-disputes",
     "migrate:preview:resident-refusal-state": "node --experimental-strip-types scripts/migrate.ts --target preview --migration resident-refusal-state",
     "migrate:preview:drawings": "node --experimental-strip-types scripts/migrate.ts --target preview --migration drawings",
+    "migrate:preview:drawing-contract": "node --experimental-strip-types scripts/migrate.ts --target preview --migration drawing-contract",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:world-root-description": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-description",
@@ -96,7 +97,8 @@
     "migrate:production:resumable-registration": "node --experimental-strip-types scripts/migrate.ts --target production --migration resumable-registration",
     "migrate:production:paypal-credit-disputes": "node --experimental-strip-types scripts/migrate.ts --target production --migration paypal-credit-disputes",
     "migrate:production:resident-refusal-state": "node --experimental-strip-types scripts/migrate.ts --target production --migration resident-refusal-state",
-    "migrate:production:drawings": "node --experimental-strip-types scripts/migrate.ts --target production --migration drawings"
+    "migrate:production:drawings": "node --experimental-strip-types scripts/migrate.ts --target production --migration drawings",
+    "migrate:production:drawing-contract": "node --experimental-strip-types scripts/migrate.ts --target production --migration drawing-contract"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

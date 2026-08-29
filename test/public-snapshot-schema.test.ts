@@ -9,6 +9,10 @@ import {
 
 const migrationUrl = new URL('../db/migrations/20260823_public_snapshots.sql', import.meta.url)
 const drawingsMigrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
+const drawingContractMigrationUrl = new URL(
+  '../db/migrations/20260828_drawing_contract.sql',
+  import.meta.url,
+)
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
@@ -108,6 +112,41 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
       'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
       'agreements', 'events', 'moderation', 'treasury_fees', 'world_market_offers',
     ]) assert.match(sql, new RegExp(`'${className}'`, 'u'), className)
+  })
+}
+
+for (const [name, url] of [
+  ['drawing contract migration', drawingContractMigrationUrl],
+  ['fresh schema', schemaUrl],
+] as const) {
+  test(`${name} exports current drawing state and separate immutable revisions`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)
+    assert.ok(viewStart >= 0, `${name}: snapshot view`)
+    const view = sql.slice(viewStart)
+
+    for (const key of [
+      'drawing', 'drawing_state', 'drawing_description', 'drawing_rows', 'drawing_source',
+    ]) assert.match(view, new RegExp(`'${key}'`, 'u'), `${name}: ${key}`)
+    for (const source of [
+      'none', 'resident', 'place', 'thing', 'kind_base', 'kind_variant',
+    ]) assert.match(view, new RegExp(`'${source}'`, 'u'), `${name}: ${source}`)
+    for (const provenance of ['kind_id', 'kind_name', 'revision', 'variant_name']) {
+      assert.match(view, new RegExp(`'${provenance}'`, 'u'), `${name}: ${provenance}`)
+    }
+
+    const revisionsStart = view.indexOf("SELECT 'drawing_revisions'")
+    assert.ok(revisionsStart >= 0, `${name}: drawing revisions class`)
+    const revisions = view.slice(revisionsStart)
+    for (const key of [
+      'target_type', 'target_id', 'previous', 'current', 'source', 'author_relation',
+      'created_at',
+    ]) assert.match(revisions, new RegExp(`'${key}'`, 'u'), `${name}: revision ${key}`)
+    assert.match(revisions, /moderation_actions/iu)
+    assert.match(revisions, /target_type/iu)
+    assert.match(revisions, /target_id/iu)
+    assert.doesNotMatch(view, /resident_drawing_rate_limits/iu)
+    assert.doesNotMatch(view, /'drawing_history'|'history'\s*,/iu)
   })
 }
 

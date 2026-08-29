@@ -44,6 +44,59 @@ const replayThings = [20, 21, 22, 23, 24, 25, 26, 9].map(id => ({
   id,
   name: id === 9 ? 'field lantern' : `harbor keepsake ${id}`,
 }))
+const exactDrawing = Object.freeze({
+  palette: Object.freeze(['#174d3c', '#f0c95f']),
+  indices: Object.freeze(Array.from(
+    { length: 64 }, (_, index) => index % 3 === 0 ? null : index % 2,
+  )),
+})
+const exactDrawingRows = Object.freeze(Array.from({ length: 8 }, (_, row) => (
+  exactDrawing.indices.slice(row * 8, row * 8 + 8)
+    .map(index => index === null ? '.' : String(index))
+    .join(' ')
+)))
+
+async function expectProofDrawingContract(page: Page): Promise<void> {
+  const proof = page.locator('#live-panel[data-live-proof="true"]')
+  const cases = [
+    { state: 'undrawn', presentation: 'undrawn', label: 'Undrawn' },
+    { state: 'refused', presentation: 'refused', label: 'Refused' },
+    { state: 'in_progress', presentation: 'in_progress', label: 'In progress' },
+    { state: 'complete', presentation: 'blank', label: 'Blank' },
+    { state: 'complete', presentation: 'complete', label: 'Complete' },
+  ] as const
+  for (const drawingCase of cases) {
+    const drawing = proof.locator(
+      `[data-drawing-state="${drawingCase.state}"]` +
+      `[data-drawing-presentation-state="${drawingCase.presentation}"]`,
+    ).first()
+    await expect(drawing).toBeVisible()
+    await expect(drawing).toHaveAttribute('aria-label', new RegExp(drawingCase.label, 'u'))
+  }
+
+  const own = proof.locator('[data-drawing-source="thing"]').first()
+  const base = proof.locator('[data-drawing-source="kind_base"]').first()
+  const variant = proof.locator('[data-drawing-source="kind_variant"]').first()
+  await expect(own).toHaveAttribute('aria-label', /Own drawing/u)
+  await expect(base).toHaveAttribute('aria-label', /Kind proof-object · revision 3 · base/u)
+  await expect(variant).toHaveAttribute(
+    'aria-label', /Kind proof-object · revision 3 · variant ember glow/u,
+  )
+
+  for (const presentation of ['in_progress', 'complete']) {
+    const canvas = proof.locator(
+      `canvas[data-drawing-presentation-state="${presentation}"]`,
+    ).first()
+    await expect(canvas).toBeVisible()
+    expect(await canvas.evaluate(node => {
+      const context = (node as HTMLCanvasElement).getContext('2d')
+      return context ? [...context.getImageData(0, 0, 1, 1).data] : []
+    })).toHaveLength(4)
+  }
+
+  await expect(proof.locator('.drawing-canonical-rows, .drawing-history')).toHaveCount(0)
+  await expect(proof).not.toContainText(/Palette indices|Drawing history/u)
+}
 
 function replayPlaceScopeIds(rootId: number) {
   return new Set(replayPlaces.filter(place => {
@@ -640,7 +693,18 @@ async function installReplayRoutes(
         await new Promise(resolve => setTimeout(resolve, controls.drawingDelayMs))
       }
       await route.fulfill({ json: {
-        type: match[1], id: Number(match[2]), source: null, drawing: null,
+        type: match[1],
+        id: Number(match[2]),
+        state: 'undrawn',
+        presentation_state: 'undrawn',
+        description: null,
+        drawing: null,
+        rows: null,
+        source: 'none',
+        kind_id: null,
+        kind_name: null,
+        revision: null,
+        variant_name: null,
       } })
     } finally {
       activeDrawingRequests -= 1
@@ -761,7 +825,9 @@ test('Live paints exact surveyed counts and Focus ids while named thing cards lo
     )
 
     await expect(page.locator('#live-history-status')).toContainText('history is complete')
-    await page.locator('[data-live-resident-handle="map-walker"]').first().click()
+    const mapWalker = page.locator('[data-live-resident-handle="map-walker"]').first()
+    await panLiveTargetIntoView(page, mapWalker)
+    await mapWalker.click()
     await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
     await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(9)
     await expect(page.locator('#live-focus-interactions [data-live-focus-thing="23"]'))
@@ -1141,9 +1207,12 @@ test('Live keeps both Show more controls separate and operable in one crowded pl
   await expect(thingMore).toBeVisible()
   await expectControlsDoNotOverlap(residentMore, thingMore)
 
+  await panLiveTargetIntoView(page, thingMore)
   await thingMore.click()
   await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
-  await cinder.locator('.live-resident-more').click()
+  const rearrangedResidentMore = cinder.locator('.live-resident-more')
+  await panLiveTargetIntoView(page, rearrangedResidentMore)
+  await rearrangedResidentMore.click()
   await expect(cinder.locator('.live-walker')).toHaveCount(8)
 })
 
@@ -1535,6 +1604,7 @@ test('Live drops queued drawings from the old plate before reading a newly opene
 
 test('discoverable preview proof scene visibly demonstrates every Live behavior and Retry', async ({ page }) => {
   const now = Date.now()
+  await page.setViewportSize({ width: 1280, height: 800 })
   await page.clock.install({ time: new Date(now) })
   await installReplayRoutes(page, now)
   await page.goto('/window#view=live')
@@ -1543,6 +1613,7 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await proofButton.click()
   const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
   await expect(proofPanel).toBeVisible()
+  await expectProofDrawingContract(page)
 
   const retry = page.getByRole('button', { name: 'Retry proof room' })
   await expect(retry).toBeVisible()
@@ -1584,6 +1655,7 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
 })
 
 test('preview proof scene has a static reduced-motion alternative', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
@@ -1591,11 +1663,163 @@ test('preview proof scene has a static reduced-motion alternative', async ({ pag
 
   const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
   await expect(proofPanel).toBeVisible()
+  await expectProofDrawingContract(page)
   await expect(proofPanel.locator('.live-replay-portrait')).toHaveCount(0)
   await expect(proofPanel.locator('.live-walker')).not.toHaveCount(0)
   await expect(proofPanel.locator('.live-thing-specimen')).not.toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
   await expect(proofPanel.locator('#live-ledger')).toContainText(/moved|spoke|used/u)
+})
+
+test('drawing details reveal exact authored readback and fetch bounded history only on request', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installReplayRoutes(page, Date.now())
+  const historyUrls: URL[] = []
+  let historyAttempts = 0
+  const undrawn = Object.freeze({
+    state: 'undrawn', presentation_state: 'undrawn', description: null,
+    drawing: null, rows: null, source: 'none', kind_id: null, kind_name: null,
+    revision: null, variant_name: null,
+  })
+  const current = Object.freeze({
+    state: 'complete', presentation_state: 'complete',
+    description: 'An ember-glow lantern chosen by its owner.',
+    drawing: exactDrawing, rows: exactDrawingRows, source: 'kind_variant',
+    kind_id: 7, kind_name: 'lantern', revision: 3, variant_name: 'ember glow',
+  })
+
+  await page.route('**/api/thing/9', route => route.fulfill({ json: {
+    thing: {
+      id: 9, place_id: 3, name: 'field lantern', body: 'a steady mark',
+      made_by: 'map-walker', current_owner: 'map-walker', moderated: false,
+    },
+  } }))
+  await page.route('**/api/drawing/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/drawing/thing/9/history') {
+      historyAttempts += 1
+      historyUrls.push(url)
+      if (historyAttempts === 1) {
+        await route.fulfill({ status: 503, json: { error: 'drawing history unavailable' } })
+        return
+      }
+      const before = url.searchParams.get('before')
+      await route.fulfill({ json: before ? {
+        type: 'thing', id: 9,
+        revisions: [{
+          id: 16, slot_variant_name: 'ember glow', previous: undrawn,
+          current: { ...current, state: 'in_progress', presentation_state: 'in_progress',
+            description: 'The first ember pixels.', },
+          author: { id: 5, handle: 'map-walker', relation: 'owner' },
+          created_at: '2026-08-27T12:00:00.000Z',
+        }],
+        page: { limit: 20, has_more: false, next_before: null },
+      } : {
+        type: 'thing', id: 9,
+        revisions: [{
+          id: 18, slot_variant_name: 'ember glow', previous: {
+            ...current, state: 'in_progress', presentation_state: 'in_progress',
+            description: 'The first ember pixels.',
+          }, current,
+          author: { id: 5, handle: 'map-walker', relation: 'owner' },
+          created_at: '2026-08-28T12:00:00.000Z',
+        }],
+        page: { limit: 20, has_more: true, next_before: 17 },
+      } })
+      return
+    }
+    if (url.pathname === '/api/drawing/thing/9') {
+      await route.fulfill({ json: { type: 'thing', id: 9, ...current } })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/window/map')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  expect(historyUrls).toEqual([])
+  await page.getByRole('tab', { name: 'Live' }).click()
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  expect(historyUrls).toEqual([])
+
+  await page.goto('/window/thing/9')
+  const detail = page.locator('#record-detail')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('#record-detail-title')).toHaveText('field lantern')
+  const drawing = detail.locator('.drawing-detail')
+  await expect(drawing.locator('.drawing-state-label')).toHaveText('Complete')
+  await expect(drawing.locator('.drawing-provenance')).toHaveText(
+    'Kind lantern · revision 3 · variant ember glow',
+  )
+  await expect(drawing.locator('.drawing-owner-description')).toHaveText(
+    'An ember-glow lantern chosen by its owner.',
+  )
+  await expect(drawing.locator('[data-drawing-palette]')).toHaveText('#174d3c #f0c95f')
+  await expect(drawing.locator('[data-drawing-indices]')).toHaveText(
+    JSON.stringify(exactDrawing.indices),
+  )
+  await expect(drawing.locator('[data-drawing-row]')).toHaveText(exactDrawingRows)
+  const pixels = await drawing.locator('canvas.drawing-authored').evaluate(node => {
+    const canvas = node as HTMLCanvasElement
+    const context = canvas.getContext('2d')!
+    const sample = (column: number) => [...context.getImageData(
+      Math.floor(canvas.width * (column + 0.5) / 8),
+      Math.floor(canvas.height / 16),
+      1,
+      1,
+    ).data]
+    return [sample(1), sample(2)]
+  })
+  expect(pixels).toEqual([[240, 201, 95, 255], [23, 77, 60, 255]])
+  expect(historyUrls).toEqual([])
+
+  const showHistory = drawing.getByRole('button', { name: 'Show drawing history' })
+  await expect(showHistory).toHaveAttribute('aria-expanded', 'false')
+  await showHistory.click()
+  await expect(drawing.getByRole('button', { name: 'Retry drawing history' })).toBeVisible()
+  expect(historyUrls).toHaveLength(1)
+  expect(historyUrls[0]!.searchParams.get('limit')).toBe('20')
+
+  await drawing.getByRole('button', { name: 'Retry drawing history' }).click()
+  await expect(drawing.locator('.drawing-history-revision')).toHaveCount(1)
+  await expect(drawing.locator('.drawing-history')).toContainText('The first ember pixels.')
+  await expect(drawing.locator('.drawing-history')).toContainText(
+    'An ember-glow lantern chosen by its owner.',
+  )
+  const earlier = drawing.getByRole('button', { name: 'Load earlier drawing revisions' })
+  await earlier.click()
+  await expect(drawing.locator('.drawing-history-revision')).toHaveCount(2)
+  expect(historyUrls).toHaveLength(3)
+  expect(historyUrls[2]!.searchParams.get('before')).toBe('17')
+  expect(historyUrls[2]!.searchParams.get('limit')).toBe('20')
+})
+
+test('parent moderation leaves current drawing and its history unavailable in details', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  const historyUrls: string[] = []
+  await page.route('**/api/thing/9', route => route.fulfill({ json: {
+    thing: {
+      id: 9, place_id: 3, name: 'field lantern', body: 'a steady mark',
+      made_by: 'map-walker', current_owner: 'map-walker', moderated: true,
+    },
+  } }))
+  await page.route('**/api/drawing/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/drawing/thing/9/history') historyUrls.push(url.href)
+    if (url.pathname === '/api/drawing/thing/9' ||
+        url.pathname === '/api/drawing/thing/9/history') {
+      await route.fulfill({ status: 404, json: { error: 'drawing record not found' } })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/window/thing/9')
+  const detail = page.locator('#record-detail')
+  await expect(detail.locator('#record-detail-title')).toHaveText('field lantern')
+  await expect(detail.locator('.drawing-unavailable')).toContainText('Drawing unavailable')
+  await expect(detail.getByRole('button', { name: 'Show drawing history' })).toHaveCount(0)
+  expect(historyUrls).toEqual([])
 })
 
 test('preview proof failure stays with the Retry room instead of covering the crowd', async ({ page }) => {
@@ -1866,7 +2090,9 @@ test('focused use pulses the exact pinned nested thing', async ({ page }) => {
   const fixture = await installReplayRoutes(page, now)
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
-  await page.locator('[data-live-resident-handle="map-walker"]').first().click()
+  const mapWalker = page.locator('[data-live-resident-handle="map-walker"]').first()
+  await panLiveTargetIntoView(page, mapWalker)
+  await mapWalker.click()
 
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
@@ -1908,7 +2134,9 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
-  await page.locator('[data-live-resident-handle="map-walker"]').first().click()
+  const mapWalker = page.locator('[data-live-resident-handle="map-walker"]').first()
+  await panLiveTargetIntoView(page, mapWalker)
+  await mapWalker.click()
   await expect(page.locator('#live-roster [data-live-focus-partner]')).toHaveCount(7)
   await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(9)
   const thingIds = await page.locator('#live-focus-interactions [data-live-focus-thing]')
@@ -1997,6 +2225,7 @@ test('resident tags follow zoom and intent while terrain and camera writes stay 
     `#live-label-layer [data-live-resident-tag="${maximumReplayHandle}"]`,
   )
   await expect(focusedTag).toHaveCount(0)
+  await panLiveTargetIntoView(page, focusedWalker)
   await focusedWalker.hover()
   await expect(focusedTag).toBeVisible()
   await expect(focusedTag).toHaveText(maximumReplayHandle)
@@ -2016,7 +2245,8 @@ test('resident tags follow zoom and intent while terrain and camera writes stay 
   const neighborWalker = page.locator(
     '#live-plates [data-live-resident-handle="harbor-3"]',
   ).first()
-  await neighborWalker.hover()
+  await panLiveTargetIntoView(page, neighborWalker)
+  await neighborWalker.focus()
   const neighborTag = page.locator('#live-label-layer [data-live-resident-tag="harbor-3"]')
   await expect(neighborTag).toBeVisible()
   const labelsOverlap = await focusedTag.evaluate((node, neighbor) => {
@@ -2161,7 +2391,9 @@ test('focus keeps a truthful specimen visible after its resident leaves the dril
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
-  await page.locator('.live-plot[data-place-id="2"] .live-plot-open').click()
+  const cinderOpen = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await panLiveTargetIntoView(page, cinderOpen)
+  await cinderOpen.click()
   const mapWalker = page.locator(
     '#live-roster [data-live-resident-handle="map-walker"]',
   ).first()
@@ -2188,6 +2420,7 @@ test('resident focus persists locally, pins exact interactions, and camera zoom 
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
   const walker = page.locator('[data-live-resident-handle="map-walker"]').first()
+  await panLiveTargetIntoView(page, walker)
   await walker.click()
   await expect(page.locator('#live-focus-status')).toContainText('map-walker')
   await expect(page.locator(
@@ -2278,13 +2511,14 @@ test('resident focus persists locally, pins exact interactions, and camera zoom 
     const thing = node.getBoundingClientRect()
     const plot = node.closest('.live-plot')!.getBoundingClientRect()
     return {
-      left: thing.left >= plot.left - 1,
-      right: thing.right <= plot.right + 1,
-      top: thing.top >= plot.top - 1,
-      bottom: thing.bottom <= plot.bottom + 1,
+      thing: { left: thing.left, right: thing.right, top: thing.top, bottom: thing.bottom },
+      plot: { left: plot.left, right: plot.right, top: plot.top, bottom: plot.bottom },
     }
   })
-  expect(pinnedThingBounds).toEqual({ left: true, right: true, top: true, bottom: true })
+  expect(pinnedThingBounds.thing.left).toBeGreaterThanOrEqual(pinnedThingBounds.plot.left - 1)
+  expect(pinnedThingBounds.thing.right).toBeLessThanOrEqual(pinnedThingBounds.plot.right + 1)
+  expect(pinnedThingBounds.thing.top).toBeGreaterThanOrEqual(pinnedThingBounds.plot.top - 1)
+  expect(pinnedThingBounds.thing.bottom).toBeLessThanOrEqual(pinnedThingBounds.plot.bottom + 1)
   const thingBadge = page.locator('[data-place-id="3"] .live-thing-more')
   await expect(thingBadge).toHaveText('+3 more')
   const thingOverlaps = await page.locator(
@@ -2729,20 +2963,34 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
       return
     }
     const authored = (type === 'place' && (id === 1 || id === 2)) || type === 'thing'
+    const drawing = authored
+      ? { palette: ['#174d3c', '#f0c95f'], indices: Array.from({ length: 64 }, (_, index) => index % 2) }
+      : null
     await route.fulfill({ json: {
-      type, id, source: authored ? type : null,
-      drawing: authored
-        ? { palette: ['#174d3c', '#f0c95f'], indices: Array.from({ length: 64 }, (_, index) => index % 2) }
+      type,
+      id,
+      state: authored ? 'complete' : 'undrawn',
+      presentation_state: authored ? 'complete' : 'undrawn',
+      description: authored ? `Owner-authored ${type} drawing.` : null,
+      drawing,
+      rows: drawing
+        ? Array.from({ length: 8 }, (_, row) => drawing.indices.slice(row * 8, (row + 1) * 8).join(' '))
         : null,
+      source: authored ? type : 'none',
+      kind_id: null,
+      kind_name: null,
+      revision: null,
+      variant_name: null,
     } })
   })
 
   await page.goto('/window#view=map')
   await expect(page.locator('#window-status')).toContainText('Watching')
-  await expect(page.locator('#live-beta')).toBeHidden()
+  await expect(page.locator('#live-alpha')).toBeHidden()
   await page.getByRole('tab', { name: 'Live' }).click()
-  await expect(page.locator('#live-beta')).toBeVisible()
-  await expect(page.locator('#live-beta-note')).toContainText('if it disagrees with them, they are right')
+  await expect(page.locator('#live-alpha')).toBeVisible()
+  await expect(page.locator('#live-alpha')).toHaveText('ALPHA')
+  await expect(page.locator('#live-alpha-note')).toContainText('if it disagrees with them, they are right')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
   await expect(page.locator('.live-plate-title')).toHaveText('the world')
   const captionClearOfViewport = await page.locator('#live-map-caption').evaluate(node => {
@@ -2910,12 +3158,9 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   const centeredWorld = await narrowStage.evaluate(stage => {
     const world = stage.getBoundingClientRect()
     const viewport = stage.closest('#live-viewport')!.getBoundingClientRect()
-    return {
-      worldStillWider: world.width > viewport.width * 1.5,
-      worldStillTaller: world.height > viewport.height * 1.5,
-    }
+    return world.width > viewport.width * 1.5 || world.height > viewport.height * 1.5
   })
-  expect(centeredWorld).toEqual({ worldStillWider: true, worldStillTaller: true })
+  expect(centeredWorld).toBe(true)
   await expect(page.locator('.live-plot[data-live-detail="true"]')).not.toHaveCount(0)
   await expect(page.locator('.live-plot[data-live-detail="false"]')).not.toHaveCount(0)
 

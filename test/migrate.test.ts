@@ -34,6 +34,7 @@ const resumableRegistrationMigrationFile =
 const residentRefusalMigrationFile =
   'db/migrations/20260827_resident_refusal_state.sql' as const
 const drawingsMigrationFile = 'db/migrations/20260827_drawings.sql' as const
+const drawingContractMigrationFile = 'db/migrations/20260828_drawing_contract.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -789,6 +790,69 @@ test('drawings are one explicit guarded transactional preview or production migr
   assert.match(
     packageJson.scripts?.['migrate:production:drawings'] ?? '',
     /--target production --migration drawings$/u,
+  )
+})
+
+test('drawing contract is a separate bounded additive migration over the preview drawing baseline', () => {
+  const migrationUrl = new URL(`../${drawingContractMigrationFile}`, import.meta.url)
+  assert.equal(existsSync(migrationUrl), true, 'missing forward drawing-contract migration')
+  if (!existsSync(migrationUrl)) return
+
+  const migration = migrationDdl(drawingContractMigrationFile)
+  assert.match(migration, /^\s*BEGIN\s*;/iu)
+  assert.match(migration, /SET\s+LOCAL\s+lock_timeout\s*=/iu)
+  assert.match(migration, /SET\s+LOCAL\s+statement_timeout\s*=/iu)
+  assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+drawing_state\s+TEXT/iu)
+  assert.match(migration, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+drawing_revisions/iu)
+  assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN)\b/iu)
+  assert.doesNotMatch(migration, /TRUNCATE\b/iu)
+  assert.match(migration, /COMMIT\s*;\s*$/iu)
+  assert.equal(
+    prepareMigrationExecution(drawingContractMigrationFile, migration).mode,
+    'transactional',
+  )
+})
+
+test('drawing contract has exact guarded preview and production registry entries', () => {
+  const baseEnvironment = {
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+  }
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'drawing-contract'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, drawingContractMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'drawing-contract'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'drawing-contract-release',
+    },
+  )
+  assert.equal(production.migrationFile, drawingContractMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:drawing-contract'] ?? '',
+    /--target preview --migration drawing-contract$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:drawing-contract'] ?? '',
+    /--target production --migration drawing-contract$/u,
   )
 })
 

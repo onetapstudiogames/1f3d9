@@ -61,11 +61,27 @@ const DISPLAY_FIELDS = Object.freeze({
   agreement: Object.freeze(['body'] as const),
 } satisfies Readonly<Record<ModerationTargetType, readonly string[]>>)
 
+const DRAWING_TOMBSTONE = Object.freeze({
+  drawing: null,
+  drawing_state: null,
+  drawing_presentation_state: null,
+  drawing_description: null,
+  drawing_rows: null,
+  drawing_source: null,
+  drawing_revisions: null,
+})
+const DRAWING_FIELDS: ReadonlySet<string> = new Set(Object.keys(DRAWING_TOMBSTONE))
+
 const CONTENT_TOMBSTONES = Object.freeze({
-  resident: Object.freeze({ drawing: null }),
-  place: Object.freeze({}),
-  thing: Object.freeze({}),
-  kind: Object.freeze({ traits: Object.freeze([]), recipe: null }),
+  resident: DRAWING_TOMBSTONE,
+  place: DRAWING_TOMBSTONE,
+  thing: DRAWING_TOMBSTONE,
+  kind: Object.freeze({
+    ...DRAWING_TOMBSTONE,
+    drawing_variants: null,
+    traits: Object.freeze([]),
+    recipe: null,
+  }),
   trait: Object.freeze({ recipe: null, mechanical: false }),
   note: Object.freeze({}),
   agreement: Object.freeze({}),
@@ -131,10 +147,15 @@ function redactFields<T extends PublicRecord>(
   const replacements = Object.fromEntries(
     fields.filter(field => Object.hasOwn(record, field)).map(field => [field, MODERATED_TEXT]),
   )
+  const presentTombstones = Object.fromEntries(
+    Object.entries(tombstones).filter(([field]) => (
+      !DRAWING_FIELDS.has(field) || Object.hasOwn(record, field)
+    )),
+  )
   return deepFreeze({
     ...cloned,
     ...replacements,
-    ...tombstones,
+    ...presentTombstones,
     moderated: true as const,
   }) as ModeratedRecord<T>
 }
@@ -147,11 +168,11 @@ function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {
 }
 
 export function redactPlace<T extends PublicRecord>(record: T): ModeratedRecord<T> {
-  return redactFields(record, DISPLAY_FIELDS.place)
+  return redactFields(record, DISPLAY_FIELDS.place, CONTENT_TOMBSTONES.place)
 }
 
 export function redactThing<T extends PublicRecord>(record: T): ModeratedRecord<T> {
-  return redactFields(record, DISPLAY_FIELDS.thing)
+  return redactFields(record, DISPLAY_FIELDS.thing, CONTENT_TOMBSTONES.thing)
 }
 
 export function redactKind<T extends PublicRecord>(record: T): ModeratedRecord<T> {

@@ -20,6 +20,16 @@ export type WindowDrawing = Readonly<{
   indices: readonly (number | null)[]
 }>
 
+export type WindowDrawingState = 'undrawn' | 'refused' | 'in_progress' | 'complete'
+
+export type WindowDrawingSource = Readonly<{
+  source: 'none' | 'resident' | 'place' | 'thing' | 'kind_base' | 'kind_variant'
+  kind_id?: number
+  kind_name?: string
+  revision?: number
+  variant_name?: string
+}>
+
 export function normalizeWindowDrawing(value: unknown): WindowDrawing | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const candidate = value as Record<string, unknown>
@@ -43,6 +53,26 @@ export function normalizeWindowDrawing(value: unknown): WindowDrawing | null {
     palette: Object.freeze([...(candidate.palette as string[])]),
     indices: Object.freeze([...(candidate.indices as Array<number | null>)]),
   })
+}
+
+export function windowDrawingStateLabel(
+  state: WindowDrawingState,
+  drawing: WindowDrawing | null,
+): 'Undrawn' | 'Refused' | 'In progress' | 'Blank' | 'Complete' {
+  if (state === 'undrawn') return 'Undrawn'
+  if (state === 'refused') return 'Refused'
+  if (state === 'in_progress') return 'In progress'
+  return drawing?.indices.every(index => index === null) ? 'Blank' : 'Complete'
+}
+
+export function windowDrawingSourceLabel(source: WindowDrawingSource | null): string {
+  if (!source || source.source === 'none') return ''
+  if (['resident', 'place', 'thing'].includes(source.source)) return 'Own drawing'
+  if (!source.kind_name || !Number.isSafeInteger(source.revision) ||
+      (source.revision ?? 0) <= 0) return ''
+  const prefix = `Kind ${source.kind_name} · revision ${String(source.revision)} · `
+  if (source.source === 'kind_base') return prefix + 'base'
+  return source.variant_name ? prefix + `variant ${source.variant_name}` : ''
 }
 
 export function windowLivePlateChildren<T extends Readonly<{
@@ -879,6 +909,8 @@ const VALIDATE_WINDOW_ARCHIVE_QUERY_JS = validateWindowArchiveQuery.toString()
 const VALIDATE_WINDOW_DIRECTORY_SEARCH_JS = validateWindowDirectorySearch.toString()
 const WINDOW_SHARE_PATH_JS = windowSharePath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
+const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
+const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
 const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
 const WINDOW_LIVE_SURVEYED_PLOTS_JS = windowLiveSurveyedPlots.toString()
 const WINDOW_LIVE_SCATTERED_POINT_JS = windowLiveScatteredPoint.toString()
@@ -960,6 +992,8 @@ export const WINDOW_JS = `(() => {
   const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}
   const windowSharePath = ${WINDOW_SHARE_PATH_JS}
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
+  const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
+  const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
   const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
   const windowLiveSurveyedPlots = ${WINDOW_LIVE_SURVEYED_PLOTS_JS}
   const windowLiveScatteredPoint = ${WINDOW_LIVE_SCATTERED_POINT_JS}
@@ -987,8 +1021,8 @@ export const WINDOW_JS = `(() => {
     status: document.getElementById('window-status'),
     counts: document.getElementById('city-counts'),
     scope: document.getElementById('view-scope'),
-    liveBeta: document.getElementById('live-beta'),
-    liveBetaNote: document.getElementById('live-beta-note'),
+    liveAlpha: document.getElementById('live-alpha'),
+    liveAlphaNote: document.getElementById('live-alpha-note'),
     liveClock: document.getElementById('live-clock'),
     liveBreadcrumbs: document.getElementById('live-breadcrumbs'),
     liveHistoryStatus: document.getElementById('live-history-status'),
@@ -1060,6 +1094,8 @@ export const WINDOW_JS = `(() => {
   let authoredRevision = 0
   let archiveRequestRevision = 0
   let detailRequestRevision = 0
+  let detailDrawingRequestRevision = 0
+  let detailDrawingHistoryRequestRevision = 0
   let shareFeedbackRevision = 0
   let state = {
     failures: 0,
@@ -1086,6 +1122,8 @@ export const WINDOW_JS = `(() => {
     fullBodies: {},
     detail: null,
     details: {},
+    detailDrawings: {},
+    detailDrawingHistories: {},
     archive: {
       query: '', mode: 'words', type: 'all', results: [], totalItems: 0,
       totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
@@ -1154,6 +1192,129 @@ export const WINDOW_JS = `(() => {
     return node
   }
 
+  function drawingRowsFor(drawing) {
+    return Object.freeze(Array.from({ length: 8 }, (_, row) => drawing.indices
+      .slice(row * 8, row * 8 + 8)
+      .map(index => index === null ? '.' : String(index))
+      .join(' ')))
+  }
+
+  function safeDrawingText(value, maximumBytes, allowEmpty) {
+    const text = safeExactText(value, null, maximumBytes, allowEmpty)
+    if (text === null) return null
+    try {
+      return new TextEncoder().encode(text).byteLength <= maximumBytes ? text : null
+    } catch {
+      return null
+    }
+  }
+
+  function normalizeDrawingSnapshot(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const state = ['undrawn', 'refused', 'in_progress', 'complete'].includes(raw.state)
+      ? raw.state
+      : null
+    if (!state) return null
+    const drawing = raw.drawing === null ? null : normalizeWindowDrawing(raw.drawing)
+    if (raw.drawing !== null && !drawing) return null
+    if ((state === 'undrawn' || state === 'refused') !== (drawing === null)) return null
+    const presentationState = windowDrawingStateLabel(state, drawing).toLowerCase()
+      .replace(' ', '_')
+    if (raw.presentation_state !== presentationState) return null
+    const description = state === 'undrawn'
+      ? raw.description === null ? null : undefined
+      : safeDrawingText(raw.description, 280, true)
+    if (description === undefined || (state !== 'undrawn' && description === null)) return null
+    const rows = drawing ? drawingRowsFor(drawing) : null
+    if (rows) {
+      if (!Array.isArray(raw.rows) || raw.rows.length !== 8 ||
+          raw.rows.some((row, index) => row !== rows[index])) return null
+    } else if (raw.rows !== null) return null
+    const source = ['none', 'resident', 'place', 'thing', 'kind_base', 'kind_variant']
+      .includes(raw.source) ? raw.source : null
+    if (!source || (state === 'undrawn') !== (source === 'none')) return null
+    const rawKindId = raw.kind_id ?? null
+    const rawKindName = raw.kind_name ?? null
+    const rawRevision = raw.revision ?? null
+    const rawVariantName = raw.variant_name ?? null
+    const kindId = rawKindId === null ? null : safeId(rawKindId)
+    const kindName = rawKindName === null ? null : safeDrawingText(rawKindName, 64, false)
+    const revision = rawRevision === null ? null : safeId(rawRevision)
+    const variantName = rawVariantName === null
+      ? null
+      : safeDrawingText(rawVariantName, 64, false)
+    if ((rawKindId !== null && !kindId) || (rawKindName !== null && !kindName) ||
+        (rawRevision !== null && !revision) || (rawVariantName !== null && !variantName)) {
+      return null
+    }
+    if (source === 'kind_base' || source === 'kind_variant') {
+      if (!kindId || !kindName || !revision) return null
+      if ((source === 'kind_variant') !== Boolean(variantName)) return null
+    } else if (variantName) return null
+    return Object.freeze({
+      state,
+      presentation_state: presentationState,
+      description,
+      drawing,
+      rows,
+      source,
+      kind_id: kindId,
+      kind_name: kindName,
+      revision,
+      variant_name: variantName,
+    })
+  }
+
+  function normalizeDrawingRead(type, id, payload) {
+    if (!payload || typeof payload !== 'object' || payload.type !== type ||
+        safeId(payload.id) !== id) return null
+    return normalizeDrawingSnapshot(payload)
+  }
+
+  function normalizeDrawingRevision(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const id = safeId(raw.id)
+    const slotVariantName = raw.slot_variant_name === null
+      ? null
+      : safeDrawingText(raw.slot_variant_name, 64, false)
+    const previous = normalizeDrawingSnapshot(raw.previous)
+    const current = normalizeDrawingSnapshot(raw.current)
+    const rawAuthorId = raw.author?.id ?? null
+    const rawAuthorHandle = raw.author?.handle ?? null
+    const authorId = rawAuthorId === null ? null : safeId(rawAuthorId)
+    const authorHandle = rawAuthorHandle === null ? null : safeHandle(rawAuthorHandle)
+    const authorRelation = safeDrawingText(raw.author?.relation, 64, false)
+    const createdAt = safeDate(raw.created_at)
+    if (!id || (raw.slot_variant_name !== null && !slotVariantName) || !previous || !current ||
+        (rawAuthorId !== null && !authorId) || (rawAuthorHandle !== null && !authorHandle) ||
+        Boolean(authorId) !== Boolean(authorHandle) || !authorRelation || !createdAt) return null
+    return Object.freeze({
+      id,
+      slot_variant_name: slotVariantName,
+      previous,
+      current,
+      author: Object.freeze({ id: authorId, handle: authorHandle, relation: authorRelation }),
+      created_at: createdAt.toISOString(),
+    })
+  }
+
+  function normalizeDrawingHistory(type, id, payload) {
+    if (!payload || typeof payload !== 'object' || payload.type !== type ||
+        safeId(payload.id) !== id || !Array.isArray(payload.revisions) ||
+        payload.revisions.length > 20 || !payload.page || typeof payload.page !== 'object' ||
+        payload.page.limit !== 20 || typeof payload.page.has_more !== 'boolean') return null
+    const revisions = payload.revisions.map(normalizeDrawingRevision)
+    if (revisions.some(revision => !revision) ||
+        new Set(revisions.map(revision => revision.id)).size !== revisions.length) return null
+    const nextBefore = payload.page.next_before === null ? null : safeId(payload.page.next_before)
+    if (payload.page.has_more !== Boolean(nextBefore)) return null
+    return Object.freeze({
+      revisions: Object.freeze(revisions),
+      hasMore: payload.page.has_more,
+      nextBefore,
+    })
+  }
+
   function liveProofPayload(now) {
     const rootId = LIVE_PROOF_ROOT_ID
     const gardenId = LIVE_PROOF_GARDEN_ID
@@ -1179,7 +1340,7 @@ export const WINDOW_JS = `(() => {
       current_owner: residents[0].handle,
       owner: residents[0].handle,
       open_to_use: true,
-      kind: 'proof-object',
+      kind: index === 0 ? null : 'proof-object',
       traits: [],
       created_at: new Date(now - 120_000 - index * 1_000).toISOString(),
       moderated: false,
@@ -1266,13 +1427,67 @@ export const WINDOW_JS = `(() => {
   }
 
   function liveProofDrawings(proof) {
+    const pixels = Object.freeze({
+      palette: Object.freeze(['#174d3c', '#f0c95f']),
+      indices: Object.freeze(Array.from({ length: 64 }, (_, index) => index % 3 === 0 ? 0 : 1)),
+    })
+    const alternate = Object.freeze({
+      palette: Object.freeze(['#d95c46', '#174d3c']),
+      indices: Object.freeze(Array.from({ length: 64 }, (_, index) => index % 2)),
+    })
+    const blank = Object.freeze({
+      palette: Object.freeze([]),
+      indices: Object.freeze(Array.from({ length: 64 }, () => null)),
+    })
+    const held = (state, drawing, description, source, kind = {}) => Object.freeze({
+      loading: false,
+      loaded: true,
+      error: false,
+      state,
+      presentation_state: windowDrawingStateLabel(state, drawing).toLowerCase().replace(' ', '_'),
+      description,
+      drawing,
+      rows: drawing ? drawingRowsFor(drawing) : null,
+      source,
+      kind_id: kind.kind_id ?? null,
+      kind_name: kind.kind_name ?? null,
+      revision: kind.revision ?? null,
+      variant_name: kind.variant_name ?? null,
+    })
+    const undrawn = () => held('undrawn', null, null, 'none')
+    const base = Object.freeze({ kind_id: 9601, kind_name: 'proof-object', revision: 3 })
     const entries = [
-      ...proof.snapshot.live_survey.map(place => ['place:' + String(place.id), null]),
-      ...proof.residents.map(resident => ['resident:' + String(resident.id), null]),
-      ...proof.things.map(thing => ['thing:' + String(thing.id), null]),
+      ['place:' + String(LIVE_PROOF_ROOT_ID), undrawn()],
+      ['place:' + String(LIVE_PROOF_GARDEN_ID),
+        held('refused', null, 'This proof place declines a drawing.', 'place')],
+      ['place:' + String(LIVE_PROOF_WORKSHOP_ID),
+        held('in_progress', pixels, 'The workshop outline is still being drawn.', 'place')],
+      ['place:' + String(LIVE_PROOF_RETRY_ROOM_ID),
+        held('complete', blank, 'An intentionally transparent room.', 'place')],
+      ['resident:' + String(proof.residents[0].id),
+        held('complete', alternate, 'Proof Alex drew this portrait.', 'resident')],
+      ['resident:' + String(proof.residents[1].id),
+        held('refused', null, 'Proof Bea chose not to draw.', 'resident')],
+      ...proof.residents.slice(2).map(resident => ['resident:' + String(resident.id), undrawn()]),
+      ['thing:' + String(proof.things[0].id),
+        held('complete', pixels, 'An untyped owner drawing.', 'thing')],
+      ['thing:' + String(proof.things[1].id),
+        held('complete', alternate, 'The pinned kind base.', 'kind_base', base)],
+      ['thing:' + String(proof.things[2].id), held(
+        'complete', pixels, 'The ember glow named variant.', 'kind_variant',
+        Object.freeze({ ...base, variant_name: 'ember glow' }),
+      )],
+      ['thing:' + String(proof.things[3].id),
+        held('in_progress', alternate, 'An owner-selected base still in progress.', 'kind_base', base)],
+      ['thing:' + String(proof.things[4].id),
+        held('complete', blank, 'A deliberately blank named variant.', 'kind_variant',
+          Object.freeze({ ...base, variant_name: 'clear glass' }))],
+      ['thing:' + String(proof.things[5].id),
+        held('refused', null, 'This thing owner explicitly refused.', 'thing', base)],
+      ['thing:' + String(proof.things[6].id),
+        held('complete', alternate, 'Another pinned kind base.', 'kind_base', base)],
     ]
-    return Object.freeze(Object.fromEntries(entries.map(([key, drawing]) => [key,
-      Object.freeze({ loading: false, loaded: true, error: false, drawing, source: null })])))
+    return Object.freeze(Object.fromEntries(entries))
   }
 
   function startLiveProofScene() {
@@ -1805,6 +2020,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : [])
   }
 
+  function livePlotHasFocusedDetail(node) {
+    return node.dataset.liveFocusPlot === 'true' || Boolean(node.querySelector(
+      '[data-live-focus-resident], [data-live-focus-partner], [data-live-focus-thing]',
+    ))
+  }
+
   function syncLivePlotVisibility() {
     if (!nodes.liveViewport || !nodes.livePlates || !(liveCamera.scale > 0)) return
     const plots = [...nodes.livePlates.querySelectorAll('.live-plot')].flatMap(node => {
@@ -1819,7 +2040,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
     const visibleIds = liveDetailedPlotIds(plots)
     for (const node of nodes.livePlates.querySelectorAll('.live-plot')) {
-      const detailed = visibleIds.has(safeId(node.dataset.placeId))
+      const detailed = visibleIds.has(safeId(node.dataset.placeId)) ||
+        livePlotHasFocusedDetail(node)
       node.dataset.liveDetail = String(detailed)
     }
     refillLiveDrawingQueue()
@@ -3000,13 +3222,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       })
       if (!response.ok) throw new Error('drawing unavailable')
       const payload = await response.json()
-      if (!payload || payload.type !== type || safeId(payload.id) !== id) throw new Error('invalid drawing')
-      const drawing = payload.drawing === null ? null : normalizeWindowDrawing(payload.drawing)
-      if (payload.drawing !== null && !drawing) throw new Error('invalid drawing')
-      if (![null, 'place', 'resident', 'thing', 'kind_revision'].includes(payload.source)) {
-        throw new Error('invalid drawing source')
-      }
-      const source = payload.source
+      const drawing = normalizeDrawingRead(type, id, payload)
+      if (!drawing) throw new Error('invalid drawing')
       if (state.live.drawings[key] !== loading) return
       state = {
         ...state,
@@ -3014,7 +3231,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ...state.live,
           drawings: {
             ...state.live.drawings,
-            [key]: Object.freeze({ loading: false, loaded: true, error: false, drawing, source }),
+            [key]: Object.freeze({ loading: false, loaded: true, error: false, ...drawing }),
           },
         },
       }
@@ -3113,7 +3330,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (type !== 'place') return
     const entry = state.live.drawings[key]
-    const undrawn = Boolean(entry?.loaded && entry.drawing === null)
+    const undrawn = Boolean(entry?.loaded && entry.state === 'undrawn')
     for (const card of nodes.livePlates?.querySelectorAll(
       '.live-plot[data-place-id="' + String(id) + '"]') || []) {
       card.dataset.undrawn = String(undrawn)
@@ -3137,7 +3354,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       tileContext.fillRect(index % 8, Math.floor(index / 8), 1, 1)
     })
     const canvas = document.createElement('canvas')
-    canvas.classList.add('drawing-grid', 'drawing-authored')
+    canvas.classList.add('drawing-authored')
     canvas.width = columns * 8
     canvas.height = rows * 8
     const context = canvas.getContext('2d')
@@ -3147,6 +3364,34 @@ ${WINDOW_CLIENT_SAFETY_JS}
     context.fillStyle = pattern
     context.fillRect(0, 0, canvas.width, canvas.height)
     return canvas
+  }
+
+  function applyDrawingData(node, entry) {
+    node.dataset.drawingState = entry.state
+    node.dataset.drawingPresentationState = entry.presentation_state
+    node.dataset.drawingSource = entry.source
+    if (entry.kind_id) node.dataset.drawingKindId = String(entry.kind_id)
+    if (entry.kind_name) node.dataset.drawingKindName = entry.kind_name
+    if (entry.revision) node.dataset.drawingRevision = String(entry.revision)
+    if (entry.variant_name) node.dataset.drawingVariantName = entry.variant_name
+  }
+
+  function drawingAccessibleLabel(label, entry) {
+    const stateLabel = windowDrawingStateLabel(entry.state, entry.drawing)
+    const sourceLabel = windowDrawingSourceLabel(entry)
+    return label + ' · ' + stateLabel + (sourceLabel ? ' · ' + sourceLabel : '')
+  }
+
+  function appendLiveDrawingLabels(node, entry) {
+    const stateLabel = windowDrawingStateLabel(entry.state, entry.drawing)
+    const stateNode = element('span', 'drawing-live-label drawing-state-label', stateLabel)
+    node.append(stateNode)
+    const sourceLabel = windowDrawingSourceLabel(entry)
+    if (sourceLabel) {
+      const sourceNode = element('span', 'drawing-live-label drawing-provenance', sourceLabel)
+      sourceNode.title = sourceLabel
+      node.append(sourceNode)
+    }
   }
 
   function drawingNode(type, id, label, columns = 1, rows = 1) {
@@ -3183,10 +3428,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return identify(loading)
     }
     if (entry.drawing === null) {
-      const standIn = element('span', 'drawing-grid drawing-undrawn')
+      const standIn = element('span',
+        'drawing-grid drawing-undrawn drawing-' + entry.presentation_state)
       standIn.setAttribute('role', 'img')
-      standIn.setAttribute('aria-label', label + ' is undrawn')
-      standIn.append(element('span', 'drawing-undrawn-label', 'undrawn'))
+      standIn.setAttribute('aria-label', drawingAccessibleLabel(label, entry))
+      applyDrawingData(standIn, entry)
+      const visibleState = element('span',
+        'drawing-undrawn-label drawing-state-label',
+        windowDrawingStateLabel(entry.state, entry.drawing))
+      standIn.append(visibleState)
+      const sourceLabel = windowDrawingSourceLabel(entry)
+      if (sourceLabel) {
+        const sourceNode = element('span', 'drawing-live-label drawing-provenance', sourceLabel)
+        sourceNode.title = sourceLabel
+        standIn.append(sourceNode)
+      }
       return identify(standIn)
     }
     const drawing = entry.drawing
@@ -3198,11 +3454,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       unavailable.append(element('span', 'drawing-undrawn-label', 'drawing unavailable'))
       return identify(unavailable)
     }
-    sprite.setAttribute('role', 'img')
-    const blank = drawing.indices.every(index => index === null)
-    sprite.setAttribute('aria-label', label +
-      (blank ? ' is deliberately blank' : ' has an authored drawing'))
-    return identify(sprite)
+    const shell = element('span',
+      'drawing-grid drawing-authored-shell drawing-' + entry.presentation_state)
+    shell.setAttribute('role', 'img')
+    shell.setAttribute('aria-label', drawingAccessibleLabel(label, entry))
+    applyDrawingData(shell, entry)
+    applyDrawingData(sprite, entry)
+    sprite.setAttribute('aria-hidden', 'true')
+    shell.append(sprite)
+    appendLiveDrawingLabels(shell, entry)
+    return identify(shell)
   }
 
   async function fetchLiveNote(noteId) {
@@ -4035,6 +4296,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     ))
     if (openingDetail || (Object.hasOwn(next, 'detail') && next.detail === null)) {
       detailRequestRevision += 1
+      detailDrawingRequestRevision += 1
+      detailDrawingHistoryRequestRevision += 1
     }
     resetShareFeedback()
     const leavesReplayPlate = previousView === 'live' && (
@@ -4061,6 +4324,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function closeDetail() {
     if (!state.detail) return
     detailRequestRevision += 1
+    detailDrawingRequestRevision += 1
+    detailDrawingHistoryRequestRevision += 1
     resetShareFeedback()
     if (nodes.detail?.open) nodes.detail.close()
     if (history.state?.windowDetailEntry === true) {
@@ -5679,6 +5944,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const shelf = liveThingShelf(snapshot, place, records, focus.id, true, interactionThings)
     if (shelf) card.append(shelf)
+    if (livePlotHasFocusedDetail(card)) card.dataset.liveDetail = 'true'
     return card
   }
 
@@ -7158,6 +7424,81 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }) : null
   }
 
+  async function loadDrawingHistory(type, id, before = null, append = false) {
+    if (type !== 'thing' || state.detail?.kind !== type || state.detail.id !== id) return
+    const key = detailDrawingKey(type, id)
+    const current = state.detailDrawingHistories[key] || Object.freeze({
+      expanded: true, initialized: false, loading: false, error: false,
+      revisions: Object.freeze([]), hasMore: false, nextBefore: null,
+      failedBefore: null, failedAppend: false,
+    })
+    if (current.loading) return
+    const requestAuthoredRevision = authoredRevision
+    const requestRevision = ++detailDrawingHistoryRequestRevision
+    const requestIsCurrent = () => authoredRevision === requestAuthoredRevision &&
+      detailDrawingHistoryRequestRevision === requestRevision &&
+      state.detail?.kind === type && state.detail?.id === id
+    state = {
+      ...state,
+      detailDrawingHistories: {
+        ...state.detailDrawingHistories,
+        [key]: Object.freeze({
+          ...current, expanded: true, loading: true, error: false,
+          failedBefore: null, failedAppend: false,
+        }),
+      },
+    }
+    renderDetail()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/drawing/' + type + '/' + String(id) + '/history',
+        window.location.origin)
+      url.searchParams.set('limit', '20')
+      if (before) url.searchParams.set('before', String(before))
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+      })
+      if (!requestIsCurrent()) return
+      if (!response.ok) throw new Error('drawing history unavailable')
+      const page = normalizeDrawingHistory(type, id, await response.json())
+      if (!page) throw new Error('invalid drawing history')
+      if (!requestIsCurrent()) return
+      const previousRows = append ? current.revisions : []
+      const rowsById = new Map(previousRows.map(revision => [revision.id, revision]))
+      for (const revision of page.revisions) rowsById.set(revision.id, revision)
+      const revisions = Object.freeze([...rowsById.values()]
+        .sort((left, right) => right.id - left.id))
+      state = {
+        ...state,
+        detailDrawingHistories: {
+          ...state.detailDrawingHistories,
+          [key]: Object.freeze({
+            expanded: true, initialized: true, loading: false, error: false,
+            revisions, hasMore: page.hasMore, nextBefore: page.nextBefore,
+            failedBefore: null, failedAppend: false,
+          }),
+        },
+      }
+    } catch {
+      if (!requestIsCurrent()) return
+      state = {
+        ...state,
+        detailDrawingHistories: {
+          ...state.detailDrawingHistories,
+          [key]: Object.freeze({
+            ...current, expanded: true, loading: false, error: true,
+            failedBefore: before, failedAppend: append,
+          }),
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (requestIsCurrent()) renderDetail()
+    }
+  }
+
   async function ensureDetail(force) {
     const target = state.detail
     if (!target || target.kind === 'place') return
@@ -7229,7 +7570,250 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  function detailDrawingKey(type, id) {
+    return type + ':' + String(id)
+  }
+
+  async function ensureDetailDrawing(type, id, force = false) {
+    if (type !== 'thing' || state.detail?.kind !== type || state.detail.id !== id) return
+    const key = detailDrawingKey(type, id)
+    const current = state.detailDrawings[key]
+    if (current?.loading || (!force && (current?.drawing || current?.unavailable))) return
+    const requestAuthoredRevision = authoredRevision
+    const requestRevision = ++detailDrawingRequestRevision
+    const requestIsCurrent = () => authoredRevision === requestAuthoredRevision &&
+      detailDrawingRequestRevision === requestRevision &&
+      state.detail?.kind === type && state.detail?.id === id
+    state = {
+      ...state,
+      detailDrawings: {
+        ...state.detailDrawings,
+        [key]: Object.freeze({ loading: true, error: false, unavailable: false, drawing: null }),
+      },
+    }
+    renderDetail()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/drawing/' + type + '/' + String(id), window.location.origin)
+      const response = await fetch(url.pathname, {
+        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+      })
+      if (!requestIsCurrent()) return
+      if (response.status === 404) {
+        state = {
+          ...state,
+          detailDrawings: {
+            ...state.detailDrawings,
+            [key]: Object.freeze({
+              loading: false, error: false, unavailable: true, drawing: null,
+            }),
+          },
+        }
+        return
+      }
+      if (!response.ok) throw new Error('drawing unavailable')
+      const drawing = normalizeDrawingRead(type, id, await response.json())
+      if (!drawing) throw new Error('invalid drawing')
+      if (!requestIsCurrent()) return
+      state = {
+        ...state,
+        detailDrawings: {
+          ...state.detailDrawings,
+          [key]: Object.freeze({
+            loading: false, error: false, unavailable: false, drawing,
+          }),
+        },
+      }
+    } catch {
+      if (!requestIsCurrent()) return
+      state = {
+        ...state,
+        detailDrawings: {
+          ...state.detailDrawings,
+          [key]: Object.freeze({ loading: false, error: true, unavailable: false, drawing: null }),
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (requestIsCurrent()) renderDetail()
+    }
+  }
+
+  function drawingExactReadback(snapshot) {
+    if (!snapshot.drawing) return null
+    const exact = element('section', 'drawing-exact-readback')
+    exact.append(element('h4', '', 'Exact drawing readback'))
+    const palette = element('p', 'drawing-exact-line')
+    palette.append(document.createTextNode('Palette · '))
+    const paletteValue = element('code', '', snapshot.drawing.palette.join(' '))
+    paletteValue.dataset.drawingPalette = 'true'
+    palette.append(paletteValue)
+    const indices = element('p', 'drawing-exact-line')
+    indices.append(document.createTextNode('64 indices · '))
+    const indexValue = element('code', '', JSON.stringify(snapshot.drawing.indices))
+    indexValue.dataset.drawingIndices = 'true'
+    indices.append(indexValue)
+    const rowsTitle = element('p', 'drawing-exact-line', 'Canonical eight rows')
+    const rows = element('ol', 'drawing-canonical-rows')
+    for (const row of snapshot.rows) {
+      const item = document.createElement('li')
+      const code = element('code', '', row)
+      code.dataset.drawingRow = 'true'
+      item.append(code)
+      rows.append(item)
+    }
+    exact.append(palette, indices, rowsTitle, rows)
+    return exact
+  }
+
+  function drawingSnapshotNode(snapshot, title, compact = false) {
+    const section = element('section', compact ? 'drawing-snapshot drawing-snapshot-compact' :
+      'drawing-snapshot')
+    if (title) section.append(element('h4', '', title))
+    const stateLabel = windowDrawingStateLabel(snapshot.state, snapshot.drawing)
+    section.append(element('p', 'drawing-state-label', stateLabel))
+    const sourceLabel = windowDrawingSourceLabel(snapshot)
+    if (sourceLabel) section.append(element('p', 'drawing-provenance', sourceLabel))
+    if (snapshot.description !== null) {
+      section.append(element('p', 'drawing-owner-description', snapshot.description))
+    }
+    if (snapshot.drawing) {
+      const canvas = paintedDrawingNode(snapshot.drawing, 1, 1)
+      if (canvas) {
+        canvas.classList.add('drawing-detail-canvas')
+        canvas.setAttribute('role', 'img')
+        canvas.setAttribute('aria-label', stateLabel + (sourceLabel ? ' · ' + sourceLabel : ''))
+        applyDrawingData(canvas, snapshot)
+        section.append(canvas)
+      }
+    } else {
+      section.append(element('p', 'drawing-no-pixels',
+        snapshot.state === 'refused' ? 'The owner explicitly refused to draw.' :
+          'No owner-authored pixels are set.'))
+    }
+    const exact = drawingExactReadback(snapshot)
+    if (exact) section.append(exact)
+    return section
+  }
+
+  function drawingHistoryNode(type, id, history) {
+    const historyNode = element('section', 'drawing-history')
+    historyNode.id = 'drawing-history-' + type + '-' + String(id)
+    historyNode.setAttribute('aria-live', 'polite')
+    historyNode.append(element('h4', '', 'Drawing history'))
+    if (history.loading) {
+      historyNode.append(element('p', 'loading-row', history.revisions.length
+        ? 'Reading earlier drawing revisions…'
+        : 'Reading drawing history…'))
+    } else if (history.error) {
+      historyNode.append(element('p', 'error-row', 'Drawing history could not be read.'))
+      const retry = element('button', 'drawing-history-control', 'Retry drawing history')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'drawing-history-retry'
+      retry.addEventListener('click', () => void loadDrawingHistory(
+        type, id, history.failedBefore, history.failedAppend))
+      historyNode.append(retry)
+    }
+    for (const revision of history.revisions) {
+      const row = element('article', 'drawing-history-revision')
+      const when = new Date(revision.created_at).toLocaleString()
+      row.append(element('h5', '', 'Revision #' + String(revision.id)))
+      row.append(element('p', 'drawing-history-meta',
+        'by ' + (revision.author.handle || revision.author.relation) + ' · ' +
+        revision.author.relation + ' · ' + when +
+        (revision.slot_variant_name ? ' · slot ' + revision.slot_variant_name : '')))
+      row.append(
+        drawingSnapshotNode(revision.previous, 'Before', true),
+        drawingSnapshotNode(revision.current, 'After', true),
+      )
+      historyNode.append(row)
+    }
+    if (!history.loading && !history.error && history.initialized && !history.revisions.length) {
+      historyNode.append(element('p', 'empty-row', 'No drawing changes have been recorded yet.'))
+    }
+    if (!history.loading && !history.error && history.hasMore && history.nextBefore) {
+      const earlier = element('button', 'drawing-history-control', 'Load earlier drawing revisions')
+      earlier.type = 'button'
+      earlier.dataset.focusKey = 'drawing-history-earlier'
+      earlier.addEventListener('click', () => void loadDrawingHistory(
+        type, id, history.nextBefore, true))
+      historyNode.append(earlier)
+    }
+    return historyNode
+  }
+
+  function drawingDetailNode(type, id, label) {
+    const key = detailDrawingKey(type, id)
+    const entry = state.detailDrawings[key]
+    const section = element('section', 'drawing-detail')
+    section.setAttribute('aria-label', label + ' drawing details')
+    section.append(element('h3', '', 'Owner drawing'))
+    if (!entry || entry.loading) {
+      section.append(element('p', 'loading-row', 'Reading the current drawing…'))
+      if (!entry) window.queueMicrotask(() => void ensureDetailDrawing(type, id))
+      return section
+    }
+    if (entry.unavailable) {
+      section.append(element('p', 'drawing-unavailable', 'Drawing unavailable'))
+      return section
+    }
+    if (entry.error || !entry.drawing) {
+      section.append(element('p', 'error-row', 'The current drawing could not be read.'))
+      const retry = element('button', 'drawing-history-control', 'Retry current drawing')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'drawing-current-retry'
+      retry.addEventListener('click', () => void ensureDetailDrawing(type, id, true))
+      section.append(retry)
+      return section
+    }
+    section.append(drawingSnapshotNode(entry.drawing, '', false))
+    const history = state.detailDrawingHistories[key] || null
+    const expanded = history?.expanded === true
+    const toggle = element('button', 'drawing-history-control', expanded
+      ? 'Hide drawing history'
+      : 'Show drawing history')
+    toggle.type = 'button'
+    toggle.dataset.focusKey = 'drawing-history-toggle'
+    toggle.setAttribute('aria-expanded', String(expanded))
+    toggle.setAttribute('aria-controls', 'drawing-history-' + type + '-' + String(id))
+    toggle.addEventListener('click', () => {
+      const held = state.detailDrawingHistories[key]
+      if (held?.expanded) {
+        state = {
+          ...state,
+          detailDrawingHistories: {
+            ...state.detailDrawingHistories,
+            [key]: Object.freeze({ ...held, expanded: false }),
+          },
+        }
+        renderDetail()
+        return
+      }
+      const next = held
+        ? Object.freeze({ ...held, expanded: true })
+        : Object.freeze({
+            expanded: true, initialized: false, loading: false, error: false,
+            revisions: Object.freeze([]), hasMore: false, nextBefore: null,
+            failedBefore: null, failedAppend: false,
+          })
+      state = {
+        ...state,
+        detailDrawingHistories: { ...state.detailDrawingHistories, [key]: next },
+      }
+      renderDetail()
+      if (!next.initialized && !next.loading) void loadDrawingHistory(type, id)
+    })
+    section.append(toggle)
+    if (expanded && history) section.append(drawingHistoryNode(type, id, history))
+    return section
+  }
+
   function renderDetail() {
+    const previousFocusKey = nodes.detailBody?.contains(document.activeElement)
+      ? document.activeElement?.dataset?.focusKey || null
+      : null
     const target = state.detail
     if (!nodes.detail) return
     if (!target || target.kind === 'place') {
@@ -7266,6 +7850,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
             new Date(record.createdAt).toLocaleString()
         const body = element('p', 'record-detail-text public-body', record.body)
         nodes.detailBody.replaceChildren(element('p', 'record-detail-meta', meta), body)
+        if (record.kind === 'thing') {
+          nodes.detailBody.append(drawingDetailNode('thing', record.id, record.name))
+        }
         if (record.moderated) {
           nodes.detailBody.append(element(
             'p', 'moderated-mark', 'Maintainer removal is shown as a current tombstone.',
@@ -7274,6 +7861,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     }
     if (!nodes.detail.open) nodes.detail.showModal()
+    if (previousFocusKey) {
+      window.queueMicrotask(() => nodes.detailBody?.querySelector(
+        '[data-focus-key="' + CSS.escape(previousFocusKey) + '"]')?.focus())
+    }
   }
 
   async function loadFullBody(kind, id) {
@@ -8513,8 +9104,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     for (const panel of panels) panel.hidden = panel.id !== state.view + '-panel'
     const live = state.view === 'live'
-    if (nodes.liveBeta) nodes.liveBeta.hidden = !live
-    if (nodes.liveBetaNote) nodes.liveBetaNote.hidden = !live
+    if (nodes.liveAlpha) nodes.liveAlpha.hidden = !live
+    if (nodes.liveAlphaNote) nodes.liveAlphaNote.hidden = !live
     scheduleLiveClock()
   }
 
@@ -9292,6 +9883,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
           : state.live,
         fullBodies: replaceAuthored ? {} : state.fullBodies,
         details: replaceAuthored ? {} : state.details,
+        detailDrawings: replaceAuthored ? {} : state.detailDrawings,
+        detailDrawingHistories: replaceAuthored ? {} : state.detailDrawingHistories,
         changeMarker: freshSnapshot.changeMarker || requiredMarker,
         hasSnapshot: true,
         failures: 0,
@@ -9459,7 +10052,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (
       nextLocationState.detail?.kind !== state.detail?.kind ||
       nextLocationState.detail?.id !== state.detail?.id
-    ) detailRequestRevision += 1
+    ) {
+      detailRequestRevision += 1
+      detailDrawingRequestRevision += 1
+      detailDrawingHistoryRequestRevision += 1
+    }
     resetShareFeedback()
     if (clearsLiveFocus && state.live.focusResident) storeLiveFocusResident(null)
     state = {

@@ -118,6 +118,34 @@ test('resident moderation keeps public identity but clears its drawing', () => {
   assert.notEqual(source.drawing, null)
 })
 
+test('parent moderation clears the complete current drawing contract without exposing history', () => {
+  const source = {
+    id: 7,
+    handle: 'tiny-lantern',
+    drawing: { palette: ['#ad3f25'], indices: Array.from({ length: 64 }, () => 0) },
+    drawing_state: 'complete',
+    drawing_description: 'owner-authored lantern portrait',
+    drawing_source: { type: 'resident' },
+    drawing_rows: ['00000000', '00000000', '00000000', '00000000', '00000000', '00000000', '00000000', '00000000'],
+    drawing_revisions: [{ revision: 1, description: 'must not ride ordinary reads' }],
+  }
+
+  const redacted = redactModeratedTarget('resident', source)
+  const redactedRecord = redacted as Readonly<Record<string, unknown>>
+
+  assert.equal(redacted.id, 7)
+  assert.equal(redacted.handle, 'tiny-lantern')
+  for (const key of [
+    'drawing', 'drawing_state', 'drawing_description', 'drawing_source', 'drawing_rows',
+    'drawing_revisions',
+  ]) assert.equal(redactedRecord[key], null, key)
+  assert.equal(redacted.moderated, true)
+  assert.equal(Object.isFrozen(redacted), true)
+  assert.deepEqual(source.drawing_revisions, [
+    { revision: 1, description: 'must not ride ordinary reads' },
+  ])
+})
+
 test('target redactors remove authored payloads and retain public history', () => {
   const records = [
     {

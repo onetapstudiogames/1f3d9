@@ -1642,10 +1642,12 @@ test('a directory-known note author is followable before their presence has been
 })
 
 test('cold deep link replaces its numbered fallback when the directory arrives later', async ({ page }) => {
-  const focusedRead = (API_REQUESTS.get(page) ?? []).map(value => new URL(value)).find(url => {
-    return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
-  })
-  expect(focusedRead?.searchParams.get('after_change_marker')).toBe('20')
+  await expect.poll(() => {
+    const focusedRead = (API_REQUESTS.get(page) ?? []).map(value => new URL(value)).find(url => {
+      return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77'
+    })
+    return focusedRead?.searchParams.get('after_change_marker')
+  }).toBe('20')
   await expect(page.locator('#directory-status')).toContainText('Complete city directory')
   await expect(page.locator('#place-focus-title')).toHaveText('quiet_annex')
   await expect(page.locator('#place-focus-summary')).toContainText(

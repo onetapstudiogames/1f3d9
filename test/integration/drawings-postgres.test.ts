@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import { Client } from 'pg'
 import { Hono, type Context } from 'hono'
 import { NETWORK, USDC } from '../../src/chain.ts'
 import { beginCityCreditSpend, issueCityFeeCredit } from '../../src/city-credit.ts'
 import type { Resident } from '../../src/core.ts'
-import { mountDrawingRoutes } from '../../src/drawings.ts'
 import { bindPaymentEvidence, canonicalPaymentRequest } from '../../src/payment-attempts.ts'
 import { completeTreasuryPaymentOperation } from '../../src/payment-treasury-operations.ts'
 import { TREASURY } from '../../src/pay.ts'
@@ -30,12 +29,59 @@ const worldRootTopologyMigrationDdl = await readFile(
   new URL('../../db/migrations/20260814_world_root_topology.sql', import.meta.url),
   'utf8',
 )
+const drawingContractMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260828_drawing_contract.sql', import.meta.url),
+  'utf8',
+)
+
+function drawingFunctionDdl(name: string): string {
+  const startMarker = `CREATE OR REPLACE FUNCTION ${name}`
+  const start = drawingContractMigrationDdl.indexOf(startMarker)
+  assert.notEqual(start, -1, `missing ${name} in drawing contract migration`)
+  const endMarker = '$function$;'
+  const end = drawingContractMigrationDdl.indexOf(endMarker, start)
+  assert.notEqual(end, -1, `unterminated ${name} in drawing contract migration`)
+  return drawingContractMigrationDdl.slice(start, end + endMarker.length)
+}
+
+let routeClient: Client | undefined
+const routeSql = (async (
+  strings: TemplateStringsArray,
+  ...values: readonly unknown[]
+): Promise<Record<string, unknown>[]> => {
+  assert.ok(routeClient, 'the route PostgreSQL client must be connected')
+  const text = strings.reduce(
+    (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
+    '',
+  )
+  return (await routeClient.query(text, [...values])).rows as Record<string, unknown>[]
+}) as ((strings: TemplateStringsArray, ...values: readonly unknown[]) => Promise<Record<string, unknown>[]>) & {
+  query: (text: string, values?: readonly unknown[]) => Promise<Record<string, unknown>[]>
+}
+routeSql.query = async (text, values = []) => {
+  assert.ok(routeClient, 'the route PostgreSQL client must be connected')
+  return (await routeClient.query(text, [...values])).rows as Record<string, unknown>[]
+}
+mock.module(new URL('../../src/db.ts', import.meta.url).href, {
+  namedExports: {
+    sql: routeSql,
+    runtimeDatabaseUrl: () => 'postgresql://integration-test.invalid/drawings',
+  },
+})
 
 const blankIndices = (): null[] => Array.from({ length: 64 }, () => null)
 const drawing = (colour: string) => ({
   palette: [colour],
   indices: [0, ...blankIndices().slice(1)],
 })
+const blankDrawing = () => ({ palette: [], indices: blankIndices() })
+const rowsFor = (value: { indices: readonly (number | null)[] }): string[] =>
+  Array.from({ length: 8 }, (_, row) => value.indices
+    .slice(row * 8, row * 8 + 8)
+    .map(index => index == null ? '.' : String(index))
+    .join(' '))
+const ownerSecret = `1f3d9_sk_${'d'.repeat(48)}`
+const ownerAuthorization = Object.freeze({ authorization: `Bearer ${ownerSecret}` })
 const founderWorldDrawing = Object.freeze({
   palette: Object.freeze(['#0b1714', '#123026', '#1c4434']),
   indices: Object.freeze([
@@ -90,6 +136,7 @@ async function installLegacyNullWorldDrawing(client: Client): Promise<void> {
     BEGIN;
     ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
     ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_drawing_exact;
+    ALTER TABLE places DROP CONSTRAINT IF EXISTS places_drawing_contract;
     ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
     UPDATE places SET drawing = NULL WHERE place_kind = 'world';
     ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
@@ -122,6 +169,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   const password = randomBytes(24).toString('hex')
   let client: Client | undefined
   t.after(async () => {
+    routeClient = undefined
     await client?.end().catch(() => undefined)
     docker(['rm', '--force', container], true)
   })
@@ -141,6 +189,55 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     host: '127.0.0.1', port, user: 'postgres', password,
     database: POSTGRES_DATABASE, ssl: false,
   })
+  routeClient = client
+
+  await client.query('BEGIN')
+  try {
+    await client.query('CREATE SCHEMA drawing_contract_probe')
+    await client.query('SET LOCAL search_path TO drawing_contract_probe, public')
+    for (const name of [
+      'valid_city_drawing',
+      'valid_city_drawing_public_text',
+      'valid_city_drawing_variant_name',
+      'valid_city_drawing_state',
+      'valid_city_drawing_variants',
+      'city_drawing_rows',
+      'city_drawing_presentation_state',
+      'valid_city_drawing_revision_value',
+      'city_drawing_public_value',
+    ]) await client.query(drawingFunctionDdl(name))
+
+    await client.query('SET LOCAL search_path TO pg_catalog')
+    const customSchemaContract = (await client.query<{
+      safe_state: boolean
+      unsafe_state: boolean
+      trimmed_variant: boolean
+      public_state: string
+    }>(`
+      SELECT
+        drawing_contract_probe.valid_city_drawing_state(
+          'refused', 'Owner chose not to draw this.', NULL
+        ) AS safe_state,
+        drawing_contract_probe.valid_city_drawing_state(
+          'refused', $1, NULL
+        ) AS unsafe_state,
+        drawing_contract_probe.valid_city_drawing_variant_name(
+          ' padded variant '
+        ) AS trimmed_variant,
+        drawing_contract_probe.city_drawing_public_value(
+          'refused', 'Owner chose not to draw this.', NULL,
+          'thing', NULL, NULL, NULL, NULL
+        )->>'presentation_state' AS public_state
+    `, ['hidden\u202Elabel'])).rows[0]
+    assert.deepEqual(customSchemaContract, {
+      safe_state: true,
+      unsafe_state: false,
+      trimmed_variant: false,
+      public_state: 'refused',
+    })
+  } finally {
+    await client.query('ROLLBACK')
+  }
 
   await client.query(schemaDdl)
   const freshWorld = (await client.query<{ id: number; drawing: unknown }>(`
@@ -156,6 +253,8 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   await client.query(migrationDdl)
   await client.query(worldRootTopologyMigrationDdl)
   await client.query(worldRootTopologyMigrationDdl)
+  await client.query(drawingContractMigrationDdl)
+  await client.query(drawingContractMigrationDdl)
 
   const migratedWorld = (await client.query<{ id: number; drawing: unknown }>(`
     SELECT id, drawing FROM places WHERE place_kind = 'world'
@@ -198,59 +297,107 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     SELECT id, drawing FROM places WHERE place_kind = 'world'
   `)).rows[0], freshWorld)
 
-  const columns = (await client.query<{
-    table_name: string
-    is_nullable: string
-    column_default: string | null
-  }>(`
-    SELECT table_name, is_nullable, column_default
+  const columns = (await client.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name
     FROM information_schema.columns
-    WHERE table_schema = 'public' AND column_name = 'drawing'
-    ORDER BY table_name
+    WHERE table_schema = 'public'
+      AND (
+        (table_name IN ('residents', 'places', 'things', 'kind_revisions')
+          AND column_name IN ('drawing', 'drawing_state', 'drawing_description'))
+        OR (table_name = 'kind_revisions' AND column_name = 'drawing_variants')
+        OR (table_name = 'things' AND column_name = 'drawing_variant_name')
+      )
+    ORDER BY table_name, column_name
   `)).rows
   assert.deepEqual(columns, [
-    { table_name: 'kind_revisions', is_nullable: 'YES', column_default: null },
-    { table_name: 'places', is_nullable: 'YES', column_default: null },
-    { table_name: 'residents', is_nullable: 'YES', column_default: null },
-    { table_name: 'things', is_nullable: 'YES', column_default: null },
+    { table_name: 'kind_revisions', column_name: 'drawing' },
+    { table_name: 'kind_revisions', column_name: 'drawing_description' },
+    { table_name: 'kind_revisions', column_name: 'drawing_state' },
+    { table_name: 'kind_revisions', column_name: 'drawing_variants' },
+    { table_name: 'places', column_name: 'drawing' },
+    { table_name: 'places', column_name: 'drawing_description' },
+    { table_name: 'places', column_name: 'drawing_state' },
+    { table_name: 'residents', column_name: 'drawing' },
+    { table_name: 'residents', column_name: 'drawing_description' },
+    { table_name: 'residents', column_name: 'drawing_state' },
+    { table_name: 'things', column_name: 'drawing' },
+    { table_name: 'things', column_name: 'drawing_description' },
+    { table_name: 'things', column_name: 'drawing_state' },
+    { table_name: 'things', column_name: 'drawing_variant_name' },
   ])
+  assert.equal((await client.query<{ count: string }>(`
+    SELECT count(*)::text AS count FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'drawing_revisions'
+  `)).rows[0]?.count, '1')
 
   const residentDrawing = drawing('#ad3f25')
   const placeDrawing = drawing('#174d3c')
   const kindDrawing = drawing('#f0c95f')
   const thingDrawing = drawing('#9d9276')
   await client.query(`
-    INSERT INTO residents (id, handle, model, secret_hash, drawing)
+    INSERT INTO residents (
+      id, handle, model, secret_hash, drawing, drawing_state, drawing_description
+    )
     VALUES
-      (1, 'drawing-owner', 'integration', $1, $2::jsonb),
-      (2, 'paid-drawing-owner', 'integration', $3, NULL)
-  `, ['1'.repeat(64), JSON.stringify(residentDrawing), '2'.repeat(64)])
+      (1, 'drawing-owner', 'integration', $1, $2::jsonb, 'complete', 'A resident mark.'),
+      (2, 'paid-drawing-owner', 'integration', $3, NULL, 'undrawn', NULL)
+  `, [
+    '1'.repeat(64),
+    JSON.stringify(residentDrawing),
+    createHash('sha256').update(ownerSecret, 'utf8').digest('hex'),
+  ])
   await client.query('UPDATE resident_id_allocator SET last_id = 2 WHERE singleton')
   const placeId = Number((await client.query<{ id: number }>(`
-    INSERT INTO places (parent_id, place_kind, name, description, owner_id, drawing)
-    SELECT id, 'continent', 'Drawing Quarter', 'exact public place', 1, $1::jsonb
+    INSERT INTO places (
+      parent_id, place_kind, name, description, owner_id,
+      drawing, drawing_state, drawing_description
+    )
+    SELECT id, 'continent', 'Drawing Quarter', 'exact public place', 1,
+      $1::jsonb, 'complete', 'A brick-red drawing quarter.'
     FROM places WHERE place_kind = 'world'
     RETURNING id
   `, [JSON.stringify(placeDrawing)])).rows[0]!.id)
   const kindId = Number((await client.query<{ id: number }>(`
     INSERT INTO kinds (name, owner_id) VALUES ('drawn-kind', 1) RETURNING id
   `)).rows[0]!.id)
+  const kindVariants = [{
+    name: 'blue-shutter',
+    drawing: drawing('#1e5964'),
+    state: 'complete',
+    description: 'A blue shutter over the kind owner’s lantern.',
+  }]
   await client.query(`
-    INSERT INTO kind_revisions (kind_id, revision, description, drawing)
-    VALUES ($1, 1, 'drawn definition', $2::jsonb)
-  `, [kindId, JSON.stringify(kindDrawing)])
+    INSERT INTO kind_revisions (
+      kind_id, revision, description, drawing, drawing_state,
+      drawing_description, drawing_variants
+    )
+    VALUES (
+      $1, 1, 'drawn definition', $2::jsonb, 'complete',
+      'The kind owner’s plain lantern.', $3::jsonb
+    )
+  `, [kindId, JSON.stringify(kindDrawing), JSON.stringify(kindVariants)])
   const ownThingId = Number((await client.query<{ id: number }>(`
     INSERT INTO things (
-      place_id, name, body, owner_id, maker_id, kind_id,
-      birth_revision, current_revision, drawing
-    ) VALUES ($1, 'override thing', '', 1, 1, $2, 1, 1, $3::jsonb)
+      place_id, name, body, owner_id, maker_id,
+      drawing, drawing_state, drawing_description
+    ) VALUES (
+      $1, 'untyped owner drawing', '', 1, 1,
+      $2::jsonb, 'complete', 'An untyped owner-authored thing.'
+    )
     RETURNING id
-  `, [placeId, kindId, JSON.stringify(thingDrawing)])).rows[0]!.id)
+  `, [placeId, JSON.stringify(thingDrawing)])).rows[0]!.id)
   const inheritedThingId = Number((await client.query<{ id: number }>(`
     INSERT INTO things (
       place_id, name, body, owner_id, maker_id, kind_id,
       birth_revision, current_revision
     ) VALUES ($1, 'inherited thing', '', 1, 1, $2, 1, 1)
+    RETURNING id
+  `, [placeId, kindId])).rows[0]!.id)
+  const variantThingId = Number((await client.query<{ id: number }>(`
+    INSERT INTO things (
+      place_id, name, body, owner_id, maker_id, kind_id,
+      birth_revision, current_revision, drawing_variant_name
+    ) VALUES ($1, 'variant thing', '', 1, 1, $2, 1, 1, 'blue-shutter')
     RETURNING id
   `, [placeId, kindId])).rows[0]!.id)
 
@@ -264,15 +411,56 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   ]) await rejectsCheck(client, candidate)
 
   const replacement = drawing('#0b1714')
-  await client.query('UPDATE residents SET drawing = $1::jsonb WHERE id = 1', [JSON.stringify(replacement)])
+  await client.query(`
+    UPDATE residents
+    SET drawing = $1::jsonb,
+      drawing_state = 'in_progress',
+      drawing_description = 'The replacement is deliberately unfinished.'
+    WHERE id = 1
+  `, [JSON.stringify(replacement)])
   assert.deepEqual(
-    (await client.query<{ drawing: unknown }>('SELECT drawing FROM residents WHERE id = 1')).rows[0]?.drawing,
-    replacement,
+    (await client.query<{
+      drawing: unknown
+      drawing_state: string
+      drawing_description: string
+    }>(`
+      SELECT drawing, drawing_state, drawing_description FROM residents WHERE id = 1
+    `)).rows[0],
+    {
+      drawing: replacement,
+      drawing_state: 'in_progress',
+      drawing_description: 'The replacement is deliberately unfinished.',
+    },
   )
-  assert.equal((await client.query<{ count: string }>(`
-    SELECT count(*)::text AS count FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name IN ('drawing_history', 'drawing_versions')
-  `)).rows[0]?.count, '0')
+
+  await assert.rejects(
+    client.query(`
+      UPDATE things
+      SET drawing = $2::jsonb,
+        drawing_state = 'complete',
+        drawing_description = 'Typed things may not invent instance pixels.'
+      WHERE id = $1
+    `, [inheritedThingId, JSON.stringify(thingDrawing)]),
+    (error: unknown) => (error as { code?: string }).code === '23514',
+  )
+  await assert.rejects(
+    client.query(`
+      INSERT INTO kind_revisions (
+        kind_id, revision, description, traits, recipe,
+        drawing, drawing_state, drawing_description, drawing_variants
+      )
+      SELECT kind_id, 2, description, traits, recipe,
+        drawing, drawing_state, drawing_description, $2::jsonb
+      FROM kind_revisions
+      WHERE kind_id = $1 AND revision = 1
+    `, [kindId, JSON.stringify(Array.from({ length: 9 }, (_, index) => ({
+      name: `variant-${index}`,
+      drawing: thingDrawing,
+      state: 'complete',
+      description: `Variant ${index}.`,
+    })))]),
+    (error: unknown) => (error as { code?: string }).code === '23514',
+  )
 
   await assert.rejects(
     client.query(
@@ -299,21 +487,123 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   ).rows[0]!.payload
 
   assert.deepEqual((await snapshot('residents', 1)).drawing, replacement)
+  assert.equal((await snapshot('residents', 1)).drawing_state, 'in_progress')
+  assert.equal(
+    (await snapshot('residents', 1)).drawing_description,
+    'The replacement is deliberately unfinished.',
+  )
+  assert.deepEqual((await snapshot('residents', 1)).drawing_rows, rowsFor(replacement))
+  assert.equal((await snapshot('residents', 1)).drawing_source, 'resident')
   assert.deepEqual((await snapshot('places', freshWorld.id)).drawing, founderWorldDrawing)
+  assert.equal((await snapshot('places', freshWorld.id)).drawing_state, 'complete')
+  assert.deepEqual((await snapshot('places', freshWorld.id)).drawing_rows, rowsFor(founderWorldDrawing))
+  assert.equal((await snapshot('places', freshWorld.id)).drawing_source, 'place')
   assert.deepEqual((await snapshot('places', placeId)).drawing, placeDrawing)
+  assert.equal((await snapshot('places', placeId)).drawing_source, 'place')
   assert.deepEqual((await snapshot('kinds', kindId)).drawing, kindDrawing)
+  assert.equal((await snapshot('kinds', kindId)).drawing_source, 'kind_base')
+  assert.equal((await snapshot('kinds', kindId)).revision, 1)
   assert.deepEqual((await snapshot('things', ownThingId)).drawing, thingDrawing)
-  assert.deepEqual((await snapshot('things', ownThingId)).drawing_source, { type: 'thing' })
+  assert.equal((await snapshot('things', ownThingId)).drawing_source, 'thing')
   assert.deepEqual((await snapshot('things', inheritedThingId)).drawing, kindDrawing)
-  assert.deepEqual((await snapshot('things', inheritedThingId)).drawing_source, {
-    type: 'kind_revision', kind_id: kindId, revision: 1,
+  assert.equal((await snapshot('things', inheritedThingId)).drawing_source, 'kind_base')
+  assert.equal((await snapshot('things', inheritedThingId)).kind_id, kindId)
+  assert.equal((await snapshot('things', inheritedThingId)).revision, 1)
+  assert.deepEqual((await snapshot('things', variantThingId)).drawing, kindVariants[0]!.drawing)
+  assert.equal((await snapshot('things', variantThingId)).drawing_source, 'kind_variant')
+  assert.equal((await snapshot('things', variantThingId)).variant_name, 'blue-shutter')
+
+  await client.query('UPDATE things SET owner_id = 2 WHERE id = $1', [variantThingId])
+  assert.deepEqual((await snapshot('things', variantThingId)).drawing, kindVariants[0]!.drawing)
+  assert.equal((await snapshot('things', variantThingId)).drawing_source, 'kind_variant')
+  assert.equal((await snapshot('things', variantThingId)).variant_name, 'blue-shutter')
+
+  await client.query(`
+    UPDATE things
+    SET drawing = NULL,
+      drawing_state = 'refused',
+      drawing_description = 'The thing owner refuses the selected kind variant.'
+    WHERE id = $1
+  `, [variantThingId])
+  const refusedVariantSnapshot = await snapshot('things', variantThingId)
+  assert.equal(refusedVariantSnapshot.drawing_state, 'refused')
+  assert.equal(refusedVariantSnapshot.drawing_source, 'thing')
+  assert.equal(refusedVariantSnapshot.variant_name, null)
+
+  const { mountDrawingRoutes: mountRefusalDrawingRoutes } = await import('../../src/drawings.ts')
+  const refusalDrawingApp = new Hono()
+  mountRefusalDrawingRoutes(refusalDrawingApp, {
+    database: {
+      query: async (text: string, params: readonly unknown[] = []) =>
+        (await client!.query(text, [...params])).rows,
+    },
+    authenticate: async () => null,
   })
+  const refusedVariantCurrent = await refusalDrawingApp.request(
+    `/api/drawing/thing/${variantThingId}`,
+  )
+  assert.equal(refusedVariantCurrent.status, 200)
+  assert.deepEqual(await refusedVariantCurrent.json(), {
+    type: 'thing', id: variantThingId,
+    state: 'refused', presentation_state: 'refused',
+    description: 'The thing owner refuses the selected kind variant.',
+    drawing: null, rows: null, source: 'thing',
+    kind_id: kindId, revision: 1,
+  })
+  await client.query(`
+    UPDATE things
+    SET drawing = NULL, drawing_state = 'undrawn', drawing_description = NULL
+    WHERE id = $1
+  `, [variantThingId])
+  assert.equal((await snapshot('things', variantThingId)).drawing_source, 'kind_variant')
+  assert.equal((await snapshot('things', variantThingId)).variant_name, 'blue-shutter')
+
+  await client.query(`
+    UPDATE things
+    SET drawing = NULL,
+      drawing_state = 'refused',
+      drawing_description = 'The thing owner refuses inherited artwork.'
+    WHERE id = $1
+  `, [inheritedThingId])
+  assert.equal((await snapshot('things', inheritedThingId)).drawing, null)
+  assert.equal((await snapshot('things', inheritedThingId)).drawing_state, 'refused')
+  assert.equal((await snapshot('things', inheritedThingId)).drawing_source, 'thing')
+  await client.query(`
+    UPDATE things
+    SET drawing = NULL, drawing_state = 'undrawn', drawing_description = NULL
+    WHERE id = $1
+  `, [inheritedThingId])
+  assert.deepEqual((await snapshot('things', inheritedThingId)).drawing, kindDrawing)
+  assert.equal((await snapshot('things', inheritedThingId)).drawing_source, 'kind_base')
   const eventId = Number((await client.query<{ id: number }>(`
     SELECT id FROM events WHERE kind = 'resident_edited' ORDER BY id DESC LIMIT 1
   `)).rows[0]!.id)
   assert.deepEqual((await snapshot('events', eventId)).detail, {
     resident_id: 1, source_thing_id: ownThingId,
   })
+
+  await client.query(`
+    INSERT INTO drawing_revisions (
+      target_type, target_id,
+      prior_state, prior_description, prior_drawing, prior_source,
+      prior_kind_id, prior_kind_revision,
+      current_state, current_description, current_drawing, current_source,
+      current_kind_id, current_kind_revision, current_variant_name,
+      slot_variant_name, author_id, author_relation
+    ) VALUES (
+      'thing', $1,
+      'complete', 'The kind owner’s plain lantern.', $2::jsonb, 'kind_base',
+      $3, 1,
+      'complete', 'A blue shutter over the kind owner’s lantern.', $4::jsonb, 'kind_variant',
+      $3, 1, 'blue-shutter',
+      'blue-shutter', 1, 'owner'
+    )
+  `, [
+    inheritedThingId,
+    JSON.stringify(kindDrawing),
+    kindId,
+    JSON.stringify(kindVariants[0]!.drawing),
+  ])
 
   await client.query(`
     INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
@@ -343,6 +633,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     notes_today: 0,
     agreement_actions_today: 0,
   })
+  const { mountDrawingRoutes } = await import('../../src/drawings.ts')
   const drawingApp = new Hono()
   mountDrawingRoutes(drawingApp, {
     database,
@@ -353,27 +644,61 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   assert.deepEqual(await worldDrawingRead.json(), {
     type: 'place',
     id: freshWorld.id,
+    state: 'complete',
+    presentation_state: 'complete',
+    description: '',
     drawing: founderWorldDrawing,
+    rows: rowsFor(founderWorldDrawing),
     source: 'place',
+  })
+  const hiddenInheritedCurrent = await drawingApp.request(
+    `/api/drawing/thing/${inheritedThingId}`,
+  )
+  assert.equal(hiddenInheritedCurrent.status, 200)
+  assert.deepEqual(await hiddenInheritedCurrent.json(), {
+    type: 'thing', id: inheritedThingId,
+    state: 'undrawn', presentation_state: 'undrawn',
+    description: null, drawing: null, rows: null, source: 'none',
+  })
+  const hiddenInheritedHistory = await drawingApp.request(
+    `/api/drawing/thing/${inheritedThingId}/history`,
+  )
+  assert.equal(hiddenInheritedHistory.status, 200)
+  assert.deepEqual(await hiddenInheritedHistory.json(), {
+    type: 'thing', id: inheritedThingId,
+    revisions: [],
+    page: { limit: 20, has_more: false, next_before: null },
   })
   const admittedColours = ['#101010', '#202020', '#303030', '#404040', '#505050', '#606060']
   for (const colour of admittedColours) {
     const response = await drawingApp.request('/api/me/drawing', {
       method: 'PATCH',
-      body: JSON.stringify({ drawing: drawing(colour) }),
+      body: JSON.stringify({
+        drawing: drawing(colour),
+        drawing_state: 'complete',
+        drawing_description: 'A resident rate-limit proof drawing.',
+      }),
     })
     assert.equal(response.status, 200, await response.clone().text())
     assert.equal((await response.json() as { changed: boolean }).changed, true)
   }
   const limited = await drawingApp.request('/api/me/drawing', {
     method: 'PATCH',
-    body: JSON.stringify({ drawing: drawing('#707070') }),
+    body: JSON.stringify({
+      drawing: drawing('#707070'),
+      drawing_state: 'complete',
+      drawing_description: 'A resident rate-limit proof drawing.',
+    }),
   })
   assert.equal(limited.status, 429)
   assert.equal(limited.headers.get('retry-after'), '60')
   const exactRetry = await drawingApp.request('/api/me/drawing', {
     method: 'PATCH',
-    body: JSON.stringify({ drawing: drawing(admittedColours.at(-1)!) }),
+    body: JSON.stringify({
+      drawing: drawing(admittedColours.at(-1)!),
+      drawing_state: 'complete',
+      drawing_description: 'A resident rate-limit proof drawing.',
+    }),
   })
   assert.equal(exactRetry.status, 200)
   assert.equal((await exactRetry.json() as { changed: boolean }).changed, false)
@@ -403,6 +728,8 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
       traits: [],
       recipe: [],
       drawing: firstPaidDrawing,
+      drawing_state: 'complete',
+      drawing_description: 'The first paid kind drawing.',
     },
   })
   assert.equal(invention.state, 'ready')
@@ -444,6 +771,8 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
       traits: [],
       recipe: [],
       drawing: secondPaidDrawing,
+      drawing_state: 'complete',
+      drawing_description: 'The second paid kind drawing.',
     },
   })
   assert.equal(revision.state, 'ready')
@@ -475,6 +804,8 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     traits: [],
     recipe: [],
     drawing: lateFinalityDrawing,
+    drawing_state: 'complete',
+    drawing_description: 'The late-finality kind drawing.',
   }
   const lateFinalityCanonical = canonicalPaymentRequest(lateFinalityRequest)
   const lateFinalityAttemptId = 'drawing-late-finality-attempt-0001'

@@ -54,7 +54,7 @@ interface ToolResult {
 
 const EXISTING_TOOL_NAMES = [
   'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
-  'browse', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
+  'browse', 'drawing', 'drawing_history', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
   'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
   'draw_self', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
@@ -64,6 +64,7 @@ const EXISTING_TOOL_NAMES = [
 ] as const
 const PUBLIC_ANONYMOUS_TOOL_NAMES = [
   'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
+  'drawing', 'drawing_history',
 ] as const
 
 const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>> = Object.freeze({
@@ -74,6 +75,8 @@ const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>
   changes: 'Check public changes',
   look: 'Look around',
   browse: 'Browse public catalogs',
+  drawing: 'Read a drawing',
+  drawing_history: 'Read drawing history',
   credit_preflight: 'Check one fee before confirming',
   buy_credit: 'Buy city credit',
   found: 'Found a place',
@@ -173,6 +176,34 @@ function createHarness() {
       return c.json({ resident: { id: 49, handle: 'chatty', drawing: forwardedBody }, changed: true })
     }
     return c.json({ error: 'A valid resident sign-in is required.' }, 401)
+  })
+  city.get('/api/drawing/:type/:id', c => {
+    forwardedAuthorization = c.req.header('authorization')
+    forwardedMethod = c.req.method
+    return c.json({
+      type: c.req.param('type'),
+      id: Number(c.req.param('id')),
+      state: 'complete',
+      presentation_state: 'complete',
+      description: 'A public lantern.',
+      drawing: {
+        palette: ['#ad3f25'],
+        indices: Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null),
+      },
+      rows: ['0 . . . . . . .', ...Array.from({ length: 7 }, () => '. . . . . . . .')],
+      source: c.req.param('type') === 'kind' ? 'kind_base' : c.req.param('type'),
+    })
+  })
+  city.get('/api/drawing/:type/:id/history', c => {
+    forwardedAuthorization = c.req.header('authorization')
+    forwardedMethod = c.req.method
+    forwardedBody = { ...c.req.query() }
+    return c.json({
+      type: c.req.param('type'),
+      id: Number(c.req.param('id')),
+      revisions: [],
+      page: { limit: Number(c.req.query('limit') ?? 20), has_more: false, next_before: null },
+    })
   })
   city.post('/api/thing/:id/mark', async c => {
     forwardedAuthorization = c.req.header('authorization')
@@ -473,6 +504,8 @@ test('a hosted resident can open a visit through connector tools without a globa
 })
 
 test('every advertised MCP tool has a short plain title on its exact door catalog', async () => {
+  assert.equal(EXISTING_TOOL_NAMES.length, 40)
+  assert.equal(HOSTED_TOOL_NAMES.length, 39)
   for (const [hosted, path, authorization, expectedNames] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`, HOSTED_TOOL_NAMES],
     [false, '/mcp', `Bearer ${LEGACY_SECRET}`, EXISTING_TOOL_NAMES],
@@ -717,12 +750,18 @@ test('draw_self states the complete public shape and forwards one authenticated 
   ] as const) {
     setHostedChatFlag(hosted)
     const { gateway } = createHarness()
-    const tool = toolByName(await listTools(gateway, path, authorization), 'draw_self')
+    const tools = await listTools(gateway, path, authorization)
+    const tool = toolByName(tools, 'draw_self')
     assert.match(tool.description, /exactly 64/iu, path)
     assert.match(tool.description, /64 lowercase #rrggbb/iu, path)
     assert.match(tool.description, /2048 UTF-8 bytes/iu, path)
-    assert.match(tool.description, /null removes[\s\S]*64 null indices[\s\S]*deliberately blank/iu, path)
-    assert.match(tool.description, /overwrites[\s\S]*no version history/iu, path)
+    assert.match(tool.description, /null[\s\S]*Undrawn/iu, path)
+    assert.match(tool.description, /exact(?: whole)?[\s\S]*REFUSE[\s\S]*Refused/iu, path)
+    assert.match(tool.description, /in[_ -]progress[\s\S]*complete[\s\S]*explicit/iu, path)
+    assert.match(tool.description, /complete[\s\S]*64 null indices[\s\S]*Blank/iu, path)
+    assert.match(tool.description, /description[\s\S]*280 UTF-8 bytes/iu, path)
+    assert.match(tool.description, /immutable[\s\S]*(?:revision|history)/iu, path)
+    assert.match(tool.description, /exact no-op[\s\S]*(?:no|without)[\s\S]*(?:revision|history)/iu, path)
     assert.match(tool.description, /six changed drawings[\s\S]*UTC minute[\s\S]*Retry-After: 60/iu, path)
     assert.deepEqual(tool.annotations, {
       readOnlyHint: false,
@@ -732,6 +771,55 @@ test('draw_self states the complete public shape and forwards one authenticated 
     }, path)
     assert.deepEqual(tool.inputSchema.required, ['drawing'], path)
     assert.equal(tool.inputSchema.additionalProperties, false, path)
+    const schema = JSON.stringify(tool.inputSchema)
+    assert.match(schema, /REFUSE/u, path)
+    assert.match(schema, /drawing_state/u, path)
+    assert.match(schema, /in_progress/u, path)
+    assert.match(schema, /drawing_description/u, path)
+    assert.doesNotMatch(schema, /"maxLength":280/u, path)
+    assert.match(
+      schema,
+      /HTTP\/MCP runtime enforces safe public text[^"}]*280 UTF-8 bytes[^"}]*HTTP is authoritative[^"}]*MCP forwards its exact errors/iu,
+      path,
+    )
+
+    const variantTools = ['invent_kind', 'revise_kind'] as const
+    for (const toolName of variantTools) {
+      const variantTool = toolByName(tools, toolName)
+      const variants = variantTool.inputSchema.properties?.drawing_variants as {
+        description?: string
+        items?: { properties?: { name?: Record<string, unknown> } }
+      }
+      const variantName = variants.items?.properties?.name ?? {}
+      assert.equal(variantName.minLength, 1, `${path}: ${toolName} variant name remains non-empty`)
+      assert.equal(Object.hasOwn(variantName, 'maxLength'), false, `${path}: ${toolName} has no false character limit`)
+      assert.match(
+        String(variantName.description ?? ''),
+        /HTTP\/MCP runtime enforces a safe trimmed one-line exact variant name[^.]*64 UTF-8 bytes[^.]*HTTP is authoritative[^.]*MCP forwards its exact errors/iu,
+        `${path}: ${toolName} variant runtime contract`,
+      )
+      assert.match(
+        String(variants.description ?? ''),
+        /HTTP\/MCP runtime enforces unique exact variant names/iu,
+        `${path}: ${toolName} variant uniqueness`,
+      )
+    }
+
+    const selectionTools = ['thing_edit', 'thing_upgrade'] as const
+    for (const toolName of selectionTools) {
+      const selectionTool = toolByName(tools, toolName)
+      const selection = selectionTool.inputSchema.properties?.drawing_variant_name as {
+        anyOf?: Array<Record<string, unknown>>
+      }
+      const selectionName = selection.anyOf?.find(branch => branch.type === 'string') ?? {}
+      assert.equal(selectionName.minLength, 1, `${path}: ${toolName} selection remains non-empty`)
+      assert.equal(Object.hasOwn(selectionName, 'maxLength'), false, `${path}: ${toolName} has no false character limit`)
+      assert.match(
+        String(selectionName.description ?? ''),
+        /HTTP\/MCP runtime enforces a safe trimmed one-line exact offered variant name[^.]*64 UTF-8 bytes[^.]*HTTP is authoritative[^.]*MCP forwards its exact errors/iu,
+        `${path}: ${toolName} selection runtime contract`,
+      )
+    }
   }
 
   setHostedChatFlag(false)
@@ -739,13 +827,129 @@ test('draw_self states the complete public shape and forwards one authenticated 
   const response = await callTool(
     legacy.gateway,
     'draw_self',
-    { drawing },
+    {
+      drawing,
+      drawing_state: 'complete',
+      drawing_description: 'A single red light.',
+    },
     `Bearer ${LEGACY_SECRET}`,
     '/mcp',
   )
   assert.equal(response.isError, false)
   assert.equal(legacy.forwardedMethod(), 'PATCH')
-  assert.deepEqual(legacy.forwardedBody(), { drawing })
+  assert.deepEqual(legacy.forwardedBody(), {
+    drawing,
+    drawing_state: 'complete',
+    drawing_description: 'A single red light.',
+  })
+
+  const refused = createHarness()
+  const refusedResponse = await callTool(
+    refused.gateway,
+    'draw_self',
+    { drawing: 'REFUSE', drawing_description: 'I decline to draw myself.' },
+    `Bearer ${LEGACY_SECRET}`,
+    '/mcp',
+  )
+  assert.equal(refusedResponse.isError, false)
+  assert.deepEqual(refused.forwardedBody(), {
+    drawing: 'REFUSE', drawing_description: 'I decline to draw myself.',
+  })
+})
+
+test('drawing and drawing_history expose bounded public HTTP reads with identical MCP parity', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const harness = createHarness()
+    const tools = await listTools(harness.gateway, path, authorization)
+    const drawingTool = toolByName(tools, 'drawing')
+    const historyTool = toolByName(tools, 'drawing_history')
+    const expectedAnnotations = {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    }
+
+    assert.deepEqual(drawingTool.inputSchema.properties?.type, {
+      type: 'string', enum: ['place', 'resident', 'kind', 'thing'],
+    }, `${path}: drawing type`)
+    assert.deepEqual(drawingTool.inputSchema.required, ['type', 'id'], `${path}: drawing required`)
+    assert.deepEqual(drawingTool.annotations, expectedAnnotations, `${path}: drawing safety`)
+    assert.match(drawingTool.description, /state[\s\S]*Undrawn[\s\S]*Refused[\s\S]*Blank[\s\S]*In progress[\s\S]*Complete/iu, path)
+    assert.match(drawingTool.description, /palette[\s\S]*64 indices[\s\S]*eight[ -]row/iu, path)
+
+    assert.deepEqual(historyTool.inputSchema.properties?.before, {
+      type: 'integer', minimum: 1, maximum: 2_147_483_647,
+    }, `${path}: history cursor`)
+    assert.deepEqual(historyTool.inputSchema.properties?.limit, {
+      type: 'integer', minimum: 1, maximum: 50, default: 20,
+    }, `${path}: history limit`)
+    assert.deepEqual(historyTool.inputSchema.required, ['type', 'id'], `${path}: history required`)
+    assert.deepEqual(historyTool.annotations, expectedAnnotations, `${path}: history safety`)
+    assert.match(historyTool.description, /deliberate[\s\S]*bounded[\s\S]*immutable/iu, path)
+    assert.match(historyTool.description, /previous[\s\S]*current[\s\S]*author[\s\S]*time/iu, path)
+
+    const drawingResult = await callTool(
+      harness.gateway, 'drawing', { type: 'resident', id: 49 }, authorization, path,
+    )
+    assert.equal(drawingResult.isError, false, path)
+    assert.deepEqual(JSON.parse(drawingResult.content[0]?.text ?? '{}'), {
+      type: 'resident',
+      id: 49,
+      state: 'complete',
+      presentation_state: 'complete',
+      description: 'A public lantern.',
+      drawing: {
+        palette: ['#ad3f25'],
+        indices: Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null),
+      },
+      rows: ['0 . . . . . . .', ...Array.from({ length: 7 }, () => '. . . . . . . .')],
+      source: 'resident',
+    }, path)
+
+    const historyResult = await callTool(
+      harness.gateway,
+      'drawing_history',
+      { type: 'resident', id: 49, before: 19, limit: 2 },
+      authorization,
+      path,
+    )
+    assert.equal(historyResult.isError, false, path)
+    assert.deepEqual(harness.forwardedBody(), { before: '19', limit: '2' }, `${path}: history query`)
+  }
+})
+
+test('public drawing tools redact credentials from owner descriptions on both MCP doors', async () => {
+  for (const [hosted, path, authorization] of [
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+  ] as const) {
+    setHostedChatFlag(hosted)
+    const city = new Hono()
+    city.get('/api/drawing/:type/:id', c => c.json({
+      type: c.req.param('type'),
+      id: Number(c.req.param('id')),
+      state: 'refused',
+      presentation_state: 'refused',
+      description: `Never return ${LEGACY_SECRET} from authored public text.`,
+      drawing: null,
+      rows: null,
+      source: 'resident',
+    }))
+    const gateway = new Hono()
+    gateway.post('/mcp', c => mcp(c, city))
+    gateway.post('/mcp/connect', c => mcp(c, city, { hostedChat: true }))
+
+    const result = await callTool(gateway, 'drawing', { type: 'resident', id: 49 }, authorization, path)
+    const text = result.content[0]?.text ?? ''
+    assert.equal(result.isError, false, path)
+    assert.match(text, /redacted.*resident credential/iu, path)
+    assert.doesNotMatch(text, new RegExp(LEGACY_SECRET, 'iu'), path)
+  }
 })
 
 test('MCP descriptions state enforced caller contracts before use', async () => {

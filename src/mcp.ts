@@ -28,6 +28,14 @@ import {
   PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
 } from './public-pagination.ts'
 import { PUBLIC_EVENT_KINDS } from './public-events.ts'
+import {
+  DRAWING_DESCRIPTION_MAX_BYTES,
+  DRAWING_MAX_BYTES,
+  DRAWING_PALETTE_MAX,
+  DRAWING_SQUARE_COUNT,
+  DRAWING_VARIANT_NAME_MAX_BYTES,
+  DRAWING_VARIANTS_MAX,
+} from './drawing.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -343,6 +351,117 @@ const TRAIT_RECIPE_SCHEMA = Object.freeze({
     `and ${MAX_RECIPE_BYTES.toLocaleString('en-US')} UTF-8 JSON bytes`,
 })
 
+const DRAWING_PIXEL_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    palette: {
+      type: 'array',
+      maxItems: DRAWING_PALETTE_MAX,
+      items: { type: 'string', pattern: '^#[0-9a-f]{6}$' },
+    },
+    indices: {
+      type: 'array',
+      minItems: DRAWING_SQUARE_COUNT,
+      maxItems: DRAWING_SQUARE_COUNT,
+      items: {
+        anyOf: [
+          { type: 'null' },
+          { type: 'integer', minimum: 0, maximum: DRAWING_PALETTE_MAX - 1 },
+        ],
+      },
+    },
+  },
+  required: ['palette', 'indices'],
+})
+
+const DRAWING_ARGUMENT_SCHEMA = Object.freeze({
+  anyOf: [
+    { type: 'null' },
+    { type: 'string', const: 'REFUSE' },
+    DRAWING_PIXEL_SCHEMA,
+  ],
+})
+
+const DRAWING_STATE_SCHEMA = Object.freeze({
+  type: 'string', enum: ['in_progress', 'complete'],
+})
+
+const DRAWING_DESCRIPTION_SCHEMA = Object.freeze({
+  type: 'string',
+  description:
+    `HTTP/MCP runtime enforces safe public text and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors`,
+})
+
+const DRAWING_VARIANT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: {
+      type: 'string', minLength: 1,
+      description:
+        `HTTP/MCP runtime enforces a safe trimmed one-line exact variant name and at most ${DRAWING_VARIANT_NAME_MAX_BYTES} UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors`,
+    },
+    drawing: DRAWING_PIXEL_SCHEMA,
+    drawing_state: DRAWING_STATE_SCHEMA,
+    drawing_description: DRAWING_DESCRIPTION_SCHEMA,
+  },
+  required: ['name', 'drawing', 'drawing_state', 'drawing_description'],
+})
+
+const DRAWING_VARIANTS_SCHEMA = Object.freeze({
+  type: 'array',
+  maxItems: DRAWING_VARIANTS_MAX,
+  items: DRAWING_VARIANT_SCHEMA,
+  description:
+    `zero to ${DRAWING_VARIANTS_MAX} variants authored for this kind revision; HTTP/MCP runtime enforces unique exact variant names; HTTP is authoritative and MCP forwards its exact errors`,
+})
+
+const DRAWING_SELECTION_SCHEMA = Object.freeze({
+  anyOf: [
+    { type: 'null' },
+    {
+      type: 'string', minLength: 1,
+      description:
+        `HTTP/MCP runtime enforces a safe trimmed one-line exact offered variant name and at most ${DRAWING_VARIANT_NAME_MAX_BYTES} UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors`,
+    },
+  ],
+  description: 'null deliberately selects the pinned kind base; a string selects that exact named variant',
+})
+
+const DRAWING_WRITE_PROPERTIES = Object.freeze({
+  drawing: DRAWING_ARGUMENT_SCHEMA,
+  drawing_state: DRAWING_STATE_SCHEMA,
+  drawing_description: DRAWING_DESCRIPTION_SCHEMA,
+})
+
+// The API performs the authoritative UTF-8 and exact-shape validation. These
+// conditions state the same three accepted shapes to MCP clients before use.
+const DRAWING_WRITE_CONDITIONS = Object.freeze([
+  {
+    if: {
+      anyOf: [{ required: ['drawing_state'] }, { required: ['drawing_description'] }],
+    },
+    then: { required: ['drawing'] },
+  },
+  {
+    if: { properties: { drawing: { type: 'null' } }, required: ['drawing'] },
+    then: {
+      not: {
+        anyOf: [{ required: ['drawing_state'] }, { required: ['drawing_description'] }],
+      },
+    },
+  },
+  {
+    if: { properties: { drawing: { const: 'REFUSE' } }, required: ['drawing'] },
+    then: { required: ['drawing_description'], not: { required: ['drawing_state'] } },
+  },
+  {
+    if: { properties: { drawing: { type: 'object' } }, required: ['drawing'] },
+    then: { required: ['drawing_state', 'drawing_description'] },
+  },
+])
+
 const BROWSE_COMMON_KEYS = ['before_id', 'limit'] as const
 const BROWSE_VIEW_KEYS = Object.freeze({
   kinds: BROWSE_COMMON_KEYS,
@@ -591,6 +710,52 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({ method: 'GET', path: browsePath(args) }),
   },
   {
+    name: 'drawing',
+    title: 'Read a drawing',
+    description:
+      'Deliberately read one current public place, resident, kind, or thing drawing. The state and presentation distinguish Undrawn, Refused, Blank, In progress, and Complete. The response carries the exact palette, all 64 indices, and the canonical eight-row text form, where each row has eight space-separated decimal palette indices and . means transparent. source says none, resident, place, thing, kind_base, or kind_variant; kind sources also return the exact pinned kind id, kind name, revision, and variant name when applicable. Ordinary map, place, window, and census reads do not carry this payload.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: { type: 'string', enum: ['place', 'resident', 'kind', 'thing'] },
+        id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
+      },
+      required: ['type', 'id'],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    route: args => ({
+      method: 'GET',
+      path: `/api/drawing/${String(args.type)}/${Number(args.id)}`,
+    }),
+  },
+  {
+    name: 'drawing_history',
+    title: 'Read drawing history',
+    description:
+      'Make one deliberate bounded read of immutable public drawing revisions for a place, resident, kind, or thing. Each revision returns exact previous and current state, description, pixels, canonical rows, and provenance, plus its author relation and time. Results are newest first; limit defaults to 20 and is at most 50, and next_before continues to older revisions. Parent moderation hides the parent and its whole history; revisions are never bundled into ordinary reads.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: { type: 'string', enum: ['place', 'resident', 'kind', 'thing'] },
+        id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
+        before: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+      },
+      required: ['type', 'id'],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    route: args => ({
+      method: 'GET',
+      path: publicReadPath(
+        `/api/drawing/${String(args.type)}/${Number(args.id)}/history`,
+        args,
+        ['before', 'limit'],
+      ),
+    }),
+  },
+  {
     name: 'credit_preflight',
     title: 'Check one fee before confirming',
     description:
@@ -671,11 +836,12 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      'As the owner, edit one place. Send place_id plus at least one changed field: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A place with an open sale offer cannot be edited. Repeating the same edit is safe and creates no duplicate change event.',
+      `As the owner, edit one place. Send place_id plus at least one changed field: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends an immutable public revision; an exact no-op appends nothing. A place with an open sale offer cannot be edited. Repeating the same non-drawing edit is safe and creates no duplicate change event.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       minProperties: 2,
+      allOf: DRAWING_WRITE_CONDITIONS,
       properties: {
         place_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
         description: { type: 'string', maxLength: 4000 },
@@ -689,6 +855,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
+        ...DRAWING_WRITE_PROPERTIES,
       },
       required: ['place_id'],
     },
@@ -699,6 +866,7 @@ const TOOLS: readonly ToolDefinition[] = [
       body: picked(args, [
         'description', 'purpose', 'front_matter_thing_ids',
         'open_to_building', 'open_to_things', 'open_to_notes',
+        'drawing', 'drawing_state', 'drawing_description',
       ]),
     }),
   },
@@ -728,10 +896,11 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'invent_kind',
     title: 'Invent a kind',
     description:
-      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails.`,
+      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
+      allOf: DRAWING_WRITE_CONDITIONS,
       properties: {
         name: WORLD_NAME_SCHEMA,
         description: { type: 'string', maxLength: 4000, default: '' },
@@ -740,6 +909,8 @@ const TOOLS: readonly ToolDefinition[] = [
           items: WORLD_NAME_SCHEMA,
         },
         recipe: { ...KIND_RECIPE_SCHEMA, default: [] },
+        ...DRAWING_WRITE_PROPERTIES,
+        drawing_variants: DRAWING_VARIANTS_SCHEMA,
         city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
       },
       required: ['name'],
@@ -748,7 +919,10 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: '/api/kind',
-      body: picked(args, ['name', 'description', 'traits', 'recipe']),
+      body: picked(args, [
+        'name', 'description', 'traits', 'recipe',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+      ]),
       ...(own(args, 'city_credit_request_id')
         ? { headers: { 'x-1f3d9-fee-credit': String(args.city_credit_request_id) } }
         : {}),
@@ -758,10 +932,11 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'revise_kind',
     title: 'Revise a kind',
     description:
-      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, or recipe keeps the current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both.`,
+      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
+      allOf: DRAWING_WRITE_CONDITIONS,
       properties: {
         kind_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
         description: { type: 'string', maxLength: 4000 },
@@ -770,6 +945,8 @@ const TOOLS: readonly ToolDefinition[] = [
           items: WORLD_NAME_SCHEMA,
         },
         recipe: KIND_RECIPE_SCHEMA,
+        ...DRAWING_WRITE_PROPERTIES,
+        drawing_variants: DRAWING_VARIANTS_SCHEMA,
         city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
       },
       required: ['kind_id'],
@@ -778,7 +955,10 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: `/api/kind/${Number(args.kind_id)}/revise`,
-      body: picked(args, ['description', 'traits', 'recipe']),
+      body: picked(args, [
+        'description', 'traits', 'recipe',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+      ]),
       ...(own(args, 'city_credit_request_id')
         ? { headers: { 'x-1f3d9-fee-credit': String(args.city_credit_request_id) } }
         : {}),
@@ -822,16 +1002,19 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'thing_edit',
     title: 'Edit a thing',
     description:
-      'As the owner, edit one active thing. Send thing_id plus at least one of name, body, or open_to_use. name is one safe line of 1 to 120 characters; body may be empty and is at most 65,536 UTF-8 bytes; open_to_use is boolean. Birth kind and revision stay permanent. A thing with an open sale offer cannot be edited. Every successful edit records a public event, so do not repeat it unless you intend another event.',
+      `As the owner, edit one active thing. Send thing_id plus at least one changed field. name is one safe line of 1 to 120 characters; body may be empty and is at most 65,536 UTF-8 bytes; open_to_use is boolean. An untyped thing accepts the exact null/REFUSE/pixel drawing shapes stated by draw_self. A typed thing shows its pinned kind revision and cannot take arbitrary instance pixels: it accepts exact REFUSE with an owner-written drawing_description, or drawing:null to clear that refusal and return to the pinned kind source. drawing_variant_name deliberately selects null for the pinned kind base or one exact named variant offered by that pinned revision. The selection stays with the thing across transfer. Every real drawing or selection change appends immutable history; an exact no-op appends nothing. A thing with an open sale offer cannot be edited.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       minProperties: 2,
+      allOf: DRAWING_WRITE_CONDITIONS,
       properties: {
         thing_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
         name: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', description: 'safe text no larger than 65,536 UTF-8 bytes' },
         open_to_use: { type: 'boolean' },
+        ...DRAWING_WRITE_PROPERTIES,
+        drawing_variant_name: DRAWING_SELECTION_SCHEMA,
       },
       required: ['thing_id'],
     },
@@ -839,67 +1022,43 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'PATCH',
       path: `/api/thing/${Number(args.thing_id)}`,
-      body: picked(args, ['name', 'body', 'open_to_use']),
+      body: picked(args, [
+        'name', 'body', 'open_to_use',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
+      ]),
     }),
   },
   {
     name: 'thing_upgrade',
     title: 'Upgrade a thing',
     description:
-      'As the owner, adopt a typed active thing\'s latest kind revision. Untyped things have no revision to upgrade, and a thing with an open sale offer cannot be upgraded. Every successful call records a public upgrade event, including when the thing already has the latest revision, so do not repeat it unless you intend another event.',
+      'As the owner, adopt a typed active thing\'s latest kind revision. Its selected exact variant name is preserved only when the new revision offers it. If that variant is absent, the upgrade refuses instead of silently changing the picture; retry with drawing_variant_name:null to deliberately choose the new base, or with one exact variant offered by the new revision. Untyped things have no revision to upgrade, and a thing with an open sale offer cannot be upgraded. An exact retry that already has the requested revision and selection is a no-op with no duplicate event.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         thing_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
+        drawing_variant_name: DRAWING_SELECTION_SCHEMA,
       },
       required: ['thing_id'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: `/api/thing/${Number(args.thing_id)}/upgrade`,
-      body: {},
+      body: picked(args, ['drawing_variant_name']),
     }),
   },
   {
     name: 'draw_self',
     title: 'Draw myself',
     description:
-      'Set your one optional public 8x8 drawing. drawing is null or exactly {palette, indices}: palette contains 0 to 64 lowercase #rrggbb colours; indices contains exactly 64 null values or integer positions in that palette; the serialized drawing is at most 2048 UTF-8 bytes. null removes your drawing, while an empty palette with exactly 64 null indices is deliberately blank. A valid edit overwrites the prior drawing with no version history and emits resident_edited only when it changes. Six changed drawings are admitted per UTC minute; safe retries with the same drawing make no further change, consume no allowance, and a 429 response carries Retry-After: 60.',
+      `Set your public 8x8 drawing with exactly one write shape. {drawing:null} explicitly clears it to Undrawn. {drawing:"REFUSE", drawing_description} uses the exact whole REFUSE value to become Refused; normal description text is never scanned for that word. Pixel art uses {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}; drawing_state is explicitly chosen, never inferred. drawing_description is owner-written and no larger than ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. palette contains 0 to 64 lowercase #rrggbb colours; indices contains exactly 64 null values or integer positions in that palette; the serialized drawing is at most ${DRAWING_MAX_BYTES} UTF-8 bytes. A complete drawing with exactly 64 null indices presents as Blank. Each real change appends one immutable public history revision; an exact no-op adds no revision, emits no event, and consumes no allowance. Six changed drawings are admitted per UTC minute, and a 429 response carries Retry-After: 60.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {
-        drawing: {
-          anyOf: [
-            { type: 'null' },
-            {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                palette: {
-                  type: 'array',
-                  maxItems: 64,
-                  items: { type: 'string', pattern: '^#[0-9a-f]{6}$' },
-                },
-                indices: {
-                  type: 'array',
-                  minItems: 64,
-                  maxItems: 64,
-                  items: {
-                    anyOf: [
-                      { type: 'null' },
-                      { type: 'integer', minimum: 0, maximum: 63 },
-                    ],
-                  },
-                },
-              },
-              required: ['palette', 'indices'],
-            },
-          ],
-        },
-      },
+      allOf: DRAWING_WRITE_CONDITIONS,
+      properties: DRAWING_WRITE_PROPERTIES,
       required: ['drawing'],
     },
     annotations: {
@@ -911,7 +1070,7 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'PATCH',
       path: '/api/me/drawing',
-      body: { drawing: args.drawing },
+      body: picked(args, ['drawing', 'drawing_state', 'drawing_description']),
     }),
   },
   {
@@ -1561,6 +1720,35 @@ function invalidPublicReadArgument(
   name: string,
   args: Record<string, unknown>,
 ): string | null {
+  if (name === 'drawing' || name === 'drawing_history') {
+    if (!['place', 'resident', 'kind', 'thing'].includes(String(args.type))) {
+      return 'Drawing type is required and must be place, resident, kind, or thing.'
+    }
+    if (
+      typeof args.id !== 'number' || !Number.isSafeInteger(args.id)
+      || args.id < 1 || args.id > POSTGRES_INTEGER_MAX
+    ) {
+      return `Drawing id must be a positive integer no greater than ${POSTGRES_INTEGER_MAX}.`
+    }
+    if (name === 'drawing_history') {
+      if (
+        own(args, 'before')
+        && (
+          typeof args.before !== 'number' || !Number.isSafeInteger(args.before)
+          || args.before < 1 || args.before > POSTGRES_INTEGER_MAX
+        )
+      ) {
+        return `Drawing history before must be a positive integer no greater than ${POSTGRES_INTEGER_MAX}.`
+      }
+      if (
+        own(args, 'limit')
+        && (
+          typeof args.limit !== 'number' || !Number.isSafeInteger(args.limit)
+          || args.limit < 1 || args.limit > 50
+        )
+      ) return 'Drawing history limit must be an integer from 1 to 50.'
+    }
+  }
   if (name === 'search') {
     if (
       typeof args.q !== 'string' ||
@@ -1807,7 +1995,12 @@ function toolResult(
 }
 
 function securitySchemesFor(name: string) {
-  if (['front_door', 'official_facts', 'physics', 'look', 'browse', 'search', 'changes'].includes(name)) {
+  if (
+    [
+      'front_door', 'official_facts', 'physics', 'look', 'browse', 'search', 'changes',
+      'drawing', 'drawing_history',
+    ].includes(name)
+  ) {
     return [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
   }
   return [OAUTH_SECURITY_SCHEME]
@@ -1897,6 +2090,8 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     || name === 'credit_gift'
     || name === 'payment_attempt'
     || name === 'buy_credit'
+    || name === 'drawing'
+    || name === 'drawing_history'
   ) {
     c.header('Cache-Control', 'no-store')
     c.header('Pragma', 'no-cache')

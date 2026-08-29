@@ -2,9 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DRAWING_BODY_MAX_BYTES,
+  DRAWING_DESCRIPTION_MAX_BYTES,
   DRAWING_MAX_BYTES,
   DRAWING_PALETTE_MAX,
+  DRAWING_VARIANTS_MAX,
+  drawingPresentationState,
+  drawingRows,
   parseDrawing,
+  parseDrawingVariants,
+  parseDrawingWrite,
   readBoundedJsonObject,
   type Drawing,
 } from '../src/drawing.ts'
@@ -58,6 +64,228 @@ test('drawing byte limit is measured from canonical UTF-8 JSON', () => {
   const parsed = parseDrawing(valid)
   assert.equal(parsed.ok, true)
   assert.ok(Buffer.byteLength(JSON.stringify(valid), 'utf8') < DRAWING_MAX_BYTES)
+})
+
+test('drawing writes distinguish explicit clear, exact refusal, and explicitly staged pixels', () => {
+  assert.deepEqual(parseDrawingWrite({ drawing: null }), {
+    ok: true,
+    value: { state: 'undrawn', description: null, drawing: null },
+  })
+  assert.deepEqual(parseDrawingWrite({
+    drawing: 'REFUSE',
+    drawing_description: 'I chose not to draw this.',
+  }), {
+    ok: true,
+    value: {
+      state: 'refused',
+      description: 'I chose not to draw this.',
+      drawing: null,
+    },
+  })
+  assert.deepEqual(parseDrawingWrite({
+    drawing: oneColourDrawing(),
+    drawing_state: 'in_progress',
+    drawing_description: 'The first lantern is placed.',
+  }), {
+    ok: true,
+    value: {
+      state: 'in_progress',
+      description: 'The first lantern is placed.',
+      drawing: oneColourDrawing(),
+    },
+  })
+  assert.deepEqual(parseDrawingWrite({
+    drawing: oneColourDrawing(),
+    drawing_state: 'complete',
+    drawing_description: 'REFUSE is ordinary description text here.',
+  }), {
+    ok: true,
+    value: {
+      state: 'complete',
+      description: 'REFUSE is ordinary description text here.',
+      drawing: oneColourDrawing(),
+    },
+  })
+
+  const lowercaseRefusal = parseDrawingWrite({
+    drawing: 'refuse',
+    drawing_description: 'Only the exact whole value is the signal.',
+  })
+  assert.equal(lowercaseRefusal.ok, false)
+  if (!lowercaseRefusal.ok) assert.match(lowercaseRefusal.error, /drawing.*null.*REFUSE.*object/iu)
+})
+
+test('drawing writes require the atomic state-description pairing without inferring intent', () => {
+  const invalid = [
+    [{ drawing: 'REFUSE' }, /drawing_description/iu],
+    [{ drawing: oneColourDrawing(), drawing_state: 'complete' }, /drawing_description/iu],
+    [{ drawing: oneColourDrawing(), drawing_description: 'Not enough.' }, /drawing_state/iu],
+    [{ drawing: oneColourDrawing(), drawing_state: 'blank', drawing_description: '' }, /in_progress.*complete/iu],
+    [{ drawing: null, drawing_state: 'complete' }, /undrawn.*drawing_state/iu],
+    [{ drawing: null, drawing_description: '' }, /undrawn.*drawing_description/iu],
+  ] as const
+
+  for (const [candidate, expected] of invalid) {
+    const parsed = parseDrawingWrite(candidate)
+    assert.equal(parsed.ok, false, JSON.stringify(candidate))
+    if (!parsed.ok) assert.match(parsed.error, expected)
+  }
+})
+
+test('drawing descriptions are explicit, may be empty, and are bounded by UTF-8 bytes', () => {
+  assert.equal(DRAWING_DESCRIPTION_MAX_BYTES, 280)
+  const atLimit = '🏮'.repeat(70)
+  const overLimit = `${atLimit}🏮`
+  assert.equal(Buffer.byteLength(atLimit, 'utf8'), DRAWING_DESCRIPTION_MAX_BYTES)
+
+  for (const drawing_description of ['', atLimit]) {
+    const parsed = parseDrawingWrite({
+      drawing: oneColourDrawing(),
+      drawing_state: 'complete',
+      drawing_description,
+    })
+    assert.equal(parsed.ok, true, JSON.stringify(drawing_description))
+  }
+
+  const oversized = parseDrawingWrite({
+    drawing: 'REFUSE',
+    drawing_description: overLimit,
+  })
+  assert.equal(oversized.ok, false)
+  if (!oversized.ok) assert.match(oversized.error, /drawing_description.*280 UTF-8 bytes/iu)
+})
+
+test('public drawing descriptions and variant names reject unsafe or credential-shaped text', () => {
+  const unsafeText = [
+    'control\u0001character',
+    'right-to-left\u202Espoof',
+    'replacement \uFFFD text',
+    'caf\u00C3\u00A9 mojibake',
+    `resident key 1f3d9_sk_${'a'.repeat(8)}`,
+  ] as const
+
+  for (const drawing_description of unsafeText) {
+    const parsed = parseDrawingWrite({
+      drawing: oneColourDrawing(),
+      drawing_state: 'complete',
+      drawing_description,
+    })
+    assert.equal(parsed.ok, false, drawing_description)
+    if (!parsed.ok) assert.match(parsed.error, /drawing_description.*safe public text/iu)
+  }
+
+  for (const name of [...unsafeText, 'two\nlines']) {
+    const parsed = parseDrawingVariants([{
+      name,
+      drawing: oneColourDrawing(),
+      drawing_state: 'complete',
+      drawing_description: '',
+    }])
+    assert.equal(parsed.ok, false, JSON.stringify(name))
+    if (!parsed.ok) assert.match(parsed.error, /variant name.*safe one-line/iu)
+  }
+
+  const normalized = parseDrawingVariants([{
+    name: '  evening lamp  ',
+    drawing: oneColourDrawing(),
+    drawing_state: 'complete',
+    drawing_description: 'Owner words remain exact.\nA second safe line.',
+  }])
+  assert.equal(normalized.ok, true)
+  if (normalized.ok) {
+    assert.equal(normalized.variants[0]?.name, 'evening lamp')
+    assert.equal(normalized.variants[0]?.description, 'Owner words remain exact.\nA second safe line.')
+  }
+})
+
+test('presentation state makes blank a complete transparent drawing, never a pixel inference', () => {
+  const transparent: Drawing = Object.freeze({
+    palette: Object.freeze([]),
+    indices: Object.freeze(emptySquares()),
+  })
+
+  assert.equal(drawingPresentationState({ state: 'undrawn', drawing: null }), 'undrawn')
+  assert.equal(drawingPresentationState({ state: 'refused', drawing: null }), 'refused')
+  assert.equal(drawingPresentationState({ state: 'in_progress', drawing: transparent }), 'in_progress')
+  assert.equal(drawingPresentationState({ state: 'complete', drawing: transparent }), 'blank')
+  assert.equal(drawingPresentationState({ state: 'complete', drawing: oneColourDrawing() }), 'complete')
+})
+
+test('canonical drawing rows are eight exact human-comparable palette-index rows', () => {
+  const drawing: Drawing = Object.freeze({
+    palette: Object.freeze(Array.from({ length: 12 }, (_, index) => `#0000${index.toString(16).padStart(2, '0')}`)),
+    indices: Object.freeze([
+      0, 10, null, 1, null, 11, 2, null,
+      ...Array.from({ length: 56 }, () => null),
+    ]),
+  })
+
+  const rows = drawingRows(drawing)
+  assert.deepEqual(rows, [
+    '0 10 . 1 . 11 2 .',
+    '. . . . . . . .',
+    '. . . . . . . .',
+    '. . . . . . . .',
+    '. . . . . . . .',
+    '. . . . . . . .',
+    '. . . . . . . .',
+    '. . . . . . . .',
+  ])
+  assert.equal(Object.isFrozen(rows), true)
+  for (const row of rows) assert.equal(row.split(' ').length, 8)
+})
+
+test('kind drawing variants are bounded, exact-name unique, described drawings', () => {
+  assert.equal(DRAWING_VARIANTS_MAX, 8)
+  const variants = Array.from({ length: DRAWING_VARIANTS_MAX }, (_, index) => ({
+    name: index === 0 ? '🏮'.repeat(16) : `variant-${index}`,
+    drawing: oneColourDrawing(`#0000${index.toString(16).padStart(2, '0')}`),
+    drawing_state: index % 2 === 0 ? 'complete' : 'in_progress',
+    drawing_description: index === 0 ? '' : `Owner variation ${index}.`,
+  }))
+  const parsed = parseDrawingVariants(variants)
+  assert.equal(parsed.ok, true)
+  if (parsed.ok) {
+    assert.equal(parsed.variants.length, DRAWING_VARIANTS_MAX)
+    assert.deepEqual(parsed.variants[0], {
+      name: '🏮'.repeat(16),
+      state: 'complete',
+      description: '',
+      drawing: oneColourDrawing('#000000'),
+    })
+    assert.equal(Object.isFrozen(parsed.variants), true)
+    assert.equal(Object.isFrozen(parsed.variants[0]), true)
+  }
+
+  const caseSensitiveNames = parseDrawingVariants([
+    { ...variants[1], name: 'day' },
+    { ...variants[2], name: 'Day' },
+  ])
+  assert.equal(caseSensitiveNames.ok, true)
+})
+
+test('kind drawing variants reject overflow, exact duplicate names, and incomplete entries', () => {
+  const valid = {
+    name: 'day',
+    drawing: oneColourDrawing(),
+    drawing_state: 'complete',
+    drawing_description: '',
+  } as const
+  const invalid = [
+    [Array.from({ length: DRAWING_VARIANTS_MAX + 1 }, (_, index) => ({ ...valid, name: `v${index}` })), /at most 8/iu],
+    [[valid, { ...valid }], /unique.*name/iu],
+    [[{ ...valid, name: '' }], /name.*1.*64 UTF-8 bytes/iu],
+    [[{ ...valid, name: '🏮'.repeat(17) }], /name.*1.*64 UTF-8 bytes/iu],
+    [[{ name: 'missing-state', drawing: valid.drawing, drawing_description: '' }], /drawing_state/iu],
+    [[{ name: 'missing-description', drawing: valid.drawing, drawing_state: 'complete' }], /drawing_description/iu],
+    [[{ ...valid, drawing: 'REFUSE' }], /drawing.*object/iu],
+  ] as const
+
+  for (const [candidate, expected] of invalid) {
+    const parsed = parseDrawingVariants(candidate)
+    assert.equal(parsed.ok, false, JSON.stringify(candidate))
+    if (!parsed.ok) assert.match(parsed.error, expected)
+  }
 })
 
 test('bounded JSON reads actual UTF-8 bytes without trusting Content-Length', async () => {

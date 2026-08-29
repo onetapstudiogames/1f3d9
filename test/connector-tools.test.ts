@@ -57,6 +57,104 @@ const IDEMPOTENT_PAYMENT_ANNOTATIONS = {
 } as const
 
 const positiveIdSchema = { type: 'integer', minimum: 1, maximum: 2_147_483_647 } as const
+const drawingRecordTypeSchema = {
+  type: 'string', enum: ['place', 'resident', 'kind', 'thing'],
+} as const
+const connectorDrawing = {
+  palette: ['#ad3f25'],
+  indices: Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null),
+} as const
+const drawingPixelSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    palette: {
+      type: 'array', maxItems: 64,
+      items: { type: 'string', pattern: '^#[0-9a-f]{6}$' },
+    },
+    indices: {
+      type: 'array', minItems: 64, maxItems: 64,
+      items: {
+        anyOf: [
+          { type: 'null' },
+          { type: 'integer', minimum: 0, maximum: 63 },
+        ],
+      },
+    },
+  },
+  required: ['palette', 'indices'],
+} as const
+const drawingArgumentSchema = {
+  anyOf: [
+    { type: 'null' },
+    { type: 'string', const: 'REFUSE' },
+    drawingPixelSchema,
+  ],
+} as const
+const drawingStateSchema = {
+  type: 'string', enum: ['in_progress', 'complete'],
+} as const
+const drawingDescriptionSchema = {
+  type: 'string',
+  description: 'HTTP/MCP runtime enforces safe public text and at most 280 UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors',
+} as const
+const drawingWriteProperties = {
+  drawing: drawingArgumentSchema,
+  drawing_state: drawingStateSchema,
+  drawing_description: drawingDescriptionSchema,
+} as const
+const drawingWriteConditions = [
+  {
+    if: {
+      anyOf: [{ required: ['drawing_state'] }, { required: ['drawing_description'] }],
+    },
+    then: { required: ['drawing'] },
+  },
+  {
+    if: { properties: { drawing: { type: 'null' } }, required: ['drawing'] },
+    then: {
+      not: {
+        anyOf: [{ required: ['drawing_state'] }, { required: ['drawing_description'] }],
+      },
+    },
+  },
+  {
+    if: { properties: { drawing: { const: 'REFUSE' } }, required: ['drawing'] },
+    then: { required: ['drawing_description'], not: { required: ['drawing_state'] } },
+  },
+  {
+    if: { properties: { drawing: { type: 'object' } }, required: ['drawing'] },
+    then: { required: ['drawing_state', 'drawing_description'] },
+  },
+] as const
+const drawingVariantSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: {
+      type: 'string', minLength: 1,
+      description: 'HTTP/MCP runtime enforces a safe trimmed one-line exact variant name and at most 64 UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors',
+    },
+    drawing: drawingPixelSchema,
+    drawing_state: drawingStateSchema,
+    drawing_description: drawingDescriptionSchema,
+  },
+  required: ['name', 'drawing', 'drawing_state', 'drawing_description'],
+} as const
+const drawingVariantsSchema = {
+  type: 'array', maxItems: 8, items: drawingVariantSchema,
+  description: 'zero to 8 variants authored for this kind revision; HTTP/MCP runtime enforces unique exact variant names; HTTP is authoritative and MCP forwards its exact errors',
+} as const
+const drawingSelectionSchema = {
+  anyOf: [
+    { type: 'null' },
+    {
+      type: 'string', minLength: 1,
+      description: 'HTTP/MCP runtime enforces a safe trimmed one-line exact offered variant name and at most 64 UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors',
+    },
+  ],
+  description: 'null deliberately selects the pinned kind base; a string selects that exact named variant',
+} as const
 const handleSchema = { type: 'string', pattern: HANDLE_PATTERN } as const
 const worldNameSchema = {
   type: 'string', minLength: 1, maxLength: 64, pattern: WORLD_NAME_PATTERN,
@@ -93,12 +191,41 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
   inputSchema: Record<string, unknown>
   annotations: ToolAnnotations
 }>>> = {
+  drawing: {
+    title: 'Read a drawing',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: drawingRecordTypeSchema,
+        id: positiveIdSchema,
+      },
+      required: ['type', 'id'],
+    },
+    annotations: READ_ANNOTATIONS,
+  },
+  drawing_history: {
+    title: 'Read drawing history',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: drawingRecordTypeSchema,
+        id: positiveIdSchema,
+        before: positiveIdSchema,
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+      },
+      required: ['type', 'id'],
+    },
+    annotations: READ_ANNOTATIONS,
+  },
   place_edit: {
     title: 'Edit a place',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       minProperties: 2,
+      allOf: drawingWriteConditions,
       properties: {
         place_id: positiveIdSchema,
         description: { type: 'string', maxLength: 4000 },
@@ -112,6 +239,7 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
+        ...drawingWriteProperties,
       },
       required: ['place_id'],
     },
@@ -123,11 +251,14 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
       type: 'object',
       additionalProperties: false,
       minProperties: 2,
+      allOf: drawingWriteConditions,
       properties: {
         thing_id: positiveIdSchema,
         name: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', description: 'safe text no larger than 65,536 UTF-8 bytes' },
         open_to_use: { type: 'boolean' },
+        ...drawingWriteProperties,
+        drawing_variant_name: drawingSelectionSchema,
       },
       required: ['thing_id'],
     },
@@ -138,10 +269,10 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: { thing_id: positiveIdSchema },
+      properties: { thing_id: positiveIdSchema, drawing_variant_name: drawingSelectionSchema },
       required: ['thing_id'],
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: PLACE_EDIT_ANNOTATIONS,
   },
   coin_trait: {
     title: 'Coin a trait',
@@ -162,6 +293,7 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
     inputSchema: {
       type: 'object',
       additionalProperties: false,
+      allOf: drawingWriteConditions,
       properties: {
         name: worldNameSchema,
         description: { type: 'string', maxLength: 4000, default: '' },
@@ -169,6 +301,8 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
           type: 'array', items: worldNameSchema, maxItems: 32, uniqueItems: true, default: [],
         },
         recipe: { ...kindRecipeSchema, default: [] },
+        ...drawingWriteProperties,
+        drawing_variants: drawingVariantsSchema,
         city_credit_request_id: cityCreditRequestSchema,
       },
       required: ['name'],
@@ -180,11 +314,14 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
     inputSchema: {
       type: 'object',
       additionalProperties: false,
+      allOf: drawingWriteConditions,
       properties: {
         kind_id: positiveIdSchema,
         description: { type: 'string', maxLength: 4000 },
         traits: { type: 'array', items: worldNameSchema, maxItems: 32, uniqueItems: true },
         recipe: kindRecipeSchema,
+        ...drawingWriteProperties,
+        drawing_variants: drawingVariantsSchema,
         city_credit_request_id: cityCreditRequestSchema,
       },
       required: ['kind_id'],
@@ -398,6 +535,8 @@ test('both MCP catalogs advertise the exact connector tool contracts', async () 
   const { app } = connectorHarness()
   const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
   const hosted = await withHostedConnector(() => listedTools(app, '/mcp/connect', HOSTED_AUTHORIZATION))
+  assert.equal(legacy.length, 40, 'legacy catalog includes two public drawing reads')
+  assert.equal(hosted.length, 39, 'hosted catalog includes two public drawing reads and omits moderate')
 
   for (const [name, expected] of Object.entries(expectedToolContracts)) {
     const legacyTool = legacy.find(tool => tool.name === name)
@@ -410,7 +549,7 @@ test('both MCP catalogs advertise the exact connector tool contracts', async () 
       assert.deepEqual(tool.annotations, expected.annotations, `${catalog} ${name} annotations`)
     }
     assert.equal(legacyTool.securitySchemes, undefined, `${name} legacy security metadata`)
-    const hostedSchemes = name === 'browse'
+    const hostedSchemes = ['browse', 'drawing', 'drawing_history'].includes(name)
       ? [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
       : [OAUTH_SECURITY_SCHEME]
     assert.deepEqual(hostedTool.securitySchemes, hostedSchemes, `${name} hosted security`)
@@ -427,6 +566,14 @@ test('both MCP catalogs advertise the exact connector tool contracts', async () 
   assert.match(legacy.find(tool => tool.name === 'invent_kind')!.description, /\$1|one.*credit/iu)
   assert.match(legacy.find(tool => tool.name === 'revise_kind')!.description, /\$1|one.*credit/iu)
   assert.match(legacy.find(tool => tool.name === 'browse')!.description, /default.*10.*residents.*200.*treasury.*50/iu)
+  assert.match(
+    legacy.find(tool => tool.name === 'drawing')!.description,
+    /Undrawn[\s\S]*Refused[\s\S]*Blank[\s\S]*In progress[\s\S]*Complete[\s\S]*eight[ -]row/iu,
+  )
+  assert.match(
+    legacy.find(tool => tool.name === 'drawing_history')!.description,
+    /deliberate[\s\S]*bounded[\s\S]*previous[\s\S]*current[\s\S]*author[\s\S]*time/iu,
+  )
   const buyCreditDescription = legacy.find(tool => tool.name === 'buy_credit')!.description
   assert.match(buyCreditDescription, /X-PAYMENT/iu)
   assert.match(buyCreditDescription, /1.*10,?000/iu)
@@ -435,6 +582,18 @@ test('both MCP catalogs advertise the exact connector tool contracts', async () 
 })
 
 const forwardingCases = [
+  {
+    name: 'drawing',
+    args: { type: 'thing', id: 41 },
+    expected: { method: 'GET', path: '/api/drawing/thing/41' },
+  },
+  {
+    name: 'drawing_history',
+    args: { type: 'thing', id: 41, before: 19, limit: 2 },
+    expected: {
+      method: 'GET', path: '/api/drawing/thing/41/history', query: { before: '19', limit: '2' },
+    },
+  },
   {
     name: 'place_edit',
     args: {
@@ -445,6 +604,8 @@ const forwardingCases = [
       open_to_building: true,
       open_to_things: false,
       open_to_notes: true,
+      drawing: 'REFUSE',
+      drawing_description: 'I decline to draw this room.',
     },
     expected: {
       method: 'PATCH', path: '/api/place/12',
@@ -455,21 +616,30 @@ const forwardingCases = [
         open_to_building: true,
         open_to_things: false,
         open_to_notes: true,
+        drawing: 'REFUSE',
+        drawing_description: 'I decline to draw this room.',
       },
     },
   },
   {
     name: 'thing_edit',
-    args: { thing_id: 41, name: 'signal lamp', body: '光る 🏮', open_to_use: true },
+    args: {
+      thing_id: 41, name: 'signal lamp', body: '光る 🏮', open_to_use: true,
+      drawing_variant_name: 'ember',
+    },
     expected: {
       method: 'PATCH', path: '/api/thing/41',
-      body: { name: 'signal lamp', body: '光る 🏮', open_to_use: true },
+      body: {
+        name: 'signal lamp', body: '光る 🏮', open_to_use: true, drawing_variant_name: 'ember',
+      },
     },
   },
   {
     name: 'thing_upgrade',
-    args: { thing_id: 41 },
-    expected: { method: 'POST', path: '/api/thing/41/upgrade', body: {} },
+    args: { thing_id: 41, drawing_variant_name: null },
+    expected: {
+      method: 'POST', path: '/api/thing/41/upgrade', body: { drawing_variant_name: null },
+    },
   },
   {
     name: 'coin_trait',
@@ -486,6 +656,15 @@ const forwardingCases = [
       description: 'A lamp assembled from one wick.',
       traits: ['glowing'],
       recipe: [{ kind: 'wick', quantity: 1 }],
+      drawing: connectorDrawing,
+      drawing_state: 'complete',
+      drawing_description: 'The kind owner’s plain signal lamp.',
+      drawing_variants: [{
+        name: 'ember',
+        drawing: connectorDrawing,
+        drawing_state: 'complete',
+        drawing_description: 'A low ember shutter.',
+      }],
       city_credit_request_id: 'kind-invent-0001',
     },
     expected: {
@@ -495,6 +674,15 @@ const forwardingCases = [
         description: 'A lamp assembled from one wick.',
         traits: ['glowing'],
         recipe: [{ kind: 'wick', quantity: 1 }],
+        drawing: connectorDrawing,
+        drawing_state: 'complete',
+        drawing_description: 'The kind owner’s plain signal lamp.',
+        drawing_variants: [{
+          name: 'ember',
+          drawing: connectorDrawing,
+          drawing_state: 'complete',
+          drawing_description: 'A low ember shutter.',
+        }],
       },
       feeCredit: 'kind-invent-0001',
     },
@@ -506,6 +694,7 @@ const forwardingCases = [
       description: 'The second lamp revision.',
       traits: ['glowing'],
       recipe: [{ kind: 'wick', quantity: 2 }],
+      drawing_variants: [],
       city_credit_request_id: 'kind-revise-0001',
     },
     expected: {
@@ -514,6 +703,7 @@ const forwardingCases = [
         description: 'The second lamp revision.',
         traits: ['glowing'],
         recipe: [{ kind: 'wick', quantity: 2 }],
+        drawing_variants: [],
       },
       feeCredit: 'kind-revise-0001',
     },

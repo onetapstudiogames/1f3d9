@@ -74,12 +74,41 @@ ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
 ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_drawing_exact;
 ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
 
-UPDATE places
-SET drawing =
-  '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb
-WHERE place_kind = 'world'
-  AND drawing IS DISTINCT FROM
+DO $drawing_contract_compatible_write$
+DECLARE
+  founder_drawing CONSTANT JSONB :=
     '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb;
+  drawing_contract_column_count INTEGER;
+BEGIN
+  SELECT count(*) INTO drawing_contract_column_count
+  FROM information_schema.columns
+  WHERE table_schema = current_schema()
+    AND table_name = 'places'
+    AND column_name IN ('drawing_state', 'drawing_description');
+
+  IF drawing_contract_column_count = 2 THEN
+    EXECUTE $sql$
+      UPDATE places
+      SET drawing = $1,
+          drawing_state = 'complete',
+          drawing_description = coalesce(drawing_description, '')
+      WHERE place_kind = 'world'
+        AND (
+          drawing IS DISTINCT FROM $1
+          OR drawing_state IS DISTINCT FROM 'complete'
+          OR drawing_description IS NULL
+        )
+    $sql$ USING founder_drawing;
+  ELSIF drawing_contract_column_count = 0 THEN
+    UPDATE places
+    SET drawing = founder_drawing
+    WHERE place_kind = 'world'
+      AND drawing IS DISTINCT FROM founder_drawing;
+  ELSE
+    RAISE EXCEPTION 'world-root drawing found a partial drawing contract';
+  END IF;
+END
+$drawing_contract_compatible_write$;
 
 ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
 

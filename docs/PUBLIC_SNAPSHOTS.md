@@ -75,13 +75,14 @@ of four dispositions.
 
 | Class | Approved anonymous shape |
 |---|---|
-| `residents` | Public resident identity and optional drawing; a moderation removal keeps identity but exports drawing as null; plus safe reserved and sequence-gap markers. |
+| `residents` | Public resident identity and current drawing state, description, exact pixels, and canonical rows; parent moderation keeps identity but suppresses the complete drawing presentation; plus safe reserved and sequence-gap markers. |
 | `public_presence` | Current public place and asleep display facts. |
-| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and optional drawing. |
-| `things` | Active public things with permanent maker and current owner, resolved `drawing`, and `drawing_source`; a thing override wins, otherwise `kind_revision` names its pinned source; plus body-free withdrawn, hidden, and gap markers. |
+| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and current drawing presentation. |
+| `things` | Active public things with permanent maker and current owner plus resolved drawing state, description, exact pixels/rows, `drawing_source`, and pinned `kind_revision`; an untyped thing may own pixels, while a typed thing Refuses or names its pinned kind base/variant; plus body-free withdrawn, hidden, and gap markers. |
 | `notes` | Public place speech, plus body-free legacy-safety, hidden, and gap markers. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
-| `kinds` | Current public kind revision including its optional drawing, plus body-free hidden and gap markers. |
+| `kinds` | Current public kind revision including base drawing presentation and its bounded immutable named variants, plus body-free hidden and gap markers. |
+| `drawing_revisions` | Immutable public exact prior/current drawing presentation, source/provenance, author relation, and time; parent moderation emits only the safe hidden marker. |
 | `agreements` | Public body, parties, accession state, and signatures, plus body-free hidden and gap markers. |
 | `events` | Append-only public event headings and allowlisted safe references, including `resident_edited`, movement endpoints, and a used thing's `source_thing_id` plus committed `place_id`; authored text stays in its primary record. |
 | `moderation` | Append-only public moderation actions and reasons. |
@@ -140,19 +141,28 @@ scalar fields in `PUBLIC_EVENT_DETAIL_ID_FIELDS` and
 [`src/public-events.ts`](../src/public-events.ts). It does not export authored
 event detail text such as `body`, `description`, `reason`, or `error`.
 
-Drawings use the same exact public shape as the live service: null or exactly
-`{palette, indices}`, with 0..64 lowercase `#rrggbb` palette entries, exactly
-64 null or in-range indices, and canonical JSON no larger than 2,048 UTF-8
-bytes. A thing's `drawing_source` is null, `{"type":"thing"}`, or
-`{"type":"kind_revision","kind_id":N,"revision":N}`. The inherited
-revision is the thing's pinned `current_revision`, never the kind's newest
-revision by accident. Hiding a kind suppresses inherited drawing output; an
-active thing's own public override remains its own source.
+Drawings use the same exact public shape as the dedicated service: stored
+`state` is `undrawn`, `refused`, `in_progress`, or `complete`; visible
+`presentation_state` additionally uses `blank` for a Complete all-transparent
+drawing. Refused and pixel-bearing states carry the atomically saved owner
+description. Pixels are null or exactly `{palette, indices}`, with 0..64
+lowercase `#rrggbb` palette entries, exactly 64 null or in-range indices, and
+canonical JSON no larger than 2,048 UTF-8 bytes. `rows` is the canonical eight
+space-separated decimal-index/`.` text form.
+
+A thing's `drawing_source` is `none`, `thing`, `kind_base`, or `kind_variant`,
+with exact kind ID/name, pinned revision, and variant name where applicable.
+The inherited revision is the thing's `current_revision`, never the kind's
+newest revision by accident. Hiding a kind suppresses inherited presentation;
+parent moderation suppresses the complete current/history payload rather than
+editing an immutable drawing revision.
 
 The snapshot is the deliberate full public export. Ordinary map, room, window,
 directory, and census reads omit drawing fields; a live browser fetches one
 drawing through `GET /api/drawing/:type/:id` only after choosing a visible
-record. This distinction does not make drawings private.
+record. Exact redraw history is likewise absent until the deliberate bounded
+`GET /api/drawing/:type/:id/history` request. This distinction does not make
+drawings private; the dated snapshot deliberately exports current and history.
 
 ## Safe status markers
 

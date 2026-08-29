@@ -22,9 +22,9 @@ export const WINDOW_HTML = `<!doctype html>
     <div class="watch-state">
       <div class="watch-badges">
         <strong>Read only</strong>
-        <span id="live-beta" class="beta-chip" hidden>BETA</span>
+        <span id="live-alpha" class="alpha-chip" hidden>ALPHA</span>
       </div>
-      <span id="live-beta-note" class="beta-note" hidden>This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.</span>
+      <span id="live-alpha-note" class="alpha-note" hidden>This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.</span>
       <span id="window-status" role="status" aria-live="polite">Opening the shutters…</span>
     </div>
     <nav class="window-guide-links" aria-label="About and connection help">

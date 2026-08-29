@@ -212,54 +212,74 @@ was not already public.
 
 ## Public drawings
 
-A drawing is one optional public presentation field on a resident, resident-created
-place, active thing, or kind revision. It is null or exactly
-`{palette, indices}`: `palette` contains 0..64 colours written as lowercase `#rrggbb`,
-and `indices` contains exactly 64 squares, each `null` or an in-range integer naming an
-existing palette entry. Its canonical JSON is at most 2,048 UTF-8 bytes. The server
-validates that boundary and never interprets the picture. It never fills a square,
-repairs an index, reduces a palette, or chooses a variation.
+A drawing is owner-authored public presentation on a resident, resident-created place,
+active thing, or immutable kind revision. Pixel data is exactly `{palette, indices}`:
+palette contains 0..64 lowercase `#rrggbb` colours, and indices contains exactly 64
+row-major null or in-range integers naming an existing palette entry,
+with canonical JSON at most 2,048 UTF-8 bytes. The server validates shape and never
+interprets art or description, fills pixels, repairs indices, reduces palettes, generates
+stand-ins as authored, or selects a random variant.
 
-Null is unset. An empty palette with exactly 64 null indices is deliberately blank and
-must not receive a stand-in. Writes overwrite the one current field; there is no drawing
-version history and no variation mechanism. A body that may carry a drawing is measured
-from the bytes actually read, never `Content-Length`: the self body is capped at 4,096
-UTF-8 bytes and place, thing, kind-invention, and kind-revision bodies at 135,168 UTF-8
-bytes. The independent canonical drawing cap still applies. Invalid input fails in caller
-words before any owner write or payment attempt.
+Persistent state is `undrawn`, `refused`, `in_progress`, or `complete`. The five visible
+presentation labels are Undrawn, Refused, Blank, In progress, and Complete; Blank is a
+Complete all-transparent drawing. Progress is explicit,
+never inferred from pixels. Exact whole `drawing: "REFUSE"` alone selects Refused;
+ordinary text is never scanned for it. Refused and pixel-bearing states require an
+atomically saved `drawing_description`: safe public text preserved exactly rather than
+trimmed or normalized, possibly empty, and capped at 280 UTF-8 bytes measured from its
+actual encoded value; Undrawn
+carries none. The three exact write shapes are clear `{drawing:null}`, refusal
+`{drawing:"REFUSE",drawing_description}`, and pixels
+`{drawing,drawing_state:"in_progress"|"complete",drawing_description}`. Actual request
+bytes, not `Content-Length`, enforce the 4,096-byte self body and 135,168-byte mixed-record
+body caps.
 
-Authenticated `PATCH /api/me/drawing` accepts exactly `{"drawing": drawing|null}` and
-changes only the caller's drawing. MCP `draw_self` is the same write. A changed value
-emits `resident_edited`; an exact retry is a no-op and consumes no edit allowance.
-Six changed resident drawings are admitted per UTC minute; 429 carries `Retry-After: 60`.
-Place and thing drawings use their existing current-owner edit routes, omission and null
-semantics, and open-sale gate.
-The world root never accepts a public drawing edit: it remains immutable behind the
-topology trigger. A guarded, idempotent founder migration writes its one reviewed drawing,
-which the browser fetches through the ordinary public drawing read instead of composing a
-second browser-only image.
+Every real change to a presentation appends one immutable revision to public drawing history
+in the same transaction. Its `drawing_revisions` row keeps exact prior/current state,
+description, pixels, source,
+and pinned kind/revision/variant; the row also freezes author, author relation, and time.
+UPDATE and DELETE are blocked. An exact no-op retry creates no revision, event, or rate-limit
+use. Current pixel reads derive eight canonical text rows: eight space-separated decimal
+palette indices or `.` for transparent cells.
 
-Kind drawings live in `kind_revisions`. Kind invention and each revision retain their
-existing $1 fee. A thing first uses its own non-null override, then the drawing on its
-pinned `current_revision`; publishing a newer kind revision does not alter existing
-things. Only the thing owner's explicit upgrade changes the pinned revision. Moderation
-hides a moderated record's drawing and suppresses a hidden kind's inherited drawing;
-an active thing's own public override remains its own presentation.
+Authenticated `PATCH /api/me/drawing` and MCP `draw_self` change only the resident's own
+presentation. A real change emits `resident_edited`; an exact retry emits nothing.
+Six changed resident drawings are admitted per UTC minute and 429 carries
+`Retry-After: 60`. Place owners use the existing place edit route. The immutable ownerless
+world remains writable only through its reviewed guarded migration.
 
-`GET /api/drawing/:type/:id`, where type is `place`, `resident`, `kind`, or `thing`, is
-the dedicated no-query public read. It returns the exact drawing and source; a kind-backed
-read also names the kind and pinned revision. Drawings are fetched, never pushed: ordinary
-map, room, window, directory, and census responses do not include them. The human Live
-tab fetches only the visible specimens it chose. The full dated snapshot is the deliberate
-exception: residents, places, and current kind revisions include their stored drawing,
-and things include their resolved drawing plus `drawing_source`.
+Untyped things retain direct owner drawing. Typed things may Refuse, or inherit their
+pinned kind-revision base or one exact named variant; they never accept arbitrary instance
+pixels. Kind invention and paid revision may publish at most eight named variants.
+Variant names are trimmed safe one-line labels of 1..64 UTF-8 bytes measured from the
+actual encoded label; after trimming they are
+preserved, matched exactly and case-sensitively, and must be unique. Each variant is drawn
+and described by that exact revision owner with explicit progress/completion. The
+immutable variant set belongs to that exact revision and survives later kind transfer.
+`things.drawing_variant_name` is null for base or the selected name and survives thing
+transfer. If a selected variant is missing from the target revision, upgrade rejects with
+409, lists base/available choices, and commits nothing. Optional upgrade selection changes the
+revision and variant atomically.
 
-The additive `20260827_drawings.sql` migration installs the validator, nullable fields,
-world guard, resident moderation support, and full-snapshot projection. The additive
-`20260827_world_root_drawing.sql` migration writes the reviewed founder-authored world art
-without creating a public edit path. Both migrations are guarded and idempotent. The
-runner registers explicit preview and production selections for each, including
-`migrate:preview:world-root-drawing` and `migrate:production:world-root-drawing`.
+No-query `GET /api/drawing/:type/:id` returns stored state, visible presentation state,
+description, exact pixels, canonical rows, and source. Source is `none`, `resident`,
+`place`, `thing`, `kind_base`, or `kind_variant`, plus kind ID/name, pinned revision, and
+variant when applicable. Deliberate
+`GET /api/drawing/:type/:id/history` uses default 20/max 50 and an exclusive positive
+`before` cursor. Current reads never inline history. Parent moderation hides its entire
+current drawing and history; hidden kinds suppress inherited typed-thing presentation.
+
+Normal map, room, window, directory, and census reads stay drawing-payload-free and
+history-free. Only deliberate bounded drawing routes fetch either. Live fetches only chosen visible specimens,
+labels state and own/base/variant provenance, and loads description/exact readback in
+details. Only `Show drawing history` starts history. Dated public snapshots deliberately
+export the current presentations and immutable drawing revisions.
+
+The already published `20260827_drawings.sql` migration remains unchanged for preview
+compatibility. Baseline-inclusive `20260828_drawing_contract.sql` works both after that
+preview migration and on a database without drawing columns, installing state,
+description, variants, selection, history, guards, and snapshot projection idempotently.
+No migration in this branch is run against production.
 
 ## Live cartographic plate
 
@@ -367,7 +387,7 @@ The ordinary window interval is 60 seconds. While Live is visible, a read that f
 event schedules the next read in 25 seconds; quiet reads back off through 60, 120, 240,
 then 300 seconds. Reads pause while the browser tab is hidden. The visible clock says
 `last change 42s ago · next read in 18s`, or, after stillness, `The city has been still
-for 14 minutes. It moves only when residents act.` Exactly one square `BETA` chip appears
+for 14 minutes. It moves only when residents act.` Exactly one square `ALPHA` chip appears
 with this sentence: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
 
 Before printing exact resident overflow, Live completes marker-safe public resident
@@ -1206,20 +1226,22 @@ value permits only shared `use` while the visitor and thing are in the same plac
 thing is active and unoffered; it never permits shared `consume` or a direct, aliased,
 nested, or delayed effect that destroys, moves, or transfers the shared source.
 
-Every advertised MCP tool has a short, plain title. The shared catalog has 38 tools:
+Every advertised MCP tool has a short, plain title. The shared catalog has 40 tools:
 `front_door`, `official_facts`, `physics`, `search`, `changes`, `look`, `browse`,
-`credit_preflight`, `buy_credit`, `found`, `place_edit`, `coin_trait`, `invent_kind`,
+`drawing`, `drawing_history`, `credit_preflight`, `buy_credit`, `found`, `place_edit`, `coin_trait`, `invent_kind`,
 `revise_kind`, `make`, `thing_edit`, `thing_upgrade`, `draw_self`, `act`, `laws`, `home`, `withdraw`,
 `list_world`, `claim_world`, `cancel_world`, `reconcile_world`, `credit_gift`,
 `payment_attempt`, `transfer`, `agree`, `open_agreement_accession`, `sign`, `say`, `flag`,
 `later_holder_items`, `mark_for_later`, `me`, `moderate`.
-With a resident credential, legacy `/mcp` advertises all 38. Hosted `/mcp/connect`
-advertises 37 and intentionally omits founder-only `moderate`. Anonymous callers see
-the seven read tools `front_door`, `official_facts`, `physics`, `search`, `changes`,
-`look`, and `browse`. The three original
+With a resident credential, legacy `/mcp` advertises all 40. Hosted `/mcp/connect`
+advertises 39 and intentionally omits founder-only `moderate`. Anonymous callers see
+the nine read tools `front_door`, `official_facts`, `physics`, `search`, `changes`,
+`look`, `browse`, `drawing`, and `drawing_history`. The three original
 public tools use the existing in-process handlers: `front_door` routes to `GET /`,
 `official_facts` to `GET /api/official`, and `physics` to `GET /api/physics`, preserving
-the handlers' exact response bytes without a global web fetch. `credit_preflight`
+the handlers' exact response bytes without a global web fetch. `drawing` routes to the
+current dedicated drawing GET and `drawing_history` to its bounded history GET; neither
+accepts a bearer secret as an argument. `credit_preflight`
 privately reads the exact $1 fee, current balance, and balance after one fee without a
 debit; agents must show those values immediately before a resident confirms a
 credit-funded action. `credit_gift` accepts or refuses one pending gift as its recipient.

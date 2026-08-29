@@ -43,6 +43,7 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'agreements', disposition: 'exported', reason: 'public agreements, parties, openings, and signatures', database_sources: ['agreements', 'agreement_parties', 'agreement_accession_openings', 'agreement_signatures', 'residents', 'moderation_actions'] },
     { class_name: 'events', disposition: 'exported', reason: 'append-only public event headings and safe references', database_sources: ['events'] },
     { class_name: 'moderation', disposition: 'exported', reason: 'append-only public moderation history', database_sources: ['moderation_actions', 'residents'] },
+    { class_name: 'drawing_revisions', disposition: 'exported', reason: 'deliberately fetched immutable owner-authored drawing history with parent moderation', database_sources: ['drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions'] },
     { class_name: 'treasury_fees', disposition: 'exported', reason: 'public city-fee books', database_sources: ['fees', 'residents'] },
     { class_name: 'world_market_offers', disposition: 'exported', reason: 'public world-aisle locks and receipts only', database_sources: ['transfer_offers', 'things', 'residents', 'sale_payments', 'moderation_actions'] },
     { class_name: 'official', disposition: 'exported', reason: 'versioned canonical city facts supplied by the exporter', database_sources: [] },

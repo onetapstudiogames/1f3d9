@@ -72,29 +72,137 @@ import {
 } from './room-orientation.ts'
 import {
   DRAWING_RECORD_BODY_MAX_BYTES,
-  parseDrawing,
+  DRAWING_VARIANT_NAME_MAX_BYTES,
+  parseDrawingVariantName,
+  parseDrawingVariants,
+  parseDrawingWrite,
   readBoundedJsonObject,
-  type Drawing,
+  type DrawingState,
+  type DrawingValue,
+  type DrawingVariant,
+  type BoundedJsonResult,
 } from './drawing.ts'
 
 const executePublicQuery: PublicQueryExecutor = async (text, params) =>
   await sql.query(text, [...params]) as Record<string, unknown>[]
 
-type DrawingField =
+type DrawingWriteField =
   | Readonly<{ ok: true; supplied: false }>
-  | Readonly<{ ok: true; supplied: true; drawing: Drawing | null; stored: string | null }>
+  | Readonly<{
+      ok: true
+      supplied: true
+      value: DrawingValue
+      storedDrawing: string | null
+    }>
   | Readonly<{ ok: false; error: string }>
 
-function drawingField(body: Record<string, unknown>): DrawingField {
-  if (!Object.hasOwn(body, 'drawing')) return Object.freeze({ ok: true, supplied: false })
-  const parsed = parseDrawing(body.drawing)
+function drawingWriteField(body: Record<string, unknown>): DrawingWriteField {
+  const supplied = ['drawing', 'drawing_state', 'drawing_description']
+    .some(field => Object.hasOwn(body, field))
+  if (!supplied) return Object.freeze({ ok: true, supplied: false })
+  const parsed = parseDrawingWrite(body)
   if (!parsed.ok) return parsed
   return Object.freeze({
     ok: true,
     supplied: true,
-    drawing: parsed.drawing,
-    stored: parsed.drawing === null ? null : JSON.stringify(parsed.drawing),
+    value: parsed.value,
+    storedDrawing: parsed.value.drawing === null ? null : JSON.stringify(parsed.value.drawing),
   })
+}
+
+type DrawingVariantsField =
+  | Readonly<{ ok: true; supplied: false }>
+  | Readonly<{ ok: true; supplied: true; variants: readonly DrawingVariant[] }>
+  | Readonly<{ ok: false; error: string }>
+
+function drawingVariantsField(body: Record<string, unknown>): DrawingVariantsField {
+  if (!Object.hasOwn(body, 'drawing_variants')) {
+    return Object.freeze({ ok: true, supplied: false })
+  }
+  const parsed = parseDrawingVariants(body.drawing_variants)
+  return parsed.ok
+    ? Object.freeze({ ok: true, supplied: true, variants: parsed.variants })
+    : parsed
+}
+
+function drawingRequestFields(
+  value: DrawingValue,
+): Readonly<Record<string, unknown>> {
+  if (value.state === 'undrawn') return Object.freeze({ drawing: null })
+  if (value.state === 'refused') {
+    return Object.freeze({ drawing: 'REFUSE', drawing_description: value.description })
+  }
+  return Object.freeze({
+    drawing: value.drawing,
+    drawing_state: value.state,
+    drawing_description: value.description,
+  })
+}
+
+function variantRequestRows(
+  variants: readonly DrawingVariant[],
+): readonly Readonly<Record<string, unknown>>[] {
+  return Object.freeze(variants.map(variant => Object.freeze({
+    name: variant.name,
+    drawing: variant.drawing,
+    drawing_state: variant.state,
+    drawing_description: variant.description,
+  })))
+}
+
+function storedDrawingValue(row: Readonly<{
+  drawing?: unknown
+  drawing_state?: unknown
+  drawing_description?: unknown
+}>): DrawingValue | null {
+  const state = row.drawing_state == null
+    ? (row.drawing == null ? 'undrawn' : 'complete')
+    : row.drawing_state
+  if (!['undrawn', 'refused', 'in_progress', 'complete'].includes(String(state))) return null
+  const candidate: Record<string, unknown> = state === 'undrawn'
+    ? { drawing: null }
+    : state === 'refused'
+      ? { drawing: 'REFUSE', drawing_description: row.drawing_description }
+      : {
+          drawing: row.drawing,
+          drawing_state: state,
+          drawing_description: row.drawing_description ?? '',
+        }
+  const parsed = parseDrawingWrite(candidate)
+  return parsed.ok ? parsed.value : null
+}
+
+function storedDrawingVariants(value: unknown): readonly DrawingVariant[] | null {
+  if (!Array.isArray(value)) return null
+  const publicRows = value.map(candidate => {
+    if (candidate == null || typeof candidate !== 'object' || Array.isArray(candidate)) return candidate
+    const row = candidate as Record<string, unknown>
+    return {
+      name: row.name,
+      drawing: row.drawing,
+      drawing_state: row.state ?? row.drawing_state,
+      drawing_description: row.description ?? row.drawing_description,
+    }
+  })
+  const parsed = parseDrawingVariants(publicRows)
+  return parsed.ok ? parsed.variants : null
+}
+
+function drawingVariantName(value: unknown): string | null | 'invalid' {
+  if (value === null) return null
+  return parseDrawingVariantName(value) ?? 'invalid'
+}
+
+async function optionalDrawingBody(request: Request): Promise<BoundedJsonResult> {
+  try {
+    const bytes = new Uint8Array(await request.clone().arrayBuffer())
+    if (bytes.byteLength === 0) {
+      return Object.freeze({ ok: true as const, body: Object.freeze({}) as Record<string, unknown> })
+    }
+  } catch {
+    return Object.freeze({ ok: false as const, error: 'body could not be read' })
+  }
+  return await readBoundedJsonObject(request, DRAWING_RECORD_BODY_MAX_BYTES)
 }
 
 function publicPlaceWriteRow(row: PlaceRow): Readonly<Record<string, unknown>> {
@@ -628,7 +736,7 @@ export function mountWorldRoutes(app: Hono): void {
     const fields = [
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes',
-      'drawing',
+      'drawing', 'drawing_state', 'drawing_description',
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       return err(c, 400, 'edit description, purpose, front matter, drawing, or a permission switch')
@@ -642,7 +750,7 @@ export function mountWorldRoutes(app: Hono): void {
     const openToBuilding = optionalBoolean(body.open_to_building)
     const openToThings = optionalBoolean(body.open_to_things)
     const openToNotes = optionalBoolean(body.open_to_notes)
-    const requestedDrawing = drawingField(body)
+    const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     if (description === null || purpose === null || frontMatterThingIds === null
         || openToBuilding === null || openToThings === null || openToNotes === null) {
@@ -724,7 +832,7 @@ export function mountWorldRoutes(app: Hono): void {
           END AS eligible
           FROM candidate_locks
         ), editable AS MATERIALIZED (
-          SELECT p.id
+          SELECT p.*
           FROM places p
           CROSS JOIN selection_state selection
           LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
@@ -746,8 +854,14 @@ export function mountWorldRoutes(app: Hono): void {
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
             open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
             drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
-              THEN ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb
-              ELSE drawing END
+              THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
+              ELSE drawing END,
+            drawing_state = CASE WHEN ${requestedDrawing.supplied}::boolean
+              THEN ${requestedDrawing.supplied ? requestedDrawing.value.state : 'undrawn'}::text
+              ELSE drawing_state END,
+            drawing_description = CASE WHEN ${requestedDrawing.supplied}::boolean
+              THEN ${requestedDrawing.supplied ? requestedDrawing.value.description : null}::text
+              ELSE drawing_description END
           WHERE id IN (SELECT id FROM editable)
             AND (
               (${description !== undefined}::boolean
@@ -765,9 +879,41 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
               OR (${requestedDrawing.supplied}::boolean
                 AND drawing IS DISTINCT FROM
-                  ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb)
+                  ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
+              OR (${requestedDrawing.supplied}::boolean
+                AND drawing_state IS DISTINCT FROM
+                  ${requestedDrawing.supplied ? requestedDrawing.value.state : 'undrawn'}::text)
+              OR (${requestedDrawing.supplied}::boolean
+                AND drawing_description IS DISTINCT FROM
+                  ${requestedDrawing.supplied ? requestedDrawing.value.description : null}::text)
             )
           RETURNING *
+        ), new_drawing_revision AS (
+          INSERT INTO drawing_revisions (
+            target_type, target_id, slot_variant_name,
+            prior_state, prior_description, prior_drawing, prior_source,
+            prior_kind_id, prior_kind_revision, prior_variant_name,
+            current_state, current_description, current_drawing, current_source,
+            current_kind_id, current_kind_revision, current_variant_name,
+            author_id, author_relation
+          )
+          SELECT 'place', changed.id, NULL,
+            editable.drawing_state, editable.drawing_description, editable.drawing,
+            CASE WHEN editable.drawing_state = 'undrawn' THEN 'none' ELSE 'place' END,
+            NULL, NULL, NULL,
+            changed.drawing_state, changed.drawing_description, changed.drawing,
+            CASE WHEN changed.drawing_state = 'undrawn' THEN 'none' ELSE 'place' END,
+            NULL, NULL, NULL,
+            ${resident.id}, 'owner'
+          FROM changed
+          JOIN editable ON editable.id = changed.id
+          WHERE ${requestedDrawing.supplied}::boolean
+            AND (
+              editable.drawing IS DISTINCT FROM changed.drawing
+              OR editable.drawing_state IS DISTINCT FROM changed.drawing_state
+              OR editable.drawing_description IS DISTINCT FROM changed.drawing_description
+            )
+          RETURNING id
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'place_edited', ${resident.handle}, jsonb_build_object('place_id', id)
@@ -875,11 +1021,16 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     const body = decoded.body
-    if (!hasOnly(body, ['name', 'description', 'traits', 'recipe', 'drawing'])) {
+    if (!hasOnly(body, [
+      'name', 'description', 'traits', 'recipe',
+      'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+    ])) {
       return err(c, 400, 'kind body contains an unsupported field')
     }
-    const requestedDrawing = drawingField(body)
+    const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
+    const requestedVariants = drawingVariantsField(body)
+    if (!requestedVariants.ok) return err(c, 400, requestedVariants.error)
     const name = worldName(body.name)
     const description = publicText(body.description ?? '', {
       maximumCharacters: DESCRIPTION_MAX,
@@ -910,7 +1061,10 @@ export function mountWorldRoutes(app: Hono): void {
         targetKey: `kind-invention:${name}`,
         request: {
           name, description, traits, recipe,
-          ...(requestedDrawing.supplied ? { drawing: requestedDrawing.drawing } : {}),
+          ...(requestedDrawing.supplied ? drawingRequestFields(requestedDrawing.value) : {}),
+          ...(requestedVariants.supplied
+            ? { drawing_variants: variantRequestRows(requestedVariants.variants) }
+            : {}),
         },
       },
     )
@@ -968,11 +1122,16 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     const body = decoded.body
-    if (!hasOnly(body, ['description', 'traits', 'recipe', 'drawing'])) {
+    if (!hasOnly(body, [
+      'description', 'traits', 'recipe',
+      'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+    ])) {
       return err(c, 400, 'kind revision contains an unsupported field')
     }
-    const requestedDrawing = drawingField(body)
+    const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
+    const requestedVariants = drawingVariantsField(body)
+    if (!requestedVariants.ok) return err(c, 400, requestedVariants.error)
     const suppliedTraits = body.traits === undefined ? undefined : stringList(body.traits)
     if (suppliedTraits === null) {
       return err(c, 400, 'traits must be a list of at most 32 valid trait names')
@@ -984,6 +1143,7 @@ export function mountWorldRoutes(app: Hono): void {
     const currentRows = (await sql`
       SELECT k.id, k.name, k.owner_id, k.current_revision AS revision,
         revision.description, revision.traits, revision.recipe, revision.drawing,
+        revision.drawing_state, revision.drawing_description, revision.drawing_variants,
         k.active_offer_id, (offer.id IS NOT NULL) AS has_open_offer
       FROM kinds k
       JOIN kind_revisions revision
@@ -1004,8 +1164,10 @@ export function mountWorldRoutes(app: Hono): void {
       : publicText(body.description, { maximumCharacters: DESCRIPTION_MAX, allowEmpty: true })
     const traits = suppliedTraits ?? current.traits
     const recipe = parseKindRecipe(body.recipe === undefined ? current.recipe : body.recipe)
-    const currentDrawing = parseDrawing(current.drawing ?? null)
-    if (!currentDrawing.ok) return err(c, 500, 'stored kind drawing is invalid')
+    const currentDrawing = storedDrawingValue(current)
+    if (currentDrawing === null) return err(c, 500, 'stored kind drawing is invalid')
+    const currentVariants = storedDrawingVariants(current.drawing_variants ?? [])
+    if (currentVariants === null) return err(c, 500, 'stored kind drawing variants are invalid')
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
     if (recipe == null) {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
@@ -1014,8 +1176,11 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait')
     }
     const revisionDrawing = requestedDrawing.supplied
-      ? requestedDrawing.drawing
-      : currentDrawing.drawing
+      ? requestedDrawing.value
+      : currentDrawing
+    const revisionVariants = requestedVariants.supplied
+      ? requestedVariants.variants
+      : currentVariants
 
     const fee = await treasuryFee(
       c,
@@ -1029,8 +1194,11 @@ export function mountWorldRoutes(app: Hono): void {
         assetId: id,
         request: {
           kind_id: id, description, traits, recipe,
-          ...(requestedDrawing.supplied || revisionDrawing !== null
-            ? { drawing: revisionDrawing }
+          ...(requestedDrawing.supplied || revisionDrawing.state !== 'undrawn'
+            ? drawingRequestFields(revisionDrawing)
+            : {}),
+          ...(requestedVariants.supplied || revisionVariants.length > 0
+            ? { drawing_variants: variantRequestRows(revisionVariants) }
             : {}),
         },
       },
@@ -1244,8 +1412,11 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     const body = decoded.body
-    if (!hasOnly(body, ['name', 'body', 'open_to_use', 'drawing']) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, and open_to_use are editable; birth_revision is permanent')
+    if (!hasOnly(body, [
+      'name', 'body', 'open_to_use',
+      'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
+    ]) || Object.keys(body).length === 0) {
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, and open_to_use are editable; birth_revision is permanent')
     }
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
@@ -1255,22 +1426,37 @@ export function mountWorldRoutes(app: Hono): void {
     const openToUse = body.open_to_use === undefined
       ? undefined
       : typeof body.open_to_use === 'boolean' ? body.open_to_use : null
-    const requestedDrawing = drawingField(body)
+    const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
+    const requestedVariant = Object.hasOwn(body, 'drawing_variant_name')
+      ? drawingVariantName(body.drawing_variant_name)
+      : undefined
+    if (requestedVariant === 'invalid') {
+      return err(c, 400, `drawing_variant_name must be null or a safe one-line label of 1-${DRAWING_VARIANT_NAME_MAX_BYTES} UTF-8 bytes`)
+    }
     if (name === null) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody === null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
     if (openToUse === null) return err(c, 400, 'open_to_use must be boolean when present')
 
     const existingRows = (await sql`
-      SELECT thing.id, thing.owner_id, thing.active_offer_id,
+      SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
+        thing.drawing_state, thing.drawing_variant_name, pinned.drawing_variants,
+        thing.active_offer_id,
         (offer.id IS NOT NULL) AS has_open_offer
       FROM things thing
+      LEFT JOIN kind_revisions pinned
+        ON pinned.kind_id = thing.kind_id AND pinned.revision = thing.current_revision
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
     `) as Array<{
       id: number
       owner_id: number
+      kind_id: number | null
+      current_revision: number | null
+      drawing_state?: DrawingState
+      drawing_variant_name?: string | null
+      drawing_variants?: unknown
       active_offer_id: number | null
       has_open_offer?: boolean
     }>
@@ -1280,11 +1466,47 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be edited while it has an open sale offer')
     }
+    if (existing.kind_id !== null && requestedDrawing.supplied
+        && (requestedDrawing.value.state === 'in_progress' || requestedDrawing.value.state === 'complete')) {
+      return err(c, 400, 'typed things inherit their pinned kind base or named variant; arbitrary instance pixel drawings are not allowed')
+    }
+    if (existing.kind_id === null && requestedVariant !== undefined) {
+      return err(c, 409, 'an untyped thing has no kind base or drawing variant')
+    }
+    const resultingDrawingState = requestedDrawing.supplied
+      ? requestedDrawing.value.state
+      : existing.drawing_state
+    if (requestedVariant !== undefined && resultingDrawingState === 'refused') {
+      return err(c, 409, 'clear the thing refusal with drawing null before choosing its inherited base or variant')
+    }
+    const availableVariants = existing.kind_id === null
+      ? []
+      : storedDrawingVariants(existing.drawing_variants ?? [])
+    if (availableVariants === null) return err(c, 500, 'stored kind drawing variants are invalid')
+    if (typeof requestedVariant === 'string'
+        && !availableVariants.some(variant => variant.name === requestedVariant)) {
+      const choices = availableVariants.map(variant => variant.name)
+      return err(c, 409, choices.length === 0
+        ? 'this pinned kind revision offers no named variants; choose its base with drawing_variant_name null'
+        : `drawing_variant_name is not offered by this pinned kind revision; choose base with null or an available variant: ${choices.join(', ')}`)
+    }
 
     const rows = (await sql`
-      WITH editable AS (
-        SELECT thing.id
+      WITH editable AS MATERIALIZED (
+        SELECT thing.*,
+          pinned.drawing AS kind_drawing,
+          pinned.drawing_state AS kind_drawing_state,
+          pinned.drawing_description AS kind_drawing_description,
+          selected_variant.value AS kind_variant
         FROM things thing
+        LEFT JOIN kind_revisions pinned
+          ON pinned.kind_id = thing.kind_id AND pinned.revision = thing.current_revision
+        LEFT JOIN LATERAL (
+          SELECT variant.value
+          FROM jsonb_array_elements(coalesce(pinned.drawing_variants, '[]'::jsonb)) variant(value)
+          WHERE variant.value->>'name' = thing.drawing_variant_name
+          LIMIT 1
+        ) selected_variant ON TRUE
         LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
           AND offer.asset_id = thing.id AND offer.status = 'open'
         WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
@@ -1297,8 +1519,16 @@ export function mountWorldRoutes(app: Hono): void {
           body = coalesce(${thingBody ?? null}::text, body),
           open_to_use = coalesce(${openToUse ?? null}::boolean, open_to_use),
           drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
-            THEN ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb
-            ELSE drawing END
+            THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
+            ELSE drawing END,
+          drawing_state = CASE WHEN ${requestedDrawing.supplied}::boolean
+            THEN ${requestedDrawing.supplied ? requestedDrawing.value.state : 'undrawn'}::text
+            ELSE drawing_state END,
+          drawing_description = CASE WHEN ${requestedDrawing.supplied}::boolean
+            THEN ${requestedDrawing.supplied ? requestedDrawing.value.description : null}::text
+            ELSE drawing_description END,
+          drawing_variant_name = CASE WHEN ${requestedVariant !== undefined}::boolean
+            THEN ${requestedVariant ?? null}::text ELSE drawing_variant_name END
         WHERE id IN (SELECT id FROM editable)
           AND (
             (${name !== undefined}::boolean AND name IS DISTINCT FROM ${name ?? null}::text)
@@ -1306,9 +1536,101 @@ export function mountWorldRoutes(app: Hono): void {
             OR (${openToUse !== undefined}::boolean
               AND open_to_use IS DISTINCT FROM ${openToUse ?? null}::boolean)
             OR (${requestedDrawing.supplied}::boolean
-              AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.stored : null}::jsonb)
+              AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
+            OR (${requestedDrawing.supplied}::boolean
+              AND drawing_state IS DISTINCT FROM
+                ${requestedDrawing.supplied ? requestedDrawing.value.state : 'undrawn'}::text)
+            OR (${requestedDrawing.supplied}::boolean
+              AND drawing_description IS DISTINCT FROM
+                ${requestedDrawing.supplied ? requestedDrawing.value.description : null}::text)
+            OR (${requestedVariant !== undefined}::boolean
+              AND drawing_variant_name IS DISTINCT FROM ${requestedVariant ?? null}::text)
           )
         RETURNING *
+      ), current_presentation AS MATERIALIZED (
+        SELECT changed.*,
+          pinned.drawing AS kind_drawing,
+          pinned.drawing_state AS kind_drawing_state,
+          pinned.drawing_description AS kind_drawing_description,
+          selected_variant.value AS kind_variant
+        FROM changed
+        LEFT JOIN kind_revisions pinned
+          ON pinned.kind_id = changed.kind_id AND pinned.revision = changed.current_revision
+        LEFT JOIN LATERAL (
+          SELECT variant.value
+          FROM jsonb_array_elements(coalesce(pinned.drawing_variants, '[]'::jsonb)) variant(value)
+          WHERE variant.value->>'name' = changed.drawing_variant_name
+          LIMIT 1
+        ) selected_variant ON TRUE
+      ), new_drawing_revision AS (
+        INSERT INTO drawing_revisions (
+          target_type, target_id, slot_variant_name,
+          prior_state, prior_description, prior_drawing, prior_source,
+          prior_kind_id, prior_kind_revision, prior_variant_name,
+          current_state, current_description, current_drawing, current_source,
+          current_kind_id, current_kind_revision, current_variant_name,
+          author_id, author_relation
+        )
+        SELECT 'thing', current.id, NULL,
+          CASE
+            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_state
+            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->>'state'
+            ELSE prior.kind_drawing_state
+          END,
+          CASE
+            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_description
+            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->>'description'
+            ELSE prior.kind_drawing_description
+          END,
+          CASE
+            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing
+            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->'drawing'
+            ELSE prior.kind_drawing
+          END,
+          CASE
+            WHEN prior.kind_id IS NULL THEN CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
+            WHEN prior.drawing_state = 'refused' THEN 'thing'
+            WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+            ELSE 'kind_base'
+          END,
+          prior.kind_id, prior.current_revision,
+          CASE WHEN prior.kind_id IS NOT NULL AND prior.drawing_state <> 'refused'
+            THEN prior.drawing_variant_name ELSE NULL END,
+          CASE
+            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_state
+            WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->>'state'
+            ELSE current.kind_drawing_state
+          END,
+          CASE
+            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_description
+            WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->>'description'
+            ELSE current.kind_drawing_description
+          END,
+          CASE
+            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing
+            WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->'drawing'
+            ELSE current.kind_drawing
+          END,
+          CASE
+            WHEN current.kind_id IS NULL THEN CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
+            WHEN current.drawing_state = 'refused' THEN 'thing'
+            WHEN current.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+            ELSE 'kind_base'
+          END,
+          current.kind_id, current.current_revision,
+          CASE WHEN current.kind_id IS NOT NULL AND current.drawing_state <> 'refused'
+            THEN current.drawing_variant_name ELSE NULL END,
+          ${resident.id}, 'owner'
+        FROM current_presentation current
+        JOIN editable prior ON prior.id = current.id
+        WHERE ${requestedDrawing.supplied || requestedVariant !== undefined}::boolean
+          AND (
+            prior.drawing IS DISTINCT FROM current.drawing
+            OR prior.drawing_state IS DISTINCT FROM current.drawing_state
+            OR prior.drawing_description IS DISTINCT FROM current.drawing_description
+            OR prior.drawing_variant_name IS DISTINCT FROM current.drawing_variant_name
+          )
+        RETURNING id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id)
@@ -1343,19 +1665,42 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
+    const decoded = await optionalDrawingBody(c.req.raw)
+    if (!decoded.ok) {
+      return /no larger than/iu.test(decoded.error)
+        ? c.json({ error: decoded.error }, 413)
+        : err(c, 400, decoded.error)
+    }
+    if (!hasOnly(decoded.body, ['drawing_variant_name'])) {
+      return err(c, 400, 'thing upgrade accepts only optional drawing_variant_name')
+    }
+    const requestedVariant = Object.hasOwn(decoded.body, 'drawing_variant_name')
+      ? drawingVariantName(decoded.body.drawing_variant_name)
+      : undefined
+    if (requestedVariant === 'invalid') {
+      return err(c, 400, `drawing_variant_name must be null or a safe one-line label of 1-${DRAWING_VARIANT_NAME_MAX_BYTES} UTF-8 bytes`)
+    }
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.birth_revision,
         thing.current_revision, kind.current_revision AS latest_revision,
+        thing.drawing_state, thing.drawing_variant_name,
+        latest.drawing_variants AS latest_drawing_variants,
         thing.active_offer_id,
         (offer.id IS NOT NULL) AS has_open_offer
       FROM things thing
       LEFT JOIN kinds kind ON kind.id = thing.kind_id
+      LEFT JOIN kind_revisions latest
+        ON latest.kind_id = kind.id AND latest.revision = kind.current_revision
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
     `) as Array<ThingRow & {
       latest_revision?: number
+      drawing_state?: DrawingState
+      drawing_variant_name?: string | null
+      latest_drawing_variants?: unknown
+      drawing_variants?: unknown
       active_offer_id: number | null
       has_open_offer?: boolean
     }>
@@ -1366,36 +1711,153 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be upgraded while it has an open sale offer')
     }
+    if (requestedVariant !== undefined && existing.drawing_state === 'refused') {
+      return err(c, 409, 'clear the thing refusal before choosing a base or variant during upgrade')
+    }
+    const currentVariant = existing.drawing_variant_name ?? null
+    const targetVariants = storedDrawingVariants(
+      existing.latest_drawing_variants ?? existing.drawing_variants ?? [],
+    )
+    if (targetVariants === null) return err(c, 500, 'stored target kind drawing variants are invalid')
+    const upgradeVariant = requestedVariant === undefined ? currentVariant : requestedVariant
+    if (typeof upgradeVariant === 'string'
+        && !targetVariants.some(variant => variant.name === upgradeVariant)) {
+      const names = targetVariants.map(variant => variant.name)
+      return err(c, 409, names.length === 0
+        ? 'the selected variant is absent from the target revision; choose base with drawing_variant_name null'
+        : `the selected variant is absent from the target revision; choose base with drawing_variant_name null or an available target variant: ${names.join(', ')}`)
+    }
 
     const rows = (await sql`
-      WITH upgradeable AS (
-        SELECT thing.id, kind.current_revision AS latest_revision
+      WITH upgradeable AS MATERIALIZED (
+        SELECT thing.*,
+          prior_revision.drawing AS prior_kind_drawing,
+          prior_revision.drawing_state AS prior_kind_drawing_state,
+          prior_revision.drawing_description AS prior_kind_drawing_description,
+          prior_variant.value AS prior_kind_variant,
+          kind.current_revision AS latest_revision,
+          latest_revision.drawing AS target_kind_drawing,
+          latest_revision.drawing_state AS target_kind_drawing_state,
+          latest_revision.drawing_description AS target_kind_drawing_description,
+          target_variant.value AS target_kind_variant
         FROM things thing
         JOIN kinds kind ON kind.id = thing.kind_id
+        JOIN kind_revisions latest_revision
+          ON latest_revision.kind_id = kind.id
+          AND latest_revision.revision = kind.current_revision
+        JOIN kind_revisions prior_revision
+          ON prior_revision.kind_id = thing.kind_id
+          AND prior_revision.revision = thing.current_revision
+        LEFT JOIN LATERAL (
+          SELECT variant.value
+          FROM jsonb_array_elements(coalesce(prior_revision.drawing_variants, '[]'::jsonb)) variant(value)
+          WHERE variant.value->>'name' = thing.drawing_variant_name
+          LIMIT 1
+        ) prior_variant ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT variant.value
+          FROM jsonb_array_elements(coalesce(latest_revision.drawing_variants, '[]'::jsonb)) variant(value)
+          WHERE variant.value->>'name' = ${upgradeVariant ?? null}::text
+          LIMIT 1
+        ) target_variant ON TRUE
         LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
           AND offer.asset_id = thing.id AND offer.status = 'open'
         WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
           AND thing.withdrawn_at IS NULL
           AND thing.active_offer_id IS NULL AND offer.id IS NULL
-        FOR UPDATE OF thing
+          AND (${upgradeVariant === null}::boolean OR target_variant.value IS NOT NULL)
+        FOR UPDATE OF thing, kind
       ), changed AS (
-        UPDATE things SET current_revision = upgradeable.latest_revision
+        UPDATE things SET
+          current_revision = upgradeable.latest_revision,
+          drawing_variant_name = ${upgradeVariant ?? null}::text
         FROM upgradeable
         WHERE things.id = upgradeable.id
+          AND (
+            things.current_revision IS DISTINCT FROM upgradeable.latest_revision
+            OR things.drawing_variant_name IS DISTINCT FROM ${upgradeVariant ?? null}::text
+          )
         RETURNING things.*
+      ), new_drawing_revision AS (
+        INSERT INTO drawing_revisions (
+          target_type, target_id, slot_variant_name,
+          prior_state, prior_description, prior_drawing, prior_source,
+          prior_kind_id, prior_kind_revision, prior_variant_name,
+          current_state, current_description, current_drawing, current_source,
+          current_kind_id, current_kind_revision, current_variant_name,
+          author_id, author_relation
+        )
+        SELECT 'thing', changed.id, NULL,
+          CASE
+            WHEN prior.drawing_state = 'refused' THEN prior.drawing_state
+            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->>'state'
+            ELSE prior.prior_kind_drawing_state
+          END,
+          CASE
+            WHEN prior.drawing_state = 'refused' THEN prior.drawing_description
+            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->>'description'
+            ELSE prior.prior_kind_drawing_description
+          END,
+          CASE
+            WHEN prior.drawing_state = 'refused' THEN prior.drawing
+            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->'drawing'
+            ELSE prior.prior_kind_drawing
+          END,
+          CASE
+            WHEN prior.drawing_state = 'refused' THEN 'thing'
+            WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+            ELSE 'kind_base'
+          END,
+          prior.kind_id, prior.current_revision,
+          CASE WHEN prior.drawing_state = 'refused'
+            THEN NULL ELSE prior.drawing_variant_name END,
+          CASE
+            WHEN changed.drawing_state = 'refused' THEN changed.drawing_state
+            WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->>'state'
+            ELSE prior.target_kind_drawing_state
+          END,
+          CASE
+            WHEN changed.drawing_state = 'refused' THEN changed.drawing_description
+            WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->>'description'
+            ELSE prior.target_kind_drawing_description
+          END,
+          CASE
+            WHEN changed.drawing_state = 'refused' THEN changed.drawing
+            WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->'drawing'
+            ELSE prior.target_kind_drawing
+          END,
+          CASE
+            WHEN changed.drawing_state = 'refused' THEN 'thing'
+            WHEN ${upgradeVariant !== null}::boolean THEN 'kind_variant'
+            ELSE 'kind_base'
+          END,
+          changed.kind_id, changed.current_revision,
+          CASE WHEN changed.drawing_state = 'refused'
+            THEN NULL ELSE changed.drawing_variant_name END,
+          ${resident.id}, 'owner'
+        FROM changed
+        JOIN upgradeable prior ON prior.id = changed.id
+        RETURNING id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
           'thing_id', id, 'birth_revision', birth_revision,
           'current_revision', current_revision
         ) FROM changed
+      ), result AS (
+        SELECT changed.* FROM changed
+        UNION ALL
+        SELECT thing.*
+        FROM things thing
+        JOIN upgradeable ON upgradeable.id = thing.id
+        WHERE NOT EXISTS (SELECT 1 FROM changed)
       )
       SELECT changed.*, maker.handle AS made_by,
         changed.owner_id AS current_owner_id,
         current_owner.handle AS current_owner,
         current_owner.handle AS owner,
         kind_definition.name AS kind
-      FROM changed
+      FROM result changed
       JOIN residents maker ON maker.id = changed.maker_id
       JOIN residents current_owner ON current_owner.id = changed.owner_id
       LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id

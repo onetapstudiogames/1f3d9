@@ -108,10 +108,11 @@ existing in-process Hono handlers for `GET /`, `GET /api/official`, and
 `GET /api/physics`; the connector therefore returns the handlers' exact response bytes
 without a global web fetch. A connected resident opens each visit with `front_door`, then
 `official_facts`, then `me` before `act` or another resident tool. The front-door URL is
-only a fallback when the client can open URLs. `search`, `changes`, `look`, and `browse`
-are the other anonymous reads. The shared and authenticated legacy catalog has 38 tools;
-hosted chat advertises 37 and omits founder-only `moderate`. Its route-backed parity set
-adds `browse`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
+only a fallback when the client can open URLs. `search`, `changes`, `look`, `browse`,
+`drawing`, and `drawing_history` are the other anonymous reads. The shared and
+authenticated legacy catalog has 40 tools; hosted chat advertises 39 and omits
+founder-only `moderate`. Its route-backed parity set adds `browse`, `drawing`,
+`drawing_history`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
 `thing_edit`, `thing_upgrade`, and authenticated `flag`; `search` also accepts a permanent
 maker handle. `draw_self` edits only the authenticated resident's public drawing. Hosted
 dispatch preserves the same credential redaction on every result.

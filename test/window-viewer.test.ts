@@ -147,7 +147,10 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
     'live-zoom-in', 'live-zoom-out', 'live-center', 'live-fullscreen',
     'live-proof', 'live-pause', 'live-focus-status',
   ]) assert.match(WINDOW_HTML, new RegExp(`id="${id}"`))
-  assert.equal((WINDOW_HTML.match(/>BETA</gu) ?? []).length, 1)
+  assert.match(WINDOW_HTML, /id="live-alpha" class="alpha-chip" hidden>ALPHA<\/span>/u)
+  assert.match(WINDOW_HTML, /id="live-alpha-note" class="alpha-note" hidden>/u)
+  assert.equal((WINDOW_HTML.match(/>ALPHA</gu) ?? []).length, 1)
+  assert.doesNotMatch(`${WINDOW_HTML}\n${WINDOW_JS}`, /live-beta|beta-chip|beta-note|>BETA</u)
   assert.match(
     WINDOW_HTML,
     /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u,
@@ -242,6 +245,41 @@ test('the live plate states its honest timing and drawing rules in shipped code'
     WINDOW_CSS,
     /@media \(max-width: 54rem\)[\s\S]*?\.live-layout\s*\{[^}]*display:\s*block[^}]*\}[\s\S]*?\.live-viewport/u,
   )
+})
+
+test('drawing presentation and details expose the complete authored contract without eager history', () => {
+  for (const label of ['Undrawn', 'Refused', 'In progress', 'Blank', 'Complete']) {
+    assert.match(WINDOW_JS, new RegExp(label.replace(' ', '\\s+'), 'u'))
+  }
+  for (const field of [
+    'presentation_state', 'description', 'rows', 'source', 'kind_id',
+    'kind_name', 'revision', 'variant_name',
+  ]) {
+    assert.match(WINDOW_JS, new RegExp(`\\b${field}\\b`, 'u'))
+  }
+  assert.match(WINDOW_JS, /Own drawing/u)
+  assert.match(WINDOW_JS, /Kind [^'"\n]*revision/u)
+  assert.match(WINDOW_CSS, /\.drawing-state-label/u)
+  assert.match(WINDOW_CSS, /\.drawing-provenance/u)
+  assert.match(WINDOW_CSS, /\.drawing-owner-description/u)
+  assert.match(WINDOW_CSS, /\.drawing-canonical-rows/u)
+
+  assert.match(WINDOW_JS, /Show drawing history/u)
+  assert.match(WINDOW_JS, /Retry drawing history/u)
+  assert.match(WINDOW_JS, /Load earlier drawing revisions/u)
+  assert.match(WINDOW_JS, /\/api\/drawing\/'?\s*\+[^\n]*\/history/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('limit'/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('before'/u)
+
+  const liveRead = /async function fetchLiveDrawing[\s\S]*?\n  function drainLiveDrawingQueue/u
+    .exec(WINDOW_JS)?.[0] ?? ''
+  const ordinaryDetailRead = /async function ensureDetail[\s\S]*?\n  function renderDetail/u
+    .exec(WINDOW_JS)?.[0] ?? ''
+  assert.ok(liveRead)
+  assert.ok(ordinaryDetailRead)
+  assert.doesNotMatch(liveRead, /\/history/u)
+  assert.doesNotMatch(ordinaryDetailRead, /\/history/u)
+  assert.doesNotMatch(WINDOW_HTML, /drawing history|canonical rows|palette indices/iu)
 })
 
 test('the share link round-trips every reproducible window question', () => {
