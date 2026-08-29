@@ -1302,6 +1302,7 @@ export const WINDOW_JS = `(() => {
   const LIVE_DRAWING_FETCH_CONCURRENCY = 4
   const LIVE_DRAWING_QUEUE_LIMIT = 32
   const LIVE_OPENING_PAGE_LIMIT = 200
+  const LIVE_REPLAY_BACKLOG_LIMIT = LIVE_OPENING_PAGE_LIMIT
   const LIVE_PORTRAIT_LIMIT = 6
   const LIVE_THING_LIMIT = 6
   const LIVE_FOCUS_STORAGE_KEY = '1f3d9:window:live-focus'
@@ -2493,15 +2494,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       node.dataset.liveDetail = String(detailed)
       if (detailed && placeId && livePlotDetailContext) {
         const place = livePlotDetailContext.children.find(candidate => candidate.id === placeId)
-        if (place) mountLivePlaceDetail(
-          node,
-          livePlotDetailContext.snapshot,
-          livePlotDetailContext.focus,
-          place,
-          livePlotDetailContext.bubbles,
-          livePlotDetailContext.records,
-          livePlotDetailContext.interactionThings,
-        )
+        if (place) mountLivePlaceDetail(node, livePlotDetailContext, place)
       } else if (!detailed) {
         unmountLivePlaceDetail(node)
       }
@@ -2599,7 +2592,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return target ? revealLiveStageTarget(target, center) : false
   }
 
-  function liveDefaultCenterTarget(snapshot, focus, survey) {
+  function liveDefaultCenterTarget(snapshot, focus, survey, renderContext = null) {
     const focusedResident = state.live.focusResident
       ? displayedResidents(snapshot).find(resident =>
           resident.handle === state.live.focusResident)
@@ -2611,6 +2604,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         focusedResident.handle,
         focus,
         liveChildren(snapshot, focus),
+        renderContext,
       )
       if (focusedPoint) return focusedPoint
     }
@@ -2635,10 +2629,44 @@ ${WINDOW_CLIENT_SAFETY_JS}
         y: firstChild.y + firstChild.height / 2,
       })
     }
-    return Object.freeze({
+    const ordinaryTarget = Object.freeze({
       x: Math.min(survey.width, LIVE_DIRECT_GROUND_WIDTH) / 2,
       y: Math.min(survey.height, WINDOW_LIVE_DIRECT_COMMONS_HEIGHT) / 2,
     })
+    if (!firstChild || !nodes.liveViewport) return ordinaryTarget
+    const ordinaryCamera = liveCameraForStageTarget(ordinaryTarget, true)
+    if (!ordinaryCamera) return ordinaryTarget
+    const ordinaryViewport = Object.freeze({
+      left: -ordinaryCamera.offsetX / ordinaryCamera.scale,
+      top: -ordinaryCamera.offsetY / ordinaryCamera.scale,
+      right: (nodes.liveViewport.clientWidth - ordinaryCamera.offsetX) /
+        ordinaryCamera.scale,
+      bottom: (nodes.liveViewport.clientHeight - ordinaryCamera.offsetY) /
+        ordinaryCamera.scale,
+    })
+    if (windowLiveVisiblePlotIds(
+      survey.plots,
+      survey.expandedGrounds,
+      ordinaryViewport,
+      LIVE_PLOT_OVERSCAN,
+    ).length) return ordinaryTarget
+    return Object.freeze({
+      x: firstChild.x + firstChild.width / 2,
+      y: firstChild.y + firstChild.height / 2,
+      preservesChildDetail: true,
+      childDetailPlaceId: firstChild.id,
+    })
+  }
+
+  function liveChildDetailRevealTargets(target) {
+    const placeId = safeId(target?.childDetailPlaceId)
+    if (!target?.preservesChildDetail || !placeId || !nodes.livePlates) return []
+    return [
+      ...nodes.livePlates.querySelectorAll(
+        '.live-plot[data-place-id="' + String(placeId) + '"] .live-plot-open',
+      ),
+      ...nodes.livePlates.querySelectorAll('.live-root-walkers .live-speech-bubble'),
+    ]
   }
 
   function liveCenterTarget() {
@@ -2665,6 +2693,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const focus = liveFocusPlace(state.snapshot)
       const resident = displayedResidents(state.snapshot).find(candidate =>
         candidate.handle === state.live.focusResident)
+      const renderContext = livePlotDetailContext?.snapshot === state.snapshot &&
+        focus && livePlotDetailContext.focus.id === focus.id
+        ? livePlotDetailContext
+        : null
       if (focus && resident) {
         const point = liveResidentReplayPoint(
           state.snapshot,
@@ -2672,6 +2704,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           resident.handle,
           focus,
           liveChildren(state.snapshot, focus),
+          renderContext,
         )
         if (point) return point
       }
@@ -2679,10 +2712,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.snapshot) {
       const focus = liveFocusPlace(state.snapshot)
       if (focus) {
+        const renderContext = livePlotDetailContext?.snapshot === state.snapshot &&
+          livePlotDetailContext.focus.id === focus.id
+          ? livePlotDetailContext
+          : null
         return liveDefaultCenterTarget(
           state.snapshot,
           focus,
-          liveStageSurvey(livePlaceRows(state.snapshot), focus.id),
+          renderContext?.survey || liveStageSurvey(livePlaceRows(state.snapshot), focus.id),
+          renderContext,
         )
       }
     }
@@ -2707,6 +2745,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!centered) return
     applyLiveCamera({ ...centered, panStart: null, pinchStart: null })
     if (liveCameraFrame) {
+      window.cancelAnimationFrame(liveCameraFrame)
+      liveCameraFrame = 0
+      commitLiveCamera()
+    }
+    if (revealLiveElements(liveChildDetailRevealTargets(target)) && liveCameraFrame) {
       window.cancelAnimationFrame(liveCameraFrame)
       liveCameraFrame = 0
       commitLiveCamera()
@@ -4305,7 +4348,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
         seen.size === state.live.replaySeenKeys.length &&
         revealed.size === state.live.replayRevealedKeys.length) return
 
-    if (!animate || liveMotionReduced()) {
+    const animates = animate && !liveMotionReduced()
+    const retainedAdditions = animates
+      ? additions.slice(-LIVE_REPLAY_BACKLOG_LIMIT)
+      : additions
+    const caughtUpAdditions = animates
+      ? additions.slice(0, Math.max(0, additions.length - retainedAdditions.length))
+      : []
+    if (!animates) {
       const trailStarts = { ...state.live.trailStarts }
       for (const record of additions) {
         if (liveRecordType(record) === 'move') trailStarts[liveTraceKey(record)] = now
@@ -4323,7 +4373,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const queues = Object.fromEntries(Object.entries(state.live.replayQueues)
       .map(([actor, queue]) => [actor, [...queue]]))
     const positions = { ...state.live.replayPositions }
-    for (const record of additions) {
+    const trailStarts = { ...state.live.trailStarts }
+    for (const record of caughtUpAdditions) {
+      const key = liveTraceKey(record)
+      revealed.add(key)
+      if (liveRecordType(record) === 'move') trailStarts[key] = now
+    }
+    for (const record of retainedAdditions) {
       queues[record.actor] = Object.freeze([...(queues[record.actor] || []), record])
       if (!Object.hasOwn(positions, record.actor) && liveRecordType(record) === 'move') {
         positions[record.actor] = record.detail.from_place_id
@@ -4335,6 +4391,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       replayPositions: Object.freeze(positions),
       replaySeenKeys: Object.freeze([...seen]),
       replayRevealedKeys: Object.freeze([...revealed]),
+      trailStarts: Object.freeze(trailStarts),
     } }
   }
 
@@ -4363,23 +4420,41 @@ ${WINDOW_CLIENT_SAFETY_JS}
     } }
   }
 
-  function livePlaceAnchor(placeId, focusId, children) {
-    if (!placeId) return null
-    if (placeId === focusId) return focusId
+  function livePlaceAnchorLookup(focusId, children) {
     const places = state.snapshot
       ? livePlaceRows(state.snapshot)
       : state.directory.loaded ? state.directory.places : []
     const byId = new Map(places.map(place => [place.id, place]))
     const childIds = new Set(children.map(place => place.id))
-    const seen = new Set()
-    let current = byId.get(placeId)
-    while (current && !seen.has(current.id)) {
-      if (childIds.has(current.id)) return current.id
-      if (current.parent_id === focusId) return current.id
-      seen.add(current.id)
-      current = current.parent_id ? byId.get(current.parent_id) : null
-    }
-    return null
+    const anchors = new Map()
+    return Object.freeze({
+      resolve(placeId) {
+        if (anchors.has(placeId)) return anchors.get(placeId)
+        const seen = new Set()
+        let current = byId.get(placeId)
+        let anchor = null
+        while (current && !seen.has(current.id)) {
+          if (childIds.has(current.id) || current.parent_id === focusId) {
+            anchor = current.id
+            break
+          }
+          seen.add(current.id)
+          current = current.parent_id ? byId.get(current.parent_id) : null
+        }
+        anchors.set(placeId, anchor)
+        return anchor
+      },
+    })
+  }
+
+  function livePlaceAnchor(placeId, focusId, children, renderContext = null) {
+    if (!placeId) return null
+    if (placeId === focusId) return focusId
+    const buildLookup = () => livePlaceAnchorLookup(focusId, children)
+    const lookup = renderContext
+      ? renderContext.remember('place-anchor-lookup:' + String(focusId), buildLookup)
+      : buildLookup()
+    return lookup.resolve(placeId)
   }
 
   function liveDrawingKey(type, id) {
@@ -6518,7 +6593,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function livePortraitShell(portrait, bubble, className = 'live-portrait-wrap') {
     const shell = element('span', className)
     shell.append(portrait)
-    if (bubble) shell.append(liveSpeechBubbleNode(bubble))
+    if (bubble && !liveMotionReduced()) shell.append(liveSpeechBubbleNode(bubble))
     return shell
   }
 
@@ -6541,7 +6616,79 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return Math.max(680, height)
   }
 
-  function liveResidentLayout(residents, placeId, focus, children, pinnedIds) {
+  function liveCreateRenderContext(
+    snapshot,
+    focus,
+    children,
+    survey,
+  ) {
+    const values = new Map()
+    return Object.freeze({
+      snapshot,
+      focus,
+      children,
+      survey,
+      expandedGrounds: survey.expandedGrounds,
+      remember(key, build) {
+        if (values.has(key)) return values.get(key)
+        const value = build()
+        values.set(key, value)
+        return value
+      },
+    })
+  }
+
+  function liveRenderResidentIndex(snapshot, renderContext = null) {
+    const build = () => {
+      const residents = Object.freeze(displayedResidents(snapshot))
+      const byHandle = new Map(residents.map(resident => [resident.handle, resident]))
+      const byId = new Map(residents.map(resident => [resident.id, resident]))
+      return Object.freeze({
+        residents,
+        residentByHandle: handle => byHandle.get(handle) || null,
+        residentById: id => byId.get(id) || null,
+      })
+    }
+    return renderContext
+      ? renderContext.remember('resident-index', build)
+      : build()
+  }
+
+  function liveResidentLayout(
+    residents,
+    placeId,
+    focus,
+    children,
+    pinnedIds,
+    renderContext = null,
+    cacheable = true,
+    persistPoints = true,
+    persistVisibleIds = persistPoints,
+    surfaceLayout = null,
+  ) {
+    if (renderContext && cacheable) {
+      const key = 'resident-layout:' + String(persistPoints) + ':' +
+        String(persistVisibleIds) + ':' +
+        String(placeId) + ':' +
+        residents.map(resident => resident.id).join(',') + ':' +
+        (pinnedIds || []).join(',') + ':' +
+        (surfaceLayout
+          ? [surfaceLayout.surfaceWidth, surfaceLayout.surfaceHeight,
+              surfaceLayout.inlineOffsetY].join(',')
+          : '')
+      return renderContext.remember(key, () => liveResidentLayout(
+        residents,
+        placeId,
+        focus,
+        children,
+        pinnedIds,
+        renderContext,
+        false,
+        persistPoints,
+        persistVisibleIds,
+        surfaceLayout,
+      ))
+    }
     const ordered = [...residents.filter(resident => !resident.asleep),
       ...residents.filter(resident => resident.asleep)]
     const isRoot = placeId === focus.id
@@ -6572,31 +6719,42 @@ ${WINDOW_CLIENT_SAFETY_JS}
     )
     const visibleResidents = selection.visible
     const border = focus.parent_id === null ? 4 : 3
-    const survey = liveStageSurvey(livePlaceRows(state.snapshot), focus.id)
-    const surfaceWidth = isRoot
-      ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
-      : expanded ? 480 : plot.width
+    const survey = renderContext?.survey ||
+      liveStageSurvey(livePlaceRows(state.snapshot), focus.id)
+    const surfaceWidth = surfaceLayout
+      ? surfaceLayout.surfaceWidth
+      : isRoot
+        ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
+        : expanded ? 480 : plot.width
     const minimumHeight = isRoot ? 680 : expanded ? 320 : plot.height
     const itemWidth = 56
     const itemHeight = 56
     const thingItemWidth = isRoot ? 144 : 94
     const margin = isRoot ? 12 : 6
-    const surfaceHeight = isRoot
-      ? rootExpanded ? liveDirectGroundHeight(placeId, surfaceWidth) : minimumHeight
-      : !expanded
-      ? minimumHeight
-      : Math.max(
-          minimumHeight,
-          windowLiveScatterSurfaceHeight(
-            0,
-            surfaceWidth,
-            visibleResidents.length,
-            itemWidth,
-            itemHeight,
-            margin,
-            selection.overflowCount > 0,
-          ),
+    const stablePointHeadroom = expanded && !isRoot
+      ? Math.min(
+          LIVE_PORTRAIT_LIMIT,
+          Object.keys(liveResidentPointsByPlaceId[String(placeId)] || {}).length,
         )
+      : 0
+    const surfaceHeight = surfaceLayout
+      ? surfaceLayout.surfaceHeight
+      : isRoot
+        ? rootExpanded ? liveDirectGroundHeight(placeId, surfaceWidth) : minimumHeight
+        : !expanded
+          ? minimumHeight
+          : Math.max(
+              minimumHeight,
+              windowLiveScatterSurfaceHeight(
+                0,
+                surfaceWidth,
+                visibleResidents.length + stablePointHeadroom,
+                itemWidth,
+                itemHeight,
+                margin,
+                selection.overflowCount > 0,
+              ),
+            )
     const reserved = isRoot
       ? windowLiveRootReservations(surfaceWidth, surfaceHeight)
       : Object.freeze([])
@@ -6626,16 +6784,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
         !expanded && !state.live.expandedThingPlaceIds.includes(placeId)
       ),
     )
-    liveResidentPointsByPlaceId = Object.freeze({
-      ...liveResidentPointsByPlaceId,
-      [String(placeId)]: separated,
-    })
+    if (persistPoints) {
+      liveResidentPointsByPlaceId = Object.freeze({
+        ...liveResidentPointsByPlaceId,
+        [String(placeId)]: separated,
+      })
+    }
     const expandedGround = !isRoot && expanded
       ? survey.expandedGrounds[String(placeId)] || null
       : null
-    const inlineOffsetY = expandedGround?.residentTop
-      ? expandedGround.residentTop - plot.y
-      : 0
+    const inlineOffsetY = surfaceLayout
+      ? surfaceLayout.inlineOffsetY
+      : expandedGround?.residentTop
+        ? expandedGround.residentTop - plot.y
+        : 0
     const visible = Object.freeze(visibleResidents.flatMap(resident => {
       const localPoint = separated[String(resident.id)]
       if (!localPoint) return []
@@ -6648,11 +6810,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return [Object.freeze({ resident, localPoint, stagePoint })]
     }))
     const visibleIds = new Set(visible.map(entry => entry.resident.id))
-    liveResidentVisibleIdsByPlaceId = Object.freeze({
-      ...liveResidentVisibleIdsByPlaceId,
-      [String(placeId)]: Object.freeze(visible.map(entry => entry.resident.id)),
-    })
-    return Object.freeze({
+    if (persistVisibleIds) {
+      liveResidentVisibleIdsByPlaceId = Object.freeze({
+        ...liveResidentVisibleIdsByPlaceId,
+        [String(placeId)]: Object.freeze(visible.map(entry => entry.resident.id)),
+      })
+    }
+    const layout = Object.freeze({
       visible,
       hidden: Object.freeze(ordered.filter(resident => !visibleIds.has(resident.id))),
       overflowCount: Math.max(0, ordered.length - visible.length),
@@ -6664,6 +6828,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         ? Object.freeze({ x: surfaceWidth - 58, y: surfaceHeight - 18 })
         : Object.freeze({ x: plot.x + plot.width - 28, y: plot.y + plot.height - 10 }),
     })
+    if (renderContext) {
+      for (const entry of visible) {
+        renderContext.remember(
+          'resident-point:' + String(placeId) + ':' + entry.resident.handle,
+          () => entry.stagePoint,
+        )
+      }
+    }
+    return layout
   }
 
   function livePinnedResidentIds(snapshot, records, placeId) {
@@ -6702,46 +6875,137 @@ ${WINDOW_CLIENT_SAFETY_JS}
       .map(thing => thing.id))
   }
 
-  function liveFocusedPlotIds(snapshot, focus, children, records, interactionThings) {
+  function liveFocusedPlotIds(
+    snapshot,
+    focus,
+    children,
+    records,
+    interactionThings,
+    renderContext = null,
+  ) {
     if (state.live.proofScene) return Object.freeze(children.map(place => place.id))
     const focused = new Set()
     const pinnedResidents = new Set(livePinnedResidentIds(snapshot, records, focus.id))
     for (const resident of displayedResidents(snapshot)) {
       if (!pinnedResidents.has(resident.id)) continue
-      const anchorId = livePlaceAnchor(resident.current_place_id, focus.id, children)
+      const anchorId = livePlaceAnchor(
+        resident.current_place_id, focus.id, children, renderContext)
       if (anchorId && anchorId !== focus.id) focused.add(anchorId)
     }
     const pinnedThings = new Set(livePinnedThingIds(
       snapshot, records, focus.id, interactionThings))
     for (const thing of interactionThings) {
       if (!pinnedThings.has(thing.id)) continue
-      const anchorId = livePlaceAnchor(thing.place_id, focus.id, children)
+      const anchorId = livePlaceAnchor(thing.place_id, focus.id, children, renderContext)
       if (anchorId && anchorId !== focus.id) focused.add(anchorId)
     }
     return Object.freeze([...focused])
   }
 
-  function liveResidentReplayPoint(snapshot, placeId, actor, focus, children) {
-    const anchorId = livePlaceAnchor(placeId, focus.id, children)
+  function liveResidentReplayPoint(
+    snapshot,
+    placeId,
+    actor,
+    focus,
+    children,
+    renderContext = null,
+    cacheable = true,
+  ) {
+    const anchorId = livePlaceAnchor(placeId, focus.id, children, renderContext)
     if (!anchorId) return null
-    const resident = displayedResidents(snapshot).find(candidate => candidate.handle === actor)
+    if (renderContext && cacheable) {
+      return renderContext.remember(
+        'resident-point:' + String(anchorId) + ':' + actor,
+        () => liveResidentReplayPoint(
+          snapshot, placeId, actor, focus, children, renderContext, false),
+      )
+    }
+    const residentIndex = liveRenderResidentIndex(snapshot, renderContext)
+    const resident = residentIndex.residentByHandle(actor)
     if (!resident) return null
-    const anchoredResidents = anchorId === focus.id
-      ? displayedResidents(snapshot).filter(candidate =>
-          candidate.current_place_id === focus.id &&
-          (!state.resident || candidate.handle === state.resident))
-      : residentsAt(snapshot, anchorId)
-    const residents = anchoredResidents.some(candidate => candidate.handle === actor)
-      ? anchoredResidents
-      : [...anchoredResidents, resident]
-    const records = visibleLiveRecords(snapshot, focus, children)
-    const pinnedIds = livePinnedResidentIds(snapshot, records, anchorId)
+    const buildAnchoredResidents = () => {
+      const placeIds = anchorId === focus.id
+        ? new Set([focus.id])
+        : placeScopeSet(anchorId, snapshot)
+      return Object.freeze(residentIndex.residents.filter(candidate =>
+        placeIds.has(candidate.current_place_id) &&
+        (!state.resident || candidate.handle === state.resident)))
+    }
+    const anchoredResidents = renderContext
+      ? renderContext.remember(
+          'resident-replay-rows:' + String(anchorId),
+          buildAnchoredResidents,
+        )
+      : buildAnchoredResidents()
+    const buildAnchoredResidentIds = () =>
+      new Set(anchoredResidents.map(candidate => candidate.id))
+    const anchoredResidentIds = renderContext
+      ? renderContext.remember(
+          'resident-replay-ids:' + String(anchorId),
+          buildAnchoredResidentIds,
+        )
+      : buildAnchoredResidentIds()
+    const records = renderContext?.records || visibleLiveRecords(
+      snapshot, focus, children, renderContext)
+    const buildPinnedIds = () => livePinnedResidentIds(snapshot, records, anchorId)
+    const pinnedIds = renderContext
+      ? renderContext.remember(
+          'resident-replay-pins:' + String(anchorId),
+          buildPinnedIds,
+        )
+      : buildPinnedIds()
+    const buildBaseLayout = () => liveResidentLayout(
+      anchoredResidents,
+      anchorId,
+      focus,
+      children,
+      pinnedIds,
+      renderContext,
+      true,
+      true,
+      true,
+    )
+    const baseLayout = renderContext
+      ? renderContext.remember(
+          'resident-replay-base:' + String(anchorId),
+          buildBaseLayout,
+        )
+      : buildBaseLayout()
+    const basePoint = baseLayout.visible
+      .find(entry => entry.resident.id === resident.id)?.stagePoint
+    if (basePoint) return basePoint
+
+    const totalWithActor = baseLayout.visible.length + baseLayout.overflowCount +
+      (anchoredResidentIds.has(resident.id) ? 0 : 1)
+    const layerCapacity = baseLayout.expanded
+      ? Math.min(LIVE_PORTRAIT_LIMIT, totalWithActor)
+      : totalWithActor > LIVE_PORTRAIT_LIMIT
+        ? Math.max(1, LIVE_PORTRAIT_LIMIT - 2)
+        : Math.min(LIVE_PORTRAIT_LIMIT, totalWithActor)
+    const layerIds = []
+    for (const id of [
+      resident.id,
+      ...pinnedIds,
+      ...baseLayout.visible.map(entry => entry.resident.id),
+    ]) {
+      if (layerIds.length >= layerCapacity) break
+      if (!layerIds.includes(id)) layerIds.push(id)
+    }
+    const layerResidents = Object.freeze(layerIds.flatMap(id => {
+      const candidate = residentIndex.residentById(id)
+      return candidate ? [candidate] : []
+    }))
     const layout = liveResidentLayout(
-      residents,
+      layerResidents,
       anchorId,
       focus,
       children,
       Object.freeze([resident.id, ...pinnedIds.filter(id => id !== resident.id)]),
+      renderContext,
+      false,
+      false,
+      false,
+      baseLayout,
     )
     return layout.visible.find(entry => entry.resident.handle === actor)?.stagePoint ||
       layout.badgePoint
@@ -6767,13 +7031,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
     control.style.minWidth = '0'
   }
 
-  function livePortraitGrid(residents, label, bubbles, placeId, pinnedIds, className = 'live-portrait-grid') {
+  function livePortraitGrid(
+    residents,
+    label,
+    bubbles,
+    placeId,
+    pinnedIds,
+    className = 'live-portrait-grid',
+    renderContext = null,
+  ) {
     const grid = element('div', className)
     grid.setAttribute('aria-label', label)
-    const focus = state.snapshot ? liveFocusPlace(state.snapshot) : null
-    const children = focus && state.snapshot ? liveChildren(state.snapshot, focus) : []
+    const focus = renderContext?.focus || (state.snapshot ? liveFocusPlace(state.snapshot) : null)
+    const children = renderContext?.children ||
+      (focus && state.snapshot ? liveChildren(state.snapshot, focus) : [])
     if (!focus) return grid
-    const layout = liveResidentLayout(residents, placeId, focus, children, pinnedIds)
+    const layout = liveResidentLayout(
+      residents, placeId, focus, children, pinnedIds, renderContext)
     if (placeId === focus.id) {
       grid.style.width = String(layout.surfaceWidth) + 'px'
       grid.style.height = String(layout.surfaceHeight) + 'px'
@@ -6909,7 +7183,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
     focusId,
     includeDescendants = false,
     interactionThings = null,
+    renderContext = null,
+    cacheable = true,
   ) {
+    if (renderContext && cacheable) {
+      const key = 'thing-presentation:' + String(placeId) + ':' +
+        String(focusId) + ':' + String(includeDescendants)
+      return renderContext.remember(key, () => liveThingPresentation(
+        snapshot,
+        placeId,
+        records,
+        focusId,
+        includeDescendants,
+        interactionThings,
+        renderContext,
+        false,
+      ))
+    }
     const things = liveDisplayedThings(snapshot, placeId, focusId, includeDescendants)
     const pinnedIds = livePinnedThingIds(snapshot, records, placeId, interactionThings)
     const exactTotal = liveExactThingTotal(
@@ -6974,9 +7264,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     focusId,
     includeDescendants = false,
     interactionThings = null,
+    renderContext = null,
   ) {
     const presentation = liveThingPresentation(
-      snapshot, place.id, records, focusId, includeDescendants, interactionThings)
+      snapshot,
+      place.id,
+      records,
+      focusId,
+      includeDescendants,
+      interactionThings,
+      renderContext,
+    )
     const { things, pinnedIds, exactTotal, selection } = presentation
     if (!things.length && exactTotal !== null && exactTotal === 0) return null
     if (!things.length && exactTotal === null) return null
@@ -6989,7 +7287,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state.live.expandedResidentPlaceIds.includes(place.id) ||
       state.live.expandedThingPlaceIds.includes(place.id)
     )
-    const survey = liveStageSurvey(livePlaceRows(snapshot), focusId)
+    const survey = renderContext?.survey || liveStageSurvey(livePlaceRows(snapshot), focusId)
     const childPlot = isRoot ? null : survey.plots.find(candidate => candidate.id === place.id)
     const itemWidth = isRoot ? 144 : 94
     const itemHeight = 56
@@ -7155,19 +7453,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const filters = liveThingFilters(focusId)
     const entry = historyEntry('things', filters)
     if (entry.hasMore && !entry.loading) await loadHistory('things', filters)
-    if (state.snapshot) renderLive(state.snapshot)
   }
 
-  function mountLivePlaceDetail(
-    card,
-    snapshot,
-    focus,
-    place,
-    bubbles,
-    records,
-    interactionThings,
-  ) {
+  function mountLivePlaceDetail(card, renderContext, place) {
     if (card.dataset.liveDetailMounted === 'true') return
+    const { snapshot, focus, bubbles, records, interactionThings } = renderContext
     const open = card.querySelector(':scope > .live-plot-open')
     if (!open) return
     const drawing = state.live.drawings[liveDrawingKey('place', place.id)]
@@ -7198,9 +7488,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         bubbles,
         place.id,
         livePinnedResidentIds(snapshot, records, place.id),
+        'live-portrait-grid',
+        renderContext,
       ))
     }
-    const shelf = liveThingShelf(snapshot, place, records, focus.id, true, interactionThings)
+    const shelf = liveThingShelf(
+      snapshot, place, records, focus.id, true, interactionThings, renderContext)
     if (shelf) card.append(shelf)
     card.dataset.liveDetailMounted = 'true'
   }
@@ -7212,17 +7505,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     card.dataset.liveDetailMounted = 'false'
   }
 
-  function livePlacePlot(
-    snapshot,
-    focus,
-    place,
-    plot,
-    bubbles,
-    records,
-    interactionThings,
-    detailed,
-    focused,
-  ) {
+  function livePlacePlot(renderContext, place, plot, detailed, focused) {
+    const { snapshot, focus } = renderContext
     const card = element('article', 'live-plot')
     card.dataset.placeId = String(place.id)
     card.dataset.livePlotX = String(plot.x)
@@ -7250,8 +7534,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     card.dataset.undrawn = 'false'
     card.dataset.placeKind = focus.parent_id === null ? 'continent' : 'place'
     card.append(open)
-    if (detailed || focused) mountLivePlaceDetail(
-      card, snapshot, focus, place, bubbles, records, interactionThings)
+    if (detailed || focused) mountLivePlaceDetail(card, renderContext, place)
     return card
   }
 
@@ -7273,7 +7556,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
         if (!residentsExpanded && !thingsExpanded) return []
         const residentHeight = residentsExpanded
           ? Math.max(320, windowLiveScatterSurfaceHeight(
-              0, 480, residentsAt(state.snapshot, plot.id).length, 56, 56, 6))
+              0,
+              480,
+              residentsAt(state.snapshot, plot.id).length + Math.min(
+                LIVE_PORTRAIT_LIMIT,
+                Object.keys(liveResidentPointsByPlaceId[String(plot.id)] || {}).length,
+              ),
+              56,
+              56,
+              6,
+            ))
           : 0
         const things = thingsExpanded
           ? liveDisplayedThings(state.snapshot, plot.id, parentId, true)
@@ -7465,16 +7757,42 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }) : null
   }
 
-  function liveReplayPoint(placeId, focus, children) {
-    const anchor = livePlaceAnchor(placeId, focus.id, children)
+  function liveReplayPoint(placeId, focus, children, renderContext = null) {
+    const anchor = livePlaceAnchor(placeId, focus.id, children, renderContext)
     return liveAnchorPoint(anchor, focus.id, children)
   }
 
-  function liveReplayMoveGeometry(record, snapshot, focus, children) {
+  function liveReplayMoveGeometry(
+    record,
+    snapshot,
+    focus,
+    children,
+    renderContext = null,
+    cacheable = true,
+  ) {
+    if (renderContext && cacheable) {
+      return renderContext.remember(
+        'move-geometry:' + liveTraceKey(record),
+        () => liveReplayMoveGeometry(
+          record, snapshot, focus, children, renderContext, false),
+      )
+    }
     const from = liveResidentReplayPoint(
-      snapshot, record.detail.from_place_id, record.actor, focus, children)
+      snapshot,
+      record.detail.from_place_id,
+      record.actor,
+      focus,
+      children,
+      renderContext,
+    )
     const to = liveResidentReplayPoint(
-      snapshot, record.detail.to_place_id, record.actor, focus, children)
+      snapshot,
+      record.detail.to_place_id,
+      record.actor,
+      focus,
+      children,
+      renderContext,
+    )
     if (!from || !to || (from.x === to.x && from.y === to.y)) return null
     return Object.freeze({ from, to })
   }
@@ -7504,6 +7822,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const replayReadyAtByActor = { ...state.live.replayReadyAtByActor }
     const focus = state.snapshot ? liveFocusPlace(state.snapshot) : null
     const children = focus && state.snapshot ? liveChildren(state.snapshot, focus) : []
+    const renderContext = livePlotDetailContext?.snapshot === state.snapshot &&
+      livePlotDetailContext.focus.id === focus?.id
+      ? livePlotDetailContext
+      : null
     const now = Date.now()
     const absorptionDeadlines = new Map()
     let changed = false
@@ -7511,7 +7833,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const held = active[completion.actor]
       if (!held || held.key !== completion.key) continue
       const absorbingPlaceId = held.type === 'move' && focus
-        ? livePlaceAnchor(held.toPlaceId, focus.id, children)
+        ? livePlaceAnchor(held.toPlaceId, focus.id, children, renderContext)
         : null
       delete active[completion.actor]
       if (held.type === 'move') {
@@ -7524,7 +7846,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
       }
       if (!state.live.replayQueues[completion.actor]?.length) {
-        delete positions[completion.actor]
+        if (!absorbingPlaceId) delete positions[completion.actor]
         delete replayReadyAtByActor[completion.actor]
       } else {
         const pendingCount = Object.values(state.live.replayQueues)
@@ -7551,29 +7873,57 @@ ${WINDOW_CLIENT_SAFETY_JS}
     } }
     if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
     for (const [placeId, absorptionEndsAt] of absorptionDeadlines) {
+      const absorbedActors = Object.entries(positions)
+        .filter(([actor, placeIdAtRest]) =>
+          !active[actor] &&
+          !state.live.replayQueues[actor]?.length &&
+          livePlaceAnchor(
+            placeIdAtRest, focus.id, children, renderContext) === Number(placeId))
+        .map(([actor]) => actor)
       window.setTimeout(() => {
         if (state.live.absorptionEndsAtByPlaceId[placeId] !== absorptionEndsAt) return
         const remaining = { ...state.live.absorptionEndsAtByPlaceId }
+        const remainingPositions = { ...state.live.replayPositions }
         delete remaining[placeId]
+        for (const actor of absorbedActors) {
+          if (!state.live.replayActive[actor] &&
+              !state.live.replayQueues[actor]?.length) delete remainingPositions[actor]
+        }
         state = { ...state, live: {
           ...state.live,
           absorptionEndsAtByPlaceId: Object.freeze(remaining),
+          replayPositions: Object.freeze(remainingPositions),
         } }
         if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
       }, LIVE_ABSORPTION_MS)
     }
   }
 
-  function liveReplayThingIsDisplayed(record, snapshot, focus, children) {
+  function liveReplayThingIsDisplayed(
+    record,
+    snapshot,
+    focus,
+    children,
+    renderContext = null,
+  ) {
     if (liveRecordType(record) !== 'use') return false
     const placeId = record.detail.place_id
-    const anchorId = livePlaceAnchor(placeId, focus.id, children)
+    const anchorId = livePlaceAnchor(placeId, focus.id, children, renderContext)
     if (!anchorId) return false
     const includeDescendants = anchorId !== focus.id
-    const records = visibleLiveRecords(snapshot, focus, children)
-    const interactionThings = liveFocusInteractionThings(snapshot, focus, records)
+    const records = renderContext?.records || visibleLiveRecords(
+      snapshot, focus, children, renderContext)
+    const interactionThings = renderContext?.interactionThings ||
+      liveFocusInteractionThings(snapshot, focus, records)
     const presentation = liveThingPresentation(
-      snapshot, anchorId, records, focus.id, includeDescendants, interactionThings)
+      snapshot,
+      anchorId,
+      records,
+      focus.id,
+      includeDescendants,
+      interactionThings,
+      renderContext,
+    )
     const matches = thing => thing.id === record.detail.source_thing_id &&
       (thing.place_id === placeId || thing.recorded_place_id === placeId)
     return presentation.selection.visible.some(matches) ||
@@ -7595,6 +7945,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const focus = liveFocusPlace(state.snapshot)
     if (!focus) return
     const children = liveChildren(state.snapshot, focus)
+    const renderContext = livePlotDetailContext?.snapshot === state.snapshot &&
+      livePlotDetailContext.focus.id === focus.id
+      ? livePlotDetailContext
+      : null
+    const residentIndex = liveRenderResidentIndex(state.snapshot, renderContext)
     const now = Date.now()
     const queues = Object.fromEntries(Object.entries(state.live.replayQueues)
       .map(([actor, queue]) => [actor, [...queue]]))
@@ -7658,7 +8013,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const record = queue[0]
         const type = liveRecordType(record)
         const key = liveTraceKey(record)
-        const point = liveReplayPoint(liveRecordPlaceId(record), focus, children)
+        const point = liveReplayPoint(
+          liveRecordPlaceId(record), focus, children, renderContext)
         if (type === 'note' && point) {
           const noteId = record.detail.note_id
           const entry = state.live.noteBodies[String(noteId)]
@@ -7670,10 +8026,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
 
         if (type === 'move') {
-          const resident = displayedResidents(state.snapshot)
-            .find(candidate => candidate.handle === actor)
+          const resident = residentIndex.residentByHandle(actor)
           const geometry = resident
-            ? liveReplayMoveGeometry(record, state.snapshot, focus, children)
+            ? liveReplayMoveGeometry(
+                record, state.snapshot, focus, children, renderContext)
             : null
           if (!geometry) {
             queue = queue.slice(1)
@@ -7720,7 +8076,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         changed = true
         revealed.add(key)
         const canReplayHere = point && (type !== 'use' ||
-          liveReplayThingIsDisplayed(record, state.snapshot, focus, children))
+          liveReplayThingIsDisplayed(
+            record, state.snapshot, focus, children, renderContext))
         if (!canReplayHere) continue
         const naturalDuration = type === 'note' ? LIVE_NOTE_REPLAY_MS : LIVE_PULSE_MS
         const ordinaryDurationCap = longestActorQueue > 1
@@ -7776,17 +8133,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
-  function renderLiveReplayPortraits(layer, snapshot, focus, children, bubbles) {
+  function renderLiveReplayPortraits(
+    layer,
+    snapshot,
+    focus,
+    children,
+    bubbles,
+    renderContext = null,
+  ) {
+    const residentIndex = liveRenderResidentIndex(snapshot, renderContext)
     for (const [actor, placeId] of Object.entries(state.live.replayPositions)) {
       if (state.resident && actor !== state.resident) continue
-      const resident = displayedResidents(snapshot).find(candidate => candidate.handle === actor)
+      const resident = residentIndex.residentByHandle(actor)
       if (!resident) continue
       const held = state.live.replayActive[actor]
-      let point = liveResidentReplayPoint(snapshot, placeId, actor, focus, children)
+      let point = liveResidentReplayPoint(
+        snapshot, placeId, actor, focus, children, renderContext)
       let destination = null
       let remaining = 0
       if (held?.type === 'move') {
-        const geometry = liveReplayMoveGeometry(held.record, snapshot, focus, children)
+        const geometry = liveReplayMoveGeometry(
+          held.record, snapshot, focus, children, renderContext)
         if (!geometry) continue
         const progress = Math.max(0, Math.min(1,
           (Date.now() - held.startedAt) / held.duration))
@@ -7838,7 +8205,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
-  function visibleLiveRecords(snapshot, focus, children) {
+  function visibleLiveRecords(snapshot, focus, children, renderContext = null) {
     const now = Date.now()
     return liveRecords().filter(record => {
       const type = liveRecordType(record)
@@ -7848,11 +8215,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       if (type === 'move') {
         return Boolean(
-          livePlaceAnchor(record.detail.from_place_id, focus.id, children) ||
-          livePlaceAnchor(record.detail.to_place_id, focus.id, children)
+          livePlaceAnchor(
+            record.detail.from_place_id, focus.id, children, renderContext) ||
+          livePlaceAnchor(
+            record.detail.to_place_id, focus.id, children, renderContext)
         )
       }
-      return Boolean(livePlaceAnchor(liveRecordPlaceId(record), focus.id, children))
+      return Boolean(livePlaceAnchor(
+        liveRecordPlaceId(record), focus.id, children, renderContext))
     })
   }
 
@@ -7911,7 +8281,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }, Math.max(0, nextExpiry - Date.now()) + 1)
   }
 
-  function renderLiveTraceLayer(snapshot, focus, children, records, bubbles, survey) {
+  function renderLiveTraceLayer(
+    snapshot,
+    focus,
+    children,
+    records,
+    bubbles,
+    survey,
+    renderContext = null,
+  ) {
     const layer = element('div', 'live-trace-layer')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.classList.add('live-traces')
@@ -7948,7 +8326,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         record.at.getTime(), Date.now(), liveRecordLifetime(record))
       if (type === 'move') {
         if (!trailKeys.has(key)) continue
-        const geometry = liveReplayMoveGeometry(record, snapshot, focus, children)
+        const geometry = liveReplayMoveGeometry(
+          record, snapshot, focus, children, renderContext)
         const from = geometry?.from
         const to = geometry?.to
         if (!from || !to || (from.x === to.x && from.y === to.y)) continue
@@ -7979,7 +8358,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         continue
       }
       const placeId = liveRecordPlaceId(record)
-      const anchor = livePlaceAnchor(placeId, focus.id, children)
+      const anchor = livePlaceAnchor(placeId, focus.id, children, renderContext)
       const point = liveAnchorPoint(anchor, focus.id, children)
       if (!point) continue
       if (type === 'note') {
@@ -7992,6 +8371,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         mark.style.opacity = String(recordOpacity)
         mark.setAttribute('aria-label', 'Show ' + record.actor + "'s note in the plate ledger")
         bindLiveHighlight(mark, key, 'mark')
+        const bubble = bubbles.get(record.actor)
+        if (liveMotionReduced() && bubble?.record === record) {
+          mark.append(liveSpeechBubbleNode(bubble))
+        }
         layer.append(mark)
       } else if (type === 'make' && state.live.replayActive[record.actor]?.key === key) {
         const pulse = element('span', 'live-action-mark live-pulse', type === 'make' ? '+' : '×')
@@ -8006,7 +8389,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     }
     layer.prepend(svg)
-    renderLiveReplayPortraits(layer, snapshot, focus, children, bubbles)
+    renderLiveReplayPortraits(
+      layer, snapshot, focus, children, bubbles, renderContext)
     return layer
   }
 
@@ -8538,18 +8922,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const thingFilters = liveThingFilters(focus.id)
     const thingsPage = historyEntry('things', thingFilters)
     const children = liveChildren(snapshot, focus)
-    const records = visibleLiveRecords(snapshot, focus, children)
+    const survey = liveStageSurvey(livePlaceRows(snapshot), focus.id)
+    const renderContextBase = liveCreateRenderContext(snapshot, focus, children, survey)
+    const records = visibleLiveRecords(snapshot, focus, children, renderContextBase)
     const interactionThings = liveFocusInteractionThings(snapshot, focus, records)
     const bubbles = liveSpeechBubbles(records)
-    const survey = liveStageSurvey(livePlaceRows(snapshot), focus.id)
     const directResidents = displayedResidents(snapshot).filter(resident =>
       resident.current_place_id === focus.id &&
       (!state.resident || resident.handle === state.resident))
+    const renderContext = Object.freeze({
+      ...renderContextBase,
+      records,
+      interactionThings,
+      bubbles,
+    })
+    livePlotDetailContext = renderContext
     const stageId = String(focus.id)
     const stageChanged = liveCamera.stageId !== stageId
+    let defaultCenterTarget = null
     if (stageChanged && nodes.liveViewport) {
-      const target = liveDefaultCenterTarget(snapshot, focus, survey)
-      const centered = liveCameraForStageTarget(target, true)
+      defaultCenterTarget = liveDefaultCenterTarget(snapshot, focus, survey, renderContext)
+      const centered = liveCameraForStageTarget(defaultCenterTarget, true)
       if (centered) {
         liveCamera = Object.freeze({
           ...liveCamera,
@@ -8562,11 +8955,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const detailedPlotIds = liveDetailedPlotIds(survey.plots, survey.expandedGrounds)
     const focusedPlotIds = liveFocusedPlotIds(
-      snapshot, focus, children, records, interactionThings)
-    livePlotDetailContext = Object.freeze({
-      snapshot, focus, children, bubbles, records, interactionThings,
-      expandedGrounds: survey.expandedGrounds,
-    })
+      snapshot, focus, children, records, interactionThings, renderContext)
     renderLiveBreadcrumbs(snapshot, focus)
 
     nodes.liveStage.style.setProperty('--live-stage-width', String(survey.width) + 'px')
@@ -8609,8 +8998,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const place = children.find(candidate => candidate.id === plot.id)
       if (place) {
         plateParts.push(livePlacePlot(
-          snapshot, focus, place, plot, bubbles, records, interactionThings,
-          detailedPlotIds.has(plot.id), focusedPlotIds.includes(plot.id)))
+          renderContext,
+          place,
+          plot,
+          detailedPlotIds.has(plot.id),
+          focusedPlotIds.includes(plot.id),
+        ))
       }
     }
     const proofLoad = liveProofLoadNode(focus, survey)
@@ -8623,10 +9016,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         focus.id,
         livePinnedResidentIds(snapshot, records, focus.id),
         'live-walker-layer live-root-walkers',
+        renderContext,
       ))
     }
     const focusShelf = liveThingShelf(
-      snapshot, focus, records, focus.id, false, interactionThings)
+      snapshot, focus, records, focus.id, false, interactionThings, renderContext)
     if (focusShelf) {
       focusShelf.classList.add('live-focus-thing-shelf', 'live-root-thing-shelf')
       plateParts.push(focusShelf)
@@ -8637,7 +9031,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ? 'No smaller public places are drawn inside this room.'
           : 'Nobody is here right now. The room keeps its things.'))
     }
-    plateParts.push(renderLiveTraceLayer(snapshot, focus, children, records, bubbles, survey))
+    plateParts.push(renderLiveTraceLayer(
+      snapshot, focus, children, records, bubbles, survey, renderContext))
     nodes.livePlates.replaceChildren(...plateParts)
     scheduleLiveResidentLabels(true)
     scheduleLiveTrailExpiry()
@@ -8647,12 +9042,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const preferredKey = state.live.focusResident
         ? 'resident:' + state.live.focusResident
         : state.live.raisedItemKey
+      const preferredTargets = preferredKey
+        ? [...nodes.livePlates.querySelectorAll(
+            '[data-live-item-key="' + CSS.escape(preferredKey) + '"]')]
+        : []
       const firstPaintTargets = state.live.proofScene && state.live.proofFailure
         ? [...nodes.livePlates.querySelectorAll('[data-focus-key="live-proof-retry"]')]
-        : preferredKey
-          ? [...nodes.livePlates.querySelectorAll(
-              '[data-live-item-key="' + CSS.escape(preferredKey) + '"]')]
-          : liveRevealTargetsForPlace(focus.id)
+        : preferredTargets.length
+          ? preferredTargets
+          : defaultCenterTarget?.preservesChildDetail
+            ? liveChildDetailRevealTargets(defaultCenterTarget)
+            : liveRevealTargetsForPlace(focus.id)
       revealLiveElements(firstPaintTargets)
     }
     renderLiveLedger(snapshot, focus, children, records)
