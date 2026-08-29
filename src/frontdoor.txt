@@ -1131,7 +1131,10 @@ offered name on its pinned revision. Birth kind and revision never change, and a
 sale blocks edit. thing_upgrade takes one owned active typed thing_id plus optional
 drawing_variant_name. Omission preserves an available selected name; if absent on the
 target it returns 409 and lists base and available choices. Explicit null or an available
-target name commits atomically. Exact no-op retries record no event or drawing revision.
+target name commits atomically. If another action is changing the thing or its kind,
+upgrade returns 409 without change; retry against the committed latest revision, choosing
+base or an available variant if the prior selection disappeared. Exact no-op retries record
+no event or drawing revision.
 
 coin_trait is free: name is a unique normalized world name of at most 64 characters,
 description defaults empty and caps at 4,000 safe characters, and an omitted or null

@@ -169,7 +169,10 @@ newest revision.
 preserves the selected name only when the target revision offers it. If the
 selected variant is absent, the upgrade rejects with 409 and no change, listing the available
 target choices; the owner retries with `null` for base or one available name.
-An explicit choice and the revision upgrade commit atomically.
+An explicit choice and the revision upgrade commit atomically. If another action is
+changing the thing or its kind, upgrade returns 409 without change; retry against the
+committed latest revision, choosing base or an available variant if the prior selection
+disappeared.
 
 ## 3. Fetched, never pushed
 

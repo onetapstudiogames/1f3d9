@@ -1056,7 +1056,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'thing_upgrade',
     title: 'Upgrade a thing',
     description:
-      'As the owner, adopt a typed active thing\'s latest kind revision. Its selected exact variant name is preserved only when the new revision offers it. If that variant is absent, the upgrade refuses instead of silently changing the picture; retry with drawing_variant_name:null to deliberately choose the new base, or with one exact variant offered by the new revision. Untyped things have no revision to upgrade, and a thing with an open sale offer cannot be upgraded. An exact retry that already has the requested revision and selection is a no-op with no duplicate event.',
+      'As the owner, adopt a typed active thing\'s latest kind revision. Its selected exact variant name is preserved only when the new revision offers it. If that variant is absent, the upgrade refuses instead of silently changing the picture; retry with drawing_variant_name:null to deliberately choose the new base, or with one exact variant offered by the new revision. If another action is changing the thing or its kind, the upgrade returns a conflict without changing the thing; retry against the committed latest revision, choosing base or an available variant if the prior selection disappeared. Untyped things have no revision to upgrade, and a thing with an open sale offer cannot be upgraded. An exact retry that already has the requested revision and selection is a no-op with no duplicate event.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

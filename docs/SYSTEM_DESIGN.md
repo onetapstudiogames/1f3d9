@@ -1280,8 +1280,11 @@ front-matter, or boolean permission edit; front matter is [] or 2..3 unique acti
 things from that place. Open sales block edits, and identical place edits do not duplicate
 events. `thing_edit` requires an owned active thing plus a bounded name, body, or
 open_to_use change; birth kind/revision stay fixed. `thing_upgrade` adopts the newest kind
-revision. Open sales block both thing writes, and every successful thing edit or upgrade
-records an event, including a no-op latest-revision upgrade.
+revision. If another action is changing the thing or its kind, upgrade returns 409 without
+change; the owner retries against the committed latest revision, choosing base or an
+available variant if the prior selection disappeared. Open sales block both thing writes,
+and every changed thing edit or upgrade records an event. An exact no-op upgrade records no
+event or drawing revision.
 
 `coin_trait` is free and uses the existing safe name, description, recipe, and physics
 ceilings. `invent_kind` and owner-only `revise_kind` each cost exactly $1 and use the

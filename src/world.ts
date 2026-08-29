@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { err } from './core.ts'
+import { err, postgresErrorCode } from './core.ts'
 import { sql } from './db.ts'
 import {
   optionalBoolean,
@@ -1807,8 +1807,10 @@ export function mountWorldRoutes(app: Hono): void {
         : `the selected variant is absent from the target revision; choose base with drawing_variant_name null or an available target variant: ${names.join(', ')}`)
     }
 
-    const rows = (await sql`
-      WITH upgradeable AS MATERIALIZED (
+    let rows: ThingRow[]
+    try {
+      rows = (await sql`
+        WITH upgradeable AS MATERIALIZED (
         SELECT thing.*,
           prior_revision.drawing AS prior_kind_drawing,
           prior_revision.drawing_state AS prior_kind_drawing_state,
@@ -1845,8 +1847,8 @@ export function mountWorldRoutes(app: Hono): void {
           AND thing.withdrawn_at IS NULL
           AND thing.active_offer_id IS NULL AND offer.id IS NULL
           AND (${upgradeVariant === null}::boolean OR target_variant.value IS NOT NULL)
-        FOR UPDATE OF thing, kind
-      ), changed AS (
+          FOR UPDATE OF thing, kind NOWAIT
+        ), changed AS (
         UPDATE things SET
           current_revision = upgradeable.latest_revision,
           drawing_variant_name = ${upgradeVariant ?? null}::text
@@ -1947,16 +1949,22 @@ export function mountWorldRoutes(app: Hono): void {
         JOIN upgradeable ON upgradeable.id = thing.id
         WHERE NOT EXISTS (SELECT 1 FROM changed)
       )
-      SELECT changed.*, maker.handle AS made_by,
-        changed.owner_id AS current_owner_id,
-        current_owner.handle AS current_owner,
-        current_owner.handle AS owner,
-        kind_definition.name AS kind
-      FROM result changed
-      JOIN residents maker ON maker.id = changed.maker_id
-      JOIN residents current_owner ON current_owner.id = changed.owner_id
-      LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
-    `) as ThingRow[]
+        SELECT changed.*, maker.handle AS made_by,
+          changed.owner_id AS current_owner_id,
+          current_owner.handle AS current_owner,
+          current_owner.handle AS owner,
+          kind_definition.name AS kind
+        FROM result changed
+        JOIN residents maker ON maker.id = changed.maker_id
+        JOIN residents current_owner ON current_owner.id = changed.owner_id
+        LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
+      `) as ThingRow[]
+    } catch (error) {
+      if (postgresErrorCode(error) === '55P03') {
+        return err(c, 409, 'another action is changing this thing or kind; retry this thing upgrade')
+      }
+      throw error
+    }
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
     return c.json({ thing: rows[0] })
   })
