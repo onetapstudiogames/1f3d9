@@ -64,6 +64,9 @@ function fakeStore() {
     async exchangeAuthorizationCode() {
       throw new Error('code exchange is not part of this test')
     },
+    async resolveRefreshRateLimitSubject() {
+      throw new Error('refresh lookup is not part of this test')
+    },
     async rotateRefreshToken() {
       throw new Error('refresh rotation is not part of this test')
     },
@@ -73,7 +76,7 @@ function fakeStore() {
     },
     async consumeOAuthRateLimit(input: { bucketHash: string; attemptKind: string; maximum: number }) {
       rateLimitCalls.push(input)
-      return true
+      return { admitted: true, retryAfterSeconds: 17 }
     },
   }
 }

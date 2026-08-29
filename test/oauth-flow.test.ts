@@ -14,6 +14,7 @@ import type {
   AuthorizationCodeRecord,
   AuthorizationRequestInput,
   AuthorizationRequestRecord,
+  OAuthRateLimitResult,
 } from '../src/oauth-store.ts'
 
 type OAuthStore = typeof import('../src/oauth-store.ts').postgresOAuthStore
@@ -33,6 +34,10 @@ const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
 const CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
 const EXISTING_KEY = `1f3d9_sk_${'ab'.repeat(24)}`
 const RECOVERY_CODE_HASH = /^[0-9a-f]{64}$/
+
+function rateLimitResult(admitted: boolean, retryAfterSeconds = 17): OAuthRateLimitResult {
+  return { admitted, retryAfterSeconds }
+}
 
 function validRecoveryCodeHashes(hashes: readonly string[]): boolean {
   return hashes.length === 8 &&
@@ -374,6 +379,25 @@ class MemoryOAuthStore {
       return 'rotated' as const
     },
 
+    resolveRefreshRateLimitSubject: async (
+      input: Parameters<OAuthStore['resolveRefreshRateLimitSubject']>[0],
+    ) => {
+      const token = this.tokens.get(input.presentedRefreshTokenHash)
+      const family = token ? this.families.get(token.familyId) : undefined
+      if (
+        !token || token.tokenType !== 'refresh' || !family ||
+        family.clientId !== input.clientId || family.resource !== input.resource
+      ) return { status: 'junk' as const }
+      if (token.used && !family.revoked && family.expiresAt > Date.now()) {
+        return { status: 'reused' as const }
+      }
+      if (
+        token.used || token.revoked || token.expiresAt <= Date.now() ||
+        family.revoked || family.expiresAt <= Date.now()
+      ) return { status: 'junk' as const }
+      return { status: 'active' as const, connectionKey: String(family.id) }
+    },
+
     revokeTokenFamilyByToken: async (
       input: Parameters<OAuthStore['revokeTokenFamilyByToken']>[0],
     ): Promise<void> => {
@@ -398,7 +422,7 @@ class MemoryOAuthStore {
 
     consumeOAuthRateLimit: async (
       _input: Parameters<OAuthStore['consumeOAuthRateLimit']>[0],
-    ): Promise<boolean> => true,
+    ): Promise<OAuthRateLimitResult> => rateLimitResult(true),
   } satisfies TestOAuthStore
 
   expireBrowserSession(rawSession: string): void {
@@ -908,7 +932,7 @@ test('an unexpected authorization-store failure is bounded and logged without re
 
 test('an initial authorization rate limit tells the caller how to restart', async () => {
   const { app, memory } = fixture()
-  memory.api.consumeOAuthRateLimit = async () => false
+  memory.api.consumeOAuthRateLimit = async () => rateLimitResult(false)
 
   const response = await app.request(authorizationUrl())
   assert.equal(response.status, 429)
@@ -920,7 +944,7 @@ test('an initial authorization rate limit tells the caller how to restart', asyn
 test('an active existing-resident rate limit discards the expired sign-in form', async () => {
   const { app, memory } = fixture()
   const session = await begin(app)
-  memory.api.consumeOAuthRateLimit = async () => false
+  memory.api.consumeOAuthRateLimit = async () => rateLimitResult(false)
 
   const response = await browserPost(app, session, {
     action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
@@ -1118,6 +1142,177 @@ test('current ChatGPT callback-specific CIMD completes PKCE exchange and refresh
     (await residentByOAuthAccessToken(secondPair.access_token, cimdEnvironment, memory.api))?.handle,
     'chatty',
   )
+})
+
+test('refresh allowances belong to each connector connection instead of the shared client', async () => {
+  const { app, memory } = fixture()
+  const first = await initialPair(app)
+  const second = await initialPair(app)
+  const usedByBucket = new Map<string, number>()
+  memory.api.consumeOAuthRateLimit = async input => {
+    if (input.attemptKind !== 'refresh') return rateLimitResult(true)
+    const used = usedByBucket.get(input.bucketHash) ?? 0
+    if (used >= 1) return rateLimitResult(false)
+    usedByBucket.set(input.bucketHash, used + 1)
+    return rateLimitResult(true)
+  }
+
+  for (const pair of [first, second]) {
+    const response = await app.request('/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: CLIENT_ID,
+        resource: RESOURCE,
+        refresh_token: pair.refresh_token,
+      }),
+    })
+    await readTokenPair(response)
+  }
+})
+
+test('junk refresh requests cannot spend a real connector connection allowance', async () => {
+  const { app, memory } = fixture()
+  const pair = await initialPair(app)
+  const usedByBucket = new Map<string, number>()
+  const rotateRefreshToken = memory.api.rotateRefreshToken
+  let rotationCalls = 0
+  memory.api.rotateRefreshToken = async input => {
+    rotationCalls += 1
+    return rotateRefreshToken(input)
+  }
+  memory.api.consumeOAuthRateLimit = async input => {
+    if (input.attemptKind !== 'refresh') return rateLimitResult(true)
+    const used = usedByBucket.get(input.bucketHash) ?? 0
+    if (used >= 2) return rateLimitResult(false)
+    usedByBucket.set(input.bucketHash, used + 1)
+    return rateLimitResult(true)
+  }
+
+  for (const refreshToken of [
+    'not-a-city-refresh-token',
+    `1f3d9_rt_${'cd'.repeat(32)}`,
+  ]) {
+    const junk = await app.request('/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: CLIENT_ID,
+        resource: RESOURCE,
+        refresh_token: refreshToken,
+      }),
+    })
+    assert.equal(junk.status, 400)
+    assert.deepEqual(await junk.json(), { error: 'invalid_grant' })
+  }
+  const throttledJunk = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: `1f3d9_rt_${'ef'.repeat(32)}`,
+    }),
+  })
+  assert.equal(throttledJunk.status, 429)
+  assert.equal(throttledJunk.headers.get('retry-after'), '17')
+  assert.equal(rotationCalls, 0, 'junk must stop before refresh rotation work')
+
+  const real = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: pair.refresh_token,
+    }),
+  })
+  await readTokenPair(real)
+  assert.equal(rotationCalls, 1)
+})
+
+test('a throttled refresh says to wait and retry instead of calling the grant invalid', async () => {
+  const { app, memory } = fixture()
+  const pair = await initialPair(app)
+  memory.api.consumeOAuthRateLimit = async input => rateLimitResult(input.attemptKind !== 'refresh')
+
+  const response = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: pair.refresh_token,
+    }),
+  })
+
+  assert.equal(response.status, 429)
+  assertPrivate(response)
+  assert.equal(response.headers.get('retry-after'), '17')
+  const expected = {
+    error: 'temporarily_unavailable',
+    error_description: 'Too many refresh attempts. Wait 17 seconds and retry.',
+  }
+  assert.deepEqual(await response.json(), expected)
+
+  const junk = await app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: 'not-a-city-refresh-token',
+    }),
+  })
+  assert.equal(junk.status, 429)
+  assertPrivate(junk)
+  assert.equal(junk.headers.get('retry-after'), '17')
+  assert.deepEqual(await junk.json(), expected)
+})
+
+test('first refresh-token reuse still revokes once; later replay stops before rotation', async () => {
+  const { app, memory } = fixture()
+  const first = await initialPair(app)
+  const request = () => app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: first.refresh_token,
+    }),
+  })
+  const second = await readTokenPair(await request())
+  const rotateRefreshToken = memory.api.rotateRefreshToken
+  let rotationCalls = 0
+  memory.api.rotateRefreshToken = async input => {
+    rotationCalls += 1
+    return rotateRefreshToken(input)
+  }
+  memory.api.consumeOAuthRateLimit = async input => rateLimitResult(input.attemptKind !== 'refresh')
+
+  const firstReplay = await request()
+  assert.equal(firstReplay.status, 400)
+  assert.deepEqual(await firstReplay.json(), { error: 'invalid_grant' })
+  assert.equal(await residentByOAuthAccessToken(first.access_token, environment, memory.api), null)
+  assert.equal(await residentByOAuthAccessToken(second.access_token, environment, memory.api), null)
+  assert.equal(rotationCalls, 1, 'the first replay must reach family revocation')
+
+  const laterReplay = await request()
+  assert.equal(laterReplay.status, 429)
+  assert.equal(laterReplay.headers.get('retry-after'), '17')
+  assert.deepEqual(await laterReplay.json(), {
+    error: 'temporarily_unavailable',
+    error_description: 'Too many refresh attempts. Wait 17 seconds and retry.',
+  })
+  assert.equal(rotationCalls, 1, 'post-revocation replay must stop before rotation')
 })
 
 test('existing resident completes sign-in, PKCE exchange, resolver, replay rejection, and revocation', async () => {
@@ -1419,7 +1614,7 @@ test('connector signup discloses no generated secrets when throttling or staging
     Object.assign(memory.api, {
       consumeOAuthRateLimit: async () => {
         rateCall += 1
-        return rateCall !== deniedCall
+        return rateLimitResult(rateCall !== deniedCall)
       },
     })
 
@@ -1518,7 +1713,7 @@ test('connector signup confirmation stays uncommitted when its rate limit or sto
     assert.ok(rootKey)
 
     if (confirmFailure === 'rate_limit') {
-      Object.assign(memory.api, { consumeOAuthRateLimit: async () => false })
+      Object.assign(memory.api, { consumeOAuthRateLimit: async () => rateLimitResult(false) })
     } else if (confirmFailure === 'missing') {
       Object.assign(memory.api, { confirmNewResidentAndIssueAuthorizationCode: async () => ({ status: 'request_unavailable' as const }) })
     } else {

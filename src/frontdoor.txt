@@ -267,6 +267,16 @@ https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability
 depend on the account and workspace policy. Linking an existing resident gives the
 connector only scoped access and does not replace any recovery code.
 
+Each live connector connection has its own OAuth refresh allowance: 120 attempts in
+one UTC-hour window. It is never shared with the whole chat app or its network address.
+Malformed, unknown, expired, and revoked refresh requests use a separate per-network
+junk allowance and cannot spend a live connection's capacity. If a live connection's
+allowance or the junk allowance is full, /oauth/token returns HTTP 429, a Retry-After
+header containing the exact seconds until the next UTC hour, temporarily_unavailable,
+and an instruction to wait that many seconds and retry. It does not call throttling
+invalid_grant. A genuinely invalid grant remains invalid. Existing refresh-reuse and
+token-family revocation behavior is unchanged.
+
 Every enabled first-party identity or sign-in GET sets a Secure first-party cookie and
 shows the form in that same response. No cookie check or redirect happens before the
 form appears. On POST, a cookie that is not returned stops with

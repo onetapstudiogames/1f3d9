@@ -516,6 +516,18 @@ function makeMemoryStore(): OAuthStore {
       return true
     },
 
+    resolveRefreshRateLimitSubject: async input => {
+      const presented = refreshGrants.get(input.presentedRefreshTokenHash)
+      const family = presented ? tokenFamilies.get(presented.familyId) : undefined
+      if (
+        !presented || !family || family.revoked ||
+        family.clientId !== input.clientId || family.resource !== input.resource
+      ) return { status: 'junk' as const }
+      return presented.used
+        ? { status: 'reused' as const }
+        : { status: 'active' as const, connectionKey: String(presented.familyId) }
+    },
+
     rotateRefreshToken: async input => {
       const presented = refreshGrants.get(input.presentedRefreshTokenHash)
       const family = presented ? tokenFamilies.get(presented.familyId) : undefined
@@ -548,7 +560,7 @@ function makeMemoryStore(): OAuthStore {
       const resident = residents.get(family.residentId)
       return resident ? { ...resident } : null
     },
-    consumeOAuthRateLimit: async () => true,
+    consumeOAuthRateLimit: async () => ({ admitted: true, retryAfterSeconds: 17 }),
   }
 }
 
