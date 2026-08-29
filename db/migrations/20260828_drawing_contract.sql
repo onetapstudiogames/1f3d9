@@ -922,6 +922,144 @@ WHERE coalesce(moderation_actions_parent_hidden.action, 'restore') <> 'remove'
 
 REVOKE ALL ON city_snapshot.public_records FROM PUBLIC;
 GRANT USAGE ON SCHEMA city_snapshot TO city_snapshot_export;
-GRANT SELECT ON city_snapshot.public_records TO city_snapshot_export;
+
+-- A Gazette install can predate this contract. PostgreSQL view dependencies
+-- follow the renamed v1 object by OID, so rebuild v2 over the new drawing-aware
+-- v1 without changing the historical Gazette migration. The exact activation
+-- state also decides whether the retired v1 grant must stay revoked.
+DO $drawing_snapshot_v2$
+DECLARE
+  gazette_submissions_open BOOLEAN := FALSE;
+BEGIN
+  IF to_regclass('city_snapshot.public_records_v2') IS NOT NULL THEN
+    EXECUTE $drawing_snapshot_v2_view$
+      CREATE OR REPLACE VIEW city_snapshot.public_records_v2
+      WITH (security_barrier = true)
+      AS
+      WITH public_event_kinds_v2(kind) AS (
+        VALUES
+          ('register'),
+          ('rotate'),
+          ('resident_edited'),
+          ('home_set'),
+          ('place_created'),
+          ('place_edited'),
+          ('kind_invented'),
+          ('kind_revised'),
+          ('trait_coined'),
+          ('thing_created'),
+          ('thing_crafted'),
+          ('thing_edited'),
+          ('thing_moved'),
+          ('thing_upgraded'),
+          ('thing_withdrawn'),
+          ('laws_changed'),
+          ('action'),
+          ('effect_scheduled'),
+          ('effect_resolved'),
+          ('note'),
+          ('gazette_printed'),
+          ('agreement'),
+          ('agreement_accession'),
+          ('agreement_sign'),
+          ('transfer'),
+          ('transfer_offer'),
+          ('sale'),
+          ('transfer_cancel'),
+          ('world_listed'),
+          ('world_sale'),
+          ('world_cancel'),
+          ('payment_repair'),
+          ('flag'),
+          ('moderation')
+      )
+      SELECT base_record.class_name,
+        base_record.record_id,
+        base_record.sort_key,
+        CASE
+          WHEN base_record.class_name = 'events'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM public_event_kinds_v2 public_kind
+              WHERE public_kind.kind = base_record.payload->>'kind'
+            )
+          THEN jsonb_build_object(
+            'id', base_record.payload->'id',
+            'status', 'not_public_or_sequence_gap'
+          )
+          WHEN base_record.class_name = 'events'
+            AND base_record.payload->>'kind' = 'gazette_printed'
+            AND gazette_issue.event_id IS NOT NULL
+          THEN jsonb_set(
+            base_record.payload #- '{detail,error}',
+            '{detail}',
+            (coalesce(base_record.payload->'detail', '{}'::jsonb) - 'error') || jsonb_build_object(
+              'issue_number', gazette_issue.issue_number,
+              'entry_count', gazette_issue.entry_count
+            ),
+            TRUE
+          )
+          WHEN base_record.class_name = 'events'
+          THEN base_record.payload #- '{detail,error}'
+          ELSE base_record.payload
+        END AS payload
+      FROM city_snapshot.public_records base_record
+      LEFT JOIN public.gazette_issues gazette_issue
+        ON base_record.class_name = 'events'
+          AND base_record.record_id = gazette_issue.event_id::TEXT
+
+      UNION ALL
+
+      SELECT 'gazette_issues'::TEXT AS class_name,
+        issue.issue_number::TEXT AS record_id,
+        issue.issue_number::BIGINT AS sort_key,
+        jsonb_build_object(
+          'id', issue.issue_number,
+          'status', 'exported',
+          'issue_number', issue.issue_number,
+          'scheduled_for', issue.scheduled_for,
+          'printed_at', issue.printed_at,
+          'header', issue.header,
+          'entry_count', issue.entry_count,
+          'event_id', issue.event_id
+        ) AS payload
+      FROM public.gazette_issues issue
+
+      UNION ALL
+
+      SELECT 'gazette_issue_entries'::TEXT AS class_name,
+        entry.note_id::TEXT AS record_id,
+        entry.note_id::BIGINT AS sort_key,
+        jsonb_build_object(
+          'id', entry.note_id,
+          'status', 'exported',
+          'issue_number', entry.issue_number,
+          'ordinal', entry.ordinal,
+          'note_id', entry.note_id,
+          'author_id', note.author_id,
+          'author', author.handle,
+          'created_at', note.created_at
+        ) AS payload
+      FROM public.gazette_issue_entries entry
+      JOIN public.notes note ON note.id = entry.note_id
+      JOIN public.residents author ON author.id = note.author_id
+    $drawing_snapshot_v2_view$;
+
+    EXECUTE 'REVOKE ALL ON city_snapshot.public_records_v2 FROM PUBLIC';
+    EXECUTE 'GRANT SELECT ON city_snapshot.public_records_v2 TO city_snapshot_export';
+
+    IF to_regprocedure('public.gazette_submission_room_is_open()') IS NOT NULL THEN
+      EXECUTE 'SELECT public.gazette_submission_room_is_open()'
+      INTO gazette_submissions_open;
+    END IF;
+  END IF;
+
+  IF gazette_submissions_open THEN
+    REVOKE SELECT ON city_snapshot.public_records FROM city_snapshot_export;
+  ELSE
+    GRANT SELECT ON city_snapshot.public_records TO city_snapshot_export;
+  END IF;
+END
+$drawing_snapshot_v2$;
 
 COMMIT;

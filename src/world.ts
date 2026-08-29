@@ -33,6 +33,7 @@ import {
   jsonBody,
   openOffer,
   reconcileTreasuryCompletionNoEffect,
+  reportTreasuryCompletionFailure,
   returnFailedTreasuryFee,
   requireResident,
   THING_BODY_MAX_BYTES,
@@ -707,15 +708,29 @@ export function mountWorldRoutes(app: Hono): void {
     } catch (error) {
       const message = conflictMessage(error, 'place name or payment proof already used')
       if (fee.rail === 'credit') {
-        return await returnFailedTreasuryFee(
+        const response = await returnFailedTreasuryFee(
           fee,
           resident.id,
           message ?? 'frontier founding failed before completion',
           message ? 409 : 503,
         ) as Response
+        reportTreasuryCompletionFailure({
+          operation: 'frontier',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
       }
       if (message) {
-        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+        const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+        reportTreasuryCompletionFailure({
+          operation: 'frontier',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
       }
       throw error
     }
@@ -1093,16 +1108,38 @@ export function mountWorldRoutes(app: Hono): void {
       const unknownTrait = unknownTraitMessage(error)
       const message = conflictMessage(error, 'kind name or payment proof already used')
       if (fee.rail === 'credit') {
-        return await returnFailedTreasuryFee(
+        const response = await returnFailedTreasuryFee(
           fee,
           resident.id,
           unknownTrait ? `kind ${unknownTrait}` : message ?? 'kind invention failed before completion',
           unknownTrait ? 400 : message ? 409 : 503,
         ) as Response
+        reportTreasuryCompletionFailure({
+          operation: 'kind_invention',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
       }
-      if (unknownTrait) return err(c, 400, `kind ${unknownTrait}`)
+      if (unknownTrait) {
+        reportTreasuryCompletionFailure({
+          operation: 'kind_invention',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: 400,
+        }, error)
+        return err(c, 400, `kind ${unknownTrait}`)
+      }
       if (message) {
-        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+        const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+        reportTreasuryCompletionFailure({
+          operation: 'kind_invention',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
       }
       throw error
     }
@@ -1228,7 +1265,7 @@ export function mountWorldRoutes(app: Hono): void {
       const unknownTrait = unknownTraitMessage(error)
       const message = conflictMessage(error, 'payment proof already used')
       if (fee.rail === 'credit') {
-        return await returnFailedTreasuryFee(
+        const response = await returnFailedTreasuryFee(
           fee,
           resident.id,
           unknownTrait
@@ -1236,10 +1273,32 @@ export function mountWorldRoutes(app: Hono): void {
             : message ?? 'kind revision failed before completion',
           unknownTrait ? 400 : message ? 409 : 503,
         ) as Response
+        reportTreasuryCompletionFailure({
+          operation: 'kind_revision',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
       }
-      if (unknownTrait) return err(c, 400, `kind revision ${unknownTrait}`)
+      if (unknownTrait) {
+        reportTreasuryCompletionFailure({
+          operation: 'kind_revision',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: 400,
+        }, error)
+        return err(c, 400, `kind revision ${unknownTrait}`)
+      }
       if (message) {
-        return await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+        const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
+        reportTreasuryCompletionFailure({
+          operation: 'kind_revision',
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
       }
       throw error
     }

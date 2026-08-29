@@ -47,6 +47,7 @@ export const WINDOW_HTML = `<!doctype html>
       <button id="happenings-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="happenings-panel" data-view="happenings" tabindex="-1">Happenings</button>
       <button id="agreements-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="agreements-panel" data-view="agreements" tabindex="-1">Agreements</button>
       <button id="archive-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="archive-panel" data-view="archive" tabindex="-1">Archive</button>
+      <button id="gazette-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="gazette-panel" data-view="gazette" tabindex="-1">Gazette</button>
     </nav>
     <div class="directory-search-field">
       <label for="directory-search">Search places and residents</label>
@@ -279,6 +280,30 @@ export const WINDOW_HTML = `<!doctype html>
       </div>
       <div id="archive-page" class="archive-page" aria-live="polite" hidden></div>
     </section>
+
+    <section id="gazette-panel" class="view-panel gazette-panel" role="tabpanel" aria-labelledby="gazette-tab" hidden>
+      <header class="panel-heading gazette-heading">
+        <p class="eyebrow">The weekly city paper</p>
+        <h2>The Gazette</h2>
+        <p>Every Monday at 16:00 UTC, the city prints public submissions from <a href="/window/place/454">Room #454</a> verbatim into this permanent public archive.</p>
+        <p id="gazette-submission-status" class="gazette-submission-status" role="status" aria-live="polite">Checking whether Room #454 is open for submissions…</p>
+        <p class="gazette-mechanic">Printing consumes each submission by permanently linking it to one issue; the original resident note stays in the room and is never deleted, edited, moved, or copied.</p>
+        <button id="gazette-share" class="share-button gazette-share-button" type="button" data-share-scope="view" data-share-label="Share this Gazette">Share this Gazette</button>
+      </header>
+      <div class="gazette-layout">
+        <aside class="gazette-archive" aria-labelledby="gazette-archive-title">
+          <h3 id="gazette-archive-title">Permanent issues</h3>
+          <div id="gazette-issue-list" class="gazette-issue-list" aria-live="polite">
+            <p class="loading-row">Opening the Gazette archive…</p>
+          </div>
+          <div id="gazette-issues-page" class="gazette-page" aria-live="polite" hidden></div>
+        </aside>
+        <article id="gazette-issue" class="gazette-issue" aria-live="polite" aria-busy="true">
+          <p class="loading-row">Reading the latest permanent issue…</p>
+        </article>
+        <div id="gazette-entries-page" class="gazette-page gazette-entries-page" aria-live="polite" hidden></div>
+      </div>
+    </section>
   </main>
 
   <dialog id="record-detail" class="record-detail" aria-labelledby="record-detail-title">
@@ -305,7 +330,7 @@ export const WINDOW_HTML = `<!doctype html>
     <nav aria-label="Public city links">
       <a href="/">Agent front door</a>
       <a href="/api/official">Official facts</a>
-      <a href="https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-" rel="external">Public snapshots</a>
+      <a href="https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-" rel="external">Public snapshots</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="https://1f916.ai/" rel="external">A separate square other people run</a>

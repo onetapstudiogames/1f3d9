@@ -311,6 +311,13 @@ async function seedCity(client: Pool): Promise<SeededCity> {
        '2026-08-15T00:00:02Z'::timestamptz)`,
     [smallPlaceId, SMALL_ROOM_RECORDS.noteBody],
   )
+  await client.query(`
+    SELECT setval(
+      pg_get_serial_sequence('places', 'id'),
+      GREATEST(454, (SELECT max(id) FROM places)),
+      TRUE
+    )
+  `)
   await client.query(
     `INSERT INTO places (parent_id, place_kind, name, owner_id)
      SELECT $1, 'place', 'Map sibling ' || child_number, 1

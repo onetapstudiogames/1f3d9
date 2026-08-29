@@ -6,10 +6,12 @@ import {
   PUBLIC_EVENT_DETAIL_ID_FIELDS,
   PUBLIC_EVENT_KINDS,
   PUBLIC_EVENT_LABELS,
+  PUBLIC_SYSTEM_EVENT_ACTORS,
 } from './public-events.ts'
 import {
   validateWindowArchiveQuery,
   validateWindowDirectorySearch,
+  windowDetailShareState,
   windowSharePath,
 } from './window-sharing.ts'
 
@@ -83,6 +85,10 @@ export function windowLivePlateChildren<T extends Readonly<{
     .sort((left, right) => left.id - right.id)
 }
 
+export const WINDOW_LIVE_DIRECT_COMMONS_WIDTH = 1_100
+export const WINDOW_LIVE_DIRECT_COMMONS_HEIGHT = 680
+export const WINDOW_LIVE_CHILD_GROUND_GAP = 80
+
 export function windowLiveSurveyedPlots<T extends Readonly<{
   id: number
   parent_id: number | null
@@ -93,9 +99,12 @@ export function windowLiveSurveyedPlots<T extends Readonly<{
   width: number
   height: number
 }>> {
-  const width = 220
-  const height = 148
-  const gap = 34
+  // One fixed ordinary footprint holds both declared six-item visible caps.
+  // Fixed dimensions keep existing places still when later occupants arrive.
+  const width = 440
+  const height = 280
+  const gap = 80
+  const childGroundLeft = WINDOW_LIVE_DIRECT_COMMONS_WIDTH + WINDOW_LIVE_CHILD_GROUND_GAP
   const placed: Array<Readonly<{
     id: number
     x: number
@@ -123,7 +132,7 @@ export function windowLiveSurveyedPlots<T extends Readonly<{
       y: number
       width: number
       height: number
-    }> = Object.freeze({ id: place.id, x: 64, y: 184, width, height })
+    }> = Object.freeze({ id: place.id, x: childGroundLeft, y: 184, width, height })
     for (let attempt = 0; attempt < 10_000; attempt += 1) {
       const band = Math.floor(attempt / 24)
       const availableWidth = 860 + band * 420
@@ -132,7 +141,7 @@ export function windowLiveSurveyedPlots<T extends Readonly<{
       const ySeed = Math.imul(place.id ^ 0xc2b2ae35, 0x165667b1) + attempt * 0x9e3779b1
       candidate = Object.freeze({
         id: place.id,
-        x: Math.round(64 + randomUnit(xSeed) * Math.max(1, availableWidth - width)),
+        x: Math.round(childGroundLeft + randomUnit(xSeed) * Math.max(1, availableWidth - width)),
         y: Math.round(184 + randomUnit(ySeed) * Math.max(1, availableHeight - height)),
         width,
         height,
@@ -145,8 +154,9 @@ export function windowLiveSurveyedPlots<T extends Readonly<{
     if (!foundOpenGround) {
       candidate = Object.freeze({
         id: place.id,
-        x: 64,
-        y: placed.reduce((bottom, existing) => Math.max(bottom, existing.y + existing.height), 184) + gap,
+        x: childGroundLeft,
+        y: placed.reduce((bottom, existing) =>
+          Math.max(bottom, existing.y + existing.height), 184) + gap,
         width,
         height,
       })
@@ -154,6 +164,106 @@ export function windowLiveSurveyedPlots<T extends Readonly<{
     placed.push(candidate)
   }
   return Object.freeze(placed)
+}
+
+export function windowLiveExpandedGroundLayout(
+  plots: readonly Readonly<{
+    id: number
+    x: number
+    y: number
+    width: number
+    height: number
+  }>[],
+  expansions: readonly Readonly<{
+    id: number
+    residentHeight: number
+    thingHeight: number
+  }>[],
+  groundWidth = 480,
+  gap = 16,
+  controlRailDepth = 64,
+): Readonly<{
+  grounds: Readonly<Record<string, Readonly<{
+    x: number
+    residentTop: number | null
+    thingTop: number | null
+    width: number
+    bottom: number
+  }>>>
+  width: number
+  height: number
+}> {
+  const safeGroundWidth = Number.isFinite(groundWidth) && groundWidth > 0
+    ? groundWidth
+    : 480
+  const safeGap = Number.isFinite(gap) && gap >= 0 ? gap : 16
+  const safeRailDepth = Number.isFinite(controlRailDepth) && controlRailDepth >= 0
+    ? controlRailDepth
+    : 64
+  const plotById = new Map(plots.filter(plot =>
+    [plot.id, plot.x, plot.y, plot.width, plot.height].every(Number.isFinite) &&
+      Number.isSafeInteger(plot.id) && plot.id > 0 && plot.width > 0 && plot.height > 0)
+    .map(plot => [plot.id, plot]))
+  const fixed = [...plotById.values()].map(plot => Object.freeze({
+    x: plot.x,
+    y: plot.y,
+    width: plot.width,
+    height: plot.height + safeRailDepth,
+  }))
+  const obstacles = [...fixed]
+  const grounds: Record<string, Readonly<{
+    x: number
+    residentTop: number | null
+    thingTop: number | null
+    width: number
+    bottom: number
+  }>> = {}
+  const ordered = expansions.filter(expansion =>
+    plotById.has(expansion.id) &&
+      [expansion.residentHeight, expansion.thingHeight].every(Number.isFinite) &&
+      expansion.residentHeight >= 0 && expansion.thingHeight >= 0 &&
+      (expansion.residentHeight > 0 || expansion.thingHeight > 0))
+    .sort((left, right) => {
+      const leftPlot = plotById.get(left.id)!
+      const rightPlot = plotById.get(right.id)!
+      return leftPlot.y - rightPlot.y || leftPlot.x - rightPlot.x || left.id - right.id
+    })
+  for (const expansion of ordered) {
+    const plot = plotById.get(expansion.id)!
+    const totalHeight = expansion.residentHeight + expansion.thingHeight +
+      (expansion.residentHeight > 0 && expansion.thingHeight > 0 ? safeGap : 0)
+    let top = plot.y + plot.height + safeRailDepth + safeGap
+    while (true) {
+      const overlapping = obstacles.filter(obstacle =>
+        plot.x < obstacle.x + obstacle.width + safeGap &&
+        plot.x + safeGroundWidth + safeGap > obstacle.x &&
+        top < obstacle.y + obstacle.height + safeGap &&
+        top + totalHeight + safeGap > obstacle.y)
+      if (!overlapping.length) break
+      top = Math.max(...overlapping.map(obstacle => obstacle.y + obstacle.height + safeGap))
+    }
+    const residentTop = expansion.residentHeight > 0 ? top : null
+    const thingTop = expansion.thingHeight > 0
+      ? top + expansion.residentHeight +
+        (expansion.residentHeight > 0 ? safeGap : 0)
+      : null
+    const ground = Object.freeze({
+      x: plot.x,
+      residentTop,
+      thingTop,
+      width: safeGroundWidth,
+      bottom: top + totalHeight,
+    })
+    grounds[String(expansion.id)] = ground
+    obstacles.push(Object.freeze({ x: ground.x, y: top, width: ground.width, height: totalHeight }))
+  }
+  return Object.freeze({
+    grounds: Object.freeze(grounds),
+    width: Math.max(0, ...fixed.map(area => area.x + area.width),
+      ...Object.values(grounds).map(ground => ground.x + ground.width)),
+    height: Math.max(0, ...fixed.map(area => area.y + area.height),
+      ...Object.values(grounds).map(ground => ground.bottom)),
+  })
 }
 
 export function windowLiveScatteredPoint(
@@ -340,11 +450,140 @@ export function windowLiveSeparatedPoints(
         break
       }
     }
+    if (!point) {
+      const minX = Math.ceil(margin + itemWidth / 2)
+      const maxX = Math.floor(width - margin - itemWidth / 2)
+      const minY = Math.ceil(margin + itemHeight * anchorY)
+      const maxY = Math.floor(height - margin - itemHeight * (1 - anchorY))
+      const xCount = Math.max(0, maxX - minX + 1)
+      const yCount = Math.max(0, maxY - minY + 1)
+      const fineCount = xCount * yCount
+      const fineOffset = fineCount
+        ? (Math.imul(key ^ Math.floor(seed), 0x27d4eb2d) >>> 0) % fineCount
+        : 0
+      for (let attempt = 0; attempt < fineCount; attempt += 1) {
+        const index = (fineOffset + attempt) % fineCount
+        const candidate = Object.freeze({
+          x: minX + index % xCount,
+          y: minY + Math.floor(index / xCount),
+        })
+        if (available(candidate)) {
+          point = candidate
+          break
+        }
+      }
+    }
     if (!point) continue
     result[String(key)] = point
     placed.push(rectangle(point))
   }
   return Object.freeze(result)
+}
+
+export const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT = Object.freeze({
+  x: 6,
+  y: 286,
+  width: 128,
+  height: 44,
+})
+
+function windowLivePointFootprints(
+  points: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+  itemWidth: number,
+  itemHeight: number,
+  anchorY: number,
+): readonly Readonly<{ x: number; y: number; width: number; height: number }>[] {
+  if (![itemWidth, itemHeight, anchorY].every(Number.isFinite) ||
+      itemWidth <= 0 || itemHeight <= 0 || anchorY < 0 || anchorY > 1) {
+    return Object.freeze([])
+  }
+  return Object.freeze(Object.values(points).flatMap(point =>
+    [point.x, point.y].every(Number.isFinite)
+      ? [Object.freeze({
+          x: point.x - itemWidth / 2,
+          y: point.y - itemHeight * anchorY,
+          width: itemWidth,
+          height: itemHeight,
+        })]
+      : []))
+}
+
+export function windowLiveRootReservations(
+  width: number,
+  height: number,
+): readonly Readonly<{ x: number; y: number; width: number; height: number }>[] {
+  if (![width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return Object.freeze([])
+  }
+  const controlWidth = Math.min(116, width)
+  const controlHeight = Math.min(144, height)
+  return Object.freeze([Object.freeze({
+    x: width - controlWidth,
+    y: height - controlHeight,
+    width: controlWidth,
+    height: controlHeight,
+  })])
+}
+
+export function windowLiveResidentPointsAroundThings(
+  keys: readonly number[],
+  width: number,
+  height: number,
+  seed: number,
+  itemWidth: number,
+  itemHeight: number,
+  margin: number,
+  thingPoints: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+  thingItemWidth: number,
+  reserved: readonly Readonly<{ x: number; y: number; width: number; height: number }>[] = [],
+  previous: Readonly<Record<string, Readonly<{ x: number; y: number }>>> = {},
+  sharesThingSurface = true,
+): Readonly<Record<string, Readonly<{ x: number; y: number }>>> {
+  const thingFootprints = sharesThingSurface
+    ? windowLivePointFootprints(thingPoints, thingItemWidth, 56, 0.5)
+    : Object.freeze([])
+  return windowLiveSeparatedPoints(
+    keys,
+    width,
+    height,
+    seed,
+    itemWidth,
+    itemHeight,
+    margin,
+    1,
+    Object.freeze([...reserved, ...thingFootprints]),
+    previous,
+  )
+}
+
+export function windowLiveThingPointsAroundResidents(
+  keys: readonly number[],
+  width: number,
+  height: number,
+  seed: number,
+  itemWidth: number,
+  itemHeight: number,
+  margin: number,
+  residentPoints: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+  reserved: readonly Readonly<{ x: number; y: number; width: number; height: number }>[] = [],
+  previous: Readonly<Record<string, Readonly<{ x: number; y: number }>>> = {},
+  sharesResidentSurface = true,
+): Readonly<Record<string, Readonly<{ x: number; y: number }>>> {
+  const residentFootprints = sharesResidentSurface
+    ? windowLivePointFootprints(residentPoints, 56, 56, 1)
+    : Object.freeze([])
+  return windowLiveSeparatedPoints(
+    keys,
+    width,
+    height,
+    seed,
+    itemWidth,
+    itemHeight,
+    margin,
+    0.5,
+    Object.freeze([...reserved, ...residentFootprints]),
+    previous,
+  )
 }
 
 export function windowLiveTouchActivation(
@@ -377,6 +616,57 @@ export function windowLiveVisiblePlots<T extends Readonly<{
     plot.width > 0 && plot.height > 0 &&
     plot.x + plot.width >= left && plot.x <= right &&
     plot.y + plot.height >= top && plot.y <= bottom))
+}
+
+export function windowLiveVisiblePlotIds(
+  plots: readonly Readonly<{
+    id: number
+    x: number
+    y: number
+    width: number
+    height: number
+  }>[],
+  expandedGrounds: Readonly<Record<string, Readonly<{
+    x: number
+    residentTop: number | null
+    thingTop: number | null
+    width: number
+    bottom: number
+  }>>>,
+  viewport: Readonly<{ left: number; top: number; right: number; bottom: number }>,
+  overscan: number,
+  controlRailDepth = 64,
+): readonly number[] {
+  const safeRailDepth = Number.isFinite(controlRailDepth) && controlRailDepth >= 0
+    ? controlRailDepth
+    : 0
+  const regions = plots.flatMap(plot => {
+    if (!Number.isSafeInteger(plot.id) || plot.id <= 0) return []
+    const base = Object.freeze({
+      id: plot.id,
+      x: plot.x,
+      y: plot.y,
+      width: plot.width,
+      height: plot.height + safeRailDepth,
+    })
+    const ground = expandedGrounds[String(plot.id)]
+    if (!ground) return [base]
+    const tops = [ground.residentTop, ground.thingTop]
+      .filter((value): value is number => Number.isFinite(value))
+    const top = tops.length ? Math.min(...tops) : Number.NaN
+    if (![ground.x, top, ground.width, ground.bottom].every(Number.isFinite) ||
+        ground.width <= 0 || ground.bottom <= top) return [base]
+    return [base, Object.freeze({
+      id: plot.id,
+      x: ground.x,
+      y: top,
+      width: ground.width,
+      height: ground.bottom - top,
+    })]
+  })
+  return Object.freeze([...new Set(
+    windowLiveVisiblePlots(regions, viewport, overscan).map(region => region.id),
+  )])
 }
 
 export function windowLiveDirectGroundWidth(
@@ -447,6 +737,51 @@ export function windowLiveCenterCamera(
     scale,
     offsetX: viewportWidth / 2 - targetX * scale,
     offsetY: viewportHeight / 2 - targetY * scale,
+  })
+}
+
+export function windowLiveRevealCamera(
+  viewportWidth: number,
+  viewportHeight: number,
+  targetX: number,
+  targetY: number,
+  targetWidth: number,
+  targetHeight: number,
+  scale: number,
+  offsetX: number,
+  offsetY: number,
+  safeInset: number,
+): Readonly<{ scale: number; offsetX: number; offsetY: number }> | null {
+  if (![viewportWidth, viewportHeight, targetX, targetY, targetWidth, targetHeight,
+    scale, offsetX, offsetY, safeInset].every(Number.isFinite) ||
+      viewportWidth <= 0 || viewportHeight <= 0 || scale <= 0 ||
+      targetWidth < 0 || targetHeight < 0 || safeInset < 0 ||
+      safeInset * 2 >= viewportWidth || safeInset * 2 >= viewportHeight) return null
+  const safeCenter = (
+    current: number,
+    viewportSize: number,
+    scaledTargetSize: number,
+  ) => {
+    const half = scaledTargetSize / 2
+    const available = viewportSize - safeInset * 2
+    const canFit = scaledTargetSize <= available
+    const inwardGuard = canFit
+      ? Math.min(0.01, Math.max(0, available - scaledTargetSize) / 2)
+      : 0
+    const minimum = canFit ? safeInset + half + inwardGuard : safeInset
+    const maximum = canFit
+      ? viewportSize - safeInset - half - inwardGuard
+      : viewportSize - safeInset
+    return Math.max(minimum, Math.min(maximum, current))
+  }
+  const screenX = targetX * scale + offsetX
+  const screenY = targetY * scale + offsetY
+  const revealedX = safeCenter(screenX, viewportWidth, targetWidth * scale)
+  const revealedY = safeCenter(screenY, viewportHeight, targetHeight * scale)
+  return Object.freeze({
+    scale,
+    offsetX: revealedX - targetX * scale,
+    offsetY: revealedY - targetY * scale,
   })
 }
 
@@ -893,6 +1228,7 @@ export function pageWindowDirectorySearch(
 
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
+const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
 const BASIC_ACTIONS_JSON = JSON.stringify(BASIC_ACTIONS)
 const WORLD_ROOT_NAME_JSON = JSON.stringify(WORLD_ROOT_NAME)
 const MERGE_WINDOW_ROWS_JS = mergeWindowRows.toString()
@@ -907,22 +1243,32 @@ const PARSE_WINDOW_SLEEPER_PLACE_IDS_JS = parseWindowSleeperPlaceIds.toString()
 const CONTAINS_MALFORMED_PUBLIC_TEXT_JS = containsMalformedPublicText.toString()
 const VALIDATE_WINDOW_ARCHIVE_QUERY_JS = validateWindowArchiveQuery.toString()
 const VALIDATE_WINDOW_DIRECTORY_SEARCH_JS = validateWindowDirectorySearch.toString()
+const WINDOW_DETAIL_SHARE_STATE_JS = windowDetailShareState.toString()
 const WINDOW_SHARE_PATH_JS = windowSharePath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
 const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
 const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
 const WINDOW_LIVE_SURVEYED_PLOTS_JS = windowLiveSurveyedPlots.toString()
+const WINDOW_LIVE_EXPANDED_GROUND_LAYOUT_JS = windowLiveExpandedGroundLayout.toString()
 const WINDOW_LIVE_SCATTERED_POINT_JS = windowLiveScatteredPoint.toString()
 const WINDOW_LIVE_SCATTERED_POINTS_JS = windowLiveScatteredPoints.toString()
 const WINDOW_LIVE_SCATTER_SURFACE_HEIGHT_JS = windowLiveScatterSurfaceHeight.toString()
 const WINDOW_LIVE_SEPARATED_POINTS_JS = windowLiveSeparatedPoints.toString()
+const WINDOW_LIVE_POINT_FOOTPRINTS_JS = windowLivePointFootprints.toString()
+const WINDOW_LIVE_ROOT_RESERVATIONS_JS = windowLiveRootReservations.toString()
+const WINDOW_LIVE_RESIDENT_POINTS_AROUND_THINGS_JS =
+  windowLiveResidentPointsAroundThings.toString()
+const WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS =
+  windowLiveThingPointsAroundResidents.toString()
 const WINDOW_LIVE_VISIBLE_PLOTS_JS = windowLiveVisiblePlots.toString()
+const WINDOW_LIVE_VISIBLE_PLOT_IDS_JS = windowLiveVisiblePlotIds.toString()
 const WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS = windowLiveDirectGroundWidth.toString()
 const WINDOW_LIVE_CAPACITY_SELECTION_JS = windowLiveCapacitySelection.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
 const WINDOW_LIVE_TRACE_OPACITY_JS = windowLiveTraceOpacity.toString()
 const WINDOW_LIVE_CENTER_CAMERA_JS = windowLiveCenterCamera.toString()
+const WINDOW_LIVE_REVEAL_CAMERA_JS = windowLiveRevealCamera.toString()
 const WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS = windowLiveClampZoomScale.toString()
 const WINDOW_LIVE_RESIDENT_LABEL_MODE_JS = windowLiveResidentLabelMode.toString()
 const WINDOW_LIVE_PRUNE_TRAIL_STARTS_JS = windowLivePruneTrailStarts.toString()
@@ -933,6 +1279,12 @@ const WINDOW_LIVE_REPLAY_START_OFFSETS_JS = windowLiveReplayStartOffsets.toStrin
 const WINDOW_LIVE_REPLAY_ORDER_JS = windowLiveReplayOrder.toString()
 const WINDOW_LIVE_SPEECH_LINE_JS = windowLiveSpeechLine.toString()
 const WINDOW_LIVE_TOUCH_ACTIVATION_JS = windowLiveTouchActivation.toString()
+const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
+  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
+)
+const WINDOW_LIVE_DIRECT_COMMONS_WIDTH_JSON = JSON.stringify(WINDOW_LIVE_DIRECT_COMMONS_WIDTH)
+const WINDOW_LIVE_DIRECT_COMMONS_HEIGHT_JSON = JSON.stringify(WINDOW_LIVE_DIRECT_COMMONS_HEIGHT)
+const WINDOW_LIVE_CHILD_GROUND_GAP_JSON = JSON.stringify(WINDOW_LIVE_CHILD_GROUND_GAP)
 
 export const WINDOW_JS = `(() => {
   'use strict'
@@ -956,22 +1308,35 @@ export const WINDOW_JS = `(() => {
   const LIVE_CAMERA_MIN_SCALE = 0.8
   const LIVE_CAMERA_CENTER_SCALE = 1
   const LIVE_CAMERA_MAX_SCALE = 2.2
-  const LIVE_DIRECT_GROUND_WIDTH = 1_100
+  const LIVE_CAMERA_SAFE_INSET = 16
+  const WINDOW_LIVE_DIRECT_COMMONS_WIDTH = ${WINDOW_LIVE_DIRECT_COMMONS_WIDTH_JSON}
+  const WINDOW_LIVE_DIRECT_COMMONS_HEIGHT = ${WINDOW_LIVE_DIRECT_COMMONS_HEIGHT_JSON}
+  const WINDOW_LIVE_CHILD_GROUND_GAP = ${WINDOW_LIVE_CHILD_GROUND_GAP_JSON}
+  const LIVE_DIRECT_GROUND_WIDTH = WINDOW_LIVE_DIRECT_COMMONS_WIDTH
   const LIVE_LABEL_READABLE_SCALE = 1.6
   const LIVE_LABEL_FULL_REFRESH_MS = 250
   const LIVE_LABEL_CONTINUOUS_LIMIT = 12
   const LIVE_PLOT_OVERSCAN = 160
+  const LIVE_PLOT_DRAWING_DETAIL_RECT = Object.freeze(
+    ${WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON})
   const LIVE_TRAIL_DOM_LIMIT = 96
   const REQUEST_TIMEOUT_MS = 10000
   const MAX_FORWARD_RECONCILE_PAGES = 8
   const MAX_AUTO_HISTORY_PAGES = 8
+  const GAZETTE_ISSUE_PAGE_LIMIT = 10
+  const GAZETTE_ENTRY_PAGE_LIMIT = 25
+  const GAZETTE_FIRST_PRINT_AT = '2026-08-31T16:00:00.000Z'
+  const GAZETTE_FIRST_PRINT_EMPTY_STATE = 'No Gazette issues have printed yet. The first print is scheduled for Monday, 31 August 2026 at 16:00 UTC.'
   const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{2,31}$/
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
   const MODERATED_TEXT = '[removed by maintainer]'
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
-  const VIEWS = Object.freeze(['map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive'])
+  const VIEWS = Object.freeze([
+    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+  ])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
   const SAFE_EVENT_DETAIL_IDS = Object.freeze(${PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON})
+  const SAFE_SYSTEM_EVENT_ACTORS = new Set(${PUBLIC_SYSTEM_EVENT_ACTORS_JSON})
   const SAFE_ACTIONS = new Set(${BASIC_ACTIONS_JSON})
   const SAFE_ACTION_STATUSES = new Set(['applied', 'blocked', 'noop', 'failed'])
   const SAFE_EFFECT_STATUSES = new Set(['applied', 'skipped', 'failed'])
@@ -990,22 +1355,32 @@ export const WINDOW_JS = `(() => {
   const containsMalformedPublicText = ${CONTAINS_MALFORMED_PUBLIC_TEXT_JS}
   const validateWindowArchiveQuery = ${VALIDATE_WINDOW_ARCHIVE_QUERY_JS}
   const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}
+  const windowDetailShareState = ${WINDOW_DETAIL_SHARE_STATE_JS}
   const windowSharePath = ${WINDOW_SHARE_PATH_JS}
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
   const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
   const windowLiveSurveyedPlots = ${WINDOW_LIVE_SURVEYED_PLOTS_JS}
+  const windowLiveExpandedGroundLayout = ${WINDOW_LIVE_EXPANDED_GROUND_LAYOUT_JS}
   const windowLiveScatteredPoint = ${WINDOW_LIVE_SCATTERED_POINT_JS}
   const windowLiveScatteredPoints = ${WINDOW_LIVE_SCATTERED_POINTS_JS}
   const windowLiveScatterSurfaceHeight = ${WINDOW_LIVE_SCATTER_SURFACE_HEIGHT_JS}
   const windowLiveSeparatedPoints = ${WINDOW_LIVE_SEPARATED_POINTS_JS}
+  const windowLivePointFootprints = ${WINDOW_LIVE_POINT_FOOTPRINTS_JS}
+  const windowLiveRootReservations = ${WINDOW_LIVE_ROOT_RESERVATIONS_JS}
+  const windowLiveResidentPointsAroundThings =
+    ${WINDOW_LIVE_RESIDENT_POINTS_AROUND_THINGS_JS}
+  const windowLiveThingPointsAroundResidents =
+    ${WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS}
   const windowLiveVisiblePlots = ${WINDOW_LIVE_VISIBLE_PLOTS_JS}
+  const windowLiveVisiblePlotIds = ${WINDOW_LIVE_VISIBLE_PLOT_IDS_JS}
   const windowLiveDirectGroundWidth = ${WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS}
   const windowLiveCapacitySelection = ${WINDOW_LIVE_CAPACITY_SELECTION_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
   const windowLiveTraceOpacity = ${WINDOW_LIVE_TRACE_OPACITY_JS}
   const windowLiveCenterCamera = ${WINDOW_LIVE_CENTER_CAMERA_JS}
+  const windowLiveRevealCamera = ${WINDOW_LIVE_REVEAL_CAMERA_JS}
   const windowLiveClampZoomScale = ${WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS}
   const windowLiveResidentLabelMode = ${WINDOW_LIVE_RESIDENT_LABEL_MODE_JS}
   const windowLivePruneTrailStarts = ${WINDOW_LIVE_PRUNE_TRAIL_STARTS_JS}
@@ -1083,6 +1458,14 @@ export const WINDOW_JS = `(() => {
     archiveSearch: document.getElementById('archive-search'),
     archiveResults: document.getElementById('archive-results'),
     archivePage: document.getElementById('archive-page'),
+    gazetteShare: document.getElementById('gazette-share'),
+    gazetteSubmissionStatus: document.getElementById('gazette-submission-status'),
+    gazetteIssueList: document.getElementById('gazette-issue-list'),
+    gazetteIssuesPage: document.getElementById('gazette-issues-page'),
+    gazetteIssue: document.getElementById('gazette-issue'),
+    gazetteEntriesPage: document.getElementById('gazette-entries-page'),
+    directorySearchField: document.querySelector('.directory-search-field'),
+    viewFilters: document.querySelector('.view-filters'),
   }
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
@@ -1093,6 +1476,9 @@ export const WINDOW_JS = `(() => {
   let navigationRevision = 0
   let authoredRevision = 0
   let archiveRequestRevision = 0
+  let gazetteListRequestRevision = 0
+  let gazetteListRequestPromise = null
+  let gazetteDetailRequestRevision = 0
   let detailRequestRevision = 0
   let detailDrawingRequestRevision = 0
   let detailDrawingHistoryRequestRevision = 0
@@ -1129,6 +1515,25 @@ export const WINDOW_JS = `(() => {
       totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
       initialized: false, error: null,
     },
+    gazette: {
+      firstPrintAt: null,
+      submissionsOpen: null,
+      issues: [],
+      nextBeforeIssueNumber: null,
+      hasMoreIssues: false,
+      listLoading: false,
+      listInitialized: false,
+      listError: null,
+      listRetryMode: 'initial',
+      issue: null,
+      entries: [],
+      nextAfterOrdinal: null,
+      hasMoreEntries: false,
+      detailLoading: false,
+      detailInitialized: false,
+      detailError: null,
+    },
+    gazetteIssueId: null,
     view: 'map',
     directorySearch: '',
     directorySearchIndex: -1,
@@ -1177,6 +1582,8 @@ export const WINDOW_JS = `(() => {
   let liveResidentPointsByPlaceId = Object.freeze({})
   let liveThingPointsByPlaceId = Object.freeze({})
   let livePlotDetailContext = null
+  let livePendingRevealPlaceId = null
+  let livePendingRevealTarget = null
   let liveNoteQueue = Object.freeze([])
   let liveNoteFetches = 0
   let liveDrawingQueue = Object.freeze([])
@@ -1662,7 +2069,11 @@ export const WINDOW_JS = `(() => {
           proofFailure: false,
           proofRetrySucceeded: true,
         } }
-        if (state.snapshot) renderLive(state.snapshot)
+        if (state.snapshot) {
+          renderLive(state.snapshot)
+          window.queueMicrotask(() =>
+            revealLiveElements(liveRevealTargetsForPlace(LIVE_PROOF_WORKSHOP_ID)))
+        }
       })
       row.append(retry)
     } else {
@@ -1713,6 +2124,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (node.dataset.liveItemKey === key) node.setAttribute('data-live-raised', 'true')
       else node.removeAttribute('data-live-raised')
     }
+    syncLivePlotVisibility()
     scheduleLiveResidentLabels(true)
   }
 
@@ -1743,7 +2155,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
-  function requestLiveFocusRestore(focusKey, fallbackId = 'live-plates') {
+  function requestLiveFocusRestore(
+    focusKey,
+    fallbackId = 'live-plates',
+    revealPlaceId = null,
+  ) {
+    livePendingRevealPlaceId = safeId(revealPlaceId)
+    livePendingRevealTarget = liveStageTargetForElements(
+      document.querySelectorAll('[data-focus-key="' + CSS.escape(focusKey) + '"]'),
+    )
     state = {
       ...state,
       live: {
@@ -1754,10 +2174,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  function liveRevealTargetsForPlace(placeId) {
+    const safePlaceId = safeId(placeId)
+    if (!safePlaceId || !nodes.livePlates) return []
+    return [...nodes.livePlates.querySelectorAll(
+      '[data-live-overflow-place-id="' + String(safePlaceId) + '"]',
+    )]
+  }
+
   function flushLiveFocusRestore() {
     const focusKey = state.live.focusRestoreKey
     const fallbackId = state.live.focusRestoreFallbackId
     if (!focusKey) return
+    const revealPlaceId = livePendingRevealPlaceId
+    const revealTarget = livePendingRevealTarget
+    livePendingRevealPlaceId = null
+    livePendingRevealTarget = null
     state = {
       ...state,
       live: {
@@ -1766,7 +2198,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         focusRestoreFallbackId: null,
       },
     }
-    window.queueMicrotask(() => restoreFocus(focusKey, null, fallbackId || null))
+    window.queueMicrotask(() => {
+      const focusTargets = [...document.querySelectorAll(
+        '[data-focus-key="' + CSS.escape(focusKey) + '"]',
+      )].filter(target => !target.closest('[hidden]'))
+      const placeTargets = liveRevealTargetsForPlace(revealPlaceId)
+      if (!revealLiveElements(focusTargets.length ? focusTargets : placeTargets) &&
+          revealTarget) revealLiveStageTarget(revealTarget)
+      restoreFocus(focusKey, null, fallbackId || null)
+    })
   }
 
   function renderLiveFocusStatus() {
@@ -2014,16 +2454,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
-  function liveDetailedPlotIds(plots) {
+  function liveDetailedPlotIds(plots, expandedGrounds = Object.freeze({})) {
     const viewport = liveCameraViewport()
-    return new Set(viewport
-      ? windowLiveVisiblePlots(plots, viewport, LIVE_PLOT_OVERSCAN).map(plot => plot.id)
-      : [])
+    return new Set(viewport ? windowLiveVisiblePlotIds(
+      plots, expandedGrounds, viewport, LIVE_PLOT_OVERSCAN,
+    ) : [])
   }
 
   function livePlotHasFocusedDetail(node) {
-    return node.dataset.liveFocusPlot === 'true' || Boolean(node.querySelector(
-      '[data-live-focus-resident], [data-live-focus-partner], [data-live-focus-thing]',
+    return node.dataset.liveFocusPlot === 'true' || node.dataset.liveRaised === 'true' ||
+      Boolean(node.querySelector(
+      '[data-live-focus-resident], [data-live-focus-partner], [data-live-focus-thing], ' +
+      '[data-live-raised="true"]',
     ))
   }
 
@@ -2039,7 +2481,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       return plot.id ? [plot] : []
     })
-    const visibleIds = liveDetailedPlotIds(plots)
+    const visibleIds = liveDetailedPlotIds(
+      plots,
+      livePlotDetailContext?.expandedGrounds || Object.freeze({}),
+    )
     for (const node of nodes.livePlates.querySelectorAll('.live-plot')) {
       const placeId = safeId(node.dataset.placeId)
       const detailed = visibleIds.has(placeId) ||
@@ -2085,6 +2530,116 @@ ${WINDOW_CLIENT_SAFETY_JS}
     liveCameraFrame = window.requestAnimationFrame(commitLiveCamera)
   }
 
+  function liveCameraForStageTarget(target, center = false) {
+    if (!nodes.liveViewport || !target) return null
+    const base = center
+      ? windowLiveCenterCamera(
+          nodes.liveViewport.clientWidth,
+          nodes.liveViewport.clientHeight,
+          target.x,
+          target.y,
+          LIVE_CAMERA_CENTER_SCALE,
+          LIVE_CAMERA_MIN_SCALE,
+          LIVE_CAMERA_MAX_SCALE,
+        )
+      : liveCamera
+    if (!base) return null
+    return windowLiveRevealCamera(
+      nodes.liveViewport.clientWidth,
+      nodes.liveViewport.clientHeight,
+      target.x,
+      target.y,
+      Number(target.width) || 0,
+      Number(target.height) || 0,
+      base.scale,
+      base.offsetX,
+      base.offsetY,
+      LIVE_CAMERA_SAFE_INSET,
+    )
+  }
+
+  function revealLiveStageTarget(target, center = false) {
+    const next = liveCameraForStageTarget(target, center)
+    if (!next) return false
+    applyLiveCamera({ ...next, panStart: null, pinchStart: null })
+    return true
+  }
+
+  function liveStageTargetForElements(elements) {
+    if (!nodes.liveViewport || !nodes.liveStage || !(liveCamera.scale > 0)) return null
+    if (liveCameraFrame) {
+      window.cancelAnimationFrame(liveCameraFrame)
+      liveCameraFrame = 0
+      commitLiveCamera()
+    }
+    const rects = [...elements].flatMap(node => {
+      if (!(node instanceof Element) || node.closest('[hidden]')) return []
+      const rect = node.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0 ? [rect] : []
+    })
+    if (!rects.length) return null
+    const viewportRect = nodes.liveViewport.getBoundingClientRect()
+    const left = Math.min(...rects.map(rect => rect.left))
+    const right = Math.max(...rects.map(rect => rect.right))
+    const top = Math.min(...rects.map(rect => rect.top))
+    const bottom = Math.max(...rects.map(rect => rect.bottom))
+    return Object.freeze({
+      x: ((left + right) / 2 - viewportRect.left - liveCamera.offsetX) /
+        liveCamera.scale,
+      y: ((top + bottom) / 2 - viewportRect.top - liveCamera.offsetY) /
+        liveCamera.scale,
+      width: (right - left) / liveCamera.scale,
+      height: (bottom - top) / liveCamera.scale,
+    })
+  }
+
+  function revealLiveElements(elements, center = false) {
+    const target = liveStageTargetForElements(elements)
+    return target ? revealLiveStageTarget(target, center) : false
+  }
+
+  function liveDefaultCenterTarget(snapshot, focus, survey) {
+    const focusedResident = state.live.focusResident
+      ? displayedResidents(snapshot).find(resident =>
+          resident.handle === state.live.focusResident)
+      : null
+    if (focusedResident) {
+      const focusedPoint = liveResidentReplayPoint(
+        snapshot,
+        focusedResident.current_place_id,
+        focusedResident.handle,
+        focus,
+        liveChildren(snapshot, focus),
+      )
+      if (focusedPoint) return focusedPoint
+    }
+    const hasDirectResident = displayedResidents(snapshot).some(resident =>
+      resident.current_place_id === focus.id &&
+      (!state.resident || resident.handle === state.resident))
+    const firstChild = survey.plots[0] || null
+    const proofRetry = state.live.proofScene && focus.id === LIVE_PROOF_ROOT_ID
+      ? survey.plots.find(plot => plot.id === LIVE_PROOF_RETRY_ROOM_ID) || null
+      : null
+    if (firstChild && proofRetry) {
+      return Object.freeze({
+        x: (firstChild.x + firstChild.width / 2 +
+          proofRetry.x + proofRetry.width / 2) / 2,
+        y: (firstChild.y + firstChild.height / 2 +
+          proofRetry.y + proofRetry.height / 2) / 2,
+      })
+    }
+    if (!hasDirectResident && Number(focus.things) <= 0 && firstChild) {
+      return Object.freeze({
+        x: firstChild.x + firstChild.width / 2,
+        y: firstChild.y + firstChild.height / 2,
+      })
+    }
+    return Object.freeze({
+      x: Math.min(survey.width, LIVE_DIRECT_GROUND_WIDTH) / 2,
+      y: Math.min(survey.height, WINDOW_LIVE_DIRECT_COMMONS_HEIGHT) / 2,
+    })
+  }
+
   function liveCenterTarget() {
     if (!nodes.liveViewport || !nodes.liveStage) return null
     const preferredKey = state.live.focusResident
@@ -2120,11 +2675,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
         if (point) return point
       }
     }
+    if (state.snapshot) {
+      const focus = liveFocusPlace(state.snapshot)
+      if (focus) {
+        return liveDefaultCenterTarget(
+          state.snapshot,
+          focus,
+          liveStageSurvey(livePlaceRows(state.snapshot), focus.id),
+        )
+      }
+    }
     const width = Number(nodes.liveStage.dataset.liveStageWidth) || nodes.liveStage.offsetWidth
     const height = Number(nodes.liveStage.dataset.liveStageHeight) || nodes.liveStage.offsetHeight
     return Object.freeze({
       x: Math.min(width, LIVE_DIRECT_GROUND_WIDTH) / 2,
-      y: Math.min(height, 680) / 2,
+      y: Math.min(height, WINDOW_LIVE_DIRECT_COMMONS_HEIGHT) / 2,
     })
   }
 
@@ -2137,15 +2702,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const target = liveCenterTarget()
     if (!target) return
-    const centered = windowLiveCenterCamera(
-      nodes.liveViewport.clientWidth,
-      nodes.liveViewport.clientHeight,
-      target.x,
-      target.y,
-      LIVE_CAMERA_CENTER_SCALE,
-      LIVE_CAMERA_MIN_SCALE,
-      LIVE_CAMERA_MAX_SCALE,
-    )
+    const centered = liveCameraForStageTarget(target, true)
     if (!centered) return
     applyLiveCamera({ ...centered, panStart: null, pinchStart: null })
     if (liveCameraFrame) {
@@ -2304,9 +2861,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       delete status.dataset.tone
     }
     for (const button of [...viewShareButtons, detailShareButton].filter(Boolean)) {
-      button.textContent = button.dataset.shareScope === 'detail'
+      button.textContent = button.dataset.shareLabel || (button.dataset.shareScope === 'detail'
         ? 'Share this detail'
-        : 'Share this view'
+        : 'Share this view')
     }
   }
 
@@ -2319,9 +2876,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     status.dataset.tone = tone
   }
 
+  function currentSharePath(button) {
+    const current = viewShareState()
+    const shareState = button?.dataset.shareScope === 'detail'
+      ? windowDetailShareState(current)
+      : current
+    return shareState ? windowSharePath(shareState) : null
+  }
+
   async function copyCurrentShareLink(button) {
     const requestShareFeedbackRevision = ++shareFeedbackRevision
-    const path = windowSharePath(viewShareState())
+    const path = currentSharePath(button)
     if (!path) {
       const values = [state.directorySearch, state.archive.query]
       const credentialPresent = values.some(value => (
@@ -2339,16 +2904,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
       await navigator.clipboard.writeText(absoluteUrl)
       if (
         shareFeedbackRevision !== requestShareFeedbackRevision ||
-        windowSharePath(viewShareState()) !== path
+        currentSharePath(button) !== path
       ) return
       setShareStatus('Link copied: ' + absoluteUrl, 'success', button)
       if (button) button.textContent = button.dataset.shareScope === 'detail'
         ? 'Detail link copied'
-        : 'View link copied'
+        : button === nodes.gazetteShare
+          ? state.gazetteIssueId ? 'Issue link copied' : 'Gazette link copied'
+          : 'View link copied'
     } catch {
       if (
         shareFeedbackRevision !== requestShareFeedbackRevision ||
-        windowSharePath(viewShareState()) !== path
+        currentSharePath(button) !== path
       ) return
       setShareStatus('The link could not copy. Copy this URL: ' + absoluteUrl, 'error', button)
     }
@@ -2777,6 +3344,600 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  function safeGazetteCount(value) {
+    const parsed = Number(value)
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+  }
+
+  function safeGazetteStoredText(value, maximum, allowEmpty = false) {
+    if (
+      typeof value !== 'string' || containsMalformedPublicText(value) || hasUnsafeText(value) ||
+      /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/iu.test(value)
+    ) return null
+    const characters = Array.from(value)
+    if (characters.length > maximum || (!allowEmpty && !value.trim())) return null
+    return value
+  }
+
+  function normalizeGazetteIssueSummary(rawIssue) {
+    if (!rawIssue || typeof rawIssue !== 'object') return null
+    const issueNumber = safeId(rawIssue.issue_number)
+    const scheduledFor = safeDate(rawIssue.scheduled_for)
+    const printedAt = safeDate(rawIssue.printed_at)
+    const entryCount = safeGazetteCount(rawIssue.entry_count)
+    if (!issueNumber || !scheduledFor || !printedAt || entryCount === null) return null
+    if (printedAt.getTime() < scheduledFor.getTime()) return null
+    return Object.freeze({ issueNumber, scheduledFor, printedAt, entryCount })
+  }
+
+  function normalizeGazetteListPayload(payload, requestedBeforeIssueNumber) {
+    if (!payload || typeof payload !== 'object' ||
+        !payload.submission_room || Array.isArray(payload.submission_room) ||
+        payload.submission_room.place_id !== 454 ||
+        typeof payload.submission_room.submissions_open !== 'boolean' ||
+        payload.first_print_at !== GAZETTE_FIRST_PRINT_AT || !Array.isArray(payload.issues) ||
+        payload.issues.length > GAZETTE_ISSUE_PAGE_LIMIT) {
+      throw new Error('invalid Gazette issue page')
+    }
+    const firstPrintAt = safeDate(payload.first_print_at)
+    const issues = payload.issues.map(normalizeGazetteIssueSummary)
+    if (!firstPrintAt || issues.some(issue => !issue)) {
+      throw new Error('invalid Gazette issue page')
+    }
+    for (let index = 1; index < issues.length; index += 1) {
+      if (issues[index - 1].issueNumber <= issues[index].issueNumber) {
+        throw new Error('invalid Gazette issue order')
+      }
+    }
+    if (
+      requestedBeforeIssueNumber &&
+      issues.some(issue => issue.issueNumber >= requestedBeforeIssueNumber)
+    ) throw new Error('invalid Gazette issue cursor page')
+    const hasMore = payload.has_more === true
+    const nextBeforeIssueNumber = payload.next_before_issue_number === null ||
+      payload.next_before_issue_number === undefined
+      ? null
+      : safeId(payload.next_before_issue_number)
+    if (hasMore !== Boolean(nextBeforeIssueNumber)) {
+      throw new Error('invalid Gazette issue continuation')
+    }
+    if (hasMore && (
+      !issues.length || nextBeforeIssueNumber !== issues.at(-1).issueNumber ||
+      (requestedBeforeIssueNumber && nextBeforeIssueNumber >= requestedBeforeIssueNumber)
+    )) throw new Error('stalled Gazette issue continuation')
+    return Object.freeze({
+      firstPrintAt,
+      submissionsOpen: payload.submission_room.submissions_open,
+      issues,
+      hasMore,
+      nextBeforeIssueNumber,
+    })
+  }
+
+  function normalizeGazetteEntry(rawEntry, scheduledFor) {
+    if (!rawEntry || typeof rawEntry !== 'object') return null
+    const ordinal = safeId(rawEntry.ordinal)
+    const noteId = safeId(rawEntry.note_id)
+    const author = safeHandle(rawEntry.author)
+    const body = safeGazetteStoredText(rawEntry.body, 65536)
+    const createdAt = safeDate(rawEntry.created_at)
+    if (!ordinal || !noteId || !author || body === null || !createdAt ||
+        createdAt.getTime() >= scheduledFor.getTime()) return null
+    return Object.freeze({ ordinal, noteId, author, body, createdAt })
+  }
+
+  function sameGazetteIssue(left, right) {
+    return Boolean(left && right &&
+      left.issueNumber === right.issueNumber &&
+      left.scheduledFor.getTime() === right.scheduledFor.getTime() &&
+      left.printedAt.getTime() === right.printedAt.getTime() &&
+      left.entryCount === right.entryCount && left.header === right.header)
+  }
+
+  function normalizeGazetteDetailPayload(
+    payload,
+    expectedIssueNumber,
+    requestedAfterOrdinal,
+    acceptedIssue,
+  ) {
+    if (!payload || typeof payload !== 'object') throw new Error('invalid Gazette issue')
+    const summary = normalizeGazetteIssueSummary(payload.issue)
+    const header = safeGazetteStoredText(payload.issue?.header, 4000)
+    if (!summary || summary.issueNumber !== expectedIssueNumber || header === null ||
+        !Array.isArray(payload.entries) || payload.entries.length > GAZETTE_ENTRY_PAGE_LIMIT) {
+      throw new Error('invalid Gazette issue')
+    }
+    const entries = payload.entries.map(entry => normalizeGazetteEntry(entry, summary.scheduledFor))
+    if (entries.some(entry => !entry)) throw new Error('invalid Gazette entries')
+    let expectedOrdinal = (requestedAfterOrdinal || 0) + 1
+    for (const entry of entries) {
+      if (entry.ordinal !== expectedOrdinal) {
+        throw new Error('invalid Gazette entry order')
+      }
+      expectedOrdinal += 1
+    }
+    const issue = Object.freeze({ ...summary, header })
+    if (acceptedIssue && !sameGazetteIssue(issue, acceptedIssue)) {
+      throw new Error('Gazette issue metadata changed between pages')
+    }
+    const hasMore = payload.has_more === true
+    const nextAfterOrdinal = payload.next_after_ordinal === null ||
+      payload.next_after_ordinal === undefined
+      ? null
+      : safeId(payload.next_after_ordinal)
+    const lastOrdinal = entries.at(-1)?.ordinal ?? (requestedAfterOrdinal || 0)
+    if (
+      hasMore !== Boolean(nextAfterOrdinal) || summary.entryCount < entries.length ||
+      (hasMore && (
+        !entries.length || nextAfterOrdinal !== lastOrdinal ||
+        nextAfterOrdinal >= summary.entryCount
+      )) ||
+      (!hasMore && lastOrdinal !== summary.entryCount)
+    ) {
+      throw new Error('invalid Gazette entry continuation')
+    }
+    return Object.freeze({
+      issue,
+      entries,
+      hasMore,
+      nextAfterOrdinal,
+    })
+  }
+
+  function gazetteDateLabel(date, includeWeekday = false) {
+    const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ]
+    const weekday = includeWeekday ? weekdays[date.getUTCDay()] + ', ' : ''
+    return weekday + String(date.getUTCDate()) + ' ' + months[date.getUTCMonth()] + ' ' +
+      String(date.getUTCFullYear()) + ' at ' + String(date.getUTCHours()).padStart(2, '0') +
+      ':' + String(date.getUTCMinutes()).padStart(2, '0') + ' UTC'
+  }
+
+  function selectGazetteIssue(issueNumber, push) {
+    if (!issueNumber || state.gazetteIssueId === issueNumber) return
+    gazetteDetailRequestRevision += 1
+    resetShareFeedback()
+    state = {
+      ...state,
+      gazetteIssueId: issueNumber,
+      gazette: {
+        ...state.gazette,
+        issue: null,
+        entries: [],
+        nextAfterOrdinal: null,
+        hasMoreEntries: false,
+        detailLoading: false,
+        detailInitialized: false,
+        detailError: null,
+      },
+    }
+    writeLocation(push)
+    renderGazettePreservingFocus()
+    void loadGazetteIssue(issueNumber, true)
+  }
+
+  function gazetteIssueLink(issue) {
+    const item = element('li', 'gazette-issue-summary')
+    const link = element('a', 'gazette-issue-link', 'Issue ' + String(issue.issueNumber))
+    link.href = '/window/gazette?issue=' + String(issue.issueNumber)
+    link.dataset.focusKey = 'gazette-issue-' + String(issue.issueNumber)
+    if (issue.issueNumber === state.gazetteIssueId) link.setAttribute('aria-current', 'page')
+    link.addEventListener('click', event => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      selectGazetteIssue(issue.issueNumber, true)
+    })
+    const count = String(issue.entryCount) + (issue.entryCount === 1 ? ' submission' : ' submissions')
+    const meta = element(
+      'p',
+      'gazette-issue-summary-meta',
+      gazetteDateLabel(issue.scheduledFor, true) + ' · ' + count,
+    )
+    item.append(link, meta)
+    return item
+  }
+
+  function gazetteListRetryButton() {
+    const retry = element('button', 'gazette-retry', 'Retry loading Gazette issues')
+    retry.type = 'button'
+    retry.dataset.focusKey = 'gazette-retry-issues'
+    retry.dataset.focusFallbackId = 'gazette-issue-list'
+    retry.addEventListener('click', () => void loadGazetteIssues(state.gazette.listRetryMode))
+    return retry
+  }
+
+  function gazetteDetailRetryButton() {
+    const retry = element('button', 'gazette-retry', 'Retry loading this Gazette issue')
+    retry.type = 'button'
+    retry.dataset.focusKey = 'gazette-retry-detail'
+    retry.dataset.focusFallbackId = 'gazette-issue'
+    retry.addEventListener('click', () => {
+      if (state.gazetteIssueId) void loadGazetteIssue(state.gazetteIssueId, state.gazette.entries.length === 0)
+    })
+    return retry
+  }
+
+  function renderGazetteIssuesPage(gazette) {
+    if (!nodes.gazetteIssuesPage) return
+    nodes.gazetteIssuesPage.hidden = true
+    nodes.gazetteIssuesPage.replaceChildren()
+    if (gazette.listLoading && gazette.issues.length) {
+      nodes.gazetteIssuesPage.hidden = false
+      nodes.gazetteIssuesPage.replaceChildren(
+        element('p', 'loading-row', 'Checking the Gazette archive…'),
+      )
+      return
+    }
+    if (gazette.listError && gazette.issues.length) {
+      nodes.gazetteIssuesPage.hidden = false
+      nodes.gazetteIssuesPage.replaceChildren(
+        element('p', 'error-row', gazette.listError),
+        gazetteListRetryButton(),
+      )
+      return
+    }
+    if (!gazette.hasMoreIssues || !gazette.nextBeforeIssueNumber) return
+    const load = element('button', 'gazette-load', 'Load older issues')
+    load.type = 'button'
+    load.dataset.focusKey = 'gazette-load-issues'
+    load.dataset.focusFallbackId = 'gazette-issue-list'
+    load.addEventListener('click', () => void loadGazetteIssues('older'))
+    nodes.gazetteIssuesPage.hidden = false
+    nodes.gazetteIssuesPage.replaceChildren(load)
+  }
+
+  function gazetteEntryCard(entry) {
+    const item = element('li', 'gazette-entry')
+    const body = element('p', 'gazette-entry-body')
+    body.textContent = entry.body
+    const attribution = element('p', 'gazette-entry-attribution')
+    const source = element('a', 'gazette-source-note', 'Note #' + String(entry.noteId))
+    source.href = '/window/note/' + String(entry.noteId)
+    attribution.append(
+      document.createTextNode('by ' + entry.author + ' · '),
+      source,
+      document.createTextNode(' · ' + gazetteDateLabel(entry.createdAt)),
+    )
+    item.append(body, attribution)
+    return item
+  }
+
+  function renderGazetteEntriesPage(gazette) {
+    if (!nodes.gazetteEntriesPage) return
+    nodes.gazetteEntriesPage.hidden = true
+    nodes.gazetteEntriesPage.replaceChildren()
+    if (gazette.detailLoading && gazette.entries.length) {
+      nodes.gazetteEntriesPage.hidden = false
+      nodes.gazetteEntriesPage.replaceChildren(
+        element('p', 'loading-row', 'Reading more entries in this issue…'),
+      )
+      return
+    }
+    if (gazette.detailError && gazette.entries.length) {
+      nodes.gazetteEntriesPage.hidden = false
+      nodes.gazetteEntriesPage.replaceChildren(
+        element('p', 'error-row', gazette.detailError),
+        gazetteDetailRetryButton(),
+      )
+      return
+    }
+    if (!gazette.hasMoreEntries || !gazette.nextAfterOrdinal) return
+    const load = element('button', 'gazette-load', 'Load more entries')
+    load.type = 'button'
+    load.dataset.focusKey = 'gazette-load-entries'
+    load.dataset.focusFallbackId = 'gazette-issue'
+    load.addEventListener('click', () => {
+      if (state.gazetteIssueId) void loadGazetteIssue(state.gazetteIssueId, false)
+    })
+    nodes.gazetteEntriesPage.hidden = false
+    nodes.gazetteEntriesPage.replaceChildren(load)
+  }
+
+  function renderGazetteIssue(gazette) {
+    if (!nodes.gazetteIssue) return
+    nodes.gazetteIssue.setAttribute('aria-busy', String(gazette.detailLoading))
+    if (!state.gazetteIssueId) {
+      renderEmpty(
+        nodes.gazetteIssue,
+        'empty-row',
+        gazette.issues.length
+          ? 'Choose a permanent Gazette issue.'
+          : 'The first permanent issue will appear here after its scheduled print.',
+      )
+      renderGazetteEntriesPage(gazette)
+      return
+    }
+    if (gazette.detailLoading && !gazette.issue) {
+      renderEmpty(nodes.gazetteIssue, 'loading-row', 'Reading Gazette issue ' + String(state.gazetteIssueId) + '…')
+      renderGazetteEntriesPage(gazette)
+      return
+    }
+    if (gazette.detailError && !gazette.issue) {
+      nodes.gazetteIssue.replaceChildren(
+        element('p', 'error-row', gazette.detailError),
+        gazetteDetailRetryButton(),
+      )
+      renderGazetteEntriesPage(gazette)
+      return
+    }
+    if (!gazette.issue) {
+      renderEmpty(nodes.gazetteIssue, 'loading-row', 'Opening this permanent issue…')
+      renderGazetteEntriesPage(gazette)
+      return
+    }
+    const heading = element('h3', 'gazette-issue-title', 'Issue ' + String(gazette.issue.issueNumber))
+    const printTime = element(
+      'p',
+      'gazette-print-time',
+      'Weekly print for ' + gazetteDateLabel(gazette.issue.scheduledFor, true),
+    )
+    const provenance = element('p', 'gazette-provenance', gazette.issue.header)
+    const entries = element('ol', 'gazette-entries')
+    if (gazette.entries.length) {
+      entries.append(...gazette.entries.map(gazetteEntryCard))
+      nodes.gazetteIssue.replaceChildren(heading, printTime, provenance, entries)
+    } else {
+      nodes.gazetteIssue.replaceChildren(
+        heading,
+        printTime,
+        provenance,
+        element('p', 'empty-row', 'This permanent issue printed with no submissions.'),
+      )
+    }
+    renderGazetteEntriesPage(gazette)
+  }
+
+  function renderGazette() {
+    if (!nodes.gazetteIssueList) return
+    const gazette = state.gazette
+    if (nodes.gazetteSubmissionStatus) {
+      if (gazette.submissionsOpen === true) {
+        nodes.gazetteSubmissionStatus.dataset.state = 'open'
+        nodes.gazetteSubmissionStatus.textContent = 'Room #454 is open for Gazette submissions.'
+      } else if (gazette.submissionsOpen === false) {
+        nodes.gazetteSubmissionStatus.dataset.state = 'closed'
+        nodes.gazetteSubmissionStatus.textContent = 'Room #454 is closed for Gazette submissions. Wait until this notice says open before submitting.'
+      } else {
+        nodes.gazetteSubmissionStatus.dataset.state = gazette.listError ? 'unavailable' : 'checking'
+        nodes.gazetteSubmissionStatus.textContent = gazette.listError
+          ? 'Gazette submission status is unavailable. Check again before submitting.'
+          : 'Checking whether Room #454 is open for submissions…'
+      }
+    }
+    if (nodes.gazetteShare) {
+      const label = state.gazetteIssueId
+        ? 'Share issue ' + String(state.gazetteIssueId)
+        : 'Share this Gazette'
+      nodes.gazetteShare.dataset.shareLabel = label
+      nodes.gazetteShare.textContent = label
+    }
+    nodes.gazetteIssueList.setAttribute('aria-busy', String(gazette.listLoading))
+    if (gazette.listLoading && !gazette.issues.length) {
+      renderEmpty(nodes.gazetteIssueList, 'loading-row', 'Opening the Gazette archive…')
+    } else if (gazette.listError && !gazette.issues.length) {
+      nodes.gazetteIssueList.replaceChildren(
+        element('p', 'error-row', gazette.listError),
+        gazetteListRetryButton(),
+      )
+    } else if (gazette.listInitialized && !gazette.issues.length) {
+      renderEmpty(nodes.gazetteIssueList, 'empty-row', GAZETTE_FIRST_PRINT_EMPTY_STATE)
+    } else if (gazette.issues.length) {
+      const list = element('ol', 'gazette-issue-list-items')
+      list.append(...gazette.issues.map(gazetteIssueLink))
+      nodes.gazetteIssueList.replaceChildren(list)
+    }
+    renderGazetteIssuesPage(gazette)
+    renderGazetteIssue(gazette)
+  }
+
+  function renderGazettePreservingFocus() {
+    const active = document.activeElement
+    const focusKey = active?.dataset?.focusKey || null
+    const focusFallbackKey = active?.dataset?.focusFallbackKey || null
+    const focusFallbackId = active?.dataset?.focusFallbackId || null
+    renderGazette()
+    restoreFocus(focusKey, focusFallbackKey, focusFallbackId)
+  }
+
+  async function loadGazetteIssues(mode) {
+    if (gazetteListRequestPromise) return gazetteListRequestPromise
+    const previous = state.gazette
+    const initial = mode === 'initial'
+    const older = mode === 'older'
+    const requestRevision = ++gazetteListRequestRevision
+    state = {
+      ...state,
+      gazette: {
+        ...previous,
+        submissionsOpen: older ? previous.submissionsOpen : null,
+        issues: initial ? [] : previous.issues,
+        nextBeforeIssueNumber: initial ? null : previous.nextBeforeIssueNumber,
+        hasMoreIssues: initial ? false : previous.hasMoreIssues,
+        listLoading: true,
+        listInitialized: true,
+        listError: null,
+        listRetryMode: mode,
+      },
+    }
+    renderGazettePreservingFocus()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const request = (async () => {
+      try {
+        const url = new URL('/api/gazette', window.location.origin)
+        url.searchParams.set('limit', String(GAZETTE_ISSUE_PAGE_LIMIT))
+        if (older && previous.nextBeforeIssueNumber) {
+          url.searchParams.set('before_issue_number', String(previous.nextBeforeIssueNumber))
+        }
+        const response = await fetch(url.pathname + url.search, {
+          cache: 'no-store',
+          credentials: 'omit',
+          headers: { Accept: 'application/json' },
+          mode: 'same-origin',
+          redirect: 'error',
+          referrerPolicy: 'no-referrer',
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('Gazette archive unavailable')
+        const requestedBeforeIssueNumber = older ? previous.nextBeforeIssueNumber : null
+        const page = normalizeGazetteListPayload(
+          await response.json(),
+          requestedBeforeIssueNumber,
+        )
+        if (gazetteListRequestRevision !== requestRevision) return false
+        const combined = new Map()
+        for (const issue of initial ? [] : previous.issues) {
+          combined.set(issue.issueNumber, issue)
+        }
+        for (const issue of page.issues) combined.set(issue.issueNumber, issue)
+        const issues = [...combined.values()]
+          .sort((left, right) => right.issueNumber - left.issueNumber)
+        const shouldSelectLatest = state.view === 'gazette' && !state.gazetteIssueId && issues.length
+        const selectedIssueNumber = shouldSelectLatest ? issues[0].issueNumber : state.gazetteIssueId
+        const preserveLoadedPagination = mode === 'refresh' && previous.issues.length > 0
+        const nextBeforeIssueNumber = preserveLoadedPagination
+          ? previous.nextBeforeIssueNumber
+          : page.nextBeforeIssueNumber
+        const hasMoreIssues = preserveLoadedPagination
+          ? previous.hasMoreIssues
+          : page.hasMore && Boolean(page.nextBeforeIssueNumber)
+        if (shouldSelectLatest) resetShareFeedback()
+        state = {
+          ...state,
+          gazetteIssueId: selectedIssueNumber,
+          gazette: {
+            ...state.gazette,
+            firstPrintAt: page.firstPrintAt,
+            submissionsOpen: page.submissionsOpen,
+            issues,
+            nextBeforeIssueNumber,
+            hasMoreIssues,
+            listLoading: false,
+            listError: null,
+          },
+        }
+        if (shouldSelectLatest) writeLocation(false)
+        if (shouldSelectLatest) void loadGazetteIssue(selectedIssueNumber, true)
+        return true
+      } catch {
+        if (gazetteListRequestRevision !== requestRevision) return false
+        state = {
+          ...state,
+          gazette: {
+            ...state.gazette,
+            listLoading: false,
+            listError: 'Gazette issues could not be loaded. Check the connection and try again.',
+          },
+        }
+        return false
+      } finally {
+        window.clearTimeout(timeout)
+        renderGazettePreservingFocus()
+      }
+    })()
+    gazetteListRequestPromise = request
+    try {
+      return await request
+    } finally {
+      if (gazetteListRequestPromise === request) gazetteListRequestPromise = null
+    }
+  }
+
+  async function loadGazetteIssue(issueNumber, reset) {
+    const previous = state.gazette
+    if (previous.detailLoading || !safeId(issueNumber)) return
+    const sameIssue = previous.issue?.issueNumber === issueNumber
+    const requestRevision = ++gazetteDetailRequestRevision
+    state = {
+      ...state,
+      gazette: {
+        ...previous,
+        issue: reset || !sameIssue ? null : previous.issue,
+        entries: reset || !sameIssue ? [] : previous.entries,
+        nextAfterOrdinal: reset || !sameIssue ? null : previous.nextAfterOrdinal,
+        hasMoreEntries: reset || !sameIssue ? false : previous.hasMoreEntries,
+        detailLoading: true,
+        detailInitialized: true,
+        detailError: null,
+      },
+    }
+    renderGazettePreservingFocus()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/gazette/' + String(issueNumber), window.location.origin)
+      url.searchParams.set('limit', String(GAZETTE_ENTRY_PAGE_LIMIT))
+      if (!reset && previous.nextAfterOrdinal) {
+        url.searchParams.set('after_ordinal', String(previous.nextAfterOrdinal))
+      }
+      const response = await fetch(url.pathname + url.search, {
+        cache: 'no-store',
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('Gazette issue unavailable')
+      const requestedAfterOrdinal = reset || !sameIssue ? null : previous.nextAfterOrdinal
+      const acceptedIssue = reset || !sameIssue ? null : previous.issue
+      const page = normalizeGazetteDetailPayload(
+        await response.json(),
+        issueNumber,
+        requestedAfterOrdinal,
+        acceptedIssue,
+      )
+      if (gazetteDetailRequestRevision !== requestRevision || state.gazetteIssueId !== issueNumber) return
+      const combined = new Map()
+      for (const entry of reset || !sameIssue ? [] : previous.entries) {
+        combined.set(entry.ordinal, entry)
+      }
+      for (const entry of page.entries) combined.set(entry.ordinal, entry)
+      state = {
+        ...state,
+        gazette: {
+          ...state.gazette,
+          issue: page.issue,
+          entries: [...combined.values()].sort((left, right) => left.ordinal - right.ordinal),
+          nextAfterOrdinal: page.nextAfterOrdinal,
+          hasMoreEntries: page.hasMore && Boolean(page.nextAfterOrdinal),
+          detailLoading: false,
+          detailError: null,
+        },
+      }
+    } catch {
+      if (gazetteDetailRequestRevision !== requestRevision || state.gazetteIssueId !== issueNumber) return
+      state = {
+        ...state,
+        gazette: {
+          ...state.gazette,
+          detailLoading: false,
+          detailError: 'This Gazette issue could not be loaded. Check the connection and try again.',
+        },
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      renderGazettePreservingFocus()
+    }
+  }
+
+  function loadSharedGazette() {
+    if (state.view !== 'gazette') return
+    if (!state.gazette.listInitialized && !state.gazette.listLoading) {
+      void loadGazetteIssues('initial')
+    }
+    if (
+      state.gazetteIssueId && !state.gazette.detailLoading &&
+      (!state.gazette.detailInitialized || state.gazette.issue?.issueNumber !== state.gazetteIssueId)
+    ) {
+      void loadGazetteIssue(state.gazetteIssueId, true)
+    }
+  }
+
   function dateLabel(date) {
     return date.toLocaleString([], {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -2965,7 +4126,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const changeId = raw.change_id == null ? null : safeChangeMarker(raw.change_id)
-      const actor = safeHandle(raw.actor)
+      const actor = safeHandle(raw.actor) || (
+        SAFE_SYSTEM_EVENT_ACTORS.has(raw.actor) ? raw.actor : null
+      )
       const verb = SAFE_EVENT_KINDS.get(raw.kind)
       const at = safeDate(raw.at)
       if (!id || (raw.change_id != null && !changeId) || !actor || !verb || !at) return []
@@ -2975,6 +4138,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
         return value ? [[key, value]] : []
       }))
       detail = normalizeLiveTransferDetail(raw.kind, source, detail)
+      if (raw.kind === 'gazette_printed') {
+        const issueNumber = safeId(source.issue_number)
+        const entryCount = safeGazetteCount(source.entry_count)
+        if (!issueNumber || entryCount === null || detail.place_id !== 454) return []
+        detail.issue_number = issueNumber
+        detail.entry_count = entryCount
+      }
       let carriesFailureCause = false
       if (raw.kind === 'action' && SAFE_ACTIONS.has(source.action)) {
         detail.action = source.action
@@ -4233,12 +5403,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const sleeperPlaceIds = parseWindowSleeperPlaceIds(params.get('sleepers'))
     const archiveChanged = query !== state.archive.query || mode !== state.archive.mode ||
       type !== state.archive.type
-    const detail = !legacyHash && pathId && ['place', 'resident', 'thing', 'note'].includes(pathKind)
+    const selectedView = VIEWS.includes(view) ? view : 'map'
+    const gazetteIssueId = selectedView === 'gazette' ? safeId(params.get('issue')) : null
+    const gazetteChanged = gazetteIssueId !== state.gazetteIssueId
+    const detail = !legacyHash && pathId && ['thing', 'note'].includes(pathKind)
       ? Object.freeze({ kind: pathKind, id: pathId })
       : null
-    const pathPlaceId = detail?.kind === 'place' ? detail.id : null
+    const pathPlaceId = pathKind === 'place' ? pathId : null
     return {
-      view: VIEWS.includes(view) ? view : 'map',
+      view: selectedView,
       placeId: pathPlaceId || safeId(params.get('place')),
       resident,
       conversationContext: Boolean(resident && params.get('context') === 'place'),
@@ -4261,6 +5434,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
             error: null,
           }
         : state.archive,
+      gazette: gazetteChanged
+        ? {
+            ...state.gazette,
+            issue: null,
+            entries: [],
+            nextAfterOrdinal: null,
+            hasMoreEntries: false,
+            detailLoading: false,
+            detailInitialized: false,
+            detailError: null,
+          }
+        : state.gazette,
+      gazetteIssueId,
       detail,
     }
   }
@@ -4278,6 +5464,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         mode: state.archive.mode,
         type: state.archive.type,
       }),
+      gazetteIssueId: state.gazetteIssueId,
       detail: state.detail,
     })
   }
@@ -4335,6 +5522,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.view !== previousView) {
       scheduleRefresh(state.view === 'live' && !document.hidden ? 0 : BASE_REFRESH_MS)
     }
+    loadSharedGazette()
   }
 
   function closeDetail() {
@@ -4344,11 +5532,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     detailDrawingHistoryRequestRevision += 1
     resetShareFeedback()
     if (nodes.detail?.open) nodes.detail.close()
-    if (history.state?.windowDetailEntry === true) {
+    const historyBackClosesDetail = history.state?.windowDetailEntry === true
+    state = { ...state, detail: null }
+    if (historyBackClosesDetail) {
+      renderDetail()
+      void ensureFocusedSelection()
       history.back()
       return
     }
-    state = { ...state, detail: null }
     writeLocation(false)
     renderAll()
     void ensureFocusedSelection()
@@ -5360,6 +6551,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         badgePoint: null })
     }
     const expanded = state.live.expandedResidentPlaceIds.includes(placeId)
+    const rootExpanded = isRoot && (
+      state.live.expandedResidentPlaceIds.includes(placeId) ||
+      state.live.expandedThingPlaceIds.includes(placeId)
+    )
     const overflowing = !expanded && ordered.length > LIVE_PORTRAIT_LIMIT
     const capacity = overflowing
       ? Math.max(0, LIVE_PORTRAIT_LIMIT - 2)
@@ -5374,12 +6569,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ordered.length,
       preferredIds,
     )
-    liveResidentVisibleIdsByPlaceId = Object.freeze({
-      ...liveResidentVisibleIdsByPlaceId,
-      [String(placeId)]: Object.freeze(selection.visible.map(resident => resident.id)),
-    })
     const visibleResidents = selection.visible
-    const visibleIds = new Set(visibleResidents.map(resident => resident.id))
     const border = focus.parent_id === null ? 4 : 3
     const survey = liveStageSurvey(livePlaceRows(state.snapshot), focus.id)
     const surfaceWidth = isRoot
@@ -5388,9 +6578,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const minimumHeight = isRoot ? 680 : expanded ? 320 : plot.height
     const itemWidth = 56
     const itemHeight = 56
+    const thingItemWidth = isRoot ? 144 : 94
     const margin = isRoot ? 12 : 6
     const surfaceHeight = isRoot
-      ? expanded ? liveDirectGroundHeight(placeId, surfaceWidth) : minimumHeight
+      ? rootExpanded ? liveDirectGroundHeight(placeId, surfaceWidth) : minimumHeight
       : !expanded
       ? minimumHeight
       : Math.max(
@@ -5405,63 +6596,69 @@ ${WINDOW_CLIENT_SAFETY_JS}
             selection.overflowCount > 0,
           ),
         )
-    const reserved = [
-      ...(isRoot ? survey.plots.filter(candidate =>
-        candidate.x < surfaceWidth && candidate.y < surfaceHeight).map(candidate => Object.freeze({
-        x: candidate.x - 8,
-        y: candidate.y - 8,
-        width: candidate.width + 16,
-        height: candidate.height + 16,
-      })) : []),
-      ...(selection.overflowCount ? [Object.freeze({
-        x: surfaceWidth - 116,
-        y: surfaceHeight - 52,
-        width: 116,
-        height: 52,
-      })] : []),
-    ]
+    const reserved = isRoot
+      ? windowLiveRootReservations(surfaceWidth, surfaceHeight)
+      : Object.freeze([])
     const residentKeys = new Set(ordered.map(resident => String(resident.id)))
     const previous = Object.fromEntries(Object.entries(
       liveResidentPointsByPlaceId[String(placeId)] || {},
     ).filter(([key]) => residentKeys.has(key)))
-    const separated = windowLiveSeparatedPoints(
-      visibleResidents.map(resident => resident.id),
+    const selectedResidentIds = new Set(visibleResidents.map(resident => resident.id))
+    const placementIds = Object.freeze([
+      ...(pinnedIds || []).filter(id => selectedResidentIds.has(id)),
+      ...visibleResidents.map(resident => resident.id)
+        .filter(id => !(pinnedIds || []).includes(id)),
+    ])
+    const separated = windowLiveResidentPointsAroundThings(
+      placementIds,
       surfaceWidth,
       surfaceHeight,
       placeId * 17 + 3,
       itemWidth,
       itemHeight,
       margin,
-      1,
+      liveThingPointsByPlaceId[String(placeId)] || Object.freeze({}),
+      thingItemWidth,
       reserved,
       previous,
+      isRoot || (
+        !expanded && !state.live.expandedThingPlaceIds.includes(placeId)
+      ),
     )
     liveResidentPointsByPlaceId = Object.freeze({
       ...liveResidentPointsByPlaceId,
-      [String(placeId)]: Object.freeze({ ...previous, ...separated }),
+      [String(placeId)]: separated,
     })
-    const visible = Object.freeze(visibleResidents.map(resident => {
-      const localPoint = separated[String(resident.id)] || Object.freeze({
-        x: isRoot ? 72 : plot.width / 2,
-        y: isRoot ? 72 : plot.height / 2,
-      })
-      const inlineOffsetY = !isRoot && expanded ? plot.height + 16 : 0
+    const expandedGround = !isRoot && expanded
+      ? survey.expandedGrounds[String(placeId)] || null
+      : null
+    const inlineOffsetY = expandedGround?.residentTop
+      ? expandedGround.residentTop - plot.y
+      : 0
+    const visible = Object.freeze(visibleResidents.flatMap(resident => {
+      const localPoint = separated[String(resident.id)]
+      if (!localPoint) return []
       const stagePoint = isRoot
         ? localPoint
         : Object.freeze({
             x: plot.x + border + localPoint.x,
             y: plot.y + border + inlineOffsetY + localPoint.y,
           })
-      return Object.freeze({ resident, localPoint, stagePoint })
+      return [Object.freeze({ resident, localPoint, stagePoint })]
     }))
+    const visibleIds = new Set(visible.map(entry => entry.resident.id))
+    liveResidentVisibleIdsByPlaceId = Object.freeze({
+      ...liveResidentVisibleIdsByPlaceId,
+      [String(placeId)]: Object.freeze(visible.map(entry => entry.resident.id)),
+    })
     return Object.freeze({
       visible,
       hidden: Object.freeze(ordered.filter(resident => !visibleIds.has(resident.id))),
-      overflowCount: selection.overflowCount,
+      overflowCount: Math.max(0, ordered.length - visible.length),
       expanded,
       surfaceWidth,
       surfaceHeight,
-      inlineOffsetY: !isRoot && expanded ? plot.height + 16 : 0,
+      inlineOffsetY,
       badgePoint: isRoot
         ? Object.freeze({ x: surfaceWidth - 58, y: surfaceHeight - 18 })
         : Object.freeze({ x: plot.x + plot.width - 28, y: plot.y + plot.height - 10 }),
@@ -5505,6 +6702,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function liveFocusedPlotIds(snapshot, focus, children, records, interactionThings) {
+    if (state.live.proofScene) return Object.freeze(children.map(place => place.id))
     const focused = new Set()
     const pinnedResidents = new Set(livePinnedResidentIds(snapshot, records, focus.id))
     for (const resident of displayedResidents(snapshot)) {
@@ -5548,6 +6746,26 @@ ${WINDOW_CLIENT_SAFETY_JS}
       layout.badgePoint
   }
 
+  function positionLiveRootOverflowControl(control, slot, width, height) {
+    const rail = windowLiveRootReservations(width, height)[0]
+    if (!rail) return
+    const inset = 6
+    const gap = 8
+    const controlWidth = rail.width - inset * 2
+    const controlHeight = (rail.height - inset * 2 - gap) / 2
+    if (controlWidth < 44 || controlHeight < 44) return
+    const slotIndex = slot === 'thing' ? 1 : 0
+    control.dataset.liveRootControl = slot
+    control.style.inset = 'auto'
+    control.style.left = String(rail.x + inset) + 'px'
+    control.style.top = String(
+      rail.y + inset + slotIndex * (controlHeight + gap)
+    ) + 'px'
+    control.style.width = String(controlWidth) + 'px'
+    control.style.height = String(controlHeight) + 'px'
+    control.style.minWidth = '0'
+  }
+
   function livePortraitGrid(residents, label, bubbles, placeId, pinnedIds, className = 'live-portrait-grid') {
     const grid = element('div', className)
     grid.setAttribute('aria-label', label)
@@ -5555,11 +6773,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const children = focus && state.snapshot ? liveChildren(state.snapshot, focus) : []
     if (!focus) return grid
     const layout = liveResidentLayout(residents, placeId, focus, children, pinnedIds)
-    if (layout.expanded) {
-      grid.dataset.liveExpanded = 'true'
+    if (placeId === focus.id) {
       grid.style.width = String(layout.surfaceWidth) + 'px'
       grid.style.height = String(layout.surfaceHeight) + 'px'
+      grid.style.inset = '0 auto auto 0'
+    }
+    if (layout.expanded) {
+      grid.dataset.liveExpanded = 'true'
       if (placeId !== focus.id) {
+        grid.style.width = String(layout.surfaceWidth) + 'px'
+        grid.style.height = String(layout.surfaceHeight) + 'px'
         grid.style.inset = 'auto'
         grid.style.left = '0'
         grid.style.top = String(layout.inlineOffsetY) + 'px'
@@ -5611,6 +6834,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         '+' + String(overflowCount) + ' more')
       badge.type = 'button'
       badge.dataset.focusKey = 'live-resident-overflow:' + String(placeId)
+      badge.dataset.liveOverflowPlaceId = String(placeId)
       badge.setAttribute('aria-label', 'Show ' + String(overflowCount) + ' more residents')
       badge.setAttribute('data-live-overflow-count', String(overflowCount))
       badge.title = String(residents.length) + ' residents here; showing ' +
@@ -5618,8 +6842,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (Number(state.live.absorptionEndsAtByPlaceId[String(placeId)]) > Date.now()) {
         badge.classList.add('live-overflow-absorbing')
       }
+      if (placeId === focus.id) {
+        positionLiveRootOverflowControl(
+          badge, 'resident', layout.surfaceWidth, layout.surfaceHeight)
+      }
       badge.addEventListener('click', () => {
-        requestLiveFocusRestore(badge.dataset.focusKey || '', 'live-plates')
+        requestLiveFocusRestore(
+          badge.dataset.focusKey || '', 'live-plates', placeId)
         state = { ...state, live: { ...state.live,
           expandedResidentPlaceIds: Object.freeze([
             ...new Set([...state.live.expandedResidentPlaceIds, placeId]),
@@ -5755,22 +6984,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const expanded = state.live.expandedThingPlaceIds.includes(place.id)
     const entry = historyEntry('things', liveThingFilters(focusId))
     const isRoot = place.id === focusId
+    const rootExpanded = isRoot && (
+      state.live.expandedResidentPlaceIds.includes(place.id) ||
+      state.live.expandedThingPlaceIds.includes(place.id)
+    )
     const survey = liveStageSurvey(livePlaceRows(snapshot), focusId)
+    const childPlot = isRoot ? null : survey.plots.find(candidate => candidate.id === place.id)
     const itemWidth = isRoot ? 144 : 94
     const itemHeight = 56
     const surfaceWidth = isRoot
       ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
-      : expanded ? 480 : 220
+      : expanded ? 480 : childPlot?.width || 440
     const margin = isRoot ? 12 : 6
     const hasOverflow = exactTotal === null
       ? things.length > selection.visible.length
       : selection.overflowCount > 0
-    const residentOverflow = !state.live.expandedResidentPlaceIds.includes(place.id) &&
-      residentsAt(snapshot, place.id).length > LIVE_PORTRAIT_LIMIT
     const surfaceHeight = isRoot
-      ? expanded ? liveDirectGroundHeight(place.id, surfaceWidth) : 680
+      ? rootExpanded ? liveDirectGroundHeight(place.id, surfaceWidth) : 680
       : !expanded
-        ? 148
+        ? childPlot?.height || 280
         : Math.max(
             320,
             windowLiveScatterSurfaceHeight(
@@ -5783,77 +7015,67 @@ ${WINDOW_CLIENT_SAFETY_JS}
               hasOverflow,
             ),
           )
-    const reserved = [
-      ...(isRoot ? survey.plots.filter(candidate =>
-        candidate.x < surfaceWidth && candidate.y < surfaceHeight).map(candidate => Object.freeze({
-        x: candidate.x - 8,
-        y: candidate.y - 8,
-        width: candidate.width + 16,
-        height: candidate.height + 16,
-      })) : []),
-      ...Object.values(liveResidentPointsByPlaceId[String(place.id)] || {})
-        .map(point => Object.freeze({
-          x: point.x - 30,
-          y: point.y - 54,
-          width: 60,
-          height: 60,
-        })),
-      ...(hasOverflow || residentOverflow ? [Object.freeze({
-        x: surfaceWidth - 116,
-        y: surfaceHeight - (isRoot && hasOverflow && residentOverflow ? 144 : 64),
-        width: 116,
-        height: isRoot && hasOverflow && residentOverflow ? 144 : 64,
-      })] : []),
-    ]
+    const reserved = isRoot
+      ? windowLiveRootReservations(surfaceWidth, surfaceHeight)
+      : Object.freeze([])
     const thingKeys = new Set(things.map(thing => String(thing.id)))
     const previous = Object.fromEntries(Object.entries(
       liveThingPointsByPlaceId[String(place.id)] || {},
     ).filter(([key]) => thingKeys.has(key)))
-    const separated = windowLiveSeparatedPoints(
-      selection.visible.map(thing => thing.id),
+    const selectedThingIds = new Set(selection.visible.map(thing => thing.id))
+    const placementIds = Object.freeze([
+      ...pinnedIds.filter(id => selectedThingIds.has(id)),
+      ...selection.visible.map(thing => thing.id).filter(id => !pinned.has(id)),
+    ])
+    const separated = windowLiveThingPointsAroundResidents(
+      placementIds,
       surfaceWidth,
       surfaceHeight,
       place.id * 29 + 11,
       itemWidth,
       itemHeight,
       margin,
-      0.5,
+      liveResidentPointsByPlaceId[String(place.id)] || Object.freeze({}),
       reserved,
       previous,
+      isRoot || (
+        !expanded && !state.live.expandedResidentPlaceIds.includes(place.id)
+      ),
     )
     liveThingPointsByPlaceId = Object.freeze({
       ...liveThingPointsByPlaceId,
-      [String(place.id)]: Object.freeze({ ...previous, ...separated }),
+      [String(place.id)]: separated,
     })
-    const residentsExpanded = !isRoot &&
-      state.live.expandedResidentPlaceIds.includes(place.id)
-    const residentExpansionHeight = residentsExpanded
-      ? Math.max(320, windowLiveScatterSurfaceHeight(
-          0, 480, residentsAt(snapshot, place.id).length, 56, 56, 6))
-      : 0
-    const inlineOffsetY = !isRoot && expanded
-      ? 148 + 16 + residentExpansionHeight + (residentsExpanded ? 16 : 0)
+    const expandedGround = !isRoot && expanded
+      ? survey.expandedGrounds[String(place.id)] || null
+      : null
+    const inlineOffsetY = expandedGround?.thingTop
+      ? expandedGround.thingTop - (childPlot?.y || 0)
       : 0
     if (expanded) shelf.dataset.liveExpanded = 'true'
     shelf.style.width = String(surfaceWidth) + 'px'
     shelf.style.height = String(surfaceHeight) + 'px'
-    if (inlineOffsetY) {
+    if (isRoot) {
+      shelf.style.inset = '0 auto auto 0'
+    } else if (inlineOffsetY) {
       shelf.style.inset = 'auto'
       shelf.style.left = '0'
       shelf.style.top = String(inlineOffsetY) + 'px'
     }
     shelf.setAttribute('aria-label', 'Things shown inside ' + place.name)
-    for (const thing of selection.visible) {
+    const visibleThings = selection.visible.filter(thing => Boolean(separated[String(thing.id)]))
+    liveThingVisibleIdsByPlaceId = Object.freeze({
+      ...liveThingVisibleIdsByPlaceId,
+      [String(place.id)]: Object.freeze(visibleThings.map(thing => thing.id)),
+    })
+    for (const thing of visibleThings) {
       const specimen = element('a', 'live-thing-specimen')
       specimen.href = '/api/thing/' + String(thing.id)
       specimen.title = 'Read ' + thing.name
       specimen.dataset.focusKey = 'live-thing:' + String(thing.id)
       specimen.dataset.liveThingId = String(thing.id)
       specimen.dataset.liveThingPlaceId = String(thing.place_id)
-      const point = separated[String(thing.id)] || Object.freeze({
-        x: surfaceWidth / 2,
-        y: surfaceHeight / 2,
-      })
+      const point = separated[String(thing.id)]
       specimen.style.left = String(point.x) + 'px'
       specimen.style.top = String(point.y) + 'px'
       const itemKey = 'thing:' + String(thing.id)
@@ -5875,39 +7097,54 @@ ${WINDOW_CLIENT_SAFETY_JS}
       bindLiveActivation(specimen, specimen, itemKey, null)
       shelf.append(specimen)
     }
-    if (exactTotal === null && (things.length > selection.visible.length || entry.hasMore)) {
+    const overflowCount = selection.overflowCount + selection.visible.length - visibleThings.length
+    if (exactTotal === null && (things.length > visibleThings.length || entry.hasMore)) {
       const badge = element('button', 'live-overflow-badge live-thing-more',
         'more · count unavailable')
       badge.type = 'button'
       badge.dataset.focusKey = 'live-thing-overflow:' + String(place.id)
+      badge.dataset.liveOverflowPlaceId = String(place.id)
       badge.setAttribute('aria-label', 'Show more things; exact count unavailable')
       badge.setAttribute('aria-busy', String(entry.loading))
       badge.title = 'Some named things are folded here; the exact count is unavailable.'
-      badge.addEventListener('click', () =>
-        void expandLiveThings(place.id, focusId, badge.dataset.focusKey || ''))
+      if (isRoot) {
+        positionLiveRootOverflowControl(badge, 'thing', surfaceWidth, surfaceHeight)
+      }
+      badge.addEventListener('click', () => {
+        requestLiveFocusRestore(
+          badge.dataset.focusKey || '', 'live-plates', place.id)
+        void expandLiveThings(place.id, focusId)
+      })
       shelf.append(badge)
-    } else if (selection.overflowCount) {
+    } else if (overflowCount) {
       const badge = element('button', 'live-overflow-badge live-thing-more',
-        '+' + String(selection.overflowCount) + ' more')
+        '+' + String(overflowCount) + ' more')
       badge.type = 'button'
       badge.dataset.focusKey = 'live-thing-overflow:' + String(place.id)
-      badge.setAttribute('aria-label', 'Show ' + String(selection.overflowCount) + ' more things')
+      badge.dataset.liveOverflowPlaceId = String(place.id)
+      badge.setAttribute('aria-label', 'Show ' + String(overflowCount) + ' more things')
       badge.setAttribute('aria-busy', String(entry.loading))
-      badge.setAttribute('data-live-overflow-count', String(selection.overflowCount))
+      badge.setAttribute('data-live-overflow-count', String(overflowCount))
       badge.title = String(exactTotal) + ' things here; showing ' +
-        String(selection.visible.length)
+        String(visibleThings.length)
       if (Object.values(state.live.replayActive).some(active =>
         active.type === 'make' && liveRecordPlaceId(active.record) === place.id)) {
         badge.classList.add('live-overflow-absorbing')
       }
-      badge.addEventListener('click', () =>
-        void expandLiveThings(place.id, focusId, badge.dataset.focusKey || ''))
+      if (isRoot) {
+        positionLiveRootOverflowControl(badge, 'thing', surfaceWidth, surfaceHeight)
+      }
+      badge.addEventListener('click', () => {
+        requestLiveFocusRestore(
+          badge.dataset.focusKey || '', 'live-plates', place.id)
+        void expandLiveThings(place.id, focusId)
+      })
       shelf.append(badge)
     }
     return shelf
   }
 
-  async function expandLiveThings(placeId, focusId, focusKey) {
+  async function expandLiveThings(placeId, focusId) {
     state = { ...state, live: { ...state.live,
       expandedThingPlaceIds: Object.freeze([
         ...new Set([...state.live.expandedThingPlaceIds, placeId]),
@@ -5917,7 +7154,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const filters = liveThingFilters(focusId)
     const entry = historyEntry('things', filters)
     if (entry.hasMore && !entry.loading) await loadHistory('things', filters)
-    requestLiveFocusRestore(focusKey, 'live-plates')
     if (state.snapshot) renderLive(state.snapshot)
   }
 
@@ -5942,19 +7178,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const terrain = liveTiledDrawing(place, 'live-plot-terrain', 8, 5)
     card.prepend(terrain)
     card.append(element('p', 'live-plot-owner', owner))
-    card.append(openDrawingDetailButton(
+    const drawingDetail = openDrawingDetailButton(
       'place',
       place.id,
       place.name,
       'live-plot-drawing-detail drawing-detail-open',
-      button => {
-        button.style.position = 'absolute'
-        button.style.zIndex = '9'
-        button.style.left = '0.45rem'
-        button.style.top = '2.45rem'
-        button.style.maxWidth = 'calc(100% - 0.9rem)'
-      },
-    ))
+    )
+    drawingDetail.style.left = String(LIVE_PLOT_DRAWING_DETAIL_RECT.x) + 'px'
+    drawingDetail.style.top = String(LIVE_PLOT_DRAWING_DETAIL_RECT.y) + 'px'
+    drawingDetail.style.width = String(LIVE_PLOT_DRAWING_DETAIL_RECT.width) + 'px'
+    drawingDetail.style.height = String(LIVE_PLOT_DRAWING_DETAIL_RECT.height) + 'px'
+    card.append(drawingDetail)
     const residents = residentsAt(snapshot, place.id)
     if (residents.length) {
       card.append(livePortraitGrid(
@@ -6025,17 +7259,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     let width = Math.max(1_100, ...plots.map(plot => plot.x + plot.width + 64))
     const occupiedHeight = Math.max(680, ...plots.map(plot => plot.y + plot.height + 96))
     let height = occupiedHeight
+    let expandedGrounds = Object.freeze({})
     if (state.snapshot && (state.live.expandedResidentPlaceIds.includes(parentId) ||
         state.live.expandedThingPlaceIds.includes(parentId))) {
       const directWidth = windowLiveDirectGroundWidth(width, LIVE_DIRECT_GROUND_WIDTH)
       height = Math.max(height, liveDirectGroundHeight(parentId, directWidth))
     }
     if (state.snapshot) {
-      for (const plot of plots) {
+      const expansions = plots.flatMap(plot => {
         const residentsExpanded = state.live.expandedResidentPlaceIds.includes(plot.id)
         const thingsExpanded = state.live.expandedThingPlaceIds.includes(plot.id)
-        if (!residentsExpanded && !thingsExpanded) continue
-        width = Math.max(width, plot.x + 480 + 64)
+        if (!residentsExpanded && !thingsExpanded) return []
         const residentHeight = residentsExpanded
           ? Math.max(320, windowLiveScatterSurfaceHeight(
               0, 480, residentsAt(state.snapshot, plot.id).length, 56, 56, 6))
@@ -6047,12 +7281,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ? Math.max(320, windowLiveScatterSurfaceHeight(
               0, 480, things.length, 94, 56, 6, true))
           : 0
-        const expandedHeight = plot.height + 16 + residentHeight +
-          (residentHeight && thingHeight ? 16 : 0) + thingHeight
-        height = Math.max(height, plot.y + expandedHeight + 96)
-      }
+        return [Object.freeze({ id: plot.id, residentHeight, thingHeight })]
+      })
+      const expandedLayout = windowLiveExpandedGroundLayout(plots, expansions)
+      expandedGrounds = expandedLayout.grounds
+      width = Math.max(width, expandedLayout.width + 64)
+      height = Math.max(height, expandedLayout.height + 96)
     }
-    return Object.freeze({ plots, width, height })
+    return Object.freeze({ plots, width, height, expandedGrounds })
   }
 
   function renderLiveResidentPage() {
@@ -7303,18 +8539,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const interactionThings = liveFocusInteractionThings(snapshot, focus, records)
     const bubbles = liveSpeechBubbles(records)
     const survey = liveStageSurvey(livePlaceRows(snapshot), focus.id)
+    const directResidents = displayedResidents(snapshot).filter(resident =>
+      resident.current_place_id === focus.id &&
+      (!state.resident || resident.handle === state.resident))
     const stageId = String(focus.id)
     const stageChanged = liveCamera.stageId !== stageId
     if (stageChanged && nodes.liveViewport) {
-      const centered = windowLiveCenterCamera(
-        nodes.liveViewport.clientWidth,
-        nodes.liveViewport.clientHeight,
-        Math.min(survey.width, LIVE_DIRECT_GROUND_WIDTH) / 2,
-        Math.min(survey.height, 680) / 2,
-        LIVE_CAMERA_CENTER_SCALE,
-        LIVE_CAMERA_MIN_SCALE,
-        LIVE_CAMERA_MAX_SCALE,
-      )
+      const target = liveDefaultCenterTarget(snapshot, focus, survey)
+      const centered = liveCameraForStageTarget(target, true)
       if (centered) {
         liveCamera = Object.freeze({
           ...liveCamera,
@@ -7325,11 +8557,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         })
       }
     }
-    const detailedPlotIds = liveDetailedPlotIds(survey.plots)
+    const detailedPlotIds = liveDetailedPlotIds(survey.plots, survey.expandedGrounds)
     const focusedPlotIds = liveFocusedPlotIds(
       snapshot, focus, children, records, interactionThings)
     livePlotDetailContext = Object.freeze({
       snapshot, focus, children, bubbles, records, interactionThings,
+      expandedGrounds: survey.expandedGrounds,
     })
     renderLiveBreadcrumbs(snapshot, focus)
 
@@ -7379,9 +8612,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const proofLoad = liveProofLoadNode(focus, survey)
     if (proofLoad) plateParts.push(proofLoad)
-    const directResidents = displayedResidents(snapshot).filter(resident =>
-      resident.current_place_id === focus.id &&
-      (!state.resident || resident.handle === state.resident))
     if (directResidents.length) {
       plateParts.push(livePortraitGrid(
         directResidents,
@@ -7410,6 +8640,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     scheduleLiveTrailExpiry()
 
     applyLiveCamera({ stageId })
+    if (stageChanged) {
+      const preferredKey = state.live.focusResident
+        ? 'resident:' + state.live.focusResident
+        : state.live.raisedItemKey
+      const firstPaintTargets = state.live.proofScene && state.live.proofFailure
+        ? [...nodes.livePlates.querySelectorAll('[data-focus-key="live-proof-retry"]')]
+        : preferredKey
+          ? [...nodes.livePlates.querySelectorAll(
+              '[data-live-item-key="' + CSS.escape(preferredKey) + '"]')]
+          : liveRevealTargetsForPlace(focus.id)
+      revealLiveElements(firstPaintTargets)
+    }
     renderLiveLedger(snapshot, focus, children, records)
     renderLiveRoster(snapshot, focus, records, interactionThings)
     refillLiveDrawingQueue()
@@ -7501,13 +8743,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return link
   }
 
-  function openDrawingDetailButton(kind, id, label, className, decorate = null) {
+  function openDrawingDetailButton(kind, id, label, className) {
     const button = element('button', className || 'drawing-detail-open', 'Current drawing')
     button.type = 'button'
     button.dataset.focusKey = 'drawing-detail:' + kind + ':' + String(id)
     button.setAttribute('aria-label', 'Open current drawing for ' + label)
     button.addEventListener('click', () => navigate({ detail: Object.freeze({ kind, id }) }))
-    if (typeof decorate === 'function') decorate(button)
     return button
   }
 
@@ -7979,6 +9220,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? document.activeElement?.dataset?.focusKey || null
       : null
     const target = state.detail
+    if (detailShareButton) {
+      const shareLabel = target?.kind === 'place' ? 'Share this place' : 'Share this detail'
+      detailShareButton.hidden = !target || target.kind === 'resident'
+      if (detailShareButton.dataset.shareLabel !== shareLabel) {
+        detailShareButton.dataset.shareLabel = shareLabel
+        detailShareButton.textContent = shareLabel
+      }
+    }
     if (!nodes.detail) return
     if (!target) {
       if (nodes.detail.open) nodes.detail.close()
@@ -8700,6 +9949,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (event.detail.status === 'skipped' || event.detail.status === 'failed') {
         description += ' — ' + eventCause(event.detail)
       }
+    } else if (event.kind === 'gazette_printed') {
+      const submissions = event.detail.entry_count === 1 ? 'submission' : 'submissions'
+      description += ' · Issue ' + String(event.detail.issue_number) +
+        ' · ' + String(event.detail.entry_count) + ' ' + submissions + ' from Room #454'
     }
     return Object.freeze({
       description,
@@ -8764,7 +10017,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       description.append('.')
       copy.append(
-        residentNode(event.actor, 'activity-actor', 'activity-actor:' + String(event.id)),
+        SAFE_SYSTEM_EVENT_ACTORS.has(event.actor)
+          ? element('span', 'activity-actor activity-system-actor', event.actor)
+          : residentNode(event.actor, 'activity-actor', 'activity-actor:' + String(event.id)),
         description,
       )
       row.append(copy, timeNode(event.at, 'activity-time'))
@@ -9290,10 +10545,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function renderView() {
+    const gazetteView = state.view === 'gazette'
+    if (nodes.directorySearchField) nodes.directorySearchField.hidden = gazetteView
+    if (nodes.viewFilters) nodes.viewFilters.hidden = gazetteView
     for (const tab of tabs) {
       const active = tab.dataset.view === state.view
       tab.setAttribute('aria-selected', String(active))
       tab.tabIndex = active ? 0 : -1
+      if (active && tab.parentElement) {
+        const tabList = tab.parentElement
+        const tabBox = tab.getBoundingClientRect()
+        const tabListBox = tabList.getBoundingClientRect()
+        if (tabBox.left < tabListBox.left) {
+          tabList.scrollLeft -= Math.ceil(tabListBox.left - tabBox.left)
+        } else if (tabBox.right > tabListBox.right) {
+          tabList.scrollLeft += Math.ceil(tabBox.right - tabListBox.right)
+        }
+      }
     }
     for (const panel of panels) panel.hidden = panel.id !== state.view + '-panel'
     const live = state.view === 'live'
@@ -9345,6 +10613,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     writeLocation(false)
     renderDetail()
     if (state.view === 'archive') renderArchive()
+    if (state.view === 'gazette') renderGazette()
     if (!snapshot) return
     renderCounts(snapshot)
     renderScope(snapshot)
@@ -9967,6 +11236,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.view === 'live') renderLiveClock()
   }
 
+  async function finishWatchingPublicStreets() {
+    const gazetteFresh = state.view !== 'gazette' || await loadGazetteIssues(
+      state.gazette.listInitialized ? 'refresh' : 'initial',
+    )
+    if (state.view === 'gazette' && !gazetteFresh) {
+      setStatus('The public streets are current. The Gazette could not be refreshed.', 'stale')
+      return
+    }
+    setStatus('Watching the public streets', 'live')
+  }
+
   async function refreshCity() {
     if (state.refreshing || state.live.proofScene) return
     const hadSnapshot = state.hasSnapshot
@@ -9993,7 +11273,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
             changeState.marker,
           )
           if (navigationRevision !== navigationRevisionAtStart) {
-            setStatus('Watching the public streets', 'live')
+            await finishWatchingPublicStreets()
             return
           }
           const residentPresentationChanged =
@@ -10004,7 +11284,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
               changeMarker: changeState.marker,
               failures: 0,
             }
-            setStatus('Watching the public streets', 'live')
+            await finishWatchingPublicStreets()
             return
           }
           const snapshot = Object.freeze({
@@ -10022,7 +11302,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           populateFilters(snapshot)
           renderAll()
           void ensureFocusedSelection({ forceResident: true })
-          setStatus('Watching the public streets', 'live')
+          await finishWatchingPublicStreets()
           return
         } catch {
           // Presence is time-derived. If its small read fails, continue into a
@@ -10043,7 +11323,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         ? freshSnapshotNavigation(freshSnapshot)
         : await mergeFreshNavigation(freshSnapshot, controller.signal)
       if (navigationRevision !== navigationRevisionAtStart) {
-        setStatus('Watching the public streets', 'live')
+        await finishWatchingPublicStreets()
         return
       }
       const snapshot = navigation.snapshot
@@ -10092,7 +11372,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
       refreshFilteredViews()
-      setStatus('Watching the public streets', 'live')
+      await finishWatchingPublicStreets()
     } catch {
       const failures = state.failures + 1
       state = {
@@ -10126,12 +11406,30 @@ ${WINDOW_CLIENT_SAFETY_JS}
     tab.addEventListener('click', () => {
       const view = tab.dataset.view
       if (!VIEWS.includes(view)) return
+      const openingGazette = view === 'gazette'
       let placeId = state.placeId
       if (view === 'place' && !state.resident && !state.placeId &&
         !selectedPlace(state.snapshot || { residents: [], flatPlaces: [] })) {
         placeId = state.snapshot?.flatPlaces[0]?.id || null
       }
-      navigate({ view, placeId, detail: null })
+      if (!openingGazette && state.view !== 'gazette') {
+        navigate({ view, placeId, detail: null })
+        return
+      }
+      if (openingGazette && nodes.directorySearch) nodes.directorySearch.value = ''
+      navigate({
+        view,
+        placeId: openingGazette ? null : placeId,
+        resident: openingGazette ? null : state.resident,
+        conversationContext: openingGazette ? false : state.conversationContext,
+        directorySearch: openingGazette ? '' : state.directorySearch,
+        directorySearchIndex: openingGazette ? -1 : state.directorySearchIndex,
+        sleeperPlaceIds: openingGazette ? [] : state.sleeperPlaceIds,
+        gazetteIssueId: openingGazette
+          ? state.view === 'gazette' ? state.gazetteIssueId : null
+          : null,
+        detail: null,
+      })
     })
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -10246,6 +11544,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
     if (
+      nextLocationState.gazetteIssueId !== state.gazetteIssueId ||
+      nextLocationState.view !== state.view
+    ) gazetteDetailRequestRevision += 1
+    if (
       nextLocationState.detail?.kind !== state.detail?.kind ||
       nextLocationState.detail?.id !== state.detail?.id
     ) {
@@ -10269,6 +11571,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.view !== previousView) {
       scheduleRefresh(state.view === 'live' && !document.hidden ? 0 : BASE_REFRESH_MS)
     }
+    loadSharedGazette()
   }
   nodes.liveViewport?.addEventListener('wheel', event => {
     event.preventDefault()
@@ -10419,6 +11722,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   writeLocation(false)
   syncLiveFullscreenFromHistory()
   void ensureDetail()
+  loadSharedGazette()
   void loadDirectory(false)
   void refreshCity()
 })()

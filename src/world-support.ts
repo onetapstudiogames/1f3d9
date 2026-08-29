@@ -2,6 +2,7 @@ import type { Context } from 'hono'
 import {
   auth,
   err,
+  postgresErrorConstraint,
   postgresErrorCode,
   postgresErrorMessage,
   type Resident,
@@ -175,6 +176,44 @@ export function unknownTraitMessage(error: unknown): string | null {
   return raised.includes('unknown or duplicate trait')
     ? 'names an unknown or duplicate trait; coin each trait first with POST /api/trait'
     : null
+}
+
+function safeTreasuryCompletionText(error: unknown): string | null {
+  const detail = postgresErrorMessage(error) ?? (error instanceof Error ? error.message : null)
+  if (!detail) return null
+  return detail
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/giu, '[redacted database URL]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
+    .replace(/1f3d9_sk_[A-Za-z0-9_-]+/giu, '[redacted resident key]')
+    .slice(0, 240)
+}
+
+export function reportTreasuryCompletionFailure(
+  input: Readonly<{
+    operation: 'frontier' | 'kind_invention' | 'kind_revision'
+    rail: FeePayment['rail']
+    attemptId: string
+    status: number
+  }>,
+  error: unknown,
+): void {
+  const code = postgresErrorCode(error)
+  const constraint = postgresErrorConstraint(error)
+  const detail = safeTreasuryCompletionText(error)
+  console.error('treasury_completion_failure', JSON.stringify({
+    event: 'treasury_completion_failure',
+    operation: input.operation,
+    rail: input.rail,
+    attempt_id: input.attemptId,
+    status: Number.isSafeInteger(input.status) && input.status >= 100 && input.status <= 599
+      ? input.status
+      : 500,
+    ...(code && /^[0-9A-Z]{5}$/u.test(code) ? { error_code: code } : {}),
+    ...(constraint && /^[A-Za-z0-9_.-]{1,120}$/u.test(constraint)
+      ? { constraint }
+      : {}),
+    ...(detail ? { error: detail } : {}),
+  }))
 }
 
 export function hasDuplicateNames(source: unknown, normalized: string[]): boolean {

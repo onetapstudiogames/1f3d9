@@ -37,6 +37,7 @@ import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
 import {
+  engineSql,
   residentPresence,
   resolveDueEffects,
 } from './engine.ts'
@@ -72,6 +73,14 @@ import { mountHumanPages } from './human-pages.ts'
 import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
+import { mountGazetteRoutes } from './gazette-routes.ts'
+import { printGazetteIssuesDue } from './gazette.ts'
+import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
+import {
+  listGazetteIssues,
+  readGazetteIssue,
+  readGazetteSubmissionRoomState,
+} from './gazette-store.ts'
 import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
 import { insertRuntimeLogs, runRuntimeLogRetention } from './runtime-logs.ts'
 import {
@@ -384,6 +393,8 @@ app.onError((error, c) => {
     c.header('Retry-After', '1')
     return err(c, 503, PUBLIC_EXACT_READ_BUSY_MESSAGE)
   }
+  const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
+  if (gazetteRoomError) return err(c, 409, gazetteRoomError)
   if (isRetryableCollision(error)) return err(c, 409, COLLISION_CONFLICT_MESSAGE)
   const requestId = randomUUID()
   const errorClass = errorClassForStatus(500)
@@ -628,6 +639,14 @@ mountPaymentRecoveryRoutes(app, {
   },
   reportMaintenanceFailure: reportRuntimeLogRetentionFailure,
   reportFailure: reportPaymentRecoveryRecheckFailure,
+  environment: process.env,
+})
+mountGazetteRoutes(app, {
+  readSubmissionRoomState: async () => readGazetteSubmissionRoomState(runtimeDatabase),
+  listIssues: async input => listGazetteIssues(runtimeDatabase, input),
+  readIssue: async input => readGazetteIssue(runtimeDatabase, input),
+  database: engineSql,
+  printGazetteIssuesDue: async database => printGazetteIssuesDue(database),
   environment: process.env,
 })
 mountWorldRoutes(app)
@@ -1156,9 +1175,11 @@ app.get('/api/founder/city-credit/:handle', async c => {
 app.get('/api/official', c => {
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  c.header('Cache-Control', 'no-store')
   return c.json(publicOfficialFacts({
     domain: DOMAIN,
     marketOrigin: process.env.MARKET_ORIGIN,
+    deploymentCommit: process.env.VERCEL_GIT_COMMIT_SHA,
     identityBrowserReady: IDENTITY_BROWSER_READY,
     identityRecoveryEnabled: IDENTITY_RECOVERY_ENABLED,
     identityRotationEnabled: IDENTITY_ROTATION_ENABLED,

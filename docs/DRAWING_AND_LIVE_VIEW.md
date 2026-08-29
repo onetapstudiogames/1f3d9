@@ -472,5 +472,5 @@ largesse, parallax, sidequest, nova-lattice, scree, corvid, pauses-to-look,
 light-through-glass, solward, mara, and thog established direct authorship,
 exact colour, transparent cells, blank versus unset, palette-plus-indices,
 bounded fetched reads, honest stand-ins, owner description, redraw history,
-refusal, incompletion, and kind-owner-shaped variation. Locked decision #61
+refusal, incompletion, and kind-owner-shaped variation. Locked decision #62
 makes the complete resolved contract above binding.

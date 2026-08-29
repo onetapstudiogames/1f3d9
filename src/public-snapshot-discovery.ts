@@ -1,5 +1,5 @@
 export const PUBLIC_SNAPSHOT_RELEASES =
-  'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-'
+  'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-'
 
 export const PUBLIC_SNAPSHOT_FORMAT_DOCUMENTATION =
   'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md'

@@ -103,6 +103,22 @@ function proofDrawing(color: string, paintedIndex: number) {
   }
 }
 
+async function issueCredits(
+  db: CityCreditDatabase,
+  count: number,
+  prefix: string,
+): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    const result = await issueCityFeeCredit(db, {
+      founderId: 1,
+      residentId: 2,
+      sourceKey: `${prefix}-${index}`,
+      reason: `fund PostgreSQL completion proof ${index}`,
+    })
+    assert.equal(result.disposition, 'created')
+  }
+}
+
 test('shared treasury completion executes every paid credit operation in real PostgreSQL', {
   timeout: 120_000,
 }, async () => {
@@ -450,6 +466,74 @@ test('shared treasury completion executes every paid credit operation in real Po
     assert.deepEqual(rejectedEffects.rows, [{
       rejected_kinds: 0,
       drawing_revisions: unchangedDrawingRevisionCount,
+    }])
+  } finally {
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
+test('shared treasury completion survives twelve immediate paid kind inventions in real PostgreSQL', {
+  timeout: 120_000,
+}, async () => {
+  const postgres = await startPostgres()
+  try {
+    await resetFresh(postgres.client)
+    const db = database(postgres.client)
+    await issueCredits(db, 12, 'treasury-burst-kind-credit')
+
+    for (let index = 0; index < 12; index += 1) {
+      const request = {
+        name: `treasury-burst-kind-${index.toString().padStart(2, '0')}`,
+        description: `Burst completion proof ${index}.`,
+        traits: [],
+        recipe: [],
+      }
+      const spend = await beginCityCreditSpend(db, {
+        actorId: 2,
+        operation: 'kind_invention',
+        targetKey: `kind-invention:${request.name}`,
+        request,
+        requestId: `treasury-burst-kind-request-${index.toString().padStart(2, '0')}`,
+      })
+      assert.equal(spend.state, 'ready')
+      if (spend.state !== 'ready') assert.fail(`kind invention ${index} did not acquire its lease`)
+      const completion = await completeTreasuryPaymentOperation(db, {
+        attemptId: spend.attempt_id,
+        leaseOwner: spend.lease_owner,
+      })
+      assert.equal(completion.state, 'completed')
+      if (completion.state !== 'completed') assert.fail(`kind invention ${index} did not complete`)
+      assert.equal(completion.operation, 'kind_invention')
+      assert.equal(completion.method, 'credit')
+      assert.equal(completion.status, 201)
+    }
+
+    const finalState = await postgres.client.query<{
+      completed_attempts: number
+      spend_entries: number
+      return_entries: number
+      kind_count: number
+      balance_units: string
+    }>(`
+      SELECT
+        (SELECT count(*)::int FROM payment_attempts WHERE actor_id = 2 AND status = 'completed')
+          AS completed_attempts,
+        (SELECT count(*)::int FROM city_credit_entries WHERE resident_id = 2 AND entry_kind = 'spend')
+          AS spend_entries,
+        (SELECT count(*)::int FROM city_credit_entries WHERE resident_id = 2 AND entry_kind = 'return')
+          AS return_entries,
+        (SELECT count(*)::int FROM kinds WHERE owner_id = 2 AND name LIKE 'treasury-burst-kind-%')
+          AS kind_count,
+        (SELECT balance_units::text FROM city_credit_accounts WHERE resident_id = 2)
+          AS balance_units
+    `)
+    assert.deepEqual(finalState.rows, [{
+      completed_attempts: 12,
+      spend_entries: 12,
+      return_entries: 0,
+      kind_count: 12,
+      balance_units: '0',
     }])
   } finally {
     await postgres.client.end().catch(() => undefined)

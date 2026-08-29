@@ -5,21 +5,27 @@ It never creates or restores a private recovery backup. Read the format and
 class registry in [`../PUBLIC_SNAPSHOTS.md`](../PUBLIC_SNAPSHOTS.md) before
 enabling publication.
 
-No snapshot publication was run while this workflow was built. The first real
-release is a separate, explicitly approved release operation.
+Published format-v1 releases are immutable. Format v2 begins a separate tag
+series and adds the permanent Gazette issue and membership classes.
 
 ## 1. Install the restricted database projection
 
 Time: usually 2–10 minutes for preview, plus the normal production migration
 review window.
 
-1. Review `db/migrations/20260823_public_snapshots.sql`. Confirm it has explicit
-   columns, one `city_snapshot.public_records` view, base-table revocations, and
-   grants only to `city_snapshot_export`.
-2. Apply preview first with the normal target proof:
+1. Review `db/migrations/20260823_public_snapshots.sql`,
+   `db/migrations/20260827_gazette.sql`, and the separately guarded Gazette
+   activation. The first supplies v1. The dormant Gazette migration adds one
+   explicit four-column `city_snapshot.public_records_v2` security-barrier view
+   and grants v2 while retaining v1 for the still-deployed exporter. Exact-commit
+   room activation performs the final v1 revoke in its opening transaction.
+2. On a new target, install the base snapshot projection first. On every target,
+   apply the Gazette migration in Preview before Production with the normal
+   target proof:
 
    ```sh
    npm run migrate:preview:public-snapshots
+   npm run migrate:preview:gazette
    ```
 
 3. Provision a strong password for `city_snapshot_export` through the database
@@ -38,11 +44,12 @@ review window.
    npm run snapshot:verify -- --dir /path/to/empty-preview-candidate
    ```
 
-6. After preview export and verification pass, and only with separate approval, apply
-   the Production migration:
+6. After preview export and verification pass, and only with separate approval,
+   apply the Production migrations in the same order required by that target:
 
    ```sh
    npm run migrate:production:public-snapshots
+   npm run migrate:production:gazette
    ```
 
 The migration runner's existing production safeguards still apply. The snapshot
@@ -69,8 +76,12 @@ The export proves all of these before it reads the four-column view:
 
 - Current login is `city_snapshot_export`.
 - The transaction is read-only and has one repeatable-read moment.
+- The account can read `city_snapshot.public_records_v2`. During the documented
+  dormant Gazette transition it may also read the safe v1 view; after exact-commit
+  activation it must be v2-only.
 - The account cannot read or write any base relation in `public`.
-- The account cannot read private tables such as OAuth, flags, payments, fee credit, or later-holder marks.
+- The account cannot read private tables such as OAuth, flags, payments, fee credit,
+  later-holder marks, or repeated-refusal state.
 - The view columns are exactly `class_name`, `record_id`, `sort_key`, `payload`.
 
 Stop on any failure. Do not broaden the role to make an export pass. Fix the
@@ -88,10 +99,16 @@ Time: usually 2–5 minutes.
 3. Confirm every class whose manifest count is zero has an exact one-byte LF file;
    GitHub Releases refuses zero-byte assets.
 4. Scan filenames and sample all marker types, including the two approved
-   `body_not_exported` legacy-note markers. Confirm there are no extra files,
+   `body_not_exported` legacy-note markers. Sample `gazette_issues.ndjson` and
+   confirm each row repeats its issue number as both `id` and `issue_number`.
+   Sample `gazette_issue_entries.ndjson`; confirm entries retain membership, author,
+   and source time but do not duplicate note bodies. Confirm exported event detail
+   never carries `error`. Sample an event
+   `not_public_or_sequence_gap` marker and confirm it exposes only `id` and
+   `status`. Confirm there are no extra files,
    private classes, hidden/withdrawn bodies, private direct offers, flag reports,
-   payment attempts, fee-credit facts, credentials, OAuth records, or later-holder
-   marks.
+   payment attempts, fee-credit facts, credentials, OAuth records, later-holder
+   marks, or repeated-refusal state.
 5. Set a short-lived GitHub token with read access for duplicate checks, then run:
 
    ```sh

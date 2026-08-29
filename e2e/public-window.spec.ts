@@ -56,7 +56,7 @@ test('public window links to the dated public snapshot archive', async ({ page }
   const link = page.getByRole('link', { name: 'Public snapshots' })
   await expect(link).toHaveAttribute(
     'href',
-    'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-',
+    'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-',
   )
 })
 
@@ -72,6 +72,7 @@ test('each visible view has one share button that copies its absolute clean URL'
     { tab: 'Happenings', path: '/window/happenings?place=11' },
     { tab: 'Agreements', path: '/window/agreements?place=11' },
     { tab: 'Archive', path: '/window/archive?place=11' },
+    { tab: 'Gazette', path: '/window/gazette' },
   ] as const
   const expectedLinks: string[] = []
 
@@ -93,6 +94,79 @@ test('each visible view has one share button that copies its absolute clean URL'
   }
 })
 
+test('an unproven Gazette issue restores and shares without claiming it exists in metadata', async ({ page }) => {
+  const residentBody = 'This resident body belongs in the page, never in an unfurl.'
+  await page.route('**/api/gazette**', route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/gazette') {
+      return route.fulfill({
+        json: {
+          first_print_at: '2026-08-31T16:00:00.000Z',
+          submission_room: { place_id: 454, submissions_open: true },
+          issues: [{
+            issue_number: 7,
+            scheduled_for: '2026-10-12T16:00:00.000Z',
+            printed_at: '2026-10-12T16:00:02.000Z',
+            entry_count: 1,
+          }],
+          has_more: false,
+          next_before_issue_number: null,
+        },
+      })
+    }
+    if (url.pathname === '/api/gazette/7') {
+      return route.fulfill({
+        json: {
+          issue: {
+            issue_number: 7,
+            scheduled_for: '2026-10-12T16:00:00.000Z',
+            printed_at: '2026-10-12T16:00:02.000Z',
+            header: 'Permanent issue 7 provenance from Room #454.',
+            entry_count: 1,
+          },
+          entries: [{
+            ordinal: 1,
+            note_id: 701,
+            author: 'leafwalker',
+            body: residentBody,
+            created_at: '2026-10-12T15:55:00.000Z',
+          }],
+          has_more: false,
+          next_after_ordinal: null,
+        },
+      })
+    }
+    return route.abort('failed')
+  })
+  await installClipboardRecorder(page)
+
+  const navigation = await page.goto('/window/gazette?issue=7')
+  expect(navigation?.status()).toBe(200)
+  await expect(page).toHaveTitle('The Gazette · Issue 7 could not be checked — 1F3D9')
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
+    'content',
+    'The Gazette · Issue 7 could not be checked — 1F3D9',
+  )
+  const unfurlDescription = await page.locator('meta[property="og:description"]')
+    .getAttribute('content')
+  expect(unfurlDescription).toContain('public availability could not be checked right now')
+  expect(unfurlDescription).not.toContain(residentBody)
+  expect(unfurlDescription).not.toContain('leafwalker')
+
+  await expect(page.getByRole('tab', { name: 'Gazette', exact: true }))
+    .toHaveAttribute('aria-selected', 'true')
+  const panel = page.locator('#gazette-panel')
+  await expect(panel.getByRole('status')).toHaveText(
+    'Room #454 is open for Gazette submissions.',
+  )
+  await expect(panel).toContainText('Issue 7')
+  await expect(panel).toContainText(residentBody)
+  await panel.locator('[data-share-scope="view"]').click()
+  await expect.poll(() => copiedShareLinks(page)).toEqual([
+    new URL('/window/gazette?issue=7', page.url()).href,
+  ])
+})
+
 test('a filtered Place URL survives server render and browser restoration exactly', async ({ page }) => {
   const path = '/window/place/11?resident=browser-resident&context=place&find=field&sleepers=11'
   const navigation = await page.goto(path)
@@ -109,7 +183,7 @@ test('a filtered Place URL survives server render and browser restoration exactl
   await expect(page.locator('#directory-search')).toHaveValue('field')
 })
 
-test('place, thing, and note details each copy one absolute clean live-record URL', async ({ page }) => {
+test('place, thing, and note details each copy one absolute clean live-record URL', async ({ page, context }) => {
   await installClipboardRecorder(page)
   const navigation = await page.goto('/window/place/11')
   expect(navigation?.status()).toBe(200)
@@ -119,6 +193,7 @@ test('place, thing, and note details each copy one absolute clean live-record UR
   const expectedLinks = [`${origin}/window/place/11`]
   const placePanel = page.locator('#place-panel')
   await expect(placePanel).toBeVisible()
+  await expect(page.locator('#record-detail')).toBeHidden()
   await expect(placePanel.locator('[data-share-scope="view"]')).toHaveCount(1)
   await placePanel.locator('[data-share-scope="view"]').click()
   await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
@@ -132,6 +207,11 @@ test('place, thing, and note details each copy one absolute clean live-record UR
   await detail.locator('[data-share-scope="detail"]').click()
   expectedLinks.push(`${origin}/window/thing/401`)
   await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
+  const thingRecipient = await context.newPage()
+  await thingRecipient.goto(`${origin}/window/thing/401`)
+  await expect(thingRecipient.locator('#record-detail')).toBeVisible()
+  await expect(thingRecipient.locator('#record-detail-title')).toHaveText('field_lantern')
+  await thingRecipient.close()
 
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(page).toHaveURL(`${origin}/window/place/11`)
@@ -201,13 +281,60 @@ test('closing an in-window detail prevents Back from reopening that detail', asy
   const detail = page.locator('#record-detail')
   await expect(page).toHaveURL(/\/window\/thing\/401$/u)
   await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+
+  await page.evaluate(() => {
+    const heldBack = history.back.bind(history)
+    const heldShowModal = HTMLDialogElement.prototype.showModal
+    const trackedWindow = window as Window & {
+      __detailShowModalCalls?: number
+      __releaseHeldBack?: () => void
+      __restoreDetailShowModal?: () => void
+    }
+    trackedWindow.__detailShowModalCalls = 0
+    HTMLDialogElement.prototype.showModal = function showModal() {
+      trackedWindow.__detailShowModalCalls = (trackedWindow.__detailShowModalCalls || 0) + 1
+      return heldShowModal.call(this)
+    }
+    history.back = () => {}
+    trackedWindow.__releaseHeldBack = () => {
+      history.back = heldBack
+      heldBack()
+    }
+    trackedWindow.__restoreDetailShowModal = () => {
+      HTMLDialogElement.prototype.showModal = heldShowModal
+    }
+  })
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(detail).toBeHidden()
+  await expect(page).toHaveURL(/\/window\/thing\/401$/u)
+  expect(await page.evaluate(() => history.state?.windowDetailEntry)).toBe(true)
+  expect(await page.evaluate(() => (
+    window as Window & { __detailShowModalCalls?: number }
+  ).__detailShowModalCalls)).toBe(0)
+  await page.evaluate(() => (
+    window as Window & { __releaseHeldBack?: () => void }
+  ).__releaseHeldBack?.())
   await expect(page).toHaveURL(/\/window\/place\/11$/u)
   await expect(detail).toBeHidden()
 
-  await page.goBack()
+  await page.goForward()
+  await expect(page).toHaveURL(/\/window\/thing\/401$/u)
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  await expect(detail).toBeVisible()
+  expect(await page.evaluate(() => history.state?.windowDetailEntry)).toBe(true)
+  expect(await page.evaluate(() => (
+    window as Window & { __detailShowModalCalls?: number }
+  ).__detailShowModalCalls)).toBe(1)
+
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
   await expect(detail).toBeHidden()
-  expect(new URL(page.url()).pathname).not.toBe('/window/thing/401')
+  expect(await page.evaluate(() => (
+    window as Window & { __detailShowModalCalls?: number }
+  ).__detailShowModalCalls)).toBe(1)
+  await page.evaluate(() => (
+    window as Window & { __restoreDetailShowModal?: () => void }
+  ).__restoreDetailShowModal?.())
 })
 
 test('closing a directly loaded detail falls back to the map deterministically', async ({ page }) => {

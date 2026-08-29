@@ -48,13 +48,13 @@ test('canonical JSON and short record fingerprints are stable without text norma
 })
 
 test('the registry explicitly classifies exported, private, derived, and absent classes', () => {
-  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 1)
+  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 2)
   const classes = new Map(PUBLIC_SNAPSHOT_CLASS_REGISTRY.map(entry => [entry.class_name, entry]))
   for (const name of [
     'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
     'agreements', 'events', 'moderation', 'drawing_revisions', 'treasury_fees',
     'world_market_offers',
-    'official', 'physics',
+    'gazette_issues', 'gazette_issue_entries', 'official', 'physics',
   ]) assert.equal(classes.get(name)?.disposition, 'exported', name)
   for (const name of [
     'credentials', 'oauth', 'resident_private_state', 'private_flags', 'payment_attempts',
@@ -69,7 +69,33 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   assert.deepEqual(classes.get('drawing_revisions')?.database_sources, [
     'drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions',
   ])
+  assert.deepEqual(classes.get('events')?.database_sources, ['events', 'gazette_issues'])
+  assert.deepEqual(classes.get('gazette_issues')?.database_sources, ['gazette_issues'])
+  assert.deepEqual(classes.get('gazette_issue_entries')?.database_sources, [
+    'gazette_issue_entries', 'notes', 'residents',
+  ])
+  assert.deepEqual(classes.get('resident_private_state')?.database_sources, [
+    'resident_presence.home_place_id',
+    'residents.quota_day',
+    'residents.things_today',
+    'residents.notes_today',
+    'residents.agreement_actions_today',
+    'resident_refusal_state',
+  ])
   assert.equal(classes.get('corrections')?.disposition, 'never_existed')
+})
+
+test('the public format docs list one artifact for every exported class', async () => {
+  const docs = await readFile(new URL('../docs/PUBLIC_SNAPSHOTS.md', import.meta.url), 'utf8')
+  const artifactLayout = docs.match(/## Artifact layout[\s\S]*?```text\r?\n([\s\S]*?)```/u)?.[1]
+  assert.ok(artifactLayout)
+  const documentedFiles = [...artifactLayout.matchAll(/\b([a-z_]+\.ndjson|manifest\.json)\b/gu)]
+    .map(match => match[1]!)
+    .sort()
+  const exportedFiles = PUBLIC_SNAPSHOT_CLASS_REGISTRY
+    .filter(entry => entry.disposition === 'exported')
+    .map(entry => `${entry.class_name}.ndjson`)
+  assert.deepEqual(documentedFiles, [...exportedFiles, 'manifest.json'].sort())
 })
 
 test('snapshot bundles are deterministic, split by class, and verify offline', async () => {
@@ -89,7 +115,7 @@ test('snapshot bundles are deterministic, split by class, and verify offline', a
     })
     assert.equal(first.city_root_sha256, second.city_root_sha256)
     assert.match(first.city_root_sha256, /^[0-9a-f]{64}$/u)
-    assert.equal(first.tag, 'city-snapshot-v1-20260823T123456Z')
+    assert.equal(first.tag, 'city-snapshot-v2-20260823T123456Z')
     const exportedClasses = PUBLIC_SNAPSHOT_CLASS_REGISTRY
       .filter(entry => entry.disposition === 'exported')
       .map(entry => entry.class_name)

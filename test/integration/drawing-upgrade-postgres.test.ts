@@ -29,6 +29,14 @@ const worldRootDrawingMigrationDdl = await readFile(
   new URL('../../db/migrations/20260827_world_root_drawing.sql', import.meta.url),
   'utf8',
 )
+const gazetteMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260827_gazette.sql', import.meta.url),
+  'utf8',
+)
+const gazetteActivationDdl = await readFile(
+  new URL('../../db/migrations/20260827_gazette_room_activation.sql', import.meta.url),
+  'utf8',
+)
 const founderWorldDrawing = Object.freeze({
   palette: Object.freeze(['#0b1714', '#123026', '#1c4434']),
   indices: Object.freeze([
@@ -106,6 +114,25 @@ async function startPostgres(t: TestContext, purpose: string): Promise<Client> {
   return client
 }
 
+async function snapshotExportPrivileges(client: Client): Promise<Readonly<{
+  public_records: boolean
+  public_records_v2: boolean
+}>> {
+  const privileges = (await client.query<{
+    public_records: boolean
+    public_records_v2: boolean
+  }>(`
+    SELECT
+      has_table_privilege(
+        'city_snapshot_export', to_regclass('city_snapshot.public_records'), 'SELECT'
+      ) AS public_records,
+      coalesce(has_table_privilege(
+        'city_snapshot_export', to_regclass('city_snapshot.public_records_v2'), 'SELECT'
+      ), FALSE) AS public_records_v2
+  `)).rows[0]!
+  return Object.freeze(privileges)
+}
+
 test('real PostgreSQL upgrades the exact pre-drawing production schema in release order', async t => {
   assert.equal(
     createHash('sha256').update(preDrawingSchemaDdl).digest('hex'),
@@ -134,6 +161,11 @@ test('real PostgreSQL upgrades the exact pre-drawing production schema in releas
       to_regprocedure('public.valid_city_drawing(jsonb)')::text AS drawing_validator
   `)).rows, [{ drawing_state: null, drawing_revisions: null, drawing_validator: null }])
 
+  await client.query(gazetteMigrationDdl)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: true,
+    public_records_v2: true,
+  })
   await client.query(drawingContractMigrationDdl)
   await client.query(worldRootDrawingMigrationDdl)
   await client.query(`
@@ -170,6 +202,85 @@ test('real PostgreSQL upgrades the exact pre-drawing production schema in releas
   assert.equal(undrawnSnapshot.kind_name, null)
   assert.equal(undrawnSnapshot.revision, null)
   assert.equal(undrawnSnapshot.variant_name, null)
+
+  const residentEditedEventId = Number((await client.query<{ id: string }>(`
+    INSERT INTO events (kind, actor, detail)
+    VALUES ('resident_edited', 'snapshot-owner', $1::jsonb)
+    RETURNING id::text
+  `, [JSON.stringify({ resident_id: 1, error: 'must stay private' })])).rows[0]!.id)
+  const privateEventId = Number((await client.query<{ id: string }>(`
+    INSERT INTO events (kind, actor, detail)
+    VALUES ('drawing_upgrade_private_fixture', 'snapshot-owner', $1::jsonb)
+    RETURNING id::text
+  `, [JSON.stringify({ error: 'must stay private' })])).rows[0]!.id)
+  const gazetteEventId = Number((await client.query<{ id: string }>(`
+    INSERT INTO events (kind, actor, detail)
+    VALUES ('gazette_printed', 'the Gazette printer', $1::jsonb)
+    RETURNING id::text
+  `, [JSON.stringify({ error: 'must stay private' })])).rows[0]!.id)
+  await client.query(`
+    INSERT INTO gazette_issues (
+      issue_number, scheduled_for, printed_at, header, entry_count, event_id
+    ) VALUES (
+      1,
+      TIMESTAMPTZ '2026-08-31 16:00:00+00',
+      TIMESTAMPTZ '2026-08-31 16:00:00+00',
+      'The Gazette — Issue 1 — 2026-08-31',
+      0,
+      $1
+    )
+  `, [gazetteEventId])
+
+  const v2ViewDefinition = (await client.query<{ definition: string }>(`
+    SELECT pg_get_viewdef('city_snapshot.public_records_v2'::regclass, TRUE) AS definition
+  `)).rows[0]!.definition
+  assert.match(v2ViewDefinition, /FROM city_snapshot\.public_records base_record/iu)
+  assert.doesNotMatch(v2ViewDefinition, /public_records_without_drawing_contract/iu)
+  const v2Records = new Map((await client.query<{
+    class_name: string
+    record_id: string
+    payload: Record<string, unknown>
+  }>(`
+    SELECT class_name, record_id, payload
+    FROM city_snapshot.public_records_v2
+    WHERE (class_name = 'events' AND record_id IN ($1::text, $2::text, $3::text))
+      OR class_name IN ('drawing_revisions', 'gazette_issues')
+    ORDER BY class_name, record_id
+  `, [residentEditedEventId, privateEventId, gazetteEventId])).rows.map(record => [
+    `${record.class_name}:${record.record_id}`,
+    record.payload,
+  ]))
+  assert.deepEqual(v2Records.get(`events:${residentEditedEventId}`), {
+    id: residentEditedEventId,
+    kind: 'resident_edited',
+    actor: 'snapshot-owner',
+    detail: { resident_id: 1 },
+    at: v2Records.get(`events:${residentEditedEventId}`)?.at,
+    status: 'exported',
+    detail_policy: 'safe references only; authored text is in its primary exported record',
+  })
+  assert.deepEqual(v2Records.get(`events:${privateEventId}`), {
+    id: privateEventId,
+    status: 'not_public_or_sequence_gap',
+  })
+  assert.deepEqual(v2Records.get(`events:${gazetteEventId}`), {
+    id: gazetteEventId,
+    kind: 'gazette_printed',
+    actor: 'the Gazette printer',
+    detail: { issue_number: 1, entry_count: 0 },
+    at: v2Records.get(`events:${gazetteEventId}`)?.at,
+    status: 'exported',
+    detail_policy: 'safe references only; authored text is in its primary exported record',
+  })
+  assert.equal(
+    [...v2Records.keys()].some(key => key.startsWith('drawing_revisions:')),
+    true,
+  )
+  assert.equal(v2Records.get('gazette_issues:1')?.issue_number, 1)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: true,
+    public_records_v2: true,
+  })
   const firstState = await releaseState(client)
   await client.query(drawingContractMigrationDdl)
   await client.query(worldRootDrawingMigrationDdl)
@@ -223,6 +334,57 @@ test('real PostgreSQL upgrades the exact pre-drawing production schema in releas
   assert.deepEqual(repeatedState.views, firstState.views)
 })
 
+test('drawing upgrade preserves an activated Gazette v2-only export cutover on rerun', async t => {
+  const client = await startPostgres(t, 'drawing-gazette-activated')
+  await client.query(preDrawingSchemaDdl)
+  await client.query(`
+    INSERT INTO residents (id, handle, model, secret_hash)
+    VALUES (1, 'gazette-founder', 'integration-test', repeat('1', 64));
+
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    )
+    SELECT
+      2, world.id, 'continent', 'gazette test continent',
+      'Integration-only parent for the Gazette room.', 1,
+      FALSE, FALSE, FALSE
+    FROM places world
+    WHERE world.place_kind = 'world';
+
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, purpose, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    ) VALUES (
+      454, 2, 'place', 'the gazette submission room',
+      'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+      '', 1, FALSE, FALSE, FALSE
+    );
+  `)
+  await client.query(gazetteMigrationDdl)
+  await client.query(gazetteActivationDdl)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: false,
+    public_records_v2: true,
+  })
+
+  await client.query(drawingContractMigrationDdl)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: false,
+    public_records_v2: true,
+  })
+  await client.query(drawingContractMigrationDdl)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: false,
+    public_records_v2: true,
+  })
+  const viewDefinition = (await client.query<{ definition: string }>(`
+    SELECT pg_get_viewdef('city_snapshot.public_records_v2'::regclass, TRUE) AS definition
+  `)).rows[0]!.definition
+  assert.match(viewDefinition, /FROM city_snapshot\.public_records base_record/iu)
+  assert.doesNotMatch(viewDefinition, /public_records_without_drawing_contract/iu)
+})
+
 test('a completed contract rerun cannot relabel later authored drawings as legacy', async t => {
   const client = await startPostgres(t, 'drawing-late-rerun')
   await client.query(preDrawingSchemaDdl)
@@ -255,6 +417,10 @@ test('a completed contract rerun cannot relabel later authored drawings as legac
     VALUES ($1, 1, 'undrawn before the contract')
   `, [kindId])
   await client.query(drawingContractMigrationDdl)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: true,
+    public_records_v2: false,
+  })
   assert.equal((await client.query<{ count: string }>(`
     SELECT count(*)::text AS count
     FROM drawing_revisions
@@ -397,6 +563,10 @@ test('a completed contract rerun cannot relabel later authored drawings as legac
     ],
   )
   await client.query(drawingContractMigrationDdl)
+  assert.deepEqual(await snapshotExportPrivileges(client), {
+    public_records: true,
+    public_records_v2: false,
+  })
   const repeatedHistory = (await client.query(`
     SELECT id::text, target_type, target_id,
       prior_state, prior_description, prior_drawing, prior_source,

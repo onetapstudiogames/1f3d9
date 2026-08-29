@@ -3,8 +3,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as windowClientModule from '../src/window-client.ts'
 import {
+  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
   normalizeWindowDrawing,
   windowLiveClampZoomScale,
+  windowLiveExpandedGroundLayout,
   windowLivePlateChildren,
   windowLivePollDelay,
   windowLiveReplayDuration,
@@ -16,6 +18,7 @@ import {
   windowLiveSeparatedPoints,
   windowLiveScatteredPoint,
   windowLiveScatteredPoints,
+  windowLiveSurveyedPlots,
   windowLiveSpeechLine,
   windowLiveTouchActivation,
   windowLiveTraceOpacity,
@@ -47,6 +50,8 @@ type LiveViewportBounds = Readonly<{
   bottom: number
 }>
 
+type LivePointMap = Readonly<Record<string, Readonly<{ x: number; y: number }>>>
+
 type LiveClientExports = Readonly<{
   windowDrawingStateLabel?: (
     state: 'undrawn' | 'refused' | 'in_progress' | 'complete',
@@ -68,6 +73,18 @@ type LiveClientExports = Readonly<{
     minimumScale: number,
     maximumScale: number,
   ) => Readonly<{ scale: number; offsetX: number; offsetY: number }> | null
+  windowLiveRevealCamera?: (
+    viewportWidth: number,
+    viewportHeight: number,
+    targetX: number,
+    targetY: number,
+    targetWidth: number,
+    targetHeight: number,
+    scale: number,
+    offsetX: number,
+    offsetY: number,
+    safeInset: number,
+  ) => Readonly<{ scale: number; offsetX: number; offsetY: number }> | null
   windowLiveDirectGroundWidth?: (
     stageWidth: number,
     readableWidth: number,
@@ -85,6 +102,50 @@ type LiveClientExports = Readonly<{
     viewport: LiveViewportBounds,
     overscan: number,
   ) => readonly SurveyedPlot[]
+  windowLiveVisiblePlotIds?: (
+    plots: readonly SurveyedPlot[],
+    expandedGrounds: Readonly<Record<string, Readonly<{
+      x: number
+      residentTop: number | null
+      thingTop: number | null
+      width: number
+      bottom: number
+    }>>>,
+    viewport: LiveViewportBounds,
+    overscan: number,
+    controlRailDepth?: number,
+  ) => readonly number[]
+  windowLiveThingPointsAroundResidents?: (
+    keys: readonly number[],
+    width: number,
+    height: number,
+    seed: number,
+    itemWidth: number,
+    itemHeight: number,
+    margin: number,
+    residentPoints: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+    reserved?: readonly Readonly<{ x: number; y: number; width: number; height: number }>[],
+    previous?: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+    sharesResidentSurface?: boolean,
+  ) => Readonly<Record<string, Readonly<{ x: number; y: number }>>>
+  windowLiveResidentPointsAroundThings?: (
+    keys: readonly number[],
+    width: number,
+    height: number,
+    seed: number,
+    itemWidth: number,
+    itemHeight: number,
+    margin: number,
+    thingPoints: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+    thingItemWidth: number,
+    reserved?: readonly Readonly<{ x: number; y: number; width: number; height: number }>[],
+    previous?: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+    sharesThingSurface?: boolean,
+  ) => Readonly<Record<string, Readonly<{ x: number; y: number }>>>
+  windowLiveRootReservations?: (
+    width: number,
+    height: number,
+  ) => readonly Readonly<{ x: number; y: number; width: number; height: number }>[]
   windowLiveCapacitySelection?: (
     rows: readonly CapacityRow[],
     capacity: number,
@@ -388,6 +449,31 @@ test('crowded residents keep append-stable separated points away from control gr
   }
 })
 
+test('spatial arbitration stays stable when focus changes pinned input order', () => {
+  const original = windowLiveSeparatedPoints(
+    Object.freeze([21, 22, 23, 24, 25, 26]),
+    440,
+    280,
+    73,
+    56,
+    56,
+    6,
+    1,
+  )
+  const focusReordered = windowLiveSeparatedPoints(
+    Object.freeze([25, 23, 21, 22, 24, 26]),
+    440,
+    280,
+    73,
+    56,
+    56,
+    6,
+    1,
+  )
+
+  assert.deepEqual(focusReordered, original)
+})
+
 test('crowded things use the whole plot without covering Show more', () => {
   const reserved = Object.freeze([
     Object.freeze({ x: 116, y: 104, width: 104, height: 44 }),
@@ -424,6 +510,581 @@ test('crowded things use the whole plot without covering Show more', () => {
       false,
     )
   }
+})
+
+test('ordinary child ground keeps 6 residents and 6 things naturally scattered for 100 seeds', () => {
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  if (!thingPointsAroundResidents) return
+  const [plot] = windowLiveSurveyedPlots([
+    Object.freeze({ id: 1, parent_id: null }),
+    Object.freeze({ id: 2, parent_id: 1 }),
+  ], 1)
+  assert.ok(plot)
+  if (!plot) return
+  assert.deepEqual({ width: plot.width, height: plot.height }, { width: 440, height: 280 })
+  assert.ok(WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT.y >= plot.height + 6)
+
+  const overlaps = (
+    left: Readonly<{ x: number; y: number; width: number; height: number }>,
+    right: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ) => left.x < right.x + right.width + 6 && left.x + left.width + 6 > right.x &&
+    left.y < right.y + right.height + 6 && left.y + left.height + 6 > right.y
+
+  for (let placeId = 2; placeId < 102; placeId += 1) {
+    const residentIds = Object.freeze(Array.from({ length: 6 }, (_, index) => 20 + index))
+    const thingIds = Object.freeze(Array.from({ length: 6 }, (_, index) => 90 + index))
+    const residents = windowLiveSeparatedPoints(
+      residentIds,
+      plot.width,
+      plot.height,
+      placeId * 17 + 3,
+      56,
+      56,
+      6,
+      1,
+    )
+    const things: Readonly<Record<string, Readonly<{ x: number; y: number }>>> =
+      thingPointsAroundResidents(
+        thingIds,
+        plot.width,
+        plot.height,
+        placeId * 29 + 11,
+        94,
+        56,
+        6,
+        residents,
+      )
+    assert.equal(Object.keys(residents).length, 6, `resident seed ${placeId}`)
+    assert.equal(Object.keys(things).length, 6, `thing seed ${placeId}`)
+    assert.deepEqual(windowLiveSeparatedPoints(
+      residentIds,
+      plot.width,
+      plot.height,
+      placeId * 17 + 3,
+      56,
+      56,
+      6,
+      1,
+      [],
+      residents,
+    ), residents)
+
+    const rectangles = [
+      ...Object.values(residents).map(point => ({
+        x: point.x - 28, y: point.y - 56, width: 56, height: 56,
+      })),
+      ...Object.values(things).map(point => ({
+        x: point.x - 47, y: point.y - 28, width: 94, height: 56,
+      })),
+    ]
+    for (const [index, left] of rectangles.entries()) {
+      for (const right of rectangles.slice(index + 1)) assert.equal(overlaps(left, right), false)
+    }
+    const allPoints = [...Object.values(residents), ...Object.values(things)]
+    assert.ok(new Set(allPoints.map(point => Math.round(point.x))).size >= 8)
+    assert.ok(new Set(allPoints.map(point => Math.round(point.y))).size >= 8)
+  }
+})
+
+test('direct root ground uses the production combined resident and thing placement', () => {
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  if (!thingPointsAroundResidents) return
+
+  const residents = windowLiveSeparatedPoints(
+    Object.freeze([20, 21, 22, 23, 24, 25]),
+    1_100,
+    680,
+    20,
+    56,
+    56,
+    12,
+    1,
+  )
+  const things: Readonly<Record<string, Readonly<{ x: number; y: number }>>> =
+    thingPointsAroundResidents(
+      Object.freeze([90, 91, 92, 93, 94, 95]),
+      1_100,
+      680,
+      40,
+      144,
+      56,
+      12,
+      residents,
+    )
+  assert.equal(Object.keys(residents).length, 6)
+  assert.equal(Object.keys(things).length, 6)
+
+  for (const resident of Object.values(residents)) {
+    const residentRect = { x: resident.x - 28, y: resident.y - 56, width: 56, height: 56 }
+    for (const thing of Object.values(things)) {
+      const thingRect = { x: thing.x - 72, y: thing.y - 28, width: 144, height: 56 }
+      assert.equal(
+        residentRect.x < thingRect.x + thingRect.width + 6 &&
+          residentRect.x + residentRect.width + 6 > thingRect.x &&
+          residentRect.y < thingRect.y + thingRect.height + 6 &&
+          residentRect.y + residentRect.height + 6 > thingRect.y,
+        false,
+      )
+    }
+  }
+})
+
+test('expanded child thing ground places every selected thing outside resident coordinates', () => {
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  if (!thingPointsAroundResidents) return
+
+  for (const count of [8, 12, 20, 80]) {
+    const residentIds = Object.freeze(Array.from({ length: count }, (_, index) => 20 + index))
+    const thingIds = Object.freeze(Array.from({ length: count }, (_, index) => 200 + index))
+    const width = 480
+    const residentHeight = Math.max(
+      320,
+      windowLiveScatterSurfaceHeight(0, width, count, 56, 56, 6),
+    )
+    const thingHeight = Math.max(
+      320,
+      windowLiveScatterSurfaceHeight(0, width, count, 94, 56, 6),
+    )
+    const residents = windowLiveSeparatedPoints(
+      residentIds,
+      width,
+      residentHeight,
+      47,
+      56,
+      56,
+      6,
+      1,
+    )
+    const things = thingPointsAroundResidents(
+      thingIds,
+      width,
+      thingHeight,
+      53,
+      94,
+      56,
+      6,
+      residents,
+      [],
+      {},
+      false,
+    )
+
+    assert.equal(Object.keys(residents).length, count, `${count} expanded residents`)
+    assert.equal(Object.keys(things).length, count, `${count} expanded things`)
+  }
+})
+
+test('shared root ground keeps retained residents and things fixed when either type arrives', () => {
+  const residentPointsAroundThings = liveClientExports.windowLiveResidentPointsAroundThings
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  const rootReservations = liveClientExports.windowLiveRootReservations
+  assert.equal(typeof residentPointsAroundThings, 'function')
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  assert.equal(typeof rootReservations, 'function')
+  if (!residentPointsAroundThings || !thingPointsAroundResidents || !rootReservations) return
+
+  const residentIds = Object.freeze([20, 21, 22, 23, 24, 25])
+  const thingIds = Object.freeze([90, 91, 92, 93, 94, 95])
+  const retained = (
+    points: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
+    ids: readonly number[],
+  ) => Object.fromEntries(ids.map(id => [String(id), points[String(id)]]))
+
+  for (let placeId = 1; placeId <= 250; placeId += 1) {
+    const reserved = rootReservations(1_100, 680)
+    const residentsBefore: LivePointMap = residentPointsAroundThings(
+      residentIds, 1_100, 680, placeId * 17 + 3, 56, 56, 12, {}, 144, reserved,
+    )
+    const thingsBefore: LivePointMap = thingPointsAroundResidents(
+      thingIds, 1_100, 680, placeId * 29 + 11, 144, 56, 12,
+      residentsBefore, reserved, {}, true,
+    )
+    const residentsAfter: LivePointMap = residentPointsAroundThings(
+      Object.freeze([...residentIds, 26]),
+      1_100,
+      680,
+      placeId * 17 + 3,
+      56,
+      56,
+      12,
+      thingsBefore,
+      144,
+      reserved,
+      residentsBefore,
+      true,
+    )
+    const thingsAfterResident: LivePointMap = thingPointsAroundResidents(
+      thingIds, 1_100, 680, placeId * 29 + 11, 144, 56, 12,
+      residentsAfter, reserved, thingsBefore, true,
+    )
+    assert.deepEqual(retained(residentsAfter, residentIds), residentsBefore, `resident seed ${placeId}`)
+    assert.deepEqual(thingsAfterResident, thingsBefore, `thing seed ${placeId}`)
+
+    const residentsAfterThing: LivePointMap = residentPointsAroundThings(
+      residentIds, 1_100, 680, placeId * 17 + 3, 56, 56, 12,
+      thingsBefore, 144, reserved, residentsBefore, true,
+    )
+    const thingsAfterThing: LivePointMap = thingPointsAroundResidents(
+      Object.freeze([...thingIds, 96]),
+      1_100,
+      680,
+      placeId * 29 + 11,
+      144,
+      56,
+      12,
+      residentsAfterThing,
+      reserved,
+      thingsBefore,
+      true,
+    )
+    assert.deepEqual(residentsAfterThing, residentsBefore, `resident thing-arrival seed ${placeId}`)
+    assert.deepEqual(retained(thingsAfterThing, thingIds), thingsBefore, `new thing seed ${placeId}`)
+  }
+})
+
+test('root overflow controls reserve the same ground before and after the 6 to 7 threshold', () => {
+  const residentPointsAroundThings = liveClientExports.windowLiveResidentPointsAroundThings
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  const rootReservations = liveClientExports.windowLiveRootReservations
+  assert.equal(typeof residentPointsAroundThings, 'function')
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  assert.equal(typeof rootReservations, 'function')
+  if (!residentPointsAroundThings || !thingPointsAroundResidents || !rootReservations) return
+
+  const placeId = 17
+  const residentIds = Object.freeze([20, 21, 22, 23, 24, 25])
+  const thingIds = Object.freeze([90, 91, 92, 93, 94, 95])
+  const reserved = rootReservations(1_100, 680)
+  assert.deepEqual(reserved, [Object.freeze({ x: 984, y: 536, width: 116, height: 144 })])
+  const residentsBefore: LivePointMap = residentPointsAroundThings(
+    residentIds, 1_100, 680, placeId * 17 + 3, 56, 56, 12, {}, 144, reserved,
+  )
+  const thingsBefore: LivePointMap = thingPointsAroundResidents(
+    thingIds, 1_100, 680, placeId * 29 + 11, 144, 56, 12,
+    residentsBefore, reserved, {}, true,
+  )
+  const retainedResidentIds = residentIds.slice(0, 4)
+  const residentsAfterThreshold: LivePointMap = residentPointsAroundThings(
+    retainedResidentIds,
+    1_100,
+    680,
+    placeId * 17 + 3,
+    56,
+    56,
+    12,
+    thingsBefore,
+    144,
+    reserved,
+    residentsBefore,
+    true,
+  )
+  const retainedThingIds = thingIds.slice(0, 5)
+  const thingsAfterThreshold: LivePointMap = thingPointsAroundResidents(
+    retainedThingIds,
+    1_100,
+    680,
+    placeId * 29 + 11,
+    144,
+    56,
+    12,
+    residentsAfterThreshold,
+    reserved,
+    thingsBefore,
+    true,
+  )
+  assert.deepEqual(
+    residentsAfterThreshold,
+    Object.fromEntries(retainedResidentIds.map(id => [String(id), residentsBefore[String(id)]])),
+  )
+  assert.deepEqual(
+    thingsAfterThreshold,
+    Object.fromEntries(retainedThingIds.map(id => [String(id), thingsBefore[String(id)]])),
+  )
+})
+
+test('resident-only and thing-only root expansion keep one shared collision-free rail', () => {
+  const residentPointsAroundThings = liveClientExports.windowLiveResidentPointsAroundThings
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  const rootReservations = liveClientExports.windowLiveRootReservations
+  assert.equal(typeof residentPointsAroundThings, 'function')
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  assert.equal(typeof rootReservations, 'function')
+  if (!residentPointsAroundThings || !thingPointsAroundResidents || !rootReservations) return
+
+  const rootExpandedDeclarations = windowClientModule.WINDOW_JS.match(
+    /const rootExpanded = isRoot && \(\s*state\.live\.expandedResidentPlaceIds\.includes\([^)]+\) \|\|\s*state\.live\.expandedThingPlaceIds\.includes\([^)]+\)\s*\)/gu,
+  ) || []
+  assert.equal(rootExpandedDeclarations.length, 2)
+  assert.equal((windowClientModule.WINDOW_JS.match(
+    /rootExpanded \? liveDirectGroundHeight\(/gu,
+  ) || []).length, 2)
+
+  const width = 1_100
+  const baseHeight = 680
+  const placeId = 1
+  const initialResidentIds = Object.freeze([20, 21, 22, 23])
+  const initialThingIds = Object.freeze([90, 91, 92, 93, 94])
+  const initialReserved = rootReservations(width, baseHeight)
+  const initialResidents: LivePointMap = residentPointsAroundThings(
+    initialResidentIds, width, baseHeight, placeId * 17 + 3, 56, 56, 12,
+    {}, 144, initialReserved,
+  )
+  const initialThings: LivePointMap = thingPointsAroundResidents(
+    initialThingIds, width, baseHeight, placeId * 29 + 11, 144, 56, 12,
+    initialResidents, initialReserved,
+  )
+  const overlaps = (
+    left: Readonly<{ x: number; y: number; width: number; height: number }>,
+    right: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ) => left.x < right.x + right.width && left.x + left.width > right.x &&
+    left.y < right.y + right.height && left.y + left.height > right.y
+  const footprint = (
+    point: Readonly<{ x: number; y: number }>,
+    width: number,
+    height: number,
+    anchorY: number,
+  ) => Object.freeze({
+    x: point.x - width / 2,
+    y: point.y - height * anchorY,
+    width,
+    height,
+  })
+  const assertClearOfControl = (
+    points: LivePointMap,
+    itemWidth: number,
+    anchorY: number,
+    control: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ) => {
+    for (const point of Object.values(points)) {
+      assert.equal(overlaps(footprint(point, itemWidth, 56, anchorY), control), false)
+    }
+  }
+  const intersectionCount = (
+    points: LivePointMap,
+    itemWidth: number,
+    anchorY: number,
+    control: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ) => Object.values(points).filter(point =>
+    overlaps(footprint(point, itemWidth, 56, anchorY), control)).length
+  const controlRect = (
+    rail: Readonly<{ x: number; y: number; width: number; height: number }>,
+    slot: 'resident' | 'thing',
+  ) => {
+    const inset = 6
+    const gap = 8
+    const height = (rail.height - inset * 2 - gap) / 2
+    return Object.freeze({
+      x: rail.x + inset,
+      y: rail.y + inset + (slot === 'thing' ? height + gap : 0),
+      width: rail.width - inset * 2,
+      height,
+    })
+  }
+
+  const expandedResidentIds = Object.freeze(Array.from({ length: 800 }, (_, index) => 20 + index))
+  const residentOnlyHeight = windowLiveScatterSurfaceHeight(
+    baseHeight, width, expandedResidentIds.length, 56, 56, 12,
+  )
+  assert.equal(residentOnlyHeight, 3_744)
+  const residentOnlyReserved = rootReservations(width, residentOnlyHeight)
+  const residentOnlyResidents: LivePointMap = residentPointsAroundThings(
+    expandedResidentIds, width, residentOnlyHeight, placeId * 17 + 3, 56, 56, 12,
+    initialThings, 144, residentOnlyReserved, initialResidents, true,
+  )
+  const residentOnlyThings: LivePointMap = thingPointsAroundResidents(
+    initialThingIds, width, residentOnlyHeight, placeId * 29 + 11, 144, 56, 12,
+    residentOnlyResidents, residentOnlyReserved, initialThings, true,
+  )
+  assert.deepEqual(
+    Object.fromEntries(initialResidentIds.map(id =>
+      [String(id), residentOnlyResidents[String(id)]])),
+    initialResidents,
+  )
+  assert.deepEqual(residentOnlyThings, initialThings)
+  assert.equal(intersectionCount(
+    residentOnlyResidents, 56, 1,
+    controlRect(initialReserved[0]!, 'thing'),
+  ), 2, 'the prior independent-height rail is a deterministic counterexample')
+  assertClearOfControl(
+    residentOnlyResidents, 56, 1,
+    controlRect(residentOnlyReserved[0]!, 'thing'),
+  )
+
+  const expandedThingIds = Object.freeze(Array.from({ length: 400 }, (_, index) => 90 + index))
+  const thingOnlyHeight = windowLiveScatterSurfaceHeight(
+    baseHeight, width, expandedThingIds.length, 144, 56, 12, true,
+  )
+  assert.equal(thingOnlyHeight, 4_488)
+  const thingOnlyReserved = rootReservations(width, thingOnlyHeight)
+  const thingOnlyResidents: LivePointMap = residentPointsAroundThings(
+    initialResidentIds, width, thingOnlyHeight, placeId * 17 + 3, 56, 56, 12,
+    initialThings, 144, thingOnlyReserved, initialResidents, true,
+  )
+  const thingOnlyThings: LivePointMap = thingPointsAroundResidents(
+    expandedThingIds, width, thingOnlyHeight, placeId * 29 + 11, 144, 56, 12,
+    thingOnlyResidents, thingOnlyReserved, initialThings, true,
+  )
+  assert.deepEqual(thingOnlyResidents, initialResidents)
+  assert.deepEqual(
+    Object.fromEntries(initialThingIds.map(id => [String(id), thingOnlyThings[String(id)]])),
+    initialThings,
+  )
+  assert.equal(intersectionCount(
+    thingOnlyThings, 144, 0.5,
+    controlRect(initialReserved[0]!, 'resident'),
+  ), 2, 'the prior independent-height rail is a deterministic counterexample')
+  assertClearOfControl(
+    thingOnlyThings, 144, 0.5,
+    controlRect(thingOnlyReserved[0]!, 'resident'),
+  )
+})
+
+test('permanent direct commons stays disjoint and stable across 1,000 child arrivals', () => {
+  const residentPointsAroundThings = liveClientExports.windowLiveResidentPointsAroundThings
+  const thingPointsAroundResidents = liveClientExports.windowLiveThingPointsAroundResidents
+  const rootReservations = liveClientExports.windowLiveRootReservations
+  assert.equal(typeof residentPointsAroundThings, 'function')
+  assert.equal(typeof thingPointsAroundResidents, 'function')
+  assert.equal(typeof rootReservations, 'function')
+  if (!residentPointsAroundThings || !thingPointsAroundResidents || !rootReservations) return
+
+  const commonsWidth = 1_100
+  const commonsHeight = 680
+  const childGroundGap = 80
+  const expandedCommonsHeight = windowLiveScatterSurfaceHeight(
+    commonsHeight,
+    commonsWidth,
+    1_600,
+    56,
+    56,
+    12,
+  )
+  assert.ok(expandedCommonsHeight > commonsHeight)
+  const reserved = rootReservations(commonsWidth, commonsHeight)
+  assert.deepEqual(reserved, [Object.freeze({ x: 984, y: 536, width: 116, height: 144 })])
+  const residentIds = Object.freeze([20, 21, 22, 23, 24, 25])
+  const thingIds = Object.freeze([90, 91, 92, 93, 94, 95])
+  let commonsIntrusions = 0
+  let movedResidents = 0
+  let movedThings = 0
+
+  for (let parentId = 1; parentId <= 1_000; parentId += 1) {
+    const parent = Object.freeze({ id: parentId, parent_id: null, name: `parent ${parentId}` })
+    const firstChild = Object.freeze({
+      id: 10_000 + parentId * 2,
+      parent_id: parentId,
+      name: `first child ${parentId}`,
+    })
+    const laterChild = Object.freeze({
+      id: firstChild.id + 1,
+      parent_id: parentId,
+      name: `later child ${parentId}`,
+    })
+    const beforePlots = windowLiveSurveyedPlots(Object.freeze([parent, firstChild]), parentId)
+    const afterPlots = windowLiveSurveyedPlots(
+      Object.freeze([parent, firstChild, laterChild]),
+      parentId,
+    )
+    assert.deepEqual(afterPlots.find(plot => plot.id === firstChild.id), beforePlots[0])
+    commonsIntrusions += afterPlots.filter(plot => plot.x < commonsWidth + childGroundGap).length
+
+    const residentsBefore: LivePointMap = residentPointsAroundThings(
+      residentIds,
+      commonsWidth,
+      commonsHeight,
+      parentId * 17 + 3,
+      56,
+      56,
+      12,
+      {},
+      144,
+      reserved,
+    )
+    const thingsBefore: LivePointMap = thingPointsAroundResidents(
+      thingIds,
+      commonsWidth,
+      commonsHeight,
+      parentId * 29 + 11,
+      144,
+      56,
+      12,
+      residentsBefore,
+      reserved,
+    )
+    const residentsAfter: LivePointMap = residentPointsAroundThings(
+      residentIds,
+      commonsWidth,
+      commonsHeight,
+      parentId * 17 + 3,
+      56,
+      56,
+      12,
+      thingsBefore,
+      144,
+      reserved,
+      residentsBefore,
+    )
+    const thingsAfter: LivePointMap = thingPointsAroundResidents(
+      thingIds,
+      commonsWidth,
+      commonsHeight,
+      parentId * 29 + 11,
+      144,
+      56,
+      12,
+      residentsAfter,
+      reserved,
+      thingsBefore,
+    )
+    if (!Object.is(JSON.stringify(residentsAfter), JSON.stringify(residentsBefore))) movedResidents += 1
+    if (!Object.is(JSON.stringify(thingsAfter), JSON.stringify(thingsBefore))) movedThings += 1
+  }
+
+  assert.equal(commonsIntrusions, 0)
+  assert.equal(movedResidents, 0)
+  assert.equal(movedThings, 0)
+})
+
+test('expanded natural grounds keep fixed plots still and reserve separate reachable clearings', () => {
+  const plots = windowLiveSurveyedPlots([
+    Object.freeze({ id: 1, parent_id: null }),
+    Object.freeze({ id: 2, parent_id: 1 }),
+    Object.freeze({ id: 3, parent_id: 1 }),
+    Object.freeze({ id: 4, parent_id: 1 }),
+  ], 1)
+  const before = structuredClone(plots)
+  const layout = windowLiveExpandedGroundLayout(plots, Object.freeze([
+    Object.freeze({ id: 2, residentHeight: 320, thingHeight: 382 }),
+    Object.freeze({ id: 3, residentHeight: 320, thingHeight: 0 }),
+  ]))
+
+  assert.deepEqual(plots, before)
+  assert.deepEqual(Object.keys(layout.grounds).sort(), ['2', '3'])
+  const grounds = Object.values(layout.grounds).map(ground => ({
+    x: ground.x,
+    y: ground.residentTop ?? ground.thingTop!,
+    width: ground.width,
+    height: ground.bottom - (ground.residentTop ?? ground.thingTop!),
+  }))
+  const fixed = plots.map(plot => ({
+    x: plot.x,
+    y: plot.y,
+    width: plot.width,
+    height: plot.height + 64,
+  }))
+  const overlaps = (
+    left: Readonly<{ x: number; y: number; width: number; height: number }>,
+    right: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ) => left.x < right.x + right.width + 16 && left.x + left.width + 16 > right.x &&
+    left.y < right.y + right.height + 16 && left.y + left.height + 16 > right.y
+  for (const ground of grounds) {
+    for (const plot of fixed) assert.equal(overlaps(ground, plot), false)
+  }
+  assert.equal(overlaps(grounds[0]!, grounds[1]!), false)
+  assert.ok(layout.height >= Math.max(...grounds.map(ground => ground.y + ground.height)))
 })
 
 test('expanded root crowds reserve enough new ground for every loaded item', () => {
@@ -497,6 +1158,42 @@ test('live plot detail stays camera-bounded while distant plots remain marker ca
   assert.deepEqual(plots.map(plot => plot.id), [1, 2, 3, 4, 5])
 })
 
+test('expanded plot ground stays detailed while its fixed card is off camera', () => {
+  const visiblePlotIds = liveClientExports.windowLiveVisiblePlotIds
+  assert.equal(typeof visiblePlotIds, 'function')
+  if (!visiblePlotIds) return
+
+  const plots = Object.freeze(Array.from({ length: 80 }, (_, index) => Object.freeze({
+    id: index + 1,
+    x: index * 600,
+    y: 100,
+    width: 440,
+    height: 280,
+  })))
+  const expandedGrounds = Object.freeze({
+    '1': Object.freeze({
+      x: 0,
+      residentTop: 900,
+      thingTop: 1_240,
+      width: 480,
+      bottom: 1_620,
+    }),
+  })
+
+  assert.deepEqual(visiblePlotIds(
+    plots,
+    expandedGrounds,
+    Object.freeze({ left: 0, top: 1_300, right: 480, bottom: 1_620 }),
+    0,
+  ), [1])
+  assert.deepEqual(visiblePlotIds(
+    plots,
+    expandedGrounds,
+    Object.freeze({ left: 600, top: 380, right: 1_040, bottom: 444 }),
+    0,
+  ), [2], 'the control rail remains part of its owner detail region')
+})
+
 test('Live uses the locked empty-room sentence on every empty-room surface', () => {
   const lockedCopy = 'Nobody is here right now. The room keeps its things.'
   const occurrences = windowClientModule.WINDOW_JS.split(lockedCopy).length - 1
@@ -539,6 +1236,63 @@ test('Center keeps a readable scale around its target without fitting the whole 
   )
   assert.equal(centerCamera(0, 352, 550, 340, 1, 0.8, 2.2), null)
   assert.equal(centerCamera(320, 352, Number.NaN, 340, 1, 0.8, 2.2), null)
+})
+
+test('every programmatic Live target is revealed inside the interactive safe viewport', () => {
+  const revealCamera = liveClientExports.windowLiveRevealCamera
+  assert.equal(typeof revealCamera, 'function')
+  if (!revealCamera) return
+
+  const viewports = Object.freeze([
+    Object.freeze({ width: 320, height: 352 }),
+    Object.freeze({ width: 824, height: 576 }),
+    Object.freeze({ width: 1_280, height: 720 }),
+  ])
+  const targets = Object.freeze([
+    Object.freeze({ kind: 'resident', width: 56, height: 56 }),
+    Object.freeze({ kind: 'thing', width: 144, height: 56 }),
+    Object.freeze({ kind: 'overflow rail', width: 268, height: 44 }),
+    Object.freeze({ kind: 'Retry', width: 192, height: 132 }),
+  ])
+  const scales = Object.freeze([0.8, 1, 2.2])
+  const safeInset = 16
+
+  for (const viewport of viewports) {
+    for (const target of targets) {
+      for (const scale of scales) {
+        for (const screenPoint of [
+          Object.freeze({ x: -240, y: viewport.height / 2 }),
+          Object.freeze({ x: viewport.width + 240, y: viewport.height / 2 }),
+          Object.freeze({ x: viewport.width / 2, y: -240 }),
+          Object.freeze({ x: viewport.width / 2, y: viewport.height + 240 }),
+        ]) {
+          const targetX = 2_000
+          const targetY = 1_000
+          const offsetX = screenPoint.x - targetX * scale
+          const offsetY = screenPoint.y - targetY * scale
+          const revealed = revealCamera(
+            viewport.width, viewport.height, targetX, targetY,
+            target.width, target.height, scale, offsetX, offsetY, safeInset,
+          )
+          assert.ok(revealed, `${target.kind} ${viewport.width}x${viewport.height}`)
+          const centerX = targetX * scale + revealed.offsetX
+          const centerY = targetY * scale + revealed.offsetY
+          assert.ok(centerX >= safeInset && centerX <= viewport.width - safeInset,
+            `${target.kind} x center in ${viewport.width}x${viewport.height}`)
+          assert.ok(centerY >= safeInset && centerY <= viewport.height - safeInset,
+            `${target.kind} y center in ${viewport.width}x${viewport.height}`)
+          if (target.width * scale <= viewport.width - safeInset * 2) {
+            assert.ok(centerX - target.width * scale / 2 >= safeInset)
+            assert.ok(centerX + target.width * scale / 2 <= viewport.width - safeInset)
+          }
+          if (target.height * scale <= viewport.height - safeInset * 2) {
+            assert.ok(centerY - target.height * scale / 2 >= safeInset)
+            assert.ok(centerY + target.height * scale / 2 <= viewport.height - safeInset)
+          }
+        }
+      }
+    }
+  }
 })
 
 test('zoom has a fixed readable floor independent of surveyed stage bounds', () => {

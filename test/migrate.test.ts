@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
+  executeMigrationRun,
   MIGRATION_LOCK_TIMEOUT,
   MIGRATION_STATEMENT_TIMEOUT,
   eventsPresenceIndexRecoveryStatements,
@@ -10,6 +11,8 @@ import {
   prepareMigrationStatements,
   resolveMigrationRun,
   splitSqlStatements,
+  verifyGazetteLocalCandidate,
+  verifyGazetteDeployment,
 } from '../scripts/migrate.ts'
 
 const schemaDdl = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8')
@@ -633,6 +636,419 @@ test('PayPal credit disputes are an explicitly selected guarded payment migratio
   assert.match(
     packageJson.scripts?.['migrate:production:paypal-credit-disputes'] ?? '',
     /--target production --migration paypal-credit-disputes$/u,
+  )
+})
+
+test('Gazette schema installation and post-deploy room activation are separate guarded migrations', () => {
+  const schemaMigrationFile = 'db/migrations/20260827_gazette.sql' as const
+  const activationMigrationFile = 'db/migrations/20260827_gazette_room_activation.sql' as const
+  const previewEnvironment = {
+    CONFIRM_GAZETTE: 'INSTALL_GAZETTE_ARCHIVE_AND_SUBMISSION_LIMIT',
+    CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+    PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+  }
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'gazette'],
+      { ...previewEnvironment, CONFIRM_GAZETTE: undefined },
+    ),
+    /CONFIRM_GAZETTE/iu,
+  )
+
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'gazette'],
+    previewEnvironment,
+  )
+  assert.equal(preview.migrationFile, schemaMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'gazette-room-activation'],
+      previewEnvironment,
+    ),
+    /CONFIRM_GAZETTE_ROOM_ACTIVATION/iu,
+  )
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'gazette-room-activation'],
+      {
+        ...previewEnvironment,
+        CONFIRM_GAZETTE_ROOM_ACTIVATION:
+          'OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT',
+      },
+    ),
+    /GAZETTE_DEPLOYMENT_COMMIT/iu,
+  )
+  const previewActivation = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'gazette-room-activation'],
+    {
+      ...previewEnvironment,
+      CONFIRM_GAZETTE_ROOM_ACTIVATION:
+        'OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT',
+      GAZETTE_DEPLOYMENT_COMMIT: 'a'.repeat(40),
+      GAZETTE_PREVIEW_ORIGIN:
+        'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    },
+  )
+  assert.equal(previewActivation.migrationFile, activationMigrationFile)
+  assert.equal(previewActivation.executionMode, 'transactional')
+  assert.deepEqual(previewActivation.liveDeployment, {
+    origin: 'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    commit: 'a'.repeat(40),
+  })
+  for (const unsafeOrigin of [
+    'https://1f3d9-git-feat-growth-gazette-onetapstudiogames-projects.vercel.app',
+    'https://1f3d9-feat-growth-gazette-onetapstudiogames-projects.vercel.app',
+    'https://1f3d9-world-root-preview-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    'https://1f3d9-QG56L10XF-onetapstudiogames-projects.vercel.app',
+    'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app:443',
+    'https://another-project.vercel.app',
+  ]) {
+    assert.throws(
+      () => resolveMigrationRun(
+        ['--target', 'preview', '--migration', 'gazette-room-activation'],
+        {
+          ...previewEnvironment,
+          CONFIRM_GAZETTE_ROOM_ACTIVATION:
+            'OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT',
+          GAZETTE_DEPLOYMENT_COMMIT: 'a'.repeat(40),
+          GAZETTE_PREVIEW_ORIGIN: unsafeOrigin,
+        },
+      ),
+      /this project's immutable HTTPS Vercel deployment origin/iu,
+      unsafeOrigin,
+    )
+  }
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'gazette'],
+    {
+      CONFIRM_GAZETTE: 'INSTALL_GAZETTE_ARCHIVE_AND_SUBMISSION_LIMIT',
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'gazette-release',
+    },
+  )
+  assert.equal(production.migrationFile, schemaMigrationFile)
+
+  const productionActivation = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'gazette-room-activation'],
+    {
+      CONFIRM_GAZETTE_ROOM_ACTIVATION:
+        'OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT',
+      GAZETTE_DEPLOYMENT_COMMIT: 'b'.repeat(40),
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'gazette-room-activation',
+    },
+  )
+  assert.equal(productionActivation.migrationFile, activationMigrationFile)
+  assert.deepEqual(productionActivation.liveDeployment, {
+    origin: 'https://1f3d9.com',
+    commit: 'b'.repeat(40),
+  })
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:gazette'] ?? '',
+    /--target preview --migration gazette$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:gazette'] ?? '',
+    /--target production --migration gazette$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:preview:gazette-room-activation'] ?? '',
+    /--target preview --migration gazette-room-activation$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:gazette-room-activation'] ?? '',
+    /--target production --migration gazette-room-activation$/u,
+  )
+})
+
+test('Gazette room activation proves the exact no-store deployed application commit', async () => {
+  const expected = {
+    origin: 'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    commit: 'c'.repeat(40),
+  } as const
+  let requestedUrl = ''
+  let requestedInit: RequestInit | undefined
+  await verifyGazetteDeployment(expected, async (input, init) => {
+    requestedUrl = String(input)
+    requestedInit = init
+    return new Response(JSON.stringify({ deployment_commit: expected.commit }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    })
+  })
+  assert.equal(requestedUrl, `${expected.origin}/api/official`)
+  assert.equal(requestedInit?.method, 'GET')
+  assert.equal(requestedInit?.cache, 'no-store')
+  assert.equal(requestedInit?.redirect, 'error')
+
+  await assert.rejects(
+    () => verifyGazetteDeployment(expected, async () => new Response(JSON.stringify({
+      deployment_commit: 'd'.repeat(40),
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    })),
+    /deployed commit did not match/iu,
+  )
+  await assert.rejects(
+    () => verifyGazetteDeployment(expected, async () => new Response('not json', {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    })),
+    /deployment proof/iu,
+  )
+})
+
+test('Gazette room activation binds a clean local worktree to its full Git HEAD', () => {
+  const expectedCommit = 'e'.repeat(40)
+  const calls: string[][] = []
+
+  verifyGazetteLocalCandidate(expectedCommit, args => {
+    calls.push([...args])
+    return args[0] === 'status' ? '' : `${expectedCommit}\n`
+  })
+
+  assert.deepEqual(calls, [
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    ['rev-parse', '--verify', 'HEAD^{commit}'],
+  ])
+})
+
+test('Gazette room activation refuses tracked or untracked local changes before reading HEAD', () => {
+  for (const dirtyStatus of [' M scripts/migrate.ts\n', '?? scratch-activation.sql\n']) {
+    const calls: string[][] = []
+    assert.throws(
+      () => verifyGazetteLocalCandidate('e'.repeat(40), args => {
+        calls.push([...args])
+        return dirtyStatus
+      }),
+      /clean local candidate.*tracked and untracked/iu,
+    )
+    assert.deepEqual(calls, [['status', '--porcelain=v1', '--untracked-files=all']])
+  }
+})
+
+test('Gazette room activation refuses malformed or mismatched local HEAD commits', () => {
+  for (const [head, error] of [
+    ['short-head\n', /full lowercase Git HEAD/iu],
+    [`${'f'.repeat(40)}\n`, /does not match the clean local candidate HEAD/iu],
+  ] as const) {
+    assert.throws(
+      () => verifyGazetteLocalCandidate('e'.repeat(40), args =>
+        args[0] === 'status' ? '' : head,
+      ),
+      error,
+    )
+  }
+})
+
+test('Gazette activation re-proves the deployed commit after the database guard and immediately before DDL', async () => {
+  const expectedDeployment = {
+    origin: 'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    commit: 'e'.repeat(40),
+  } as const
+  const events: string[] = []
+  const result = await executeMigrationRun({
+    target: 'preview',
+    databaseUrl: 'postgres://role@example.neon.tech/db',
+    migrationFile: 'db/migrations/20260827_gazette_room_activation.sql',
+    executionMode: 'transactional',
+    liveDeployment: expectedDeployment,
+    preview: {
+      projectId: 'project-one',
+      branchId: 'branch-preview',
+      productionBranchId: 'branch-production',
+    },
+  }, 'SELECT activation_ddl', 'secret-neon-key', {
+    verifyGazetteLocalCandidate: async commit => {
+      assert.equal(commit, expectedDeployment.commit)
+      events.push('local-candidate-proof')
+    },
+    verifyGazetteDeployment: async () => { events.push('deployment-proof') },
+    verifyPreviewDatabaseTarget: async () => { events.push('database-proof') },
+    prepareProductionMigration: async () => {
+      assert.fail('Preview activation must not prepare a Production snapshot')
+    },
+    applyMigration: async (_databaseUrl, _migrationFile, ddl) => {
+      events.push(`ddl:${ddl}`)
+      return 1
+    },
+  })
+
+  assert.deepEqual(events, [
+    'local-candidate-proof',
+    'deployment-proof',
+    'database-proof',
+    'deployment-proof',
+    'ddl:SELECT activation_ddl',
+  ])
+  assert.deepEqual(result, { statementCount: 1 })
+})
+
+test('dormant Gazette schema installation does not require candidate or live deployment proof', async () => {
+  const events: string[] = []
+  const result = await executeMigrationRun({
+    target: 'preview',
+    databaseUrl: 'postgres://role@example.neon.tech/db',
+    migrationFile: 'db/migrations/20260827_gazette.sql',
+    executionMode: 'transactional',
+    preview: {
+      projectId: 'project-one',
+      branchId: 'branch-preview',
+      productionBranchId: 'branch-production',
+    },
+  }, 'SELECT dormant_ddl', 'secret-neon-key', {
+    verifyGazetteLocalCandidate: async () => {
+      assert.fail('Dormant Gazette schema installation must not inspect the local candidate')
+    },
+    verifyGazetteDeployment: async () => {
+      assert.fail('Dormant Gazette schema installation must not request a live deployment')
+    },
+    verifyPreviewDatabaseTarget: async () => { events.push('database-proof') },
+    prepareProductionMigration: async () => {
+      assert.fail('Preview migration must not prepare a Production snapshot')
+    },
+    applyMigration: async (_databaseUrl, _migrationFile, ddl) => {
+      events.push(`ddl:${ddl}`)
+      return 1
+    },
+  })
+
+  assert.deepEqual(events, ['database-proof', 'ddl:SELECT dormant_ddl'])
+  assert.deepEqual(result, { statementCount: 1 })
+})
+
+test('Gazette Production activation re-proves the deployed commit after its verified snapshot', async () => {
+  const events: string[] = []
+  const result = await executeMigrationRun({
+    target: 'production',
+    databaseUrl: 'postgres://role@example.neon.tech/db',
+    migrationFile: 'db/migrations/20260827_gazette_room_activation.sql',
+    executionMode: 'transactional',
+    liveDeployment: { origin: 'https://1f3d9.com', commit: 'f'.repeat(40) },
+    snapshot: {
+      projectId: 'project-one',
+      branchId: 'branch-production',
+      name: 'gazette-room-activation',
+    },
+  }, 'SELECT activation_ddl', 'secret-neon-key', {
+    verifyGazetteLocalCandidate: async commit => {
+      assert.equal(commit, 'f'.repeat(40))
+      events.push('local-candidate-proof')
+    },
+    verifyGazetteDeployment: async () => { events.push('deployment-proof') },
+    verifyPreviewDatabaseTarget: async () => {
+      assert.fail('Production activation must not verify a Preview branch')
+    },
+    prepareProductionMigration: async () => {
+      events.push('verified-snapshot')
+      return 'snapshot-one'
+    },
+    applyMigration: async () => {
+      events.push('ddl')
+      return 1
+    },
+  })
+
+  assert.deepEqual(events, [
+    'local-candidate-proof',
+    'deployment-proof',
+    'verified-snapshot',
+    'deployment-proof',
+    'ddl',
+  ])
+  assert.deepEqual(result, { statementCount: 1, snapshotId: 'snapshot-one' })
+})
+
+test('a stale second Gazette deployment proof leaves room activation unapplied', async () => {
+  let proofCount = 0
+  let applied = false
+  await assert.rejects(
+    () => executeMigrationRun({
+      target: 'preview',
+      databaseUrl: 'postgres://role@example.neon.tech/db',
+      migrationFile: 'db/migrations/20260827_gazette_room_activation.sql',
+      executionMode: 'transactional',
+      liveDeployment: {
+        origin: 'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+        commit: '1'.repeat(40),
+      },
+      preview: {
+        projectId: 'project-one',
+        branchId: 'branch-preview',
+        productionBranchId: 'branch-production',
+      },
+    }, 'SELECT activation_ddl', 'secret-neon-key', {
+      verifyGazetteLocalCandidate: async () => {},
+      verifyGazetteDeployment: async () => {
+        proofCount += 1
+        if (proofCount === 2) throw new Error('deployed commit changed during preparation')
+      },
+      verifyPreviewDatabaseTarget: async () => {},
+      prepareProductionMigration: async () => 'not-used',
+      applyMigration: async () => {
+        applied = true
+        return 1
+      },
+    }),
+    /deployed commit changed during preparation/iu,
+  )
+  assert.equal(proofCount, 2)
+  assert.equal(applied, false)
+})
+
+test('a refused local Gazette candidate performs no live, Neon, snapshot, or DDL operation', async () => {
+  const remoteOperation = () => assert.fail('Local candidate refusal must happen before remote work')
+  await assert.rejects(
+    () => executeMigrationRun({
+      target: 'preview',
+      databaseUrl: 'postgres://role@example.neon.tech/db',
+      migrationFile: 'db/migrations/20260827_gazette_room_activation.sql',
+      executionMode: 'transactional',
+      liveDeployment: {
+        origin: 'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+        commit: '1'.repeat(40),
+      },
+      preview: {
+        projectId: 'project-one',
+        branchId: 'branch-preview',
+        productionBranchId: 'branch-production',
+      },
+    }, 'SELECT activation_ddl', 'secret-neon-key', {
+      verifyGazetteLocalCandidate: async () => {
+        throw new Error('Gazette room activation requires a clean local candidate')
+      },
+      verifyGazetteDeployment: async () => { remoteOperation() },
+      verifyPreviewDatabaseTarget: async () => { remoteOperation() },
+      prepareProductionMigration: async () => {
+        remoteOperation()
+        return 'not-used'
+      },
+      applyMigration: async () => {
+        remoteOperation()
+        return 1
+      },
+    }),
+    /requires a clean local candidate/iu,
   )
 })
 

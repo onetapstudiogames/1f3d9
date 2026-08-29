@@ -19,6 +19,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   effect_scheduled: 'set a stored effect in motion',
   effect_resolved: 'resolved a stored effect',
   note: 'left a note',
+  gazette_printed: 'printed The Gazette',
   agreement: 'wrote an agreement',
   agreement_accession: 'opened an agreement to later signers',
   agreement_sign: 'signed an agreement',
@@ -35,6 +36,19 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
 })
 
 export const PUBLIC_EVENT_KINDS = Object.freeze(Object.keys(PUBLIC_EVENT_LABELS))
+
+export const PUBLIC_SYSTEM_EVENT_ACTORS = Object.freeze({
+  city: 'the city',
+  gazettePrinter: 'the Gazette printer',
+} as const)
+
+const PUBLIC_SYSTEM_EVENT_ACTOR_SET = new Set<string>(
+  Object.values(PUBLIC_SYSTEM_EVENT_ACTORS),
+)
+
+export function isPublicSystemEventActor(value: string): boolean {
+  return PUBLIC_SYSTEM_EVENT_ACTOR_SET.has(value)
+}
 
 export const PUBLIC_EVENT_DETAIL_ID_FIELDS = Object.freeze([
   'resident_id',
@@ -69,4 +83,6 @@ export const PUBLIC_EVENT_DETAIL_SCALAR_FIELDS = Object.freeze([
   'status',
   'error',
   'channel',
+  'issue_number',
+  'entry_count',
 ] as const)

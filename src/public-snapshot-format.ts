@@ -9,7 +9,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { containsPublicCredential } from './credential-safety.ts'
 
-export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 1 as const
+export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 2 as const
 export const PUBLIC_SNAPSHOT_FORMAT_NAME = '1f3d9-public-snapshot' as const
 
 export type SnapshotClassDisposition =
@@ -26,10 +26,11 @@ export type SnapshotClassRegistryEntry = Readonly<{
 }>
 
 /**
- * Version 1 is a closed registry. A new public or private class must be named
+ * Version 2 is a closed registry. A new public or private class must be named
  * here before a later exporter can describe it. The database view remains an
  * independent explicit-column allowlist, so a new table or column is never
- * included merely because it exists.
+ * included merely because it exists. Published version-1 bundles remain
+ * immutable and verify with the source commit recorded in their manifest.
  */
 export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry[] =
   Object.freeze(([
@@ -41,17 +42,19 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'traits', disposition: 'exported', reason: 'current public trait vocabulary plus hidden and gap markers', database_sources: ['traits', 'residents', 'moderation_actions'] },
     { class_name: 'kinds', disposition: 'exported', reason: 'current public kind definitions plus hidden and gap markers', database_sources: ['kinds', 'kind_revisions', 'residents', 'moderation_actions'] },
     { class_name: 'agreements', disposition: 'exported', reason: 'public agreements, parties, openings, and signatures', database_sources: ['agreements', 'agreement_parties', 'agreement_accession_openings', 'agreement_signatures', 'residents', 'moderation_actions'] },
-    { class_name: 'events', disposition: 'exported', reason: 'append-only public event headings and safe references', database_sources: ['events'] },
+    { class_name: 'events', disposition: 'exported', reason: 'append-only approved public event headings and safe references plus body-free private-or-gap markers', database_sources: ['events', 'gazette_issues'] },
     { class_name: 'moderation', disposition: 'exported', reason: 'append-only public moderation history', database_sources: ['moderation_actions', 'residents'] },
     { class_name: 'drawing_revisions', disposition: 'exported', reason: 'deliberately fetched immutable owner-authored drawing history with parent moderation', database_sources: ['drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions'] },
     { class_name: 'treasury_fees', disposition: 'exported', reason: 'public city-fee books', database_sources: ['fees', 'residents'] },
     { class_name: 'world_market_offers', disposition: 'exported', reason: 'public world-aisle locks and receipts only', database_sources: ['transfer_offers', 'things', 'residents', 'sale_payments', 'moderation_actions'] },
+    { class_name: 'gazette_issues', disposition: 'exported', reason: 'permanent public Gazette issue ledger', database_sources: ['gazette_issues'] },
+    { class_name: 'gazette_issue_entries', disposition: 'exported', reason: 'permanent issue membership with public source-note identity', database_sources: ['gazette_issue_entries', 'notes', 'residents'] },
     { class_name: 'official', disposition: 'exported', reason: 'versioned canonical city facts supplied by the exporter', database_sources: [] },
     { class_name: 'physics', disposition: 'exported', reason: 'versioned frozen actions, effect bricks, and ceilings supplied by the exporter', database_sources: [] },
     { class_name: 'credentials', disposition: 'not_public', reason: 'resident secrets, hashes, registration, rotation, and recovery material are private', database_sources: ['residents.secret_hash', 'pending_resident_registrations', 'pending_resident_registration_recovery_codes', 'resident_recovery_codes', 'resident_key_rotations'] },
     { class_name: 'oauth', disposition: 'not_public', reason: 'hosted sign-in requests, codes, tokens, families, and limits are private', database_sources: ['oauth_authorization_requests', 'oauth_authorization_request_recovery_codes', 'oauth_authorization_codes', 'oauth_token_families', 'oauth_tokens', 'oauth_rate_limits'] },
     { class_name: 'infrastructure_limits', disposition: 'not_public', reason: 'IP hashes and identity, flag, or drawing rate-limit rows are private operations data', database_sources: ['reg_log', 'identity_rate_limits', 'anonymous_flag_limits', 'resident_drawing_rate_limits'] },
-    { class_name: 'resident_private_state', disposition: 'not_public', reason: 'home location and personal daily quota state stay private to the resident', database_sources: ['resident_presence.home_place_id', 'residents.quota_day', 'residents.things_today', 'residents.notes_today', 'residents.agreement_actions_today'] },
+    { class_name: 'resident_private_state', disposition: 'not_public', reason: 'home location, personal quota state, and repeated-refusal state stay private to the resident', database_sources: ['resident_presence.home_place_id', 'residents.quota_day', 'residents.things_today', 'residents.notes_today', 'residents.agreement_actions_today', 'resident_refusal_state'] },
     { class_name: 'private_flags', disposition: 'not_public', reason: 'flag report bodies stay private; their safe public event references remain in events', database_sources: ['flags'] },
     { class_name: 'payment_attempts', disposition: 'not_public', reason: 'attempt request bodies, leases, and recovery state are private', database_sources: ['payment_attempts', 'payment_uses'] },
     { class_name: 'private_direct_offers', disposition: 'not_public', reason: 'direct transfer offers are visible only to their participants; world offers are a separate public class', database_sources: ['transfer_offers[channel=direct]'] },
@@ -59,7 +62,7 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'later_holder_marks', disposition: 'not_public', reason: 'deliberate later-holder navigation is private', database_sources: ['thing_later_holder_marks'] },
     { class_name: 'reader_state', disposition: 'not_public', reason: 'no durable reader, opened, seen, or dismissed class exists', database_sources: [] },
     { class_name: 'action_runtime', disposition: 'not_exported', reason: 'runtime action, block, timer, and resolution rows are represented by exported public events and current records', database_sources: ['active_blocks', 'action_runs', 'action_resolutions', 'pending_effects', 'effect_resolutions'] },
-    { class_name: 'historical_property_transfers', disposition: 'not_exported', reason: 'transfer and sale-payment tables are rebuildable from current public property and exported event records in format v1', database_sources: ['transfers', 'sale_payments'] },
+    { class_name: 'historical_property_transfers', disposition: 'not_exported', reason: 'transfer and sale-payment tables are rebuildable from current public property and exported event records in format v2', database_sources: ['transfers', 'sale_payments'] },
     { class_name: 'reading_counters', disposition: 'not_exported', reason: 'derived byte and item counters can be reproduced from exported records', database_sources: ['place_reading_totals'] },
     { class_name: 'change_markers', disposition: 'not_exported', reason: 'derived cursor state can be rebuilt from exported events', database_sources: ['public_change_state', 'public_change_log'] },
     { class_name: 'window', disposition: 'not_exported', reason: 'derived bounded human presentation', database_sources: [] },
@@ -68,7 +71,7 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'changes', disposition: 'not_exported', reason: 'derived event cursor surface', database_sources: [] },
     { class_name: 'names_directory', disposition: 'not_exported', reason: 'derived from exported resident and place identities', database_sources: [] },
     { class_name: 'counters', disposition: 'not_exported', reason: 'derived from exported records', database_sources: [] },
-    { class_name: 'corrections', disposition: 'never_existed', reason: 'format v1 never edits original records; release errata are separate assets and releases', database_sources: [] },
+    { class_name: 'corrections', disposition: 'never_existed', reason: 'format v2 never edits original records; release errata are separate assets and releases', database_sources: [] },
   ] satisfies readonly SnapshotClassRegistryEntry[]).map(entry => Object.freeze({
     ...entry,
     database_sources: Object.freeze([...entry.database_sources]),
@@ -162,7 +165,7 @@ function tagFor(exportedAt: string): string {
   if (!SNAPSHOT_TIME_RE.test(exportedAt) || Number.isNaN(Date.parse(exportedAt))) {
     throw new TypeError('exportedAt must be an exact UTC timestamp with milliseconds')
   }
-  return `city-snapshot-v1-${exportedAt.replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')}`
+  return `city-snapshot-v${PUBLIC_SNAPSHOT_FORMAT_VERSION}-${exportedAt.replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')}`
 }
 
 function compareRecord(left: PublicSnapshotRecord, right: PublicSnapshotRecord): number {
@@ -204,7 +207,9 @@ export async function createSnapshotBundle(input: Readonly<{
   )
   for (const record of input.records) {
     if (!CLASS_NAME_RE.test(record.class_name) || !EXPORTED_CLASSES.has(record.class_name)) {
-      throw new TypeError(`snapshot class is not exported in format v1: ${record.class_name}`)
+      throw new TypeError(
+        `snapshot class is not exported in format v${PUBLIC_SNAPSHOT_FORMAT_VERSION}: ${record.class_name}`,
+      )
     }
     if (!RECORD_ID_RE.test(record.record_id)) throw new TypeError('snapshot record_id is invalid')
     if (!INTEGER_RE.test(record.sort_key)) throw new TypeError('snapshot sort_key must be a nonnegative decimal integer')
@@ -314,7 +319,7 @@ function manifestShape(value: unknown): SnapshotManifest {
     !COMMIT_RE.test(String(manifest.source_commit)) ||
     !manifest.counts || typeof manifest.counts !== 'object' || Array.isArray(manifest.counts) ||
     !Array.isArray(manifest.files) || !Array.isArray(manifest.class_registry)
-  ) throw new Error('manifest has an invalid format v1 shape')
+  ) throw new Error(`manifest has an invalid format v${PUBLIC_SNAPSHOT_FORMAT_VERSION} shape`)
   return manifest as SnapshotManifest
 }
 
@@ -342,7 +347,9 @@ export async function verifySnapshotDirectory(directory: string): Promise<Snapsh
   const manifest = manifestShape(parsed)
   if (`${canonicalJson(manifest)}\n` !== manifestText) throw new Error('manifest is not canonical JSON')
   if (canonicalJson(manifest.class_registry) !== canonicalJson(PUBLIC_SNAPSHOT_CLASS_REGISTRY)) {
-    throw new Error('manifest class registry does not match format v1')
+    throw new Error(
+      `manifest class registry does not match format v${PUBLIC_SNAPSHOT_FORMAT_VERSION}`,
+    )
   }
   const manifestClasses = manifest.files.map(file => file.class_name)
   if (

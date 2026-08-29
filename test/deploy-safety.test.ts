@@ -377,6 +377,8 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_GAZETTE_SCHEMA_MIGRATION:
+    'APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
@@ -459,6 +461,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION',
     'CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION="${6-}"',
     'export CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION',
+    'CONFIRM_GAZETTE_SCHEMA_MIGRATION="${7-}"',
+    'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -479,6 +483,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_RESUMABLE_REGISTRATION_MIGRATION ?? '',
         readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
         readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
+        readiness.CONFIRM_GAZETTE_SCHEMA_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -553,6 +558,24 @@ test('preparation requires provider-key and migration readiness before any relea
     /resident-refusal-state.*migration.*Preview and Production.*before.*rollout/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingGazette = fixture.run({ CONFIRM_GAZETTE_SCHEMA_MIGRATION: '' })
+  assert.notEqual(missingGazette.status, 0)
+  assert.match(
+    `${missingGazette.stdout}\n${missingGazette.stderr}`,
+    /Gazette schema.*was applied.*Preview and Production.*while room #454 was closed/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const wrongGazetteState = fixture.run({
+    CONFIRM_GAZETTE_SCHEMA_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  })
+  assert.notEqual(wrongGazetteState.status, 0)
+  assert.match(
+    `${wrongGazetteState.stdout}\n${wrongGazetteState.stderr}`,
+    /Gazette schema.*was applied.*Preview and Production.*while room #454 was closed/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
 })
 
 test('release instructions require maker provenance before later-holder marks in each database', () => {
@@ -595,7 +618,26 @@ test('production drawing migrations have one guarded order and rollback boundary
     'places_world_shape',
     'places_world_drawing_exact',
     'places_protect_topology_write',
+    'public_records_v2',
+    'public_records_without_drawing_contract',
+    'resident_edited',
+    'gazette_issues',
+    'gazette_issue_entries',
+    'has_table_privilege',
   ]) assert.match(deploymentRunbook, new RegExp(postcondition, 'u'))
+  assert.match(deploymentRunbook, /pg_get_viewdef/iu)
+  assert.match(
+    deploymentRunbook,
+    /pg_get_viewdef\(\s*to_regclass\('city_snapshot\.public_records_v2'\)/u,
+  )
+  assert.doesNotMatch(
+    deploymentRunbook,
+    /pg_get_viewdef\(\s*'city_snapshot\.public_records_v2'::regclass/u,
+  )
+  assert.match(deploymentRunbook, /\{detail,error\}/u)
+  assert.match(deploymentRunbook, /no_gazette[\s\S]*true[\s\S]*false/iu)
+  assert.match(deploymentRunbook, /dormant[\s\S]*true[\s\S]*true/iu)
+  assert.match(deploymentRunbook, /activated[\s\S]*false[\s\S]*true/iu)
   assert.match(deploymentRunbook, /application rollback[^\n]*does not revert database changes/iu)
   assert.match(deploymentRunbook, /destructive down migration[^\n]*not[^\n]*incident/iu)
 })
@@ -615,6 +657,14 @@ test('PostgreSQL gate upgrades the checked-in pre-drawing production schema in r
   assert.match(source, /places_world_drawing_exact/u)
   assert.match(source, /places_protect_topology_write/u)
   assert.match(source, /drawing_revisions_append_only/u)
+  assert.match(source, /gazetteMigrationDdl/u)
+  assert.match(source, /gazetteActivationDdl/u)
+  assert.match(source, /public_records_v2/u)
+  assert.match(source, /public_records_without_drawing_contract/u)
+  assert.match(source, /resident_edited/u)
+  assert.match(source, /drawing_upgrade_private_fixture/u)
+  assert.match(source, /gazette_issues/u)
+  assert.match(source, /snapshotExportPrivileges/u)
 })
 
 test('release preparation requires the resumable-registration schema in Preview and Production', () => {

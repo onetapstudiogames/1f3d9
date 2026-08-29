@@ -4,8 +4,34 @@ function isWrite(request: Request): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
 }
 
+async function installLiveClipboardRecorder(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const copiedShareLinks: string[] = []
+    Object.defineProperty(window, '__copiedShareLinks', {
+      configurable: true,
+      value: copiedShareLinks,
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText(value: string) {
+          copiedShareLinks.push(value)
+          return Promise.resolve()
+        },
+      },
+    })
+  })
+}
+
+async function copiedLiveShareLinks(page: Page): Promise<readonly string[]> {
+  return page.evaluate(() => [
+    ...((window as Window & { __copiedShareLinks?: string[] }).__copiedShareLinks ?? []),
+  ])
+}
+
 async function panLiveTargetIntoView(page: Page, target: Locator): Promise<void> {
   const viewport = page.locator('#live-viewport')
+  await viewport.scrollIntoViewIfNeeded()
   await viewport.focus()
   for (let attempt = 0; attempt < 48; attempt += 1) {
     const [viewportBox, targetBox] = await Promise.all([
@@ -804,7 +830,76 @@ async function expectControlsDoNotOverlap(residentMore: Locator, thingMore: Loca
   ).toBe(false)
 }
 
-test('Live paints exact surveyed counts and Focus ids while named thing cards load', async ({ page }) => {
+async function expectTargetCenterExposed(target: Locator) {
+  await expect(target).toBeVisible()
+  await target.scrollIntoViewIfNeeded()
+  const result = await target.evaluate(node => {
+    const box = node.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    const hitElement = hit as HTMLElement | null
+    return {
+      exposed: hit === node || Boolean(hit && node.contains(hit)),
+      targetBox: {
+        left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+      },
+      hit: hitElement?.className || hitElement?.tagName || null,
+    }
+  })
+  expect(result.exposed, JSON.stringify(result)).toBe(true)
+}
+
+async function expectEveryTargetCenterExposed(page: Page, targets: Locator) {
+  const covered = []
+  const count = await targets.count()
+  for (let index = 0; index < count; index += 1) {
+    const target = targets.nth(index)
+    await panLiveTargetIntoView(page, target)
+    const result = await target.evaluate(node => {
+      const box = node.getBoundingClientRect()
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+      if (hit === node || Boolean(hit && node.contains(hit))) return null
+      const element = node as HTMLElement
+      const hitElement = hit as HTMLElement | null
+      return {
+        target: element.dataset.liveItemKey || element.dataset.liveThingId ||
+          element.querySelector<HTMLElement>('[data-live-resident-handle]')
+            ?.dataset.liveResidentHandle || element.className,
+        hit: hitElement?.dataset.liveItemKey || hitElement?.dataset.liveThingId ||
+          hitElement?.className || hitElement?.tagName || null,
+      }
+    })
+    if (result) {
+      covered.push(result)
+      continue
+    }
+    await target.hover()
+    expect(await target.evaluate(node => node.matches(':hover'))).toBe(true)
+  }
+  expect(covered).toEqual([])
+}
+
+async function expectLocatorSetsDoNotOverlap(left: Locator, right: Locator) {
+  const [leftBoxes, rightBoxes] = await Promise.all([
+    left.evaluateAll(nodes => nodes.map(node => {
+      const box = node.getBoundingClientRect()
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom }
+    })),
+    right.evaluateAll(nodes => nodes.map(node => {
+      const box = node.getBoundingClientRect()
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom }
+    })),
+  ])
+  for (const leftBox of leftBoxes) {
+    for (const rightBox of rightBoxes) {
+      expect(
+        leftBox.left < rightBox.right && leftBox.right > rightBox.left &&
+          leftBox.top < rightBox.bottom && leftBox.bottom > rightBox.top,
+      ).toBe(false)
+    }
+  }
+}
+
+test('Live paints exact surveyed counts and Focus ids while named thing cards load', async ({ page }, testInfo) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     holdThingPage: true,
     manyFocusInteractions: true,
@@ -826,8 +921,20 @@ test('Live paints exact surveyed counts and Focus ids while named thing cards lo
 
     await expect(page.locator('#live-history-status')).toContainText('history is complete')
     const mapWalker = page.locator('[data-live-resident-handle="map-walker"]').first()
+    const cinderDrawing = page.getByRole('button', {
+      name: 'Open current drawing for Cinder lane',
+    }).first()
     await panLiveTargetIntoView(page, mapWalker)
-    await mapWalker.click()
+    await expectControlsDoNotOverlap(cinderDrawing, mapWalker)
+    if (testInfo.project.name === 'mobile-chromium') {
+      const mapWalkerShell = mapWalker.locator('xpath=..')
+      await mapWalker.tap()
+      await expect(mapWalkerShell).toHaveAttribute('data-live-raised', 'true')
+      await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+      await mapWalker.tap()
+    } else {
+      await mapWalker.click()
+    }
     await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
     await expect(page.locator('#live-focus-interactions [data-live-focus-thing]')).toHaveCount(9)
     await expect(page.locator('#live-focus-interactions [data-live-focus-thing="23"]'))
@@ -846,7 +953,9 @@ test('Live paints exact surveyed counts and Focus ids while named thing cards lo
   await expect(page.locator('#live-focus-interactions [data-live-focus-thing="23"]'))
     .toContainText('harbor keepsake 23 · now in Cinder lane · recorded in Harbor room')
 
-  await page.locator('[data-place-id="3"] .live-plot-open').click()
+  const harborOpen = page.locator('[data-place-id="3"] .live-plot-open')
+  await panLiveTargetIntoView(page, harborOpen)
+  await harborOpen.click()
   await expect.poll(fixture.thingPageRequests).toBe(2)
   expect(fixture.thingWithinPlaceIds()).toEqual(['1', '3'])
   expect(fixture.thingLimits()).toEqual(['50', '50'])
@@ -938,7 +1047,8 @@ test('Live hover and keyboard focus bring covered places, residents, and things 
 
   const plot = page.locator('.live-plot[data-place-id="3"]')
   const plotOpen = plot.locator('.live-plot-open')
-  await plot.hover()
+  await panLiveTargetIntoView(page, plotOpen)
+  await plotOpen.hover()
   await expect(plot).toHaveCSS('z-index', '60')
   await page.locator('#live-viewport').focus()
   await plotOpen.focus()
@@ -949,8 +1059,10 @@ test('Live hover and keyboard focus bring covered places, residents, and things 
   const residentTag = page.locator(
     '#live-label-layer [data-live-resident-tag="harbor-1"]',
   )
+  await panLiveTargetIntoView(page, resident)
   await resident.hover()
   await expect(residentShell).toHaveCSS('z-index', '30')
+  await expect(page.locator('#live-viewport')).toHaveJSProperty('scrollTop', 0)
   await expect(residentTag).toBeVisible()
   await expect.poll(async () => residentTag.evaluate(tag => {
     const own = Number(getComputedStyle(tag).zIndex)
@@ -961,6 +1073,7 @@ test('Live hover and keyboard focus bring covered places, residents, and things 
   })).toBe(true)
   await page.locator('#live-viewport').focus()
   await resident.focus()
+  await expect(page.locator('#live-viewport')).toHaveJSProperty('scrollTop', 0)
   await expect(residentShell).toHaveCSS('z-index', '30')
   await expect.poll(async () => residentTag.evaluate(tag => {
     const own = Number(getComputedStyle(tag).zIndex)
@@ -971,25 +1084,45 @@ test('Live hover and keyboard focus bring covered places, residents, and things 
   })).toBe(true)
 
   const thing = page.locator('[data-live-thing-id="9"]').first()
+  const harborDrawing = plot.getByRole('button', {
+    name: 'Open current drawing for Harbor room',
+  })
+  await panLiveTargetIntoView(page, thing)
+  await expectControlsDoNotOverlap(harborDrawing, thing)
   await thing.hover()
   await expect(thing).toHaveCSS('z-index', '45')
   await page.locator('#live-viewport').focus()
   await thing.focus()
   await expect(thing).toHaveCSS('z-index', '45')
+
+  await panLiveTargetIntoView(page, harborDrawing)
+  await harborDrawing.click()
+  const detail = page.locator('#record-detail')
+  await expect(detail.locator('#record-detail-title')).toHaveText('Harbor room')
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(detail).toBeHidden()
 })
 
-test('Live first touch raises covered items and second touch opens them', async ({ page }) => {
+test('Live first touch raises covered items and second touch opens them', async ({ page }, testInfo) => {
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const touch = async (target: Locator) => {
+    await panLiveTargetIntoView(page, target)
+    if (testInfo.project.name === 'mobile-chromium') {
+      await target.tap()
+      return
+    }
+    await target.dispatchEvent('pointerdown', { pointerType: 'touch' })
+    await target.dispatchEvent('click', { pointerType: 'touch' })
+  }
 
   const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
   const shell = resident.locator('xpath=..')
   const residentTag = page.locator(
     '#live-label-layer [data-live-resident-tag="harbor-1"]',
   )
-  await resident.dispatchEvent('pointerdown', { pointerType: 'touch' })
-  await resident.dispatchEvent('click', { pointerType: 'touch' })
+  await touch(resident)
   await expect(shell).toHaveAttribute('data-live-raised', 'true')
   await expect(residentTag).toHaveAttribute('data-live-raised', 'true')
   await expect.poll(async () => residentTag.evaluate(tag => {
@@ -1001,8 +1134,7 @@ test('Live first touch raises covered items and second touch opens them', async 
   })).toBe(true)
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
 
-  await resident.dispatchEvent('pointerdown', { pointerType: 'touch' })
-  await resident.dispatchEvent('click', { pointerType: 'touch' })
+  await touch(resident)
   await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-1')
 
   const thing = page.locator('[data-live-thing-id="9"]').first()
@@ -1010,25 +1142,95 @@ test('Live first touch raises covered items and second touch opens them', async 
     ;(node as HTMLElement).dataset.testDefaultPrevented = String(event.defaultPrevented)
     event.preventDefault()
   }))
-  await thing.dispatchEvent('pointerdown', { pointerType: 'touch' })
-  await thing.dispatchEvent('click', { pointerType: 'touch' })
+  await touch(thing)
   await expect(thing).toHaveAttribute('data-live-raised', 'true')
   await expect(thing).toHaveAttribute('data-test-default-prevented', 'true')
-  await thing.dispatchEvent('pointerdown', { pointerType: 'touch' })
-  await thing.dispatchEvent('click', { pointerType: 'touch' })
+  await touch(thing)
   await expect(thing).toHaveAttribute('data-test-default-prevented', 'false')
   await expect(thing).toHaveAttribute('href', '/api/thing/9')
 
   const plot = page.locator('.live-plot[data-place-id="2"]')
   const open = plot.locator('.live-plot-open')
   const urlBeforeFirstPlaceTap = page.url()
-  await open.dispatchEvent('pointerdown', { pointerType: 'touch' })
-  await open.dispatchEvent('click', { pointerType: 'touch' })
+  await touch(open)
   await expect(plot).toHaveAttribute('data-live-raised', 'true')
   expect(page.url()).toBe(urlBeforeFirstPlaceTap)
-  await open.dispatchEvent('pointerdown', { pointerType: 'touch' })
-  await open.dispatchEvent('click', { pointerType: 'touch' })
+  await touch(open)
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+})
+
+test('Center returns to one touch-raised child occupant without breaking the detail budget', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await installReplayRoutes(page, Date.now(), 'complete', 0, { drawingPlaceCount: 80 })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const touch = async (target: Locator) => {
+    await panLiveTargetIntoView(page, target)
+    if (testInfo.project.name === 'mobile-chromium') {
+      await target.tap()
+      return
+    }
+    await target.dispatchEvent('pointerdown', { pointerType: 'touch' })
+    await target.dispatchEvent('click', { pointerType: 'touch' })
+  }
+
+  const harbor = page.locator('.live-plot[data-place-id="3"]')
+  const resident = harbor.locator('[data-live-resident-handle="harbor-1"]').first()
+  const residentShell = resident.locator('xpath=..')
+  await touch(resident)
+  await expect(residentShell).toHaveAttribute('data-live-raised', 'true')
+
+  const distantPlot = page.locator('.live-plot[data-place-id="105"]')
+  await expect(distantPlot).toHaveAttribute('data-live-detail', 'false')
+  const distantOpen = distantPlot.locator('.live-plot-open')
+  await panLiveTargetIntoView(page, distantOpen)
+  const harborInsideOrdinaryBudget = await harbor.evaluate((plot, overscan) => {
+    const stage = document.querySelector('#live-stage') as HTMLElement
+    const viewport = document.querySelector('#live-viewport') as HTMLElement
+    const scale = Number(stage.dataset.liveScale)
+    const left = -Number(stage.dataset.liveOffsetX) / scale
+    const top = -Number(stage.dataset.liveOffsetY) / scale
+    const right = left + viewport.clientWidth / scale
+    const bottom = top + viewport.clientHeight / scale
+    const x = Number((plot as HTMLElement).dataset.livePlotX)
+    const y = Number((plot as HTMLElement).dataset.livePlotY)
+    const width = Number((plot as HTMLElement).dataset.livePlotWidth)
+    const height = Number((plot as HTMLElement).dataset.livePlotHeight)
+    return x < right + overscan && x + width > left - overscan &&
+      y < bottom + overscan && y + height > top - overscan
+  }, 160)
+  expect(harborInsideOrdinaryBudget).toBe(false)
+  await expect(harbor).toHaveAttribute('data-live-detail', 'true')
+  await expect(resident).toHaveCount(1)
+  const retainedBudget = await page.locator('.live-plot').evaluateAll(plots => ({
+    detailedPlots: plots.filter(plot =>
+      (plot as HTMLElement).dataset.liveDetail === 'true').length,
+    mountedDetailNodes: plots.reduce((count, plot) => count + plot.querySelectorAll(
+      '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+    ).length, 0),
+  }))
+  expect(retainedBudget.detailedPlots).toBeLessThanOrEqual(21)
+  expect(retainedBudget.mountedDetailNodes).toBeLessThanOrEqual(
+    retainedBudget.detailedPlots * 4,
+  )
+
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  await expect(page.locator('#live-stage')).toHaveAttribute('data-live-scale', '1')
+  await expect.poll(() => resident.evaluate(node => {
+    const residentBox = node.getBoundingClientRect()
+    const viewportBox = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    return residentBox.left >= viewportBox.left && residentBox.right <= viewportBox.right &&
+      residentBox.top >= viewportBox.top && residentBox.bottom <= viewportBox.bottom
+  })).toBe(true)
+  await expect(residentShell).toHaveAttribute('data-live-raised', 'true')
+
+  await panLiveTargetIntoView(page, distantOpen)
+  await touch(distantOpen)
+  await expect(distantPlot).toHaveAttribute('data-live-raised', 'true')
+  await expect(harbor).toHaveAttribute('data-live-detail', 'false')
+  await expect(harbor.locator(
+    '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+  )).toHaveCount(0)
 })
 
 test('a cancelled touch does not consume the next keyboard activation', async ({ page }) => {
@@ -1052,7 +1254,9 @@ test('Live Show more reveals every loaded resident and thing instead of leaving 
 
   const harbor = page.locator('.live-plot[data-place-id="3"]')
   const harborBefore = await liveResidentPositions(harbor)
-  await harbor.getByRole('button', { name: 'Show 3 more residents' }).click()
+  const harborMore = harbor.getByRole('button', { name: 'Show 3 more residents' })
+  await panLiveTargetIntoView(page, harborMore)
+  await harborMore.click()
   await expect(harbor.locator('.live-walker')).toHaveCount(7)
   await expect(harbor.locator('.live-resident-more')).toHaveCount(0)
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -1201,11 +1405,26 @@ test('Live keeps both Show more controls separate and operable in one crowded pl
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
   const cinder = page.locator('.live-plot[data-place-id="2"]')
+  const drawingDetail = cinder.getByRole('button', {
+    name: 'Open current drawing for Cinder lane',
+  })
   const residentMore = cinder.locator('.live-resident-more')
   const thingMore = cinder.locator('.live-thing-more')
+  await expect(drawingDetail).toBeVisible()
   await expect(residentMore).toBeVisible()
   await expect(thingMore).toBeVisible()
+  await expectControlsDoNotOverlap(drawingDetail, residentMore)
+  await expectControlsDoNotOverlap(drawingDetail, thingMore)
   await expectControlsDoNotOverlap(residentMore, thingMore)
+  expect(await drawingDetail.evaluate((button, plot) => {
+    const buttonBox = button.getBoundingClientRect()
+    const plotBox = (plot as Element).getBoundingClientRect()
+    return buttonBox.top >= plotBox.bottom
+  }, await cinder.elementHandle())).toBe(true)
+  await expectEveryTargetCenterExposed(page, cinder.locator(
+    '.live-walker, .live-thing-specimen',
+  ))
+  await expect(cinder).toHaveAttribute('data-live-detail-mounted', 'true')
 
   await panLiveTargetIntoView(page, thingMore)
   await thingMore.click()
@@ -1214,6 +1433,38 @@ test('Live keeps both Show more controls separate and operable in one crowded pl
   await panLiveTargetIntoView(page, rearrangedResidentMore)
   await rearrangedResidentMore.click()
   await expect(cinder.locator('.live-walker')).toHaveCount(8)
+
+  const expandedResidents = cinder.locator('.live-portrait-grid[data-live-expanded="true"]')
+  const expandedThings = cinder.locator('.live-thing-shelf[data-live-expanded="true"]')
+  await expect(expandedResidents).toHaveCount(1)
+  await expect(expandedThings).toHaveCount(1)
+  await expectLocatorSetsDoNotOverlap(expandedResidents, expandedThings)
+  await expectLocatorSetsDoNotOverlap(
+    cinder.locator(
+      '.live-portrait-grid[data-live-expanded="true"], .live-thing-shelf[data-live-expanded="true"]',
+    ),
+    page.locator('.live-plot:not([data-place-id="2"])'),
+  )
+  await expectEveryTargetCenterExposed(page, cinder.locator(
+    '.live-walker, .live-thing-specimen',
+  ))
+  await expect(cinder).toHaveAttribute('data-live-detail-mounted', 'true')
+  const crowdedDetailBudget = await page.locator('.live-plot').evaluateAll(plots => ({
+    detailedPlots: plots.filter(plot =>
+      (plot as HTMLElement).dataset.liveDetail === 'true').length,
+    mountedDetailNodes: plots.reduce((count, plot) => count + plot.querySelectorAll(
+      '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+    ).length, 0),
+  }))
+  expect(crowdedDetailBudget.detailedPlots).toBeLessThanOrEqual(2)
+  expect(crowdedDetailBudget.mountedDetailNodes).toBeLessThanOrEqual(
+    crowdedDetailBudget.detailedPlots * 4,
+  )
+
+  const harborOpen = page.locator('.live-plot[data-place-id="3"] .live-plot-open')
+  await panLiveTargetIntoView(page, harborOpen)
+  await harborOpen.click()
+  await expect(page.locator('.live-plate-title')).toHaveText('Harbor room')
 })
 
 test('Live keeps focused-place Show more controls separate and operable', async ({ page }) => {
@@ -1226,11 +1477,43 @@ test('Live keeps focused-place Show more controls separate and operable', async 
   await expect(residentMore).toBeVisible()
   await expect(thingMore).toBeVisible()
   await expectControlsDoNotOverlap(residentMore, thingMore)
+  await expectTargetCenterExposed(thingMore)
 
+  const residentsBeforeThingExpansion = (await liveResidentPositions(
+    page.locator('.live-root-walkers'),
+  )).map(({ key, x, y }) => ({
+    key, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100,
+  }))
   await thingMore.click()
   await expect(page.locator('.live-root-thing-shelf .live-thing-specimen')).toHaveCount(7)
-  await page.locator('.live-root-walkers .live-resident-more').click()
+  expect((await liveResidentPositions(page.locator('.live-root-walkers')))
+    .map(({ key, x, y }) => ({
+      key, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100,
+    }))).toEqual(residentsBeforeThingExpansion)
+  const remainingResidentMore = page.locator('.live-root-walkers .live-resident-more')
+  await expectTargetCenterExposed(remainingResidentMore)
+  await remainingResidentMore.click()
   await expect(page.locator('.live-root-walkers .live-walker')).toHaveCount(8)
+
+  await page.reload()
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const thingsBeforeResidentExpansion = (await liveThingPositions(
+    page.locator('.live-root-thing-shelf'),
+  )).map(({ key, x, y }) => ({
+    key, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100,
+  }))
+  const residentFirst = page.locator('.live-root-walkers .live-resident-more')
+  await expectTargetCenterExposed(residentFirst)
+  await residentFirst.click()
+  await expect(page.locator('.live-root-walkers .live-walker')).toHaveCount(8)
+  expect((await liveThingPositions(page.locator('.live-root-thing-shelf')))
+    .map(({ key, x, y }) => ({
+      key, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100,
+    }))).toEqual(thingsBeforeResidentExpansion)
+  const remainingThingMore = page.locator('.live-root-thing-shelf .live-thing-more')
+  await expectTargetCenterExposed(remainingThingMore)
+  await remainingThingMore.click()
+  await expect(page.locator('.live-root-thing-shelf .live-thing-specimen')).toHaveCount(7)
 })
 
 test('Live refuses exact thing badges when the fixed survey disagrees', async ({ page }) => {
@@ -1624,10 +1907,15 @@ test('record detail closes on its backdrop but stays open for clicks inside the 
 
   const detail = page.locator('#record-detail')
   await expect(detail).toBeVisible()
-  await detail.locator('article').dispatchEvent('click')
+  await detail.locator('article').click()
   await expect(detail).toBeVisible()
 
-  await detail.dispatchEvent('click')
+  await page.mouse.click(4, 4)
+  await expect(detail).toBeHidden()
+
+  await page.goto('/window/thing/9')
+  await expect(detail).toBeVisible()
+  await page.keyboard.press('Escape')
   await expect(detail).toBeHidden()
 })
 
@@ -1664,6 +1952,7 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
 
   const retry = page.getByRole('button', { name: 'Retry proof room' })
   await expect(retry).toBeVisible()
+  await expectTargetCenterExposed(retry)
   await retry.click()
   await expect(retry).toHaveCount(0)
 
@@ -1671,6 +1960,8 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   const thingMore = proofPanel.getByRole('button', { name: /Show .* more things/u })
   await expect(residentMore).toBeVisible()
   await expect(thingMore).toBeVisible()
+  await expectTargetCenterExposed(residentMore)
+  await expectTargetCenterExposed(thingMore)
   await residentMore.click()
   await thingMore.click()
   await expect(proofPanel.getByRole('dialog')).toHaveCount(0)
@@ -1842,6 +2133,7 @@ test('drawing details reveal exact authored readback and fetch bounded history o
 })
 
 test('Live opens place and resident current drawings from secondary affordances without eager history reads', async ({ page }) => {
+  await installLiveClipboardRecorder(page)
   const fixture = await installReplayRoutes(page, Date.now())
   const placeHistoryUrls: URL[] = []
   const residentHistoryUrls: URL[] = []
@@ -2050,6 +2342,15 @@ test('Live opens place and resident current drawings from secondary affordances 
   )
   await expect(placeDrawing.locator('[data-drawing-palette]')).toHaveText('#174d3c #f0c95f')
   await expect(placeDrawing.locator('[data-drawing-row]')).toHaveText(exactDrawingRows)
+  const placeShare = detail.locator('[data-share-scope="detail"]')
+  await expect(placeShare).toBeVisible()
+  await expect(placeShare).toHaveText('Share this place')
+  await placeShare.click()
+  const placeShareLink = new URL('/window/place/2', page.url()).href
+  await expect.poll(() => copiedLiveShareLinks(page)).toEqual([placeShareLink])
+  await expect(detail.locator('#record-detail-share-status')).toHaveText(
+    'Link copied: ' + placeShareLink,
+  )
   expect(placeCurrentPaths.length).toBeGreaterThanOrEqual(placeReadsBeforeOpen)
   expect(placeHistoryUrls).toHaveLength(1)
   await placeDrawing.getByRole('button', { name: 'Show drawing history' }).click()
@@ -2063,7 +2364,9 @@ test('Live opens place and resident current drawings from secondary affordances 
 
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-  await page.locator('.live-plot[data-place-id="2"] .live-plot-open').click()
+  const cinderOpen = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await panLiveTargetIntoView(page, cinderOpen)
+  await cinderOpen.click()
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
   await expect(page.locator('.live-plate-title')).toHaveText('Cinder lane')
   const leafCaptionDrawing = page.locator('#live-map-caption')
@@ -2095,6 +2398,7 @@ test('Live opens place and resident current drawings from secondary affordances 
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
   await expect(detail.locator('#record-detail-kind')).toHaveText('Public resident · live current drawing')
   await expect(detail.locator('#record-detail-title')).toHaveText('map-walker')
+  await expect(detail.locator('[data-share-scope="detail"]')).toBeHidden()
   await expect(detail.locator('.record-detail-meta')).toContainText('resident #5')
   await expect(detail.locator('.error-row')).toContainText('The current drawing could not be read.')
   expect(residentCurrentPaths).toHaveLength(residentReadsBeforeOpen + 1)
@@ -2128,6 +2432,17 @@ test('Live opens place and resident current drawings from secondary affordances 
   await page.locator('#record-detail-close').click()
   await expect(detail).toBeHidden()
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+
+  const recipientNavigation = await page.goto(placeShareLink)
+  expect(recipientNavigation?.status()).toBe(200)
+  await expect(page).toHaveURL(placeShareLink)
+  await expect(page.locator('#record-detail')).toBeHidden()
+  await expect(page.getByRole('tab', { name: 'Place', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(page.locator('#place-panel')).toBeVisible()
+  await expect(page.locator('#place-panel')).toContainText('Cinder lane')
 })
 
 test('parent moderation leaves current drawing and its history unavailable in details', async ({ page }) => {
@@ -2875,7 +3190,15 @@ test('resident focus persists locally, pins exact interactions, and camera zoom 
     '#live-plates [data-live-focus-resident="map-walker"]',
   )).toHaveCount(1)
   const focusedWalker = page.locator('[data-live-resident-handle="map-walker"]').first()
+  await expectTargetCenterExposed(focusedWalker)
   await focusedWalker.click()
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+
+  await focusedWalker.click()
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+  const clearFocus = page.getByRole('button', { name: 'Clear resident focus' })
+  await expectTargetCenterExposed(clearFocus)
+  await clearFocus.click()
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
   expect(await page.evaluate(() => localStorage.getItem('1f3d9:window:live-focus'))).toBeNull()
   await focusedWalker.click()
@@ -3348,17 +3671,27 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await expect(page.locator('#live-ledger')).not.toContainText('used thing #9 in Cinder lane')
   const worldDrawing = page.locator('.live-world-ground .drawing-authored').first()
   await expect(worldDrawing).toBeVisible()
+  await expect(page.locator('.live-world-ground > .drawing-grid')).toHaveCount(1)
   const worldPixels = await worldDrawing.evaluate(node => {
     const canvas = node as HTMLCanvasElement
+    const stage = canvas.closest('#live-stage') as HTMLElement
     return {
       tag: canvas.tagName,
       width: canvas.width,
       height: canvas.height,
+      stageWidth: Number(stage.dataset.liveStageWidth),
+      stageHeight: Number(stage.dataset.liveStageHeight),
       first: [...canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data],
     }
   })
-  expect(worldPixels).toEqual({ tag: 'CANVAS', width: 160, height: 104,
-    first: [23, 77, 60, 255] })
+  expect(worldPixels).toEqual({
+    tag: 'CANVAS',
+    width: Math.ceil(worldPixels.stageWidth / 56) * 8,
+    height: Math.ceil(worldPixels.stageHeight / 56) * 8,
+    stageWidth: worldPixels.stageWidth,
+    stageHeight: worldPixels.stageHeight,
+    first: [23, 77, 60, 255],
+  })
   const harbor = page.locator('.live-plot[data-place-id="3"]')
   await expect(harbor).toHaveAttribute('data-undrawn', 'true')
   await expect(harbor).toHaveAttribute('data-place-kind', 'continent')
@@ -3379,6 +3712,16 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     width: (plot as HTMLElement).style.width,
     height: (plot as HTMLElement).style.height,
   })))
+  const stableOccupants = page.locator(
+    '.live-plot[data-place-id="3"] .live-walker[data-live-item-key="resident:map-walker"], ' +
+    '.live-plot[data-place-id="2"] .live-thing-specimen[data-live-item-key="thing:9"]',
+  )
+  await expect(stableOccupants).toHaveCount(2)
+  const originalOccupants = await stableOccupants.evaluateAll(nodes => nodes.map(node => ({
+    key: (node as HTMLElement).dataset.liveItemKey,
+    left: (node as HTMLElement).style.left,
+    top: (node as HTMLElement).style.top,
+  })).sort((left, right) => String(left.key).localeCompare(String(right.key))))
   const trailCoordinates = await page.locator('.live-trail').evaluate(line => ({
     x1: Number(line.getAttribute('x1')),
     x2: Number(line.getAttribute('x2')),
@@ -3421,6 +3764,14 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     height: (plot as HTMLElement).style.height,
   })))
   expect(expandedPlots.filter(plot => plot.id !== '5')).toEqual(originalPlots)
+  await expect(stableOccupants).toHaveCount(2)
+  expect(await stableOccupants.evaluateAll(nodes => nodes.map(node => ({
+    key: (node as HTMLElement).dataset.liveItemKey,
+    left: (node as HTMLElement).style.left,
+    top: (node as HTMLElement).style.top,
+  })).sort((left, right) => String(left.key).localeCompare(String(right.key))))).toEqual(
+    originalOccupants,
+  )
 
   latestReadUnavailable = true
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
@@ -3434,7 +3785,20 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   )
 
   await page.setViewportSize({ width: 700, height: 900 })
-  await expect(page.locator('.live-plot-terrain')).toHaveCount(3)
+  const resizedDetailBudget = await page.locator('.live-plot').evaluateAll(plots => ({
+    detailedPlots: plots.filter(plot =>
+      (plot as HTMLElement).dataset.liveDetail === 'true').length,
+    mountedTerrain: plots.filter(plot => plot.querySelector('.live-plot-terrain')).length,
+    distantDetailNodes: plots.filter(plot =>
+      (plot as HTMLElement).dataset.liveDetail === 'false').reduce((count, plot) =>
+      count + plot.querySelectorAll(
+        '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+      ).length, 0),
+  }))
+  expect(resizedDetailBudget.detailedPlots).toBeGreaterThan(0)
+  expect(resizedDetailBudget.detailedPlots).toBeLessThanOrEqual(3)
+  expect(resizedDetailBudget.mountedTerrain).toBe(resizedDetailBudget.detailedPlots)
+  expect(resizedDetailBudget.distantDetailNodes).toBe(0)
   const stackedGeometry = await page.locator('.live-layout').evaluate(layout => {
     const stage = layout.querySelector('.live-stage-shell')?.getBoundingClientRect()
     const roster = layout.querySelector('.live-roster-board')?.getBoundingClientRect()

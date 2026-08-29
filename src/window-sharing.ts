@@ -9,6 +9,7 @@ export type WindowShareView =
   | 'happenings'
   | 'agreements'
   | 'archive'
+  | 'gazette'
 
 export type WindowShareDetail = Readonly<{
   kind: 'place' | 'thing' | 'note'
@@ -29,8 +30,32 @@ export type WindowShareState = Readonly<{
   directorySearch: string
   sleeperPlaceIds: readonly number[]
   archive: WindowShareArchive
+  gazetteIssueId: number | null
   detail: WindowShareDetail | null
 }>
+
+/**
+ * A place drawing dialog is session-local, while its deliberate share target
+ * is the canonical base Place view. Resident drawing dialogs have no shared
+ * recipient under the locked place/thing/note detail contract.
+ */
+export function windowDetailShareState(state: WindowShareState): WindowShareState | null {
+  if (!state || typeof state !== 'object' || !state.detail) return null
+  if (state.detail.kind === 'thing' || state.detail.kind === 'note') return state
+  if (state.detail.kind !== 'place') return null
+  return Object.freeze({
+    ...state,
+    view: 'place',
+    placeId: state.detail.id,
+    resident: null,
+    conversationContext: false,
+    directorySearch: '',
+    sleeperPlaceIds: Object.freeze([]),
+    archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
+    gazetteIssueId: null,
+    detail: null,
+  })
+}
 
 export type ParsedWindowShareRequest = Readonly<{
   canonicalPath: string
@@ -53,6 +78,7 @@ const DEFAULT_STATE: WindowShareState = Object.freeze({
   directorySearch: '',
   sleeperPlaceIds: Object.freeze([]),
   archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
+  gazetteIssueId: null,
   detail: null,
 })
 
@@ -140,7 +166,9 @@ export function validateWindowArchiveQuery(
  * embedded beside it in the dependency-free browser client.
  */
 export function windowSharePath(state: WindowShareState): string | null {
-  const views = new Set(['map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive'])
+  const views = new Set([
+    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+  ])
   const safeId = (value: unknown): value is number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647
   const safeHandle = (value: unknown): value is string =>
@@ -158,6 +186,16 @@ export function windowSharePath(state: WindowShareState): string | null {
       !['all', 'note', 'thing'].includes(state.archive.type)) return null
   const archiveQuery = validateWindowArchiveQuery(state.archive.query, state.archive.mode)
   if (!archiveQuery.ok) return null
+  const gazetteIssueId = state.gazetteIssueId ?? null
+  if (gazetteIssueId !== null && !safeId(gazetteIssueId)) return null
+  if (state.view !== 'gazette' && gazetteIssueId !== null) return null
+
+  if (state.view === 'gazette') {
+    if (state.detail !== null) return null
+    return gazetteIssueId === null
+      ? '/window/gazette'
+      : '/window/gazette?issue=' + String(gazetteIssueId)
+  }
 
   let path: string
   if (state.detail !== null) {
@@ -240,7 +278,9 @@ export function parseWindowShareRequest(
   if (parts.length === 1) {
     view = 'map'
   } else if (parts.length === 2) {
-    if (!['map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive'].includes(segment!)) {
+    if (![
+      'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    ].includes(segment!)) {
       return null
     }
     view = segment as WindowShareView
@@ -249,10 +289,11 @@ export function parseWindowShareRequest(
     const id = positiveId(parts[2] ?? null)
     if (id === null) return null
     const kind = segment as WindowShareDetail['kind']
-    detail = Object.freeze({ kind, id })
     if (kind === 'place') {
       view = 'place'
       placeId = id
+    } else {
+      detail = Object.freeze({ kind, id })
     }
   }
 
@@ -262,7 +303,9 @@ export function parseWindowShareRequest(
   } catch {
     return null
   }
-  const allowed = new Set(['place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type'])
+  const allowed = new Set([
+    'place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue',
+  ])
   if ([...params.keys()].some(name => !allowed.has(name))) return null
   for (const name of allowed) if (params.getAll(name).length > 1) return null
   if (detail !== null && detail.kind !== 'place' && params.size > 0) return null
@@ -275,10 +318,23 @@ export function parseWindowShareRequest(
   const queryValue = singleValue(params, 'q')
   const modeValue = singleValue(params, 'mode')
   const typeValue = singleValue(params, 'type')
+  const issueValue = singleValue(params, 'issue')
   if (placeValue === undefined || residentValue === undefined || contextValue === undefined ||
       findValue === undefined || sleepersValue === undefined || queryValue === undefined ||
-      modeValue === undefined || typeValue === undefined) return null
-  if (detail?.kind === 'place' && placeValue !== null) return null
+      modeValue === undefined || typeValue === undefined || issueValue === undefined) return null
+  if (parts.length === 3 && segment === 'place' && placeValue !== null) return null
+
+  if (view === 'gazette') {
+    if (
+      placeValue !== null || residentValue !== null || contextValue !== null ||
+      findValue !== null || sleepersValue !== null || queryValue !== null ||
+      modeValue !== null || typeValue !== null
+    ) return null
+  } else if (issueValue !== null) {
+    return null
+  }
+  const gazetteIssueId = issueValue === null ? null : positiveId(issueValue)
+  if (issueValue !== null && gazetteIssueId === null) return null
 
   if (detail === null && placeValue !== null) {
     placeId = positiveId(placeValue)
@@ -313,6 +369,7 @@ export function parseWindowShareRequest(
       mode: mode as WindowShareArchive['mode'],
       type: type as WindowShareArchive['type'],
     }),
+    gazetteIssueId,
     detail,
   })
   const canonicalPath = windowSharePath(state)
@@ -414,6 +471,10 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
     title: 'Search the public archive — 1F3D9',
     description: 'Open the current public archive results selected by this link.',
   }),
+  gazette: Object.freeze({
+    title: 'The Gazette — 1F3D9',
+    description: 'Read the permanent weekly Gazette printed verbatim from public notes in Room #454.',
+  }),
 })
 
 const DETAIL_IMAGE_ALT = Object.freeze({
@@ -433,16 +494,38 @@ export function createWindowShareMetadata(
 ): WindowShareMetadata {
   const origin = shareOrigin(originValue)
   const canonicalUrl = new URL(request.canonicalPath, origin).href
-  const detail = request.state.detail
+  const detail = request.state.detail || (
+    request.state.view === 'place' && request.state.placeId !== null
+      ? Object.freeze({ kind: 'place' as const, id: request.state.placeId })
+      : null
+  )
   if (detail === null) {
     const view = VIEW_METADATA[request.state.view]
+    const gazetteIssueId = request.state.gazetteIssueId
+    const gazetteIssueState = recordValue === true
+      ? 'available'
+      : recordValue === false
+        ? 'missing'
+        : 'unverified'
     const archiveQuery = request.state.view === 'archive'
       ? shareDescriptionExcerpt(request.state.archive.query, 120)
       : ''
     return Object.freeze({
       canonicalUrl,
-      title: view.title,
-      description: archiveQuery
+      title: request.state.view === 'gazette' && gazetteIssueId !== null
+        ? gazetteIssueState === 'available'
+          ? `The Gazette · Issue ${gazetteIssueId} — 1F3D9`
+          : gazetteIssueState === 'missing'
+            ? `The Gazette · Issue ${gazetteIssueId} is unavailable — 1F3D9`
+            : `The Gazette · Issue ${gazetteIssueId} could not be checked — 1F3D9`
+        : view.title,
+      description: request.state.view === 'gazette' && gazetteIssueId !== null
+        ? gazetteIssueState === 'available'
+          ? `Open weekly Gazette issue ${gazetteIssueId}, a permanent public archive printed from Room #454 in 1F3D9.`
+          : gazetteIssueState === 'missing'
+            ? `This Gazette link names issue ${gazetteIssueId}, which is not publicly available now.`
+            : `This Gazette link names issue ${gazetteIssueId}, but its public availability could not be checked right now.`
+        : archiveQuery
         ? `Open the current public archive results for “${archiveQuery}”.`
         : view.description,
       imageUrl: new URL('/share/view.png', origin).href,

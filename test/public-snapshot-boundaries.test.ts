@@ -192,7 +192,7 @@ test('snapshot manifests reject malformed, incomplete, and noncanonical declarat
       message: RegExp
     }>> = [
       { name: 'format', change: manifest => { manifest.format = 'other' }, message: /shape/iu },
-      { name: 'version', change: manifest => { manifest.format_version = 2 }, message: /shape/iu },
+      { name: 'version', change: manifest => { manifest.format_version = 1 }, message: /shape/iu },
       { name: 'kind', change: manifest => { manifest.snapshot_kind = 'erratum' }, message: /shape/iu },
       { name: 'time', change: manifest => { manifest.exported_at = 'yesterday' }, message: /shape/iu },
       { name: 'commit', change: manifest => { manifest.source_commit = 'short' }, message: /shape/iu },
@@ -293,5 +293,5 @@ test('snapshot record files reject truncation, bad JSON, bad fingerprints, and u
 
 test('snapshot constants remain explicit and versioned', () => {
   assert.equal(PUBLIC_SNAPSHOT_FORMAT_NAME, '1f3d9-public-snapshot')
-  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 1)
+  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 2)
 })

@@ -158,7 +158,7 @@ export async function publishSnapshot(input: Readonly<{
       target_commitish: manifest.source_commit,
       name: `1F3D9 public snapshot ${bundle.exported_at.slice(0, 10)}`,
       body:
-        `Format v1 public city snapshot.\n\n` +
+        `Format v${bundle.format_version} public city snapshot.\n\n` +
         `City root SHA-256: \`${bundle.city_root_sha256}\`\n` +
         `Source commit: \`${manifest.source_commit}\`\n\n` +
         'Original assets are append-only. Any correction must be a separate erratum; never replace these files.',

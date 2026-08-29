@@ -1827,6 +1827,93 @@ test('a caller quota failure preserves HTTP 429 and never records applied', asyn
   })
 })
 
+test('a caller primitive refusal rolls back law effects before recording failure', async () => {
+  let labels = 0
+  let labelsAtSavepoint: number | null = null
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 113 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/WITH RECURSIVE ancestry/.test(text)) {
+      return [{
+        trait_id: 31,
+        name: 'talk-marker',
+        recipe: { talk: [{ effect: 'label', target: 'actor', label: 'talked' }] },
+        source_place_id: 2,
+        position: 0,
+      }]
+    }
+    if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
+    if (/^SAVEPOINT caller_primitive_effects$/.test(text)) {
+      labelsAtSavepoint = labels
+      return []
+    }
+    if (/INSERT INTO active_labels/.test(text)) {
+      labels += 1
+      return [{ id: 313 }]
+    }
+    if (/^ROLLBACK TO SAVEPOINT caller_primitive_effects$/.test(text)) {
+      assert.notEqual(labelsAtSavepoint, null)
+      labels = labelsAtSavepoint!
+      return []
+    }
+    if (/^RELEASE SAVEPOINT caller_primitive_effects$/.test(text)) return []
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 213 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 2,
+    primitiveHandledByCaller: true,
+    performPrimitive: async transaction => {
+      await transaction`SELECT 'caller primitive reached'`
+      throw new EngineError(429, 'daily primitive quota reached')
+    },
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 429)
+  assert.equal(labels, 0, 'the rejected primitive must leave no earlier law effect')
+  const statements = calls.map(call => call.text)
+  const savepoint = statements.indexOf('SAVEPOINT caller_primitive_effects')
+  const lawEffect = statements.findIndex(statement => /INSERT INTO active_labels/.test(statement))
+  const primitive = statements.indexOf("SELECT 'caller primitive reached'")
+  const rollback = statements.indexOf('ROLLBACK TO SAVEPOINT caller_primitive_effects')
+  const release = statements.indexOf('RELEASE SAVEPOINT caller_primitive_effects')
+  const resolution = statements.findIndex(statement => /INSERT INTO action_resolutions/.test(statement))
+  assert.ok(savepoint >= 0)
+  assert.ok(savepoint < lawEffect && lawEffect < primitive)
+  assert.ok(primitive < rollback && rollback < release && release < resolution)
+})
+
+test('a non-caller primitive keeps the existing action path without a savepoint', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 114 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/WITH RECURSIVE ancestry/.test(text)) return []
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 214 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'talk',
+    placeId: 2,
+  }, db)
+
+  assert.equal(result.status, 'applied')
+  assert.equal(calls.some(call => /SAVEPOINT caller_primitive_effects/.test(call.text)), false)
+})
+
 test('a recognized internal engine failure is generic in the public record', async t => {
   const logged: unknown[][] = []
   t.mock.method(console, 'error', (...values: unknown[]) => {

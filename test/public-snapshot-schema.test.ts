@@ -13,10 +13,22 @@ const drawingContractMigrationUrl = new URL(
   '../db/migrations/20260828_drawing_contract.sql',
   import.meta.url,
 )
+const gazetteMigrationUrl = new URL('../db/migrations/20260827_gazette.sql', import.meta.url)
+const gazetteActivationUrl = new URL(
+  '../db/migrations/20260827_gazette_room_activation.sql',
+  import.meta.url,
+)
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
   : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)]
+
+const V1_PUBLIC_EVENT_KINDS = currentPublicEventKinds.filter(kind => kind !== 'gazette_printed')
+const V1_PUBLIC_EVENT_DETAIL_FIELDS = [
+  ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
+  ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS.filter(field =>
+    field !== 'issue_number' && field !== 'entry_count'),
+].sort()
 
 for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaUrl]] as const) {
   test(`${name} installs one explicit fail-closed public snapshot view`, async () => {
@@ -62,8 +74,8 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlPublicKinds = [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
     const expectedKinds = name === 'migration'
-      ? currentPublicEventKinds.filter(kind => kind !== 'resident_edited')
-      : currentPublicEventKinds
+      ? V1_PUBLIC_EVENT_KINDS.filter(kind => kind !== 'resident_edited')
+      : V1_PUBLIC_EVENT_KINDS
     assert.deepEqual(sqlPublicKinds, expectedKinds)
     assert.ok(sqlPublicKinds.includes('payment_repair'))
     assert.match(
@@ -78,10 +90,8 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlEventDetailFields = [...eventProjection.matchAll(
       /'([a-z_]+)',\s*event\.detail->'\1'/gu,
     )].map(match => match[1]!).sort()
-    const expectedEventDetailFields = [
-      ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
-      ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
-    ].filter(field => name !== 'migration' || field !== 'source_thing_id').sort()
+    const expectedEventDetailFields = V1_PUBLIC_EVENT_DETAIL_FIELDS
+      .filter(field => name !== 'migration' || field !== 'source_thing_id')
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
@@ -104,7 +114,7 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     )
     for (const privateTable of [
       'oauth_tokens', 'flags', 'payment_attempts', 'city_credit_entries',
-      'thing_later_holder_marks',
+      'thing_later_holder_marks', 'resident_refusal_state',
     ]) {
       assert.equal(new RegExp(`\\bFROM\\s+(?:public\\.)?${privateTable}\\b`, 'iu').test(view), false, privateTable)
     }
@@ -173,7 +183,7 @@ for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh
     assert.ok(publicKindsCte)
     assert.deepEqual(
       [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)].map(match => match[1]!),
-      currentPublicEventKinds,
+      V1_PUBLIC_EVENT_KINDS,
     )
     const eventsStart = view.indexOf("SELECT 'events'")
     const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
@@ -181,7 +191,109 @@ for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh
     assert.deepEqual(
       [...eventProjection.matchAll(/'([a-z_]+)',\s*event\.detail->'\1'/gu)]
         .map(match => match[1]!).sort(),
-      [...PUBLIC_EVENT_DETAIL_ID_FIELDS, ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS].sort(),
+      V1_PUBLIC_EVENT_DETAIL_FIELDS,
     )
   })
 }
+
+for (const [name, url] of [
+  ['Gazette migration', gazetteMigrationUrl],
+  ['drawing contract migration', drawingContractMigrationUrl],
+  ['fresh schema', schemaUrl],
+] as const) {
+  test(`${name} installs the restricted format-v2 Gazette projection`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records_v2/iu)
+    const viewEnd = sql.indexOf('GRANT SELECT ON city_snapshot.public_records_v2', viewStart)
+    assert.ok(viewStart >= 0 && viewEnd > viewStart)
+    const view = sql.slice(viewStart, viewEnd)
+
+    assert.match(view, /WITH \(security_barrier = true\)/iu)
+    assert.match(view, /FROM city_snapshot\.public_records base_record/iu)
+    assert.doesNotMatch(view, /SELECT\s+\*/iu)
+    const v2KindsCte = view.match(
+      /public_event_kinds_v2\(kind\)\s+AS\s*\(\s*VALUES([\s\S]*?)\r?\n\s*\)\r?\n\s*SELECT/iu,
+    )?.[1]
+    assert.ok(v2KindsCte)
+    const v2PublicKinds = [...v2KindsCte.matchAll(/\('([^']+)'\)/gu)]
+      .map(match => match[1]!)
+    const expectedV2Kinds = name === 'Gazette migration'
+      ? currentPublicEventKinds.filter(kind => kind !== 'resident_edited')
+      : currentPublicEventKinds
+    assert.deepEqual(v2PublicKinds, expectedV2Kinds)
+    assert.match(
+      view,
+      /base_record\.class_name = 'events'[\s\S]+NOT EXISTS \([\s\S]+public_event_kinds_v2[\s\S]+jsonb_build_object\(\s*'id',\s*base_record\.payload->'id',\s*'status',\s*'not_public_or_sequence_gap'\s*\)/iu,
+    )
+    assert.match(
+      view,
+      /base_record\.class_name = 'events'[\s\S]+base_record\.payload->>'kind' = 'gazette_printed'[\s\S]+gazette_issue\.event_id/iu,
+    )
+    assert.match(
+      view,
+      /base_record\.class_name = 'events'[\s\S]+base_record\.payload\s*#-\s*'\{detail,error\}'/iu,
+      'format v2 must remove inherited event error text without changing v1',
+    )
+    assert.match(view, /'issue_number',\s*gazette_issue\.issue_number/iu)
+    assert.match(view, /'entry_count',\s*gazette_issue\.entry_count/iu)
+
+    const issuesStart = view.indexOf("SELECT 'gazette_issues'")
+    const entriesStart = view.indexOf("SELECT 'gazette_issue_entries'", issuesStart)
+    assert.ok(issuesStart >= 0 && entriesStart > issuesStart)
+    const issuesProjection = view.slice(issuesStart, entriesStart)
+    for (const field of [
+      'id', 'status', 'issue_number', 'scheduled_for', 'printed_at', 'header', 'entry_count', 'event_id',
+    ]) assert.match(issuesProjection, new RegExp(`'${field}'`, 'u'), field)
+    assert.match(issuesProjection, /issue\.issue_number::TEXT AS record_id/iu)
+    assert.match(issuesProjection, /issue\.issue_number::BIGINT AS sort_key/iu)
+
+    const entriesProjection = view.slice(entriesStart)
+    for (const field of [
+      'id', 'status', 'issue_number', 'ordinal', 'note_id', 'author_id', 'author', 'created_at',
+    ]) assert.match(entriesProjection, new RegExp(`'${field}'`, 'u'), field)
+    assert.match(entriesProjection, /entry\.note_id::TEXT AS record_id/iu)
+    assert.match(entriesProjection, /entry\.note_id::BIGINT AS sort_key/iu)
+    assert.match(entriesProjection, /JOIN public\.notes note ON note\.id = entry\.note_id/iu)
+    assert.match(entriesProjection, /JOIN public\.residents author ON author\.id = note\.author_id/iu)
+    assert.doesNotMatch(entriesProjection, /'body'/iu)
+
+    assert.match(
+      sql,
+      /GRANT SELECT ON city_snapshot\.public_records_v2 TO city_snapshot_export/iu,
+    )
+    if (name === 'Gazette migration') {
+      assert.doesNotMatch(
+        sql,
+        /REVOKE SELECT ON city_snapshot\.public_records FROM city_snapshot_export/iu,
+        'the dormant migration must leave the still-deployed v1 exporter working',
+      )
+    } else if (name === 'drawing contract migration') {
+      assert.match(sql, /gazette_submission_room_is_open\(\)/iu)
+      assert.match(
+        sql,
+        /REVOKE SELECT ON city_snapshot\.public_records FROM city_snapshot_export/iu,
+      )
+      assert.match(
+        sql,
+        /GRANT SELECT ON city_snapshot\.public_records TO city_snapshot_export/iu,
+      )
+    } else {
+      assert.match(
+        sql,
+        /REVOKE SELECT ON city_snapshot\.public_records FROM city_snapshot_export/iu,
+      )
+    }
+  })
+}
+
+test('exact post-deploy Gazette activation completes the snapshot v2 privilege cutover', async () => {
+  const sql = await readFile(gazetteActivationUrl, 'utf8')
+  assert.match(
+    sql,
+    /REVOKE SELECT ON city_snapshot\.public_records FROM city_snapshot_export/iu,
+  )
+  assert.match(
+    sql,
+    /GRANT SELECT ON city_snapshot\.public_records_v2 TO city_snapshot_export/iu,
+  )
+})
