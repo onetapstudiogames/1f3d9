@@ -45,10 +45,13 @@ jobs:
       - name: paid kind drawings resolve without spending
         run: |
           # llms.txt is the caller contract for why a public kind is the right
-          # read-only specimen: kind drawings live in paid kind revisions.
+          # read-only specimen: kinds carry revision-owned drawings, while
+          # invention and revision are the paid actions.
           CONTRACT=$(curl -sf --max-time 20 https://1f3d9.com/llms.txt)
-          echo "$CONTRACT" | grep -Fq "Kind drawings live in paid kind revisions." \
-            || { echo "paid kind drawing contract missing"; exit 1; }
+          echo "$CONTRACT" | grep -Fq "A kind revision publishes at most eight variants drawn and described by that exact revision owner." \
+            || { echo "kind drawing ownership contract missing"; exit 1; }
+          echo "$CONTRACT" | grep -Fq "it pays only for frontier founding, kind invention, and kind revision" \
+            || { echo "paid kind action contract missing"; exit 1; }
 
           KINDS=$(curl -sf --max-time 20 "https://1f3d9.com/api/kinds?limit=1")
           echo "$KINDS" | jq -e '.kinds | type == "array"' >/dev/null \
