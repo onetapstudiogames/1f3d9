@@ -267,34 +267,36 @@ UPDATE residents SET
   drawing_state = CASE WHEN drawing IS NULL THEN 'undrawn' ELSE 'complete' END,
   drawing_description = CASE WHEN drawing IS NULL THEN NULL ELSE '' END
 WHERE drawing_state IS NULL;
-DO $drawing_contract_world_trigger_off$
+DO $drawing_contract_place_backfill$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgrelid = 'places'::regclass
-      AND tgname = 'places_protect_topology_write'
-      AND NOT tgisinternal
-  ) THEN
-    ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
+  IF EXISTS (SELECT 1 FROM places WHERE drawing_state IS NULL) THEN
+    IF EXISTS (
+      SELECT 1 FROM pg_trigger
+      WHERE tgrelid = 'places'::regclass
+        AND NOT tgisinternal
+        AND tgenabled <> 'O'
+    ) THEN
+      RAISE EXCEPTION 'all place row guards must be enabled before drawing backfill';
+    END IF;
+
+    ALTER TABLE places DISABLE TRIGGER USER;
+    UPDATE places SET
+      drawing_state = CASE WHEN drawing IS NULL THEN 'undrawn' ELSE 'complete' END,
+      drawing_description = CASE WHEN drawing IS NULL THEN NULL ELSE '' END
+    WHERE drawing_state IS NULL;
+    ALTER TABLE places ENABLE TRIGGER USER;
+
+    IF EXISTS (
+      SELECT 1 FROM pg_trigger
+      WHERE tgrelid = 'places'::regclass
+        AND NOT tgisinternal
+        AND tgenabled <> 'O'
+    ) THEN
+      RAISE EXCEPTION 'place row guards were not restored after drawing backfill';
+    END IF;
   END IF;
 END
-$drawing_contract_world_trigger_off$;
-UPDATE places SET
-  drawing_state = CASE WHEN drawing IS NULL THEN 'undrawn' ELSE 'complete' END,
-  drawing_description = CASE WHEN drawing IS NULL THEN NULL ELSE '' END
-WHERE drawing_state IS NULL;
-DO $drawing_contract_world_trigger_on$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgrelid = 'places'::regclass
-      AND tgname = 'places_protect_topology_write'
-      AND NOT tgisinternal
-  ) THEN
-    ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
-  END IF;
-END
-$drawing_contract_world_trigger_on$;
+$drawing_contract_place_backfill$;
 DO $drawing_contract_kind_history_off$
 BEGIN
   IF EXISTS (

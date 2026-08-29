@@ -256,6 +256,42 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   await client.query(drawingContractMigrationDdl)
   await client.query(drawingContractMigrationDdl)
 
+  await client.query(`
+    ALTER TABLE places DROP CONSTRAINT places_drawing_contract;
+    ALTER TABLE places ALTER COLUMN drawing_state DROP NOT NULL;
+    ALTER TABLE places ALTER COLUMN drawing_state DROP DEFAULT;
+    ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
+    UPDATE places SET drawing_state = NULL, drawing_description = NULL
+    WHERE place_kind = 'world';
+    ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
+
+    CREATE FUNCTION reject_unrelated_place_backfill() RETURNS trigger
+    LANGUAGE plpgsql AS $function$
+    BEGIN
+      RAISE EXCEPTION 'unrelated protected place must not receive a row update';
+    END
+    $function$;
+    CREATE TRIGGER places_reject_unrelated_backfill
+    BEFORE UPDATE ON places
+    FOR EACH ROW EXECUTE FUNCTION reject_unrelated_place_backfill();
+  `)
+  try {
+    await client.query(drawingContractMigrationDdl)
+    assert.deepEqual((await client.query<{ drawing_state: string; tgenabled: string }>(`
+      SELECT place.drawing_state, trigger.tgenabled
+      FROM places place
+      JOIN pg_trigger trigger ON trigger.tgrelid = 'places'::regclass
+        AND trigger.tgname = 'places_reject_unrelated_backfill'
+        AND NOT trigger.tgisinternal
+      WHERE place.place_kind = 'world'
+    `)).rows, [{ drawing_state: 'complete', tgenabled: 'O' }])
+  } finally {
+    await client.query(`
+      DROP TRIGGER IF EXISTS places_reject_unrelated_backfill ON places;
+      DROP FUNCTION IF EXISTS reject_unrelated_place_backfill();
+    `)
+  }
+
   const migratedWorld = (await client.query<{ id: number; drawing: unknown }>(`
     SELECT id, drawing FROM places WHERE place_kind = 'world'
   `)).rows[0]!

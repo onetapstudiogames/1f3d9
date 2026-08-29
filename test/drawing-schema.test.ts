@@ -130,6 +130,21 @@ test('fresh and upgraded databases store explicit atomic drawing state and descr
   }
 })
 
+test('place drawing backfills preserve unrelated enabled row guards without invoking them', async () => {
+  const [schema, migration] = await Promise.all([
+    readFile(schemaUrl, 'utf8'),
+    readFile(contractMigrationUrl, 'utf8'),
+  ])
+
+  for (const [name, sql] of [['fresh schema', schema], ['additive migration', migration]] as const) {
+    assert.match(
+      sql,
+      /IF\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+places\s+WHERE\s+drawing_state\s+IS\s+NULL\s*\)[\s\S]{0,900}ALTER\s+TABLE\s+places\s+DISABLE\s+TRIGGER\s+USER[\s\S]{0,500}UPDATE\s+places\s+SET[\s\S]{0,500}ALTER\s+TABLE\s+places\s+ENABLE\s+TRIGGER\s+USER/iu,
+      `${name}: guarded place backfill`,
+    )
+  }
+})
+
 test('drawing text constraints and dependent SQL helpers stay safe under restore and custom schemas', async () => {
   const [schema, migration] = await Promise.all([
     readFile(schemaUrl, 'utf8'),
