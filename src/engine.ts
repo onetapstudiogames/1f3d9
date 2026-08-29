@@ -16,6 +16,7 @@ import {
   type EffectExecutionContext,
 } from './engine-effects.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
+import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -843,6 +844,8 @@ export function logUnrecognizedExecutionFailure(
 
 function failureFromError(error: unknown, actionId: number): EngineError {
   if (error instanceof EngineError && error.status < 500) return error
+  const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
+  if (gazetteRoomError) return new EngineError(409, gazetteRoomError)
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   logUnrecognizedExecutionFailure('action', actionId, error)
   return new EngineError(500, 'the city could not complete this action')
@@ -1034,6 +1037,29 @@ function actionContext(
   }
 }
 
+/** Keep the action run, but erase every effect before a refused caller primitive is resolved. */
+async function withCallerPrimitiveEffectsSavepoint<T>(
+  transaction: TaggedSql,
+  enabled: boolean,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!enabled) return work()
+  await queryRows(transaction`SAVEPOINT caller_primitive_effects`)
+  try {
+    const result = await work()
+    await queryRows(transaction`RELEASE SAVEPOINT caller_primitive_effects`)
+    return result
+  } catch (error) {
+    try {
+      await queryRows(transaction`ROLLBACK TO SAVEPOINT caller_primitive_effects`)
+      await queryRows(transaction`RELEASE SAVEPOINT caller_primitive_effects`)
+    } catch {
+      throw error
+    }
+    throw error
+  }
+}
+
 export async function runAction(
   rawInput: ActionInput,
   db: TaggedSql = engineSql,
@@ -1109,36 +1135,58 @@ export async function runAction(
       ) {
         throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
       }
-      const intrinsic = await intrinsicAction(input, transaction)
-      const base = actionContext(actionId, input, sharedSourceThingId)
-      let effectsApplied = 0
-      let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
-      for (const program of programs) {
-        const outcome = await executeEffectsWithOutcome(program.effects, {
-          ...base,
-          sourceTraitId: program.sourceTraitId,
-          sourceThingId: program.sourceThingId ?? base.sourceThingId,
-          originThingId: program.sourceThingId,
-          originPlaceId: program.lawSourcePlaceId,
-          lawAuthority: program.lawSourcePlaceId === null || program.sourceTraitId === null ? null : {
-            traitId: program.sourceTraitId,
-            sourcePlaceId: program.lawSourcePlaceId,
-          },
-        }, transaction)
-        effectsApplied += outcome.effectsApplied
-        emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
-      }
-      if (input.primitiveHandledByCaller) {
-        if (!input.performPrimitive) throw new EngineError(500, 'caller primitive callback is missing')
-        await input.performPrimitive(transaction)
-        emittedTypedPublicEvent ||= input.primitiveEmitsTypedEvent
-      }
-      if (!input.primitiveHandledByCaller && input.action === 'consume') {
-        if (input.sourceThingId === null) throw new EngineError(400, 'consume needs a source thing')
-        await withdrawOwnedThing(input.sourceThingId, input.actorId, input.actorHandle, transaction)
-        emittedTypedPublicEvent = true
-      }
-      const primitiveApplied = intrinsic.applied || input.primitiveHandledByCaller
+      const actionOutcome = await withCallerPrimitiveEffectsSavepoint(
+        transaction,
+        input.primitiveHandledByCaller,
+        async () => {
+          const intrinsic = await intrinsicAction(input, transaction)
+          const base = actionContext(actionId, input, sharedSourceThingId)
+          let effectsApplied = 0
+          let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
+          for (const program of programs) {
+            const outcome = await executeEffectsWithOutcome(program.effects, {
+              ...base,
+              sourceTraitId: program.sourceTraitId,
+              sourceThingId: program.sourceThingId ?? base.sourceThingId,
+              originThingId: program.sourceThingId,
+              originPlaceId: program.lawSourcePlaceId,
+              lawAuthority: program.lawSourcePlaceId === null || program.sourceTraitId === null
+                ? null
+                : {
+                    traitId: program.sourceTraitId,
+                    sourcePlaceId: program.lawSourcePlaceId,
+                  },
+            }, transaction)
+            effectsApplied += outcome.effectsApplied
+            emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
+          }
+          if (input.primitiveHandledByCaller) {
+            if (!input.performPrimitive) {
+              throw new EngineError(500, 'caller primitive callback is missing')
+            }
+            await input.performPrimitive(transaction)
+            emittedTypedPublicEvent ||= input.primitiveEmitsTypedEvent
+          }
+          if (!input.primitiveHandledByCaller && input.action === 'consume') {
+            if (input.sourceThingId === null) {
+              throw new EngineError(400, 'consume needs a source thing')
+            }
+            await withdrawOwnedThing(
+              input.sourceThingId,
+              input.actorId,
+              input.actorHandle,
+              transaction,
+            )
+            emittedTypedPublicEvent = true
+          }
+          return {
+            effectsApplied,
+            emittedTypedPublicEvent,
+            primitiveApplied: intrinsic.applied || input.primitiveHandledByCaller,
+          }
+        },
+      )
+      const { effectsApplied, emittedTypedPublicEvent, primitiveApplied } = actionOutcome
       const status: ResolutionStatus = effectsApplied === 0 && !primitiveApplied
         && input.action === 'use' ? 'noop' : 'applied'
       await recordActionResolution(

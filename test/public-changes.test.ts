@@ -6,7 +6,10 @@ import {
   PublicChangeReadConflictError,
   readAtStablePublicChangeCheckpoint,
 } from '../src/public-changes.ts'
-import { PUBLIC_EVENT_KINDS } from '../src/public-events.ts'
+import {
+  PUBLIC_EVENT_KINDS,
+  PUBLIC_SYSTEM_EVENT_ACTORS,
+} from '../src/public-events.ts'
 
 type QueryRow = Readonly<Record<string, unknown>>
 
@@ -248,6 +251,53 @@ test('changes page forward by public change log id with exact checkpoints and no
     assert.doesNotMatch(text, /MAX\s*\(\s*(?:e\.)?id\s*\)/iu)
     assert.doesNotMatch(text, /(?:SELECT|,)\s+(?:e|page)\.id\s*(?:,|FROM)/iu)
   }
+})
+
+test('public changes preserve explicit system actors without admitting arbitrary services', async () => {
+  const database = new FakeExecutor([
+    {
+      checkpoint: '22', change_id: '20', kind: 'gazette_printed',
+      actor: PUBLIC_SYSTEM_EVENT_ACTORS.gazettePrinter,
+      detail: { issue_number: 3, place_id: 454, entry_count: 2 },
+      created_at: '2026-09-14T16:00:01.000Z',
+    },
+    {
+      checkpoint: '22', change_id: '21', kind: 'place_edited',
+      actor: PUBLIC_SYSTEM_EVENT_ACTORS.city,
+      detail: { place_id: 454 },
+      created_at: '2026-09-14T16:00:02.000Z',
+    },
+    {
+      checkpoint: '22', change_id: '22', kind: 'note',
+      actor: 'private:service', detail: { note_id: 99 },
+      created_at: '2026-09-14T16:00:03.000Z',
+    },
+  ])
+
+  const result = await loadPublicChanges(
+    database.query,
+    validQuery({ since: ['19'], limit: ['3'] }),
+  )
+
+  assert.deepEqual(result, {
+    change_marker: '22',
+    changes: [
+      {
+        change_id: '20', kind: 'gazette_printed',
+        actor: PUBLIC_SYSTEM_EVENT_ACTORS.gazettePrinter,
+        detail: { issue_number: 3, place_id: 454, entry_count: 2 },
+        created_at: '2026-09-14T16:00:01.000Z',
+      },
+      {
+        change_id: '21', kind: 'place_edited', actor: PUBLIC_SYSTEM_EVENT_ACTORS.city,
+        detail: { place_id: 454 }, created_at: '2026-09-14T16:00:02.000Z',
+      },
+    ],
+    returned_items: 2,
+    unchanged: false,
+    has_more: false,
+    next_since: '22',
+  })
 })
 
 test('an exact kind filter pages in global change-id space and advances to the checkpoint', async () => {

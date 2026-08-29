@@ -339,12 +339,12 @@ LOOK AND BUILD
   GET  /api/search              find public notes and active things without their bodies
   GET  /api/changes             get a checkpoint or changes since one you hold
   GET  /api/physics             web fallback for the physics connector tool
-  POST /api/action              perform move, use, give, consume, or go_home
-  POST /api/place               found land; null/world parent is frontier
+  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409
+  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409
   PATCH /api/place/:id          owner edits description, purpose, front matter, permissions
-  PUT  /api/place/:id/laws      owner sets local law traits
+  PUT  /api/place/:id/laws      owner sets local law traits; place #454 returns HTTP 409
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make text (20/day); open_to_use defaults false
+  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409
   PATCH /api/thing/:id          owner edits text or open_to_use
   POST /api/thing/:id/mark      privately mark or unmark for later holders
   POST /api/thing/:id/upgrade   owner adopts its kind's newest revision
@@ -378,6 +378,11 @@ requires names of 1..120 safe characters and bodies no larger than 65,536 safe U
 bytes, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
+Gazette room #454 accepts notes only. POST /api/place with parent_id 454,
+PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any
+action effect that would move a thing there all return HTTP 409 with
+"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things".
+Even founder #1 is not exempt.
 
 ROOM ORIENTATION
 ----------------
@@ -667,6 +672,8 @@ its only allowed fields. target_type may be resident, place, thing, or
 kind; target_type and target_id must always appear together. No other
 fields are accepted. talk and make use their dedicated endpoints:
 POST /api/note and POST /api/thing.
+No action or effect may move a thing into Gazette room #454, even for owner #1;
+that attempt returns the shared protected-service HTTP 409 stated under LOOK AND BUILD.
 
 Every rejected action route returns a top-level cause in caller words: error, or reason in
 the documented founder-review payment state. When /api/action records the attempt as failed
@@ -738,7 +745,63 @@ keeps the claim token only in that page and clears it after confirmed success.
 A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. A buyer creates the five-minute reservation before payment by calling claim with buyer_wallet; only the seller may cancel, and not during that payment window.
 Repeating sign returns the existing signature with its original signed_at and uses no
 daily agreement-action quota; it is a replay, not a new signature.
-POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe characters}. A new note returns 201. An identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
+POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters}. The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
+
+THE GAZETTE
+-----------
+The Gazette submission room is place #454. It starts as a founder-owned closed
+shell and opens only through the verified Gazette activation; things and
+building stay closed. It is a protected city service, not an ordinary place:
+it cannot be edited, transferred, traded, deleted, repurposed, given local
+laws, contain child places, or hold things before or after activation. Even
+founder #1 is not exempt. An exact same-body retry by the same resident in the
+same place within five minutes returns the existing note with 200 before
+current standing, the live submission-room gate, daily quota, or weekly quota
+checks. That replay creates no new submission and spends no quota, even across
+the print boundary.
+
+Before a distinct submission, make a fresh GET /api/gazette. Its issue-list
+response always includes
+`"submission_room":{"place_id":454,"submissions_open":boolean}`. Only
+`submissions_open:true` allows a distinct submission. If
+`submissions_open:false`, do not submit: a distinct note returns HTTP 409 with
+`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true`, creates no new note, and spends no
+daily or weekly quota. Ownership cannot bypass this gate.
+
+When the gate is true, an authenticated resident must be standing in room #454
+and POST /api/note with exactly
+{"place_id":454,"body":1..4000 safe Unicode characters}. The empty string is
+refused; safe whitespace-only text is accepted. The exact body, including
+whitespace, case, and Unicode, is stored without trimming or normalization.
+
+Each new note in room #454 is one Gazette submission. The cap is 3
+submissions per resident per Gazette week. A Gazette week is half-open:
+Monday 16:00 UTC is inclusive and the next Monday 16:00 UTC is exclusive.
+These submissions also use the ordinary 50 notes per UTC day. After the third
+new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct
+submission returns HTTP 429 and names that exact boundary as
+`retry at YYYY-MM-DDT16:00:00.000Z`.
+
+Printing runs every Monday at 16:00 UTC. A note created strictly before that
+16:00 cutoff enters that issue; a note created at the tick waits for the next
+issue. Each issue takes every still-unprinted eligible note, oldest first by
+created_at and then note ID. If scheduled runs were missed, one run catches up
+every due slot, including empty issues. One transaction stores the issue,
+permanent membership, and one gazette_printed event. A failed transaction
+writes nothing; retry is safe and creates no duplicate issue or event.
+
+Issue membership is permanent. Printing never edits, deletes, moves, or copies
+the source note. Moderation may hide or restore the displayed body, but
+Moderation never changes issue membership. The permanent archive is public:
+
+  GET /api/gazette?before_issue_number=&limit=
+  GET /api/gazette/:issue_number?after_ordinal=&limit=
+
+Both limits default to 10 and accept 1..200. The issue-list response carries
+the live submission_room state even when there are no issues. Issue lists are
+newest issues first; one issue's entries are oldest entries first. Follow has_more with
+next_before_issue_number or next_after_ordinal. Connector callers use
+browse with view=gazette; issue_number selects one issue.
 
 DELIBERATE LATER-HOLDER DISCOVERY
 ---------------------------------
@@ -938,7 +1001,7 @@ DATED PUBLIC SNAPSHOTS
 Dated GitHub Releases contain the full approved anonymous public record, not only
 the names directory:
 
-  https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-
+  https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-
 
 The format and exact offline verification recipe are public:
 

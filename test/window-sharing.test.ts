@@ -20,8 +20,17 @@ const BASE_STATE: WindowShareState = Object.freeze({
   directorySearch: '',
   sleeperPlaceIds: Object.freeze([]),
   archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
+  gazetteIssueId: null,
   detail: null,
 })
+
+function gazetteShareState(issue: number | null): WindowShareState {
+  return {
+    ...BASE_STATE,
+    view: 'gazette',
+    gazetteIssueId: issue,
+  } as unknown as WindowShareState
+}
 
 test('share metadata uses only Vercel’s exact injected Preview deployment origin', () => {
   const configured = 'https://1f3d9-hosted-chat-preview.vercel.app'
@@ -102,6 +111,58 @@ test('window share paths are clean, stable, and preserve the reproducible public
     ...BASE_STATE,
     detail: Object.freeze({ kind: 'note', id: 301 }),
   }), '/window/note/301')
+})
+
+test('Gazette issue shares are canonical, bounded, and body-free', () => {
+  assert.equal(windowSharePath(gazetteShareState(null)), '/window/gazette')
+  assert.equal(windowSharePath(gazetteShareState(7)), '/window/gazette?issue=7')
+
+  const parsed = parseWindowShareRequest('/window/gazette', '?issue=7')
+  assert.ok(parsed)
+  assert.equal(parsed.canonicalPath, '/window/gazette?issue=7')
+  assert.equal(parsed.state.view, 'gazette')
+  assert.equal(
+    (parsed.state as WindowShareState & { readonly gazetteIssueId: number | null })
+      .gazetteIssueId,
+    7,
+  )
+
+  const missing = createWindowShareMetadata('https://1f3d9.com', parsed, false)
+  assert.equal(missing.canonicalUrl, 'https://1f3d9.com/window/gazette?issue=7')
+  assert.equal(missing.title, 'The Gazette · Issue 7 is unavailable — 1F3D9')
+  assert.match(missing.description, /not publicly available now/iu)
+
+  const unverified = createWindowShareMetadata('https://1f3d9.com', parsed, null)
+  assert.equal(unverified.title, 'The Gazette · Issue 7 could not be checked — 1F3D9')
+  assert.match(unverified.description, /availability could not be checked right now/iu)
+  assert.doesNotMatch(unverified.description, /not publicly available/iu)
+
+  const forgedFromResidentText = createWindowShareMetadata('https://1f3d9.com', parsed, {
+    author: 'leafwalker',
+    body: 'A RESIDENT BODY MUST NEVER ENTER AN ISSUE UNFURL.',
+  })
+  assert.equal(forgedFromResidentText.title, unverified.title)
+
+  const metadata = createWindowShareMetadata('https://1f3d9.com', parsed, true)
+  assert.equal(metadata.canonicalUrl, 'https://1f3d9.com/window/gazette?issue=7')
+  assert.equal(metadata.title, 'The Gazette · Issue 7 — 1F3D9')
+  assert.match(metadata.description, /weekly Gazette issue/iu)
+  assert.equal(metadata.imageUrl, 'https://1f3d9.com/share/view.png')
+  assert.doesNotMatch(
+    `${metadata.title}\n${metadata.description}\n${forgedFromResidentText.description}`,
+    /RESIDENT BODY|leafwalker/u,
+  )
+
+  for (const query of [
+    '?issue=0',
+    '?issue=-1',
+    '?issue=2147483648',
+    '?issue=7&issue=8',
+    '?issue=7&resident=leafwalker',
+  ]) {
+    assert.equal(parseWindowShareRequest('/window/gazette', query), null, query)
+  }
+  assert.equal(parseWindowShareRequest('/window/map', '?issue=7'), null)
 })
 
 test('window sharing refuses private-looking or invalid state instead of placing it in a URL', () => {

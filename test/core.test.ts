@@ -60,7 +60,12 @@ test('UTC quota dates and free-action limits match the public scarcity contract'
   const after = new Date().toISOString().slice(0, 10)
 
   assert.ok(today === before || today === after)
-  assert.deepEqual(QUOTAS, { things: 20, notes: 50, agreements: 5 })
+  assert.deepEqual(QUOTAS, {
+    things: 20,
+    notes: 50,
+    agreements: 5,
+    gazetteSubmissions: 3,
+  })
 })
 
 test('transaction proofs are canonicalized before one-use checks', () => {

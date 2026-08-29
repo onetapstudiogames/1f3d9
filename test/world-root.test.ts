@@ -434,7 +434,9 @@ test('closed ownerless world state is rejected by every ordinary place-write bou
 
   assert.match(worldSource, /existing\.owner_id !== resident\.id[\s\S]{0,100}only the place owner may edit/i)
   assert.match(lawsSource, /place\.owner_id !== actor\.id[\s\S]{0,100}only the place owner may change its laws/i)
-  assert.match(noteSource, /placePermission\('place', 'open_to_notes', input\.residentId\)[\s\S]{0,100}place\.owner_id IS NOT NULL/i)
+  assert.match(noteSource, /place\.owner_id IS NOT NULL AS ordinary_place/i)
+  assert.match(noteSource, /placePermission\('place', 'open_to_notes', input\.residentId\)/i)
+  assert.match(noteSource, /state\.ordinary_place AND state\.permits_notes/i)
   assert.match(thingSource, /placePermission\('place', 'open_to_things', input\.actor\.id\)[\s\S]{0,100}place\.owner_id IS NOT NULL/i)
   assert.match(societySource, /asset\.owner_id !== resident\.id[\s\S]{0,100}only the \$\{type\} owner may transfer it/i)
 })

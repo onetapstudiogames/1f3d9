@@ -2659,6 +2659,36 @@ test('action happenings keep their verb and movement and collapse only consecuti
   await expect.soft(activity.locator('.activity-count')).toHaveText('· 3 times')
 })
 
+test('Gazette print happening names its system actor, issue, submissions, and room', async ({ page }) => {
+  await page.route('**/api/events**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('before_id') !== '51') return route.fallback()
+    return route.fulfill({
+      json: {
+        events: [{
+          id: 50,
+          at: '2026-10-12T16:00:02.000Z',
+          kind: 'gazette_printed',
+          actor: 'the Gazette printer',
+          detail: { issue_number: 7, place_id: 454, entry_count: 3 },
+        }],
+        has_more: false,
+        next_before_id: null,
+        change_marker: '20',
+      },
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+  await page.getByRole('button', { name: 'Load older happenings' }).click()
+
+  const activity = page.locator('#activity-list')
+  await expect(activity).toContainText(
+    /the Gazette printer.*printed The Gazette.*issue 7.*3 submissions.*Room #454/i,
+  )
+  await expect(page.getByRole('button', { name: 'the Gazette printer' })).toHaveCount(0)
+})
+
 test('unsafe and overlong recorded causes stay distinct and honest in the window', async ({ page }) => {
   const overlongCause = `${'x'.repeat(500)}hidden cause tail`
   const exactCause = 'y'.repeat(500)
@@ -3619,4 +3649,294 @@ test('a delayed thing detail cannot overwrite its reread after an authored refre
 
   await expect(detailText).toHaveText(refreshedBody)
   await expect(detailText).not.toContainText(staleBody)
+})
+
+test('Gazette names the exact first print when no permanent issue exists yet', async ({ page }) => {
+  await page.route('**/api/gazette**', route => route.fulfill({
+    json: {
+      first_print_at: '2026-08-31T16:00:00.000Z',
+      submission_room: { place_id: 454, submissions_open: false },
+      issues: [],
+      has_more: false,
+      next_before_issue_number: null,
+    },
+  }))
+
+  const listRequest = page.waitForRequest(request => {
+    return new URL(request.url()).pathname === '/api/gazette'
+  })
+  await page.getByRole('tab', { name: 'Gazette', exact: true }).click()
+  const requestUrl = new URL((await listRequest).url())
+  const limit = Number(requestUrl.searchParams.get('limit'))
+  expect(limit).toBeGreaterThan(0)
+  expect(limit).toBeLessThanOrEqual(50)
+  expect(requestUrl.searchParams.has('before_issue_number')).toBe(false)
+
+  const panel = page.locator('#gazette-panel')
+  await expect(panel.getByRole('status')).toHaveText(
+    'Room #454 is closed for Gazette submissions. Wait until this notice says open before submitting.',
+  )
+  await expect(panel.getByText(
+    'No Gazette issues have printed yet. The first print is scheduled for Monday, 31 August 2026 at 16:00 UTC.',
+    { exact: true },
+  )).toBeVisible()
+  await expect(panel).toContainText('Every Monday at 16:00 UTC')
+  await expect(panel.getByRole('link', { name: 'Room #454', exact: true }))
+    .toHaveAttribute('href', '/window/place/454')
+  await expect(panel).toContainText('permanent public archive')
+  await expect(panel.locator('[data-share-scope="view"]')).toHaveCount(1)
+})
+
+test('the live Gazette refreshes its first page without dropping loaded older issues', async ({ page }) => {
+  let firstPageReads = 0
+  await page.route('**/api/gazette**', route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/gazette/7') {
+      return route.fulfill({
+        json: {
+          issue: {
+            issue_number: 7,
+            scheduled_for: '2026-10-12T16:00:00.000Z',
+            printed_at: '2026-10-12T16:00:02.000Z',
+            header: 'Permanent issue 7.',
+            entry_count: 0,
+          },
+          entries: [],
+          has_more: false,
+          next_after_ordinal: null,
+        },
+      })
+    }
+    if (url.pathname !== '/api/gazette') return route.abort('failed')
+    if (url.searchParams.get('before_issue_number') === '7') {
+      return route.fulfill({
+        json: {
+          first_print_at: '2026-08-31T16:00:00.000Z',
+          submission_room: { place_id: 454, submissions_open: false },
+          issues: [{
+            issue_number: 6,
+            scheduled_for: '2026-10-05T16:00:00.000Z',
+            printed_at: '2026-10-05T16:00:01.000Z',
+            entry_count: 0,
+          }],
+          has_more: false,
+          next_before_issue_number: null,
+        },
+      })
+    }
+    firstPageReads += 1
+    const refreshed = firstPageReads > 1
+    return route.fulfill({
+      json: {
+        first_print_at: '2026-08-31T16:00:00.000Z',
+        submission_room: { place_id: 454, submissions_open: refreshed },
+        issues: [{
+          issue_number: refreshed ? 8 : 7,
+          scheduled_for: refreshed
+            ? '2026-10-19T16:00:00.000Z'
+            : '2026-10-12T16:00:00.000Z',
+          printed_at: refreshed
+            ? '2026-10-19T16:00:02.000Z'
+            : '2026-10-12T16:00:02.000Z',
+          entry_count: 0,
+        }],
+        has_more: true,
+        next_before_issue_number: refreshed ? 8 : 7,
+      },
+    })
+  })
+
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const firstPage = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/gazette' && !url.searchParams.has('before_issue_number')
+  })
+  await page.getByRole('tab', { name: 'Gazette', exact: true }).click()
+  await firstPage
+  const panel = page.locator('#gazette-panel')
+  await expect(panel).toContainText('Issue 7')
+
+  const olderPage = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/gazette' && url.searchParams.get('before_issue_number') === '7'
+  })
+  await page.getByRole('button', { name: 'Load older issues', exact: true }).click()
+  await olderPage
+  await expect(panel).toContainText('Issue 6')
+  await expect(panel.getByRole('status')).toContainText('closed for Gazette submissions')
+
+  const refreshedPage = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/gazette' && !url.searchParams.has('before_issue_number')
+  })
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await refreshedPage
+
+  await expect(panel.getByRole('status')).toHaveText(
+    'Room #454 is open for Gazette submissions.',
+  )
+  for (const issueNumber of [8, 7, 6]) {
+    await expect(panel).toContainText(`Issue ${issueNumber}`)
+  }
+  await expect(page.getByRole('button', { name: 'Load older issues', exact: true })).toHaveCount(0)
+  expect(firstPageReads).toBe(2)
+})
+
+test('Gazette renders attributed notes verbatim and pages issues and entries on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const unsafeFirstBody = [
+    'First line exactly.',
+    '<img src=x onerror="window.__gazetteMarkupRan=true">',
+    'Final & line exactly.',
+  ].join('\n')
+  const secondBody = 'Second entry remains after the first, oldest first.'
+  const requests: URL[] = []
+
+  await page.route('**/api/gazette**', route => {
+    const url = new URL(route.request().url())
+    requests.push(url)
+    if (url.pathname === '/api/gazette') {
+      const older = url.searchParams.get('before_issue_number') === '7'
+      return route.fulfill({
+        json: {
+          first_print_at: '2026-08-31T16:00:00.000Z',
+          submission_room: { place_id: 454, submissions_open: true },
+          issues: [older ? {
+            issue_number: 6,
+            scheduled_for: '2026-10-05T16:00:00.000Z',
+            printed_at: '2026-10-05T16:00:01.000Z',
+            entry_count: 0,
+          } : {
+            issue_number: 7,
+            scheduled_for: '2026-10-12T16:00:00.000Z',
+            printed_at: '2026-10-12T16:00:02.000Z',
+            entry_count: 2,
+          }],
+          has_more: !older,
+          next_before_issue_number: older ? null : 7,
+        },
+      })
+    }
+    if (url.pathname === '/api/gazette/7') {
+      const later = url.searchParams.get('after_ordinal') === '1'
+      return route.fulfill({
+        json: {
+          issue: {
+            issue_number: 7,
+            scheduled_for: '2026-10-12T16:00:00.000Z',
+            printed_at: '2026-10-12T16:00:02.000Z',
+            header: 'Stored provenance: Room #454, Monday tick, unprinted notes before the cutoff, oldest first, verbatim, with source notes retained.',
+            entry_count: 2,
+          },
+          entries: [later ? {
+            ordinal: 2,
+            note_id: 702,
+            author: 'mapkeeper',
+            body: secondBody,
+            created_at: '2026-10-12T15:58:00.000Z',
+          } : {
+            ordinal: 1,
+            note_id: 701,
+            author: 'leafwalker',
+            body: unsafeFirstBody,
+            created_at: '2026-10-12T15:55:00.000Z',
+          }],
+          has_more: !later,
+          next_after_ordinal: later ? null : 1,
+        },
+      })
+    }
+    return route.abort('failed')
+  })
+
+  const initialList = page.waitForRequest(request => {
+    return new URL(request.url()).pathname === '/api/gazette' &&
+      !new URL(request.url()).searchParams.has('before_issue_number')
+  })
+  const initialEntries = page.waitForRequest(request => {
+    return new URL(request.url()).pathname === '/api/gazette/7' &&
+      !new URL(request.url()).searchParams.has('after_ordinal')
+  })
+  await page.evaluate(() => {
+    history.pushState(null, '', '/window/gazette?issue=7')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+  const [listRequest, entryRequest] = await Promise.all([initialList, initialEntries])
+  for (const request of [listRequest, entryRequest]) {
+    const limit = Number(new URL(request.url()).searchParams.get('limit'))
+    expect(limit).toBeGreaterThan(0)
+    expect(limit).toBeLessThanOrEqual(50)
+  }
+
+  const tab = page.getByRole('tab', { name: 'Gazette', exact: true })
+  const panel = page.locator('#gazette-panel')
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+  await expect(panel).toBeVisible()
+  await expect(panel.getByRole('status')).toHaveText(
+    'Room #454 is open for Gazette submissions.',
+  )
+  await expect(panel).toContainText(
+    'Stored provenance: Room #454, Monday tick, unprinted notes before the cutoff, oldest first, verbatim, with source notes retained.',
+  )
+
+  const firstEntry = panel.locator('.gazette-entry').filter({ hasText: 'leafwalker' })
+  await expect(firstEntry).toHaveCount(1)
+  expect(await firstEntry.locator('.gazette-entry-body').textContent()).toBe(unsafeFirstBody)
+  await expect(firstEntry.locator('img')).toHaveCount(0)
+  expect(await page.evaluate(() => (
+    window as Window & { __gazetteMarkupRan?: boolean }
+  ).__gazetteMarkupRan)).toBeUndefined()
+  await expect(firstEntry.locator('.gazette-entry-attribution')).toContainText('leafwalker')
+  await expect(firstEntry.locator('.gazette-entry-attribution')).toContainText('Note #701')
+  await expect(firstEntry.locator('.gazette-entry-attribution')).toContainText(
+    '12 October 2026 at 15:55 UTC',
+  )
+  await expect(firstEntry.getByRole('link', { name: 'Note #701', exact: true }))
+    .toHaveAttribute('href', '/window/note/701')
+
+  const olderIssueRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/gazette' &&
+      url.searchParams.get('before_issue_number') === '7'
+  })
+  await page.getByRole('button', { name: 'Load older issues', exact: true }).click()
+  await olderIssueRequest
+  await expect(panel).toContainText('Issue 6')
+
+  const moreEntriesRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/gazette/7' && url.searchParams.get('after_ordinal') === '1'
+  })
+  await page.getByRole('button', { name: 'Load more entries', exact: true }).click()
+  await moreEntriesRequest
+  const entries = panel.locator('.gazette-entry .gazette-entry-body')
+  await expect(entries).toHaveCount(2)
+  expect(await entries.allTextContents()).toEqual([unsafeFirstBody, secondBody])
+
+  await tab.focus()
+  await expect(tab).toBeFocused()
+  await expect(panel.locator('[data-share-scope="view"]')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true)
+  const tabReachability = await tab.evaluate(element => {
+    const tabBox = element.getBoundingClientRect()
+    const tabList = element.parentElement
+    const tabListBox = tabList?.getBoundingClientRect()
+    return {
+      withinScroller: Boolean(
+        tabListBox && tabBox.left >= tabListBox.left && tabBox.right <= tabListBox.right,
+      ),
+      tab: { left: tabBox.left, right: tabBox.right },
+      scroller: tabListBox ? {
+        left: tabListBox.left,
+        right: tabListBox.right,
+        scrollLeft: tabList?.scrollLeft,
+        scrollWidth: tabList?.scrollWidth,
+        clientWidth: tabList?.clientWidth,
+      } : null,
+    }
+  })
+  expect(tabReachability.withinScroller, JSON.stringify(tabReachability)).toBe(true)
+  expect(requests.filter(url => url.pathname === '/api/gazette')).toHaveLength(2)
+  expect(requests.filter(url => url.pathname === '/api/gazette/7')).toHaveLength(2)
 })

@@ -32,6 +32,10 @@ import {
   PaymentSaleConflictError,
 } from './payment-sale-operations.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
+import {
+  GAZETTE_ROOM_ID,
+  GAZETTE_SUBMISSIONS_CLOSED_ERROR,
+} from './gazette.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { findRecentTalkNoteDuplicate, runTalkNoteAction } from './note-action.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
@@ -201,7 +205,10 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, 400, 'need place_id and body')
     const placeId = positiveId(body.place_id)
     if (containsBearerSecret(body.body)) return err(c, 400, SECRET_REJECTION)
-    const text = publicText(body.body, { maximumCharacters: NOTE_CHARACTERS })
+    const text = publicText(body.body, {
+      maximumCharacters: NOTE_CHARACTERS,
+      allowWhitespaceOnly: true,
+    })
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
 
@@ -226,7 +233,11 @@ export function mountSocietyRoutes(app: Hono): void {
 
     const places = await withPlacePermission(sql)`
       SELECT id, parent_id, owner_id, open_to_notes,
-        ${placePermission('place', 'open_to_notes', resident.id)} AS place_permits_notes
+        ${placePermission('place', 'open_to_notes', resident.id)} AS place_permits_notes,
+        CASE
+          WHEN place.id <> ${GAZETTE_ROOM_ID} THEN TRUE
+          ELSE gazette_submission_room_is_open()
+        END AS gazette_submissions_open
       FROM places place WHERE id = ${placeId}
     ` as {
       id: number
@@ -234,11 +245,15 @@ export function mountSocietyRoutes(app: Hono): void {
       owner_id: number | null
       open_to_notes: boolean
       place_permits_notes: boolean
+      gazette_submissions_open: boolean
     }[]
     const place = places[0]
     if (!place) return err(c, 404, 'no such place')
     if (place.parent_id === null && place.owner_id === null) {
       return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
+    }
+    if (placeId === GAZETTE_ROOM_ID && place.gazette_submissions_open !== true) {
+      return err(c, 409, GAZETTE_SUBMISSIONS_CLOSED_ERROR)
     }
     if (place.place_permits_notes !== true)
       return err(c, 403, 'this place is not open to notes')

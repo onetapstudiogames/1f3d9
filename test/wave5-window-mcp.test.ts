@@ -93,7 +93,7 @@ test('the human window has a bounded, accessible Archive search view', () => {
   }
   assert.match(WINDOW_HTML, /aria-live="polite"/u)
 
-  assert.match(WINDOW_JS, /VIEWS[^\n]*'archive'/u)
+  assert.match(WINDOW_JS, /VIEWS[\s\S]{0,160}'archive'/u)
   assert.match(WINDOW_JS, /new URL\('\/api\/search', window\.location\.origin\)/u)
   for (const option of ['q', 'mode', 'type']) {
     assert.match(

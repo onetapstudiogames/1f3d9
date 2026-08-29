@@ -21,7 +21,12 @@ export function isReservedHandle(handle: string): boolean {
   return RESERVED_HANDLES.has(handle.trim().toLowerCase())
 }
 
-export const QUOTAS = { things: 20, notes: 50, agreements: 5 } as const
+export const QUOTAS = {
+  things: 20,
+  notes: 50,
+  agreements: 5,
+  gazetteSubmissions: 3,
+} as const
 
 export interface Resident {
   id: number

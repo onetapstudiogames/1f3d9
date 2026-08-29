@@ -23,6 +23,7 @@ import {
   PUBLIC_EVENT_DETAIL_ID_FIELDS,
   PUBLIC_EVENT_KINDS,
   PUBLIC_EVENT_LABELS,
+  isPublicSystemEventActor,
 } from './public-events.ts'
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
@@ -135,6 +136,7 @@ const WINDOW_SHARE_IMAGES = Object.freeze({
 
 export type WindowShareImageKind = keyof typeof WINDOW_SHARE_IMAGES
 export type WindowShareRecordReader = (detail: WindowShareDetail) => Promise<unknown | null>
+export type WindowShareGazetteIssueReader = (issueNumber: number) => Promise<boolean>
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
@@ -242,6 +244,11 @@ function harden(c: Context) {
 const positiveInteger = (value: unknown) => {
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2_147_483_647 ? parsed : null
+}
+
+const nonnegativeInteger = (value: unknown) => {
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 2_147_483_647 ? parsed : null
 }
 
 const count = (value: unknown) => {
@@ -549,7 +556,9 @@ function publicWindowEvent(value: unknown) {
   const row = value as Record<string, unknown>
   const id = positiveInteger(row.id)
   const kind = typeof row.kind === 'string' && SAFE_EVENT_KINDS.has(row.kind) ? row.kind : null
-  const actor = typeof row.actor === 'string' && HANDLE_RE.test(row.actor) ? row.actor : null
+  const actor = typeof row.actor === 'string' && (
+    HANDLE_RE.test(row.actor) || isPublicSystemEventActor(row.actor)
+  ) ? row.actor : null
   const at = safeDate(row.at)
   if (!id || !kind || !actor || !at) return null
 
@@ -565,6 +574,13 @@ function publicWindowEvent(value: unknown) {
     const safe = positiveInteger(rawDetail[key])
     return safe ? [[key, safe] as const] : []
   }))
+  if (kind === 'gazette_printed') {
+    const issueNumber = positiveInteger(rawDetail.issue_number)
+    const entryCount = nonnegativeInteger(rawDetail.entry_count)
+    if (!issueNumber || entryCount === null || detail.place_id !== 454) return null
+    detail.issue_number = issueNumber
+    detail.entry_count = entryCount
+  }
   let carriesFailureCause = false
   if (kind === 'action' && isBasicAction(rawDetail.action)) {
     detail.action = rawDetail.action
@@ -1401,11 +1417,27 @@ async function readLiveWindowShareRecord(detail: WindowShareDetail): Promise<unk
   return loadPublicNoteRecord(detail.id)
 }
 
+async function readLiveWindowGazetteIssue(issueNumber: number): Promise<boolean> {
+  const rows = await sql.query(`
+    /* public:window-gazette-issue-exists */
+    SELECT EXISTS (
+      SELECT 1
+      FROM gazette_issues
+      WHERE issue_number = $1::integer
+    ) AS issue_exists
+  `, [issueNumber]) as readonly Record<string, unknown>[]
+  if (rows.length !== 1 || typeof rows[0]?.issue_exists !== 'boolean') {
+    throw new Error('database returned an invalid Gazette issue-existence result')
+  }
+  return rows[0].issue_exists
+}
+
 export async function windowPage(
   c: Context,
   creditPurchasesReady = false,
   readRecord: WindowShareRecordReader = readLiveWindowShareRecord,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  readGazetteIssue: WindowShareGazetteIssueReader = readLiveWindowGazetteIssue,
 ) {
   harden(c)
   c.header('Content-Security-Policy', WINDOW_CSP)
@@ -1414,9 +1446,18 @@ export async function windowPage(
   const shareRequest = parseWindowShareRequest(c.req.path, requestUrl.search)
   if (shareRequest === null) return c.text('that public city window link is not available', 404)
 
-  const record = shareRequest.state.detail === null
-    ? null
-    : await readRecord(shareRequest.state.detail)
+  let record: unknown = null
+  if (shareRequest.state.detail !== null) {
+    record = await readRecord(shareRequest.state.detail)
+  } else if (shareRequest.state.gazetteIssueId !== null) {
+    // Gazette unfurls need only one body-free fact: whether this issue exists.
+    // A failed proof stays unknown instead of being presented as proven absence.
+    try {
+      record = await readGazetteIssue(shareRequest.state.gazetteIssueId)
+    } catch {
+      record = null
+    }
+  }
   const metadata = createWindowShareMetadata(
     windowShareMetadataOrigin(configuredPublicDomain(environment).domain, environment),
     shareRequest,

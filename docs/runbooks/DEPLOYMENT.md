@@ -13,11 +13,11 @@ reviewed Git commit and make production impossible to reproduce from `main`.
 
 ### Payment-recovery prerequisite
 
-Before every release containing bounded payment recovery, confirm that a valid
+Before every release containing bounded payment recovery or the Gazette printer, confirm that a valid
 server-only `CRON_SECRET` is provisioned in Vercel Preview and Production. Check the
 provider setting without printing or copying either value into logs. The scheduled
-five-minute cron in `vercel.json` requires the existing Vercel Pro plan, so confirm
-that plan remains active before deploying.
+five-minute cron for recovery and Monday 16:00 UTC Gazette cron in `vercel.json` require the
+existing Vercel Pro plan, so confirm that plan remains active before deploying.
 
 ### Later-holder prerequisite
 
@@ -85,11 +85,113 @@ Production snapshot, apply `npm run migrate:production:resident-refusal-state`, 
 the same postconditions before merging the application. The application rollout does not
 apply this migration.
 
+### Gazette two-phase prerequisite
+
+The first Gazette rollout has two separate database changes. The `gazette` migration
+installs a dormant archive, quota trigger, printer ledger, and snapshot projection. It
+does not open room #454. The `gazette-room-activation` migration opens that room only
+after the target site proves it is serving the exact Gazette-capable commit named by the
+operator and the local activation source is that same clean Git commit. This local proof
+applies only to activation; the dormant `gazette` migration is unchanged. Neither
+migration runs as part of application deployment.
+
+1. Apply the dormant schema to the isolated Preview database:
+
+   ```sh
+   CONFIRM_GAZETTE=INSTALL_GAZETTE_ARCHIVE_AND_SUBMISSION_LIMIT \
+   CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+   npm run migrate:preview:gazette
+   ```
+
+   Verify the cycle function, three-submission trigger, protected two-state room lifecycle,
+   immutable issue and membership tables, and restricted snapshot-v2 view. During this dormant phase the export role
+   must retain `SELECT` on snapshot v1 for the still-deployed exporter and also gain
+   `SELECT` on v2. Room #454 must still be the exact closed founder shell, contain zero
+   notes, and have no Gazette opening `place_edited` event.
+2. Take the required Production snapshot and install the same dormant schema in
+   Production:
+
+   ```sh
+   CONFIRM_GAZETTE=INSTALL_GAZETTE_ARCHIVE_AND_SUBMISSION_LIMIT \
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   npm run migrate:production:gazette
+   ```
+
+   Verify the same dual-view schema postconditions. Production room #454 must remain
+   the exact protected closed shell, contain zero notes, and have no Gazette opening event.
+3. Push the candidate commit and wait for its Vercel Preview deployment. While room #454
+   remains closed in both databases, run the acknowledgement-prefixed release preparation
+   command in the next section. Record its explicit `GATE_EXIT=0` line.
+4. Before opening the pull request, request `GET /api/official` from the exact Preview
+   origin. Its `deployment_commit` must equal the exact PR head commit. Also verify
+   `GET /api/gazette` reports `submission_room.submissions_open: false` and a new
+   submission is refused without creating a note, consuming quota, or emitting an event.
+   Activation refuses any room #454 that already contains a note; verify the zero-note
+   precondition directly before running it.
+   Then run the guarded Preview activation with that same commit and origin:
+
+   ```sh
+   CONFIRM_GAZETTE_ROOM_ACTIVATION=OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT \
+   GAZETTE_PREVIEW_ORIGIN=https://1f3d9-a1b2c3d4e-onetapstudiogames-projects.vercel.app \
+   GAZETTE_DEPLOYMENT_COMMIT=<40-lowercase-hex-preview-commit> \
+   CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+   npm run migrate:preview:gazette-room-activation
+   ```
+
+   Replace the sample nine-character lowercase alphanumeric deployment ID with the
+   immutable hostname Vercel assigned to this deployment of the exact `1f3d9` project.
+   Branch aliases, extra project-name segments, and another project's `vercel.app`
+   hostname are refused. Run activation from a clean checkout of the candidate commit:
+   tracked and untracked changes are both refused. Before any live request or database
+   work, the migrator checks that cleanliness, resolves the full local Git `HEAD`, and
+   requires it to equal `GAZETTE_DEPLOYMENT_COMMIT`. It then proves the deployed commit,
+   proves the Preview database target, then proves the deployed commit again immediately before activation DDL.
+   Any refusal leaves room #454 closed. The successful activation
+   transaction also revokes snapshot
+   v1 from the export role while preserving v2 access. After activation, verify that
+   privilege cutover, verify room #454 is the exact protected notes-only open state and the archive reports submissions open, make one real Preview submission, and make one
+   authorized printer call. Confirm the resulting permanent archive membership. Repeat
+   the printer call and confirm it adds nothing. An unauthorized printer call must also
+   add no issue, membership, or event.
+5. The activation is transactionally safe to rerun with the same target and exact-commit
+   guards: it leaves the open room unchanged and preserves exactly one Gazette opening event.
+   Rerun only after rechecking all target identity inputs; a Production rerun also needs a
+   fresh verified snapshot name.
+6. Open the Gazette pull request only after the Preview evidence above is recorded. Keep
+   Production room #454 closed while the pull request is open. Do not run the Production
+   activation command for a branch or Preview deployment.
+7. After a human merges the pull request and Vercel deploys that exact `main` commit,
+   request Production `GET /api/official`. Its `deployment_commit` must equal the exact
+   merged commit now serving at `https://1f3d9.com`. The guarded command proves that
+   the local checkout is clean and its full Git `HEAD` equals that commit before any live
+   request or database work. It then proves the live commit, verifies the Production
+   database target and creates the required fresh snapshot, proves the same live commit
+   again, and only then starts activation DDL:
+
+   ```sh
+   CONFIRM_GAZETTE_ROOM_ACTIVATION=OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT \
+   GAZETTE_DEPLOYMENT_COMMIT=<40-lowercase-hex-production-commit> \
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   npm run migrate:production:gazette-room-activation
+   ```
+
+   Verify Production now reports submissions open and the export role can read v2 but not
+   v1. Record one deliberate real submission
+   intended to remain in the permanent archive, authorized printer and archive evidence,
+   a harmless authorized retry, and an unauthorized call that changes nothing. Record
+   the exact deployed commit and returned public state without recording any secret.
+
+Once either database has room #454 open, it must not roll back below the Gazette-capable
+application that enforces the room gate, quota, archive, and printer contract. Correct a
+bad rollout with a forward Gazette-capable deployment; do not place an older application
+in front of the open room.
+
 For the first rollout and every later release preparation, re-confirm that the required
 provider keys remain configured, the maker and later-holder migrations remain applied in
-that order, and the resumable-registration, PayPal credit-disputes, and resident
-refusal-state migrations remain applied. Then run preparation with these non-secret acknowledgements in the process
-environment:
+that order, and the resumable-registration, PayPal credit-disputes, resident refusal-state,
+and dormant Gazette schema migrations remain applied. For the first Gazette rollout, run
+this while room #454 is still closed in both databases. Then run preparation with these
+non-secret acknowledgements in the process environment:
 
 ```sh
 CONFIRM_LATER_HOLDER_PROVIDER_KEY=VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION \
@@ -98,8 +200,12 @@ CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
 scripts/deploy.sh --prepare
 ```
+
+The Gazette acknowledgement records the historical safe installation state. After
+activation, it does not claim that room #454 is still closed.
 
 These acknowledgements contain no key material. The preparation script never reads an
 environment file, queries or changes Vercel, or applies a migration; it only blocks the
@@ -112,7 +218,8 @@ release gates until the operator confirms those separate prerequisites.
    type-check, PostgreSQL integration, and browser suites. It does not upload or
    deploy anything.
 3. Open a pull request and check its Vercel preview, including the changed user
-   paths and any expected API behavior.
+   paths and any expected API behavior. The first Gazette rollout must complete its
+   exact-commit Preview activation and probes above before this step.
 4. Merge the reviewed pull request into `main`. Vercel then deploys that exact
    GitHub commit.
 

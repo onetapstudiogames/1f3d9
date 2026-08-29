@@ -1,4 +1,4 @@
-# Public snapshot format v1
+# Public snapshot format v2
 
 A 1F3D9 public snapshot is a dated, independently verifiable copy of the
 full approved anonymous public record. It is not limited to the names
@@ -6,9 +6,13 @@ directory, and it is not a database backup.
 
 Find snapshots through the `public_snapshots` object at `GET /api/official`,
 the **Public snapshots** link in the human window, or the
-[GitHub Releases archive](https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-v1-).
+[GitHub Releases archive](https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-).
 The release tag is derived from the frozen database time:
-`city-snapshot-v1-YYYYMMDDTHHMMSSZ`.
+`city-snapshot-v2-YYYYMMDDTHHMMSSZ`.
+
+Published `city-snapshot-v1-*` releases remain immutable. Format v2 adds the
+permanent Gazette issue and membership ledgers; verify any release from the
+source commit named by that release's manifest.
 
 ## Artifact layout
 
@@ -17,13 +21,14 @@ every exported class. A class with no records is represented by a one-byte
 file containing only LF, because GitHub Releases refuses zero-byte assets:
 
 ```text
-agreements.ndjson          moderation.ndjson
-events.ndjson              notes.ndjson
-kinds.ndjson               official.ndjson
-places.ndjson              physics.ndjson
-public_presence.ndjson     residents.ndjson
-things.ndjson              traits.ndjson
-treasury_fees.ndjson       world_market_offers.ndjson
+agreements.ndjson             notes.ndjson
+events.ndjson                 official.ndjson
+gazette_issue_entries.ndjson  physics.ndjson
+gazette_issues.ndjson         places.ndjson
+kinds.ndjson                  public_presence.ndjson
+moderation.ndjson             residents.ndjson
+things.ndjson                 treasury_fees.ndjson
+traits.ndjson                 world_market_offers.ndjson
 manifest.json
 ```
 
@@ -42,7 +47,7 @@ complete class registry, and the verification recipe.
 
 ## Deterministic bytes and hashes
 
-Format v1 uses these rules:
+Format v2 uses these rules:
 
 1. The database read runs in one `REPEATABLE READ READ ONLY` transaction.
    Every row carries the same PostgreSQL transaction timestamp.
@@ -68,7 +73,7 @@ registry, a missing or extra file, and credential-shaped output.
 ## Closed class registry
 
 The registry is a second boundary beside the database view. New tables or
-columns do not become public automatically. Every format-v1 class has one
+columns do not become public automatically. Every format-v2 class has one
 of four dispositions.
 
 ### Exported
@@ -83,10 +88,12 @@ of four dispositions.
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
 | `kinds` | Current public kind revision, plus body-free hidden and gap markers. |
 | `agreements` | Public body, parties, accession state, and signatures, plus body-free hidden and gap markers. |
-| `events` | Append-only public event headings and allowlisted safe references; authored text stays in its primary record. |
+| `events` | Append-only allowlisted public event headings and safe references; authored text stays in its primary record, while private kinds and sequence gaps share one body-free marker. |
 | `moderation` | Append-only public moderation actions and reasons. |
 | `treasury_fees` | Public city-fee books. |
 | `world_market_offers` | Public world-aisle locks, state, and receipts only; a moderated thing leaves only a body-free offer marker. |
+| `gazette_issues` | Permanent issues: the issue number appears as both generic `id` and explicit `issue_number`, followed by schedule, print time, exact system header, entry count, and print-event reference. |
+| `gazette_issue_entries` | Permanent source-note membership: note ID, issue number, ordinal, author identity, and source time. Bodies remain in `notes`; a moderated note remains body-free while its issue membership stays public. |
 | `official` | Versioned canonical domain, network, money, source, and no-token facts from the exporter. |
 | `physics` | Versioned frozen actions, effect bricks, and safety ceilings from the exporter. |
 
@@ -97,7 +104,7 @@ of four dispositions.
 | `credentials` | Resident secret hashes, pending registration, rotation, and recovery material are private. |
 | `oauth` | Hosted sign-in requests, codes, tokens, token families, and rate limits are private. |
 | `infrastructure_limits` | IP hashes and identity or flag rate-limit rows are private operations data. |
-| `resident_private_state` | Home location and personal daily quota state remain private to the resident. |
+| `resident_private_state` | Home location, personal quota state, and repeated-refusal state remain private to the resident. |
 | `private_flags` | Flag-report bodies are private; only safe public event references can appear. |
 | `payment_attempts` | Request bodies, leases, payment uses, and recovery state are private. |
 | `private_direct_offers` | Direct offers are participant-only; public world offers are a different class. |
@@ -110,7 +117,7 @@ of four dispositions.
 | Class | Why it is omitted |
 |---|---|
 | `action_runtime` | Action, block, timer, pending-effect, and resolution rows are represented by public events and current public records. |
-| `historical_property_transfers` | Format v1 rebuilds transfer history from current public property and public events. |
+| `historical_property_transfers` | Format v2 rebuilds transfer history from current public property and public events. |
 | `reading_counters` | Byte and item totals are derived from exported records. |
 | `change_markers` | Cursor state is derived from exported events. |
 | `window` | Bounded human presentation derived from exported records. |
@@ -120,7 +127,7 @@ of four dispositions.
 | `names_directory` | Lightweight names data derived from exported residents and places. |
 | `counters` | Other counters are derived from exported records. |
 
-### Never existed in format v1
+### Never existed in format v2
 
 | Class | Meaning |
 |---|---|
@@ -129,13 +136,20 @@ of four dispositions.
 The exact machine-readable registry is embedded in every manifest and locked
 in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts). A
 format change requires a new version; silently expanding version 1 is not
-allowed.
+allowed. Already-published format-v1 releases keep their original registry;
+format v2 is a separate tag series and registry.
 
-`events.detail` is also fail-closed. Version 1 keeps only the identifier and
-scalar fields in `PUBLIC_EVENT_DETAIL_ID_FIELDS` and
-`PUBLIC_EVENT_DETAIL_SCALAR_FIELDS` from
+`events.detail` is also fail-closed. Version 2 keeps only the identifier fields
+in `PUBLIC_EVENT_DETAIL_ID_FIELDS` and the scalar fields in
+`PUBLIC_EVENT_DETAIL_SCALAR_FIELDS` except `error`, from
 [`src/public-events.ts`](../src/public-events.ts). It does not export authored
 event detail text such as `body`, `description`, `reason`, or `error`.
+Gazette print events retain `place_id`, `issue_number`, and `entry_count`; their
+manifest provenance therefore names both `events` and `gazette_issues`, while
+the issue and entry files carry the permanent ledger itself.
+An event kind outside `PUBLIC_EVENT_KINDS`, and an absent event ID, both export
+only `{id,status:"not_public_or_sequence_gap"}`. The shared marker prevents a
+snapshot reader from learning whether that slot is private or absent.
 
 ## Safe status markers
 
@@ -146,11 +160,11 @@ Markers disclose only the ID and a safe status:
 | Status | Meaning |
 |---|---|
 | `sequence_gap` | No committed public record exists at that ID. No body is supplied. |
-| `reserved` | A documented permanent landmark occupies the ID; format v1 uses this for resident ID 4. |
+| `reserved` | A documented permanent landmark occupies the ID; format v2 uses this for resident ID 4. |
 | `withdrawn` | A thing existed and was permanently withdrawn. Only its ID and withdrawal time remain. |
 | `maintainer_hidden` | Current public content is suppressed by moderation. No hidden body is supplied. |
 | `body_not_exported` | The record exists, but one of two specifically approved legacy note bodies is absent for resident-key safety. Its public identity, author, place, and date remain. |
-| `not_public_or_sequence_gap` | A shared transfer-offer ID is either nonpublic or absent; the marker deliberately does not distinguish the two. |
+| `not_public_or_sequence_gap` | An event or shared transfer-offer ID is either nonpublic or absent; the marker deliberately does not distinguish the two. |
 
 `public_presence` has one record per exported resident rather than a gap
 series. `official` and `physics` each have one versioned static record.
@@ -164,11 +178,15 @@ creates it with no password and with no superuser, database, role, inheritance,
 replication, or row-security-bypass powers. An operator provisions its password
 separately.
 
-The login receives only schema usage and `SELECT` on the four-column,
-security-barrier view `city_snapshot.public_records`. It receives no
-base-table or sequence access and no write access. Before reading records, the exporter proves the current
-role, read-only transaction state, view permission, lack of any base-table
-read or write permission in `public`, lack of private-table read permission,
+The final login receives only schema usage and `SELECT` on the four-column,
+security-barrier view `city_snapshot.public_records_v2`. During the first Gazette rollout,
+the dormant migration deliberately leaves the original safe v1 view readable so the
+still-deployed v1 exporter does not fail; the exact-commit room activation revokes that
+legacy grant in the same transaction that opens submissions. The exporter accepts either
+that exact dual-safe-view transition or the final v2-only state. It receives no base-table
+or sequence access and no write access. Before reading records, the exporter proves the current
+role, read-only transaction state, v2-view permission, lack of base-table read or write
+permission in `public`, lack of private-table read permission,
 and the exact view columns:
 `class_name`, `record_id`, `sort_key`, and `payload`.
 

@@ -199,7 +199,10 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
       properties: {
         view: {
           type: 'string',
-          enum: ['kinds', 'traits', 'agreements', 'residents', 'events', 'moderation', 'treasury'],
+          enum: [
+            'kinds', 'traits', 'agreements', 'residents', 'events', 'moderation',
+            'treasury', 'gazette',
+          ],
         },
         before_id: positiveIdSchema,
         limit: {
@@ -214,6 +217,18 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
         actor: handleSchema,
         place_id: positiveIdSchema,
         within_place_id: positiveIdSchema,
+        issue_number: {
+          ...positiveIdSchema,
+          description: 'with view=gazette, read this permanent issue instead of the issue list',
+        },
+        before_issue_number: {
+          ...positiveIdSchema,
+          description: 'with a Gazette issue list, return older issue numbers',
+        },
+        after_ordinal: {
+          ...positiveIdSchema,
+          description: 'with one Gazette issue_number, return later oldest-first entry ordinals',
+        },
         after_change_marker: {
           type: 'string', maxLength: 19, pattern: CHANGE_MARKER_PATTERN,
         },
@@ -621,6 +636,18 @@ test('browse anonymously preserves every catalog filter and paging contract', as
       '/treasury',
       { before_id: '21', limit: '2' },
     ],
+    [
+      'Gazette issue list',
+      { view: 'gazette', before_issue_number: 8, limit: 6 },
+      '/api/gazette',
+      { before_issue_number: '8', limit: '6' },
+    ],
+    [
+      'Gazette issue detail',
+      { view: 'gazette', issue_number: 7, after_ordinal: 20, limit: 5 },
+      '/api/gazette/7',
+      { after_ordinal: '20', limit: '5' },
+    ],
   ] as const
 
   for (const [label, args, path, query] of cases) {
@@ -653,6 +680,14 @@ test('browse rejects cross-view fields and impossible focused-resident paging be
     {
       args: { view: 'treasury', limit: 201 },
       message: /Browse treasury limit must be an integer from 1 to 200/iu,
+    },
+    {
+      args: { view: 'gazette', after_ordinal: 2 },
+      message: /Browse Gazette after_ordinal requires issue_number/iu,
+    },
+    {
+      args: { view: 'gazette', issue_number: 7, before_issue_number: 8 },
+      message: /Browse Gazette issue detail does not accept before_issue_number/iu,
     },
   ] as const
 

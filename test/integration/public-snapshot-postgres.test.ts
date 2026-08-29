@@ -150,7 +150,7 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   `, [JSON.stringify({
     action_id: 7,
     action: 'move',
-    error: 'move must cross one parent-child edge',
+    error: 'internal secret-like action failure must not survive',
     status: 'applied',
     effects_applied: 1,
     from_place_id: 1,
@@ -158,10 +158,75 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     reason: 'safe public reason',
     unsupported_private_field: 'must not be exported',
   })])
-  await administrator.query(`
+  const privateRuntimeEvent = (await administrator.query<{ id: number }>(`
     INSERT INTO events (kind, actor, detail, at)
     VALUES ('private_runtime_probe', 'nonpublic-only', '{}', transaction_timestamp())
+    RETURNING id
+  `)).rows[0]!
+  await administrator.query(`
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, purpose, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    )
+    SELECT
+      454, $1, 'place', 'the gazette submission room',
+      'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+      '', 1, FALSE, FALSE, FALSE
+  `, [room.id])
+  await administrator.query(`
+    INSERT INTO events (kind, actor, detail, at)
+    VALUES (
+      'place_edited', 'the city',
+      '{"place_id":454,"gazette_submission_room_opened":true}'::jsonb,
+      '2026-08-30T00:00:00Z'
+    )
   `)
+  await administrator.query(`
+    UPDATE places
+    SET description = 'Leave a note here for The Gazette. Every Monday at 16:00 UTC, the automatic printer permanently assigns every unprinted note made before the cutoff to the next issue, verbatim with its author, note ID, and time. Printing never deletes, edits, moves, or copies the source note.',
+      purpose = 'Residents may submit up to three notes per Gazette week (Monday 16:00 UTC to Monday 16:00 UTC); each submission also uses the ordinary daily note quota.',
+      open_to_notes = TRUE
+    WHERE id = 454
+  `)
+  await administrator.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')
+  const gazetteNote = await (async (): Promise<{ id: number }> => {
+    try {
+      return (await administrator.query<{ id: number }>(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        VALUES (454, 2, 'moderated Gazette body must not survive', '2026-08-31T15:59:59Z')
+        RETURNING id
+      `)).rows[0]!
+    } finally {
+      await administrator.query('ALTER TABLE notes ENABLE TRIGGER gazette_note_submission_limit')
+    }
+  })()
+  await administrator.query('BEGIN')
+  const gazetteEvent = (await administrator.query<{ id: number }>(`
+    INSERT INTO events (kind, actor, detail, at)
+    VALUES (
+      'gazette_printed', 'the Gazette printer',
+      '{"issue_number":1,"place_id":454,"entry_count":1}'::jsonb,
+      '2026-08-31T16:00:01Z'
+    )
+    RETURNING id
+  `)).rows[0]!
+  await administrator.query(`
+    INSERT INTO gazette_issues (
+      issue_number, scheduled_for, printed_at, header, entry_count, event_id
+    ) VALUES (
+      1, '2026-08-31T16:00:00Z', '2026-08-31T16:00:01Z',
+      'THE GAZETTE — ISSUE 1', 1, $1
+    )
+  `, [gazetteEvent.id])
+  await administrator.query(`
+    INSERT INTO gazette_issue_entries (issue_number, ordinal, note_id)
+    VALUES (1, 1, $1)
+  `, [gazetteNote.id])
+  await administrator.query('COMMIT')
+  await administrator.query(`
+    INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+    VALUES ('note', $1, 'remove', 1, 'fixture Gazette removal')
+  `, [gazetteNote.id])
   const withdrawnThing = (await administrator.query<{ id: number }>(`
     INSERT INTO things (place_id, name, body, owner_id, maker_id, withdrawn_at)
     VALUES ($1, 'Withdrawn fixture', 'withdrawn body must not survive', 2, 2, now())
@@ -252,6 +317,43 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   assert.equal(noteLines.some(line => line.record.body === 'written after the frozen moment'), false)
   const hidden = noteLines.find(line => line.record.id === hiddenNote.id)?.record
   assert.deepEqual(hidden, { id: hiddenNote.id, status: 'maintainer_hidden' })
+  const hiddenGazetteNote = noteLines.find(line => line.record.id === gazetteNote.id)?.record
+  assert.deepEqual(hiddenGazetteNote, { id: gazetteNote.id, status: 'maintainer_hidden' })
+
+  const gazetteIssues = (await readFile(join(outputDirectory, 'gazette_issues.ndjson'), 'utf8'))
+    .trimEnd().split('\n').map(line => JSON.parse(line) as {
+      record: Readonly<Record<string, unknown>>
+    })
+  assert.deepEqual(gazetteIssues.map(line => line.record), [{
+    id: 1,
+    status: 'exported',
+    issue_number: 1,
+    scheduled_for: '2026-08-31T16:00:00+00:00',
+    printed_at: '2026-08-31T16:00:01+00:00',
+    header: 'THE GAZETTE — ISSUE 1',
+    entry_count: 1,
+    event_id: gazetteEvent.id,
+  }])
+  const gazetteEntries = (await readFile(
+    join(outputDirectory, 'gazette_issue_entries.ndjson'),
+    'utf8',
+  )).trimEnd().split('\n').map(line => JSON.parse(line) as {
+    record: Readonly<Record<string, unknown>>
+  })
+  assert.deepEqual(gazetteEntries.map(line => line.record), [{
+    id: gazetteNote.id,
+    status: 'exported',
+    issue_number: 1,
+    ordinal: 1,
+    note_id: gazetteNote.id,
+    author_id: 2,
+    author: 'unicode-writer',
+    created_at: '2026-08-31T15:59:59+00:00',
+  }])
+  assert.doesNotMatch(
+    await readFile(join(outputDirectory, 'gazette_issue_entries.ndjson'), 'utf8'),
+    /moderated Gazette body/iu,
+  )
 
   const thingLines = (await readFile(join(outputDirectory, 'things.ndjson'), 'utf8'))
     .trimEnd().split('\n').map(line => JSON.parse(line) as {
@@ -271,16 +373,34 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
 
   const eventLines = (await readFile(join(outputDirectory, 'events.ndjson'), 'utf8'))
     .trimEnd().split('\n').map(line => JSON.parse(line) as {
-      record: { detail?: Readonly<Record<string, unknown>> }
+      record: {
+        id?: unknown
+        status?: unknown
+        detail?: Readonly<Record<string, unknown>>
+      }
     })
   const actionDetail = eventLines.find(line => line.record.detail?.action_id === 7)?.record.detail
   assert.deepEqual(actionDetail, {
     action_id: 7,
     action: 'move',
-    error: 'move must cross one parent-child edge',
     status: 'applied',
     from_place_id: 1,
     to_place_id: 2,
+  })
+  const gazetteDetail = eventLines.find(
+    line => line.record.detail?.issue_number === 1,
+  )?.record.detail
+  assert.deepEqual(gazetteDetail, {
+    place_id: 454,
+    issue_number: 1,
+    entry_count: 1,
+  })
+  const privateRuntimeRecord = eventLines.find(
+    line => line.record.id === privateRuntimeEvent.id,
+  )?.record
+  assert.deepEqual(privateRuntimeRecord, {
+    id: privateRuntimeEvent.id,
+    status: 'not_public_or_sequence_gap',
   })
 
   const presenceLines = (await readFile(join(outputDirectory, 'public_presence.ndjson'), 'utf8'))
@@ -310,7 +430,7 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   ))).join('')
   assert.doesNotMatch(
     allPublicBytes,
-    /private report body|withdrawn body|hidden market body|Hidden market fixture|1{64}|2{64}|5{64}|6{64}/iu,
+    /private_runtime_probe|private report body|internal secret-like action failure|withdrawn body|hidden market body|Hidden market fixture|1{64}|2{64}|5{64}|6{64}/iu,
   )
 
   const deniedReader = await connect({ connectionString: snapshotUrl, ssl: false })
@@ -322,6 +442,14 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     await assert.rejects(
       () => deniedReader.query("UPDATE public.residents SET model = 'changed' WHERE id = 1"),
       /permission denied|read-only/iu,
+    )
+    await assert.rejects(
+      () => deniedReader.query('SELECT * FROM public.gazette_issues'),
+      /permission denied/iu,
+    )
+    await assert.rejects(
+      () => deniedReader.query('SELECT * FROM city_snapshot.public_records'),
+      /permission denied/iu,
     )
   } finally {
     await deniedReader.end()

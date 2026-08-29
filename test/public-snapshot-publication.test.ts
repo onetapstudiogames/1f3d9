@@ -134,6 +134,11 @@ test('publication creates a draft, uploads every new asset, then publishes witho
     })
     assert.equal(result.published, true)
     assert.equal(result.tag, bundle.tag)
+    const createRelease = requests.find(request =>
+      request.method === 'POST' && request.path.endsWith('/releases') && !request.uploadName)
+    assert.ok(createRelease && typeof createRelease.body === 'string')
+    const releaseInput = JSON.parse(createRelease.body) as { body?: unknown }
+    assert.match(String(releaseInput.body), /Format v2 public city snapshot/iu)
     const uploads = requests.filter(request => request.method === 'POST' && request.uploadName)
     assert.equal(uploads.length, bundle.files.length)
     assert.equal(uploads.every(request => {

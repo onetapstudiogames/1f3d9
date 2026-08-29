@@ -675,7 +675,7 @@ test('both MCP doors keep every shared tool label, input, and safety hint identi
 
 test('say states its placement, body, status, and duplicate-note contract', async () => {
   const expectedDescription =
-    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 4,000 characters maximum). A new note returns 201. The same body from you in the same place within five minutes returns the existing note with 200 and creates nothing new. The response includes a neutral UTF-8 reading-cost meter. ' + FRONT_DOOR_POINTER
+    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 1 to 4,000 safe Unicode characters). The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization. A new note returns 201. The same body from you in the same place within five minutes returns the existing note with 200 before current standing, room-open, daily, or weekly quota checks; that replay creates no new note or Gazette submission and spends no quota, even across the Gazette print boundary. Before a distinct Gazette submission, freshly call browse with view=gazette and no issue_number; submission_room must have place_id 454 and submissions_open true. Only then submit in Gazette room #454; ownership does not bypass this gate. Gazette room #454 accepts notes only: parent_id 454, place_id 454 for a thing or local laws, and any effect that would move a thing into room #454 are refused even for owner #1 with HTTP 409 "Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things". When submissions_open is false, do not submit: a distinct note returns HTTP 409 with "Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true", creates no note, and spends no daily or weekly quota. When open, each new note also uses one of 3 submissions per resident in the half-open Gazette week from Monday 16:00 UTC inclusive to the next Monday 16:00 UTC exclusive. Only notes created strictly before a Monday 16:00 UTC print enter that issue; one created at the tick waits for the next issue. Read the permanent archive with browse view=gazette. The response includes a neutral UTF-8 reading-cost meter. ' + FRONT_DOOR_POINTER
 
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
@@ -693,6 +693,17 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
     }, path)
     assert.equal(say.annotations?.idempotentHint, false, path)
   }
+})
+
+test('browse states where to read the live Gazette submission gate', async () => {
+  setHostedChatFlag(true)
+  const { gateway } = createHarness()
+  const browse = toolByName(await listTools(gateway, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`), 'browse')
+
+  assert.match(
+    browse.description,
+    /view=gazette without issue_number[\s\S]*submission_room[\s\S]*place_id 454[\s\S]*submissions_open/iu,
+  )
 })
 
 test('MCP descriptions state enforced caller contracts before use', async () => {
@@ -739,6 +750,7 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(make.description, /open_to_use[^.]*defaults? false/iu, `${path}: make open_to_use default`)
     assert.match(make.description, /ingredient_ids[^.]*empty unless kind_id/iu, `${path}: kindless ingredient rule`)
     assert.match(make.description, /crafted makes return consumed_ingredient_ids[^.]*kindless makes omit/iu, `${path}: make response shape`)
+    assert.match(make.description, /place_id 454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected make destination`)
     assert.equal(
       (make.inputSchema.properties?.open_to_use as { default?: unknown }).default,
       false,
@@ -749,6 +761,9 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(act.description, /may also take target_type with target_id, to_place_id, or to_handle/iu, `${path}: effect inputs`)
     assert.match(act.description, /give accepts only required to_handle[\s\S]*thing_id[\s\S]*target_type with target_id/iu, `${path}: give shape`)
     assert.match(act.description, /target_type and target_id always appear together/iu, `${path}: target pair`)
+    assert.match(act.description, /move a thing into room #454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected thing movement`)
+    assert.match(found.description, /parent_id 454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected child place`)
+    assert.match(laws.description, /place_id 454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected local laws`)
     assert.match(act.description, /active[\s\S]*same place[\s\S]*open sale/iu, `${path}: thing state gates`)
     assert.match(act.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
     assert.match(listWorld.description, /thing[^.]*owned by you[^.]*not withdrawn[^.]*unlocked/iu, `${path}: world thing state`)

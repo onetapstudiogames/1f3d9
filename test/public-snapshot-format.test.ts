@@ -48,12 +48,12 @@ test('canonical JSON and short record fingerprints are stable without text norma
 })
 
 test('the registry explicitly classifies exported, private, derived, and absent classes', () => {
-  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 1)
+  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 2)
   const classes = new Map(PUBLIC_SNAPSHOT_CLASS_REGISTRY.map(entry => [entry.class_name, entry]))
   for (const name of [
     'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
     'agreements', 'events', 'moderation', 'treasury_fees', 'world_market_offers',
-    'official', 'physics',
+    'gazette_issues', 'gazette_issue_entries', 'official', 'physics',
   ]) assert.equal(classes.get(name)?.disposition, 'exported', name)
   for (const name of [
     'credentials', 'oauth', 'resident_private_state', 'private_flags', 'payment_attempts',
@@ -64,6 +64,19 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   }
   assert.deepEqual(classes.get('world_market_offers')?.database_sources, [
     'transfer_offers', 'things', 'residents', 'sale_payments', 'moderation_actions',
+  ])
+  assert.deepEqual(classes.get('events')?.database_sources, ['events', 'gazette_issues'])
+  assert.deepEqual(classes.get('gazette_issues')?.database_sources, ['gazette_issues'])
+  assert.deepEqual(classes.get('gazette_issue_entries')?.database_sources, [
+    'gazette_issue_entries', 'notes', 'residents',
+  ])
+  assert.deepEqual(classes.get('resident_private_state')?.database_sources, [
+    'resident_presence.home_place_id',
+    'residents.quota_day',
+    'residents.things_today',
+    'residents.notes_today',
+    'residents.agreement_actions_today',
+    'resident_refusal_state',
   ])
   assert.equal(classes.get('corrections')?.disposition, 'never_existed')
 })
@@ -85,7 +98,7 @@ test('snapshot bundles are deterministic, split by class, and verify offline', a
     })
     assert.equal(first.city_root_sha256, second.city_root_sha256)
     assert.match(first.city_root_sha256, /^[0-9a-f]{64}$/u)
-    assert.equal(first.tag, 'city-snapshot-v1-20260823T123456Z')
+    assert.equal(first.tag, 'city-snapshot-v2-20260823T123456Z')
     const exportedClasses = PUBLIC_SNAPSHOT_CLASS_REGISTRY
       .filter(entry => entry.disposition === 'exported')
       .map(entry => entry.class_name)

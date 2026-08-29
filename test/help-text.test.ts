@@ -24,8 +24,8 @@ const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 55)
-  assert.match(contributorGuide, /\(55 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.equal(recorded.at(-1), 56)
+  assert.match(contributorGuide, /\(56 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -37,6 +37,7 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 53 \|[^\n]*founder signpost is one ordinary world thing[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 54 \|[^\n]*first-party human page lists both sibling sites' official MCP doors[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 55 \|[^\n]*Repeated authenticated rule refusals change explanation[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 56 \|[^\n]*Gazette[^\n]*three submissions[^\n]*LOCKED/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -54,9 +55,10 @@ test('the founder signpost is recorded as ordinary body-free room orientation', 
   ] as const) {
     assert.match(specification, new RegExp(`${room}[^\\n]{0,120}#${id}`, 'iu'))
   }
+  assert.match(specification, /Gazette submission room #454[^\n]*(?:closed shell|starts closed)/iu)
   assert.match(
     specification,
-    /Gazette submission room #454[\s\S]{0,240}notes, things, and building closed/iu,
+    /Gazette submission room #454[\s\S]{0,180}things and building (?:stay )?closed/iu,
   )
   assert.match(
     specification,
@@ -92,6 +94,95 @@ test('anti-loop help excludes payment and promises no deliberate wait, not zero 
       /HTTP status[\s\S]{0,180}fingerprint[\s\S]{0,180}count[\s\S]{0,120}update time/iu,
       `${name}: exact stored fields`,
     )
+  }
+})
+
+test('every caller-facing Gazette surface states the full contract before use', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['published front door', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+  ] as const) {
+    assert.match(text, /Gazette\s+submission\s+room[\s\S]{0,160}(?:place|room)\s+#454/iu, `${name}: room`)
+    assert.match(text, /authenticated\s+resident[\s\S]{0,240}standing[\s\S]{0,140}(?:#454|room)/iu, `${name}: standing and auth`)
+    assert.match(text, /1[\s\S]{0,30}4,?000\s+safe\s+Unicode\s+characters/iu, `${name}: body shape`)
+    assert.match(text, /empty\s+string[\s\S]{0,100}refused[\s\S]{0,160}whitespace-only[\s\S]{0,80}accepted/iu, `${name}: blank body contract`)
+    assert.match(text, /exact\s+(?:whitespace|body)[\s\S]{0,220}(?:no\s+|without\s+)(?:trimming|normalization)/iu, `${name}: normalization`)
+    assert.match(text, /3[\s\S]{0,130}submissions[\s\S]{0,160}resident[\s\S]{0,160}Gazette\s+week|resident[\s\S]{0,160}3[\s\S]{0,130}submissions[\s\S]{0,160}Gazette\s+week/iu, `${name}: weekly cap`)
+    assert.match(
+      text,
+      /fourth\s+distinct\s+submission[\s\S]{0,100}(?:HTTP\s+)?429[\s\S]{0,180}retry\s+at\s+YYYY-MM-DDT16:00:00\.000Z/iu,
+      `${name}: fourth-submission refusal and exact retry boundary`,
+    )
+    assert.match(text, /Monday\s+16:00\s+UTC[\s\S]{0,220}inclusive[\s\S]{0,140}exclusive/iu, `${name}: half-open week`)
+    assert.match(text, /ordinary\s+50\s+notes[\s\S]{0,140}UTC\s+day/iu, `${name}: daily quota`)
+    assert.match(text, /same-body[\s\S]{0,140}five\s+minutes[\s\S]{0,200}200/iu, `${name}: duplicate status`)
+    assert.match(text, /replay[\s\S]{0,220}(?:creates\s+no\s+new|creates\s+no|no\s+new)\s+submission[\s\S]{0,160}(?:spends\s+no|no)\s+quota/iu, `${name}: duplicate quota`)
+    assert.match(text, /replay[\s\S]{0,280}(?:print\s+boundary|across\s+the\s+print)/iu, `${name}: cross-boundary replay`)
+    assert.match(
+      text,
+      /fresh[\s\S]{0,80}GET \/api\/gazette[\s\S]{0,180}submission_room[\s\S]{0,100}place_id[\s\S]{0,40}454[\s\S]{0,100}submissions_open/iu,
+      `${name}: fresh public state before a distinct submission`,
+    )
+    assert.match(
+      text,
+      /submissions_open[\s\S]{0,80}true[\s\S]{0,140}(?:allows?|submit)/iu,
+      `${name}: true state permits submission`,
+    )
+    assert.match(
+      text,
+      /submissions_open[\s\S]{0,80}false[\s\S]{0,180}(?:do not submit|must not submit)[\s\S]{0,180}(?:HTTP\s+)?409/iu,
+      `${name}: false state blocks submission`,
+    )
+    assert.ok(
+      text.includes('Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true'),
+      `${name}: exact closed-room recovery`,
+    )
+    assert.match(
+      text,
+      /(?:HTTP\s+)?409[\s\S]{0,260}(?:creates?|writes?)\s+no\s+(?:new\s+)?note[\s\S]{0,160}(?:spends?|uses?)\s+no\s+(?:daily\s+or\s+weekly\s+)?quota/iu,
+      `${name}: closed state spends nothing`,
+    )
+    assert.match(text, /ownership[\s\S]{0,100}(?:does not|cannot)\s+bypass/iu, `${name}: owner gate`)
+    assert.match(
+      text,
+      /protected\s+city\s+service[\s\S]{0,220}cannot\s+be\s+edited[\s\S]{0,120}transferred[\s\S]{0,120}traded[\s\S]{0,120}deleted[\s\S]{0,120}repurposed/iu,
+      `${name}: protected room lifecycle`,
+    )
+    assert.match(text, /strictly\s+before[\s\S]{0,220}16:00[\s\S]{0,220}next\s+issue/iu, `${name}: cutoff`)
+    assert.match(text, /oldest\s+first[\s\S]{0,160}created_at[\s\S]{0,120}note\s+ID/iu, `${name}: deterministic order`)
+    assert.match(text, /missed[\s\S]{0,160}catch(?:es)?\s+up[\s\S]{0,160}empty\s+issues/iu, `${name}: catch-up`)
+    assert.match(text, /failed\s+transaction[\s\S]{0,160}(?:changes|writes)\s+nothing/iu, `${name}: atomic retry`)
+    assert.match(text, /retry[\s\S]{0,220}no\s+duplicate\s+(?:issue|event)/iu, `${name}: print retry`)
+    assert.match(text, /membership[\s\S]{0,140}permanent/iu, `${name}: permanent membership`)
+    assert.match(text, /Moderation[\s\S]{0,220}(?:never\s+changes|does\s+not\s+change)\s+(?:issue\s+)?membership/iu, `${name}: moderation`)
+    assert.match(text, /GET \/api\/gazette\?before_issue_number=&limit=/u, `${name}: issue list`)
+    assert.match(text, /GET \/api\/gazette\/:issue_number\?after_ordinal=&limit=/u, `${name}: issue detail`)
+    assert.match(text, /default\s+10[\s\S]{0,120}1\.\.200|defaults?\s+to\s+10[\s\S]{0,120}1[\s\S]{0,30}200/iu, `${name}: paging limits`)
+    assert.match(text, /newest[\s\S]{0,120}issues[\s\S]{0,220}oldest[\s\S]{0,120}entries/iu, `${name}: page order`)
+  }
+
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,2200}Gazette submission room #454/iu)
+  assert.match(mcpSource, /name:\s*'browse'[\s\S]{0,1600}view=gazette/iu)
+  assert.match(mcpSource, /view=gazette without issue_number[\s\S]{0,320}submission_room[\s\S]{0,160}submissions_open/iu)
+  assert.match(mcpSource, /before_issue_number[\s\S]{0,500}after_ordinal/iu)
+  assert.match(mcpSource, /name:\s*'official_facts'[\s\S]{0,420}deployment_commit/iu)
+  assert.match(specification, /GET\s+\/api\/official[\s\S]{0,260}deployment_commit/iu)
+})
+
+test('every dependency action states room #454 refusal before use', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+  ] as const) {
+    assert.match(text, /POST \/api\/place[^\n]*parent_id 454[^\n]*HTTP 409/iu, `${name}: child place`)
+    assert.match(text, /PUT[^\n]*\/api\/place\/:id\/laws[^\n]*#454[^\n]*HTTP 409/iu, `${name}: laws`)
+    assert.match(text, /POST \/api\/thing[^\n]*place_id 454[^\n]*HTTP 409/iu, `${name}: things`)
+    assert.match(text, /move[^\n]*thing[^\n]*(?:room|place) #454[^\n]*HTTP 409/iu, `${name}: thing movement`)
+    assert.match(text, /even (?:founder |owner )?#?1/iu, `${name}: founder is not exempt`)
   }
 })
 
@@ -748,7 +839,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
     assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
   }
 
-  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,700}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,1800}reading-cost meter/iu)
   assert.match(mcpSource, /name:\s*'make'[\s\S]{0,600}reading-cost meter/iu)
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })

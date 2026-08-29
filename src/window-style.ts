@@ -182,6 +182,7 @@ button { color: inherit; }
   grid-row: 1;
   display: flex;
   min-width: 0;
+  padding-inline-end: 1px;
   overflow-x: auto;
 }
 .view-tab {
@@ -440,6 +441,7 @@ button { color: inherit; }
 .happening-heading { background: #263f32; }
 .agreement-heading { color: var(--ink); background: var(--signal); }
 .archive-heading { background: #172d3a; }
+.gazette-heading { background: var(--brick-deep); }
 .eyebrow {
   position: relative;
   z-index: 1;
@@ -860,6 +862,123 @@ button { color: inherit; }
 .archive-page[hidden] { display: none; }
 .archive-page .loading-row, .archive-page .error-row { margin: 0; padding: 0; }
 
+.gazette-heading > p {
+  position: relative;
+  z-index: 1;
+  max-width: 44rem;
+  margin: 0.75rem 0 0;
+  line-height: 1.5;
+}
+.gazette-heading .eyebrow { margin-block-start: 0; }
+.gazette-heading a { font-weight: 850; }
+.gazette-mechanic { font-size: 0.78rem; }
+.gazette-share-button {
+  min-width: 10.5rem;
+  color: var(--ink);
+  background: var(--signal);
+  border-color: var(--paper-light);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.38);
+}
+.gazette-share-button:hover { color: var(--paper-light); background: var(--forest-deep); }
+.gazette-layout {
+  display: grid;
+  grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+.gazette-archive {
+  min-width: 0;
+  padding: clamp(0.8rem, 2.5vw, 1.25rem);
+  background: #ddd4bc;
+  border-inline-end: 3px solid var(--line);
+}
+.gazette-archive h3, .gazette-issue-title {
+  margin: 0 0 0.8rem;
+  overflow-wrap: anywhere;
+  font-family: "Arial Narrow", "Aptos Narrow", "Roboto Condensed", system-ui, sans-serif;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.gazette-issue-list-items, .gazette-entries {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.gazette-issue-summary {
+  min-width: 0;
+  padding: 0.75rem;
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+}
+.gazette-issue-link {
+  display: inline-block;
+  font-weight: 900;
+}
+.gazette-issue-link[aria-current="page"] { color: var(--brick-deep); }
+.gazette-issue-summary-meta, .gazette-print-time, .gazette-entry-attribution {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font: 0.66rem/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+.gazette-issue {
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 1.6rem);
+}
+.gazette-provenance {
+  margin: 1rem 0;
+  padding: 0.8rem;
+  color: var(--paper-light);
+  background: var(--forest-deep);
+  border-inline-start: 5px solid var(--signal);
+  font: 0.72rem/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+.gazette-entry {
+  min-width: 0;
+  padding: clamp(0.8rem, 2.5vw, 1.15rem);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.13);
+}
+.gazette-entry-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.02rem;
+  line-height: 1.65;
+}
+.gazette-page {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  padding-block-start: 0.85rem;
+}
+.gazette-page[hidden] { display: none; }
+.gazette-entries-page {
+  grid-column: 2;
+  padding: 0 clamp(1rem, 3vw, 1.6rem) clamp(1rem, 3vw, 1.6rem);
+}
+.gazette-page .loading-row, .gazette-page .error-row { margin: 0; padding: 0; }
+.gazette-load, .gazette-retry {
+  min-height: 2.75rem;
+  padding: 0.65rem 0.85rem;
+  color: var(--paper-light);
+  background: var(--forest);
+  border: 2px solid var(--line);
+  cursor: pointer;
+  font-weight: 850;
+}
+.gazette-load:hover, .gazette-retry:hover { background: var(--ink); }
+
 .history-page {
   display: grid;
   justify-items: start;
@@ -941,6 +1060,9 @@ button { color: inherit; }
   .window-footer nav { justify-content: start; margin-block-start: 1rem; }
   .archive-form { grid-template-columns: 1fr 1fr; }
   .archive-query-field { grid-column: 1 / -1; }
+  .gazette-layout { grid-template-columns: minmax(0, 1fr); }
+  .gazette-archive { border-block-end: 3px solid var(--line); border-inline-end: 0; }
+  .gazette-entries-page { grid-column: 1; }
 }
 @media (max-width: 40rem) {
   .city-sign { grid-template-columns: 1fr; }
@@ -969,12 +1091,18 @@ button { color: inherit; }
   .archive-query-field { grid-column: auto; }
   .archive-card { grid-template-columns: 1fr; }
   .archive-open { grid-column: 1; grid-row: auto; }
+  .gazette-share-button { width: 100%; min-height: 2.75rem; }
+  .gazette-page { align-items: stretch; flex-direction: column; }
+  .gazette-load, .gazette-retry { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
-  .note-card, .agreement-card { border-color: CanvasText; box-shadow: none; }
+  .note-card, .agreement-card, .gazette-entry, .gazette-issue-summary {
+    border-color: CanvasText;
+    box-shadow: none;
+  }
 }
 `
