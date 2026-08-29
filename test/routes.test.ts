@@ -171,6 +171,18 @@ interface FakeFounderPayPalDisputeEvent {
     action: 'credit_dispute_seller_favour' | 'credit_dispute_buyer_favour'
   }>
 }
+interface FakePaidCompletionFailure {
+  message: string
+  code?: string
+  constraint?: string
+}
+const paidCompletionError = (failure: FakePaidCompletionFailure) => Object.assign(
+  new Error(failure.message),
+  {
+    ...(failure.code ? { code: failure.code } : {}),
+    ...(failure.constraint ? { constraint: failure.constraint } : {}),
+  },
+)
 type LawRecipe = Record<string, unknown>
 interface FakeState {
   scenario: string
@@ -238,6 +250,9 @@ interface FakeState {
   facilitatorSettle: boolean
   flagSlotsUsed: Record<string, number>
   failPaidWriteOnce: boolean
+  failCreditReturnOnce: boolean
+  failFounderReviewOnce: boolean
+  paidCompletionFailure: FakePaidCompletionFailure | null
   interruptTreasuryCompletionOnce: boolean
   treasuryCompletionHeader?: string
   placeDescription: string
@@ -325,6 +340,9 @@ const initialState = (): FakeState => ({
   facilitatorSettle: false,
   flagSlotsUsed: {},
   failPaidWriteOnce: false,
+  failCreditReturnOnce: false,
+  failFounderReviewOnce: false,
+  paidCompletionFailure: null,
   interruptTreasuryCompletionOnce: false,
   placeDescription: 'a place made from words',
   roomPurpose: '',
@@ -1108,6 +1126,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     }]
   }
   if (q.includes('/* city-credit:return-spend */')) {
+    if (state.failCreditReturnOnce) {
+      state = { ...state, failCreditReturnOnce: false }
+      throw new Error('connection interrupted while returning city fee credit')
+    }
     const actorId = Number(params[0])
     const attemptId = String(params[1])
     const leaseOwner = String(params[2])
@@ -1489,6 +1511,13 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     return [{ ...updated }]
   }
   if (q.includes('/* payment-attempts:founder-review */')) {
+    if (state.failFounderReviewOnce) {
+      state = { ...state, failFounderReviewOnce: false }
+      throw paidCompletionError({
+        code: '57P01',
+        message: 'connection interrupted while recording founder review',
+      })
+    }
     const key = String(params[0])
     const current = state.paymentAttempts.get(key)
     if (
@@ -1761,6 +1790,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         attempt_id: attemptId,
         reason: 'stored treasury request is invalid or its target changed',
       }]
+    }
+    if (state.paidCompletionFailure) {
+      const failure = state.paidCompletionFailure
+      state = { ...state, paidCompletionFailure: null }
+      throw paidCompletionError(failure)
     }
 
     let responseStatus: 200 | 201
@@ -2686,6 +2720,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       state = { ...state, failPaidWriteOnce: false }
       return []
     }
+    if (state.paidCompletionFailure && /complete_city_credit_attempt/iu.test(q)) {
+      const failure = state.paidCompletionFailure
+      state = { ...state, paidCompletionFailure: null }
+      throw paidCompletionError(failure)
+    }
     const returned = placeRow(3, 2)
     const creditAttemptId = String(params.find(value =>
       typeof value === 'string' && value.startsWith('credit_attempt_')) ?? '')
@@ -2772,6 +2811,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     if (state.failPaidWriteOnce) {
       state = { ...state, failPaidWriteOnce: false }
       return []
+    }
+    if (state.paidCompletionFailure && /complete_city_credit_attempt/iu.test(q)) {
+      const failure = state.paidCompletionFailure
+      state = { ...state, paidCompletionFailure: null }
+      throw paidCompletionError(failure)
     }
     const returned = { ...kindRow(), revision: state.kindRevision + 1 }
     const creditAttemptId = String(params.find(value =>
@@ -6588,6 +6632,7 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
 const CITY_CREDIT_ROUTE_CASES = [
   {
     label: 'frontier',
+    operation: 'frontier',
     path: '/api/place',
     status: 201,
     requestId: 'wave4-frontier-0001',
@@ -6595,9 +6640,11 @@ const CITY_CREDIT_ROUTE_CASES = [
     invalidBody: { parent_id: null, name: '', description: 'invalid before debit' },
     resultKey: 'place',
     failureReason: 'frontier target changed before completion',
+    temporaryFailure: 'frontier founding failed before completion',
   },
   {
     label: 'kind invention',
+    operation: 'kind_invention',
     path: '/api/kind',
     status: 201,
     requestId: 'wave4-kind-0000001',
@@ -6608,9 +6655,11 @@ const CITY_CREDIT_ROUTE_CASES = [
     },
     resultKey: 'kind',
     failureReason: 'kind invention target changed before completion',
+    temporaryFailure: 'kind invention failed before completion',
   },
   {
     label: 'kind revision',
+    operation: 'kind_revision',
     path: '/api/kind/3/revise',
     status: 200,
     requestId: 'wave4-revision-001',
@@ -6620,6 +6669,7 @@ const CITY_CREDIT_ROUTE_CASES = [
     },
     resultKey: 'kind',
     failureReason: 'kind revision target changed before completion',
+    temporaryFailure: 'kind revision failed before completion',
   },
 ] as const
 
@@ -6837,6 +6887,261 @@ test('every post-debit city-credit fee failure appends one exact return and repl
     assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1, creditCase.label)
     assert.equal(cityCreditDomainWriteCount(), 1, `${creditCase.label}: replay repeated the failed domain write`)
     assert.equal(networkCalled('/settle'), false, creditCase.label)
+  }
+})
+
+test('every post-debit paid database failure is logged before its honest temporary refusal', async () => {
+  for (const creditCase of CITY_CREDIT_ROUTE_CASES) {
+    reset({
+      scenario: 'paid claims',
+      cityCreditBalances: new Map([[7, 1_000_000n]]),
+      paidCompletionFailure: {
+        code: '42883',
+        constraint: 'payment_attempts_completion_body_check',
+        message: 'operator does not exist at postgresql://resident-secret@fake-host.example/city with Bearer private-token and 1f3d9_sk_private-key',
+      },
+    })
+    const logged: unknown[][] = []
+    const originalConsoleError = console.error
+    console.error = (...values: unknown[]) => logged.push(values)
+    try {
+      const response = await app.request(creditCase.path, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(),
+          'X-1F3D9-FEE-CREDIT': `${creditCase.requestId}-database-failure`,
+        },
+        body: JSON.stringify(creditCase.body),
+      })
+      assert.equal(response.status, 503, `${creditCase.label}: ${await response.clone().text()}`)
+      assertCityCreditNoStore(response, `${creditCase.label} database failure`)
+      assert.deepEqual(await response.json(), {
+        error: `${creditCase.temporaryFailure}; city fee credit returned`,
+        city_fee_credit: 'credit_returned',
+        returned_usdc: '1.000000',
+      }, creditCase.label)
+      assert.equal(state.cityCreditBalances.get(7), 1_000_000n, creditCase.label)
+      assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
+      assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1, creditCase.label)
+      assert.equal(logged.length, 1, creditCase.label)
+      assert.equal(logged[0]?.[0], 'treasury_completion_failure', creditCase.label)
+      const diagnostic = JSON.parse(String(logged[0]?.[1] ?? '{}')) as Record<string, unknown>
+      assert.equal(diagnostic.operation, creditCase.operation, creditCase.label)
+      assert.equal(diagnostic.rail, 'credit', creditCase.label)
+      assert.equal(diagnostic.error_code, '42883', creditCase.label)
+      assert.equal(diagnostic.constraint, 'payment_attempts_completion_body_check', creditCase.label)
+      assert.equal(diagnostic.status, 503, creditCase.label)
+      assert.match(typeof diagnostic.attempt_id === 'string' ? diagnostic.attempt_id : '', /^credit_attempt_[0-9a-f]+$/, creditCase.label)
+      assert.doesNotMatch(JSON.stringify(diagnostic), /fake-host\.example|private-token|1f3d9_sk_/iu, creditCase.label)
+    } finally {
+      console.error = originalConsoleError
+    }
+  }
+})
+
+test('a paid kind check violation stays a temporary city fault instead of blaming the caller', async () => {
+  reset({
+    scenario: 'paid claims',
+    cityCreditBalances: new Map([[7, 1_000_000n]]),
+    paidCompletionFailure: {
+      code: '23514',
+      constraint: 'payment_attempts_completion_body_check',
+      message: 'stored completion response violates an internal payment invariant',
+    },
+  })
+  const logged: unknown[][] = []
+  const originalConsoleError = console.error
+  console.error = (...values: unknown[]) => logged.push(values)
+  try {
+    const response = await app.request('/api/kind', {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'X-1F3D9-FEE-CREDIT': 'wave4-kind-check-violation',
+      },
+      body: JSON.stringify({
+        name: 'check-violation-kind',
+        description: 'the database invariant belongs to the city',
+        traits: [],
+        recipe: [],
+      }),
+    })
+    assert.equal(response.status, 503, await response.clone().text())
+    assert.deepEqual(await response.json(), {
+      error: 'kind invention failed before completion; city fee credit returned',
+      city_fee_credit: 'credit_returned',
+      returned_usdc: '1.000000',
+    })
+    assert.equal(state.cityCreditBalances.get(7), 1_000_000n)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 1)
+    assert.equal(logged.length, 1)
+    const diagnostic = JSON.parse(String(logged[0]?.[1] ?? '{}')) as Record<string, unknown>
+    assert.equal(diagnostic.error_code, '23514')
+    assert.equal(diagnostic.constraint, 'payment_attempts_completion_body_check')
+    assert.equal(diagnostic.status, 503)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('an ambiguous credit return logs the client-visible 202 rather than the intended refusal', async () => {
+  reset({
+    scenario: 'paid claims',
+    cityCreditBalances: new Map([[7, 1_000_000n]]),
+    failCreditReturnOnce: true,
+    paidCompletionFailure: {
+      code: '42883',
+      message: 'operator does not exist after the paid kind debit',
+    },
+  })
+  const logged: unknown[][] = []
+  const originalConsoleError = console.error
+  console.error = (...values: unknown[]) => logged.push(values)
+  try {
+    const response = await app.request('/api/kind', {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'X-1F3D9-FEE-CREDIT': 'wave4-kind-return-ambiguous',
+      },
+      body: JSON.stringify({
+        name: 'ambiguous-return-kind',
+        description: 'the return response is interrupted',
+        traits: [],
+        recipe: [],
+      }),
+    })
+    assert.equal(response.status, 202, await response.clone().text())
+    assertCityCreditNoStore(response, 'ambiguous credit return')
+    const body = await response.json() as Record<string, unknown>
+    assert.equal(body.city_fee_credit, 'payment_pending')
+    assert.match(String(body.credit_attempt_id ?? ''), /^credit_attempt_[0-9a-f]+$/u)
+    assert.equal(state.cityCreditBalances.get(7), 0n)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1)
+    assert.equal(state.cityCreditEntries.filter(entry => entry.entry_kind === 'return').length, 0)
+    assert.equal(logged.length, 1)
+    const diagnostic = JSON.parse(String(logged[0]?.[1] ?? '{}')) as Record<string, unknown>
+    assert.equal(diagnostic.event, 'treasury_completion_failure')
+    assert.equal(diagnostic.error_code, '42883')
+    assert.equal(diagnostic.status, 202)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('an unexpected x402 completion failure is logged once by the global request boundary', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    interruptTreasuryCompletionOnce: true,
+  })
+  const logged: unknown[][] = []
+  const originalConsoleError = console.error
+  console.error = (...values: unknown[]) => logged.push(values)
+  try {
+    const response = await app.request('/api/place', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({
+        parent_id: null,
+        name: 'Single Log Continent',
+        description: 'one unexpected failure, one diagnostic',
+      }),
+    })
+    assert.equal(response.status, 500, await response.clone().text())
+    assert.equal(logged.filter(values => values[0] === 'treasury_completion_failure').length, 0)
+    const requestFailures = logged.filter(values => values[0] === 'request_failure')
+    assert.equal(requestFailures.length, 1)
+    const diagnostic = JSON.parse(String(requestFailures[0]?.[1] ?? '{}')) as Record<string, unknown>
+    assert.equal(diagnostic.error_code, '57P01')
+    assert.equal(diagnostic.status, 500)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('an x402 conflict is not logged as 409 before founder review is durably recorded', async () => {
+  reset({
+    scenario: 'paid claims',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    chainFrom: SELLER_WALLET,
+    chainTo: TREASURY,
+    failFounderReviewOnce: true,
+    paidCompletionFailure: {
+      code: '23505',
+      constraint: 'places_parent_id_lower_name_key',
+      message: 'duplicate place name after settlement',
+    },
+  })
+  const logged: unknown[][] = []
+  const originalConsoleError = console.error
+  console.error = (...values: unknown[]) => logged.push(values)
+  try {
+    const response = await app.request('/api/place', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+      body: JSON.stringify({
+        parent_id: null,
+        name: 'Founder Review Interrupted',
+        description: 'the conflict cannot be reported until review is durable',
+      }),
+    })
+    assert.equal(response.status, 500, await response.clone().text())
+    assert.equal(logged.filter(values => values[0] === 'treasury_completion_failure').length, 0)
+    const requestFailures = logged.filter(values => values[0] === 'request_failure')
+    assert.equal(requestFailures.length, 1)
+    const diagnostic = JSON.parse(String(requestFailures[0]?.[1] ?? '{}')) as Record<string, unknown>
+    assert.equal(diagnostic.error_code, '57P01')
+    assert.equal(diagnostic.status, 500)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('every x402 conflict is logged once after founder review is durably recorded', async () => {
+  for (const paidCase of CITY_CREDIT_ROUTE_CASES) {
+    reset({
+      scenario: 'paid claims',
+      facilitatorVerify: true,
+      facilitatorSettle: true,
+      chainFrom: SELLER_WALLET,
+      chainTo: TREASURY,
+      paidCompletionFailure: {
+        code: '23505',
+        constraint: 'paid_completion_unique_key',
+        message: 'paid completion conflict after settlement',
+      },
+    })
+    const logged: unknown[][] = []
+    const originalConsoleError = console.error
+    console.error = (...values: unknown[]) => logged.push(values)
+    try {
+      const response = await app.request(paidCase.path, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+        body: JSON.stringify(paidCase.body),
+      })
+      assert.equal(response.status, 409, `${paidCase.label}: ${await response.clone().text()}`)
+      const body = await response.json() as Record<string, unknown>
+      assert.equal(body.payment, 'founder_review', paidCase.label)
+      const attempt = state.paymentAttempts.get(String(body.payment_attempt_id ?? ''))
+      assert.equal(attempt?.status, 'founder_review', paidCase.label)
+      assert.equal(logged.filter(values => values[0] === 'request_failure').length, 0, paidCase.label)
+      const completionFailures = logged.filter(values => values[0] === 'treasury_completion_failure')
+      assert.equal(completionFailures.length, 1, paidCase.label)
+      const diagnostic = JSON.parse(String(completionFailures[0]?.[1] ?? '{}')) as Record<string, unknown>
+      assert.equal(diagnostic.operation, paidCase.operation, paidCase.label)
+      assert.equal(diagnostic.rail, 'x402', paidCase.label)
+      assert.equal(diagnostic.error_code, '23505', paidCase.label)
+      assert.equal(diagnostic.status, 409, paidCase.label)
+    } finally {
+      console.error = originalConsoleError
+    }
   }
 })
 

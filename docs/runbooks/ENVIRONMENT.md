@@ -59,9 +59,12 @@ and allowance creation say that no payment was started only for a fresh operatio
 saved return or cancel URL may follow an approval, so dormant mode says to keep that exact
 URL and purchase ID, reconnect PayPal, and reload without starting another approval.
 Capture likewise retries the same purchase and order without paying again. Webhook delivery
-asks PayPal to retry that exact event. Do not advertise the buy door until the complete
-configuration is active. The separate `/gift-redirect` recovery door remains available
-because it starts no PayPal operation.
+asks PayPal to retry that exact event only when PayPal verification is temporarily
+unavailable. Missing or malformed PayPal signature headers must be refused as `401
+unverified`, without creating city state and without asking PayPal to retry a caller-built
+unsigned event. Do not advertise the buy door until the complete configuration is active.
+The separate `/gift-redirect` recovery door remains available because it starts no PayPal
+operation.
 
 Activate in this order:
 
