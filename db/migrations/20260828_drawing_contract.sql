@@ -438,8 +438,11 @@ CREATE INDEX IF NOT EXISTS drawing_revisions_author
   ON drawing_revisions (author_id, id DESC) WHERE author_id IS NOT NULL;
 
 -- Existing preview art is an honest baseline, not retroactively attributed to
--- an owner. Typed instance pixels are recorded once and then return to their
--- pinned kind presentation.
+-- an owner. The exact world-root drawing is known founder-authored. Typed
+-- instance pixels are recorded once and then return to their pinned kind
+-- presentation. Only the first installation may infer this legacy provenance:
+-- a completed contract already has its append-only history trigger, and a
+-- rerun must not reinterpret later owner-authored pixels as legacy evidence.
 INSERT INTO drawing_revisions (
   target_type, target_id,
   prior_state, prior_description, prior_drawing, prior_source,
@@ -452,6 +455,12 @@ SELECT 'resident', resident.id,
   NULL, 'legacy'
 FROM residents resident
 WHERE resident.drawing IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_trigger installed_trigger
+    WHERE installed_trigger.tgrelid = 'drawing_revisions'::regclass
+      AND installed_trigger.tgname = 'drawing_revisions_append_only'
+      AND NOT installed_trigger.tgisinternal
+  )
   AND NOT EXISTS (
     SELECT 1 FROM drawing_revisions revision
     WHERE revision.target_type = 'resident' AND revision.target_id = resident.id
@@ -467,13 +476,24 @@ INSERT INTO drawing_revisions (
 SELECT 'place', place.id,
   'undrawn', NULL, NULL, 'none',
   'complete', '', place.drawing, 'place',
-  NULL, 'legacy'
+  NULL, CASE WHEN place.place_kind = 'world'
+      AND place.drawing = '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::JSONB
+    THEN 'founder' ELSE 'legacy' END
 FROM places place
 WHERE place.drawing IS NOT NULL
   AND NOT EXISTS (
+    SELECT 1 FROM pg_trigger installed_trigger
+    WHERE installed_trigger.tgrelid = 'drawing_revisions'::regclass
+      AND installed_trigger.tgname = 'drawing_revisions_append_only'
+      AND NOT installed_trigger.tgisinternal
+  )
+  AND NOT EXISTS (
     SELECT 1 FROM drawing_revisions revision
     WHERE revision.target_type = 'place' AND revision.target_id = place.id
-      AND revision.author_relation = 'legacy'
+      AND revision.current_state = 'complete'
+      AND revision.current_description = ''
+      AND revision.current_drawing = place.drawing
+      AND revision.current_source = 'place'
   );
 
 INSERT INTO drawing_revisions (
@@ -490,6 +510,12 @@ SELECT 'kind', definition.kind_id,
   NULL, 'legacy'
 FROM kind_revisions definition
 WHERE definition.drawing IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_trigger installed_trigger
+    WHERE installed_trigger.tgrelid = 'drawing_revisions'::regclass
+      AND installed_trigger.tgname = 'drawing_revisions_append_only'
+      AND NOT installed_trigger.tgisinternal
+  )
   AND NOT EXISTS (
     SELECT 1 FROM drawing_revisions history
     WHERE history.target_type = 'kind' AND history.target_id = definition.kind_id
@@ -509,6 +535,12 @@ SELECT 'thing', thing.id,
   NULL, 'legacy'
 FROM things thing
 WHERE thing.kind_id IS NULL AND thing.drawing IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_trigger installed_trigger
+    WHERE installed_trigger.tgrelid = 'drawing_revisions'::regclass
+      AND installed_trigger.tgname = 'drawing_revisions_append_only'
+      AND NOT installed_trigger.tgisinternal
+  )
   AND NOT EXISTS (
     SELECT 1 FROM drawing_revisions revision
     WHERE revision.target_type = 'thing' AND revision.target_id = thing.id
@@ -537,6 +569,12 @@ FROM things thing
 JOIN kind_revisions definition
   ON definition.kind_id = thing.kind_id AND definition.revision = thing.current_revision
 WHERE thing.kind_id IS NOT NULL AND thing.drawing IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_trigger installed_trigger
+    WHERE installed_trigger.tgrelid = 'drawing_revisions'::regclass
+      AND installed_trigger.tgname = 'drawing_revisions_append_only'
+      AND NOT installed_trigger.tgisinternal
+  )
   AND NOT EXISTS (
     SELECT 1 FROM drawing_revisions revision
     WHERE revision.target_type = 'thing' AND revision.target_id = thing.id
@@ -817,12 +855,21 @@ WITH latest_moderation AS (
       END AS source,
       CASE WHEN thing.kind_id IS NOT NULL
         AND coalesce(thing_kind_hidden.action, 'restore') <> 'remove'
+        AND (thing.drawing_state <> 'undrawn'
+          OR selected_variant.value IS NOT NULL
+          OR thing_definition.drawing_state <> 'undrawn')
         THEN thing.kind_id ELSE NULL END AS kind_id,
       CASE WHEN thing.kind_id IS NOT NULL
         AND coalesce(thing_kind_hidden.action, 'restore') <> 'remove'
+        AND (thing.drawing_state <> 'undrawn'
+          OR selected_variant.value IS NOT NULL
+          OR thing_definition.drawing_state <> 'undrawn')
         THEN thing_kind.name ELSE NULL END AS kind_name,
       CASE WHEN thing.kind_id IS NOT NULL
         AND coalesce(thing_kind_hidden.action, 'restore') <> 'remove'
+        AND (thing.drawing_state <> 'undrawn'
+          OR selected_variant.value IS NOT NULL
+          OR thing_definition.drawing_state <> 'undrawn')
         THEN thing.current_revision ELSE NULL END AS kind_revision,
       CASE WHEN thing.drawing_state = 'undrawn'
         AND selected_variant.value IS NOT NULL

@@ -1591,9 +1591,19 @@ export function mountWorldRoutes(app: Hono): void {
             WHEN prior.kind_id IS NULL THEN CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
             WHEN prior.drawing_state = 'refused' THEN 'thing'
             WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+            WHEN prior.kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          prior.kind_id, prior.current_revision,
+          CASE WHEN prior.kind_id IS NOT NULL AND (
+              prior.drawing_state = 'refused'
+              OR prior.drawing_variant_name IS NOT NULL
+              OR prior.kind_drawing_state <> 'undrawn'
+            ) THEN prior.kind_id ELSE NULL END,
+          CASE WHEN prior.kind_id IS NOT NULL AND (
+              prior.drawing_state = 'refused'
+              OR prior.drawing_variant_name IS NOT NULL
+              OR prior.kind_drawing_state <> 'undrawn'
+            ) THEN prior.current_revision ELSE NULL END,
           CASE WHEN prior.kind_id IS NOT NULL AND prior.drawing_state <> 'refused'
             THEN prior.drawing_variant_name ELSE NULL END,
           CASE
@@ -1615,9 +1625,19 @@ export function mountWorldRoutes(app: Hono): void {
             WHEN current.kind_id IS NULL THEN CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
             WHEN current.drawing_state = 'refused' THEN 'thing'
             WHEN current.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+            WHEN current.kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          current.kind_id, current.current_revision,
+          CASE WHEN current.kind_id IS NOT NULL AND (
+              current.drawing_state = 'refused'
+              OR current.drawing_variant_name IS NOT NULL
+              OR current.kind_drawing_state <> 'undrawn'
+            ) THEN current.kind_id ELSE NULL END,
+          CASE WHEN current.kind_id IS NOT NULL AND (
+              current.drawing_state = 'refused'
+              OR current.drawing_variant_name IS NOT NULL
+              OR current.kind_drawing_state <> 'undrawn'
+            ) THEN current.current_revision ELSE NULL END,
           CASE WHEN current.kind_id IS NOT NULL AND current.drawing_state <> 'refused'
             THEN current.drawing_variant_name ELSE NULL END,
           ${resident.id}, 'owner'
@@ -1806,9 +1826,17 @@ export function mountWorldRoutes(app: Hono): void {
           CASE
             WHEN prior.drawing_state = 'refused' THEN 'thing'
             WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+            WHEN prior.prior_kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          prior.kind_id, prior.current_revision,
+          CASE WHEN prior.drawing_state = 'refused'
+              OR prior.drawing_variant_name IS NOT NULL
+              OR prior.prior_kind_drawing_state <> 'undrawn'
+            THEN prior.kind_id ELSE NULL END,
+          CASE WHEN prior.drawing_state = 'refused'
+              OR prior.drawing_variant_name IS NOT NULL
+              OR prior.prior_kind_drawing_state <> 'undrawn'
+            THEN prior.current_revision ELSE NULL END,
           CASE WHEN prior.drawing_state = 'refused'
             THEN NULL ELSE prior.drawing_variant_name END,
           CASE
@@ -1829,9 +1857,17 @@ export function mountWorldRoutes(app: Hono): void {
           CASE
             WHEN changed.drawing_state = 'refused' THEN 'thing'
             WHEN ${upgradeVariant !== null}::boolean THEN 'kind_variant'
+            WHEN prior.target_kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          changed.kind_id, changed.current_revision,
+          CASE WHEN changed.drawing_state = 'refused'
+              OR ${upgradeVariant !== null}::boolean
+              OR prior.target_kind_drawing_state <> 'undrawn'
+            THEN changed.kind_id ELSE NULL END,
+          CASE WHEN changed.drawing_state = 'refused'
+              OR ${upgradeVariant !== null}::boolean
+              OR prior.target_kind_drawing_state <> 'undrawn'
+            THEN changed.current_revision ELSE NULL END,
           CASE WHEN changed.drawing_state = 'refused'
             THEN NULL ELSE changed.drawing_variant_name END,
           ${resident.id}, 'owner'

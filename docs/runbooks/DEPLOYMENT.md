@@ -85,6 +85,55 @@ Production snapshot, apply `npm run migrate:production:resident-refusal-state`, 
 the same postconditions before merging the application. The application rollout does not
 apply this migration.
 
+### Drawing-contract and world-root drawing prerequisite
+
+Before the first application rollout containing public drawing states, history,
+or named kind variants, apply the two drawing migrations to Production in this
+exact order. The application rollout never applies either migration.
+
+1. In an operator shell, provision `NEON_API_KEY`, `NEON_PROJECT_ID`,
+   `NEON_PRODUCTION_BRANCH_ID`, and `PRODUCTION_DATABASE_URL_UNPOOLED` without
+   printing their values. Choose a fresh `PRODUCTION_SNAPSHOT_NAME` for each production drawing command.
+2. Apply the drawing contract first. The runner verifies the exact production
+   branch and direct database target, then creates and verifies the named Neon
+   snapshot before starting the transactional migration:
+
+   ```sh
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   PRODUCTION_SNAPSHOT_NAME=<fresh-drawing-contract-snapshot-name> \
+   npm run migrate:production:drawing-contract
+   ```
+
+3. Before continuing, verify that `drawing_revisions` exists, its
+   `drawing_revisions_append_only` trigger is enabled, and the validated
+   constraints are named `residents_drawing_contract`,
+   `places_drawing_contract`, `kind_revisions_drawing_contract`, and
+   `things_drawing_contract`. Also verify that a typed thing which previously
+   stored direct legacy pixels has one legacy history row and is normalized to
+   `drawing_state = 'undrawn'` with no direct drawing.
+4. Choose a second fresh snapshot name, then apply the guarded world-root
+   drawing only after step 3 passes:
+
+   ```sh
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   PRODUCTION_SNAPSHOT_NAME=<fresh-world-root-drawing-snapshot-name> \
+   npm run migrate:production:world-root-drawing
+   ```
+
+5. Before merging the application, verify exactly one `place_kind = 'world'`
+   row carries the founder drawing, `places_world_shape` and
+   `places_world_drawing_exact` are validated, and the
+   `places_protect_topology_write` trigger is enabled. Record both snapshot
+   names and the successful read-only postcondition checks with the release
+   evidence; never record a database URL or credential.
+
+Each file is one transaction, so a failed command commits none of that
+command. If the drawing-contract command commits and the world-root command
+fails, the drawing contract remains applied: block the application rollout,
+diagnose the second command, and use a reviewed forward repair or the verified
+snapshot recovery path. Application rollback does not revert database changes.
+A destructive down migration is not an incident-time action.
+
 For the first rollout and every later release preparation, re-confirm that the required
 provider keys remain configured, the maker and later-holder migrations remain applied in
 that order, and the resumable-registration, PayPal credit-disputes, and resident

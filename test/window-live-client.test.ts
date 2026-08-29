@@ -497,6 +497,17 @@ test('live plot detail stays camera-bounded while distant plots remain marker ca
   assert.deepEqual(plots.map(plot => plot.id), [1, 2, 3, 4, 5])
 })
 
+test('Live uses the locked empty-room sentence on every empty-room surface', () => {
+  const lockedCopy = 'Nobody is here right now. The room keeps its things.'
+  const occurrences = windowClientModule.WINDOW_JS.split(lockedCopy).length - 1
+
+  assert.equal(occurrences, 2)
+  assert.doesNotMatch(
+    windowClientModule.WINDOW_JS,
+    /Nobody is here right now\. The fixed ground stays ready\./u,
+  )
+})
+
 test('live polling follows activity and backs off through quiet without exceeding five minutes', () => {
   assert.equal(windowLivePollDelay(true, 99), 25_000)
   assert.equal(windowLivePollDelay(false, 0), 60_000)

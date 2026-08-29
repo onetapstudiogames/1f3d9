@@ -1573,15 +1573,62 @@ test('Live renders nearby detail and reachable distant markers without drawing t
   await expect(page.locator('.live-plot[data-live-detail="true"]')).not.toHaveCount(0)
   const distantPlots = page.locator('.live-plot[data-live-detail="false"]')
   await expect(distantPlots).not.toHaveCount(0)
+  await expect(distantPlots.locator(
+    '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+  )).toHaveCount(0)
+  const initialDetailBudget = await page.locator('.live-plot').evaluateAll(plots => ({
+    detailedPlots: plots.filter(plot => (plot as HTMLElement).dataset.liveDetail === 'true').length,
+    mountedTerrain: plots.filter(plot => plot.querySelector('.live-plot-terrain')).length,
+    mountedDetailNodes: plots.reduce((count, plot) => count + plot.querySelectorAll(
+      '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+    ).length, 0),
+  }))
+  expect(initialDetailBudget.mountedTerrain).toBe(initialDetailBudget.detailedPlots)
+  expect(initialDetailBudget.detailedPlots).toBeLessThanOrEqual(20)
+  expect(initialDetailBudget.mountedDetailNodes).toBeLessThanOrEqual(
+    initialDetailBudget.detailedPlots * 4,
+  )
   expect(fixture.drawingRequests()).toBeGreaterThan(0)
   expect(fixture.drawingRequests()).toBeLessThan(80)
   expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
 
-  const markerTarget = distantPlots.first().locator('.live-plot-open')
+  const markerPlaceId = await distantPlots.first().getAttribute('data-place-id')
+  expect(markerPlaceId).not.toBeNull()
+  const markerPlot = page.locator(`.live-plot[data-place-id="${markerPlaceId}"]`)
+  const markerTarget = markerPlot.locator('.live-plot-open')
   const markerBox = await markerTarget.boundingBox()
   expect(markerBox).not.toBeNull()
   expect(markerBox!.width).toBeGreaterThanOrEqual(44)
   expect(markerBox!.height).toBeGreaterThanOrEqual(44)
+
+  await panLiveTargetIntoView(page, markerTarget)
+  await expect(markerPlot).toHaveAttribute('data-live-detail', 'true')
+  await expect(markerPlot.locator('.live-plot-terrain')).toHaveCount(1)
+  await expect(page.locator('.live-plot[data-live-detail="false"]').locator(
+    '.live-plot-terrain, .live-plot-owner, .live-portrait-grid, .live-thing-shelf',
+  )).toHaveCount(0)
+  await expect.poll(() => page.locator(
+    '.live-plot[data-live-detail="true"]',
+  ).count()).toBeLessThanOrEqual(20)
+})
+
+test('record detail closes on its backdrop but stays open for clicks inside the record', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.route('**/api/thing/9', route => route.fulfill({ json: {
+    thing: {
+      id: 9, place_id: 3, name: 'field lantern', body: 'a steady mark',
+      made_by: 'map-walker', current_owner: 'map-walker', moderated: false,
+    },
+  } }))
+  await page.goto('/window/thing/9')
+
+  const detail = page.locator('#record-detail')
+  await expect(detail).toBeVisible()
+  await detail.locator('article').dispatchEvent('click')
+  await expect(detail).toBeVisible()
+
+  await detail.dispatchEvent('click')
+  await expect(detail).toBeHidden()
 })
 
 test('Live drops queued drawings from the old plate before reading a newly opened plate', async ({ page }) => {
@@ -1792,6 +1839,295 @@ test('drawing details reveal exact authored readback and fetch bounded history o
   expect(historyUrls).toHaveLength(3)
   expect(historyUrls[2]!.searchParams.get('before')).toBe('17')
   expect(historyUrls[2]!.searchParams.get('limit')).toBe('20')
+})
+
+test('Live opens place and resident current drawings from secondary affordances without eager history reads', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now())
+  const placeHistoryUrls: URL[] = []
+  const residentHistoryUrls: URL[] = []
+  const placeCurrentPaths: string[] = []
+  const residentCurrentPaths: string[] = []
+  let residentDetailShouldFailOnce = false
+  await page.setViewportSize({ width: 390, height: 844 })
+  const exactDrawing = {
+    palette: ['#174d3c', '#f0c95f'],
+    indices: Array.from({ length: 64 }, (_, index) => index % 2),
+  }
+  const exactDrawingRows = Array.from({ length: 8 }, (_, row) =>
+    exactDrawing.indices.slice(row * 8, (row + 1) * 8).join(' '),
+  )
+  await page.route('**/api/drawing/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/drawing/place/1') {
+      placeCurrentPaths.push(url.pathname)
+      await route.fulfill({ json: {
+        type: 'place',
+        id: 1,
+        state: 'complete',
+        presentation_state: 'complete',
+        description: 'Owner-authored world drawing.',
+        drawing: exactDrawing,
+        rows: exactDrawingRows,
+        source: 'place',
+        kind_id: null,
+        kind_name: null,
+        revision: null,
+        variant_name: null,
+      } })
+      return
+    }
+    if (url.pathname === '/api/drawing/place/1/history') {
+      placeHistoryUrls.push(url)
+      await route.fulfill({ json: {
+        type: 'place',
+        id: 1,
+        revisions: [],
+        page: { limit: 20, has_more: false, next_before: null },
+      } })
+      return
+    }
+    if (url.pathname === '/api/drawing/place/2') {
+      placeCurrentPaths.push(url.pathname)
+      await route.fulfill({ json: {
+        type: 'place',
+        id: 2,
+        state: 'complete',
+        presentation_state: 'complete',
+        description: 'Owner-authored place drawing.',
+        drawing: exactDrawing,
+        rows: exactDrawingRows,
+        source: 'place',
+        kind_id: null,
+        kind_name: null,
+        revision: null,
+        variant_name: null,
+      } })
+      return
+    }
+    if (url.pathname === '/api/drawing/place/2/history') {
+      placeHistoryUrls.push(url)
+      await route.fulfill({ json: {
+        type: 'place',
+        id: 2,
+        revisions: [{
+          id: 18,
+          slot_variant_name: null,
+          previous: {
+            type: 'place',
+            id: 2,
+            state: 'in_progress',
+            presentation_state: 'in_progress',
+            description: 'The first place pixels.',
+            drawing: exactDrawing,
+            rows: exactDrawingRows,
+            source: 'place',
+            kind_id: null,
+            kind_name: null,
+            revision: null,
+            variant_name: null,
+          },
+          current: {
+            type: 'place',
+            id: 2,
+            state: 'complete',
+            presentation_state: 'complete',
+            description: 'Owner-authored place drawing.',
+            drawing: exactDrawing,
+            rows: exactDrawingRows,
+            source: 'place',
+            kind_id: null,
+            kind_name: null,
+            revision: null,
+            variant_name: null,
+          },
+          author: { id: 5, handle: 'map-walker', relation: 'owner' },
+          created_at: '2026-08-28T12:00:00.000Z',
+        }],
+        page: { limit: 20, has_more: false, next_before: null },
+      } })
+      return
+    }
+    if (url.pathname === '/api/drawing/resident/5') {
+      residentCurrentPaths.push(url.pathname)
+      if (residentDetailShouldFailOnce) {
+        residentDetailShouldFailOnce = false
+        await route.fulfill({ status: 503, json: { error: 'resident drawing unavailable' } })
+        return
+      }
+      await route.fulfill({ json: {
+        type: 'resident',
+        id: 5,
+        state: 'complete',
+        presentation_state: 'complete',
+        description: 'Owner-authored resident drawing.',
+        drawing: exactDrawing,
+        rows: exactDrawingRows,
+        source: 'resident',
+        kind_id: null,
+        kind_name: null,
+        revision: null,
+        variant_name: null,
+      } })
+      return
+    }
+    if (url.pathname === '/api/drawing/resident/5/history') {
+      residentHistoryUrls.push(url)
+      await route.fulfill({ json: {
+        type: 'resident',
+        id: 5,
+        revisions: [],
+        page: { limit: 20, has_more: false, next_before: null },
+      } })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect(page.locator('.live-plate-title')).toHaveText('the world')
+  expect(placeHistoryUrls).toEqual([])
+  expect(residentHistoryUrls).toEqual([])
+  const rootPlaceReadsBeforeOpen = placeCurrentPaths.filter(path => path === '/api/drawing/place/1').length
+  const placeReadsBeforeOpen = placeCurrentPaths.filter(path => path === '/api/drawing/place/2').length
+  const residentReadsBeforeOpen = residentCurrentPaths.length
+  const rootCaptionDrawing = page.getByRole('button', { name: 'Open current drawing for the world' })
+  await expect(rootCaptionDrawing).toBeVisible()
+  await rootCaptionDrawing.scrollIntoViewIfNeeded()
+  await expect(rootCaptionDrawing).toBeInViewport()
+  expect((await rootCaptionDrawing.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  await rootCaptionDrawing.click()
+  const detail = page.locator('#record-detail')
+  await expect(detail).toBeVisible()
+  await expect(page).toHaveURL(/\/window\/live$/u)
+  await expect(detail.locator('#record-detail-kind')).toHaveText('Public place · live current drawing')
+  await expect(detail.locator('#record-detail-title')).toHaveText('the world')
+  await expect(detail.locator('.record-detail-meta')).toContainText('the world · nobody owns it · transit only')
+  const rootDrawing = detail.locator('.drawing-detail')
+  await expect(rootDrawing.locator('.drawing-state-label')).toHaveText('Complete')
+  await expect(rootDrawing.locator('.drawing-owner-description')).toHaveText(
+    'Owner-authored world drawing.',
+  )
+  expect(placeCurrentPaths.filter(path => path === '/api/drawing/place/1').length)
+    .toBeGreaterThanOrEqual(rootPlaceReadsBeforeOpen)
+  expect(placeHistoryUrls).toEqual([])
+  await rootDrawing.getByRole('button', { name: 'Show drawing history' }).click()
+  await expect(rootDrawing.locator('.drawing-history')).toContainText(
+    'No drawing changes have been recorded yet.',
+  )
+  expect(placeHistoryUrls).toHaveLength(1)
+  expect(placeHistoryUrls[0]!.pathname).toBe('/api/drawing/place/1/history')
+  await page.locator('#record-detail-close').click()
+  await expect(detail).toBeHidden()
+
+  const mapWalker = page.locator('#live-roster [data-live-resident-handle="map-walker"]').first()
+  await mapWalker.click()
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+
+  const cinderPlotDrawing = page.getByRole('button', { name: 'Open current drawing for Cinder lane' }).first()
+  await panLiveTargetIntoView(page, cinderPlotDrawing)
+  await expect(cinderPlotDrawing).toBeVisible()
+  await expect(cinderPlotDrawing).toBeInViewport()
+  expect((await cinderPlotDrawing.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  await cinderPlotDrawing.click()
+  await expect(detail).toBeVisible()
+  await expect(page).toHaveURL(/\/window\/live$/u)
+  await expect(detail.locator('#record-detail-kind')).toHaveText('Public place · live current drawing')
+  await expect(detail.locator('#record-detail-title')).toHaveText('Cinder lane')
+  await expect(detail.locator('.record-detail-meta')).toContainText('kept by cinder-owner')
+  const placeDrawing = detail.locator('.drawing-detail')
+  await expect(placeDrawing.locator('.drawing-state-label')).toHaveText('Complete')
+  await expect(placeDrawing.locator('.drawing-provenance')).toHaveText('Own drawing')
+  await expect(placeDrawing.locator('.drawing-owner-description')).toHaveText(
+    'Owner-authored place drawing.',
+  )
+  await expect(placeDrawing.locator('canvas[role=\"img\"]')).toHaveAttribute(
+    'aria-describedby',
+    'drawing-description-place-2-current',
+  )
+  await expect(placeDrawing.locator('#drawing-description-place-2-current')).toHaveText(
+    'Owner-authored place drawing.',
+  )
+  await expect(placeDrawing.locator('[data-drawing-palette]')).toHaveText('#174d3c #f0c95f')
+  await expect(placeDrawing.locator('[data-drawing-row]')).toHaveText(exactDrawingRows)
+  expect(placeCurrentPaths.length).toBeGreaterThanOrEqual(placeReadsBeforeOpen)
+  expect(placeHistoryUrls).toHaveLength(1)
+  await placeDrawing.getByRole('button', { name: 'Show drawing history' }).click()
+  await expect(placeDrawing.locator('.drawing-history-revision')).toHaveCount(1)
+  expect(placeHistoryUrls).toHaveLength(2)
+  expect(placeHistoryUrls[1]!.pathname).toBe('/api/drawing/place/2/history')
+  expect(placeHistoryUrls[1]!.searchParams.get('limit')).toBe('20')
+  await page.locator('#record-detail-close').click()
+  await expect(detail).toBeHidden()
+  await expect(page).toHaveURL(/\/window\/live$/u)
+
+  fixture.publish()
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.locator('.live-plot[data-place-id="2"] .live-plot-open').click()
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+  await expect(page.locator('.live-plate-title')).toHaveText('Cinder lane')
+  const leafCaptionDrawing = page.locator('#live-map-caption')
+    .getByRole('button', { name: 'Open current drawing for Cinder lane' })
+  await expect(leafCaptionDrawing).toBeVisible()
+  await leafCaptionDrawing.scrollIntoViewIfNeeded()
+  await expect(leafCaptionDrawing).toBeInViewport()
+  expect((await leafCaptionDrawing.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  const outsideFocus = page.locator(
+    '#live-focus-interactions [data-live-focus-resident="map-walker"]' +
+    '[data-live-resident-scope="outside"]',
+  )
+  await expect(outsideFocus).toContainText('Outside this plate · Lantern nook')
+
+  const placeCaptionReadsBeforeOpen = placeCurrentPaths.filter(path => path === '/api/drawing/place/2').length
+  const placeHistoryBeforeLeafCaptionOpen = placeHistoryUrls.length
+  await leafCaptionDrawing.click()
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('#record-detail-title')).toHaveText('Cinder lane')
+  expect(placeCurrentPaths.filter(path => path === '/api/drawing/place/2').length)
+    .toBeGreaterThanOrEqual(placeCaptionReadsBeforeOpen)
+  expect(placeHistoryUrls).toHaveLength(placeHistoryBeforeLeafCaptionOpen)
+  await page.locator('#record-detail-close').click()
+  await expect(detail).toBeHidden()
+
+  residentDetailShouldFailOnce = true
+  await outsideFocus.getByRole('button', { name: 'Open current drawing for map-walker' }).click()
+  await expect(detail).toBeVisible()
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+  await expect(detail.locator('#record-detail-kind')).toHaveText('Public resident · live current drawing')
+  await expect(detail.locator('#record-detail-title')).toHaveText('map-walker')
+  await expect(detail.locator('.record-detail-meta')).toContainText('resident #5')
+  await expect(detail.locator('.error-row')).toContainText('The current drawing could not be read.')
+  expect(residentCurrentPaths).toHaveLength(residentReadsBeforeOpen + 1)
+  expect(residentHistoryUrls).toEqual([])
+  await detail.getByRole('button', { name: 'Retry current drawing' }).click()
+  const residentDrawing = detail.locator('.drawing-detail')
+  await expect(residentDrawing.locator('.drawing-state-label')).toHaveText('Complete')
+  await expect(residentDrawing.locator('.drawing-provenance')).toHaveText('Own drawing')
+  await expect(residentDrawing.locator('.drawing-owner-description')).toHaveText(
+    'Owner-authored resident drawing.',
+  )
+  await expect(residentDrawing.locator('canvas[role=\"img\"]')).toHaveAttribute(
+    'aria-describedby',
+    'drawing-description-resident-5-current',
+  )
+  await expect(residentDrawing.locator('#drawing-description-resident-5-current')).toHaveText(
+    'Owner-authored resident drawing.',
+  )
+  await expect(residentDrawing.locator('[data-drawing-indices]')).toHaveText(
+    JSON.stringify(exactDrawing.indices),
+  )
+  expect(residentCurrentPaths).toHaveLength(residentReadsBeforeOpen + 2)
+  expect(residentHistoryUrls).toEqual([])
+  await residentDrawing.getByRole('button', { name: 'Show drawing history' }).click()
+  await expect(residentDrawing.locator('.drawing-history')).toContainText(
+    'No drawing changes have been recorded yet.',
+  )
+  expect(residentHistoryUrls).toHaveLength(1)
+  expect(residentHistoryUrls[0]!.searchParams.get('limit')).toBe('20')
+
+  await page.locator('#record-detail-close').click()
+  await expect(detail).toBeHidden()
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
 })
 
 test('parent moderation leaves current drawing and its history unavailable in details', async ({ page }) => {

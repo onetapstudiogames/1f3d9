@@ -79,6 +79,7 @@ DECLARE
   founder_drawing CONSTANT JSONB :=
     '{"palette":["#0b1714","#123026","#1c4434"],"indices":[0,0,0,0,0,0,0,0,null,0,1,0,0,0,0,0,null,0,0,0,0,0,1,0,0,null,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,null,0,1,0,0,0,0,0,null,0,0,0,0,1,0,0,0,0,0,1,0,0]}'::jsonb;
   drawing_contract_column_count INTEGER;
+  world_row RECORD;
 BEGIN
   SELECT count(*) INTO drawing_contract_column_count
   FROM information_schema.columns
@@ -87,18 +88,55 @@ BEGIN
     AND column_name IN ('drawing_state', 'drawing_description');
 
   IF drawing_contract_column_count = 2 THEN
-    EXECUTE $sql$
-      UPDATE places
-      SET drawing = $1,
-          drawing_state = 'complete',
-          drawing_description = coalesce(drawing_description, '')
-      WHERE place_kind = 'world'
-        AND (
-          drawing IS DISTINCT FROM $1
-          OR drawing_state IS DISTINCT FROM 'complete'
-          OR drawing_description IS NULL
-        )
-    $sql$ USING founder_drawing;
+    SELECT id, drawing, drawing_state, drawing_description
+    INTO world_row
+    FROM places
+    WHERE place_kind = 'world'
+    FOR UPDATE;
+
+    UPDATE places
+    SET drawing = founder_drawing,
+        drawing_state = 'complete',
+        drawing_description = coalesce(drawing_description, '')
+    WHERE id = world_row.id
+      AND (
+        drawing IS DISTINCT FROM founder_drawing
+        OR drawing_state IS DISTINCT FROM 'complete'
+        OR drawing_description IS NULL
+      );
+
+    IF FOUND
+      AND world_row.drawing IS NULL
+      AND world_row.drawing_state = 'undrawn'
+      AND world_row.drawing_description IS NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM drawing_revisions revision
+        WHERE revision.target_type = 'place'
+          AND revision.target_id = world_row.id
+          AND revision.prior_state = 'undrawn'
+          AND revision.prior_description IS NULL
+          AND revision.prior_drawing IS NULL
+          AND revision.prior_source = 'none'
+          AND revision.current_state = 'complete'
+          AND revision.current_description = ''
+          AND revision.current_drawing = founder_drawing
+          AND revision.current_source = 'place'
+          AND revision.author_id IS NULL
+          AND revision.author_relation = 'founder'
+      ) THEN
+      INSERT INTO drawing_revisions (
+        target_type, target_id,
+        prior_state, prior_description, prior_drawing, prior_source,
+        current_state, current_description, current_drawing, current_source,
+        author_id, author_relation
+      ) VALUES (
+        'place', world_row.id,
+        'undrawn', NULL, NULL, 'none',
+        'complete', '', founder_drawing, 'place',
+        NULL, 'founder'
+      );
+    END IF;
   ELSIF drawing_contract_column_count = 0 THEN
     UPDATE places
     SET drawing = founder_drawing

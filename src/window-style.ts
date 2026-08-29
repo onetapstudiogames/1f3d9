@@ -780,6 +780,11 @@ button { color: inherit; }
 .live-map-caption .live-plate-legend { margin: 0; }
 .live-map-caption .live-plate-title { font-size: 1.35rem; }
 .live-map-caption .live-plate-legend { color: var(--sky); }
+.live-map-caption .drawing-detail-open {
+  justify-self: start;
+  margin-top: 0.15rem;
+  pointer-events: auto;
+}
 .live-stage-readout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.85fr);
@@ -1049,6 +1054,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
 .live-roster-list .resident-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); justify-content: normal; align-items: center; }
 .live-roster-list .resident-number { grid-column: 2; }
+.live-roster-list .resident-drawing-detail { grid-column: 2; justify-self: start; }
 .live-focus-interactions {
   margin: 0 0 1rem;
   padding: 0.7rem;
@@ -1072,6 +1078,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .live-focus-resident-card .drawing-grid { width: 2.4rem; border: 1px solid var(--paper-line); }
 .live-focus-resident-card-copy { display: grid; min-width: 0; gap: 0.12rem; }
+.live-focus-resident-card .resident-drawing-detail { grid-column: 2; justify-self: start; }
 .live-focus-resident-card-name {
   overflow: hidden;
   font: 900 0.68rem ui-monospace, monospace;
@@ -1171,6 +1178,28 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-plot-terrain > canvas.drawing-grid { height: auto; }
 .live-plot-terrain .drawing-undrawn-label { display: none; }
 .live-plot-terrain > .drawing-grid .drawing-undrawn-label { display: block; }
+.drawing-detail-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.35rem 0.7rem;
+  color: var(--ink);
+  background: rgba(255, 249, 232, 0.94);
+  border: 2px solid var(--line);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.42);
+  cursor: pointer;
+  font: 900 0.62rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-align: start;
+}
+.drawing-detail-open:hover { background: var(--signal); }
+.live-plot-drawing-detail {
+  position: absolute;
+  z-index: 9;
+  inset: 2.45rem auto auto 0.45rem;
+  max-width: calc(100% - 0.9rem);
+}
 .live-plot-open {
   position: absolute;
   z-index: 8;

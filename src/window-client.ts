@@ -1176,6 +1176,7 @@ export const WINDOW_JS = `(() => {
   let liveThingVisibleIdsByPlaceId = Object.freeze({})
   let liveResidentPointsByPlaceId = Object.freeze({})
   let liveThingPointsByPlaceId = Object.freeze({})
+  let livePlotDetailContext = null
   let liveNoteQueue = Object.freeze([])
   let liveNoteFetches = 0
   let liveDrawingQueue = Object.freeze([])
@@ -2040,9 +2041,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
     const visibleIds = liveDetailedPlotIds(plots)
     for (const node of nodes.livePlates.querySelectorAll('.live-plot')) {
-      const detailed = visibleIds.has(safeId(node.dataset.placeId)) ||
+      const placeId = safeId(node.dataset.placeId)
+      const detailed = visibleIds.has(placeId) ||
         livePlotHasFocusedDetail(node)
       node.dataset.liveDetail = String(detailed)
+      if (detailed && placeId && livePlotDetailContext) {
+        const place = livePlotDetailContext.children.find(candidate => candidate.id === placeId)
+        if (place) mountLivePlaceDetail(
+          node,
+          livePlotDetailContext.snapshot,
+          livePlotDetailContext.focus,
+          place,
+          livePlotDetailContext.bubbles,
+          livePlotDetailContext.records,
+          livePlotDetailContext.interactionThings,
+        )
+      } else if (!detailed) {
+        unmountLivePlaceDetail(node)
+      }
     }
     refillLiveDrawingQueue()
     drainLiveDrawingQueue()
@@ -4217,7 +4233,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const sleeperPlaceIds = parseWindowSleeperPlaceIds(params.get('sleepers'))
     const archiveChanged = query !== state.archive.query || mode !== state.archive.mode ||
       type !== state.archive.type
-    const detail = !legacyHash && pathId && ['place', 'thing', 'note'].includes(pathKind)
+    const detail = !legacyHash && pathId && ['place', 'resident', 'thing', 'note'].includes(pathKind)
       ? Object.freeze({ kind: pathKind, id: pathId })
       : null
     const pathPlaceId = detail?.kind === 'place' ? detail.id : null
@@ -5488,6 +5504,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
       .map(thing => thing.id))
   }
 
+  function liveFocusedPlotIds(snapshot, focus, children, records, interactionThings) {
+    const focused = new Set()
+    const pinnedResidents = new Set(livePinnedResidentIds(snapshot, records, focus.id))
+    for (const resident of displayedResidents(snapshot)) {
+      if (!pinnedResidents.has(resident.id)) continue
+      const anchorId = livePlaceAnchor(resident.current_place_id, focus.id, children)
+      if (anchorId && anchorId !== focus.id) focused.add(anchorId)
+    }
+    const pinnedThings = new Set(livePinnedThingIds(
+      snapshot, records, focus.id, interactionThings))
+    for (const thing of interactionThings) {
+      if (!pinnedThings.has(thing.id)) continue
+      const anchorId = livePlaceAnchor(thing.place_id, focus.id, children)
+      if (anchorId && anchorId !== focus.id) focused.add(anchorId)
+    }
+    return Object.freeze([...focused])
+  }
+
   function liveResidentReplayPoint(snapshot, placeId, actor, focus, children) {
     const anchorId = livePlaceAnchor(placeId, focus.id, children)
     if (!anchorId) return null
@@ -5887,6 +5921,62 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.snapshot) renderLive(state.snapshot)
   }
 
+  function mountLivePlaceDetail(
+    card,
+    snapshot,
+    focus,
+    place,
+    bubbles,
+    records,
+    interactionThings,
+  ) {
+    if (card.dataset.liveDetailMounted === 'true') return
+    const open = card.querySelector(':scope > .live-plot-open')
+    if (!open) return
+    const drawing = state.live.drawings[liveDrawingKey('place', place.id)]
+    const undrawn = drawing?.loaded && drawing.drawing === null
+    card.dataset.undrawn = String(Boolean(undrawn))
+    const owner = Object.hasOwn(place, 'owner')
+      ? place.owner ? (undrawn ? 'undrawn · ' : '') + 'kept by ' + place.owner : 'ownerless world ground'
+      : 'Place #' + String(place.id)
+    const terrain = liveTiledDrawing(place, 'live-plot-terrain', 8, 5)
+    card.prepend(terrain)
+    card.append(element('p', 'live-plot-owner', owner))
+    card.append(openDrawingDetailButton(
+      'place',
+      place.id,
+      place.name,
+      'live-plot-drawing-detail drawing-detail-open',
+      button => {
+        button.style.position = 'absolute'
+        button.style.zIndex = '9'
+        button.style.left = '0.45rem'
+        button.style.top = '2.45rem'
+        button.style.maxWidth = 'calc(100% - 0.9rem)'
+      },
+    ))
+    const residents = residentsAt(snapshot, place.id)
+    if (residents.length) {
+      card.append(livePortraitGrid(
+        residents,
+        'Residents inside ' + place.name,
+        bubbles,
+        place.id,
+        livePinnedResidentIds(snapshot, records, place.id),
+      ))
+    }
+    const shelf = liveThingShelf(snapshot, place, records, focus.id, true, interactionThings)
+    if (shelf) card.append(shelf)
+    card.dataset.liveDetailMounted = 'true'
+  }
+
+  function unmountLivePlaceDetail(card) {
+    if (card.dataset.liveDetailMounted !== 'true') return
+    const open = card.querySelector(':scope > .live-plot-open')
+    if (open) card.replaceChildren(open)
+    card.dataset.liveDetailMounted = 'false'
+  }
+
   function livePlacePlot(
     snapshot,
     focus,
@@ -5896,6 +5986,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     records,
     interactionThings,
     detailed,
+    focused,
   ) {
     const card = element('article', 'live-plot')
     card.dataset.placeId = String(place.id)
@@ -5903,7 +5994,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     card.dataset.livePlotY = String(plot.y)
     card.dataset.livePlotWidth = String(plot.width)
     card.dataset.livePlotHeight = String(plot.height)
-    card.dataset.liveDetail = String(Boolean(detailed))
+    card.dataset.liveFocusPlot = String(Boolean(focused))
+    card.dataset.liveDetail = String(Boolean(detailed || focused))
+    card.dataset.liveDetailMounted = 'false'
     const itemKey = 'place:' + String(place.id)
     card.dataset.liveItemKey = itemKey
     if (state.live.raisedItemKey === itemKey) card.dataset.liveRaised = 'true'
@@ -5919,32 +6012,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       () => navigate({ view: 'live', placeId: place.id }))
     open.append(element('span', 'live-plot-name', place.name),
       element('span', 'live-plot-number', '#' + String(place.id)))
-    const drawing = state.live.drawings[liveDrawingKey('place', place.id)]
-    const undrawn = drawing?.loaded && drawing.drawing === null
-    card.dataset.undrawn = String(Boolean(undrawn))
+    card.dataset.undrawn = 'false'
     card.dataset.placeKind = focus.parent_id === null ? 'continent' : 'place'
-    const owner = Object.hasOwn(place, 'owner')
-      ? place.owner ? (undrawn ? 'undrawn · ' : '') + 'kept by ' + place.owner : 'ownerless world ground'
-      : 'Place #' + String(place.id)
     card.append(open)
-    const terrain = liveTiledDrawing(place, 'live-plot-terrain', 8, 5)
-    card.prepend(terrain)
-    card.append(element('p', 'live-plot-owner', owner))
-    const residents = residentsAt(snapshot, place.id)
-    card.dataset.liveFocusPlot = String(residents.some(resident =>
-      resident.handle === state.live.focusResident))
-    if (residents.length) {
-      card.append(livePortraitGrid(
-        residents,
-        'Residents inside ' + place.name,
-        bubbles,
-        place.id,
-        livePinnedResidentIds(snapshot, records, place.id),
-      ))
-    }
-    const shelf = liveThingShelf(snapshot, place, records, focus.id, true, interactionThings)
-    if (shelf) card.append(shelf)
-    if (livePlotHasFocusedDetail(card)) card.dataset.liveDetail = 'true'
+    if (detailed || focused) mountLivePlaceDetail(
+      card, snapshot, focus, place, bubbles, records, interactionThings)
     return card
   }
 
@@ -6045,7 +6117,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('strong', 'live-focus-resident-card-name', focused.handle),
         element('span', 'live-focus-resident-card-location', 'Outside this plate · ' + location),
       )
-      card.append(drawingNode('resident', focused.id, focused.handle), copy)
+      card.append(
+        drawingNode('resident', focused.id, focused.handle),
+        copy,
+        openDrawingDetailButton(
+          'resident',
+          focused.id,
+          focused.handle,
+          'resident-drawing-detail drawing-detail-open',
+        ),
+      )
       panel.append(card)
     }
     if (!things.length) {
@@ -6125,6 +6206,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         drawingNode('resident', resident.id, resident.handle),
         follow,
         element('span', 'resident-number', location + (resident.asleep ? ' · asleep' : '')),
+        openDrawingDetailButton(
+          'resident',
+          resident.id,
+          resident.handle,
+          'resident-drawing-detail drawing-detail-open',
+        ),
       )
       list.append(row)
     }
@@ -7122,6 +7209,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderLive(snapshot) {
     if (!nodes.livePlates || !nodes.liveStage) return
+    livePlotDetailContext = null
     if (nodes.liveMapCaption) nodes.liveMapCaption.hidden = true
     const active = document.activeElement
     const focusKey = active?.closest?.('#live-panel') && active.dataset
@@ -7238,6 +7326,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     }
     const detailedPlotIds = liveDetailedPlotIds(survey.plots)
+    const focusedPlotIds = liveFocusedPlotIds(
+      snapshot, focus, children, records, interactionThings)
+    livePlotDetailContext = Object.freeze({
+      snapshot, focus, children, bubbles, records, interactionThings,
+    })
     renderLiveBreadcrumbs(snapshot, focus)
 
     nodes.liveStage.style.setProperty('--live-stage-width', String(survey.width) + 'px')
@@ -7253,6 +7346,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('h3', 'live-plate-title', focus.name),
         element('p', 'live-plate-legend',
           'brick dash = recorded endpoints + drawn-in glide · brick pulse on a thing = recorded use · walkers move above fixed plots · +N more = an exact hidden crowd · click a resident to focus'),
+        openDrawingDetailButton(
+          'place',
+          focus.id,
+          focus.name,
+          'live-map-caption-drawing-detail drawing-detail-open',
+        ),
       )
     }
 
@@ -7275,7 +7374,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (place) {
         plateParts.push(livePlacePlot(
           snapshot, focus, place, plot, bubbles, records, interactionThings,
-          detailedPlotIds.has(plot.id)))
+          detailedPlotIds.has(plot.id), focusedPlotIds.includes(plot.id)))
       }
     }
     const proofLoad = liveProofLoadNode(focus, survey)
@@ -7303,7 +7402,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       plateParts.push(element('p', 'live-room-empty live-stage-empty',
         directResidents.length
           ? 'No smaller public places are drawn inside this room.'
-          : 'Nobody is here right now. The fixed ground stays ready.'))
+          : 'Nobody is here right now. The room keeps its things.'))
     }
     plateParts.push(renderLiveTraceLayer(snapshot, focus, children, records, bubbles, survey))
     nodes.livePlates.replaceChildren(...plateParts)
@@ -7402,6 +7501,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return link
   }
 
+  function openDrawingDetailButton(kind, id, label, className, decorate = null) {
+    const button = element('button', className || 'drawing-detail-open', 'Current drawing')
+    button.type = 'button'
+    button.dataset.focusKey = 'drawing-detail:' + kind + ':' + String(id)
+    button.setAttribute('aria-label', 'Open current drawing for ' + label)
+    button.addEventListener('click', () => navigate({ detail: Object.freeze({ kind, id }) }))
+    if (typeof decorate === 'function') decorate(button)
+    return button
+  }
+
   function normalizeDetailRecord(kind, id, payload) {
     const raw = payload && typeof payload === 'object' ? payload[kind] : null
     if (!raw || typeof raw !== 'object' || safeId(raw.id) !== id) return null
@@ -7425,7 +7534,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   async function loadDrawingHistory(type, id, before = null, append = false) {
-    if (type !== 'thing' || state.detail?.kind !== type || state.detail.id !== id) return
+    if (!['place', 'resident', 'thing'].includes(type) ||
+        state.detail?.kind !== type || state.detail.id !== id) return
     const key = detailDrawingKey(type, id)
     const current = state.detailDrawingHistories[key] || Object.freeze({
       expanded: true, initialized: false, loading: false, error: false,
@@ -7501,7 +7611,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   async function ensureDetail(force) {
     const target = state.detail
-    if (!target || target.kind === 'place') return
+    if (!target || target.kind === 'place' || target.kind === 'resident') return
     const key = target.kind + ':' + String(target.id)
     const current = state.details[key]
     if (current?.loading || (!force && (current?.record || current?.notFound))) return
@@ -7575,7 +7685,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   async function ensureDetailDrawing(type, id, force = false) {
-    if (type !== 'thing' || state.detail?.kind !== type || state.detail.id !== id) return
+    if (!['place', 'resident', 'thing'].includes(type) ||
+        state.detail?.kind !== type || state.detail.id !== id) return
     const key = detailDrawingKey(type, id)
     const current = state.detailDrawings[key]
     if (current?.loading || (!force && (current?.drawing || current?.unavailable))) return
@@ -7668,7 +7779,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return exact
   }
 
-  function drawingSnapshotNode(snapshot, title, compact = false) {
+  function drawingSnapshotNode(snapshot, title, compact = false, descriptionId = null) {
     const section = element('section', compact ? 'drawing-snapshot drawing-snapshot-compact' :
       'drawing-snapshot')
     if (title) section.append(element('h4', '', title))
@@ -7676,8 +7787,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     section.append(element('p', 'drawing-state-label', stateLabel))
     const sourceLabel = windowDrawingSourceLabel(snapshot)
     if (sourceLabel) section.append(element('p', 'drawing-provenance', sourceLabel))
+    let descriptionNode = null
     if (snapshot.description !== null) {
-      section.append(element('p', 'drawing-owner-description', snapshot.description))
+      descriptionNode = element('p', 'drawing-owner-description', snapshot.description)
+      if (descriptionId) descriptionNode.id = descriptionId
+      section.append(descriptionNode)
     }
     if (snapshot.drawing) {
       const canvas = paintedDrawingNode(snapshot.drawing, 1, 1)
@@ -7685,6 +7799,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         canvas.classList.add('drawing-detail-canvas')
         canvas.setAttribute('role', 'img')
         canvas.setAttribute('aria-label', stateLabel + (sourceLabel ? ' · ' + sourceLabel : ''))
+        if (descriptionNode?.id) canvas.setAttribute('aria-describedby', descriptionNode.id)
         applyDrawingData(canvas, snapshot)
         section.append(canvas)
       }
@@ -7725,8 +7840,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
         revision.author.relation + ' · ' + when +
         (revision.slot_variant_name ? ' · slot ' + revision.slot_variant_name : '')))
       row.append(
-        drawingSnapshotNode(revision.previous, 'Before', true),
-        drawingSnapshotNode(revision.current, 'After', true),
+        drawingSnapshotNode(
+          revision.previous,
+          'Before',
+          true,
+          'drawing-description-' + type + '-' + String(id) + '-revision-' + String(revision.id) + '-before',
+        ),
+        drawingSnapshotNode(
+          revision.current,
+          'After',
+          true,
+          'drawing-description-' + type + '-' + String(id) + '-revision-' + String(revision.id) + '-after',
+        ),
       )
       historyNode.append(row)
     }
@@ -7768,7 +7893,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       section.append(retry)
       return section
     }
-    section.append(drawingSnapshotNode(entry.drawing, '', false))
+    section.append(drawingSnapshotNode(
+      entry.drawing,
+      '',
+      false,
+      'drawing-description-' + type + '-' + String(id) + '-current',
+    ))
     const history = state.detailDrawingHistories[key] || null
     const expanded = history?.expanded === true
     const toggle = element('button', 'drawing-history-control', expanded
@@ -7810,14 +7940,77 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return section
   }
 
+  function currentDrawingDetailSubject(target) {
+    if (!state.snapshot || !target) return null
+    if (target.kind === 'place') {
+      const place = placeReference(state.snapshot, target.id) ||
+        state.snapshot.flatPlaces.find(candidate => candidate.id === target.id)
+      if (!place) return null
+      return Object.freeze({
+        title: place.name,
+        meta: place.path + (place.owner
+          ? ' · kept by ' + place.owner
+          : ' · nobody owns it · transit only'),
+      })
+    }
+    if (target.kind === 'resident') {
+      const resident = displayedResidents(state.snapshot).find(candidate => candidate.id === target.id) ||
+        Object.values(state.focusedResidents)
+          .map(entry => entry?.resident || null)
+          .find(candidate => candidate?.id === target.id) ||
+        null
+      if (!resident) return null
+      const location = windowPlaceLabel(
+        resident.current_place_id,
+        resident.current_place_id ? placeReference(state.snapshot, resident.current_place_id) : null,
+      )
+      return Object.freeze({
+        title: resident.handle,
+        meta: 'resident #' + String(resident.id) +
+          (resident.asleep ? ' · asleep' : '') +
+          (location ? ' · at ' + location : ' · between places'),
+      })
+    }
+    return null
+  }
+
   function renderDetail() {
     const previousFocusKey = nodes.detailBody?.contains(document.activeElement)
       ? document.activeElement?.dataset?.focusKey || null
       : null
     const target = state.detail
     if (!nodes.detail) return
-    if (!target || target.kind === 'place') {
+    if (!target) {
       if (nodes.detail.open) nodes.detail.close()
+      return
+    }
+    if (target.kind === 'place' || target.kind === 'resident') {
+      const subject = currentDrawingDetailSubject(target)
+      if (nodes.detailKind) nodes.detailKind.textContent = target.kind === 'place'
+        ? 'Public place · live current drawing'
+        : 'Public resident · live current drawing'
+      if (nodes.detailTitle) nodes.detailTitle.textContent = subject?.title || (
+        target.kind === 'place' ? 'Place #' + String(target.id) : 'Resident #' + String(target.id)
+      )
+      if (nodes.detailBody) {
+        if (!subject) {
+          nodes.detailBody.replaceChildren(element(
+            'p',
+            'empty-row',
+            'This public ' + target.kind + ' is not available now.',
+          ))
+        } else {
+          nodes.detailBody.replaceChildren(
+            element('p', 'record-detail-meta', subject.meta),
+            drawingDetailNode(target.kind, target.id, subject.title),
+          )
+        }
+      }
+      if (!nodes.detail.open) nodes.detail.showModal()
+      if (previousFocusKey) {
+        window.queueMicrotask(() => nodes.detailBody?.querySelector(
+          '[data-focus-key="' + CSS.escape(previousFocusKey) + '"]')?.focus())
+      }
       return
     }
     const key = target.kind + ':' + String(target.id)
@@ -9961,6 +10154,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
   detailShareButton?.addEventListener('click', () => void copyCurrentShareLink(detailShareButton))
   nodes.detailClose?.addEventListener('click', closeDetail)
+  nodes.detail?.addEventListener('click', event => {
+    if (event.target === nodes.detail) closeDetail()
+  })
   nodes.detail?.addEventListener('cancel', event => {
     event.preventDefault()
     closeDetail()

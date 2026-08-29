@@ -248,6 +248,28 @@ test('payment reliability is fail-hard in required checks and documented where i
   }
 })
 
+test('the read-only live probe enforces the public kind drawing contract', () => {
+  const probe = liveProbeWorkflow.match(
+    /- name: paid kind drawings resolve without spending[\s\S]*?(?=\r?\n      - name:)/u,
+  )?.[0]
+  assert.ok(probe, 'missing paid kind drawing live-probe step')
+
+  assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/drawing\/kind\/\$KIND_ID"/u)
+  assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
+  assert.match(probe, /\.state == "undrawn"/u)
+  assert.match(probe, /\.state == "refused"/u)
+  assert.match(probe, /\.state == "in_progress"/u)
+  assert.match(probe, /\.state == "complete"/u)
+  assert.match(probe, /\.presentation_state == "blank"/u)
+  assert.match(probe, /\.source == "none"/u)
+  assert.match(probe, /\.source == "kind_base"/u)
+  assert.match(probe, /\.drawing\.indices\s*\|\s*type == "array" and length == 64/u)
+  assert.match(probe, /\.rows\s*\|\s*type == "array"\s*and length == 8/u)
+  assert.match(probe, /all\(\.\[\]; type == "string" and test\(/u)
+  assert.match(probe, /\.kind_name \| type == "string" and length > 0/u)
+  assert.doesNotMatch(probe, /\.source == null|kind_revision/u)
+})
+
 test('preview migration requires exact acknowledgement and named isolated Neon targets', () => {
   assert.throws(
     () => resolveMigrationRun(
@@ -545,6 +567,54 @@ test('release instructions require maker provenance before later-holder marks in
     deploymentRunbook,
     /CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
+})
+
+test('production drawing migrations have one guarded order and rollback boundary', () => {
+  const drawingContract = deploymentRunbook.indexOf(
+    'npm run migrate:production:drawing-contract',
+  )
+  const worldRootDrawing = deploymentRunbook.indexOf(
+    'npm run migrate:production:world-root-drawing',
+  )
+
+  assert.ok(drawingContract >= 0 && drawingContract < worldRootDrawing)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION/u,
+  )
+  assert.match(
+    deploymentRunbook,
+    /fresh[^\n]*PRODUCTION_SNAPSHOT_NAME[^\n]*each production drawing command/iu,
+  )
+  for (const postcondition of [
+    'drawing_revisions',
+    'residents_drawing_contract',
+    'places_drawing_contract',
+    'kind_revisions_drawing_contract',
+    'things_drawing_contract',
+    'places_world_shape',
+    'places_world_drawing_exact',
+    'places_protect_topology_write',
+  ]) assert.match(deploymentRunbook, new RegExp(postcondition, 'u'))
+  assert.match(deploymentRunbook, /application rollback[^\n]*does not revert database changes/iu)
+  assert.match(deploymentRunbook, /destructive down migration[^\n]*not[^\n]*incident/iu)
+})
+
+test('PostgreSQL gate upgrades the checked-in pre-drawing production schema in release order', () => {
+  const fileName = 'drawing-upgrade-postgres.test.ts'
+  assertPostgresTestDiscovered(fileName)
+  const source = readFileSync(
+    new URL(`../test/integration/${fileName}`, import.meta.url),
+    'utf8',
+  )
+  const drawingContract = source.indexOf('await client.query(drawingContractMigrationDdl)')
+  const worldRootDrawing = source.indexOf('await client.query(worldRootDrawingMigrationDdl)')
+
+  assert.match(source, /production-pre-drawing-schema-98594c0\.sql\.gz\.base64/u)
+  assert.ok(drawingContract >= 0 && drawingContract < worldRootDrawing)
+  assert.match(source, /places_world_drawing_exact/u)
+  assert.match(source, /places_protect_topology_write/u)
+  assert.match(source, /drawing_revisions_append_only/u)
 })
 
 test('release preparation requires the resumable-registration schema in Preview and Production', () => {

@@ -66,18 +66,72 @@ jobs:
 
           DRAWING=$(curl -sf --max-time 20 "https://1f3d9.com/api/drawing/kind/$KIND_ID")
           echo "$DRAWING" | jq -e --argjson id "$KIND_ID" '
-            .type == "kind"
+            def positive_integer:
+              type == "number" and . >= 1 and floor == .;
+            def valid_kind_metadata($expected_id):
+              .kind_id == $expected_id
+              and (.kind_name | type == "string" and length > 0)
+              and (.revision | positive_integer)
+              and (has("variant_name") | not);
+            def valid_pixels:
+              . as $record
+              | (.drawing | type == "object" and keys == ["indices", "palette"])
+              and (.drawing.palette
+                | type == "array"
+                and length <= 64
+                and all(.[]; type == "string" and test("^#[0-9a-f]{6}$")))
+              and (.drawing.indices | type == "array" and length == 64)
+              and all($record.drawing.indices[];
+                . == null
+                or (type == "number"
+                  and floor == .
+                  and . >= 0
+                  and . < ($record.drawing.palette | length)))
+              and (.rows
+                | type == "array"
+                and length == 8
+                and all(.[]; type == "string" and test("^(?:\\.|[0-9]+)(?: (?:\\.|[0-9]+)){7}$")))
+              and ([
+                range(0; 8) as $row
+                | [
+                    $record.drawing.indices[($row * 8):(($row + 1) * 8)][]
+                    | if . == null then "." else tostring end
+                  ]
+                | join(" ")
+              ] == $record.rows);
+
+            . as $record
+            | .type == "kind"
             and .id == $id
-            and .kind_id == $id
-            and (.revision | type == "number" and . >= 1 and floor == .)
+            and valid_kind_metadata($id)
             and (
-              (.drawing == null and .source == null)
-              or (
-                .source == "kind_revision"
-                and (.drawing | type == "object")
-                and (.drawing.palette | type == "array")
-                and (.drawing.indices | type == "array" and length == 64)
-              )
+              (.state == "undrawn"
+                and .presentation_state == "undrawn"
+                and .source == "none"
+                and .description == null
+                and .drawing == null
+                and .rows == null)
+              or (.state == "refused"
+                and .presentation_state == "refused"
+                and .source == "kind_base"
+                and (.description | type == "string")
+                and .drawing == null
+                and .rows == null)
+              or (.state == "in_progress"
+                and .presentation_state == "in_progress"
+                and .source == "kind_base"
+                and (.description | type == "string")
+                and valid_pixels)
+              or (.state == "complete"
+                and .source == "kind_base"
+                and (.description | type == "string")
+                and valid_pixels
+                and (
+                  (all($record.drawing.indices[]; . == null)
+                    and .presentation_state == "blank")
+                  or (any($record.drawing.indices[]; . != null)
+                    and .presentation_state == "complete")
+                ))
             )
           ' >/dev/null || { echo "kind drawing projection wrong: $DRAWING"; exit 1; }
 
