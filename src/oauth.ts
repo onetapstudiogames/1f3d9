@@ -1229,6 +1229,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           accessTokenHash: sha256(accessToken),
           newRefreshTokenHash: sha256(refreshToken),
         })
+        if (rotated === 'overlapping') {
+          return fail('invalid_grant', 'overlapping_refresh')
+        }
         if (rotated !== 'rotated') return fail('invalid_grant')
         return tokenResponse(c, accessToken, refreshToken)
       }

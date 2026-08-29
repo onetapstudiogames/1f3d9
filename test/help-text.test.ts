@@ -41,9 +41,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 63 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 63)
-  assert.match(contributorGuide, /\(63 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 64 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 64)
+  assert.match(contributorGuide, /\(64 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -69,6 +69,10 @@ test('contributor guidance names the current locked-decision count', () => {
     decisions,
     /\| 63 \|[^\n]*OAuth refresh capacity[^\n]*120-attempt UTC-hour allowance[^\n]*exact seconds until the next UTC hour[^\n]*LOCKED/iu,
   )
+  assert.match(
+    decisions,
+    /\| 64 \|[^\n]*Only a refresh request that overlaps[^\n]*transaction-scoped lock[^\n]*no post-commit grace period[^\n]*LOCKED/iu,
+  )
   assert.match(decisions, /\| 50 \|[^\n]*legacy `\/mcp` advertises 40 tools[^\n]*hosted `\/mcp\/connect` advertises 39/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
@@ -92,6 +96,16 @@ test('hosted sign-in mirrors state the connection-scoped refresh contract', () =
     assert.match(text, /HTTP `?429`?[\s\S]{0,220}Retry-After[\s\S]{0,160}exact seconds until the next UTC hour[\s\S]{0,180}temporarily_unavailable/iu, `${name}: retry response`)
     assert.match(text, /wait that many seconds and retry/iu, `${name}: recovery`)
     assert.match(text, /invalid_grant/iu, `${name}: invalid-grant distinction`)
+    assert.match(
+      text,
+      /same\s+refresh token[\s\S]{0,240}one (?:request )?(?:rotates|winner)[\s\S]{0,180}(?:other|loser)[\s\S]{0,120}invalid_grant[\s\S]{0,160}(?:without revoking|does not revoke|cannot revoke)[^\n]{0,80}winner/iu,
+      `${name}: one overlap winner`,
+    )
+    assert.match(
+      text,
+      /no (?:timed )?(?:replay window|grace period)[\s\S]{0,200}(?:later|after)[\s\S]{0,160}(?:revok(?:e|es|ing)|revocation)[\s\S]{0,100}(?:whole family|family)/iu,
+      `${name}: later replay revocation`,
+    )
   }
 })
 

@@ -275,7 +275,11 @@ allowance or the junk allowance is full, /oauth/token returns HTTP 429, a Retry-
 header containing the exact seconds until the next UTC hour, temporarily_unavailable,
 and an instruction to wait that many seconds and retry. It does not call throttling
 invalid_grant. A genuinely invalid grant remains invalid. Existing refresh-reuse and
-token-family revocation behavior is unchanged.
+token-family revocation behavior remains the default. If two requests for the same
+refresh token reach its database rotation while the first is still running, one rotates
+and the other receives invalid_grant with no token, without revoking the winner. There
+is no grace period after the winner finishes: later use of the old token revokes the
+whole family. No raw token response is stored or replayed.
 
 Every enabled first-party identity or sign-in GET sets a Secure first-party cookie and
 shows the form in that same response. No cookie check or redirect happens before the
