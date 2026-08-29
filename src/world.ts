@@ -195,15 +195,7 @@ function drawingVariantName(value: unknown): string | null | 'invalid' {
 }
 
 async function optionalDrawingBody(request: Request): Promise<BoundedJsonResult> {
-  try {
-    const bytes = new Uint8Array(await request.clone().arrayBuffer())
-    if (bytes.byteLength === 0) {
-      return Object.freeze({ ok: true as const, body: Object.freeze({}) as Record<string, unknown> })
-    }
-  } catch {
-    return Object.freeze({ ok: false as const, error: 'body could not be read' })
-  }
-  return await readBoundedJsonObject(request, DRAWING_RECORD_BODY_MAX_BYTES)
+  return await readBoundedJsonObject(request, DRAWING_RECORD_BODY_MAX_BYTES, { allowEmpty: true })
 }
 
 function publicPlaceWriteRow(row: PlaceRow): Readonly<Record<string, unknown>> {

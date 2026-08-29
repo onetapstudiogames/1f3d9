@@ -5663,6 +5663,44 @@ test('things pin their birth revision and only their owner may voluntarily upgra
   })
 })
 
+test('thing upgrade reads an empty body once while required thing edit still rejects it', async () => {
+  reset({
+    scenario: 'thing revision',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    kindRevision: 2,
+  })
+  const request = new Request('http://localhost/api/thing/41/upgrade', {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  const readBody = request.arrayBuffer.bind(request)
+  let bodyReads = 0
+  Object.defineProperty(request, 'arrayBuffer', {
+    value: async () => {
+      bodyReads += 1
+      return await readBody()
+    },
+  })
+  Object.defineProperty(request, 'clone', {
+    value: () => {
+      throw new Error('thing upgrade must not clone its request body')
+    },
+  })
+
+  const response = await app.request(request)
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(bodyReads, 1)
+
+  const requiredEdit = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(),
+  })
+  assert.equal(requiredEdit.status, 400)
+  assert.deepEqual(await requiredEdit.json(), { error: 'body must be a JSON object' })
+})
+
 test('a typed thing owner deliberately selects base or a named variant on its pinned revision', async () => {
   const variants = [{
     name: 'ember',
