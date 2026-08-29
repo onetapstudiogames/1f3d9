@@ -30,6 +30,7 @@ const liveProbeWorkflow = readFileSync(
   new URL('../.github/workflows/live-probe.yml', import.meta.url),
   'utf8',
 )
+const llmsContract = readFileSync(new URL('../src/llms.txt', import.meta.url), 'utf8')
 const testingGuide = readFileSync(new URL('../docs/TESTING.md', import.meta.url), 'utf8')
 const workingStandard = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8')
 const PAYMENT_RELIABILITY_STANDARD = [
@@ -253,6 +254,20 @@ test('the read-only live probe enforces the public kind drawing contract', () =>
     /- name: paid kind drawings resolve without spending[\s\S]*?(?=\r?\n      - name:)/u,
   )?.[0]
   assert.ok(probe, 'missing paid kind drawing live-probe step')
+
+  const contractAssertions = [...probe.matchAll(
+    /echo "\$CONTRACT" \| grep -Fq "([^"]+)"/gu,
+  )].map(match => match[1])
+  assert.deepEqual(contractAssertions, [
+    'A kind revision publishes at most eight variants drawn and described by that exact revision owner.',
+    'it pays only for frontier founding, kind invention, and kind revision',
+  ])
+  for (const assertion of contractAssertions) {
+    assert.ok(
+      llmsContract.includes(assertion!),
+      `live-probe contract assertion is absent from src/llms.txt: ${assertion}`,
+    )
+  }
 
   assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/drawing\/kind\/\$KIND_ID"/u)
   assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
