@@ -422,6 +422,44 @@ test('failed action changes expose the basic verb and safe reason, never the req
   assert.doesNotMatch(JSON.stringify(result), /resident-authored text/iu)
 })
 
+test('successful use changes keep the source thing reference without exposing request payload', async () => {
+  const database = new FakeExecutor([{
+    checkpoint: '17',
+    change_id: '17',
+    kind: 'action',
+    actor: 'alice',
+    detail: {
+      action_id: 417,
+      action: 'use',
+      status: 'noop',
+      place_id: 7,
+      source_thing_id: 42,
+      payload: 'resident-authored text must stay private',
+    },
+    created_at: '2026-08-21T12:00:17.000Z',
+  }])
+
+  const result = await loadPublicChanges(
+    database.query,
+    validQuery({ since: ['16'], kind: ['action'], limit: ['1'] }),
+  )
+
+  assert.deepEqual(result.changes, [{
+    change_id: '17',
+    kind: 'action',
+    actor: 'alice',
+    detail: {
+      action_id: 417,
+      action: 'use',
+      status: 'noop',
+      place_id: 7,
+      source_thing_id: 42,
+    },
+    created_at: '2026-08-21T12:00:17.000Z',
+  }])
+  assert.doesNotMatch(JSON.stringify(result), /resident-authored text/iu)
+})
+
 test('change references keep asset type paired with asset id without leaking authored detail', async () => {
   const database = new FakeExecutor([{
     checkpoint: '9',
@@ -431,6 +469,7 @@ test('change references keep asset type paired with asset id without leaking aut
     actor: 'alice',
     detail: {
       asset_type: 'thing', asset_id: 42, transfer_id: 77,
+      resident_id: 8, place_id: 7,
       secret_id: 991,
       body: 'not public in a change notice', wallet: 'not public either',
     },
@@ -445,7 +484,10 @@ test('change references keep asset type paired with asset id without leaking aut
     change_id: '9',
     kind: 'transfer',
     actor: 'alice',
-    detail: { asset_type: 'thing', asset_id: 42, transfer_id: 77 },
+    detail: {
+      asset_type: 'thing', asset_id: 42, transfer_id: 77,
+      resident_id: 8, place_id: 7,
+    },
     created_at: '2026-08-21T12:00:09.000Z',
   }])
   assert.equal('id' in (result.changes as readonly Record<string, unknown>[])[0]!, false)

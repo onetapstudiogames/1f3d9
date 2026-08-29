@@ -96,6 +96,13 @@ async function issueThreeCredits(db: CityCreditDatabase): Promise<void> {
   }
 }
 
+function proofDrawing(color: string, paintedIndex: number) {
+  return {
+    palette: [color],
+    indices: Array.from({ length: 64 }, (_, index) => index === paintedIndex ? 0 : null),
+  }
+}
+
 async function issueCredits(
   db: CityCreditDatabase,
   count: number,
@@ -153,6 +160,20 @@ test('shared treasury completion executes every paid credit operation in real Po
       description: 'A disposable kind completion proof.',
       traits: [],
       recipe: [],
+      drawing: proofDrawing('#123456', 0),
+      drawing_state: 'complete',
+      drawing_description: 'The first finished base drawing.',
+      drawing_variants: [{
+        name: 'ember',
+        drawing: proofDrawing('#abcdef', 1),
+        drawing_state: 'in_progress',
+        drawing_description: 'The ember variant has one unfinished bright cell.',
+      }, {
+        name: 'ash',
+        drawing: proofDrawing('#999999', 2),
+        drawing_state: 'complete',
+        drawing_description: 'The ash variant has one finished grey cell.',
+      }],
     }
     const invention = await beginCityCreditSpend(db, {
       actorId: 2,
@@ -185,6 +206,10 @@ test('shared treasury completion executes every paid credit operation in real Po
       description: 'The revised disposable kind completion proof.',
       traits: [],
       recipe: [],
+      drawing: proofDrawing('#654321', 63),
+      drawing_state: 'complete',
+      drawing_description: 'The revised finished base drawing.',
+      drawing_variants: [inventionRequest.drawing_variants[0]!],
     }
     const revision = await beginCityCreditSpend(db, {
       actorId: 2,
@@ -214,6 +239,14 @@ test('shared treasury completion executes every paid credit operation in real Po
       balance_units: string
       frontier_places: number
       kind_revision: number
+      invention_drawing: unknown
+      invention_drawing_state: string
+      invention_drawing_description: string | null
+      invention_drawing_variants: unknown
+      revision_drawing: unknown
+      revision_drawing_state: string
+      revision_drawing_description: string | null
+      revision_drawing_variants: unknown
     }>(`
       SELECT
         (SELECT count(*)::int FROM payment_attempts WHERE actor_id = 2 AND status = 'completed')
@@ -227,7 +260,23 @@ test('shared treasury completion executes every paid credit operation in real Po
         (SELECT count(*)::int FROM places WHERE name = $1 AND owner_id = 2)
           AS frontier_places,
         (SELECT current_revision FROM kinds WHERE id = $2)
-          AS kind_revision
+          AS kind_revision,
+        (SELECT drawing FROM kind_revisions WHERE kind_id = $2 AND revision = 1)
+          AS invention_drawing,
+        (SELECT drawing_state FROM kind_revisions WHERE kind_id = $2 AND revision = 1)
+          AS invention_drawing_state,
+        (SELECT drawing_description FROM kind_revisions WHERE kind_id = $2 AND revision = 1)
+          AS invention_drawing_description,
+        (SELECT drawing_variants FROM kind_revisions WHERE kind_id = $2 AND revision = 1)
+          AS invention_drawing_variants,
+        (SELECT drawing FROM kind_revisions WHERE kind_id = $2 AND revision = 2)
+          AS revision_drawing,
+        (SELECT drawing_state FROM kind_revisions WHERE kind_id = $2 AND revision = 2)
+          AS revision_drawing_state,
+        (SELECT drawing_description FROM kind_revisions WHERE kind_id = $2 AND revision = 2)
+          AS revision_drawing_description,
+        (SELECT drawing_variants FROM kind_revisions WHERE kind_id = $2 AND revision = 2)
+          AS revision_drawing_variants
     `, [frontierRequest.name, kindId])
     assert.deepEqual(finalState.rows, [{
       completed_attempts: 3,
@@ -236,6 +285,187 @@ test('shared treasury completion executes every paid credit operation in real Po
       balance_units: '0',
       frontier_places: 1,
       kind_revision: 2,
+      invention_drawing: inventionRequest.drawing,
+      invention_drawing_state: inventionRequest.drawing_state,
+      invention_drawing_description: inventionRequest.drawing_description,
+      invention_drawing_variants: [{
+        name: 'ember',
+        drawing: inventionRequest.drawing_variants[0]?.drawing,
+        state: 'in_progress',
+        description: inventionRequest.drawing_variants[0]?.drawing_description,
+      }, {
+        name: 'ash',
+        drawing: inventionRequest.drawing_variants[1]?.drawing,
+        state: 'complete',
+        description: inventionRequest.drawing_variants[1]?.drawing_description,
+      }],
+      revision_drawing: revisionRequest.drawing,
+      revision_drawing_state: revisionRequest.drawing_state,
+      revision_drawing_description: revisionRequest.drawing_description,
+      revision_drawing_variants: [{
+        name: 'ember',
+        drawing: inventionRequest.drawing_variants[0]?.drawing,
+        state: 'in_progress',
+        description: inventionRequest.drawing_variants[0]?.drawing_description,
+      }],
+    }])
+
+    const drawingHistory = await postgres.client.query<{
+      slot_variant_name: string | null
+      prior_state: string
+      prior_source: string
+      prior_kind_revision: number | null
+      current_state: string
+      current_source: string
+      current_kind_revision: number | null
+      author_id: number
+      author_relation: string
+    }>(`
+      SELECT slot_variant_name,
+        prior_state, prior_source, prior_kind_revision,
+        current_state, current_source, current_kind_revision,
+        author_id, author_relation
+      FROM drawing_revisions
+      WHERE target_type = 'kind' AND target_id = $1
+      ORDER BY id
+    `, [kindId])
+    assert.deepEqual(drawingHistory.rows, [
+      {
+        slot_variant_name: null,
+        prior_state: 'undrawn', prior_source: 'none', prior_kind_revision: null,
+        current_state: 'complete', current_source: 'kind_base', current_kind_revision: 1,
+        author_id: 2, author_relation: 'kind_owner',
+      },
+      {
+        slot_variant_name: 'ember',
+        prior_state: 'undrawn', prior_source: 'none', prior_kind_revision: null,
+        current_state: 'in_progress', current_source: 'kind_variant', current_kind_revision: 1,
+        author_id: 2, author_relation: 'kind_owner',
+      },
+      {
+        slot_variant_name: 'ash',
+        prior_state: 'undrawn', prior_source: 'none', prior_kind_revision: null,
+        current_state: 'complete', current_source: 'kind_variant', current_kind_revision: 1,
+        author_id: 2, author_relation: 'kind_owner',
+      },
+      {
+        slot_variant_name: null,
+        prior_state: 'complete', prior_source: 'kind_base', prior_kind_revision: 1,
+        current_state: 'complete', current_source: 'kind_base', current_kind_revision: 2,
+        author_id: 2, author_relation: 'kind_owner',
+      },
+      {
+        slot_variant_name: 'ember',
+        prior_state: 'in_progress', prior_source: 'kind_variant', prior_kind_revision: 1,
+        current_state: 'in_progress', current_source: 'kind_variant', current_kind_revision: 2,
+        author_id: 2, author_relation: 'kind_owner',
+      },
+      {
+        slot_variant_name: 'ash',
+        prior_state: 'complete', prior_source: 'kind_variant', prior_kind_revision: 1,
+        current_state: 'undrawn', current_source: 'none', current_kind_revision: null,
+        author_id: 2, author_relation: 'kind_owner',
+      },
+    ])
+
+    const beforeRejectedEffects = await postgres.client.query<{ drawing_revisions: number }>(`
+      SELECT count(*)::int AS drawing_revisions FROM drawing_revisions
+    `)
+    const unchangedDrawingRevisionCount = beforeRejectedEffects.rows[0]?.drawing_revisions
+    assert.equal(typeof unchangedDrawingRevisionCount, 'number')
+
+    const malformedCredit = await issueCityFeeCredit(db, {
+      founderId: 1,
+      residentId: 2,
+      sourceKey: 'treasury-operation-malformed-drawing-credit',
+      reason: 'prove malformed drawing completion has no partial world effect',
+    })
+    assert.equal(malformedCredit.disposition, 'created')
+    const malformedRequest = {
+      name: 'treasury-proof-malformed-kind',
+      description: 'This drawing intentionally omits its paired authored fields.',
+      traits: [],
+      recipe: [],
+      drawing: proofDrawing('#abcdef', 3),
+    }
+    const malformed = await beginCityCreditSpend(db, {
+      actorId: 2,
+      operation: 'kind_invention',
+      targetKey: `kind-invention:${malformedRequest.name}`,
+      request: malformedRequest,
+      requestId: 'treasury-proof-malformed-request',
+    })
+    assert.equal(malformed.state, 'ready')
+    if (malformed.state !== 'ready') assert.fail('malformed drawing spend did not acquire its lease')
+    const rejectedMalformed = await completeTreasuryPaymentOperation(db, {
+      attemptId: malformed.attempt_id,
+      leaseOwner: malformed.lease_owner,
+    })
+    assert.equal(rejectedMalformed.state, 'target_changed')
+
+    const lateCredit = await issueCityFeeCredit(db, {
+      founderId: 1,
+      residentId: 2,
+      sourceKey: 'treasury-operation-late-drawing-credit',
+      reason: 'prove late drawing completion has no partial world effect',
+    })
+    assert.equal(lateCredit.disposition, 'created')
+    const lateRequest = {
+      name: 'treasury-proof-late-kind',
+      description: 'A valid authored refusal whose completion is deliberately late.',
+      traits: [],
+      recipe: [],
+      drawing: 'REFUSE',
+      drawing_description: 'I decline to draw this kind.',
+    }
+    const late = await beginCityCreditSpend(db, {
+      actorId: 2,
+      operation: 'kind_invention',
+      targetKey: `kind-invention:${lateRequest.name}`,
+      request: lateRequest,
+      requestId: 'treasury-proof-late-request',
+    })
+    assert.equal(late.state, 'ready')
+    if (late.state !== 'ready') assert.fail('late drawing spend did not acquire its lease')
+    await postgres.client.query(
+      'ALTER TABLE payment_attempts DISABLE TRIGGER payment_attempts_initialize_recovery_window',
+    )
+    await postgres.client.query(
+      'ALTER TABLE payment_attempts DISABLE TRIGGER payment_attempts_keep_history',
+    )
+    await postgres.client.query(`
+      WITH expired_window AS (
+        SELECT clock_timestamp() - interval '3 hours' AS started_at
+      )
+      UPDATE payment_attempts
+      SET recovery_started_at = expired_window.started_at,
+          recovery_deadline_at = expired_window.started_at + interval '2 hours'
+      FROM expired_window
+      WHERE public_id = $1
+    `, [late.attempt_id])
+    await postgres.client.query(
+      'ALTER TABLE payment_attempts ENABLE TRIGGER payment_attempts_initialize_recovery_window',
+    )
+    await postgres.client.query(
+      'ALTER TABLE payment_attempts ENABLE TRIGGER payment_attempts_keep_history',
+    )
+    const rejectedLate = await completeTreasuryPaymentOperation(db, {
+      attemptId: late.attempt_id,
+      leaseOwner: late.lease_owner,
+    })
+    assert.equal(rejectedLate.state, 'deadline_passed')
+
+    const rejectedEffects = await postgres.client.query<{
+      rejected_kinds: number
+      drawing_revisions: number
+    }>(`
+      SELECT
+        (SELECT count(*)::int FROM kinds WHERE name IN ($1, $2)) AS rejected_kinds,
+        (SELECT count(*)::int FROM drawing_revisions) AS drawing_revisions
+    `, [malformedRequest.name, lateRequest.name])
+    assert.deepEqual(rejectedEffects.rows, [{
+      rejected_kinds: 0,
+      drawing_revisions: unchangedDrawingRevisionCount,
     }])
   } finally {
     await postgres.client.end().catch(() => undefined)

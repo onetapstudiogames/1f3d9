@@ -44,6 +44,14 @@ const TX1 = '0x' + '11'.repeat(32)
 const TX2 = '0x' + '22'.repeat(32)
 const TX_CASE_UPPER = '0x' + 'AB'.repeat(32)
 const AUTHORIZATION_NOW = Math.floor(Date.now() / 1000)
+const CONTRACT_DRAWING = Object.freeze({
+  palette: Object.freeze(['#ad3f25', '#f0c95f']),
+  indices: Object.freeze(Array.from(
+    { length: 64 },
+    (_, index) => index % 3 === 0 ? null : index % 2,
+  )),
+})
+const CONTRACT_DRAWING_DESCRIPTION = 'A warm lantern with a sunlit brass frame.'
 function xPayment(
   payer: string,
   payee: string,
@@ -204,6 +212,9 @@ interface FakeState {
   agreementCreatorId: number
   agreementExists: boolean
   thingOwnerId: number
+  thingKindId: number | null
+  thingCurrentRevision: number | null
+  thingDrawingVariant: string | null
   thingOpenToUse: boolean
   thingWithdrawn: boolean
   targetThingOwnerId: number
@@ -213,6 +224,10 @@ interface FakeState {
   targetThingWithdrawn: boolean
   kindOwnerId: number
   kindRevision: number
+  kindDrawing: unknown
+  kindDrawingState: 'in_progress' | 'complete' | null
+  kindDrawingDescription: string | null
+  kindDrawingVariants: unknown[]
   kindRecipe: unknown
   traitHasRecipe: boolean
   kindTraitNames: string[]
@@ -267,6 +282,7 @@ interface FakeState {
   exactTotalsSuccessfulReads: number
   publicChangeMarker: string
   publicReadMarkerRaces: number
+  publicReadMarkerRaceNeedle: string | null
   laterHolderItems: FakeLaterHolderItem[]
   recentNote: FakeRecentNote | null
   nextNoteId: number
@@ -294,6 +310,9 @@ const initialState = (): FakeState => ({
   agreementCreatorId: 7,
   agreementExists: true,
   thingOwnerId: 7,
+  thingKindId: 3,
+  thingCurrentRevision: 1,
+  thingDrawingVariant: null,
   thingOpenToUse: false,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
@@ -303,6 +322,10 @@ const initialState = (): FakeState => ({
   targetThingWithdrawn: false,
   kindOwnerId: 7,
   kindRevision: 1,
+  kindDrawing: null,
+  kindDrawingState: null,
+  kindDrawingDescription: null,
+  kindDrawingVariants: [],
   kindRecipe: [],
   traitHasRecipe: false,
   kindTraitNames: ['glowing'],
@@ -356,6 +379,7 @@ const initialState = (): FakeState => ({
   exactTotalsSuccessfulReads: 0,
   publicChangeMarker: '9',
   publicReadMarkerRaces: 0,
+  publicReadMarkerRaceNeedle: null,
   laterHolderItems: [{
     mark_id: '2', id: 41, title: 'porch lantern', place_id: 2,
     place_title: 'Lantern Town', date: '2026-08-11T00:00:00.000000Z',
@@ -430,6 +454,10 @@ const kindRow = () => ({
   description: state.kindRevision === 1 ? 'a small light' : 'a small dependable light',
   traits: state.kindTraitNames,
   recipe: state.kindRecipe,
+  drawing: state.kindDrawing,
+  drawing_state: state.kindDrawingState,
+  drawing_description: state.kindDrawingDescription,
+  drawing_variants: state.kindDrawingVariants,
   created_at: '2026-08-11T00:00:00.000Z',
 })
 
@@ -439,7 +467,7 @@ const residentHandleForFakeId = (id: number) => id === 7
 
 const thingRow = (id = 41) => {
   const source = id === 41
-  const kindId = source ? 3 : state.targetThingKindId
+  const kindId = source ? state.thingKindId : state.targetThingKindId
   const ownerId = source ? state.thingOwnerId : state.targetThingOwnerId
   return {
     id,
@@ -456,7 +484,10 @@ const thingRow = (id = 41) => {
     kind_id: kindId,
     kind: kindId === null ? null : 'lantern',
     birth_revision: kindId === null ? null : 1,
-    current_revision: kindId === null ? null : state.kindRevision,
+    current_revision: kindId === null ? null : state.thingCurrentRevision,
+    latest_revision: kindId === null ? null : state.kindRevision,
+    drawing_variant_name: kindId === null ? null : state.thingDrawingVariant,
+    drawing_variants: kindId === null ? [] : state.kindDrawingVariants,
     withdrawn_at: source
       ? (state.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null)
       : (state.targetThingWithdrawn ? '2026-08-11T00:03:00.000Z' : null),
@@ -1265,16 +1296,20 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (q.includes('/* public:changes-checkpoint */')) {
     return [{ checkpoint: state.publicChangeMarker }]
   }
-  if (state.publicReadMarkerRaces > 0 && [
-    '/* public:map-outline */',
-    '/* public:residents */',
-    '/* public:resident-presence */',
-    '/* public:events */',
-    'from notes note',
-    'from things thing',
-    'from agreements agreement',
-    '/* public:window-outline-totals */',
-  ].some(marker => q.includes(marker))) {
+  const publicReadMarkerRaceNeedle = state.publicReadMarkerRaceNeedle
+  if (state.publicReadMarkerRaces > 0 && (publicReadMarkerRaceNeedle
+    ? q.includes(publicReadMarkerRaceNeedle)
+    : [
+        '/* public:map-outline */',
+        '/* public:residents */',
+        '/* public:resident-presence */',
+        '/* public:events */',
+        'from notes note',
+        'from things thing',
+        'from agreements agreement',
+        '/* public:window-outline-totals */',
+        '/* public:window-live-survey */',
+      ].some(marker => q.includes(marker)))) {
     state = {
       ...state,
       publicChangeMarker: (BigInt(state.publicChangeMarker) + 1n).toString(),
@@ -1287,6 +1322,16 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       kind: 'action', actor: 'tiny-lantern',
       detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
     }]
+  }
+  if (q.includes('/* public:window-live-survey */')) {
+    const places = state.scenario === 'window outline'
+      ? [mapOutlineParent(1), ...mapOutlineRows().sort((left, right) => left.id - right.id)]
+      : [placeRow(1, null), placeRow(2, 1), placeRow(3, 1)]
+    return places.map(place => ({
+      id: place.id,
+      parent_id: place.parent_id,
+      things: place.things,
+    }))
   }
 
   // Once the action resolution committed, every later presence read breaks.
@@ -3170,11 +3215,10 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_open_offer: state.offer.status === 'open',
     }]
   }
-  if (q.includes('select thing.id, thing.owner_id, thing.active_offer_id') &&
+  if (q.includes('select thing.id, thing.owner_id') && q.includes('thing.active_offer_id') &&
       q.includes('left join transfer_offers')) {
     return state.thingWithdrawn ? [] : [{
-      id: 41,
-      owner_id: state.thingOwnerId,
+      ...thingRow(41),
       active_offer_id: state.offer.status === 'open' ? state.offer.id : null,
       has_open_offer: state.offer.status === 'open',
     }]
@@ -3313,6 +3357,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
   if (q.includes('insert into things')) return [thingRow()]
   if (q.includes('update things set')) {
+    if (q.includes('current_revision')) {
+      state = { ...state, thingCurrentRevision: state.kindRevision }
+    }
     if (q.includes('open_to_use')) {
       const requested = params.find(value => value === true || value === false || value === 'true' || value === 'false')
       if (requested != null) state = { ...state, thingOpenToUse: String(requested) === 'true' }
@@ -4189,7 +4236,8 @@ test('window reads retry an interleaved public commit instead of labeling newer 
       name: 'outline snapshot',
       scenario: 'window outline',
       path: '/api/window?view=outline&after_change_marker=20',
-      dataPattern: /\/\* public:residents \*\//iu,
+      dataPattern: /\/\* public:window-live-survey \*\//iu,
+      raceNeedle: '/* public:window-live-survey */',
     },
     {
       name: 'focused or paged map',
@@ -4229,6 +4277,7 @@ test('window reads retry an interleaved public commit instead of labeling newer 
         scenario: entry.scenario,
         publicChangeMarker: '20',
         publicReadMarkerRaces: 1,
+        publicReadMarkerRaceNeedle: 'raceNeedle' in entry ? entry.raceNeedle : null,
       })
       const response = await app.request(entry.path)
       assert.equal(response.status, 200, entry.name)
@@ -4236,6 +4285,11 @@ test('window reads retry an interleaved public commit instead of labeling newer 
         (await response.json() as { change_marker?: string }).change_marker,
         '21',
         `${entry.name} returns the checkpoint proven around its accepted rows`,
+      )
+      assert.equal(
+        state.publicReadMarkerRaces,
+        0,
+        `${entry.name} crosses its named data read rather than an earlier neighbor`,
       )
       assert.ok(
         sqlCalls().filter(call => entry.dataPattern.test(call.query ?? '')).length >= 2,
@@ -4332,6 +4386,7 @@ test('the legacy full window stays exact and explicit full shares its snapshot c
     assert.equal(legacyResponse.status, 200)
     const legacy = await legacyResponse.json() as Record<string, unknown>
     assert.equal(Object.hasOwn(legacy, 'view'), false)
+    assert.equal(Object.hasOwn(legacy, 'live_survey'), false)
     assert.equal(legacy.map_complete, false)
     const callsAfterLegacy = sqlCalls().length
 
@@ -4339,6 +4394,7 @@ test('the legacy full window stays exact and explicit full shares its snapshot c
     assert.equal(explicitResponse.status, 200)
     const explicit = await explicitResponse.json() as Record<string, unknown>
     assert.equal(explicit.view, 'full')
+    assert.equal(Object.hasOwn(explicit, 'live_survey'), false)
     assert.deepEqual(
       Object.fromEntries(Object.entries(explicit).filter(([key]) => key !== 'view')),
       legacy,
@@ -4380,6 +4436,7 @@ test('the outline window bounds its map and presence pages without changing rece
         kind: string
         detail: Record<string, number | string>
       }>
+      live_survey: Array<{ id: number; parent_id: number | null; things: number }>
       pages: {
         places: { has_more: boolean; next_before_subplace_id: number | null }
         residents: { has_more: boolean; next_before_id: number | null }
@@ -4391,6 +4448,15 @@ test('the outline window bounds its map and presence pages without changing rece
     }
     assert.equal(body.view, 'outline')
     assert.equal(body.change_marker, '9')
+    assert.deepEqual(
+      body.live_survey.map(place => place.id),
+      [1, ...recentIds(160).reverse()],
+      'the marker-covered survey carries every place, not only the bounded map page',
+    )
+    assert.equal(body.live_survey.every(place => (
+      Object.keys(place).sort().join(',') === 'id,parent_id,things' &&
+      Number.isSafeInteger(place.things) && place.things >= 0
+    )), true, 'the compact survey exposes only topology and direct thing counts')
     assert.deepEqual(body.places.map(place => place.id), [1])
     assert.deepEqual(body.places[0]?.children.map(place => place.id), recentIds(160).slice(0, 10))
     assert.equal(body.places[0]?.children.every(place => (
@@ -4493,6 +4559,7 @@ test('the directory window is one cached, moderated, body-free statement with ex
       residents: Array<Record<string, unknown>>
     }
     assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents', 'view'])
+    assert.equal(Object.hasOwn(directory, 'live_survey'), false)
     assert.equal(directory.view, 'directory')
     assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
     assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id', 'type'])
@@ -4595,7 +4662,7 @@ test('a busy outline-window census starts no secondary public reads', async () =
     assert.deepEqual(await response.json(), {
       error: 'exact public totals are temporarily busy; retry',
     })
-    const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
+    const secondaryRead = sqlCalls().find(call => /public:map-(?:parent|outline)|public:window-live-survey|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail|select count\(\*\)::int from places/iu.test(call.query ?? ''))
     assert.equal(
       secondaryRead,
       undefined,
@@ -4625,7 +4692,7 @@ test('busy outline-window global totals stop before map or history reads', async
       call.query?.includes('/* public:budgeted-exact */'))
     assert.equal(budgetedReads.length, 2, 'census passes before global totals reject')
     const secondaryRead = sqlCalls().find(call =>
-      /public:map-(?:parent|outline)|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
+      /public:map-(?:parent|outline)|public:window-live-survey|from notes note|from things thing|from agreements agreement|select id, at, kind, actor, detail/iu.test(call.query ?? ''))
     assert.equal(
       secondaryRead,
       undefined,
@@ -5101,6 +5168,319 @@ test('kind revision is paid but never rewrites existing things', async () => {
   assert.equal(sqlCalls().some(call => /update\s+things/i.test(call.query ?? '')), false)
 })
 
+test('place drawings atomically require the owner-selected state and paired description', async () => {
+  reset({ scenario: 'place drawing', placeOwnerId: 7 })
+  const place = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: 'The word REFUSE is painted on a complete warning sign.',
+    }),
+  })
+  assert.equal(place.status, 200, await place.clone().text())
+  const placeWrite = sqlCalls().find(call => /update\s+places\s+set/iu.test(call.query ?? ''))
+  assert.match(placeWrite?.query ?? '', /drawing_state/iu)
+  assert.match(placeWrite?.query ?? '', /drawing_description/iu)
+  assert.match(placeWrite?.query ?? '', /drawing_revisions/iu)
+  assert.match(placeWrite?.query ?? '', /IS\s+DISTINCT\s+FROM/iu)
+  assert.equal(placeWrite?.params?.includes('complete'), true)
+  assert.equal(
+    placeWrite?.params?.includes('The word REFUSE is painted on a complete warning sign.'),
+    true,
+  )
+
+  reset({ scenario: 'place refused drawing', placeOwnerId: 7 })
+  const refused = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({
+      drawing: 'REFUSE',
+      drawing_description: 'I decline to draw this place.',
+    }),
+  })
+  assert.equal(refused.status, 200, await refused.clone().text())
+  const refusalWrite = sqlCalls().find(call => /update\s+places\s+set/iu.test(call.query ?? ''))
+  assert.equal(refusalWrite?.params?.includes('refused'), true)
+  assert.equal(refusalWrite?.params?.includes('REFUSE'), false)
+  assert.equal(refusalWrite?.params?.includes('I decline to draw this place.'), true)
+
+  state = { ...state, calls: [] }
+  const cleared = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing: null }),
+  })
+  assert.equal(cleared.status, 200, await cleared.clone().text())
+  const clearWrite = sqlCalls().find(call => /update\s+places\s+set/iu.test(call.query ?? ''))
+  assert.match(clearWrite?.query ?? '', /drawing_revisions/iu)
+})
+
+test('thing drawing rules separate typed inheritance from untyped owner artwork', async () => {
+  reset({ scenario: 'typed thing direct drawing', thingOwnerId: 7, thingKindId: 3 })
+  const typedPixels = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: CONTRACT_DRAWING_DESCRIPTION,
+    }),
+  })
+  assert.equal(typedPixels.status, 400, await typedPixels.clone().text())
+  assert.match((await typedPixels.json() as { error: string }).error, /typed|kind|inherit/iu)
+  assert.equal(sqlCalls().some(call => /update\s+things\s+set/iu.test(call.query ?? '')), false)
+
+  reset({ scenario: 'typed thing refusal', thingOwnerId: 7, thingKindId: 3 })
+  const refused = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({
+      drawing: 'REFUSE',
+      drawing_description: 'I refuse to show the inherited lantern drawing.',
+    }),
+  })
+  assert.equal(refused.status, 200, await refused.clone().text())
+  assert.match(
+    sqlCalls().find(call => /update\s+things\s+set/iu.test(call.query ?? ''))?.query ?? '',
+    /drawing_revisions/iu,
+  )
+
+  state = { ...state, calls: [] }
+  const inheritedAgain = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing: null }),
+  })
+  assert.equal(inheritedAgain.status, 200, await inheritedAgain.clone().text())
+
+  reset({ scenario: 'untyped thing drawing', thingOwnerId: 7, thingKindId: null })
+  const untypedPixels = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'in_progress',
+      drawing_description: 'The lantern body is drawn; the handle is still unfinished.',
+    }),
+  })
+  assert.equal(untypedPixels.status, 200, await untypedPixels.clone().text())
+  const untypedWrite = sqlCalls().find(call => /update\s+things\s+set/iu.test(call.query ?? ''))
+  assert.match(untypedWrite?.query ?? '', /drawing_state/iu)
+  assert.match(untypedWrite?.query ?? '', /drawing_description/iu)
+  assert.match(untypedWrite?.query ?? '', /drawing_revisions/iu)
+})
+
+test('paid kind requests store owner-authored base drawings and bounded named variants', async () => {
+  const variants = [
+    {
+      name: 'ember',
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: 'A low amber glow around the lantern base.',
+    },
+    {
+      name: 'dawn',
+      drawing: {
+        palette: ['#f0c95f'],
+        indices: Array.from({ length: 64 }, (_, index) => index < 8 ? 0 : null),
+      },
+      drawing_state: 'in_progress',
+      drawing_description: 'The dawn stripe is placed; the frame is unfinished.',
+    },
+  ]
+
+  reset({
+    scenario: 'kind drawing', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const kind = await app.request('/api/kind', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      name: 'painted-lantern', description: 'a drawn kind', traits: [], recipe: [],
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: CONTRACT_DRAWING_DESCRIPTION,
+      drawing_variants: variants,
+    }),
+  })
+  assert.equal(kind.status, 201, await kind.clone().text())
+  const inventionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_invention')
+  assert.deepEqual(inventionAttempt?.request_json?.drawing, CONTRACT_DRAWING)
+  assert.equal(inventionAttempt?.request_json?.drawing_state, 'complete')
+  assert.equal(inventionAttempt?.request_json?.drawing_description, CONTRACT_DRAWING_DESCRIPTION)
+  assert.deepEqual(inventionAttempt?.request_json?.drawing_variants, variants)
+
+  reset({
+    scenario: 'kind drawing revision', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+    kindDrawing: CONTRACT_DRAWING,
+    kindDrawingState: 'complete',
+    kindDrawingDescription: CONTRACT_DRAWING_DESCRIPTION,
+    kindDrawingVariants: variants,
+  })
+  const revised = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ description: 'same art, newly revised words' }),
+  })
+  assert.equal(revised.status, 200, await revised.clone().text())
+  const revisionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_revision')
+  assert.deepEqual(revisionAttempt?.request_json?.drawing, CONTRACT_DRAWING)
+  assert.equal(revisionAttempt?.request_json?.drawing_state, 'complete')
+  assert.equal(revisionAttempt?.request_json?.drawing_description, CONTRACT_DRAWING_DESCRIPTION)
+  assert.deepEqual(revisionAttempt?.request_json?.drawing_variants, variants)
+
+  reset({
+    scenario: 'kind variant removal revision', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+    kindDrawing: CONTRACT_DRAWING,
+    kindDrawingState: 'complete',
+    kindDrawingDescription: CONTRACT_DRAWING_DESCRIPTION,
+    kindDrawingVariants: variants,
+  })
+  const removed = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ drawing_variants: [] }),
+  })
+  assert.equal(removed.status, 200, await removed.clone().text())
+  const removalAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_revision')
+  assert.deepEqual(removalAttempt?.request_json?.drawing, CONTRACT_DRAWING)
+  assert.equal(removalAttempt?.request_json?.drawing_state, 'complete')
+  assert.equal(removalAttempt?.request_json?.drawing_description, CONTRACT_DRAWING_DESCRIPTION)
+  assert.deepEqual(removalAttempt?.request_json?.drawing_variants, [])
+})
+
+test('omitted empty kind drawings retain the pre-drawing canonical payment shape', async () => {
+  reset({
+    scenario: 'legacy-shaped kind invention', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const invented = await app.request('/api/kind', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({
+      name: 'legacy-shaped-lantern', description: 'no drawing supplied', traits: [], recipe: [],
+    }),
+  })
+  assert.equal(invented.status, 201, await invented.clone().text())
+  const inventionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_invention')
+  assert.equal(Object.hasOwn(inventionAttempt?.request_json ?? {}, 'drawing'), false)
+
+  reset({
+    scenario: 'legacy-shaped kind revision', chainFrom: SELLER_WALLET, chainTo: TREASURY,
+    facilitatorVerify: true, facilitatorSettle: true,
+  })
+  const revised = await app.request('/api/kind/3/revise', {
+    method: 'POST', headers: { ...authHeaders(), 'X-PAYMENT': X_PAYMENT },
+    body: JSON.stringify({ description: 'still no drawing supplied' }),
+  })
+  assert.equal(revised.status, 200, await revised.clone().text())
+  const revisionAttempt = [...state.paymentAttempts.values()]
+    .find(attempt => attempt.operation === 'kind_revision')
+  assert.equal(Object.hasOwn(revisionAttempt?.request_json ?? {}, 'drawing'), false)
+})
+
+test('drawing write validation is caller-worded and runs before owner writes or payment', async () => {
+  const invalid = {
+    palette: ['red'],
+    indices: Array.from({ length: 64 }, () => 0),
+  }
+  const cases = [
+    ['/api/place/2', 'PATCH'],
+    ['/api/thing/41', 'PATCH'],
+    ['/api/kind', 'POST'],
+    ['/api/kind/3/revise', 'POST'],
+  ] as const
+
+  for (const [path, method] of cases) {
+    reset({ scenario: `invalid drawing ${path}`, placeOwnerId: 7, thingOwnerId: 7 })
+    const response = await app.request(path, {
+      method,
+      headers: authHeaders(),
+      body: JSON.stringify(path === '/api/kind'
+        ? {
+            name: 'invalid-drawing', traits: [], recipe: [], drawing: invalid,
+            drawing_state: 'complete', drawing_description: 'Invalid colour proof.',
+          }
+        : {
+            drawing: invalid,
+            drawing_state: 'complete',
+            drawing_description: 'Invalid colour proof.',
+          }),
+    })
+    assert.equal(response.status, 400, `${path}: ${await response.clone().text()}`)
+    assert.match((await response.json() as { error: string }).error, /drawing.*#rrggbb/iu)
+    assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false)
+    assert.equal(sqlCalls().some(call => /update\s+(?:places|things)|insert\s+into\s+kind/iu.test(call.query ?? '')), false)
+  }
+})
+
+test('drawing state, description, refusal, and variants fail closed as one write contract', async () => {
+  const invalidPlaceBodies = [
+    { drawing: CONTRACT_DRAWING },
+    { drawing: CONTRACT_DRAWING, drawing_state: 'complete' },
+    { drawing: CONTRACT_DRAWING, drawing_description: CONTRACT_DRAWING_DESCRIPTION },
+    {
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'finished',
+      drawing_description: CONTRACT_DRAWING_DESCRIPTION,
+    },
+    { drawing: 'REFUSE' },
+    { drawing: 'refuse', drawing_description: 'Lowercase text is not the refusal sentinel.' },
+    { drawing: null, drawing_state: 'complete' },
+    { drawing: null, drawing_description: 'A cleared drawing has no authored description.' },
+    { drawing_state: 'complete', drawing_description: CONTRACT_DRAWING_DESCRIPTION },
+  ]
+  for (const body of invalidPlaceBodies) {
+    reset({ scenario: 'invalid paired place drawing', placeOwnerId: 7 })
+    const response = await app.request('/api/place/2', {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body),
+    })
+    assert.equal(response.status, 400, JSON.stringify(body))
+    assert.equal(
+      sqlCalls().some(call => /update\s+places\s+set|insert\s+into\s+drawing_revisions/iu.test(call.query ?? '')),
+      false,
+      JSON.stringify(body),
+    )
+  }
+
+  const invalidVariants = [
+    Array.from({ length: 9 }, (_, index) => ({
+      name: `variant-${index}`,
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: `Variant ${index}`,
+    })),
+    ['same', 'same'].map(name => ({
+      name,
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: 'Duplicate exact variant name.',
+    })),
+    [{
+      name: 'missing-description',
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+    }],
+  ]
+  for (const drawingVariants of invalidVariants) {
+    reset({ scenario: 'invalid kind variants' })
+    const response = await app.request('/api/kind', {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({
+        name: 'invalid-variants', traits: [], recipe: [], drawing_variants: drawingVariants,
+      }),
+    })
+    assert.equal(response.status, 400, JSON.stringify(drawingVariants))
+    assert.equal(networkCalled('base-rpc.test') || networkCalled('facilitator.test'), false)
+    assert.equal(inserted('kinds'), 0)
+  }
+})
+
+test('a maximum valid thing body still fits its actual-byte drawing-aware request envelope', async () => {
+  reset({ scenario: 'maximum escaped thing body', thingOwnerId: 7 })
+  const body = '\\'.repeat(65_536)
+  const requestBody = JSON.stringify({ body, drawing: null })
+  assert.ok(Buffer.byteLength(requestBody, 'utf8') > 131_072)
+
+  const response = await app.request('/api/thing/41', {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: requestBody,
+  })
+
+  assert.equal(response.status, 200, await response.clone().text())
+})
+
 test('duplicate trait names fail before charging for a kind', async () => {
   reset({ scenario: 'duplicate kind traits', chainFrom: SELLER_WALLET, chainTo: TREASURY })
   const response = await app.request('/api/kind', {
@@ -5275,6 +5655,176 @@ test('things pin their birth revision and only their owner may voluntarily upgra
     owner_id: 8,
     owner: 'neighbor',
   })
+})
+
+test('a typed thing owner deliberately selects base or a named variant on its pinned revision', async () => {
+  const variants = [{
+    name: 'ember',
+    drawing: CONTRACT_DRAWING,
+    drawing_state: 'complete',
+    drawing_description: 'A low amber glow around the lantern base.',
+  }]
+
+  reset({
+    scenario: 'thing selects named variant',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    kindDrawingVariants: variants,
+    thingDrawingVariant: 'ember',
+  })
+  const selected = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing_variant_name: 'ember' }),
+  })
+  assert.equal(selected.status, 200, await selected.clone().text())
+  const selectionWrite = sqlCalls().find(call => /update\s+things\s+set/iu.test(call.query ?? ''))
+  assert.match(selectionWrite?.query ?? '', /drawing_variant/iu)
+  assert.match(selectionWrite?.query ?? '', /kind_revisions/iu)
+  assert.match(selectionWrite?.query ?? '', /IS\s+DISTINCT\s+FROM/iu)
+
+  reset({
+    scenario: 'thing selects kind base',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    kindDrawingVariants: variants,
+    thingDrawingVariant: null,
+  })
+  const base = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing_variant_name: null }),
+  })
+  assert.equal(base.status, 200, await base.clone().text())
+  assert.match(
+    sqlCalls().find(call => /update\s+things\s+set/iu.test(call.query ?? ''))?.query ?? '',
+    /drawing_variant/iu,
+  )
+
+  reset({
+    scenario: 'thing selects missing variant',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    kindDrawingVariants: variants,
+  })
+  const missing = await app.request('/api/thing/41', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ drawing_variant_name: 'missing' }),
+  })
+  assert.equal(missing.status, 409, await missing.clone().text())
+  assert.match((await missing.json() as { error: string }).error, /base|available|ember/iu)
+})
+
+test('thing upgrade preserves an offered variant name or refuses a silent fallback', async () => {
+  const ember = {
+    name: 'ember',
+    drawing: CONTRACT_DRAWING,
+    drawing_state: 'complete',
+    drawing_description: 'A low amber glow around the lantern base.',
+  }
+  const dawn = {
+    name: 'dawn',
+    drawing: CONTRACT_DRAWING,
+    drawing_state: 'complete',
+    drawing_description: 'A bright line across the top of the lantern.',
+  }
+
+  reset({
+    scenario: 'upgrade keeps offered variant',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    thingDrawingVariant: 'ember',
+    kindRevision: 2,
+    kindDrawingVariants: [ember, dawn],
+  })
+  const preserved = await app.request('/api/thing/41/upgrade', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({}),
+  })
+  assert.equal(preserved.status, 200, await preserved.clone().text())
+  const preservedThing = (await preserved.json() as {
+    thing: { current_revision: number; drawing_variant_name: string | null }
+  }).thing
+  assert.equal(preservedThing.current_revision, 2)
+  assert.equal(preservedThing.drawing_variant_name, 'ember')
+  const preservedWrite = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))
+  assert.match(preservedWrite?.query ?? '', /drawing_variant/iu)
+  assert.match(preservedWrite?.query ?? '', /drawing_variants/iu)
+
+  reset({
+    scenario: 'upgrade missing selected variant',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    thingDrawingVariant: 'ember',
+    kindRevision: 2,
+    kindDrawingVariants: [dawn],
+  })
+  const blocked = await app.request('/api/thing/41/upgrade', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({}),
+  })
+  assert.equal(blocked.status, 409, await blocked.clone().text())
+  assert.match((await blocked.json() as { error: string }).error, /choose.*base|available.*variant/iu)
+  assert.equal(sqlCalls().some(call => /insert\s+into\s+events/iu.test(call.query ?? '')), false)
+
+  reset({
+    scenario: 'upgrade deliberately chooses base',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    thingDrawingVariant: null,
+    kindRevision: 2,
+    kindDrawingVariants: [dawn],
+  })
+  const choseBase = await app.request('/api/thing/41/upgrade', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ drawing_variant_name: null }),
+  })
+  assert.equal(choseBase.status, 200, await choseBase.clone().text())
+  assert.match(
+    sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))?.query ?? '',
+    /drawing_variant/iu,
+  )
+
+  reset({
+    scenario: 'upgrade deliberately chooses target variant',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    thingDrawingVariant: 'dawn',
+    kindRevision: 2,
+    kindDrawingVariants: [dawn],
+  })
+  const choseDawn = await app.request('/api/thing/41/upgrade', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ drawing_variant_name: 'dawn' }),
+  })
+  assert.equal(choseDawn.status, 200, await choseDawn.clone().text())
+  const choseDawnThing = (await choseDawn.json() as {
+    thing: { current_revision: number; drawing_variant_name: string | null }
+  }).thing
+  assert.equal(choseDawnThing.current_revision, 2)
+  assert.equal(choseDawnThing.drawing_variant_name, 'dawn')
+})
+
+test('an exact thing upgrade retry is a no-op with no duplicate event', async () => {
+  const ember = {
+    name: 'ember',
+    drawing: CONTRACT_DRAWING,
+    drawing_state: 'complete',
+    drawing_description: 'A low amber glow around the lantern base.',
+  }
+  reset({
+    scenario: 'exact upgrade retry',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 2,
+    thingDrawingVariant: 'ember',
+    kindRevision: 2,
+    kindDrawingVariants: [ember],
+  })
+
+  const retry = await app.request('/api/thing/41/upgrade', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({}),
+  })
+  assert.equal(retry.status, 200, await retry.clone().text())
+  const write = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))
+  assert.match(write?.query ?? '', /IS\s+DISTINCT\s+FROM/iu)
+  assert.match(write?.query ?? '', /INSERT\s+INTO\s+events[\s\S]*FROM\s+changed/iu)
+  assert.match(write?.query ?? '', /WHERE\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+changed\s*\)/iu)
 })
 
 test('note and agreement quotas fail atomically without a partial public record', async () => {
@@ -5491,7 +6041,11 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
   assert.equal(gift.status, 200, await gift.clone().text())
   const giftWrite = sqlCalls().find(call => /WITH\s+recipient[\s\S]*moved_asset/i.test(call.query ?? ''))
   assert.match(giftWrite?.query ?? '', /UPDATE\s+things\s+SET\s+owner_id\s*=\s*recipient\.id/i)
+  assert.match(giftWrite?.query ?? '', /'resident_id'\s*,\s*\$3::?integer/iu)
+  assert.match(giftWrite?.query ?? '', /'place_id'\s*,\s*actor_presence\.current_place_id/iu)
   assert.doesNotMatch(giftWrite?.query ?? '', /SET\s+maker_id\s*=/i)
+  assert.doesNotMatch(giftWrite?.query ?? '', /SET[\s\S]*drawing_variant\s*=/i)
+  assert.doesNotMatch(giftWrite?.query ?? '', /SET[\s\S]*current_revision\s*=/i)
 
   reset({ scenario: 'offer lock' })
   const offered = await app.request('/api/transfer/offer', {
@@ -7201,7 +7755,7 @@ test('events keep the public contract while paging stably by kind and id', async
   const firstRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
   assert.deepEqual(
     firstRead?.params?.map((value, index) => index >= 3 ? Number(value) : value),
-    ['note_created', null, null, 65, 4],
+    ['note_created', null, null, 65, 4, 0],
     'the database fetches one lookahead row',
   )
   assert.match(firstRead?.query ?? '', /id\s*<\s*\$4::integer/i)
@@ -7578,6 +8132,9 @@ test('public listing routes reject invalid and duplicate pagination parameters',
     '/api/events?before_id=nope',
     '/api/events?limit=2&limit=3',
     '/api/events?kind=note_created&kind=thing_created',
+    '/api/events?within_seconds=0',
+    '/api/events?within_seconds=1801',
+    '/api/events?within_seconds=1800&within_seconds=10',
     '/api/place/2?subplace_limit=201',
     '/api/place/2?before_thing_id=0',
     '/api/place/2?note_limit=2&note_limit=3',
@@ -8732,9 +9289,9 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
     'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
-    'credit_preflight', 'buy_credit', 'found', 'place_edit',
+    'drawing', 'drawing_history', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
     'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
-    'act', 'laws', 'home', 'withdraw',
+    'draw_self', 'act', 'laws', 'home', 'withdraw',
     'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
     'payment_attempt', 'transfer',
     'agree', 'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
@@ -8843,6 +9400,130 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
   assert.equal(challenged.result.isError, true)
   assert.match(challenged.result.content[0]!.text, /reservation opened|five minutes/i)
   assert.equal(state.offer.buyerWallet, BUYER_WALLET)
+})
+
+test('MCP drawing inputs have parity with every owner write and upgrade route', async () => {
+  reset({ scenario: 'mcp drawing contract', openToNotes: true })
+  const listed = await app.request('/mcp', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  })
+  const tools = (await listed.json() as {
+    result: { tools: Array<{
+      name: string
+      inputSchema: { properties?: Record<string, unknown> }
+      description: string
+    }> }
+  }).result.tools
+  const byName = new Map(tools.map(tool => [tool.name, tool]))
+
+  for (const name of ['place_edit', 'thing_edit', 'invent_kind', 'revise_kind']) {
+    const properties = byName.get(name)?.inputSchema.properties ?? {}
+    for (const field of ['drawing', 'drawing_state', 'drawing_description']) {
+      assert.ok(field in properties, `${name} must advertise ${field}`)
+    }
+    const contractText = JSON.stringify(byName.get(name))
+    assert.match(contractText, /REFUSE/u, `${name} must advertise the exact refusal value`)
+    assert.match(contractText, /in_progress/u, `${name} must advertise explicit in-progress state`)
+    assert.match(contractText, /complete/u, `${name} must advertise explicit complete state`)
+  }
+  for (const name of ['invent_kind', 'revise_kind']) {
+    const schemaText = JSON.stringify(byName.get(name)?.inputSchema.properties?.drawing_variants)
+    assert.match(schemaText, /maxItems[^0-9]*8/u)
+    assert.match(schemaText, /uniqueItems|name/u)
+    assert.match(byName.get(name)?.description ?? '', /owner|variant/iu)
+  }
+  for (const name of ['thing_edit', 'thing_upgrade']) {
+    assert.ok('drawing_variant_name' in (byName.get(name)?.inputSchema.properties ?? {}), name)
+  }
+
+  const call = async (
+    name: string,
+    args: Record<string, unknown>,
+    headers: Record<string, string> = authHeaders(),
+  ) => {
+    const response = await app.request('/mcp', {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: name, method: 'tools/call',
+        params: { name, arguments: args },
+      }),
+    })
+    assert.equal(response.status, 200, name)
+    return await response.json() as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+  }
+
+  reset({ scenario: 'mcp place drawing', placeOwnerId: 7 })
+  const place = await call('place_edit', {
+    place_id: 2,
+    drawing: CONTRACT_DRAWING,
+    drawing_state: 'complete',
+    drawing_description: CONTRACT_DRAWING_DESCRIPTION,
+  })
+  assert.equal(place.result.isError, false, place.result.content[0]?.text)
+
+  reset({ scenario: 'mcp typed thing refusal', thingOwnerId: 7, thingKindId: 3 })
+  const thing = await call('thing_edit', {
+    thing_id: 41,
+    drawing: 'REFUSE',
+    drawing_description: 'I decline to show the inherited drawing.',
+  })
+  assert.equal(thing.result.isError, false, thing.result.content[0]?.text)
+
+  reset({
+    scenario: 'mcp kind invention drawing',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+  })
+  const invention = await call('invent_kind', {
+    name: 'mcp-painted-lantern',
+    description: 'A kind with one deliberate variant.',
+    traits: [],
+    recipe: [],
+    drawing: CONTRACT_DRAWING,
+    drawing_state: 'complete',
+    drawing_description: CONTRACT_DRAWING_DESCRIPTION,
+    drawing_variants: [{
+      name: 'ember',
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: 'A low amber glow around the lantern base.',
+    }],
+  }, { ...authHeaders(), 'X-PAYMENT': X_PAYMENT })
+  assert.equal(invention.result.isError, false, invention.result.content[0]?.text)
+
+  reset({
+    scenario: 'mcp kind revision drawing',
+    facilitatorVerify: true,
+    facilitatorSettle: true,
+    kindDrawing: CONTRACT_DRAWING,
+    kindDrawingState: 'complete',
+    kindDrawingDescription: CONTRACT_DRAWING_DESCRIPTION,
+  })
+  const revision = await call('revise_kind', {
+    kind_id: 3,
+    drawing_variants: [],
+  }, { ...authHeaders(), 'X-PAYMENT': X_PAYMENT })
+  assert.equal(revision.result.isError, false, revision.result.content[0]?.text)
+
+  reset({
+    scenario: 'mcp thing upgrade variant',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    thingDrawingVariant: null,
+    kindRevision: 2,
+    kindDrawingVariants: [{
+      name: 'ember',
+      drawing: CONTRACT_DRAWING,
+      drawing_state: 'complete',
+      drawing_description: 'A low amber glow around the lantern base.',
+    }],
+  })
+  const upgrade = await call('thing_upgrade', { thing_id: 41, drawing_variant_name: 'ember' })
+  assert.equal(upgrade.result.isError, false, upgrade.result.content[0]?.text)
 })
 
 test('public MCP reference tools return byte-identical web handler bodies', async () => {
@@ -9366,12 +10047,12 @@ test('the thing owner can toggle open_to_use and a visitor cannot edit it', asyn
   assert.equal(changedBody.reading_cost.room_stored_text_bytes, 1234)
   const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
   assert.match(update?.query ?? '', /\bopen_to_use\b/i)
-  assert.match(update?.query ?? '', /changed\.maker_id/i)
+  assert.match(update?.query ?? '', /result\.maker_id/i)
   assert.match(update?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
-  assert.match(update?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
+  assert.match(update?.query ?? '', /result\.owner_id\s+AS\s+current_owner_id/i)
   assert.match(update?.query ?? '', /current_owner\.handle\s+AS\s+current_owner/i)
-  assert.match(update?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*changed\.maker_id/i)
-  assert.match(update?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*changed\.owner_id/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+maker\s+ON\s+maker\.id\s*=\s*result\.maker_id/i)
+  assert.match(update?.query ?? '', /JOIN\s+residents\s+current_owner\s+ON\s+current_owner\.id\s*=\s*result\.owner_id/i)
 
   reset({
     scenario: 'transferred thing edit keeps maker',
@@ -9933,7 +10614,7 @@ test('event history supports bounded cursor pages without changing the events ar
   const eventRead = sqlCalls().find(call => /\/\* public:events \*\//i.test(call.query ?? ''))
   assert.match(eventRead?.query ?? '', /\$4::integer\s+is\s+null\s+or\s+event\.id\s*<\s*\$4::integer/i)
   assert.match(eventRead?.query ?? '', /limit\s+\$5::integer/i)
-  assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3'])
+  assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3', null])
 
   reset({ scenario: 'event pagination' })
   assert.equal((await app.request('/api/events?before_id=nope')).status, 400)
@@ -9956,7 +10637,7 @@ test('event history narrows by actor and by observed place', async () => {
   assert.match(actorRead?.query ?? '', /event\.detail->>'asset_type'\s*=\s*'place'/i)
   assert.match(actorRead?.query ?? '', /event\.detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
   assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
-  assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4'])
+  assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4', null])
 
   reset({ scenario: 'public pagination' })
   const inside = await app.request('/api/events?within_place_id=2&limit=3')
@@ -9965,7 +10646,7 @@ test('event history narrows by actor and by observed place', async () => {
   assert.match(insideRead?.query ?? '', /WITH RECURSIVE selected_places/i)
   assert.match(insideRead?.query ?? '', /child\.parent_id\s*=\s*selected\.id/i)
   assert.match(insideRead?.query ?? '', /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
-  assert.deepEqual(insideRead?.params, [null, null, '2', null, '4'])
+  assert.deepEqual(insideRead?.params, [null, null, '2', null, '4', null])
 
   const invalid = [
     '/api/events?actor=Not%20A%20Handle',

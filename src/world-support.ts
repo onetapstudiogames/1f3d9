@@ -35,6 +35,7 @@ import {
   parseCityCreditRequestId,
   returnCityCreditSpend,
 } from './city-credit.ts'
+import type { DrawingState, DrawingVariant } from './drawing.ts'
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export const DESCRIPTION_MAX = 4_000
@@ -77,6 +78,9 @@ export interface PlaceRow {
   parent_id: number | null
   name: string
   description: string
+  drawing?: unknown
+  drawing_state?: DrawingState
+  drawing_description?: string | null
   purpose: string
   front_matter_thing_ids?: readonly number[]
   front_matter?: readonly object[]
@@ -103,6 +107,10 @@ export interface KindRow {
   owner: string
   revision: number
   description: string
+  drawing?: unknown
+  drawing_state?: DrawingState
+  drawing_description?: string | null
+  drawing_variants?: readonly DrawingVariant[] | unknown
   traits: string[]
   recipe: unknown
   created_at: string
@@ -113,6 +121,10 @@ export interface ThingRow {
   place_id: number
   name: string
   body: string
+  drawing?: unknown
+  drawing_state?: DrawingState
+  drawing_description?: string | null
+  drawing_variant_name?: string | null
   maker_id: number
   made_by: string
   current_owner_id: number

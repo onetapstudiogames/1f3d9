@@ -3,6 +3,7 @@ import { containsMalformedPublicText, publicText } from './input.ts'
 
 export type WindowShareView =
   | 'map'
+  | 'live'
   | 'place'
   | 'conversations'
   | 'happenings'
@@ -32,6 +33,29 @@ export type WindowShareState = Readonly<{
   gazetteIssueId: number | null
   detail: WindowShareDetail | null
 }>
+
+/**
+ * A place drawing dialog is session-local, while its deliberate share target
+ * is the canonical base Place view. Resident drawing dialogs have no shared
+ * recipient under the locked place/thing/note detail contract.
+ */
+export function windowDetailShareState(state: WindowShareState): WindowShareState | null {
+  if (!state || typeof state !== 'object' || !state.detail) return null
+  if (state.detail.kind === 'thing' || state.detail.kind === 'note') return state
+  if (state.detail.kind !== 'place') return null
+  return Object.freeze({
+    ...state,
+    view: 'place',
+    placeId: state.detail.id,
+    resident: null,
+    conversationContext: false,
+    directorySearch: '',
+    sleeperPlaceIds: Object.freeze([]),
+    archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
+    gazetteIssueId: null,
+    detail: null,
+  })
+}
 
 export type ParsedWindowShareRequest = Readonly<{
   canonicalPath: string
@@ -143,7 +167,7 @@ export function validateWindowArchiveQuery(
  */
 export function windowSharePath(state: WindowShareState): string | null {
   const views = new Set([
-    'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ])
   const safeId = (value: unknown): value is number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647
@@ -255,7 +279,7 @@ export function parseWindowShareRequest(
     view = 'map'
   } else if (parts.length === 2) {
     if (![
-      'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
     ].includes(segment!)) {
       return null
     }
@@ -265,10 +289,11 @@ export function parseWindowShareRequest(
     const id = positiveId(parts[2] ?? null)
     if (id === null) return null
     const kind = segment as WindowShareDetail['kind']
-    detail = Object.freeze({ kind, id })
     if (kind === 'place') {
       view = 'place'
       placeId = id
+    } else {
+      detail = Object.freeze({ kind, id })
     }
   }
 
@@ -297,7 +322,7 @@ export function parseWindowShareRequest(
   if (placeValue === undefined || residentValue === undefined || contextValue === undefined ||
       findValue === undefined || sleepersValue === undefined || queryValue === undefined ||
       modeValue === undefined || typeValue === undefined || issueValue === undefined) return null
-  if (detail?.kind === 'place' && placeValue !== null) return null
+  if (parts.length === 3 && segment === 'place' && placeValue !== null) return null
 
   if (view === 'gazette') {
     if (
@@ -422,6 +447,10 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
     title: 'The live city map — 1F3D9',
     description: 'Look through the glass at the current public city: its places and where residents are standing now.',
   }),
+  live: Object.freeze({
+    title: 'The recent city, drawn — 1F3D9',
+    description: 'Watch recent verified public events cross fixed place plots on the city’s authored ground.',
+  }),
   place: Object.freeze({
     title: 'A live public place — 1F3D9',
     description: 'Look through the glass at one current public place and the public life around it.',
@@ -465,7 +494,11 @@ export function createWindowShareMetadata(
 ): WindowShareMetadata {
   const origin = shareOrigin(originValue)
   const canonicalUrl = new URL(request.canonicalPath, origin).href
-  const detail = request.state.detail
+  const detail = request.state.detail || (
+    request.state.view === 'place' && request.state.placeId !== null
+      ? Object.freeze({ kind: 'place' as const, id: request.state.placeId })
+      : null
+  )
   if (detail === null) {
     const view = VIEW_METADATA[request.state.view]
     const gazetteIssueId = request.state.gazetteIssueId

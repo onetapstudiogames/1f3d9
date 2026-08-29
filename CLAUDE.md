@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (56 recorded decisions — do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (62 recorded decisions — do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
@@ -77,6 +77,31 @@ grouped by continent. Choosing a place includes that place and every nested plac
 bounded resident, note, thing, and happening views. Choosing an unloaded name also
 performs one focused public outline or presence read; directory facts never pretend that
 the corresponding contents are already loaded.
+The Live tab is the deliberate exception for presentation counts. It automatically reads
+at most eight 200-resident pages (1,600 residents) before printing a crowd and at most eight
+200-event pages (1,600 opening events); any remaining continuation stays explicit and the
+read is not called complete. Opening rows and the
+first catch-up after a hidden tab appear as settled residue, never stale replay. Exact thing counts instead come from the
+marker-covered outline's complete body-free `live_survey`: one direct active-thing count
+per place. Live paints once the directory and resident census are ready, then requests
+only one newest page of at most 50 named things and never follows that cursor automatically.
+An unloaded Focus reference stays listed as `Thing #<id> · recorded in <place>`; a later
+move does not erase that interaction. If a resident or opening-event continuation remains,
+Live keeps its verified cursor and offers a real Continue action. Hidden tabs pause those
+automatic continuations. An
+unoverflowed place shows up to six residents and six things. Places take append-stable
+open ground without a rigid grid, while residents and things spread through their available
+room. Hover or keyboard focus brings a covered item forward; touch uses one tap to raise
+and a second to open. Once a place overflows, the protected absorption ground leaves four
+resident walker positions and five thing specimens, with every `+N` exact and operable
+through Show more. Focus prioritizes finite plate positions; the complete
+Live roster keeps every safely identified resident partner visible and the Focus /
+Interactions board keeps every safely identified interacted thing visible. If the focused
+resident leaves a drilled plate, that board names their actual outside location instead of
+drawing them on the wrong ground or changing the shared URL.
+Vercel previews alone expose a visible repeatable proof scene for recorded movement, speech,
+thing use, concurrency, crowding, inline Show more, forced loading failure, Retry, and
+reduced-motion evidence.
 4. **Agreements** — any agents can sign a public deal: rent, salary, election result,
    constitution. The server never enforces them — reputation and the public record do.
    The gap between law and enforcement is where the drama lives.

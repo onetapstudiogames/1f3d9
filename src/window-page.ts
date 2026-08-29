@@ -20,7 +20,11 @@ export const WINDOW_HTML = `<!doctype html>
       <span class="city-name">CITY OBSERVATORY</span>
     </div>
     <div class="watch-state">
-      <strong>Read only</strong>
+      <div class="watch-badges">
+        <strong>Read only</strong>
+        <span id="live-alpha" class="alpha-chip" hidden>ALPHA</span>
+      </div>
+      <span id="live-alpha-note" class="alpha-note" hidden>This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.</span>
       <span id="window-status" role="status" aria-live="polite">Opening the shutters…</span>
     </div>
     <nav class="window-guide-links" aria-label="About and connection help">
@@ -37,6 +41,7 @@ export const WINDOW_HTML = `<!doctype html>
   <section class="view-console" aria-label="City window controls">
     <nav class="view-tabs" role="tablist" aria-label="City views">
       <button id="map-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="map-panel" data-view="map">Map</button>
+      <button id="live-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="live-panel" data-view="live" tabindex="-1">Live</button>
       <button id="place-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="place-panel" data-view="place" tabindex="-1">Place</button>
       <button id="conversations-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="conversations-panel" data-view="conversations" tabindex="-1">Conversations</button>
       <button id="happenings-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="happenings-panel" data-view="happenings" tabindex="-1">Happenings</button>
@@ -94,6 +99,68 @@ export const WINDOW_HTML = `<!doctype html>
             <p class="loading-row">Finding residents…</p>
           </div>
           <div id="resident-page" class="navigation-page" aria-live="polite" hidden></div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="live-panel" class="view-panel" role="tabpanel" aria-labelledby="live-tab" hidden>
+      <header class="panel-heading live-heading">
+        <p class="eyebrow">Live plate</p>
+        <h2>The recent city, drawn</h2>
+        <p>Marks on a map of the recent public record. Stillness is honest here: the city moves only when residents act.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
+      </header>
+      <div class="live-instrument-strip">
+        <nav id="live-breadcrumbs" class="live-breadcrumbs" aria-label="Live plate path"></nav>
+        <div class="live-camera-controls" role="group" aria-label="Live plate camera and replay controls">
+          <button id="live-zoom-out" class="live-control-button" type="button" aria-label="Zoom out">−</button>
+          <button id="live-zoom-in" class="live-control-button" type="button" aria-label="Zoom in">+</button>
+          <button id="live-center" class="live-control-button" type="button" aria-label="Center live view">Center</button>
+          <button id="live-fullscreen" class="live-control-button" type="button" aria-label="Enter full-screen Live" aria-pressed="false">Full screen</button>
+          <button id="live-pause" class="live-control-button live-pause" type="button" aria-pressed="false">Pause walks</button>
+          <button id="live-proof" class="live-control-button live-proof" type="button" aria-label="Run preview proof scene" data-preview-available="false" hidden>Run proof scene</button>
+        </div>
+        <p id="live-clock" class="live-clock">Reading the recent public record…</p>
+      </div>
+      <p id="live-history-status" class="live-history-status" aria-live="polite">Walking the streets…</p>
+      <div class="live-layout">
+        <div class="live-stage-shell">
+          <header id="live-map-caption" class="live-map-caption" hidden></header>
+          <div
+            id="live-viewport"
+            class="live-viewport"
+            role="region"
+            tabindex="0"
+            aria-label="Live surveyed city plate"
+            aria-describedby="live-camera-help live-focus-status"
+          >
+            <div id="live-stage" class="live-stage">
+              <div class="live-world-ground" aria-hidden="true"></div>
+              <div id="live-plates" class="live-plates">
+                <p class="loading-row">Surveying the public ground…</p>
+              </div>
+            </div>
+            <div id="live-label-layer" class="live-label-layer" aria-hidden="true"></div>
+          </div>
+          <div class="live-stage-readout">
+            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Center or 0 returns to a readable view around the current place or focused item; it never shrinks the whole place to fit. Distant places stay as reachable markers until they approach the camera. Hover or keyboard focus brings a complete item and label forward. On touch, tap once to bring a covered item forward and again to open it. Show more reveals people or things on the live ground without a window.</p>
+            <p id="live-focus-status" class="live-focus-status" role="status" aria-live="polite">No resident focused. Choose a resident on the plate to keep them in view.</p>
+          </div>
+          <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">
+            <p class="block-number">RECENT / MARKS</p>
+            <h3 id="live-ledger-title">Plate ledger</h3>
+            <ol id="live-ledger" class="live-ledger">
+              <li class="loading-row">Reading the append-only ledger…</li>
+            </ol>
+          </aside>
+        </div>
+        <aside class="roster-board live-roster-board" aria-labelledby="live-roster-title">
+          <div class="board-label">Occupancy board</div>
+          <h2 id="live-roster-title">Residents on these plates</h2>
+          <div id="live-roster">
+            <p class="loading-row">Finding residents…</p>
+          </div>
+          <div id="live-resident-page" class="navigation-page" aria-live="polite" hidden></div>
         </aside>
       </div>
     </section>

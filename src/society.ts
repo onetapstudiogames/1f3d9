@@ -463,8 +463,10 @@ export function mountSocietyRoutes(app: Hono): void {
             INSERT INTO events (kind, actor, detail)
             SELECT 'transfer', $5, jsonb_build_object(
               'transfer_id', t.id, 'asset_type', $1::text, 'asset_id', $2::integer,
-              'from', $5::text, 'to', $6::text, 'mode', 'gift'
+              'from', $5::text, 'to', $6::text, 'mode', 'gift',
+              'resident_id', $3::integer, 'place_id', actor_presence.current_place_id
             ) FROM new_transfer t
+            JOIN resident_presence actor_presence ON actor_presence.resident_id = $4
           )
           SELECT id, created_at FROM new_transfer
         `, [type, id, recipient, resident.id, resident.handle, toHandle]) as {

@@ -1,5 +1,6 @@
 export const PUBLIC_PAGE_DEFAULT = 10
 export const PUBLIC_PAGE_MAX = 200
+export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
 export const PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES =
   PUBLIC_PAGE_DEFAULT * PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES
@@ -181,6 +182,7 @@ export interface PublicEventFilters {
   readonly actor: string | null
   readonly placeId: number | null
   readonly includeDescendants?: boolean
+  readonly withinSeconds?: number | null
 }
 
 function publicEventFilter(includeDescendants: boolean): string {
@@ -193,6 +195,8 @@ function publicEventFilter(includeDescendants: boolean): string {
   return `
   ($1::text IS NULL OR event.kind = $1::text)
   AND ($2::text IS NULL OR event.actor = $2::text)
+  AND ($6::integer IS NULL OR event.at >= transaction_timestamp()
+    - ($6::integer * INTERVAL '1 second'))
   AND ($3::integer IS NULL
     OR ${textPlace("event.detail->>'place_id'")}
     OR (event.detail->>'thing_id' ~ '^[0-9]{1,9}$' AND EXISTS (
@@ -274,19 +278,24 @@ export async function loadPublicEventCollectionRows(
        FROM events event
        WHERE ${eventFilter}
      )
-     SELECT page.id, page.at, page.kind, page.actor, page.detail,
+     SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
        totals.total_items, totals.total_text_bytes
      FROM totals
      LEFT JOIN LATERAL (
-       SELECT event.id, event.at, event.kind, event.actor, event.detail
+       SELECT event.id, change.change_id::text AS change_id,
+         event.at, event.kind, event.actor, event.detail
        FROM events event
+       JOIN public_change_log change ON change.event_id = event.id
        WHERE ${eventFilter}
          AND ($4::integer IS NULL OR event.id < $4::integer)
        ORDER BY event.id DESC
        LIMIT $5::integer
      ) page ON TRUE
      ORDER BY page.id DESC NULLS LAST`,
-    [filters.kind, filters.actor, filters.placeId, page.cursor, page.fetchLimit],
+    [
+      filters.kind, filters.actor, filters.placeId, page.cursor, page.fetchLimit,
+      filters.withinSeconds ?? null,
+    ],
   )
   return extractPublicCollectionRows(rows)
 }

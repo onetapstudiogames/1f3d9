@@ -304,6 +304,9 @@ test('go_home failure names the missing usable home', async () => {
     if (/WITH first_owned/.test(text)) {
       return [{ resident_id: 7, current_place_id: 2, home_place_id: null, updated_at: 'now' }]
     }
+    if (/FROM resident_presence[\s\S]*FOR UPDATE/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: null, updated_at: 'now' }]
+    }
     if (/UPDATE resident_presence presence/.test(text)) return []
     if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 502 }]
     return []
@@ -917,6 +920,9 @@ test('go_home ignores supplied source traps and bypasses every block query', asy
   const { db, calls } = fakeSql(({ text }) => {
     if (/INSERT INTO action_runs/.test(text)) return [{ id: 105 }]
     if (/WITH first_owned/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/FROM resident_presence[\s\S]*FOR UPDATE/.test(text)) {
       return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
     }
     if (/UPDATE resident_presence presence/.test(text)) {

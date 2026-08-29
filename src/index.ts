@@ -32,6 +32,7 @@ import {
 } from './oauth.ts'
 import { mountSocietyRoutes } from './society.ts'
 import { mountWorldRoutes } from './world.ts'
+import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
@@ -61,6 +62,7 @@ import {
   finalizePublicPage,
   loadPublicEventCollectionRows,
   parsePublicPage,
+  PUBLIC_EVENT_WITHIN_MAX_SECONDS,
   PUBLIC_PAGE_MAX,
   singlePublicQueryValue,
   utf8TextBytes,
@@ -592,6 +594,7 @@ app.post('/api/rotate', async c => {
 })
 
 mountActionRoutes(app)
+mountDrawingRoutes(app, { database: runtimeDatabase, authenticate: auth })
 app.get('/api/city-credit/preflight', async c => {
   privateResidentHeaders(c)
   const resident = await authPassive(c)
@@ -1193,7 +1196,7 @@ app.get('/api/events', async c => {
   const queries = c.req.queries()
   const allowed = allowedPublicQuery(queries, [
     'kind', 'actor', 'place_id', 'within_place_id', 'before_id', 'limit',
-    'after_change_marker',
+    'after_change_marker', 'within_seconds',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
@@ -1225,6 +1228,16 @@ app.get('/api/events', async c => {
     const field = insidePlaceValue.value !== null ? 'within_place_id' : 'place_id'
     return err(c, 400, `${field} must be a positive integer`)
   }
+  const withinValue = singlePublicQueryValue(queries, 'within_seconds')
+  if (!withinValue.ok) return err(c, 400, withinValue.error)
+  const withinSeconds = withinValue.value === null || !/^[1-9][0-9]{0,3}$/u.test(withinValue.value)
+    ? null
+    : Number(withinValue.value)
+  if (withinValue.value !== null &&
+      (withinSeconds === null || withinSeconds > PUBLIC_EVENT_WITHIN_MAX_SECONDS)) {
+    return err(c, 400,
+      `within_seconds must be between 1 and ${PUBLIC_EVENT_WITHIN_MAX_SECONDS}`)
+  }
   const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
   if (!afterMarkerValue.ok) return err(c, 400, afterMarkerValue.error)
   const minimumMarker = afterMarkerValue.value === null
@@ -1241,6 +1254,7 @@ app.get('/api/events', async c => {
         actor: actorValue.value,
         placeId,
         includeDescendants: insidePlaceValue.value !== null,
+        withinSeconds,
       },
       parsed,
     )

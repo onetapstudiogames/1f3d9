@@ -542,10 +542,13 @@ async function readPresence(residentId: number, db: TaggedSql): Promise<Presence
   return rows[0] ? presenceFromRow(rows[0], residentId) : ensurePresence(residentId, db)
 }
 
-async function lockPresence(residentId: number, db: TaggedSql): Promise<void> {
-  await queryRows(db`
-    SELECT resident_id FROM resident_presence WHERE resident_id = ${residentId} FOR UPDATE
+async function lockPresence(residentId: number, db: TaggedSql): Promise<Presence> {
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT resident_id, current_place_id, home_place_id, updated_at
+    FROM resident_presence WHERE resident_id = ${residentId} FOR UPDATE
   `)
+  if (!rows[0]) throw new EngineError(404, 'resident presence not found')
+  return presenceFromRow(rows[0], residentId)
 }
 
 export async function setHome(
@@ -725,6 +728,7 @@ function publicActionEventDetail(
     : null
   const sourcePlaceId = integer(detail.source_place_id)
   const sourceThingId = integer(detail.source_thing_id)
+  const placeId = integer(detail.place_id)
   return Object.freeze({
     action_id: actionId,
     action,
@@ -737,6 +741,7 @@ function publicActionEventDetail(
     ...(trait === null ? {} : { trait }),
     ...(sourcePlaceId === null || sourcePlaceId <= 0 ? {} : { source_place_id: sourcePlaceId }),
     ...(sourceThingId === null || sourceThingId <= 0 ? {} : { source_thing_id: sourceThingId }),
+    ...(placeId === null || placeId <= 0 ? {} : { place_id: placeId }),
   })
 }
 
@@ -1080,13 +1085,12 @@ export async function runAction(
   try {
     return await withEngineTransaction(db, async transaction => {
       if (input.action === 'go_home') await ensurePresence(input.actorId, transaction)
-      await lockPresence(input.actorId, transaction)
+      const lockedPresence = await lockPresence(input.actorId, transaction)
       if (input.action !== 'go_home') {
-        const fresh = await readPresence(input.actorId, transaction)
-        if (fresh.currentPlaceId !== input.placeId) {
-          const message = fresh.currentPlaceId === null
+        if (lockedPresence.currentPlaceId !== input.placeId) {
+          const message = lockedPresence.currentPlaceId === null
             ? 'your current place_id is now unset; check where you are standing before retrying'
-            : `your current place_id changed to ${fresh.currentPlaceId}; retry with place_id ${fresh.currentPlaceId}`
+            : `your current place_id changed to ${lockedPresence.currentPlaceId}; retry with place_id ${lockedPresence.currentPlaceId}`
           throw new EngineError(409, message)
         }
       }
@@ -1110,9 +1114,18 @@ export async function runAction(
         }
       }
       if (input.action === 'go_home') {
-        await goHome(input.actorId, transaction)
+        const home = await goHome(input.actorId, transaction)
         await recordActionResolution(
-          actionId, input.actorHandle, input.action, 'applied', { effects_applied: 0 }, transaction,
+          actionId,
+          input.actorHandle,
+          input.action,
+          'applied',
+          {
+            effects_applied: 0,
+            from_place_id: lockedPresence.currentPlaceId,
+            to_place_id: home.currentPlaceId,
+          },
+          transaction,
         )
         return { actionId, status: 'applied', httpStatus: 200, error: null, effectsApplied: 0 }
       }
@@ -1202,6 +1215,12 @@ export async function runAction(
             ? {
                 from_place_id: input.placeId,
                 to_place_id: input.destinationPlaceId,
+              }
+            : {}),
+          ...(input.action === 'use' && input.sourceThingId !== null
+            ? {
+                place_id: lockedPresence.currentPlaceId,
+                source_thing_id: input.sourceThingId,
               }
             : {}),
         },

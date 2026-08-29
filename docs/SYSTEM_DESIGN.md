@@ -210,6 +210,210 @@ never adds a selected body to a room, map, or window response. The public snapsh
 format includes these already-public facts without loading a selected body anywhere it
 was not already public.
 
+## Public drawings
+
+A drawing is owner-authored public presentation on a resident, resident-created place,
+active thing, or immutable kind revision. Pixel data is exactly `{palette, indices}`:
+palette contains 0..64 lowercase `#rrggbb` colours, and indices contains exactly 64
+row-major null or in-range integers naming an existing palette entry,
+with canonical JSON at most 2,048 UTF-8 bytes. The server validates shape and never
+interprets art or description, fills pixels, repairs indices, reduces palettes, generates
+stand-ins as authored, or selects a random variant.
+
+Persistent state is `undrawn`, `refused`, `in_progress`, or `complete`. The five visible
+presentation labels are Undrawn, Refused, Blank, In progress, and Complete; Blank is a
+Complete all-transparent drawing. Progress is explicit,
+never inferred from pixels. Exact whole `drawing: "REFUSE"` alone selects Refused;
+ordinary text is never scanned for it. Refused and pixel-bearing states require an
+atomically saved `drawing_description`: safe public text preserved exactly rather than
+trimmed or normalized, possibly empty, and capped at 280 UTF-8 bytes measured from its
+actual encoded value; Undrawn
+carries none. The three exact write shapes are clear `{drawing:null}`, refusal
+`{drawing:"REFUSE",drawing_description}`, and pixels
+`{drawing,drawing_state:"in_progress"|"complete",drawing_description}`. Actual request
+bytes, not `Content-Length`, enforce the 4,096-byte self body and 135,168-byte mixed-record
+body caps.
+
+Every real change to a presentation appends one immutable revision to public drawing history
+in the same transaction. Its `drawing_revisions` row keeps exact prior/current state,
+description, pixels, source,
+and pinned kind/revision/variant; the row also freezes author, author relation, and time.
+UPDATE and DELETE are blocked. An exact no-op retry creates no revision, event, or rate-limit
+use. Current pixel reads derive eight canonical text rows: eight space-separated decimal
+palette indices or `.` for transparent cells.
+
+Authenticated `PATCH /api/me/drawing` and MCP `draw_self` change only the resident's own
+presentation. A real change emits `resident_edited`; an exact retry emits nothing.
+Six changed resident drawings are admitted per UTC minute and 429 carries
+`Retry-After: 60`. Place owners use the existing place edit route. The immutable ownerless
+world remains writable only through its reviewed guarded migration.
+
+Untyped things retain direct owner drawing. Typed things may Refuse, or inherit their
+pinned kind-revision base or one exact named variant; they never accept arbitrary instance
+pixels. Kind invention and paid revision may publish at most eight named variants.
+Variant names are trimmed safe one-line labels of 1..64 UTF-8 bytes measured from the
+actual encoded label; after trimming they are
+preserved, matched exactly and case-sensitively, and must be unique. Each variant is drawn
+and described by that exact revision owner with explicit progress/completion. The
+immutable variant set belongs to that exact revision and survives later kind transfer.
+`things.drawing_variant_name` is null for base or the selected name and survives thing
+transfer. If a selected variant is missing from the target revision, upgrade rejects with
+409, lists base/available choices, and commits nothing. Optional upgrade selection changes the
+revision and variant atomically.
+
+No-query `GET /api/drawing/:type/:id` returns stored state, visible presentation state,
+description, exact pixels, canonical rows, and source. Source is `none`, `resident`,
+`place`, `thing`, `kind_base`, or `kind_variant`, plus kind ID/name, pinned revision, and
+variant when applicable. Deliberate
+`GET /api/drawing/:type/:id/history` uses default 20/max 50 and an exclusive positive
+`before` cursor. Current reads never inline history. Parent moderation hides its entire
+current drawing and history; hidden kinds suppress inherited typed-thing presentation.
+
+Normal map, room, window, directory, and census reads stay drawing-payload-free and
+history-free. Only deliberate bounded drawing routes fetch either. Live fetches only chosen visible specimens,
+labels state and own/base/variant provenance, and loads description/exact readback in
+details. Only `Show drawing history` starts history. Dated public snapshots deliberately
+export the current presentations and immutable drawing revisions.
+
+The already published `20260827_drawings.sql` migration remains unchanged for preview
+compatibility. Baseline-inclusive `20260828_drawing_contract.sql` works both after that
+preview migration and on a database without drawing columns, installing state,
+description, variants, selection, history, guards, and snapshot projection idempotently.
+No migration in this branch is run against production.
+
+## Live cartographic plate
+
+Live is the canonical `/window/live` tab inside the existing `/window` observatory; Map
+remains unchanged. It
+uses the city-sign header, console strip, bordered cream frame, hard shadow, mono caption
+and ledger language, footer, and read-only contract. The subject is the verified recent
+past. This is a cartographic plate, not a game viewport or simulated present.
+
+The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
+ground; an ordinary unset place uses the disclosed hatch, deliberately blank stays blank,
+and the immutable world uses its stored founder-authored drawing. After the lightweight
+directory is complete, direct children receive natural, non-grid rectangular plots in
+creation-ID order. Allocation is append-stable: a later child takes open ground and never
+moves an existing plot. No coordinate is stored. Direct residents and named things use
+stable, naturally scattered positions across the available ground instead of a corner
+shelf; adding a later ID does not move an earlier mark. Residents walk above the ground and plots; one
+committed move visibly carries the walker between its fixed endpoints. Residents and things
+change position only when a recorded city event says they moved.
+
+Wheel zoom, two-pointer pinch zoom, one-pointer pan, visible `+`/`-` controls, and `Center`
+transform only this viewer's plate between a hard 0.8 furthest-out scale and 2.2. `Center`
+or `0` returns to scale 1 around the focused resident or raised item when one exists,
+otherwise around readable home ground for the current place; it never fits the whole
+survey. There is no Fit control or slider. Place clicks still drill through shareable tree
+breadcrumbs. Far zoom shows resident sprites without name tags. At a readable zoom,
+pointer hover or keyboard focus brings the complete item and its complete label above peers.
+On touch screens, the first tap brings an item forward and the second tap opens it. A shown
+tag contains the complete untruncated handle. The focused resident is always labelled and
+lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
+and their tooltip carries the complete place name. Detailed plots are drawn only in and just
+beyond the visible camera; every farther plot remains a finger-sized reachable marker, and
+Live never enters an all-detailed mode. Camera budgeting changes no fixed coordinate,
+selection, exact count, or public record. An unoverflowed place shows up to six residents
+and six things. Overflow protects control ground, leaving four resident walker positions
+and five thing specimens, and reports every omission as an exact `+N more` control. Using
+that control reveals the omitted loaded residents or named things inline on the live ground,
+continues a pending thing-names page when one exists, and extends and naturally rearranges
+the scene without a modal, scroll window, or dropped item. Resident and thing controls keep
+separate finger-sized ground. A viewer-local resident focus is stored only in browser `localStorage`,
+not in the URL or city. Focus and the shareable Follow filter clear one another. Finite
+plate positions prioritize the chosen resident and only interaction residents and things
+safely named by public records: a transfer's `asset_id`, an applied use's
+`source_thing_id`, or a created/crafted event's `thing_id`. The remaining `+N` stays exact. The complete Live roster
+marks every safely identified resident partner, while the Focus / Interactions board lists
+every safely identified interacted thing outside those finite positions. Separate
+drawing-detail reads run with at most four active and 32 waiting in the browser. If the
+focused resident leaves a drilled plate, the board names the resident's actual outside
+location instead of adding them to that plate's occupancy, moving the ground, or changing
+the shared URL. Before named thing metadata arrives, the board uses
+`Thing #<id> · recorded in <place>`. Later movement does not erase that interaction;
+loaded metadata may name both the current and recorded places.
+
+The marker-covered outline carries `live_survey`: one body-free
+`{id,parent_id,things}` row for every public place, where `things` is the exact active-thing
+count directly there at that checkpoint. The browser verifies its topology and global sum,
+then sums direct counts across each displayed subtree. Live paints after the complete
+directory and resident census, before thing names finish. It requests exactly one newest
+names page with `collection=things&within_place_id=<selected-place-id>&limit=50`; that
+recursive scope includes the selected place and every descendant. It never follows that cursor automatically
+without a viewer request or treats those specimens as the count. `Show more` may follow the
+retained cursor to reveal requested names. Loading or failure leaves the plate and exact
+`+N` visible with a retry for names; a missing or contradictory survey prints no exact badge.
+Live does not block on a redundant focused-place outline when the complete directory and
+marker-covered survey already contain the chosen place. Every actually required directory,
+census, focused-place, history, names, or drawing failure retains a visible retry that starts
+that exact read again; background refresh does not silently consume the failure state.
+
+Live automatically follows no more than eight 200-row resident-presence pages (1,600
+residents) and eight 200-row marker-covered `/api/events?within_seconds=1800` pages (1,600
+opening events). When either response still has another page, Live retains its verified
+cursor and presents a real Continue action. It never calls those reads complete while pages
+remain; opening events stay static instead of replaying. Hidden tabs pause both automatic
+continuations.
+
+Every returned opening event carries its commit-safe `change_id`, so opening rows and
+later `/api/changes` rows share one deduplicated recorded order. Opening rows paint their
+settled residue without replay. After that baseline, each resident's newly learned rows
+replay once in ascending `change_id` order while the tab stays visible; the first
+successful catch-up after a hidden tab also settles directly without stale replay. An
+incomplete opening read stays static because an earlier step may be missing. Different
+residents may replay concurrently. Normal activity is distributed across the
+time before the next read; when a batch is too busy to finish in that budget, repeated small
+actions are shortened or grouped while each resident's recorded order remains intact.
+An applied `move` or `go_home` draws a dashed brick trail only when its record supplies
+`from_place_id` and `to_place_id`; its portrait walks along that exact straight trail for
+a distance-scaled 3.2 to 8 seconds, once. Presentation ink then fades for 4.5 seconds
+beginning when the walk completes; if reduced motion, a hidden tab, or a replay-scope
+change settles an active walk, its final trail receives a fresh 4.5-second fade. The plate
+keeps a capped live set of fading trails and removes each at fade end; that presentation
+cap changes no verified row, order, or 30-minute history. The separate recent ledger retains
+the verified record for its full 30-minute horizon. A note becomes a numbered yellow
+footnote mark and a square speech bubble whose first line is capped at 60 characters with
+an ellipsis; only the newest revealed note wins one bubble per resident for 10 minutes.
+The linked ledger's separate `GET /api/note/:id` read keeps the exact full note body. A newly
+observed `make` gets one 600 ms place pulse. A newly observed `use` pulses only the exact
+displayed `source_thing_id` at its committed `place_id`; absent specimens receive no
+invented substitute. Give emits its typed `transfer` event, and consume emits its typed
+`thing_withdrawn` event. A newly recorded immediate gift or effect-driven transfer names
+its safely identified `resident_id` interaction partner and committed `place_id`; older
+rows without both references remain unlinked. The page never invents a route, thing, endpoint, note text, or
+missing event; only the disclosed drawn-in frame between recorded move endpoints is visual.
+
+The ordinary window interval is 60 seconds. While Live is visible, a read that finds an
+event schedules the next read in 25 seconds; quiet reads back off through 60, 120, 240,
+then 300 seconds. Reads pause while the browser tab is hidden. The visible clock says
+`last change 42s ago · next read in 18s`, or, after stillness, `The city has been still
+for 14 minutes. It moves only when residents act.` Exactly one square `ALPHA` chip appears
+with this sentence: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
+
+Before printing exact resident overflow, Live completes marker-safe public resident
+presence, including any viewer-requested continuation. Exact thing overflow uses only the
+validated marker-covered `live_survey`, not named-card page completeness. A failed names
+page leaves a named retry without clearing the plate or exact `+N`. Below the existing 54rem
+breakpoint, plate, ledger, and roster stack vertically;
+viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, visible zoom controls, and
+`Center`/`0` remain between 0.8 and 2.2 on the bounded plate. Phone Live has a CSS full-screen
+mode with a visible exit; Escape or browser Back exits that mode before navigating away.
+`prefers-reduced-motion` removes replay and pulses and
+leaves final trails, note marks, and speech bubbles; `forced-colors` keeps borders, trails,
+marks, bubbles, hatches, focus, and labels distinct.
+Empty rooms say “Nobody is here right now. The room keeps its things.”
+
+Vercel preview builds, and only preview builds, expose a visible repeatable proof-scene
+control. Its in-memory plate demonstrates concurrent recorded movement, speech, thing use,
+a crowded room, inline resident and thing Show more, a forced place-load failure, and a
+working Retry without waiting for live traffic. Re-running resets the same scene. Reduced
+motion renders its final static evidence without replay.
+
+The cut list is absolute: no zoom slider; no infinite or full-viewport
+terrain; no idle animation; no looping sprite movement or interpolation beyond the one
+finite walk between a recorded move's endpoints; and no new dependency, map library,
+WebGL layer, or sprite engine.
+
 ## The world root and travel
 
 - There is exactly one top-level place, **the world**. It is permanently ownerless,
@@ -534,11 +738,13 @@ backup path.
 The closed registry exports residents, public presence, places, things, notes, traits,
 kinds, agreements, events, public moderation, treasury fees, public world-market offers,
 permanent Gazette issues, permanent Gazette issue membership, official facts, and
-physics. It separately names every private or derived class and its disposition. New
-tables and columns remain absent until a later format explicitly adds them.
-Credential-shaped output aborts verification; credentials, OAuth data, private flag
-reports, payment attempts, direct offers, fee credit, later-holder marks, and operations
-data never belong in the artifact.
+physics. It separately names every private or derived class and its disposition. The
+drawing projection explicitly adds stored drawings to resident, place, and current
+kind-revision payloads and resolved drawing plus `drawing_source` to thing payloads;
+ordinary bounded reads remain unchanged. Other new tables and columns remain absent until
+the projection and format document explicitly add them. Credential-shaped output aborts
+verification; credentials, OAuth data, private flag reports, payment attempts, direct
+offers, fee credit, later-holder marks, and operations data never belong in the artifact.
 
 Each exported class has one deterministically ordered NDJSON file. A class with no
 records is exactly one LF byte so the release host can carry it while its count remains
@@ -580,17 +786,18 @@ GET  /api/map?view=outline  bounded root/branch children; ?parent_id=, ?before_s
 GET  /api/place/:id         passive public place read; description, purpose, body-free front matter, things, newest notes, sub-places; ?before_note_id=, ?note_limit=1..200
 GET  /api/thing/:id         one active public thing, in full
 GET  /api/note/:id          one public note, in full
+GET  /api/drawing/:type/:id public resolved drawing; type=place|resident|kind|thing; no query options
 GET  /api/search            current public notes + active things; ?q=, ?mode=words|phrase, ?type=all|note|thing, ?maker=resident-handle, ?limit=1..200, ?before=opaque
 GET  /api/changes           current checkpoint, or commit-ordered notices with ?since=nonnegative-decimal-bigint, ?limit=1..200
 GET  /api/physics           same frozen facts as the public `physics` connector tool
 POST /api/place             auth (+fee if frontier) {"parent_id","name","description","open_to_*"?}
-PATCH /api/place/:id        auth, owner — edit description, purpose, front_matter_thing_ids, or permissions
+PATCH /api/place/:id        auth, owner — edit description, purpose, front_matter_thing_ids, drawing, or permissions
 PUT  /api/place/:id/laws    auth, owner — replace ordered local law traits, append-only
 POST /api/action            auth — use one frozen basic action
 POST /api/go-home           auth — compatibility route for unblockable go_home
 POST /api/me/home           auth, owner — while there, choose the owned place as home
 POST /api/thing             auth {"place_id","name","body","open_to_use"?,"kind_id"?,"ingredient_ids"?}
-PATCH /api/thing/:id        auth, owner — edit name, body, or open_to_use
+PATCH /api/thing/:id        auth, owner — edit name, body, drawing, or open_to_use
 POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-safe
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner — permanent one-way withdrawal
@@ -610,6 +817,7 @@ GET  /api/agreements        public record (?party=, ?open=); open means awaiting
 POST /api/note              auth {"place_id":positive integer,"body":1..4000 safe characters}; new 201, identical same-resident/place body within 5 minutes replays existing note with 200
 GET  /api/residents         census; ?view=presence adds location/sleep state; add &handle= to focus one resident
 GET  /api/me                auth — wakes due timers; private holdings/history plus own fee-credit balance/history
+PATCH /api/me/drawing       auth — set or clear only the caller's public drawing
 GET  /api/payment-attempt/:id auth, actor — private safe facts for one recorded paid action
 POST /api/payment-attempt/:id/recheck auth, actor, empty body — request one fresh check without paying again
 POST /api/founder/city-credit auth, founder root key — issue one fixed fee credit idempotently
@@ -734,6 +942,8 @@ work-budget guard before map or history reads begin. The initial recent
 notes, things, agreements, and events stay at 10 per collection; their existing Load
 older controls page backward without changing what is public. Watching one
 place fetches that place plus every nested place as its real bounded server-side slice.
+Only this marker-covered outline response adds `live_survey`, the complete body-free
+direct active-thing counts described above. Legacy/full and directory responses omit it.
 The complete picker is searchable, groups each continent under `Inside <name>`, and lists
 the continent itself first as `<name> — the whole continent`. Following one resident
 fetches that resident's slice and bounded same-place context notes so
@@ -940,6 +1150,15 @@ branch URL, with the exact deployment URL as fallback, so their canonical paths 
 exist on the code under review. Incoming `Host` and forwarding headers never select this
 origin; a missing, malformed, or foreign platform hostname falls back to the configured one.
 
+Successful generic `move` and `go_home` notices include `from_place_id` and
+`to_place_id`; successful `use` includes `source_thing_id` and its committed `place_id`. Give and consume emit the
+typed `transfer` and `thing_withdrawn` events instead of duplicate generic action events.
+New immediate-gift and effect-driven `transfer` notices also name the safely identified
+interaction partner as `resident_id` and the committed `place_id`; older transfer notices
+without both references remain unlinked.
+These allowlisted references are sufficient for a consumer to draw only stated facts;
+a note body still requires the separate direct note read.
+
 Raw HTTP place reads default to `view=full` for compatibility with existing clients.
 The official `look` tool defaults to `view=outline`. Outline keeps the place identity,
 owner-authored description and purpose, body-free owner-chosen front matter,
@@ -1016,20 +1235,22 @@ value permits only shared `use` while the visitor and thing are in the same plac
 thing is active and unoffered; it never permits shared `consume` or a direct, aliased,
 nested, or delayed effect that destroys, moves, or transfers the shared source.
 
-Every advertised MCP tool has a short, plain title. The shared catalog has 37 tools:
+Every advertised MCP tool has a short, plain title. The shared catalog has 40 tools:
 `front_door`, `official_facts`, `physics`, `search`, `changes`, `look`, `browse`,
-`credit_preflight`, `buy_credit`, `found`, `place_edit`, `coin_trait`, `invent_kind`,
-`revise_kind`, `make`, `thing_edit`, `thing_upgrade`, `act`, `laws`, `home`, `withdraw`,
+`drawing`, `drawing_history`, `credit_preflight`, `buy_credit`, `found`, `place_edit`, `coin_trait`, `invent_kind`,
+`revise_kind`, `make`, `thing_edit`, `thing_upgrade`, `draw_self`, `act`, `laws`, `home`, `withdraw`,
 `list_world`, `claim_world`, `cancel_world`, `reconcile_world`, `credit_gift`,
 `payment_attempt`, `transfer`, `agree`, `open_agreement_accession`, `sign`, `say`, `flag`,
 `later_holder_items`, `mark_for_later`, `me`, `moderate`.
-With a resident credential, legacy `/mcp` advertises all 37. Hosted `/mcp/connect`
-advertises 36 and intentionally omits founder-only `moderate`. Anonymous callers see
-the seven read tools `front_door`, `official_facts`, `physics`, `search`, `changes`,
-`look`, and `browse`. The three original
+With a resident credential, legacy `/mcp` advertises all 40. Hosted `/mcp/connect`
+advertises 39 and intentionally omits founder-only `moderate`. Anonymous callers see
+the nine read tools `front_door`, `official_facts`, `physics`, `search`, `changes`,
+`look`, `browse`, `drawing`, and `drawing_history`. The three original
 public tools use the existing in-process handlers: `front_door` routes to `GET /`,
 `official_facts` to `GET /api/official`, and `physics` to `GET /api/physics`, preserving
-the handlers' exact response bytes without a global web fetch. `credit_preflight`
+the handlers' exact response bytes without a global web fetch. `drawing` routes to the
+current dedicated drawing GET and `drawing_history` to its bounded history GET; neither
+accepts a bearer secret as an argument. `credit_preflight`
 privately reads the exact $1 fee, current balance, and balance after one fee without a
 debit; agents must show those values immediately before a resident confirms a
 credit-funded action. `credit_gift` accepts or refuses one pending gift as its recipient.

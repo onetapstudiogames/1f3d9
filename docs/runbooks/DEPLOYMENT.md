@@ -85,6 +85,127 @@ Production snapshot, apply `npm run migrate:production:resident-refusal-state`, 
 the same postconditions before merging the application. The application rollout does not
 apply this migration.
 
+### Drawing-contract and world-root drawing prerequisite
+
+Before the first application rollout containing public drawing states, history,
+or named kind variants, apply the two drawing migrations to Production in this
+exact order. The application rollout never applies either migration.
+
+1. In an operator shell, provision `NEON_API_KEY`, `NEON_PROJECT_ID`,
+   `NEON_PRODUCTION_BRANCH_ID`, and `PRODUCTION_DATABASE_URL_UNPOOLED` without
+   printing their values. Choose a fresh `PRODUCTION_SNAPSHOT_NAME` for each production drawing command.
+2. Apply the drawing contract first. The runner verifies the exact production
+   branch and direct database target, then creates and verifies the named Neon
+   snapshot before starting the transactional migration:
+
+   ```sh
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   PRODUCTION_SNAPSHOT_NAME=<fresh-drawing-contract-snapshot-name> \
+   npm run migrate:production:drawing-contract
+   ```
+
+3. Before continuing, verify that `drawing_revisions` exists, its
+   `drawing_revisions_append_only` trigger is enabled, and the validated
+   constraints are named `residents_drawing_contract`,
+   `places_drawing_contract`, `kind_revisions_drawing_contract`, and
+   `things_drawing_contract`. Also verify that a typed thing which previously
+   stored direct legacy pixels has one legacy history row and is normalized to
+   `drawing_state = 'undrawn'` with no direct drawing.
+
+   If `city_snapshot.public_records_v2` exists, it predates this drawing
+   migration and must now read the new drawing-aware v1 rather than the renamed
+   pre-contract base. Run this read-only definition check; every returned
+   boolean must be `true`:
+
+   ```sql
+   WITH definitions AS (
+     SELECT
+       pg_get_viewdef('city_snapshot.public_records'::regclass, TRUE) AS v1,
+       pg_get_viewdef(to_regclass('city_snapshot.public_records_v2'), TRUE) AS v2
+     WHERE to_regclass('city_snapshot.public_records_v2') IS NOT NULL
+   )
+   SELECT
+     position('city_snapshot.public_records base_record' IN v2) > 0
+       AS v2_reads_drawing_aware_v1,
+     position('public_records_without_drawing_contract' IN v2) = 0
+       AS v2_avoids_pre_contract_v1,
+     position('resident_edited' IN v2) > 0 AS v2_allows_resident_edited,
+     position('drawing_revisions' IN v1) > 0 AS v2_can_export_drawing_revisions,
+     position('drawing_state' IN v1) > 0 AS v2_can_export_current_drawings,
+     position('gazette_issues' IN v2) > 0 AS v2_keeps_gazette_issues,
+     position('gazette_issue_entries' IN v2) > 0 AS v2_keeps_gazette_issue_entries,
+     position('{detail,error}' IN v2) > 0 AS v2_redacts_event_errors
+   FROM definitions;
+   ```
+
+   No row is correct only when Gazette is not installed. When a row is
+   returned, all eight values must be `true`; otherwise block the rollout.
+   Then run the read-only grant check:
+
+   ```sql
+   WITH views AS (
+     SELECT to_regclass('city_snapshot.public_records_v2') AS v2
+   ), grants AS (
+     SELECT v2,
+       has_table_privilege(
+         'city_snapshot_export',
+         to_regclass('city_snapshot.public_records'),
+         'SELECT'
+       ) AS v1_select,
+       coalesce(has_table_privilege(
+         'city_snapshot_export', v2, 'SELECT'
+       ), FALSE) AS v2_select
+     FROM views
+   )
+   SELECT CASE
+       WHEN v2 IS NULL THEN 'no_gazette'
+       WHEN v1_select THEN 'dormant'
+       ELSE 'activated'
+     END AS gazette_phase,
+     v1_select,
+     v2_select
+   FROM grants;
+   ```
+
+   The only valid rows are `no_gazette | true | false`,
+   `dormant | true | true`, or `activated | false | true`. Confirm that the
+   reported dormant/activated phase matches the room #454 submission state.
+   Any other grant combination blocks the application rollout.
+4. Choose a second fresh snapshot name, then apply the guarded world-root
+   drawing only after step 3 passes:
+
+   ```sh
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   PRODUCTION_SNAPSHOT_NAME=<fresh-world-root-drawing-snapshot-name> \
+   npm run migrate:production:world-root-drawing
+   ```
+
+5. Before merging the application, verify exactly one `place_kind = 'world'`
+   row carries the founder drawing, `places_world_shape` and
+   `places_world_drawing_exact` are validated, and the
+   `places_protect_topology_write` trigger is enabled. Record both snapshot
+   names and the successful read-only postcondition checks with the release
+   evidence; never record a database URL or credential.
+
+Only after both Production migrations ran in that order and every documented
+drawing, Gazette grant, and world-root postcondition check above was recorded,
+set this exact non-secret release-preparation acknowledgement:
+
+```sh
+CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED
+```
+
+This is an operator attestation to separately recorded evidence. The
+`--prepare` script does not query Production and the value by itself does not
+prove a database postcondition.
+
+Each file is one transaction, so a failed command commits none of that
+command. If the drawing-contract command commits and the world-root command
+fails, the drawing contract remains applied: block the application rollout,
+diagnose the second command, and use a reviewed forward repair or the verified
+snapshot recovery path. Application rollback does not revert database changes.
+A destructive down migration is not an incident-time action.
+
 ### Gazette two-phase prerequisite
 
 The first Gazette rollout has two separate database changes. The `gazette` migration
@@ -201,6 +322,7 @@ CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
+CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED \
 scripts/deploy.sh --prepare
 ```
 

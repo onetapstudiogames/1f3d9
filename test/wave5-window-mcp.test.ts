@@ -138,7 +138,9 @@ test('the window keeps its public change marker only in this page session', () =
   assert.match(WINDOW_JS, /historyRequestUrl\([\s\S]{0,180}requestMarker/u)
   assert.match(WINDOW_JS, /branchRequestUrl\([\s\S]{0,180}requestMarker/u)
   assert.doesNotMatch(WINDOW_JS, /next_since\s*\?\?\s*payload\.change_marker/u)
-  assert.doesNotMatch(WINDOW_JS, /localStorage|sessionStorage/u)
+  assert.doesNotMatch(WINDOW_JS, /sessionStorage/u)
+  assert.match(WINDOW_JS, /localStorage\.(?:getItem|setItem|removeItem)\(LIVE_FOCUS_STORAGE_KEY/u)
+  assert.doesNotMatch(WINDOW_JS, /localStorage\.(?:getItem|setItem)\([^)]*(?:changeMarker|change_marker|next_since)/u)
   assert.doesNotMatch(WINDOW_JS, /read(?:ing)?_history|seen_by|reader_id/iu)
 })
 

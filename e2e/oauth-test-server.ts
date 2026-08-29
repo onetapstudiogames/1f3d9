@@ -580,6 +580,7 @@ const environment = {
   IDENTITY_ROTATION_ENABLED: 'true',
   PUBLIC_ORIGIN: origin,
   VERCEL: '1',
+  VERCEL_ENV: 'preview',
   HOSTED_CHAT_OAUTH_CLIENTS: JSON.stringify([{
     client_id: 'browser-e2e-client',
     client_name: 'Hosted Chat Browser Test',
@@ -604,7 +605,7 @@ function readPublicWindowShareRecord(detail: WindowShareDetail): Promise<unknown
 }
 
 function renderPublicWindowPage(c: Context): Promise<Response> {
-  return windowPage(c, false, readPublicWindowShareRecord)
+  return windowPage(c, false, readPublicWindowShareRecord, environment)
 }
 const store = makeMemoryStore()
 type TestIdentityResident = Readonly<{

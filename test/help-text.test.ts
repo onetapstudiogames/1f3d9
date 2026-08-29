@@ -11,6 +11,8 @@ const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 const frontdoor = read('../src/frontdoor.txt')
 const llms = read('../src/llms.txt')
 const specification = read('../docs/SYSTEM_DESIGN.md')
+const drawingDesign = read('../docs/DRAWING_AND_LIVE_VIEW.md')
+const publicSnapshots = read('../docs/PUBLIC_SNAPSHOTS.md')
 const productRequirements = read('../docs/PRD.md')
 const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
@@ -21,11 +23,27 @@ const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 
+test('Live is labeled alpha across its public help mirrors', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['drawing and Live design', drawingDesign],
+  ] as const) {
+    assert.match(text, /(?:ALPHA[^\n]{0,100}chip|chip[^\n]{0,100}ALPHA)/u, `${name}: alpha Live label`)
+    assert.doesNotMatch(text, /(?:BETA[^\n]{0,100}chip|chip[^\n]{0,100}BETA)/u, `${name}: stale beta Live label`)
+  }
+})
+
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.equal(recorded.at(-1), 56)
-  assert.match(contributorGuide, /\(56 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 62 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 62)
+  assert.match(contributorGuide, /\(62 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -38,6 +56,16 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 54 \|[^\n]*first-party human page lists both sibling sites' official MCP doors[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 55 \|[^\n]*Repeated authenticated rule refusals change explanation[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 56 \|[^\n]*Gazette[^\n]*three submissions[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 57 \|[^\n]*Live motion replays only complete, commit-ordered[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 58 \|[^\n]*Live is a fixed surveyed world plate[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 59 \|[^\n]*Live separates exact thing counts from named thing specimens[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 60 \|[^\n]*Live keeps fixed geography while making every represented item reachable[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 61 \|[^\n]*Live uses a readable camera and an inline scene[^\n]*LOCKED/iu)
+  assert.match(
+    decisions,
+    /\| 62 \|[^\n]*drawing[^\n]*(?:Refused|REFUSE)[^\n]*(?:history|revision)[^\n]*(?:variant|variation)[^\n]*LOCKED/iu,
+  )
+  assert.match(decisions, /\| 50 \|[^\n]*legacy `\/mcp` advertises 40 tools[^\n]*hosted `\/mcp\/connect` advertises 39/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
 })
 
@@ -884,14 +912,96 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 37 tools[\s\S]{0,900}legacy `\/mcp` advertises all 37[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}36[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 40 tools[\s\S]{0,900}legacy `\/mcp` advertises all 40[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}39[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
   assert.match(
     hostedSignin,
-    /shared and authenticated legacy[\s\S]{0,100}catalog has 37 tools[\s\S]{0,100}hosted chat advertises 36[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared and\s+authenticated legacy[\s\S]{0,100}catalog has 40 tools[\s\S]{0,100}hosted chat advertises 39[\s\S]{0,100}omits\s+founder-only `moderate`/iu,
     'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
   )
+})
+
+test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['specification', specification],
+    ['drawing design', drawingDesign],
+  ] as const) {
+    assert.match(text, /palette[\s\S]{0,180}(?:0\.\.64|0 (?:through|to) 64)[\s\S]{0,180}lowercase `?#rrggbb`?/iu, `${name}: palette shape`)
+    assert.match(text, /indices[\s\S]{0,180}exactly 64[\s\S]{0,180}(?:null|empty)[\s\S]{0,180}(?:in-range|existing palette)/iu, `${name}: index shape`)
+    assert.match(text, /2,?048 UTF-8 bytes/iu, `${name}: canonical drawing bytes`)
+    assert.match(text, /\/api\/me\/drawing/iu, `${name}: resident drawing route`)
+    assert.match(text, /\/api\/drawing\/:type\/:id/iu, `${name}: dedicated drawing read`)
+    assert.match(text, /\bdraw_self\b/iu, `${name}: resident MCP tool`)
+    assert.match(text, /\bresident_edited\b/iu, `${name}: resident drawing event`)
+    assert.match(text, /six changed[\s\S]{0,180}UTC minute/iu, `${name}: resident drawing rate`)
+    assert.match(text, /exact(?:\s+whole)?[\s\S]{0,100}\bREFUSE\b/iu, `${name}: exact refusal value`)
+    assert.match(
+      text,
+      /Undrawn[\s\S]{0,220}Refused[\s\S]{0,220}Blank[\s\S]{0,220}In progress[\s\S]{0,220}Complete/iu,
+      `${name}: five visible presentations`,
+    )
+    assert.match(text, /drawing_description[\s\S]{0,180}280 UTF-8 bytes/iu, `${name}: paired description`)
+    assert.match(text, /drawing_description[\s\S]{0,220}safe public text/iu, `${name}: safe public description`)
+    assert.match(text, /variant names?[\s\S]{0,220}safe one-line/iu, `${name}: safe variant names`)
+    assert.match(text, /drawing_state[\s\S]{0,120}in_progress[\s\S]{0,80}complete/iu, `${name}: explicit progress`)
+    assert.match(text, /eight[^.\n]{0,80}rows?[\s\S]{0,160}\.[^\n]{0,80}transparent/iu, `${name}: canonical rows`)
+    assert.match(text, /\/api\/drawing\/:type\/:id\/history/iu, `${name}: deliberate history read`)
+    assert.match(text, /real changes?[\s\S]{0,220}immutable (?:revision|history)/iu, `${name}: immutable change history`)
+    assert.match(text, /exact no-op[\s\S]{0,160}(?:adds|appends|creates) no/iu, `${name}: no-op history`)
+    assert.doesNotMatch(text, /overwrites without history/iu, `${name}: stale overwrite claim`)
+    assert.match(text, /(?:named )?variants?[\s\S]{0,220}(?:kind|revision) owner/iu, `${name}: owner-shaped variants`)
+    assert.match(text, /selected variant[\s\S]{0,220}(?:missing|absent|unavailable)[\s\S]{0,220}(?:reject|refus)/iu, `${name}: honest upgrade`)
+    assert.match(text, /from_place_id[\s\S]{0,160}to_place_id|to_place_id[\s\S]{0,160}from_place_id/iu, `${name}: movement endpoints`)
+    assert.match(text, /\bsource_thing_id\b/iu, `${name}: used thing reference`)
+    assert.match(text, /\bsource_thing_id\b[\s\S]{0,120}\bplace_id\b/iu, `${name}: committed use place`)
+    assert.match(text, /give[\s\S]{0,180}\btransfer\b[\s\S]{0,220}consume[\s\S]{0,180}\bthing_withdrawn\b/iu, `${name}: typed give and consume events`)
+    assert.match(text, /\blive_survey\b/iu, `${name}: compact exact thing survey`)
+    assert.match(
+      text,
+      /body-free[\s\S]{0,180}(?:(?:direct|directly)[\s\S]{0,100}(?:active )?thing count|(?:active )?thing count[\s\S]{0,100}(?:direct|directly))/iu,
+      `${name}: body-free direct thing counts`,
+    )
+    assert.match(
+      text,
+      /one[\s\S]{0,100}(?:newest|named)[\s\S]{0,100}(?:50|fifty)[\s\S]{0,180}(?:never|does not)[\s\S]{0,100}(?:cursor|second page)/iu,
+      `${name}: one bounded named-thing page`,
+    )
+    assert.match(
+      text,
+      /Thing #(?:23|<id>)[\s\S]{0,100}recorded in/iu,
+      `${name}: Focus fallback keeps a stable thing id and recorded place`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['specification', specification],
+    ['drawing design', drawingDesign],
+  ] as const) {
+    assert.match(text, /cartographic plate/iu, `${name}: plate direction`)
+    assert.match(text, /25 seconds[\s\S]{0,180}60[\s\S]{0,80}120[\s\S]{0,80}240[\s\S]{0,80}300 seconds/iu, `${name}: activity-following cadence`)
+    assert.match(text, /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u, `${name}: alpha sentence`)
+    assert.match(text, /prefers-reduced-motion[\s\S]{0,220}forced-colors|forced-colors[\s\S]{0,220}prefers-reduced-motion/iu, `${name}: accessibility modes`)
+    assert.match(text, /within_seconds=1800/iu, `${name}: opening-history horizon`)
+    assert.match(text, /change_id[\s\S]{0,320}(?:replay|static)|(?:replay|static)[\s\S]{0,320}change_id/iu, `${name}: commit-safe replay boundary`)
+    assert.match(
+      text,
+      /1,600\s+(?:opening\s+)?events[\s\S]{0,320}(?:Continue recent history|real Continue action)/iu,
+      `${name}: bounded resumable opening history`,
+    )
+    assert.match(text, /(?:3[.]2\s+(?:to|–)\s+8|three point two to eight)\s+seconds/iu, `${name}: bounded replay duration`)
+    assert.match(text, /(?:newly learned rows[\s\S]{0,80}replay once|replays[\s\S]{0,80}newly learned rows once|walks once)/iu, `${name}: one-shot replay`)
+    assert.match(text, /speech bubble[\s\S]{0,180}(?:60|sixty)[\s\S]{0,220}(?:newest|one per resident)/iu, `${name}: speech bubble contract`)
+    assert.match(text, /ledger[\s\S]{0,120}(?:full|complete|exact) (?:note )?(?:body|text)/iu, `${name}: full note ledger`)
+    assert.match(text, /no new dependenc/iu, `${name}: dependency boundary`)
+  }
+
+  assert.match(publicSnapshots, /residents[\s\S]{0,200}drawing/iu)
+  assert.match(publicSnapshots, /things[\s\S]{0,260}drawing_source[\s\S]{0,180}kind_revision/iu)
+  assert.match(publicSnapshots, /ordinary[\s\S]{0,160}(?:map|room|window|census)[\s\S]{0,180}(?:omit|do not include|never include)[\s\S]{0,100}drawing/iu)
+  assert.match(publicSnapshots, /drawing_revisions[\s\S]{0,240}(?:previous|prior)[\s\S]{0,180}current/iu)
 })
 
 test('Wave 9 complete names and bounded window truths stay aligned', () => {

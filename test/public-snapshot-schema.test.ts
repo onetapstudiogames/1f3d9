@@ -8,14 +8,22 @@ import {
 } from '../src/public-events.ts'
 
 const migrationUrl = new URL('../db/migrations/20260823_public_snapshots.sql', import.meta.url)
+const drawingsMigrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
+const drawingContractMigrationUrl = new URL(
+  '../db/migrations/20260828_drawing_contract.sql',
+  import.meta.url,
+)
 const gazetteMigrationUrl = new URL('../db/migrations/20260827_gazette.sql', import.meta.url)
 const gazetteActivationUrl = new URL(
   '../db/migrations/20260827_gazette_room_activation.sql',
   import.meta.url,
 )
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
+const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
+  ? [...PUBLIC_EVENT_KINDS]
+  : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)]
 
-const V1_PUBLIC_EVENT_KINDS = PUBLIC_EVENT_KINDS.filter(kind => kind !== 'gazette_printed')
+const V1_PUBLIC_EVENT_KINDS = currentPublicEventKinds.filter(kind => kind !== 'gazette_printed')
 const V1_PUBLIC_EVENT_DETAIL_FIELDS = [
   ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
   ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS.filter(field =>
@@ -65,7 +73,10 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     assert.ok(publicKindsCte)
     const sqlPublicKinds = [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
-    assert.deepEqual(sqlPublicKinds, V1_PUBLIC_EVENT_KINDS)
+    const expectedKinds = name === 'migration'
+      ? V1_PUBLIC_EVENT_KINDS.filter(kind => kind !== 'resident_edited')
+      : V1_PUBLIC_EVENT_KINDS
+    assert.deepEqual(sqlPublicKinds, expectedKinds)
     assert.ok(sqlPublicKinds.includes('payment_repair'))
     assert.match(
       view,
@@ -79,7 +90,9 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlEventDetailFields = [...eventProjection.matchAll(
       /'([a-z_]+)',\s*event\.detail->'\1'/gu,
     )].map(match => match[1]!).sort()
-    assert.deepEqual(sqlEventDetailFields, V1_PUBLIC_EVENT_DETAIL_FIELDS)
+    const expectedEventDetailFields = V1_PUBLIC_EVENT_DETAIL_FIELDS
+      .filter(field => name !== 'migration' || field !== 'source_thing_id')
+    assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
       eventProjection,
@@ -112,7 +125,82 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
   })
 }
 
-for (const [name, url] of [['Gazette migration', gazetteMigrationUrl], ['fresh schema', schemaUrl]] as const) {
+for (const [name, url] of [
+  ['drawing contract migration', drawingContractMigrationUrl],
+  ['fresh schema', schemaUrl],
+] as const) {
+  test(`${name} exports current drawing state and separate immutable revisions`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)
+    assert.ok(viewStart >= 0, `${name}: snapshot view`)
+    const view = sql.slice(viewStart)
+
+    for (const key of [
+      'drawing', 'drawing_state', 'drawing_description', 'drawing_rows', 'drawing_source',
+    ]) assert.match(view, new RegExp(`'${key}'`, 'u'), `${name}: ${key}`)
+    for (const source of [
+      'none', 'resident', 'place', 'thing', 'kind_base', 'kind_variant',
+    ]) assert.match(view, new RegExp(`'${source}'`, 'u'), `${name}: ${source}`)
+    for (const provenance of ['kind_id', 'kind_name', 'revision', 'variant_name']) {
+      assert.match(view, new RegExp(`'${provenance}'`, 'u'), `${name}: ${provenance}`)
+    }
+
+    const revisionsStart = view.indexOf("SELECT 'drawing_revisions'")
+    assert.ok(revisionsStart >= 0, `${name}: drawing revisions class`)
+    const revisions = view.slice(revisionsStart)
+    for (const key of [
+      'target_type', 'target_id', 'previous', 'current', 'source', 'author_relation',
+      'created_at',
+    ]) assert.match(revisions, new RegExp(`'${key}'`, 'u'), `${name}: revision ${key}`)
+    assert.match(revisions, /moderation_actions/iu)
+    assert.match(revisions, /target_type/iu)
+    assert.match(revisions, /target_id/iu)
+    assert.doesNotMatch(view, /resident_drawing_rate_limits/iu)
+    assert.doesNotMatch(view, /'drawing_history'|'history'\s*,/iu)
+  })
+}
+
+for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh schema', schemaUrl]] as const) {
+  test(`${name} exports exact drawings with moderated resident and resolved thing provenance`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records/iu)
+    assert.ok(viewStart >= 0, `${name}: snapshot view`)
+    const view = sql.slice(viewStart)
+
+    assert.match(view, /'drawing',\s*CASE[\s\S]{0,240}resident_hidden\.action\s*=\s*'remove'[\s\S]{0,120}resident\.drawing/iu)
+    assert.match(view, /resident_hidden\.target_type\s*=\s*'resident'/iu)
+    assert.match(view, /'drawing',\s*place\.drawing/iu)
+    assert.match(view, /'drawing',\s*CASE[\s\S]{0,320}thing\.drawing[\s\S]{0,320}revision\.drawing/iu)
+    assert.match(view, /'drawing_source',\s*CASE[\s\S]{0,500}'type',\s*'thing'[\s\S]{0,500}'type',\s*'kind_revision'/iu)
+    assert.match(view, /revision\.kind_id\s*=\s*thing\.kind_id\s+AND\s+revision\.revision\s*=\s*thing\.current_revision/iu)
+    assert.match(view, /'drawing',\s*revision\.drawing/iu)
+    assert.match(view, /\('resident_edited'\)/u)
+    assert.match(view, /'source_thing_id',\s*event\.detail->'source_thing_id'/u)
+
+    const publicKindsCte = view.match(
+      /public_event_kinds\(kind\)\s+AS\s*\(\s*VALUES([\s\S]*?)\r?\n\),\r?\nplace_ancestry/iu,
+    )?.[1]
+    assert.ok(publicKindsCte)
+    assert.deepEqual(
+      [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)].map(match => match[1]!),
+      V1_PUBLIC_EVENT_KINDS,
+    )
+    const eventsStart = view.indexOf("SELECT 'events'")
+    const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
+    const eventProjection = view.slice(eventsStart, moderationStart)
+    assert.deepEqual(
+      [...eventProjection.matchAll(/'([a-z_]+)',\s*event\.detail->'\1'/gu)]
+        .map(match => match[1]!).sort(),
+      V1_PUBLIC_EVENT_DETAIL_FIELDS,
+    )
+  })
+}
+
+for (const [name, url] of [
+  ['Gazette migration', gazetteMigrationUrl],
+  ['drawing contract migration', drawingContractMigrationUrl],
+  ['fresh schema', schemaUrl],
+] as const) {
   test(`${name} installs the restricted format-v2 Gazette projection`, async () => {
     const sql = await readFile(url, 'utf8')
     const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records_v2/iu)
@@ -124,12 +212,15 @@ for (const [name, url] of [['Gazette migration', gazetteMigrationUrl], ['fresh s
     assert.match(view, /FROM city_snapshot\.public_records base_record/iu)
     assert.doesNotMatch(view, /SELECT\s+\*/iu)
     const v2KindsCte = view.match(
-      /public_event_kinds_v2\(kind\)\s+AS\s*\(\s*VALUES([\s\S]*?)\r?\n\)\r?\nSELECT/iu,
+      /public_event_kinds_v2\(kind\)\s+AS\s*\(\s*VALUES([\s\S]*?)\r?\n\s*\)\r?\n\s*SELECT/iu,
     )?.[1]
     assert.ok(v2KindsCte)
     const v2PublicKinds = [...v2KindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
-    assert.deepEqual(v2PublicKinds, [...PUBLIC_EVENT_KINDS])
+    const expectedV2Kinds = name === 'Gazette migration'
+      ? currentPublicEventKinds.filter(kind => kind !== 'resident_edited')
+      : currentPublicEventKinds
+    assert.deepEqual(v2PublicKinds, expectedV2Kinds)
     assert.match(
       view,
       /base_record\.class_name = 'events'[\s\S]+NOT EXISTS \([\s\S]+public_event_kinds_v2[\s\S]+jsonb_build_object\(\s*'id',\s*base_record\.payload->'id',\s*'status',\s*'not_public_or_sequence_gap'\s*\)/iu,
@@ -175,6 +266,16 @@ for (const [name, url] of [['Gazette migration', gazetteMigrationUrl], ['fresh s
         sql,
         /REVOKE SELECT ON city_snapshot\.public_records FROM city_snapshot_export/iu,
         'the dormant migration must leave the still-deployed v1 exporter working',
+      )
+    } else if (name === 'drawing contract migration') {
+      assert.match(sql, /gazette_submission_room_is_open\(\)/iu)
+      assert.match(
+        sql,
+        /REVOKE SELECT ON city_snapshot\.public_records FROM city_snapshot_export/iu,
+      )
+      assert.match(
+        sql,
+        /GRANT SELECT ON city_snapshot\.public_records TO city_snapshot_export/iu,
       )
     } else {
       assert.match(

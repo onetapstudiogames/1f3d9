@@ -29,6 +29,7 @@ type RemoteMigration =
   | 'world-root-expand'
   | 'world-root-topology'
   | 'world-root-description'
+  | 'world-root-drawing'
   | 'public-pagination'
   | 'agreement-accession'
   | 'open-to-use'
@@ -59,6 +60,8 @@ type RemoteMigration =
   | 'resumable-registration'
   | 'paypal-credit-disputes'
   | 'resident-refusal-state'
+  | 'drawings'
+  | 'drawing-contract'
   | 'gazette'
   | 'gazette-room-activation'
 
@@ -68,6 +71,7 @@ export type MigrationFile =
   | 'db/migrations/20260814_world_root_expand.sql'
   | 'db/migrations/20260814_world_root_topology.sql'
   | 'db/migrations/20260823_world_root_description.sql'
+  | 'db/migrations/20260827_world_root_drawing.sql'
   | 'db/migrations/20260814_public_pagination.sql'
   | 'db/migrations/20260814_agreement_accession.sql'
   | 'db/migrations/20260815_open_to_use.sql'
@@ -98,6 +102,8 @@ export type MigrationFile =
   | 'db/migrations/20260826_resumable_registration.sql'
   | 'db/migrations/20260827_paypal_credit_disputes.sql'
   | 'db/migrations/20260827_resident_refusal_state.sql'
+  | 'db/migrations/20260827_drawings.sql'
+  | 'db/migrations/20260828_drawing_contract.sql'
   | 'db/migrations/20260827_gazette.sql'
   | 'db/migrations/20260827_gazette_room_activation.sql'
 
@@ -162,6 +168,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'world-root-expand': 'db/migrations/20260814_world_root_expand.sql',
   'world-root-topology': 'db/migrations/20260814_world_root_topology.sql',
   'world-root-description': 'db/migrations/20260823_world_root_description.sql',
+  'world-root-drawing': 'db/migrations/20260827_world_root_drawing.sql',
   'public-pagination': 'db/migrations/20260814_public_pagination.sql',
   'agreement-accession': 'db/migrations/20260814_agreement_accession.sql',
   'open-to-use': 'db/migrations/20260815_open_to_use.sql',
@@ -192,6 +199,8 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
   'paypal-credit-disputes': 'db/migrations/20260827_paypal_credit_disputes.sql',
   'resident-refusal-state': 'db/migrations/20260827_resident_refusal_state.sql',
+  drawings: 'db/migrations/20260827_drawings.sql',
+  'drawing-contract': 'db/migrations/20260828_drawing_contract.sql',
   gazette: 'db/migrations/20260827_gazette.sql',
   'gazette-room-activation': 'db/migrations/20260827_gazette_room_activation.sql',
 }

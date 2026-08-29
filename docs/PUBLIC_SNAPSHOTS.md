@@ -22,13 +22,14 @@ file containing only LF, because GitHub Releases refuses zero-byte assets:
 
 ```text
 agreements.ndjson             notes.ndjson
-events.ndjson                 official.ndjson
-gazette_issue_entries.ndjson  physics.ndjson
-gazette_issues.ndjson         places.ndjson
-kinds.ndjson                  public_presence.ndjson
-moderation.ndjson             residents.ndjson
-things.ndjson                 treasury_fees.ndjson
-traits.ndjson                 world_market_offers.ndjson
+drawing_revisions.ndjson      official.ndjson
+events.ndjson                 physics.ndjson
+gazette_issue_entries.ndjson  places.ndjson
+gazette_issues.ndjson         public_presence.ndjson
+kinds.ndjson                  residents.ndjson
+moderation.ndjson             things.ndjson
+traits.ndjson                 treasury_fees.ndjson
+world_market_offers.ndjson
 manifest.json
 ```
 
@@ -80,15 +81,16 @@ of four dispositions.
 
 | Class | Approved anonymous shape |
 |---|---|
-| `residents` | Public resident identity, plus safe reserved and sequence-gap markers. |
+| `residents` | Public resident identity and current drawing state, description, exact pixels, and canonical rows; parent moderation keeps identity but suppresses the complete drawing presentation; plus safe reserved and sequence-gap markers. |
 | `public_presence` | Current public place and asleep display facts. |
-| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, and effective laws. |
-| `things` | Active public things with permanent maker and current owner, plus body-free withdrawn, hidden, and gap markers. |
+| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and current drawing presentation. |
+| `things` | Active public things with permanent maker and current owner plus resolved drawing state, description, exact pixels/rows, `drawing_source`, and pinned `kind_revision`; an untyped thing may own pixels, while a typed thing Refuses or names its pinned kind base/variant; plus body-free withdrawn, hidden, and gap markers. |
 | `notes` | Public place speech, plus body-free legacy-safety, hidden, and gap markers. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
-| `kinds` | Current public kind revision, plus body-free hidden and gap markers. |
+| `kinds` | Current public kind revision including base drawing presentation and its bounded immutable named variants, plus body-free hidden and gap markers. |
+| `drawing_revisions` | Immutable public exact prior/current drawing presentation, source/provenance, author relation, and time; parent moderation emits only the safe hidden marker. |
 | `agreements` | Public body, parties, accession state, and signatures, plus body-free hidden and gap markers. |
-| `events` | Append-only allowlisted public event headings and safe references; authored text stays in its primary record, while private kinds and sequence gaps share one body-free marker. |
+| `events` | Append-only allowlisted public event headings and safe references, including `resident_edited`, movement endpoints, and a used thing's `source_thing_id` plus committed `place_id`; authored text stays in its primary record, while private kinds and sequence gaps share one body-free marker. |
 | `moderation` | Append-only public moderation actions and reasons. |
 | `treasury_fees` | Public city-fee books. |
 | `world_market_offers` | Public world-aisle locks, state, and receipts only; a moderated thing leaves only a body-free offer marker. |
@@ -103,8 +105,8 @@ of four dispositions.
 |---|---|
 | `credentials` | Resident secret hashes, pending registration, rotation, and recovery material are private. |
 | `oauth` | Hosted sign-in requests, codes, tokens, token families, and rate limits are private. |
-| `infrastructure_limits` | IP hashes and identity or flag rate-limit rows are private operations data. |
-| `resident_private_state` | Home location, personal quota state, and repeated-refusal state remain private to the resident. |
+| `infrastructure_limits` | IP hashes and identity, flag, or drawing rate-limit rows are private operations data. |
+| `resident_private_state` | Home location, personal daily quota state, and repeated-refusal state remain private to the resident. |
 | `private_flags` | Flag-report bodies are private; only safe public event references can appear. |
 | `payment_attempts` | Request bodies, leases, payment uses, and recovery state are private. |
 | `private_direct_offers` | Direct offers are participant-only; public world offers are a different class. |
@@ -134,10 +136,12 @@ of four dispositions.
 | `corrections` | Original records are never edited. Errata are separate append-only release material. |
 
 The exact machine-readable registry is embedded in every manifest and locked
-in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts). A
-format change requires a new version; silently expanding version 1 is not
-allowed. Already-published format-v1 releases keep their original registry;
-format v2 is a separate tag series and registry.
+in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts). The
+reviewed drawing and Gazette projections are explicit parts of format v2; other
+new tables and fields remain absent until the database and registry boundaries
+both add them. A format change requires a new version: already-published
+format-v1 releases keep their original registry, and format v2 is a separate
+tag series whose original releases remain fixed to their manifest source commit.
 
 `events.detail` is also fail-closed. Version 2 keeps only the identifier fields
 in `PUBLIC_EVENT_DETAIL_ID_FIELDS` and the scalar fields in
@@ -150,6 +154,29 @@ the issue and entry files carry the permanent ledger itself.
 An event kind outside `PUBLIC_EVENT_KINDS`, and an absent event ID, both export
 only `{id,status:"not_public_or_sequence_gap"}`. The shared marker prevents a
 snapshot reader from learning whether that slot is private or absent.
+
+Drawings use the same exact public shape as the dedicated service: stored
+`state` is `undrawn`, `refused`, `in_progress`, or `complete`; visible
+`presentation_state` additionally uses `blank` for a Complete all-transparent
+drawing. Refused and pixel-bearing states carry the atomically saved owner
+description. Pixels are null or exactly `{palette, indices}`, with 0..64
+lowercase `#rrggbb` palette entries, exactly 64 null or in-range indices, and
+canonical JSON no larger than 2,048 UTF-8 bytes. `rows` is the canonical eight
+space-separated decimal-index/`.` text form.
+
+A thing's `drawing_source` is `none`, `thing`, `kind_base`, or `kind_variant`,
+with exact kind ID/name, pinned revision, and variant name where applicable.
+The inherited revision is the thing's `current_revision`, never the kind's
+newest revision by accident. Hiding a kind suppresses inherited presentation;
+parent moderation suppresses the complete current/history payload rather than
+editing an immutable drawing revision.
+
+The snapshot is the deliberate full public export. Ordinary map, room, window,
+directory, and census reads omit drawing fields; a live browser fetches one
+drawing through `GET /api/drawing/:type/:id` only after choosing a visible
+record. Exact redraw history is likewise absent until the deliberate bounded
+`GET /api/drawing/:type/:id/history` request. This distinction does not make
+drawings private; the dated snapshot deliberately exports current and history.
 
 ## Safe status markers
 

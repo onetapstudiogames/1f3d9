@@ -82,6 +82,10 @@ test('treasury completion trusts one stored attempt and performs every paid writ
   assert.match(call.text, /INSERT\s+INTO\s+places/iu)
   assert.match(call.text, /INSERT\s+INTO\s+kinds/iu)
   assert.match(call.text, /INSERT\s+INTO\s+kind_revisions/iu)
+  assert.match(call.text, /kind_revisions\s*\([^)]*drawing[^)]*drawing_state[^)]*drawing_description[^)]*drawing_variants/iu)
+  assert.match(call.text, /drawing_revisions/iu)
+  assert.match(call.text, /kind_owner/iu)
+  assert.match(call.text, /valid_city_drawing/iu)
   assert.match(call.text, /UPDATE\s+kinds/iu)
   assert.match(call.text, /complete_payment_attempt/iu)
   assert.match(call.text, /complete_city_credit_attempt/iu)
@@ -112,7 +116,8 @@ test('treasury completion validates exact stored request shapes for all three op
   }
   for (const field of [
     'parent_id', 'name', 'description', 'open_to_building', 'open_to_things',
-    'open_to_notes', 'traits', 'recipe', 'kind_id',
+    'open_to_notes', 'traits', 'recipe', 'drawing', 'drawing_state',
+    'drawing_description', 'drawing_variants', 'kind_id',
   ]) {
     assert.match(query, new RegExp(`['"]${field}['"]`, 'iu'))
   }
@@ -121,6 +126,62 @@ test('treasury completion validates exact stored request shapes for all three op
   assert.match(
     query,
     /target_changed_result\s+AS\s*\([\s\S]*?FROM\s+owned_attempt\s+attempt[\s\S]*?NOT\s+EXISTS\s*\(SELECT\s+1\s+FROM\s+operation_result\)/iu,
+  )
+})
+
+test('treasury completion keeps undrawn attempts but rejects every partial authored drawing shape', async () => {
+  const database = new RecordingDatabase([completedRow()])
+
+  await completeTreasuryPaymentOperation(database, {
+    attemptId: ATTEMPT_ID,
+    leaseOwner: LEASE_OWNER,
+  })
+
+  const query = database.calls[0]!.text
+  assert.match(
+    query,
+    /request_json\s+\?&\s+ARRAY\['name',\s*'description',\s*'traits',\s*'recipe'\]/iu,
+  )
+  assert.match(
+    query,
+    /request_json\s+\?&\s+ARRAY\['kind_id',\s*'description',\s*'traits',\s*'recipe'\]/iu,
+  )
+  assert.match(query, /NOT\s+attempt\.request_json\s+\?\s+'drawing'/iu)
+  assert.match(query, /drawing_description/iu)
+  assert.match(query, /drawing_state/iu)
+  assert.match(query, /drawing_variants/iu)
+  assert.match(query, /REFUSE/u)
+  assert.match(query, /in_progress/u)
+  assert.match(query, /complete/u)
+  assert.match(query, /jsonb_array_length\([^)]*drawing_variants[^)]*\)\s*<=\s*8/iu)
+  assert.match(query, /count\s*\(\s*distinct[^)]*name/iu)
+  assert.match(query, /CASE\s+WHEN\s+NOT\s+request\.request_json\s+\?\s+'drawing'/iu)
+  assert.match(query, /':'\s*\|\|\s*\(attempt\.request_json->>'name'\)/iu)
+})
+
+test('treasury completion stores kind art, variants, authorship, and history in the paid transaction', async () => {
+  const database = new RecordingDatabase([completedRow()])
+
+  await completeTreasuryPaymentOperation(database, {
+    attemptId: ATTEMPT_ID,
+    leaseOwner: LEASE_OWNER,
+  })
+
+  const query = database.calls[0]!.text
+  assert.match(
+    query,
+    /INSERT\s+INTO\s+kind_revisions\s*\([^)]*drawing[^)]*drawing_state[^)]*drawing_description[^)]*drawing_variants/iu,
+  )
+  assert.match(query, /request\.actor_id/iu)
+  assert.match(query, /INSERT\s+INTO\s+drawing_revisions/iu)
+  assert.match(query, /source/iu)
+  assert.match(query, /author_relation/iu)
+  assert.match(query, /kind_owner/iu)
+  assert.match(query, /prior/iu)
+  assert.match(query, /current/iu)
+  assert.match(
+    query,
+    /new_kind_revision[\s\S]*kind_invention_result|kind_revision_record[\s\S]*kind_revision_result/iu,
   )
 })
 

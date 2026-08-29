@@ -24,6 +24,8 @@ const thingMakerMigrationFile = 'db/migrations/20260822_thing_maker.sql' as cons
 const laterHolderMarksMigrationFile = 'db/migrations/20260822_later_holder_marks.sql' as const
 const worldRootDescriptionMigrationFile =
   'db/migrations/20260823_world_root_description.sql' as const
+const worldRootDrawingMigrationFile =
+  'db/migrations/20260827_world_root_drawing.sql' as const
 const paymentRecoveryTriggerRepairMigrationFile =
   'db/migrations/20260823_payment_recovery_trigger_repair.sql' as const
 const paymentLateFinalityRecheckMigrationFile =
@@ -34,6 +36,8 @@ const resumableRegistrationMigrationFile =
   'db/migrations/20260826_resumable_registration.sql' as const
 const residentRefusalMigrationFile =
   'db/migrations/20260827_resident_refusal_state.sql' as const
+const drawingsMigrationFile = 'db/migrations/20260827_drawings.sql' as const
+const drawingContractMigrationFile = 'db/migrations/20260828_drawing_contract.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -264,7 +268,7 @@ test('moderation is founder-only remove-or-restore history', () => {
 
   assert.match(moderation, /actor_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\s*\(id\)[^,]*CHECK\s*\(actor_id\s*=\s*1\)/i)
   assert.match(moderation, /action\s+TEXT\s+NOT NULL\s+CHECK\s*\(action\s+IN\s*\('remove',\s*'restore'\)\)/i)
-  assert.doesNotMatch(moderation, /target_type\s+IN\s*\([^)]*'resident'/i)
+  assert.match(moderation, /target_type\s+IN\s*\([^)]*'resident'/i)
 })
 
 test('thing withdrawal keeps the row and freezes it as history', () => {
@@ -1158,6 +1162,116 @@ test('resident refusal state is bounded, private, and one explicit transactional
   )
 })
 
+test('drawings are one explicit guarded transactional preview or production migration', () => {
+  const migration = migrationDdl(drawingsMigrationFile)
+  assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+drawing\s+JSONB/iu)
+  assert.equal(prepareMigrationExecution(drawingsMigrationFile, migration).mode, 'transactional')
+
+  const baseEnvironment = {
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+  }
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'drawings'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, drawingsMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'drawings'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'drawings-release',
+    },
+  )
+  assert.equal(production.migrationFile, drawingsMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:drawings'] ?? '',
+    /--target preview --migration drawings$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:drawings'] ?? '',
+    /--target production --migration drawings$/u,
+  )
+})
+
+test('drawing contract is a separate bounded additive migration over the preview drawing baseline', () => {
+  const migrationUrl = new URL(`../${drawingContractMigrationFile}`, import.meta.url)
+  assert.equal(existsSync(migrationUrl), true, 'missing forward drawing-contract migration')
+  if (!existsSync(migrationUrl)) return
+
+  const migration = migrationDdl(drawingContractMigrationFile)
+  assert.match(migration, /^\s*BEGIN\s*;/iu)
+  assert.match(migration, /SET\s+LOCAL\s+lock_timeout\s*=/iu)
+  assert.match(migration, /SET\s+LOCAL\s+statement_timeout\s*=/iu)
+  assert.match(migration, /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+drawing_state\s+TEXT/iu)
+  assert.match(migration, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+drawing_revisions/iu)
+  assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN)\b/iu)
+  assert.doesNotMatch(migration, /TRUNCATE\b/iu)
+  assert.match(migration, /COMMIT\s*;\s*$/iu)
+  assert.equal(
+    prepareMigrationExecution(drawingContractMigrationFile, migration).mode,
+    'transactional',
+  )
+})
+
+test('drawing contract has exact guarded preview and production registry entries', () => {
+  const baseEnvironment = {
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+  }
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'drawing-contract'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, drawingContractMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'drawing-contract'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'drawing-contract-release',
+    },
+  )
+  assert.equal(production.migrationFile, drawingContractMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:drawing-contract'] ?? '',
+    /--target preview --migration drawing-contract$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:drawing-contract'] ?? '',
+    /--target production --migration drawing-contract$/u,
+  )
+})
+
 test('round-two records are append-only rather than deleted after resolution', () => {
   for (const table of [
     'place_law_changes',
@@ -1607,6 +1721,93 @@ test('world-root description is a bounded transactional forward migration', () =
     },
   )
   assert.equal(production.migrationFile, worldRootDescriptionMigrationFile)
+})
+
+test('world-root drawing is one bounded reviewed write with explicit remote targets', () => {
+  const migrationUrl = new URL(`../${worldRootDrawingMigrationFile}`, import.meta.url)
+  assert.equal(existsSync(migrationUrl), true, 'missing reviewed world-root drawing migration')
+  const migration = migrationDdl(worldRootDrawingMigrationFile)
+
+  assert.match(migration, /^\s*BEGIN\s*;/iu)
+  assert.match(migration, /SET\s+LOCAL\s+lock_timeout\s*=/iu)
+  assert.match(migration, /SET\s+LOCAL\s+statement_timeout\s*=/iu)
+  assert.match(migration, /LOCK\s+TABLE\s+places\s+IN\s+ACCESS\s+EXCLUSIVE\s+MODE/iu)
+  assert.match(migration, /(?:information_schema\.columns|pg_attribute)[\s\S]{0,500}\bdrawing\b/iu)
+  assert.match(migration, /valid_city_drawing/iu)
+  assert.match(
+    migration,
+    /SELECT\s+count\s*\(\s*\*\s*\)[\s\S]{0,900}FROM\s+places[\s\S]{0,160}WHERE\s+place_kind\s*=\s*'world'/iu,
+  )
+  assert.match(
+    migration,
+    /FROM\s+pg_trigger[\s\S]{0,300}tgname\s*=\s*'places_protect_topology_write'[\s\S]{0,180}tgenabled\s*=\s*'O'/iu,
+  )
+  assert.match(
+    migration,
+    /ALTER\s+TABLE\s+places\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+places_world_shape/iu,
+  )
+  assert.match(migration, /ALTER\s+TABLE\s+places\s+(?:ADD\s+)?CONSTRAINT\s+places_world_shape/iu)
+  assert.match(
+    migration,
+    /ALTER\s+TABLE\s+places\s+DISABLE\s+TRIGGER\s+places_protect_topology_write/iu,
+  )
+  assert.match(migration, /UPDATE\s+places\s+SET\s+drawing\s*=/iu)
+  assert.match(
+    migration,
+    /WHERE\s+place_kind\s*=\s*'world'\s+AND\s+drawing\s+IS\s+DISTINCT\s+FROM/iu,
+  )
+  assert.match(
+    migration,
+    /ALTER\s+TABLE\s+places\s+ENABLE\s+TRIGGER\s+places_protect_topology_write/iu,
+  )
+  assert.match(migration, /ALTER\s+TABLE\s+places\s+VALIDATE\s+CONSTRAINT\s+places_world_shape/iu)
+  assert.doesNotMatch(migration, /session_replication_role/iu)
+  assert.match(migration, /COMMIT\s*;\s*$/iu)
+  assert.equal(
+    prepareMigrationExecution(worldRootDrawingMigrationFile, migration).mode,
+    'transactional',
+  )
+
+  const baseEnvironment = {
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+  }
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'world-root-drawing'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, worldRootDrawingMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'world-root-drawing'],
+    {
+      ...baseEnvironment,
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'world-root-drawing-release',
+    },
+  )
+  assert.equal(production.migrationFile, worldRootDrawingMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  assert.match(
+    packageJson.scripts?.['migrate:preview:world-root-drawing'] ?? '',
+    /--target preview --migration world-root-drawing$/u,
+  )
+  assert.match(
+    packageJson.scripts?.['migrate:production:world-root-drawing'] ?? '',
+    /--target production --migration world-root-drawing$/u,
+  )
 })
 
 test('remote identity rotation is selected as its own additive release', () => {

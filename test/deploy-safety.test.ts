@@ -248,6 +248,28 @@ test('payment reliability is fail-hard in required checks and documented where i
   }
 })
 
+test('the read-only live probe enforces the public kind drawing contract', () => {
+  const probe = liveProbeWorkflow.match(
+    /- name: paid kind drawings resolve without spending[\s\S]*?(?=\r?\n      - name:)/u,
+  )?.[0]
+  assert.ok(probe, 'missing paid kind drawing live-probe step')
+
+  assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/drawing\/kind\/\$KIND_ID"/u)
+  assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
+  assert.match(probe, /\.state == "undrawn"/u)
+  assert.match(probe, /\.state == "refused"/u)
+  assert.match(probe, /\.state == "in_progress"/u)
+  assert.match(probe, /\.state == "complete"/u)
+  assert.match(probe, /\.presentation_state == "blank"/u)
+  assert.match(probe, /\.source == "none"/u)
+  assert.match(probe, /\.source == "kind_base"/u)
+  assert.match(probe, /\.drawing\.indices\s*\|\s*type == "array" and length == 64/u)
+  assert.match(probe, /\.rows\s*\|\s*type == "array"\s*and length == 8/u)
+  assert.match(probe, /all\(\.\[\]; type == "string" and test\(/u)
+  assert.match(probe, /\.kind_name \| type == "string" and length > 0/u)
+  assert.doesNotMatch(probe, /\.source == null|kind_revision/u)
+})
+
 test('preview migration requires exact acknowledgement and named isolated Neon targets', () => {
   assert.throws(
     () => resolveMigrationRun(
@@ -355,6 +377,8 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_PRODUCTION_DRAWING_RELEASE:
+    'DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED',
   CONFIRM_GAZETTE_SCHEMA_MIGRATION:
     'APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
@@ -441,6 +465,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION',
     'CONFIRM_GAZETTE_SCHEMA_MIGRATION="${7-}"',
     'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
+    'CONFIRM_PRODUCTION_DRAWING_RELEASE="${8-}"',
+    'export CONFIRM_PRODUCTION_DRAWING_RELEASE',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -462,6 +488,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
         readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
         readiness.CONFIRM_GAZETTE_SCHEMA_MIGRATION ?? '',
+        readiness.CONFIRM_PRODUCTION_DRAWING_RELEASE ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -554,6 +581,24 @@ test('preparation requires provider-key and migration readiness before any relea
     /Gazette schema.*was applied.*Preview and Production.*while room #454 was closed/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingDrawingRelease = fixture.run({ CONFIRM_PRODUCTION_DRAWING_RELEASE: '' })
+  assert.notEqual(missingDrawingRelease.status, 0)
+  assert.match(
+    `${missingDrawingRelease.stdout}\n${missingDrawingRelease.stderr}`,
+    /Production drawing-contract then world-root-drawing migrations ran in that order[\s\S]*drawing\/Gazette\/world postcondition checks were recorded[\s\S]*does not query Production/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const wrongDrawingRelease = fixture.run({
+    CONFIRM_PRODUCTION_DRAWING_RELEASE: 'yes',
+  })
+  assert.notEqual(wrongDrawingRelease.status, 0)
+  assert.match(
+    `${wrongDrawingRelease.stdout}\n${wrongDrawingRelease.stderr}`,
+    /Production drawing-contract then world-root-drawing migrations ran in that order[\s\S]*drawing\/Gazette\/world postcondition checks were recorded[\s\S]*does not query Production/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
 })
 
 test('release instructions require maker provenance before later-holder marks in each database', () => {
@@ -568,6 +613,89 @@ test('release instructions require maker provenance before later-holder marks in
     deploymentRunbook,
     /CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
+})
+
+test('production drawing migrations have one guarded order and rollback boundary', () => {
+  const drawingContract = deploymentRunbook.indexOf(
+    'npm run migrate:production:drawing-contract',
+  )
+  const worldRootDrawing = deploymentRunbook.indexOf(
+    'npm run migrate:production:world-root-drawing',
+  )
+
+  assert.ok(drawingContract >= 0 && drawingContract < worldRootDrawing)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION/u,
+  )
+  assert.match(
+    deploymentRunbook,
+    /fresh[^\n]*PRODUCTION_SNAPSHOT_NAME[^\n]*each production drawing command/iu,
+  )
+  for (const postcondition of [
+    'drawing_revisions',
+    'residents_drawing_contract',
+    'places_drawing_contract',
+    'kind_revisions_drawing_contract',
+    'things_drawing_contract',
+    'places_world_shape',
+    'places_world_drawing_exact',
+    'places_protect_topology_write',
+    'public_records_v2',
+    'public_records_without_drawing_contract',
+    'resident_edited',
+    'gazette_issues',
+    'gazette_issue_entries',
+    'has_table_privilege',
+  ]) assert.match(deploymentRunbook, new RegExp(postcondition, 'u'))
+  assert.match(deploymentRunbook, /pg_get_viewdef/iu)
+  assert.match(
+    deploymentRunbook,
+    /pg_get_viewdef\(\s*to_regclass\('city_snapshot\.public_records_v2'\)/u,
+  )
+  assert.doesNotMatch(
+    deploymentRunbook,
+    /pg_get_viewdef\(\s*'city_snapshot\.public_records_v2'::regclass/u,
+  )
+  assert.match(deploymentRunbook, /\{detail,error\}/u)
+  assert.match(deploymentRunbook, /no_gazette[\s\S]*true[\s\S]*false/iu)
+  assert.match(deploymentRunbook, /dormant[\s\S]*true[\s\S]*true/iu)
+  assert.match(deploymentRunbook, /activated[\s\S]*false[\s\S]*true/iu)
+  assert.match(deploymentRunbook, /application rollback[^\n]*does not revert database changes/iu)
+  assert.match(deploymentRunbook, /destructive down migration[^\n]*not[^\n]*incident/iu)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED/u,
+  )
+  assert.match(
+    environmentRunbook,
+    /CONFIRM_PRODUCTION_DRAWING_RELEASE[\s\S]*operator attestation[\s\S]*does not query Production/iu,
+  )
+})
+
+test('PostgreSQL gate upgrades the checked-in pre-drawing production schema in release order', () => {
+  const fileName = 'drawing-upgrade-postgres.test.ts'
+  assertPostgresTestDiscovered(fileName)
+  const source = readFileSync(
+    new URL(`../test/integration/${fileName}`, import.meta.url),
+    'utf8',
+  )
+  const drawingContract = source.indexOf('await client.query(drawingContractMigrationDdl)')
+  const worldRootDrawing = source.indexOf('await client.query(worldRootDrawingMigrationDdl)')
+
+  assert.match(source, /production-pre-drawing-schema-98594c0\.sql\.gz\.base64/u)
+  assert.ok(drawingContract >= 0 && drawingContract < worldRootDrawing)
+  assert.match(source, /places_world_drawing_exact/u)
+  assert.match(source, /places_protect_topology_write/u)
+  assert.match(source, /drawing_revisions_append_only/u)
+  assert.match(source, /gazetteMigrationDdl/u)
+  assert.match(source, /gazetteActivationDdl/u)
+  assert.match(source, /public_records_v2/u)
+  assert.match(source, /public_records_without_drawing_contract/u)
+  assert.match(source, /resident_edited/u)
+  assert.match(source, /drawing_upgrade_private_fixture/u)
+  assert.match(source, /gazette_issues/u)
+  assert.match(source, /snapshotExportPrivileges/u)
 })
 
 test('release preparation requires the resumable-registration schema in Preview and Production', () => {
@@ -595,6 +723,7 @@ test('release preparation requires the resident refusal state schema in Preview 
     deploymentRunbook,
     /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
+  assert.match(environmentRunbook, /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION/u)
 })
 
 test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {
@@ -874,7 +1003,7 @@ test('migration target must be named explicitly', () => {
 test('remote migration file must be named explicitly', () => {
   assert.throws(
     () => resolveMigrationRun(['--target', 'preview'], {}),
-    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|world-root-description\|public-pagination/u,
+    /--migration hosted-chat-signin\|world-root-expand\|world-root-topology\|world-root-description\|world-root-drawing\|public-pagination/u,
   )
 })
 

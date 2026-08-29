@@ -183,7 +183,7 @@ test('a filtered Place URL survives server render and browser restoration exactl
   await expect(page.locator('#directory-search')).toHaveValue('field')
 })
 
-test('place, thing, and note details each copy one absolute clean live-record URL', async ({ page }) => {
+test('place, thing, and note details each copy one absolute clean live-record URL', async ({ page, context }) => {
   await installClipboardRecorder(page)
   const navigation = await page.goto('/window/place/11')
   expect(navigation?.status()).toBe(200)
@@ -193,6 +193,7 @@ test('place, thing, and note details each copy one absolute clean live-record UR
   const expectedLinks = [`${origin}/window/place/11`]
   const placePanel = page.locator('#place-panel')
   await expect(placePanel).toBeVisible()
+  await expect(page.locator('#record-detail')).toBeHidden()
   await expect(placePanel.locator('[data-share-scope="view"]')).toHaveCount(1)
   await placePanel.locator('[data-share-scope="view"]').click()
   await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
@@ -206,6 +207,11 @@ test('place, thing, and note details each copy one absolute clean live-record UR
   await detail.locator('[data-share-scope="detail"]').click()
   expectedLinks.push(`${origin}/window/thing/401`)
   await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
+  const thingRecipient = await context.newPage()
+  await thingRecipient.goto(`${origin}/window/thing/401`)
+  await expect(thingRecipient.locator('#record-detail')).toBeVisible()
+  await expect(thingRecipient.locator('#record-detail-title')).toHaveText('field_lantern')
+  await thingRecipient.close()
 
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(page).toHaveURL(`${origin}/window/place/11`)
@@ -275,13 +281,60 @@ test('closing an in-window detail prevents Back from reopening that detail', asy
   const detail = page.locator('#record-detail')
   await expect(page).toHaveURL(/\/window\/thing\/401$/u)
   await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+
+  await page.evaluate(() => {
+    const heldBack = history.back.bind(history)
+    const heldShowModal = HTMLDialogElement.prototype.showModal
+    const trackedWindow = window as Window & {
+      __detailShowModalCalls?: number
+      __releaseHeldBack?: () => void
+      __restoreDetailShowModal?: () => void
+    }
+    trackedWindow.__detailShowModalCalls = 0
+    HTMLDialogElement.prototype.showModal = function showModal() {
+      trackedWindow.__detailShowModalCalls = (trackedWindow.__detailShowModalCalls || 0) + 1
+      return heldShowModal.call(this)
+    }
+    history.back = () => {}
+    trackedWindow.__releaseHeldBack = () => {
+      history.back = heldBack
+      heldBack()
+    }
+    trackedWindow.__restoreDetailShowModal = () => {
+      HTMLDialogElement.prototype.showModal = heldShowModal
+    }
+  })
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(detail).toBeHidden()
+  await expect(page).toHaveURL(/\/window\/thing\/401$/u)
+  expect(await page.evaluate(() => history.state?.windowDetailEntry)).toBe(true)
+  expect(await page.evaluate(() => (
+    window as Window & { __detailShowModalCalls?: number }
+  ).__detailShowModalCalls)).toBe(0)
+  await page.evaluate(() => (
+    window as Window & { __releaseHeldBack?: () => void }
+  ).__releaseHeldBack?.())
   await expect(page).toHaveURL(/\/window\/place\/11$/u)
   await expect(detail).toBeHidden()
 
-  await page.goBack()
+  await page.goForward()
+  await expect(page).toHaveURL(/\/window\/thing\/401$/u)
+  await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  await expect(detail).toBeVisible()
+  expect(await page.evaluate(() => history.state?.windowDetailEntry)).toBe(true)
+  expect(await page.evaluate(() => (
+    window as Window & { __detailShowModalCalls?: number }
+  ).__detailShowModalCalls)).toBe(1)
+
+  await detail.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
   await expect(detail).toBeHidden()
-  expect(new URL(page.url()).pathname).not.toBe('/window/thing/401')
+  expect(await page.evaluate(() => (
+    window as Window & { __detailShowModalCalls?: number }
+  ).__detailShowModalCalls)).toBe(1)
+  await page.evaluate(() => (
+    window as Window & { __restoreDetailShowModal?: () => void }
+  ).__restoreDetailShowModal?.())
 })
 
 test('closing a directly loaded detail falls back to the map deterministically', async ({ page }) => {

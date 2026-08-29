@@ -88,7 +88,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
 
 test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
   const views = [
-    'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ]
   for (const view of views) {
     const panel = WINDOW_HTML.match(
@@ -239,6 +239,150 @@ test('detail sharing reports inside the modal and navigation invalidates stale f
   assert.match(WINDOW_JS, /closeDetail/u)
 })
 
+test('the live plate is one linkable observatory instrument, never a game viewport', () => {
+  assert.match(WINDOW_HTML, /id="live-tab"[\s\S]*?data-view="live"/u)
+  assert.match(WINDOW_HTML, /id="live-panel"[\s\S]*?aria-labelledby="live-tab"/u)
+  for (const id of [
+    'live-clock', 'live-breadcrumbs', 'live-plates', 'live-ledger',
+    'live-roster', 'live-resident-page', 'live-viewport', 'live-stage',
+    'live-zoom-in', 'live-zoom-out', 'live-center', 'live-fullscreen',
+    'live-proof', 'live-pause', 'live-focus-status',
+  ]) assert.match(WINDOW_HTML, new RegExp(`id="${id}"`))
+  assert.match(WINDOW_HTML, /id="live-alpha" class="alpha-chip" hidden>ALPHA<\/span>/u)
+  assert.match(WINDOW_HTML, /id="live-alpha-note" class="alpha-note" hidden>/u)
+  assert.equal((WINDOW_HTML.match(/>ALPHA</gu) ?? []).length, 1)
+  assert.doesNotMatch(`${WINDOW_HTML}\n${WINDOW_JS}`, /live-beta|beta-chip|beta-note|>BETA</u)
+  assert.match(
+    WINDOW_HTML,
+    /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u,
+  )
+  assert.match(WINDOW_JS, /VIEWS[\s\S]{0,120}'live'/u)
+  assert.match(WINDOW_JS, /state\.view === 'live'/u)
+
+  const shipped = `${WINDOW_HTML}\n${WINDOW_JS}`
+  assert.doesNotMatch(shipped, /Fit live|live-fit|fitLivePlate|windowLiveFitScale/u)
+  assert.doesNotMatch(shipped, /type="range"|zoom-slider/iu)
+  assert.match(WINDOW_JS, /addEventListener\('wheel'/u)
+  assert.match(WINDOW_JS, /addEventListener\('pointerdown'/u)
+  assert.match(WINDOW_JS, /addEventListener\('pointermove'/u)
+  assert.match(WINDOW_JS, /LIVE_FOCUS_STORAGE_KEY/u)
+  assert.match(WINDOW_JS, /localStorage\.getItem\(LIVE_FOCUS_STORAGE_KEY\)/u)
+  assert.match(WINDOW_JS, /localStorage\.setItem\(LIVE_FOCUS_STORAGE_KEY/u)
+  assert.match(WINDOW_JS, /data-live-focus-resident/u)
+  assert.match(WINDOW_JS, /live-overflow-absorbing/u)
+  assert.match(WINDOW_JS, /LIVE_TRAIL_LIFETIME_MS\s*=\s*[3-8]_?\d{3}/u)
+  assert.match(
+    WINDOW_JS,
+    /function renderLiveAging\(\)[\s\S]*?windowLivePruneTrailStarts\(\s*state\.live\.trailStarts/u,
+  )
+  assert.match(WINDOW_JS, /data-live-overflow-count/u)
+  assert.match(WINDOW_JS, /function liveSurveyIsComplete/u)
+  assert.match(WINDOW_JS, /Exact \+N thing counts come from the fixed survey/u)
+  assert.match(WINDOW_JS, /!thingsPage\.loading\s*&&\s*!thingsPage\.initialized/u)
+  assert.doesNotMatch(WINDOW_JS, /Reading every public thing in this plate/u)
+  assert.match(WINDOW_CSS, /\.live-viewport\s*\{[\s\S]*?touch-action:\s*none/u)
+  assert.match(WINDOW_CSS, /\.live-stage\s*\{[\s\S]*?transform-origin:\s*0 0/u)
+  assert.match(WINDOW_JS, /live-replay-portrait/u)
+  assert.match(WINDOW_JS, /live-speech-bubble/u)
+  assert.match(WINDOW_JS, /prefers-reduced-motion: reduce/u)
+  assert.match(WINDOW_CSS, /\.live-replay-portrait[\s\S]*?live-recorded-glide/u)
+  assert.match(
+    WINDOW_CSS,
+    /\.live-speech-bubble\s*\{[\s\S]*?background:\s*var\(--paper-light\)[\s\S]*?border:\s*2px solid var\(--line\)[\s\S]*?border-radius:\s*0/u,
+  )
+  assert.doesNotMatch(WINDOW_CSS, /live-speech-arrive/u)
+  assert.match(WINDOW_JS, /recorded endpoints[^\n]*drawn-in glide/u)
+  assert.match(WINDOW_JS, /pulse on a thing[^\n]*recorded use/u)
+  assert.match(WINDOW_JS, /record\.detail\.status !== 'applied'/u)
+  assert.match(WINDOW_JS, /safeExactText\(payload\?\.note\?\.body/u)
+  assert.match(WINDOW_JS, /function liveDisplayedThings/u)
+  assert.match(WINDOW_JS, /if \(!node\.dataset\.focusKey\) node\.dataset\.focusKey/u)
+  assert.match(WINDOW_JS, /state\.resident && actor !== state\.resident/u)
+  assert.doesNotMatch(WINDOW_CSS, /position:\s*fixed[^}]*live-|100vw[^}]*live-/iu)
+})
+
+test('the live plate states its honest timing and drawing rules in shipped code', () => {
+  assert.match(WINDOW_JS, /\b(?:25000|25e3)\b/u)
+  assert.match(WINDOW_JS, /\b(?:120000|12e4)\b/u)
+  assert.match(WINDOW_JS, /\b(?:240000|24e4)\b/u)
+  for (const value of ['60000', '300000', '1800000', '600000', '600']) {
+    assert.match(WINDOW_JS, new RegExp(`\\b${value}\\b`))
+  }
+  assert.match(WINDOW_JS, /\/api\/events/u)
+  assert.match(WINDOW_JS, /after_change_marker/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('within_seconds', String\(LIVE_MOVE_LIFETIME_MS \/ 1000\)\)/u)
+  assert.match(WINDOW_JS, /\/api\/changes/u)
+  assert.match(WINDOW_JS, /\/api\/drawing\//u)
+  assert.match(WINDOW_JS, /\/api\/note\//u)
+  assert.match(WINDOW_CSS, /\.live-trail/u)
+  assert.match(WINDOW_CSS, /\.live-footnote-mark/u)
+  assert.match(WINDOW_CSS, /\.drawing-undrawn/u)
+  assert.match(
+    WINDOW_CSS,
+    /\.live-plot-terrain\s*>\s*\.drawing-grid\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
+  )
+  assert.match(
+    WINDOW_CSS,
+    /\.live-plot-owner\s*\{[^}]*pointer-events:\s*none/u,
+    'noninteractive plot chrome must not block the place opener',
+  )
+  assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
+  assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
+  assert.match(WINDOW_JS, /resident_edited[\s\S]{0,180}resident:/u)
+  assert.match(WINDOW_JS, /state\.live\.drawings\[key\]\s*!==\s+loading/u)
+  assert.match(WINDOW_JS, /cache:\s*force\s*\?\s*'reload'\s*:\s*'default'/u)
+  assert.match(WINDOW_JS, /loadDirectory\(true, false\), 31_000/u)
+  assert.match(
+    WINDOW_JS,
+    /function scheduleLiveClock\(\)[\s\S]*?renderLiveAging\(\)[\s\S]*?setTimeout\(scheduleLiveClock, 1000\)/u,
+  )
+  assert.match(WINDOW_CSS, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-pulse/u)
+  assert.match(
+    WINDOW_CSS,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-replay-portrait[\s\S]*?animation:\s*none/u,
+  )
+  assert.match(WINDOW_CSS, /@media \(forced-colors: active\)[\s\S]*?\.live-stage-shell/u)
+  assert.match(
+    WINDOW_CSS,
+    /@media \(max-width: 54rem\)[\s\S]*?\.live-layout\s*\{[^}]*display:\s*block[^}]*\}[\s\S]*?\.live-viewport/u,
+  )
+})
+
+test('drawing presentation and details expose the complete authored contract without eager history', () => {
+  for (const label of ['Undrawn', 'Refused', 'In progress', 'Blank', 'Complete']) {
+    assert.match(WINDOW_JS, new RegExp(label.replace(' ', '\\s+'), 'u'))
+  }
+  for (const field of [
+    'presentation_state', 'description', 'rows', 'source', 'kind_id',
+    'kind_name', 'revision', 'variant_name',
+  ]) {
+    assert.match(WINDOW_JS, new RegExp(`\\b${field}\\b`, 'u'))
+  }
+  assert.match(WINDOW_JS, /Own drawing/u)
+  assert.match(WINDOW_JS, /Kind [^'"\n]*revision/u)
+  assert.match(WINDOW_CSS, /\.drawing-state-label/u)
+  assert.match(WINDOW_CSS, /\.drawing-provenance/u)
+  assert.match(WINDOW_CSS, /\.drawing-owner-description/u)
+  assert.match(WINDOW_CSS, /\.drawing-canonical-rows/u)
+
+  assert.match(WINDOW_JS, /Show drawing history/u)
+  assert.match(WINDOW_JS, /Retry drawing history/u)
+  assert.match(WINDOW_JS, /Load earlier drawing revisions/u)
+  assert.match(WINDOW_JS, /\/api\/drawing\/'?\s*\+[^\n]*\/history/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('limit'/u)
+  assert.match(WINDOW_JS, /searchParams\.set\('before'/u)
+
+  const liveRead = /async function fetchLiveDrawing[\s\S]*?\n  function drainLiveDrawingQueue/u
+    .exec(WINDOW_JS)?.[0] ?? ''
+  const ordinaryDetailRead = /async function ensureDetail[\s\S]*?\n  function renderDetail/u
+    .exec(WINDOW_JS)?.[0] ?? ''
+  assert.ok(liveRead)
+  assert.ok(ordinaryDetailRead)
+  assert.doesNotMatch(liveRead, /\/history/u)
+  assert.doesNotMatch(ordinaryDetailRead, /\/history/u)
+  assert.doesNotMatch(WINDOW_HTML, /drawing history|canonical rows|palette indices/iu)
+})
+
 test('the share link round-trips every reproducible window question', () => {
   for (const parameter of [
     'view', 'place', 'resident', 'context', 'q', 'mode', 'type', 'find', 'sleepers', 'issue',
@@ -250,7 +394,7 @@ test('the share link round-trips every reproducible window question', () => {
   assert.match(WINDOW_JS, /nodes\.archiveType\.value = state\.archive\.type/)
   assert.match(WINDOW_JS, /state\.view === 'archive'[\s\S]{0,240}loadArchive\(true, true\)/)
   assert.match(WINDOW_JS, /loadArchive\(true, true\)/)
-  assert.match(WINDOW_JS, /directorySearch[^\n]*params\.set\('find'/)
+  assert.match(WINDOW_JS, /directorySearch:\s*state\.directorySearch/)
   assert.doesNotMatch(
     WINDOW_JS,
     /params\.get\('sleepers'\)[\s\S]{0,160}\.slice\(/,
@@ -359,6 +503,10 @@ test('deliberate navigation makes canonical history and refresh keeps reading st
   assert.match(WINDOW_JS, /if \(current === path && !window\.location\.hash\) return true/)
   assert.match(WINDOW_JS, /window\.addEventListener\('popstate', syncStateFromLocation\)/)
   assert.match(WINDOW_JS, /navigate\(\{ view, placeId, detail: null \}\)/)
+  assert.match(
+    WINDOW_JS,
+    /function syncStateFromLocation\(\)[\s\S]*?previousReplayScope[\s\S]*?settleLiveReplays\(\)/u,
+  )
   assert.match(WINDOW_JS, /placeId: safeId\(nodes\.placeFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   assert.match(WINDOW_JS, /resident: safeHandle\(nodes\.residentFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   // Expanded bodies are keyed state, and focus lands back on the rebuilt
@@ -424,7 +572,7 @@ test('the window covers the whole public life of the city', () => {
   // public act must be listed, or the window silently hides that life. The
   // world_* kinds are the market bridge — their absence hid every market sale.
   assert.deepEqual(PUBLIC_EVENT_KINDS, [
-    'register', 'rotate', 'home_set', 'place_created', 'place_edited',
+    'register', 'rotate', 'resident_edited', 'home_set', 'place_created', 'place_edited',
     'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
     'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',
     'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note', 'gazette_printed',
@@ -1305,6 +1453,11 @@ test('the bounded window keeps loaded navigation while fresh outline pages merge
   assert.match(WINDOW_JS, /mergeWindowRows\([^\n]*(?:children|subplaces)/i)
   assert.match(WINDOW_JS, /collapsedPlaceIds/)
   assert.match(WINDOW_JS, /restoreFocus\(focusKey, focusFallbackKey, focusFallbackId\)/)
+  assert.match(WINDOW_JS, /data-focus-key/u)
+  assert.match(WINDOW_JS, /live-record:/u)
+  assert.match(WINDOW_JS, /live-thing:/u)
+  assert.match(WINDOW_JS, /live-history-opening-retry/u)
+  assert.match(WINDOW_JS, /live-history-stream-retry/u)
   assert.doesNotMatch(WINDOW_JS, /(?:residents|subplaces|children)\.(?:push|splice|sort)\(/)
 })
 
@@ -1560,6 +1713,8 @@ test('Preview metadata trusts Vercel system URLs instead of the request Host', a
   assert.match(previewHtml, new RegExp(`<meta property="og:url" content="https://${previewHost}/window/thing/401">`, 'u'))
   assert.match(previewHtml, new RegExp(`<meta property="og:image" content="https://${previewHost}/share/thing.png">`, 'u'))
   assert.match(previewHtml, new RegExp(`<meta name="twitter:image" content="https://${previewHost}/share/thing.png">`, 'u'))
+  assert.match(previewHtml, /id="live-proof"[^>]*data-preview-available="true"/u)
+  assert.doesNotMatch(previewHtml, /id="live-proof"[^>]*hidden/u)
   assert.doesNotMatch(previewHtml, /evil\.example|1f3d9-hosted-chat-preview/u)
 
   const productionApp = new Hono()
@@ -1577,5 +1732,6 @@ test('Preview metadata trusts Vercel system URLs instead of the request Host', a
   const productionHtml = await (await productionApp.request('https://evil.example/window/thing/401')).text()
   assert.match(productionHtml, /href="https:\/\/1f3d9\.com\/window\/thing\/401"/u)
   assert.match(productionHtml, /content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
+  assert.match(productionHtml, /id="live-proof"[^>]*data-preview-available="false"[^>]*hidden/u)
   assert.doesNotMatch(productionHtml, /evil\.example|onetapstudiogames-projects/u)
 })

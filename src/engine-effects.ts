@@ -605,8 +605,10 @@ async function transferAsset(
         INSERT INTO events (kind, actor, detail)
         SELECT 'transfer', resident.handle, jsonb_build_object(
           'type', asset_type, 'id', asset_id, 'from_id', from_id,
-          'to_id', to_id, 'mode', 'effect'
+          'to_id', to_id, 'mode', 'effect', 'resident_id', ${recipientId}::integer,
+          'place_id', presence.current_place_id
         ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
+        JOIN resident_presence presence ON presence.resident_id = resident.id
       ) SELECT id FROM transfer
     `
     : target.type === 'place'
@@ -628,8 +630,10 @@ async function transferAsset(
           INSERT INTO events (kind, actor, detail)
           SELECT 'transfer', resident.handle, jsonb_build_object(
             'type', asset_type, 'id', asset_id, 'from_id', from_id,
-            'to_id', to_id, 'mode', 'effect'
+            'to_id', to_id, 'mode', 'effect', 'resident_id', ${recipientId}::integer,
+            'place_id', presence.current_place_id
           ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
+          JOIN resident_presence presence ON presence.resident_id = resident.id
         ) SELECT id FROM transfer
       `
       : db`
@@ -650,8 +654,10 @@ async function transferAsset(
           INSERT INTO events (kind, actor, detail)
           SELECT 'transfer', resident.handle, jsonb_build_object(
             'type', asset_type, 'id', asset_id, 'from_id', from_id,
-            'to_id', to_id, 'mode', 'effect'
+            'to_id', to_id, 'mode', 'effect', 'resident_id', ${recipientId}::integer,
+            'place_id', presence.current_place_id
           ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
+          JOIN resident_presence presence ON presence.resident_id = resident.id
         ) SELECT id FROM transfer
       `
   if ((await queryRows(conditions)).length === 0) await throwTransferFailure(target, actorId, db)

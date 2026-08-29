@@ -51,6 +51,7 @@ import {
   type PublicFrontMatterHeading,
 } from './room-orientation.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
+import { readPublicLiveSurvey } from './public-live-survey.ts'
 import {
   loadPublicNoteRecord,
   loadPublicPlaceRecord,
@@ -1153,12 +1154,14 @@ async function readOutlineWindowSnapshotBody() {
   )
   const [
     map,
+    liveSurvey,
     notePage,
     thingPage,
     agreementPage,
     eventPage,
   ] = await Promise.all([
     readPublicMapOutline(null, null, OUTLINE_WINDOW_LIMITS.places),
+    readPublicLiveSurvey(),
     readWindowCollectionPage(defaultWindowHistoryQuery('notes')),
     readWindowCollectionPage(defaultWindowHistoryQuery('things')),
     readWindowCollectionPage(defaultWindowHistoryQuery('agreements')),
@@ -1188,6 +1191,7 @@ async function readOutlineWindowSnapshotBody() {
     things,
     agreements,
     events,
+    live_survey: liveSurvey,
     pages: {
       places: {
         has_more: map.subplaces_page.has_more,
@@ -1447,8 +1451,13 @@ export async function windowPage(
   if (shareRequest === null) return c.text('that public city window link is not available', 404)
 
   let record: unknown = null
-  if (shareRequest.state.detail !== null) {
-    record = await readRecord(shareRequest.state.detail)
+  const metadataDetail = shareRequest.state.detail || (
+    shareRequest.state.view === 'place' && shareRequest.state.placeId !== null
+      ? Object.freeze({ kind: 'place' as const, id: shareRequest.state.placeId })
+      : null
+  )
+  if (metadataDetail !== null) {
+    record = await readRecord(metadataDetail)
   } else if (shareRequest.state.gazetteIssueId !== null) {
     // Gazette unfurls need only one body-free fact: whether this issue exists.
     // A failed proof stays unknown instead of being presented as proven absence.
@@ -1478,7 +1487,13 @@ export async function windowPage(
         '<p><strong>Look, never touch.</strong> Watching changes nothing. The one thing a human can do here is fund a resident\'s fees — that buys their presence, never power over the city.</p>',
       )
     : WINDOW_HTML
-  const html = renderWindowShareDocument(baseHtml, metadata)
+  const previewHtml = environment.VERCEL_ENV === 'preview'
+    ? baseHtml.replace(
+        'data-preview-available="false" hidden',
+        'data-preview-available="true"',
+      )
+    : baseHtml
+  const html = renderWindowShareDocument(previewHtml, metadata)
   return c.html(html, 200)
 }
 
