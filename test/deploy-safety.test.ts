@@ -377,6 +377,8 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_PRODUCTION_DRAWING_RELEASE:
+    'DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED',
   CONFIRM_GAZETTE_SCHEMA_MIGRATION:
     'APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
@@ -463,6 +465,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION',
     'CONFIRM_GAZETTE_SCHEMA_MIGRATION="${7-}"',
     'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
+    'CONFIRM_PRODUCTION_DRAWING_RELEASE="${8-}"',
+    'export CONFIRM_PRODUCTION_DRAWING_RELEASE',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -484,6 +488,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
         readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
         readiness.CONFIRM_GAZETTE_SCHEMA_MIGRATION ?? '',
+        readiness.CONFIRM_PRODUCTION_DRAWING_RELEASE ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -576,6 +581,24 @@ test('preparation requires provider-key and migration readiness before any relea
     /Gazette schema.*was applied.*Preview and Production.*while room #454 was closed/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingDrawingRelease = fixture.run({ CONFIRM_PRODUCTION_DRAWING_RELEASE: '' })
+  assert.notEqual(missingDrawingRelease.status, 0)
+  assert.match(
+    `${missingDrawingRelease.stdout}\n${missingDrawingRelease.stderr}`,
+    /Production drawing-contract then world-root-drawing migrations ran in that order[\s\S]*drawing\/Gazette\/world postcondition checks were recorded[\s\S]*does not query Production/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const wrongDrawingRelease = fixture.run({
+    CONFIRM_PRODUCTION_DRAWING_RELEASE: 'yes',
+  })
+  assert.notEqual(wrongDrawingRelease.status, 0)
+  assert.match(
+    `${wrongDrawingRelease.stdout}\n${wrongDrawingRelease.stderr}`,
+    /Production drawing-contract then world-root-drawing migrations ran in that order[\s\S]*drawing\/Gazette\/world postcondition checks were recorded[\s\S]*does not query Production/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
 })
 
 test('release instructions require maker provenance before later-holder marks in each database', () => {
@@ -640,6 +663,14 @@ test('production drawing migrations have one guarded order and rollback boundary
   assert.match(deploymentRunbook, /activated[\s\S]*false[\s\S]*true/iu)
   assert.match(deploymentRunbook, /application rollback[^\n]*does not revert database changes/iu)
   assert.match(deploymentRunbook, /destructive down migration[^\n]*not[^\n]*incident/iu)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED/u,
+  )
+  assert.match(
+    environmentRunbook,
+    /CONFIRM_PRODUCTION_DRAWING_RELEASE[\s\S]*operator attestation[\s\S]*does not query Production/iu,
+  )
 })
 
 test('PostgreSQL gate upgrades the checked-in pre-drawing production schema in release order', () => {
@@ -692,6 +723,7 @@ test('release preparation requires the resident refusal state schema in Preview 
     deploymentRunbook,
     /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
+  assert.match(environmentRunbook, /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION/u)
 })
 
 test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {

@@ -187,6 +187,18 @@ exact order. The application rollout never applies either migration.
    names and the successful read-only postcondition checks with the release
    evidence; never record a database URL or credential.
 
+Only after both Production migrations ran in that order and every documented
+drawing, Gazette grant, and world-root postcondition check above was recorded,
+set this exact non-secret release-preparation acknowledgement:
+
+```sh
+CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED
+```
+
+This is an operator attestation to separately recorded evidence. The
+`--prepare` script does not query Production and the value by itself does not
+prove a database postcondition.
+
 Each file is one transaction, so a failed command commits none of that
 command. If the drawing-contract command commits and the world-root command
 fails, the drawing contract remains applied: block the application rollout,
@@ -310,6 +322,7 @@ CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
+CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED \
 scripts/deploy.sh --prepare
 ```
 

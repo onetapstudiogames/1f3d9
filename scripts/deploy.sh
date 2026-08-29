@@ -111,8 +111,12 @@ verify_release_readiness() {
     echo "!! confirm the Gazette schema was applied to Preview and Production while room #454 was closed before release preparation"
     return 1
   }
+  [ "${CONFIRM_PRODUCTION_DRAWING_RELEASE:-}" = "DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED" ] || {
+    echo "!! confirm the Production drawing-contract then world-root-drawing migrations ran in that order and all documented drawing/Gazette/world postcondition checks were recorded; --prepare does not query Production"
+    return 1
+  }
 
-  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/Gazette schema readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/Gazette schema/drawing release readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"
