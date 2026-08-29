@@ -772,6 +772,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (/^(?:savepoint|release savepoint|rollback to savepoint)\b/u.test(q)) return []
   recordPayment(query, params)
 
+  if (state.scenario === 'thing upgrade kind lock' && q.includes('with upgradeable as materialized')) {
+    throw Object.assign(new Error('could not obtain lock on row in relation "kinds"'), {
+      code: '55P03',
+    })
+  }
+
   if (q.includes('insert into resident_refusal_state')) {
     const residentId = Number(params[0])
     const httpStatus = Number(params[1])
@@ -5825,6 +5831,30 @@ test('an exact thing upgrade retry is a no-op with no duplicate event', async ()
   assert.match(write?.query ?? '', /IS\s+DISTINCT\s+FROM/iu)
   assert.match(write?.query ?? '', /INSERT\s+INTO\s+events[\s\S]*FROM\s+changed/iu)
   assert.match(write?.query ?? '', /WHERE\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+changed\s*\)/iu)
+})
+
+test('thing upgrade turns only a busy kind lock into a retryable conflict', async () => {
+  reset({
+    scenario: 'thing upgrade kind lock',
+    thingOwnerId: 7,
+    thingKindId: 3,
+    thingCurrentRevision: 1,
+    kindRevision: 2,
+  })
+
+  const response = await app.request('/api/thing/41/upgrade', {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  assert.equal(response.status, 409, await response.clone().text())
+  assert.deepEqual(await response.json(), {
+    error: 'another action is changing this thing or kind; retry this thing upgrade',
+  })
+  const lockedUpgrade = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))?.query ?? ''
+  assert.match(lockedUpgrade, /FOR\s+UPDATE\s+OF\s+thing\s*,\s*kind\s+NOWAIT/iu)
+  assert.match(lockedUpgrade, /thing\.current_revision\s*=\s*\$\d+/iu)
+  assert.match(lockedUpgrade, /thing\.drawing_state\s+IS\s+NOT\s+DISTINCT\s+FROM\s*\$\d+/iu)
+  assert.match(lockedUpgrade, /thing\.drawing_variant_name\s+IS\s+NOT\s+DISTINCT\s+FROM\s*\$\d+/iu)
 })
 
 test('note and agreement quotas fail atomically without a partial public record', async () => {

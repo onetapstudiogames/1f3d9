@@ -16,6 +16,7 @@ const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url)
 
 let database: Pool | null = null
 let afterAgreementSignPreflight: (() => Promise<void>) | null = null
+let afterThingUpgradePreflight: (() => Promise<void>) | null = null
 
 interface IntegrationSql extends TaggedSql {
   transaction: (
@@ -36,6 +37,12 @@ const sql = (async (
   const result = await database.query(text, [...values])
   if (afterAgreementSignPreflight && text.includes('AS already_signed')) {
     await afterAgreementSignPreflight()
+  }
+  if (afterThingUpgradePreflight && text.includes('AS latest_revision')
+      && text.includes('latest_drawing_variants')) {
+    const preflight = afterThingUpgradePreflight
+    afterThingUpgradePreflight = null
+    await preflight()
   }
   return result.rows as Record<string, unknown>[]
 }) as unknown as IntegrationSql
@@ -467,6 +474,210 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
         source: 'kind_base', kind_id: kindId,
         kind_name: 'provenance-lantern', revision: 2,
       })
+    })
+
+    await t.test('thing upgrade refuses a busy kind promptly, then adopts the committed latest revision', async () => {
+      const roomId = await resetDatabase()
+      const completeDrawing = Object.freeze({
+        palette: Object.freeze(['#174d3c']),
+        indices: Object.freeze([0, ...Array.from({ length: 63 }, () => null)]),
+      })
+      const kindId = Number((await database!.query<{ id: number }>(`
+        INSERT INTO kinds (name, owner_id, current_revision)
+        VALUES ('serialized-lantern', 1, 2)
+        RETURNING id
+      `)).rows[0]!.id)
+      await database!.query(`
+        INSERT INTO kind_revisions (
+          kind_id, revision, description, traits, recipe,
+          drawing, drawing_state, drawing_description, drawing_variants
+        ) VALUES
+          ($1, 1, 'The birth revision is deliberately undrawn.', '{}', '[]',
+            NULL, 'undrawn', NULL, '[]'),
+          ($1, 2, 'The current revision has a complete drawing.', '{}', '[]',
+            $2, 'complete', 'A dark green lantern with one lit square.', '[]')
+      `, [kindId, completeDrawing])
+      await database!.query(`
+        INSERT INTO things (
+          id, place_id, name, body, owner_id, maker_id,
+          kind_id, birth_revision, current_revision
+        ) VALUES (2, $1, 'serialized upgrade', '', 1, 1, $2, 1, 1)
+      `, [roomId, kindId])
+
+      const reviser = await database!.connect()
+      const startedAt = Date.now()
+      let pendingUpgrade: Promise<Response> | undefined
+      try {
+        await reviser.query('BEGIN')
+        await reviser.query('SELECT id FROM kinds WHERE id = $1 FOR UPDATE', [kindId])
+        await reviser.query(`
+          INSERT INTO kind_revisions (
+            kind_id, revision, description, traits, recipe,
+            drawing, drawing_state, drawing_description, drawing_variants
+          ) VALUES ($1, 3, 'The concurrently committed latest revision.', '{}', '[]',
+            $2, 'complete', 'The committed latest lantern drawing.', '[]')
+        `, [kindId, completeDrawing])
+        await reviser.query('UPDATE kinds SET current_revision = 3 WHERE id = $1', [kindId])
+
+        const upgradeRequest = Promise.resolve(app.request('/api/thing/2/upgrade', {
+          method: 'POST',
+          headers: bearer(founderSecret),
+        }))
+        pendingUpgrade = upgradeRequest
+        const firstResult = await Promise.race([
+          upgradeRequest.then(response => ({ response })),
+          delay(1_000).then(() => ({ response: null })),
+        ])
+        assert.ok(firstResult.response, 'upgrade must not wait one second on a kind revision lock')
+        assert.equal(firstResult.response.status, 409, await firstResult.response.clone().text())
+        assert.match(
+          (await firstResult.response.json() as { error: string }).error,
+          /changing this thing or kind.*retry/iu,
+        )
+
+        const unchanged = await database!.query(`
+          SELECT current_revision,
+            (SELECT count(*)::integer FROM drawing_revisions
+              WHERE target_type = 'thing' AND target_id = 2) AS drawing_revisions,
+            (SELECT count(*)::integer FROM events
+              WHERE kind = 'thing_upgraded' AND (detail->>'thing_id')::integer = 2) AS events
+          FROM things WHERE id = 2
+        `)
+        assert.deepEqual(unchanged.rows, [{ current_revision: 1, drawing_revisions: 0, events: 0 }])
+        await reviser.query('COMMIT')
+      } finally {
+        await reviser.query('ROLLBACK').catch(() => undefined)
+        reviser.release()
+        if (pendingUpgrade) await pendingUpgrade.catch(() => undefined)
+      }
+
+      assert.ok(Date.now() - startedAt < 2_000, 'busy-kind refusal must stay bounded')
+      const retried = await app.request('/api/thing/2/upgrade', {
+        method: 'POST',
+        headers: bearer(founderSecret),
+      })
+      assert.equal(retried.status, 200, await retried.clone().text())
+      assert.equal(
+        (await retried.json() as { thing: { current_revision: number } }).thing.current_revision,
+        3,
+      )
+      const committed = await database!.query(`
+        SELECT current_revision,
+          (SELECT count(*)::integer FROM drawing_revisions
+            WHERE target_type = 'thing' AND target_id = 2) AS drawing_revisions,
+          (SELECT count(*)::integer FROM events
+            WHERE kind = 'thing_upgraded' AND (detail->>'thing_id')::integer = 2) AS events
+        FROM things WHERE id = 2
+      `)
+      assert.deepEqual(committed.rows, [{ current_revision: 3, drawing_revisions: 1, events: 1 }])
+    })
+
+    await t.test('thing upgrade never overwrites a drawing choice changed after its preflight', async () => {
+      const variants = [
+        {
+          name: 'ember', drawing: { palette: ['#9a3412'], indices: [0, ...Array(63).fill(null)] },
+          state: 'complete', description: 'An ember lantern.',
+        },
+        {
+          name: 'moon', drawing: { palette: ['#164e63'], indices: [0, ...Array(63).fill(null)] },
+          state: 'complete', description: 'A moon lantern.',
+        },
+      ]
+      const seedThing = async (name: string): Promise<number> => {
+        const roomId = await resetDatabase()
+        const kindId = Number((await database!.query<{ id: number }>(`
+          INSERT INTO kinds (name, owner_id, current_revision)
+          VALUES ($1, 1, 2)
+          RETURNING id
+        `, [name])).rows[0]!.id)
+        await database!.query(`
+          INSERT INTO kind_revisions (
+            kind_id, revision, description, traits, recipe,
+            drawing, drawing_state, drawing_description, drawing_variants
+          ) VALUES
+            ($1, 1, 'The pinned revision.', '{}', '[]',
+              NULL, 'undrawn', NULL, $2),
+            ($1, 2, 'The latest revision.', '{}', '[]',
+              NULL, 'undrawn', NULL, $2)
+        `, [kindId, JSON.stringify(variants)])
+        await database!.query(`
+          INSERT INTO things (
+            id, place_id, name, body, owner_id, maker_id,
+            kind_id, birth_revision, current_revision, drawing_variant_name
+          ) VALUES (2, $1, 'racing upgrade', '', 1, 1, $2, 1, 1, 'ember')
+        `, [roomId, kindId])
+        return kindId
+      }
+
+      await seedThing('interstatement-upgrade-kind')
+      afterThingUpgradePreflight = async () => {
+        const edit = await app.request('/api/thing/2', {
+          method: 'PATCH',
+          headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+          body: JSON.stringify({ drawing_variant_name: 'moon' }),
+        })
+        assert.equal(edit.status, 200, await edit.clone().text())
+      }
+      try {
+        const raced = await app.request('/api/thing/2/upgrade', {
+          method: 'POST',
+          headers: bearer(founderSecret),
+        })
+        assert.equal(raced.status, 409, await raced.clone().text())
+      } finally {
+        afterThingUpgradePreflight = null
+      }
+      const afterCommittedEdit = await database!.query(`
+        SELECT current_revision, drawing_variant_name,
+          (SELECT count(*)::integer FROM drawing_revisions
+            WHERE target_type = 'thing' AND target_id = 2) AS drawing_revisions,
+          (SELECT count(*)::integer FROM events
+            WHERE kind = 'thing_edited' AND (detail->>'thing_id')::integer = 2) AS edit_events,
+          (SELECT count(*)::integer FROM events
+            WHERE kind = 'thing_upgraded' AND (detail->>'thing_id')::integer = 2) AS upgrade_events
+        FROM things WHERE id = 2
+      `)
+      assert.deepEqual(afterCommittedEdit.rows, [{
+        current_revision: 1,
+        drawing_variant_name: 'moon',
+        drawing_revisions: 1,
+        edit_events: 1,
+        upgrade_events: 0,
+      }])
+
+      await seedThing('overlapping-upgrade-kind')
+      const editor = await database!.connect()
+      try {
+        await editor.query('BEGIN')
+        await editor.query(
+          "UPDATE things SET drawing_variant_name = 'moon' WHERE id = 2",
+        )
+        const startedAt = Date.now()
+        const overlapping = await app.request('/api/thing/2/upgrade', {
+          method: 'POST',
+          headers: bearer(founderSecret),
+        })
+        assert.equal(overlapping.status, 409, await overlapping.clone().text())
+        assert.ok(Date.now() - startedAt < 1_000, 'upgrade must not wait on an overlapping thing edit')
+        await editor.query('COMMIT')
+      } finally {
+        await editor.query('ROLLBACK').catch(() => undefined)
+        editor.release()
+      }
+      const afterOverlappingEdit = await database!.query(`
+        SELECT current_revision, drawing_variant_name,
+          (SELECT count(*)::integer FROM drawing_revisions
+            WHERE target_type = 'thing' AND target_id = 2) AS drawing_revisions,
+          (SELECT count(*)::integer FROM events
+            WHERE kind = 'thing_upgraded' AND (detail->>'thing_id')::integer = 2) AS upgrade_events
+        FROM things WHERE id = 2
+      `)
+      assert.deepEqual(afterOverlappingEdit.rows, [{
+        current_revision: 1,
+        drawing_variant_name: 'moon',
+        drawing_revisions: 0,
+        upgrade_events: 0,
+      }])
     })
 
     await t.test('gift and effect transfers publish their interaction resident and place', async () => {
