@@ -305,6 +305,7 @@ export function parseDrawingVariants(value: unknown): DrawingVariantsParseResult
 export async function readBoundedJsonObject(
   request: Request,
   maximumBytes: number,
+  options: Readonly<{ allowEmpty?: boolean }> = {},
 ): Promise<BoundedJsonResult> {
   // Hand-driving request.body's reader never resolves on Vercel's Node
   // bridge (the PR #115 class) — only the framework read is safe, with the
@@ -320,6 +321,9 @@ export async function readBoundedJsonObject(
       ok: false,
       error: `body must be no larger than ${maximumBytes} UTF-8 bytes`,
     })
+  }
+  if (bytes.byteLength === 0 && options.allowEmpty) {
+    return Object.freeze({ ok: true, body: Object.freeze({}) as Record<string, unknown> })
   }
 
   let value: unknown
