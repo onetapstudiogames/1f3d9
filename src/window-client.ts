@@ -2037,6 +2037,7 @@ export const WINDOW_JS = `(() => {
     liveThingPointsByPlaceId = restore.liveThingPointsByPlaceId
     const panel = document.getElementById('live-panel')
     if (panel) delete panel.dataset.liveProof
+    if (state.snapshot) populateFilters(state.snapshot)
     renderAll()
     scheduleRefresh(0)
   }
@@ -8074,6 +8075,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.live.proofScene) {
       const exit = element('button', 'live-history-retry', 'Exit preview proof scene')
       exit.type = 'button'
+      exit.dataset.focusKey = 'live-proof-exit'
+      exit.dataset.focusFallbackId = 'live-proof'
       exit.addEventListener('click', exitLiveProofScene)
       nodes.liveHistoryStatus.replaceChildren(
         document.createTextNode(

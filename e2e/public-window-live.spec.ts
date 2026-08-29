@@ -1992,6 +1992,37 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
 })
 
+test('exiting the preview proof scene restores ordinary place choices without a reload', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const optionValues = () => page.locator('#place-filter option').evaluateAll(options =>
+    options.map(option => (option as HTMLOptionElement).value))
+  const ordinaryOptions = await optionValues()
+  expect(ordinaryOptions).toContain('2')
+  expect(ordinaryOptions).not.toContain('9102')
+
+  const proofButton = page.getByRole('button', { name: 'Run preview proof scene' })
+  await proofButton.click()
+  await expect(page.locator('#live-panel')).toHaveAttribute('data-live-proof', 'true')
+  await expect.poll(optionValues).toEqual(['', '9101', '9102', '9103', '9104'])
+
+  const windowRequestsBeforeExit = fixture.windowRequests()
+  const exit = page.getByRole('button', { name: 'Exit preview proof scene' })
+  await exit.focus()
+  await expect(exit).toBeFocused()
+  await exit.press('Enter')
+  await expect(page.locator('#live-panel')).not.toHaveAttribute('data-live-proof', 'true')
+  expect(fixture.windowRequests()).toBe(windowRequestsBeforeExit)
+  expect(await optionValues()).toEqual(ordinaryOptions)
+  await expect(proofButton).toBeFocused()
+  await expect(page.locator('.live-plot[data-place-id="2"]')).toHaveCount(1)
+  await expect(page.locator('.live-plot[data-place-id="9102"]')).toHaveCount(0)
+})
+
 test('preview proof scene has a static reduced-motion alternative', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
