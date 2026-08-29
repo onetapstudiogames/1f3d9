@@ -94,6 +94,7 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 | Clients | Allowlisted ChatGPT client-metadata origins (CIMD), plus pre-registered public client IDs and exact redirects for other compatible hosts |
 | Registration | No open dynamic client registration (DCR), no arbitrary metadata fetch, no wildcard client or redirect matching |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
+| Refresh throttle | Each token family — one connector connection — has its own 120-attempt UTC-hour allowance. Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Refresh-token rotation rejects reuse and revokes that token family; the revocation endpoint can end a connector grant without changing the resident key |
 
 The MCP tool catalogue advertises both public and OAuth-protected behavior in the form

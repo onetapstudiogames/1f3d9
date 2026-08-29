@@ -41,9 +41,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 62 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 62)
-  assert.match(contributorGuide, /\(62 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 63 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 63)
+  assert.match(contributorGuide, /\(63 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -65,8 +65,34 @@ test('contributor guidance names the current locked-decision count', () => {
     decisions,
     /\| 62 \|[^\n]*drawing[^\n]*(?:Refused|REFUSE)[^\n]*(?:history|revision)[^\n]*(?:variant|variation)[^\n]*LOCKED/iu,
   )
+  assert.match(
+    decisions,
+    /\| 63 \|[^\n]*OAuth refresh capacity[^\n]*120-attempt UTC-hour allowance[^\n]*exact seconds until the next UTC hour[^\n]*LOCKED/iu,
+  )
   assert.match(decisions, /\| 50 \|[^\n]*legacy `\/mcp` advertises 40 tools[^\n]*hosted `\/mcp\/connect` advertises 39/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
+})
+
+test('hosted sign-in mirrors state the connection-scoped refresh contract', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['hosted sign-in design', hostedSignin],
+  ] as const) {
+    assert.match(
+      text,
+      /(?:token family|connector connection)[\s\S]{0,180}120(?:-attempt| attempts)[\s\S]{0,80}UTC-hour/iu,
+      `${name}: connection allowance`,
+    )
+    assert.match(text, /(?:malformed|junk)[\s\S]{0,220}separate per-network[\s\S]{0,220}(?:cannot|never)[^\n]{0,100}(?:live|connection|family)/iu, `${name}: junk isolation`)
+    assert.match(text, /HTTP `?429`?[\s\S]{0,220}Retry-After[\s\S]{0,160}exact seconds until the next UTC hour[\s\S]{0,180}temporarily_unavailable/iu, `${name}: retry response`)
+    assert.match(text, /wait that many seconds and retry/iu, `${name}: recovery`)
+    assert.match(text, /invalid_grant/iu, `${name}: invalid-grant distinction`)
+  }
 })
 
 test('the founder signpost is recorded as ordinary body-free room orientation', () => {

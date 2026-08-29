@@ -94,6 +94,16 @@ export interface RefreshRotationInput {
 
 export type RefreshRotationResult = 'rotated' | 'reused' | 'invalid'
 
+export type RefreshRateLimitSubject =
+  | { status: 'active'; connectionKey: string }
+  | { status: 'reused' }
+  | { status: 'junk' }
+
+export interface OAuthRateLimitResult {
+  admitted: boolean
+  retryAfterSeconds: number
+}
+
 const SHA256_HASH = /^[0-9a-f]{64}$/
 
 // Sign-in records stay readable for incident forensics for this long after the
@@ -637,6 +647,46 @@ export async function exchangeAuthorizationCode(input: CodeExchangeInput): Promi
   return rows.length === 1
 }
 
+/**
+ * Classify a refresh token only for rate-limit routing. Rotation remains the
+ * authority, and the reused state lets the first replay reach family revocation
+ * while later requests against that revoked family take the junk path.
+ */
+export async function resolveRefreshRateLimitSubject(input: {
+  presentedRefreshTokenHash: string
+  clientId: string
+  resource: string
+}): Promise<RefreshRateLimitSubject> {
+  const rows = (await sql`
+    SELECT family.id::text AS connection_key,
+      CASE
+        WHEN token.used_at IS NOT NULL
+          AND family.revoked_at IS NULL
+          AND family.expires_at > now()
+          THEN 'reused'
+        WHEN token.used_at IS NULL
+          AND token.revoked_at IS NULL
+          AND token.expires_at > now()
+          AND family.revoked_at IS NULL
+          AND family.expires_at > now()
+          THEN 'active'
+        ELSE 'junk'
+      END AS status
+    FROM oauth_tokens token
+    JOIN oauth_token_families family ON family.id = token.family_id
+    WHERE token.token_hash = ${input.presentedRefreshTokenHash}
+      AND token.token_type = 'refresh'
+      AND family.client_id = ${input.clientId}
+      AND family.resource = ${input.resource}
+  `) as { connection_key: string; status: string }[]
+  const subject = rows[0]
+  if (subject?.status === 'active' && subject.connection_key) {
+    return { status: 'active', connectionKey: subject.connection_key }
+  }
+  if (subject?.status === 'reused') return { status: 'reused' }
+  return { status: 'junk' }
+}
+
 async function revokeReusedRefreshToken(input: {
   presentedRefreshTokenHash: string
   clientId: string
@@ -812,7 +862,7 @@ export async function consumeOAuthRateLimit(input: {
   bucketHash: string
   attemptKind: OAuthAttemptKind
   maximum: number
-}): Promise<boolean> {
+}): Promise<OAuthRateLimitResult> {
   // Every OAuth route passes through this throttle, so sign-in retention rides
   // the same statement as the existing rate-limit prune. Each record type is
   // deleted only after SIGNIN_RETENTION_WINDOW past its own expiry, in bounded
@@ -822,7 +872,10 @@ export async function consumeOAuthRateLimit(input: {
   // reuse detection intact for the family's whole forensic window.
   const rows = (await sql`
     WITH current_window AS MATERIALIZED (
-      SELECT date_trunc('hour', now(), 'UTC') AS window_start
+      SELECT date_trunc('hour', now(), 'UTC') AS window_start,
+        greatest(1, ceil(extract(epoch FROM (
+          date_trunc('hour', now(), 'UTC') + interval '1 hour' - now()
+        )))::integer) AS retry_after_seconds
     ), cleanup AS (
       DELETE FROM oauth_rate_limits
       WHERE window_start < (SELECT window_start FROM current_window) - interval '24 hours'
@@ -890,9 +943,18 @@ export async function consumeOAuthRateLimit(input: {
       WHERE oauth_rate_limits.used < ${input.maximum}
       RETURNING used
     )
-    SELECT used FROM admitted
-  `) as { used: number }[]
-  return rows.length === 1
+    SELECT EXISTS (SELECT 1 FROM admitted) AS admitted, retry_after_seconds
+    FROM current_window
+  `) as { admitted: boolean; retry_after_seconds: number }[]
+  const result = rows[0]
+  const retryAfterSeconds = Number(result?.retry_after_seconds)
+  if (
+    typeof result?.admitted !== 'boolean' ||
+    !Number.isInteger(retryAfterSeconds) ||
+    retryAfterSeconds < 1 ||
+    retryAfterSeconds > 3_600
+  ) throw new Error('OAuth rate-limit result is unavailable')
+  return { admitted: result.admitted, retryAfterSeconds }
 }
 
 export const postgresOAuthStore = {
@@ -905,6 +967,7 @@ export const postgresOAuthStore = {
   confirmNewResidentAndIssueAuthorizationCode,
   getAuthorizationCode,
   exchangeAuthorizationCode,
+  resolveRefreshRateLimitSubject,
   rotateRefreshToken,
   revokeTokenFamilyByToken,
   resolveOAuthAccessToken,

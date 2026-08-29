@@ -82,6 +82,8 @@ const MAX_UI_LOCALES = 256
 const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
 const ACCESS_TOKEN_SECONDS = 10 * 60
 const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
+const REFRESH_ATTEMPTS_PER_CONNECTION_PER_HOUR = 120
+const JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR = 120
 type OAuthStore = typeof postgresOAuthStore
 
 export interface OAuthRouteOptions {
@@ -416,20 +418,34 @@ function runtime(options: OAuthRouteOptions): OAuthRuntime | null {
   }
 }
 
+async function rateLimitAdmission(
+  store: OAuthStore,
+  buckets: readonly string[],
+  attemptKind: Parameters<OAuthStore['consumeOAuthRateLimit']>[0]['attemptKind'],
+  maximum: number,
+): Promise<Awaited<ReturnType<OAuthStore['consumeOAuthRateLimit']>>> {
+  if (buckets.length === 0) throw new Error('OAuth rate-limit bucket is missing')
+  const consume = (bucket: string) => store.consumeOAuthRateLimit({
+      bucketHash: sha256(`oauth:${attemptKind}:${bucket}`),
+      attemptKind,
+      maximum,
+    })
+  let result = await consume(buckets[0]!)
+  if (!result.admitted) return result
+  for (const bucket of buckets.slice(1)) {
+    result = await consume(bucket)
+    if (!result.admitted) return result
+  }
+  return result
+}
+
 async function admitted(
   store: OAuthStore,
   buckets: readonly string[],
   attemptKind: Parameters<OAuthStore['consumeOAuthRateLimit']>[0]['attemptKind'],
   maximum: number,
 ): Promise<boolean> {
-  for (const bucket of buckets) {
-    if (!(await store.consumeOAuthRateLimit({
-      bucketHash: sha256(`oauth:${attemptKind}:${bucket}`),
-      attemptKind,
-      maximum,
-    }))) return false
-  }
-  return true
+  return (await rateLimitAdmission(store, buckets, attemptKind, maximum)).admitted
 }
 
 function isSameAuthorizationRequest(
@@ -495,6 +511,19 @@ function tokenUnavailable(c: Context) {
   privateHeaders(c)
   c.header('Retry-After', '1')
   return c.json({ error: 'temporarily_unavailable' }, 503)
+}
+
+function tokenRateLimited(c: Context, retryAfterSeconds: number) {
+  if (!Number.isInteger(retryAfterSeconds) || retryAfterSeconds < 1 || retryAfterSeconds > 3_600) {
+    throw new Error('OAuth rate-limit retry timing is unavailable')
+  }
+  privateHeaders(c)
+  c.header('Retry-After', String(retryAfterSeconds))
+  const wait = retryAfterSeconds === 1 ? '1 second' : `${retryAfterSeconds} seconds`
+  return c.json({
+    error: 'temporarily_unavailable',
+    error_description: `Too many refresh attempts. Wait ${wait} and retry.`,
+  }, 429)
 }
 
 function tokenResponse(c: Context, accessToken: string, refreshToken: string) {
@@ -1075,6 +1104,10 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       recordFailure(oauth, trace, stage, errorClass, 400)
       return tokenError(c, error)
     }
+    const throttled = (retryAfterSeconds: number) => {
+      recordFailure(oauth, trace, stage, 'rate_limited', 429)
+      return tokenRateLimited(c, retryAfterSeconds)
+    }
 
     try {
       const values = await form(c)
@@ -1097,14 +1130,14 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if (requestedScope !== OAUTH_SCOPE) return fail('invalid_request', 'invalid_scope')
       if (!clientId || resource !== oauth.resource) return fail('invalid_client')
       stage = grantType === 'refresh_token' ? 'token_refresh' : 'token_exchange'
-      if (!(await admitted(
-        oauth.store,
-        [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
-        grantType === 'refresh_token' ? 'refresh' : 'token',
-        120,
-      ))) return fail('invalid_grant', 'rate_limited')
 
       if (grantType === 'authorization_code') {
+        if (!(await admitted(
+          oauth.store,
+          [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
+          'token',
+          120,
+        ))) return fail('invalid_grant', 'rate_limited')
         const rawCode = one(values, 'code', 100)
         const redirectUri = one(values, 'redirect_uri', 4_096)
         const verifier = one(values, 'code_verifier', 128)
@@ -1140,13 +1173,57 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
 
       if (grantType === 'refresh_token') {
         const presented = one(values, 'refresh_token', 100)
+        const junkBucket = `junk-ip:${clientAddress(c, oauth.environment)}`
         if (!presented?.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) {
+          const admission = await rateLimitAdmission(
+            oauth.store,
+            [junkBucket],
+            'refresh',
+            JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR,
+          )
+          if (!admission.admitted) return throttled(admission.retryAfterSeconds)
           return fail('invalid_grant')
+        }
+        const presentedRefreshTokenHash = sha256(presented)
+        const subject = await oauth.store.resolveRefreshRateLimitSubject({
+          presentedRefreshTokenHash,
+          clientId,
+          resource,
+        })
+        if (subject.status === 'junk') {
+          const admission = await rateLimitAdmission(
+            oauth.store,
+            [junkBucket],
+            'refresh',
+            JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR,
+          )
+          if (!admission.admitted) return throttled(admission.retryAfterSeconds)
+          return fail('invalid_grant')
+        }
+        if (subject.status === 'active') {
+          const admission = await rateLimitAdmission(
+            oauth.store,
+            [`connection:${subject.connectionKey}`],
+            'refresh',
+            REFRESH_ATTEMPTS_PER_CONNECTION_PER_HOUR,
+          )
+          if (!admission.admitted) return throttled(admission.retryAfterSeconds)
+        }
+        if (subject.status === 'reused') {
+          // The first replay must still reach the existing atomic family
+          // revocation, even if junk capacity is already full. Once revoked,
+          // later replays classify as junk and stop before rotation work.
+          await rateLimitAdmission(
+            oauth.store,
+            [junkBucket],
+            'refresh',
+            JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR,
+          )
         }
         const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
         const refreshToken = opaque(OAUTH_REFRESH_TOKEN_PREFIX)
         const rotated = await oauth.store.rotateRefreshToken({
-          presentedRefreshTokenHash: sha256(presented),
+          presentedRefreshTokenHash,
           clientId,
           resource,
           accessTokenHash: sha256(accessToken),

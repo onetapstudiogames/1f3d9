@@ -1536,6 +1536,55 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       }), null)
     })
 
+    await t.test('refresh rate-limit routing keeps one stable private connection key', async () => {
+      await resetDatabase()
+      const initial = await exchangeExistingResidentCode(store, 'refresh-connection-key')
+      const input = {
+        presentedRefreshTokenHash: initial.refreshTokenHash,
+        clientId: initial.request.clientId,
+        resource: initial.request.resource,
+      }
+      const subject = await store.resolveRefreshRateLimitSubject(input)
+      assert.equal(subject.status, 'active')
+      assert.match(subject.status === 'active' ? subject.connectionKey : '', /^\d+$/u)
+      const connectionKey = subject.status === 'active' ? subject.connectionKey : ''
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject({
+        ...input,
+        clientId: 'wrong-client',
+      }), { status: 'junk' })
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject({
+        ...input,
+        resource: 'https://wrong-resource.example.test/mcp/connect',
+      }), { status: 'junk' })
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject({
+        ...input,
+        presentedRefreshTokenHash: sha256('unknown-refresh-token'),
+      }), { status: 'junk' })
+
+      const nextRefreshTokenHash = sha256('refresh-connection-key:next-refresh')
+      assert.equal(await store.rotateRefreshToken({
+        ...input,
+        accessTokenHash: sha256('refresh-connection-key:next-access'),
+        newRefreshTokenHash: nextRefreshTokenHash,
+      }), 'rotated')
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject(input), { status: 'reused' })
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject({
+        ...input,
+        presentedRefreshTokenHash: nextRefreshTokenHash,
+      }), { status: 'active', connectionKey })
+
+      assert.equal(await store.rotateRefreshToken({
+        ...input,
+        accessTokenHash: sha256('refresh-connection-key:replay-access'),
+        newRefreshTokenHash: sha256('refresh-connection-key:replay-refresh'),
+      }), 'reused')
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject(input), { status: 'junk' })
+      assert.deepEqual(await store.resolveRefreshRateLimitSubject({
+        ...input,
+        presentedRefreshTokenHash: nextRefreshTokenHash,
+      }), { status: 'junk' })
+    })
+
     await t.test('refresh tokens rotate once and reuse revokes the whole family', async () => {
       await resetDatabase()
       const initial = await exchangeExistingResidentCode(store, 'refresh-rotation')
@@ -1699,13 +1748,17 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
           maximum: 3,
         }))
       }
-      assert.deepEqual(attempts, [true, true, true, false, false])
+      assert.deepEqual(attempts.map(result => result.admitted), [true, true, true, false, false])
+      for (const result of attempts) {
+        assert.ok(Number.isInteger(result.retryAfterSeconds))
+        assert.ok(result.retryAfterSeconds >= 1 && result.retryAfterSeconds <= 3_600)
+      }
       assert.equal(
-        await store.consumeOAuthRateLimit({
+        (await store.consumeOAuthRateLimit({
           bucketHash,
           attemptKind: 'refresh',
           maximum: 1,
-        }),
+        })).admitted,
         true,
       )
 
@@ -1744,11 +1797,11 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       await ageSignInFlowPastExpiry(past.request.sessionHash, past.accessTokenHash, '31 days')
       await ageSignInFlowPastExpiry(inside.request.sessionHash, inside.accessTokenHash, '29 days')
 
-      assert.equal(await store.consumeOAuthRateLimit({
+      assert.equal((await store.consumeOAuthRateLimit({
         bucketHash: sha256('retention-prune-bucket'),
         attemptKind: 'token',
         maximum: 10,
-      }), true)
+      })).admitted, true)
 
       assert.deepEqual(await signInRowCounts(), {
         requests: '1', codes: '1', families: '1', tokens: '4',
@@ -1779,11 +1832,11 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         presentedRefreshTokenHash: inside.refreshTokenHash,
       }), 'reused', 'reuse detection still works on retained rows inside the window')
 
-      assert.equal(await store.consumeOAuthRateLimit({
+      assert.equal((await store.consumeOAuthRateLimit({
         bucketHash: sha256('retention-prune-bucket-second-pass'),
         attemptKind: 'refresh',
         maximum: 10,
-      }), true)
+      })).admitted, true)
       assert.deepEqual(await signInRowCounts(), {
         requests: '1', codes: '1', families: '1', tokens: '4',
       }, 'a revoked family keeps its full window measured from expiry')
@@ -1800,11 +1853,11 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
         [live.accessTokenHash],
       )
 
-      assert.equal(await store.consumeOAuthRateLimit({
+      assert.equal((await store.consumeOAuthRateLimit({
         bucketHash: sha256('retention-live-family-bucket'),
         attemptKind: 'refresh',
         maximum: 10,
-      }), true)
+      })).admitted, true)
 
       assert.deepEqual(await signInRowCounts(), {
         requests: '1', codes: '1', families: '1', tokens: '2',
