@@ -29,6 +29,252 @@ async function copiedLiveShareLinks(page: Page): Promise<readonly string[]> {
   ])
 }
 
+type LiveRenderWork = Readonly<{
+  renders: number
+  stageSurveys: number
+  residentLayouts: number
+  largeResidentLayouts: number
+  residentRowsVisited: number
+  residentAnchorMembershipChecks: number
+  residentAnchorMembershipRowsVisited: number
+  placeAnchorCalls: number
+  placeAnchorLookupBuilds: number
+  placeAnchorPlaceRowsVisited: number
+  placeAnchorMapRowsVisited: number
+  placeAnchorChildRowsVisited: number
+  placeAnchorResolutionSteps: number
+  replayCatchUpRecords: number
+  residentReplayPoints: number
+  moveGeometries: number
+  thingPresentations: number
+  plotBuilds: number
+  rosterRenders: number
+}>
+
+const emptyLiveRenderWork = (): LiveRenderWork => ({
+  renders: 0,
+  stageSurveys: 0,
+  residentLayouts: 0,
+  largeResidentLayouts: 0,
+  residentRowsVisited: 0,
+  residentAnchorMembershipChecks: 0,
+  residentAnchorMembershipRowsVisited: 0,
+  placeAnchorCalls: 0,
+  placeAnchorLookupBuilds: 0,
+  placeAnchorPlaceRowsVisited: 0,
+  placeAnchorMapRowsVisited: 0,
+  placeAnchorChildRowsVisited: 0,
+  placeAnchorResolutionSteps: 0,
+  replayCatchUpRecords: 0,
+  residentReplayPoints: 0,
+  moveGeometries: 0,
+  thingPresentations: 0,
+  plotBuilds: 0,
+  rosterRenders: 0,
+})
+
+async function installLiveRenderWorkRecorder(page: Page): Promise<void> {
+  await page.addInitScript(initial => {
+    Object.defineProperty(window, '__liveRenderWork', {
+      configurable: true,
+      value: { ...initial },
+    })
+    Object.defineProperty(window, '__liveReplayStarts', {
+      configurable: true,
+      value: [],
+    })
+  }, emptyLiveRenderWork())
+  await page.route('**/window.js', async route => {
+    const response = await route.fetch()
+    let body = await response.text()
+    for (const [functionName, counter] of [
+      ['renderLive', 'renders'],
+      ['liveStageSurvey', 'stageSurveys'],
+      ['liveResidentReplayPoint', 'residentReplayPoints'],
+      ['liveReplayMoveGeometry', 'moveGeometries'],
+      ['livePlaceAnchor', 'placeAnchorCalls'],
+      ['livePlacePlot', 'plotBuilds'],
+      ['renderLiveRoster', 'rosterRenders'],
+    ] as const) {
+      const pattern = new RegExp(`function ${functionName}\\([^)]*\\) \\{`, 'u')
+      const matches = body.match(new RegExp(pattern.source, 'gu')) ?? []
+      if (matches.length !== 1) {
+        throw new Error(`expected one ${functionName} function in the served Live client`)
+      }
+      body = body.replace(pattern, match => `${match}\n` +
+        `    window.__liveRenderWork.${counter} += 1`)
+    }
+    const residentLayoutStart = '    const ordered = [...residents.filter(resident => ' +
+      '!resident.asleep),\n      ...residents.filter(resident => resident.asleep)]'
+    if (body.split(residentLayoutStart).length !== 2) {
+      throw new Error('expected one resident layout build in the served Live client')
+    }
+    body = body.replace(residentLayoutStart,
+      '    window.__liveRenderWork.residentLayouts += 1\n' +
+      '    if (residents.length >= 100) window.__liveRenderWork.largeResidentLayouts += 1\n' +
+      '    window.__liveRenderWork.residentRowsVisited += residents.length\n' +
+      '    if (window.__liveResidentRowBudget > 0 &&\n' +
+      '        window.__liveRenderWork.residentRowsVisited > window.__liveResidentRowBudget &&\n' +
+      '        !window.__liveResidentRowBudgetExceededAt) {\n' +
+      '      window.__liveResidentRowBudgetExceededAt =\n' +
+      '        window.__liveRenderWork.residentRowsVisited\n' +
+      '    }\n' +
+      residentLayoutStart)
+    const legacyAnchorMembership =
+      'anchoredResidents.some(candidate => candidate.id === resident.id)'
+    const anchoredIdSetBuild =
+      'new Set(anchoredResidents.map(candidate => candidate.id))'
+    const anchoredIdSetLookup = 'anchoredResidentIds.has(resident.id)'
+    const recordMembershipRow =
+      'window.__liveRenderWork.residentAnchorMembershipRowsVisited += 1; ' +
+      'if (window.__liveResidentAnchorRowBudget > 0 && ' +
+      'window.__liveRenderWork.residentAnchorMembershipRowsVisited > ' +
+      'window.__liveResidentAnchorRowBudget && ' +
+      '!window.__liveResidentAnchorRowBudgetExceededAt) ' +
+      'window.__liveResidentAnchorRowBudgetExceededAt = ' +
+      'window.__liveRenderWork.residentAnchorMembershipRowsVisited; '
+    if (body.includes(legacyAnchorMembership)) {
+      body = body.replace(
+        legacyAnchorMembership,
+        '((window.__liveRenderWork.residentAnchorMembershipChecks += 1), ' +
+        'anchoredResidents.some(candidate => { ' + recordMembershipRow +
+        'return candidate.id === resident.id }))',
+      )
+    } else if (body.includes(anchoredIdSetBuild) && body.includes(anchoredIdSetLookup)) {
+      body = body.replace(
+        anchoredIdSetBuild,
+        'new Set(anchoredResidents.map(candidate => { ' + recordMembershipRow +
+        'return candidate.id }))',
+      )
+      body = body.replace(
+        anchoredIdSetLookup,
+        '((window.__liveRenderWork.residentAnchorMembershipChecks += 1), ' +
+        anchoredIdSetLookup + ')',
+      )
+    } else {
+      throw new Error('expected one resident anchor membership path in the served Live client')
+    }
+    const placeAnchorLookup =
+      '    const places = state.snapshot\n' +
+      '      ? livePlaceRows(state.snapshot)\n' +
+      '      : state.directory.loaded ? state.directory.places : []\n' +
+      '    const byId = new Map(places.map(place => [place.id, place]))\n' +
+      '    const childIds = new Set(children.map(place => place.id))'
+    if (body.split(placeAnchorLookup).length !== 2) {
+      throw new Error('expected one place anchor lookup build in the served Live client')
+    }
+    body = body.replace(
+      placeAnchorLookup,
+      '    window.__liveRenderWork.placeAnchorLookupBuilds += 1\n' +
+      '    const places = state.snapshot\n' +
+      '      ? livePlaceRows(state.snapshot)\n' +
+      '      : state.directory.loaded ? state.directory.places : []\n' +
+      '    window.__liveRenderWork.placeAnchorPlaceRowsVisited += places.length\n' +
+      '    const byId = new Map(places.map(place => {\n' +
+      '      window.__liveRenderWork.placeAnchorMapRowsVisited += 1\n' +
+      '      return [place.id, place]\n' +
+      '    }))\n' +
+      '    const childIds = new Set(children.map(place => {\n' +
+      '      window.__liveRenderWork.placeAnchorChildRowsVisited += 1\n' +
+      '      return place.id\n' +
+      '    }))',
+    )
+    const placeAnchorWalkPattern = /^(\s*)while \(current && !seen\.has\(current\.id\)\) \{$/gmu
+    if ((body.match(placeAnchorWalkPattern) ?? []).length !== 1) {
+      throw new Error('expected one place anchor resolution loop in the served Live client')
+    }
+    body = body.replace(placeAnchorWalkPattern, (match, indent: string) =>
+      match + '\n' + indent +
+      '  window.__liveRenderWork.placeAnchorResolutionSteps += 1')
+    const replayCatchUpBranch = '    if (!animates) {'
+    if (body.split(replayCatchUpBranch).length !== 2) {
+      throw new Error('expected one replay catch-up branch in the served Live client')
+    }
+    body = body.replace(
+      replayCatchUpBranch,
+      '    window.__liveRenderWork.replayCatchUpRecords += caughtUpAdditions.length\n' +
+      replayCatchUpBranch,
+    )
+    const replayStartPattern = /^(\s*)starts\.push\(Object\.freeze\(\{ actor, key, duration \}\)\)$/gmu
+    if ((body.match(replayStartPattern) ?? []).length !== 2) {
+      throw new Error('expected two replay start recordings in the served Live client')
+    }
+    body = body.replace(replayStartPattern, (match, indent: string) =>
+      match + '\n' +
+      indent + 'window.__liveReplayStarts.push(Object.freeze({\n' +
+      indent + '  key, actor,\n' +
+      indent + "  fromPlaceId: String(active[actor]?.fromPlaceId || ''),\n" +
+      indent + "  toPlaceId: String(active[actor]?.toPlaceId || ''),\n" +
+      indent + '}))')
+    const thingPresentationStart =
+      '    const things = liveDisplayedThings(snapshot, placeId, focusId, includeDescendants)'
+    if (body.split(thingPresentationStart).length !== 2) {
+      throw new Error('expected one thing presentation build in the served Live client')
+    }
+    body = body.replace(thingPresentationStart,
+      '    window.__liveRenderWork.thingPresentations += 1\n' + thingPresentationStart)
+    await route.fulfill({ response, body })
+  })
+}
+
+async function resetLiveRenderWork(page: Page): Promise<void> {
+  await page.evaluate(empty => {
+    Object.assign((window as Window & {
+      __liveRenderWork: Record<string, number>
+    }).__liveRenderWork, empty)
+  }, emptyLiveRenderWork())
+}
+
+async function readLiveRenderWork(page: Page): Promise<LiveRenderWork> {
+  return page.evaluate(() => ({
+    ...(window as Window & {
+      __liveRenderWork: LiveRenderWork
+    }).__liveRenderWork,
+  }))
+}
+
+type LiveChildFraming = Readonly<{
+  detailedChildren: number
+  mountedChildren: number
+  safeOpenButtons: number
+  scale: number
+}>
+
+async function readLiveChildFraming(page: Page): Promise<LiveChildFraming> {
+  return page.locator('.live-plot').evaluateAll(plots => {
+    const viewport = document.querySelector('#live-viewport') as HTMLElement | null
+    const stage = document.querySelector('#live-stage') as HTMLElement | null
+    if (!viewport || !stage) {
+      return { detailedChildren: 0, mountedChildren: 0, safeOpenButtons: 0, scale: 0 }
+    }
+    const viewportBox = viewport.getBoundingClientRect()
+    const safeInset = 16
+    const detailed = plots.filter(plot =>
+      (plot as HTMLElement).dataset.liveDetail === 'true')
+    const mounted = detailed.filter(plot =>
+      (plot as HTMLElement).dataset.liveDetailMounted === 'true' &&
+      Boolean(plot.querySelector('.live-plot-terrain')))
+    const safeOpenButtons = mounted.filter(plot => {
+      const open = plot.querySelector('.live-plot-open')
+      if (!open) return false
+      const box = open.getBoundingClientRect()
+      const centerX = box.left + box.width / 2
+      const centerY = box.top + box.height / 2
+      return box.width > 0 && box.height > 0 &&
+        centerX >= viewportBox.left + safeInset &&
+        centerX <= viewportBox.right - safeInset &&
+        centerY >= viewportBox.top + safeInset &&
+        centerY <= viewportBox.bottom - safeInset
+    })
+    return {
+      detailedChildren: detailed.length,
+      mountedChildren: mounted.length,
+      safeOpenButtons: safeOpenButtons.length,
+      scale: Number(stage.dataset.liveScale),
+    }
+  })
+}
+
 async function panLiveTargetIntoView(page: Page, target: Locator): Promise<void> {
   const viewport = page.locator('#live-viewport')
   await viewport.scrollIntoViewIfNeeded()
@@ -215,6 +461,7 @@ async function installReplayRoutes(
     movementOnly?: boolean
     drawingDelayMs?: number
     drawingPlaceCount?: number
+    drawingParentId?: number
     openingDelayMs?: number
     holdOpeningPage?: boolean
     holdOpeningRequest?: number
@@ -237,6 +484,7 @@ async function installReplayRoutes(
     focusedPlaceFailures?: number
     initialResidentPlaceId?: number
     crowdPlaceId?: number
+    residentCrowdSize?: number
   }> = {},
 ) {
   let published = false
@@ -245,6 +493,8 @@ async function installReplayRoutes(
   let openingEventRequests = 0
   let windowRequests = 0
   let changeRequests = 0
+  const changeCursors: Array<string | null> = []
+  const changeLimits: Array<string | null> = []
   let thingNamesUnavailable = Boolean(controls.thingFailure)
   const openingBeforeIds: Array<string | null> = []
   const thingWithinPlaceIds: Array<string | null> = []
@@ -273,35 +523,49 @@ async function installReplayRoutes(
       ? String(1_000 + controls.simultaneousMoves)
       : controls.secondArrival ? '17' : '16'
     : '10'
-  const controlledResidentRows = (marker: string) => [
-    ...replayResidentRows(
+  const controlledResidentRows = (marker: string) => {
+    const baseRows = replayResidentRows(
       now,
       marker === '10'
         ? controls.initialResidentPlaceId ?? (controls.openingMovement ? 3 : 2)
         : 4,
-    ).map(resident => {
+    )
+    const requestedRows = controls.residentCrowdSize === undefined
+      ? baseRows
+      : [
+          baseRows[0]!,
+          ...Array.from({ length: controls.residentCrowdSize }, (_, index) => ({
+            id: 20 + index,
+            handle: `harbor-${index + 1}`,
+            current_place_id: 3,
+            joined_at: new Date(now - 86_400_000 - index).toISOString(),
+            asleep: false,
+          })),
+        ]
+    return [
+      ...requestedRows.map(resident => {
       const placed = controls.secondArrival && resident.id === replayCrowd[0]!.id
         ? { ...resident, current_place_id: marker === '10' ? 2 : 4 }
-        : resident
-      const crowded = controls.crowdPlaceId && replayCrowd.some(candidate =>
-        candidate.id === resident.id)
+          : resident
+        const crowded = controls.crowdPlaceId && resident.id !== 5
         ? { ...placed, current_place_id: controls.crowdPlaceId }
-        : placed
-      return controls.maximumHandle && resident.id === replayCrowd[3]!.id
-        ? { ...crowded, handle: controls.maximumHandle }
-        : crowded
-    }),
-    ...Array.from({ length: controls.simultaneousMoves ?? 0 }, (_, index) => ({
-      id: 1_000 + index,
-      handle: `walker-burst-${index + 1}`,
-      current_place_id: 3,
-      joined_at: new Date(now - 172_800_000 - index).toISOString(),
-      asleep: false,
-    })),
-  ]
+          : placed
+        return controls.maximumHandle && resident.id === replayCrowd[3]!.id
+          ? { ...crowded, handle: controls.maximumHandle }
+          : crowded
+      }),
+      ...Array.from({ length: controls.simultaneousMoves ?? 0 }, (_, index) => ({
+        id: 1_000 + index,
+        handle: `walker-burst-${index + 1}`,
+        current_place_id: 3,
+        joined_at: new Date(now - 172_800_000 - index).toISOString(),
+        asleep: false,
+      })),
+    ]
+  }
   const drawingPlaces = Array.from({ length: controls.drawingPlaceCount ?? 0 }, (_, index) => ({
     id: 100 + index,
-    parent_id: 1,
+    parent_id: controls.drawingParentId ?? 1,
     name: `Drawing plot ${index + 1}`,
   }))
   const directoryPlaces = [...replayPlaces, ...drawingPlaces]
@@ -393,24 +657,31 @@ async function installReplayRoutes(
       return
     }
     const ordinarySnapshot = replaySnapshot(now, marker !== '10', marker)
+    const drawingRows = drawingPlaces.map(extra => ({
+      ...extra,
+      owner: 'drawing-owner',
+      purpose: '',
+      front_matter: [],
+      places: 0,
+      things: 0,
+      notes: 0,
+      moderated: false,
+      children: [],
+    }))
+    const appendDrawingPlaces = place => ({
+      ...place,
+      places: place.places + (place.id === (controls.drawingParentId ?? 1)
+        ? drawingPlaces.length
+        : 0),
+      children: [
+        ...place.children.map(appendDrawingPlaces),
+        ...(place.id === (controls.drawingParentId ?? 1) ? drawingRows : []),
+      ],
+    })
     const baseSnapshot = drawingPlaces.length
       ? {
           ...ordinarySnapshot,
-          places: ordinarySnapshot.places.map(place => ({
-            ...place,
-            places: place.places + drawingPlaces.length,
-            children: [...place.children, ...drawingPlaces.map(extra => ({
-              ...extra,
-              owner: 'drawing-owner',
-              purpose: '',
-              front_matter: [],
-              places: 0,
-              things: 0,
-              notes: 0,
-              moderated: false,
-              children: [],
-            }))],
-          })),
+          places: ordinarySnapshot.places.map(appendDrawingPlaces),
           totals: {
             ...ordinarySnapshot.totals,
             places: ordinarySnapshot.totals.places + drawingPlaces.length,
@@ -470,7 +741,10 @@ async function installReplayRoutes(
   })
   await page.route('**/api/changes**', async route => {
     changeRequests += 1
-    const since = new URL(route.request().url()).searchParams.get('since')
+    const url = new URL(route.request().url())
+    const since = url.searchParams.get('since')
+    changeCursors.push(since)
+    changeLimits.push(url.searchParams.get('limit'))
     if (since === null) {
       await route.fulfill({ json: { change_marker: currentMarker() } })
       return
@@ -486,19 +760,47 @@ async function installReplayRoutes(
       } })
       return
     }
+    if (since !== null && published && controls.simultaneousMoves) {
+      const publishedMarker = currentMarker()
+      const startIndex = since === '10' ? 0 : Number(since) - 1_000
+      if (Number.isSafeInteger(startIndex) && startIndex >= 0 &&
+          startIndex < controls.simultaneousMoves) {
+        const endIndex = Math.min(startIndex + 200, controls.simultaneousMoves)
+        const publishedChanges = Array.from(
+          { length: endIndex - startIndex },
+          (_, offset) => {
+            const index = startIndex + offset
+            const crossesCatchUpCutoff = controls.simultaneousMoves === 1_600 &&
+              (index === 1_399 || index === 1_400)
+            return {
+              change_id: String(1_001 + index),
+              created_at: new Date(now).toISOString(),
+              kind: 'action',
+              actor: crossesCatchUpCutoff
+                ? 'walker-burst-1401'
+                : `walker-burst-${index + 1}`,
+              detail: {
+                action: 'move', status: 'applied',
+                from_place_id: index === 1_399 ? 3 : 2,
+                to_place_id: index === 1_399 ? 2 : 3,
+              },
+            }
+          },
+        )
+        const nextSince = String(1_000 + endIndex)
+        await route.fulfill({ json: {
+          change_marker: publishedMarker,
+          unchanged: false,
+          has_more: endIndex < controls.simultaneousMoves,
+          next_since: nextSince,
+          changes: publishedChanges,
+        } })
+        return
+      }
+    }
     if (since === '10' && published) {
       const publishedMarker = currentMarker()
-      const publishedChanges = controls.simultaneousMoves
-        ? Array.from({ length: controls.simultaneousMoves }, (_, index) => ({
-            change_id: String(1_001 + index),
-            created_at: new Date(now).toISOString(),
-            kind: 'action',
-            actor: `walker-burst-${index + 1}`,
-            detail: {
-              action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
-            },
-          }))
-        : [{
+      const publishedChanges = [{
             change_id: '11', created_at: new Date(now - (
               controls.staggeredArrivalDeadlines ? 1_792_300 : 0
             )).toISOString(), kind: 'action',
@@ -746,6 +1048,8 @@ async function installReplayRoutes(
     openingBeforeIds: () => [...openingBeforeIds],
     windowRequests: () => windowRequests,
     changeRequests: () => changeRequests,
+    changeCursors: () => [...changeCursors],
+    changeLimits: () => [...changeLimits],
     activeNoteRequests: () => activeNoteRequests,
     maximumNoteRequests: () => maximumNoteRequests,
     activeDrawingRequests: () => activeDrawingRequests,
@@ -796,6 +1100,16 @@ async function liveResidentPositions(plot: Locator) {
       }
     })
   })
+}
+
+async function liveResidentLocalPositions(plot: Locator) {
+  return plot.evaluate(node => [...node.querySelectorAll<HTMLElement>('.live-walker')]
+    .map(shell => ({
+      key: shell.querySelector<HTMLElement>('[data-live-resident-handle]')
+        ?.dataset.liveResidentHandle ?? '',
+      x: Number.parseFloat(shell.style.left),
+      y: Number.parseFloat(shell.style.top),
+    })))
 }
 
 async function liveThingPositions(plot: Locator) {
@@ -1244,6 +1558,306 @@ test('a cancelled touch does not consume the next keyboard activation', async ({
   await open.focus()
   await open.evaluate(node => (node as HTMLButtonElement).click())
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+})
+
+test('Live expands 167 residents with one bounded layout pass and no new public reads', async ({ page }) => {
+  await page.setViewportSize({ width: 923, height: 648 })
+  await installLiveRenderWorkRecorder(page)
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    crowdPlaceId: 2,
+    initialResidentPlaceId: 3,
+    moveBurst: 24,
+    residentCrowdSize: 167,
+  })
+  const readCounts = () => ({
+    window: fixture.windowRequests(),
+    residents: fixture.residentPageRequests(),
+    events: fixture.openingEventRequests(),
+    focusedPlace: fixture.focusedPlaceRequests(),
+    things: fixture.thingPageRequests(),
+  })
+  const childExpansionWork = Object.freeze({
+    renders: 1,
+    stageSurveys: 1,
+    residentLayouts: 10,
+    largeResidentLayouts: 1,
+    residentRowsVisited: 188,
+    residentAnchorMembershipChecks: 8,
+    residentAnchorMembershipRowsVisited: 168,
+    placeAnchorCalls: 38,
+    placeAnchorLookupBuilds: 1,
+    placeAnchorPlaceRowsVisited: 4,
+    placeAnchorMapRowsVisited: 4,
+    placeAnchorChildRowsVisited: 2,
+    placeAnchorResolutionSteps: 2,
+    replayCatchUpRecords: 0,
+    residentReplayPoints: 28,
+    moveGeometries: 20,
+    thingPresentations: 3,
+    plotBuilds: 2,
+    rosterRenders: 1,
+  })
+  const focusedExpansionWork = Object.freeze({
+    renders: 1,
+    stageSurveys: 1,
+    residentLayouts: 2,
+    largeResidentLayouts: 1,
+    residentRowsVisited: 173,
+    residentAnchorMembershipChecks: 1,
+    residentAnchorMembershipRowsVisited: 167,
+    placeAnchorCalls: 31,
+    placeAnchorLookupBuilds: 1,
+    placeAnchorPlaceRowsVisited: 4,
+    placeAnchorMapRowsVisited: 4,
+    placeAnchorChildRowsVisited: 0,
+    placeAnchorResolutionSteps: 2,
+    replayCatchUpRecords: 0,
+    residentReplayPoints: 21,
+    moveGeometries: 20,
+    thingPresentations: 1,
+    plotBuilds: 0,
+    rosterRenders: 1,
+  })
+
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect.poll(fixture.thingPageRequests).toBe(1)
+
+  const cinder = page.locator('.live-plot[data-place-id="2"]')
+  const childMore = cinder.getByRole('button', { name: 'Show 163 more residents' })
+  await expect(childMore).toBeVisible()
+  const childResidentsBefore = (await liveResidentLocalPositions(cinder)).map(({ key, x, y }) => ({
+    key,
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+  }))
+  const childThingsBefore = (await liveThingPositions(cinder)).map(({ key, x, y }) => ({
+    key,
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+  }))
+  const childPlotsBefore = await page.locator('.live-plot').evaluateAll(plots => plots.map(plot => {
+    const element = plot as HTMLElement
+    return {
+      id: element.dataset.placeId,
+      x: element.dataset.livePlotX,
+      y: element.dataset.livePlotY,
+      width: element.dataset.livePlotWidth,
+      height: element.dataset.livePlotHeight,
+    }
+  }))
+  const childStageBefore = await page.locator('#live-stage').evaluate(stage => ({
+    width: Number((stage as HTMLElement).dataset.liveStageWidth),
+    height: Number((stage as HTMLElement).dataset.liveStageHeight),
+  }))
+  const childReadsBefore = readCounts()
+  await resetLiveRenderWork(page)
+  await childMore.click()
+  const childWork = await readLiveRenderWork(page)
+  expect(childWork).toEqual(childExpansionWork)
+
+  await expect(cinder.locator('.live-walker')).toHaveCount(167)
+  await expect(cinder.locator('.live-resident-more')).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  const childResidentsAfter = (await liveResidentLocalPositions(cinder)).map(({ key, x, y }) => ({
+    key,
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+  }))
+  expect(childResidentsAfter.filter(resident => childResidentsBefore.some(before =>
+    before.key === resident.key))).toEqual(childResidentsBefore)
+  expect((await liveThingPositions(cinder)).map(({ key, x, y }) => ({
+    key,
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+  }))).toEqual(childThingsBefore)
+  expect(await page.locator('.live-plot').evaluateAll(plots => plots.map(plot => {
+    const element = plot as HTMLElement
+    return {
+      id: element.dataset.placeId,
+      x: element.dataset.livePlotX,
+      y: element.dataset.livePlotY,
+      width: element.dataset.livePlotWidth,
+      height: element.dataset.livePlotHeight,
+    }
+  }))).toEqual(childPlotsBefore)
+  const childStageAfter = await page.locator('#live-stage').evaluate(stage => ({
+    width: Number((stage as HTMLElement).dataset.liveStageWidth),
+    height: Number((stage as HTMLElement).dataset.liveStageHeight),
+  }))
+  expect(childStageAfter.width).toBe(childStageBefore.width)
+  expect(childStageAfter.height).toBeGreaterThan(childStageBefore.height)
+  await expect(cinder.locator('.live-portrait[aria-label^="Focus on "]')).toHaveCount(167)
+  await cinder.locator('[data-live-resident-handle="harbor-167"]').focus()
+  await expect(cinder.locator('[data-live-resident-handle="harbor-167"]')).toBeFocused()
+  expect(readCounts()).toEqual(childReadsBefore)
+
+  await page.goto('/window/live?place=2')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect.poll(fixture.thingPageRequests).toBe(2)
+  const rootMore = page.locator('.live-root-walkers').getByRole(
+    'button', { name: 'Show 163 more residents' },
+  )
+  await expect(rootMore).toBeVisible()
+  const rootReadsBefore = readCounts()
+  await resetLiveRenderWork(page)
+  await rootMore.click()
+  const rootResidentWork = await readLiveRenderWork(page)
+  await expect(page.locator('.live-root-walkers .live-walker')).toHaveCount(167)
+  await expect(page.locator('.live-root-walkers .live-resident-more')).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(readCounts()).toEqual(rootReadsBefore)
+  expect(rootResidentWork).toEqual(focusedExpansionWork)
+
+  const residentsBeforeThingExpansion = (await liveResidentPositions(
+    page.locator('.live-root-walkers'),
+  )).map(({ key, x, y }) => ({
+    key,
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+  }))
+  const rootThingMore = page.locator('.live-root-thing-shelf').getByRole(
+    'button', { name: 'Show 2 more things' },
+  )
+  await panLiveTargetIntoView(page, rootThingMore)
+  const thingReadsBefore = readCounts()
+  await resetLiveRenderWork(page)
+  await rootThingMore.click()
+  const rootThingWork = await readLiveRenderWork(page)
+  await expect(page.locator('.live-root-thing-shelf .live-thing-specimen')).toHaveCount(7)
+  await expect(page.locator('.live-root-thing-shelf .live-thing-more')).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect((await liveResidentPositions(page.locator('.live-root-walkers')))
+    .map(({ key, x, y }) => ({
+      key,
+      x: Math.round(x * 100) / 100,
+      y: Math.round(y * 100) / 100,
+    }))).toEqual(residentsBeforeThingExpansion)
+  expect(readCounts()).toEqual(thingReadsBefore)
+  expect(rootThingWork).toEqual(focusedExpansionWork)
+})
+
+test('Live frames a detailed First Town child on initial load and Center', async ({ page }) => {
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    drawingPlaceCount: 217,
+    drawingParentId: 2,
+    residentCrowdSize: 6,
+    crowdPlaceId: 2,
+    initialResidentPlaceId: 3,
+  })
+  const results: Array<Readonly<{
+    viewport: string
+    initial: LiveChildFraming
+    centered: LiveChildFraming
+  }>> = []
+
+  for (const viewport of [
+    { name: 'desktop', width: 923, height: 648 },
+    { name: 'mobile', width: 390, height: 844 },
+  ] as const) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    await page.goto('/window/live?place=2')
+    await expect(page.locator('#live-history-status')).toContainText('history is complete')
+    await expect(page.locator('.live-plot')).toHaveCount(217)
+    await expect(page.locator('.live-root-walkers .live-walker')).toHaveCount(6)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /fit/i })).toHaveCount(0)
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(() => resolve()))))
+
+    const initial = await readLiveChildFraming(page)
+    await page.getByRole('button', { name: 'Center live view' }).click()
+    const centered = await readLiveChildFraming(page)
+    results.push({ viewport: viewport.name, initial, centered })
+  }
+
+  expect(results.every(result => [result.initial, result.centered].every(frame =>
+    frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+    frame.safeOpenButtons >= 1 && frame.scale === 1)), JSON.stringify(results, null, 2)).toBe(true)
+})
+
+test('Live ignores a stale raised parent when framing its drilled child plate', async ({ page }) => {
+  await page.setViewportSize({ width: 923, height: 648 })
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    drawingPlaceCount: 217,
+    drawingParentId: 2,
+    residentCrowdSize: 6,
+    crowdPlaceId: 2,
+    initialResidentPlaceId: 3,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const parentPlot = page.locator('.live-plot[data-place-id="2"]')
+  const parentOpen = parentPlot.locator('.live-plot-open')
+  await panLiveTargetIntoView(page, parentOpen)
+  await parentOpen.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await parentOpen.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(parentPlot).toHaveAttribute('data-live-raised', 'true')
+
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  await expect.poll(() => parentOpen.evaluate(open => {
+    const box = open.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    return box.width > 0 && box.height > 0 &&
+      box.left >= viewport.left && box.right <= viewport.right &&
+      box.top >= viewport.top && box.bottom <= viewport.bottom
+  })).toBe(true)
+
+  await parentOpen.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await parentOpen.dispatchEvent('click', { pointerType: 'touch' })
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+  await expect(page.locator('.live-plot')).toHaveCount(217)
+  const initial = await readLiveChildFraming(page)
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  const centered = await readLiveChildFraming(page)
+  expect([initial, centered].every(frame =>
+    frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+    frame.safeOpenButtons >= 1 && frame.scale === 1), JSON.stringify({
+      initial,
+      centered,
+    }, null, 2)).toBe(true)
+})
+
+test('Live ignores an outside focus when framing First Town', async ({ page }) => {
+  await page.setViewportSize({ width: 923, height: 648 })
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    drawingPlaceCount: 217,
+    drawingParentId: 2,
+    residentCrowdSize: 6,
+    crowdPlaceId: 2,
+    initialResidentPlaceId: 3,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const resident = page.locator('[data-live-resident-handle="map-walker"]').first()
+  await panLiveTargetIntoView(page, resident)
+  await resident.click()
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  await expect.poll(() => resident.evaluate(node => {
+    const box = node.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    return box.width > 0 && box.height > 0 &&
+      box.left >= viewport.left && box.right <= viewport.right &&
+      box.top >= viewport.top && box.bottom <= viewport.bottom
+  })).toBe(true)
+
+  const parentOpen = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await panLiveTargetIntoView(page, parentOpen)
+  await parentOpen.click()
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+  await expect(page.locator('[data-live-resident-scope="outside"]'))
+    .toContainText('map-walker')
+  await expect(page.locator('.live-plot')).toHaveCount(217)
+  const initial = await readLiveChildFraming(page)
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  const centered = await readLiveChildFraming(page)
+  expect([initial, centered].every(frame =>
+    frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+    frame.safeOpenButtons >= 1 && frame.scale === 1), JSON.stringify({
+      initial,
+      centered,
+    }, null, 2)).toBe(true)
 })
 
 test('Live Show more reveals every loaded resident and thing instead of leaving a dead badge', async ({ page }) => {
@@ -2702,18 +3316,19 @@ test('two arrivals into one crowded plot settle on their own trail endpoints', a
   const durations = await replays.evaluateAll(nodes => nodes.map(node =>
     Number((node as HTMLElement).dataset.replayDuration)))
   expect(durations.every(duration => duration >= 3_200 && duration <= 8_000)).toBe(true)
-  await page.clock.runFor(9_000)
+  await page.clock.runFor(Math.max(...durations) + 20)
   await expect(replays).toHaveCount(0)
 
   for (const handle of ['map-walker', replayCrowd[0]!.handle]) {
     const walker = page.locator(
-      `[data-place-id="3"] [data-live-resident-handle="${handle}"]`,
-    ).first()
+      `.live-replay-portrait:not([data-replay-duration]) ` +
+      `[data-live-resident-handle="${handle}"]`,
+    )
     const trail = page.locator(`.live-trail[aria-label^="${handle} moved"]`)
     await expect(walker).toHaveCount(1)
     await expect(trail).toHaveCount(1)
     const point = await walker.evaluate(node => {
-      const shell = node.closest('.live-walker') as HTMLElement
+      const shell = node.closest('.live-walker, .live-replay-portrait') as HTMLElement
       const stage = node.closest('.live-stage') as HTMLElement
       const ground = stage.getBoundingClientRect()
       const box = shell.getBoundingClientRect()
@@ -2726,6 +3341,8 @@ test('two arrivals into one crowded plot settle on their own trail endpoints', a
     expect(Math.abs(point.x - Number(await trail.getAttribute('x2')))).toBeLessThan(1)
     expect(Math.abs(point.y - Number(await trail.getAttribute('y2')))).toBeLessThan(1)
   }
+  await page.clock.runFor(900)
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
 })
 
 test('a later crowded arrival keeps its full absorption window', async ({ page }) => {
@@ -3248,15 +3865,23 @@ test('reduced motion shows new records statically without replay animation', asy
   const fixture = await installReplayRoutes(page, now)
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const harbor = page.locator('.live-plot[data-place-id="3"]')
+  const stableResidentsBefore = await liveResidentLocalPositions(harbor)
 
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await expect(page.locator('.live-trail')).toHaveCount(1)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
-  await expect(page.locator('.live-speech-bubble')).toHaveText('L'.repeat(59) + '…')
+  const latestNoteMark = page.locator('.live-footnote-mark[data-live-key="change:13"]')
+  await expect(latestNoteMark).toBeVisible()
+  await expect(latestNoteMark).toHaveAccessibleName("Show map-walker's note in the plate ledger")
+  const bubble = latestNoteMark.locator('.live-speech-bubble')
+  await expect(bubble).toBeVisible()
+  await expect(bubble).toHaveText('L'.repeat(59) + '…')
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
-  await expect(page.locator('.live-speech-bubble')).toHaveCSS('animation-name', 'none')
+  await expect(bubble).toHaveCSS('animation-name', 'none')
+  expect(await liveResidentLocalPositions(harbor)).toEqual(stableResidentsBefore)
 })
 
 test('the plate hard-caps trail ink and removes it at the fade edge without trimming the ledger', async ({ page }) => {
@@ -3364,6 +3989,232 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
   expect(completionMutations).toBeLessThanOrEqual(2)
   await expect(page.locator('.live-ledger-row')).toHaveCount(64)
   await expect(page.locator('.live-trail')).toHaveCount(64)
+})
+
+test('eight legal change pages settle 1,600 actors without rebuilding crowd membership', async ({ page }) => {
+  test.setTimeout(60_000)
+  const now = Date.now()
+  const actorCount = 1_600
+  const drawingPlaceCount = 215
+  const detailedPlotCount = 217
+  const placeRowCount = replayPlaces.length + drawingPlaceCount
+  const residentRowBudget = actorCount * 16 + 10_000
+  const anchorMembershipRowBudget = actorCount * 16 + 10_000
+  const expectedPageCursors = [
+    '10', '1200', '1400', '1600', '1800', '2000', '2200', '2400',
+  ]
+  const expectedTransientReplayKeys = Array.from(
+    { length: 200 }, (_, index) => `change:${2_401 + index}`,
+  )
+  const stableResidentPositions = async () => (await liveResidentLocalPositions(
+    page.locator('.live-plot[data-place-id="3"]'),
+  )).map(({ key, x, y }) => ({
+    key,
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+  }))
+  const fixedPlotPositions = () => page.locator('.live-plot').evaluateAll(plots =>
+    plots.map(plot => {
+      const element = plot as HTMLElement
+      return {
+        id: element.dataset.placeId,
+        x: element.dataset.livePlotX,
+        y: element.dataset.livePlotY,
+        width: element.dataset.livePlotWidth,
+        height: element.dataset.livePlotHeight,
+      }
+    }))
+  await page.clock.install({ time: new Date(now) })
+  await installLiveRenderWorkRecorder(page)
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+    simultaneousMoves: actorCount,
+    drawingPlaceCount,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  const stableResidentsBefore = await stableResidentPositions()
+  const fixedPlotsBefore = await fixedPlotPositions()
+  expect(fixedPlotsBefore).toHaveLength(detailedPlotCount)
+  expect(stableResidentsBefore.length).toBeGreaterThan(0)
+  expect(stableResidentsBefore.every(resident =>
+    !resident.key.startsWith('walker-burst-'))).toBe(true)
+
+  await resetLiveRenderWork(page)
+  await page.evaluate(({ residentBudget, anchorBudget }) => {
+    const heldWindow = window as Window & {
+      __liveResidentRowBudget?: number
+      __liveResidentRowBudgetExceededAt?: number | null
+      __liveResidentAnchorRowBudget?: number
+      __liveResidentAnchorRowBudgetExceededAt?: number | null
+    }
+    heldWindow.__liveResidentRowBudget = residentBudget
+    heldWindow.__liveResidentRowBudgetExceededAt = null
+    heldWindow.__liveResidentAnchorRowBudget = anchorBudget
+    heldWindow.__liveResidentAnchorRowBudgetExceededAt = null
+  }, { residentBudget: residentRowBudget, anchorBudget: anchorMembershipRowBudget })
+  const changeCursorOffset = fixture.changeCursors().length
+  await publishReplayChanges(page, fixture)
+  await expect.poll(
+    () => fixture.changeCursors().slice(changeCursorOffset),
+    { timeout: 45_000 },
+  ).toEqual(expectedPageCursors)
+  expect(fixture.changeLimits().slice(changeCursorOffset)).toEqual(
+    expectedPageCursors.map(() => '200'),
+  )
+
+  const replays = page.locator('.live-replay-portrait')
+  await expect(page.locator('.live-ledger-row')).toHaveCount(actorCount, { timeout: 45_000 })
+  await expect(replays).toHaveCount(expectedTransientReplayKeys.length)
+  const stableResidentsDuring = await stableResidentPositions()
+  const fixedPlotsDuring = await fixedPlotPositions()
+  await page.clock.fastForward(2_000)
+  type TransientReplay = Readonly<{
+    key: string
+    actor: string
+    fromPlaceId: string
+    toPlaceId: string
+  }>
+  let transientReplays: TransientReplay[] = []
+  await expect.poll(async () => {
+    transientReplays = await page.evaluate(() => [...((window as Window & {
+      __liveReplayStarts?: TransientReplay[]
+    }).__liveReplayStarts ?? [])])
+    return transientReplays.length
+  }).toBe(expectedTransientReplayKeys.length)
+  const transientReplayKeys = transientReplays.map(replay => replay.key)
+  expect(transientReplayKeys).toEqual(expectedTransientReplayKeys)
+  expect(transientReplayKeys).not.toContain('change:2400')
+  expect(transientReplays[0]).toEqual({
+    key: 'change:2401',
+    actor: 'walker-burst-1401',
+    fromPlaceId: '2',
+    toPlaceId: '3',
+  })
+  const transientReplayCount = transientReplayKeys.length
+  const newestTrail = page.locator('.live-trail[data-live-key="change:2600"]')
+  await expect(newestTrail).toHaveAttribute(
+    'aria-label', 'walker-burst-1600 moved from 2 to 3',
+  )
+  expect(transientReplays.at(-1)).toEqual({
+    key: 'change:2600',
+    actor: 'walker-burst-1600',
+    fromPlaceId: '2',
+    toPlaceId: '3',
+  })
+  await expect(replays).toHaveCount(0, { timeout: 20_000 })
+  await expect(page.locator('.live-trail')).toHaveCount(96)
+  const stableResidentsAfter = await stableResidentPositions()
+  const fixedPlotsAfter = await fixedPlotPositions()
+
+  const ledgerRows = await page.locator('.live-ledger-row').evaluateAll(rows =>
+    rows.map(row => ({
+      key: (row as HTMLElement).dataset.liveKey,
+      copy: row.querySelector('.live-ledger-copy')?.textContent ?? '',
+    })))
+  const expectedLedgerKeys = Array.from(
+    { length: actorCount }, (_, index) => `change:${2_600 - index}`,
+  )
+  const repeatedActorLedger = ledgerRows
+    .filter(row => row.copy.startsWith('walker-burst-1401 moved:'))
+  expect(repeatedActorLedger).toEqual([{
+    key: 'change:2401',
+    copy: 'walker-burst-1401 moved: Cinder lane → Harbor room',
+  }, {
+    key: 'change:2400',
+    copy: 'walker-burst-1401 moved: Harbor room → Cinder lane',
+  }])
+  const rosterOutcomes = await page.locator('#live-roster .resident-row').evaluateAll(rows =>
+    rows.flatMap(row => {
+      const handle = row.querySelector<HTMLElement>('[data-live-resident-handle]')
+        ?.dataset.liveResidentHandle
+      return handle?.startsWith('walker-burst-')
+        ? [{ handle, atHarbor: row.textContent?.includes('Harbor room') === true }]
+        : []
+    }))
+  const rosterActorSet = new Set(rosterOutcomes.map(outcome => outcome.handle))
+  const missingRosterActors = Array.from({ length: actorCount }, (_, index) =>
+    `walker-burst-${index + 1}`).filter(actor => !rosterActorSet.has(actor))
+  const wrongCurrentPlaces = rosterOutcomes
+    .filter(outcome => !outcome.atHarbor)
+    .map(outcome => outcome.handle)
+
+  const work = await readLiveRenderWork(page)
+  const exceeded = await page.evaluate(() => {
+    const heldWindow = window as Window & {
+      __liveResidentRowBudgetExceededAt?: number | null
+      __liveResidentAnchorRowBudgetExceededAt?: number | null
+    }
+    return {
+      residentRows: heldWindow.__liveResidentRowBudgetExceededAt ?? null,
+      anchorMembershipRows: heldWindow.__liveResidentAnchorRowBudgetExceededAt ?? null,
+    }
+  })
+  const crowdedLayoutBudget = work.renders * 2
+  const anchorMembershipCheckBudget = actorCount * Math.max(2, work.renders * 2)
+  const placeAnchorLookupBudget = work.renders * 2
+  const placeAnchorPlaceRowBudget = placeRowCount * placeAnchorLookupBudget
+  const placeAnchorChildRowBudget = detailedPlotCount * placeAnchorLookupBudget
+  const placeAnchorResolutionBudget = work.renders * 32
+  expect(work.largeResidentLayouts <= crowdedLayoutBudget &&
+    work.residentRowsVisited <= residentRowBudget &&
+    exceeded.residentRows === null &&
+    work.replayCatchUpRecords === actorCount - 200 &&
+    transientReplayCount <= 200 &&
+    work.residentAnchorMembershipChecks <= anchorMembershipCheckBudget &&
+    work.residentAnchorMembershipRowsVisited <= anchorMembershipRowBudget &&
+    exceeded.anchorMembershipRows === null &&
+    work.placeAnchorLookupBuilds <= placeAnchorLookupBudget &&
+    work.placeAnchorPlaceRowsVisited <= placeAnchorPlaceRowBudget &&
+    work.placeAnchorMapRowsVisited <= placeAnchorPlaceRowBudget &&
+    work.placeAnchorChildRowsVisited <= placeAnchorChildRowBudget &&
+    work.placeAnchorResolutionSteps <= placeAnchorResolutionBudget &&
+    stableResidentsDuring.length === stableResidentsBefore.length &&
+    stableResidentsDuring.every((resident, index) =>
+      JSON.stringify(resident) === JSON.stringify(stableResidentsBefore[index])) &&
+    stableResidentsAfter.length === stableResidentsBefore.length &&
+    stableResidentsAfter.every((resident, index) =>
+      JSON.stringify(resident) === JSON.stringify(stableResidentsBefore[index])) &&
+    JSON.stringify(fixedPlotsDuring) === JSON.stringify(fixedPlotsBefore) &&
+    JSON.stringify(fixedPlotsAfter) === JSON.stringify(fixedPlotsBefore) &&
+    JSON.stringify(ledgerRows.map(row => row.key)) === JSON.stringify(expectedLedgerKeys) &&
+    ledgerRows.some(row => row.copy.startsWith('walker-burst-1600 moved:')) &&
+    rosterOutcomes.length === actorCount && missingRosterActors.length === 0 &&
+    wrongCurrentPlaces.length === 0, JSON.stringify({
+      renders: work.renders,
+      largeResidentLayouts: work.largeResidentLayouts,
+      crowdedLayoutBudget,
+      residentRowsVisited: work.residentRowsVisited,
+      residentRowBudget,
+      residentRowBudgetExceededAt: exceeded.residentRows,
+      replayCatchUpRecords: work.replayCatchUpRecords,
+      residentAnchorMembershipChecks: work.residentAnchorMembershipChecks,
+      anchorMembershipCheckBudget,
+      residentAnchorMembershipRowsVisited: work.residentAnchorMembershipRowsVisited,
+      anchorMembershipRowBudget,
+      anchorMembershipRowBudgetExceededAt: exceeded.anchorMembershipRows,
+      placeAnchorCalls: work.placeAnchorCalls,
+      placeAnchorLookupBuilds: work.placeAnchorLookupBuilds,
+      placeAnchorLookupBudget,
+      placeAnchorPlaceRowsVisited: work.placeAnchorPlaceRowsVisited,
+      placeAnchorMapRowsVisited: work.placeAnchorMapRowsVisited,
+      placeAnchorPlaceRowBudget,
+      placeAnchorChildRowsVisited: work.placeAnchorChildRowsVisited,
+      placeAnchorChildRowBudget,
+      placeAnchorResolutionSteps: work.placeAnchorResolutionSteps,
+      placeAnchorResolutionBudget,
+      transientReplayCount,
+      transientReplayKeys: transientReplayKeys.slice(0, 3)
+        .concat(['…'], transientReplayKeys.slice(-3)),
+      stableResidentsBefore,
+      stableResidentsDuring,
+      stableResidentsAfter,
+      ledgerRowCount: ledgerRows.length,
+      repeatedActorLedger,
+      rosterActorCount: rosterOutcomes.length,
+      missingRosterActors: missingRosterActors.slice(0, 10),
+      wrongCurrentPlaces: wrongCurrentPlaces.slice(0, 10),
+    }, null, 2)).toBe(true)
 })
 
 test('a moving resident returning to readable ground receives a bounded label refresh', async ({ page }) => {
