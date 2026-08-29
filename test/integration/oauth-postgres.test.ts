@@ -1585,6 +1585,103 @@ test('OAuth authorization writes roll back atomically in PostgreSQL', async t =>
       }), { status: 'junk' })
     })
 
+    await t.test('overlapping refresh rotations leave one usable winner', async () => {
+      await resetDatabase()
+      const initial = await exchangeExistingResidentCode(store, 'overlapping-refresh-rotation')
+      await database!.query(`
+        CREATE FUNCTION test_hold_refresh_rotation() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM pg_sleep(0.25);
+          RETURN NEW;
+        END
+        $$;
+        CREATE TRIGGER test_hold_refresh_rotation
+        BEFORE UPDATE OF used_at ON oauth_tokens
+        FOR EACH ROW
+        WHEN (
+          OLD.used_at IS NULL
+          AND NEW.used_at IS NOT NULL
+          AND NEW.token_type = 'refresh'
+        )
+        EXECUTE FUNCTION test_hold_refresh_rotation()
+      `)
+      const rotations = ['first', 'second'].map(label => store.rotateRefreshToken({
+        presentedRefreshTokenHash: initial.refreshTokenHash,
+        clientId: initial.request.clientId,
+        resource: initial.request.resource,
+        accessTokenHash: sha256(`overlapping-refresh-rotation:${label}:access`),
+        newRefreshTokenHash: sha256(`overlapping-refresh-rotation:${label}:refresh`),
+      }))
+      let results: Awaited<(typeof rotations)[number]>[]
+      try {
+        results = await Promise.all(rotations)
+      } finally {
+        await database!.query(`
+          DROP TRIGGER test_hold_refresh_rotation ON oauth_tokens;
+          DROP FUNCTION test_hold_refresh_rotation()
+        `)
+      }
+      assert.deepEqual([...results].sort(), ['overlapping', 'rotated'])
+
+      const state = await database!.query<{
+        revoke_reason: string | null
+        total_tokens: string
+        active_access_tokens: string
+        active_refresh_tokens: string
+      }>(
+        `SELECT family.revoke_reason,
+           count(*)::text AS total_tokens,
+           count(*) FILTER (
+             WHERE token.token_type = 'access' AND token.revoked_at IS NULL
+           )::text AS active_access_tokens,
+           count(*) FILTER (
+             WHERE token.token_type = 'refresh'
+               AND token.used_at IS NULL AND token.revoked_at IS NULL
+           )::text AS active_refresh_tokens
+         FROM oauth_token_families family
+         JOIN oauth_tokens token ON token.family_id = family.id
+         GROUP BY family.id, family.revoke_reason`,
+      )
+      assert.deepEqual(state.rows[0], {
+        revoke_reason: null,
+        total_tokens: '4',
+        active_access_tokens: '2',
+        active_refresh_tokens: '1',
+      })
+      const labels = ['first', 'second'] as const
+      const winnerIndex = results.indexOf('rotated')
+      assert.notEqual(winnerIndex, -1)
+      const winnerAccess = sha256(
+        `overlapping-refresh-rotation:${labels[winnerIndex]!}:access`,
+      )
+      assert.equal(
+        (await store.resolveOAuthAccessToken({
+          accessTokenHash: winnerAccess,
+          resource: initial.request.resource,
+          scope: initial.request.scope,
+        }))?.id,
+        1,
+      )
+
+      assert.equal(await store.rotateRefreshToken({
+        presentedRefreshTokenHash: initial.refreshTokenHash,
+        clientId: initial.request.clientId,
+        resource: initial.request.resource,
+        accessTokenHash: sha256('overlapping-refresh-rotation:late-replay:access'),
+        newRefreshTokenHash: sha256('overlapping-refresh-rotation:late-replay:refresh'),
+      }), 'reused')
+      assert.equal(await store.resolveOAuthAccessToken({
+        accessTokenHash: winnerAccess,
+        resource: initial.request.resource,
+        scope: initial.request.scope,
+      }), null)
+      const revoked = await database!.query<{ revoke_reason: string }>(
+        'SELECT revoke_reason FROM oauth_token_families',
+      )
+      assert.deepEqual(revoked.rows, [{ revoke_reason: 'refresh token reuse' }])
+    })
+
     await t.test('refresh tokens rotate once and reuse revokes the whole family', async () => {
       await resetDatabase()
       const initial = await exchangeExistingResidentCode(store, 'refresh-rotation')

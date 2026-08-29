@@ -92,7 +92,7 @@ export interface RefreshRotationInput {
   newRefreshTokenHash: string
 }
 
-export type RefreshRotationResult = 'rotated' | 'reused' | 'invalid'
+export type RefreshRotationResult = 'rotated' | 'overlapping' | 'reused' | 'invalid'
 
 export type RefreshRateLimitSubject =
   | { status: 'active'; connectionKey: string }
@@ -723,11 +723,16 @@ async function revokeReusedRefreshToken(input: {
 
 export async function rotateRefreshToken(input: RefreshRotationInput): Promise<RefreshRotationResult> {
   const rows = (await sql`
-    WITH consumed_refresh AS (
+    WITH refresh_lock AS MATERIALIZED (
+      SELECT pg_try_advisory_xact_lock(
+        hashtextextended(${input.presentedRefreshTokenHash}, 271828)
+      ) AS acquired
+    ), consumed_refresh AS (
       UPDATE oauth_tokens token
       SET used_at = now()
-      FROM oauth_token_families family
+      FROM oauth_token_families family, refresh_lock
       WHERE token.family_id = family.id
+        AND refresh_lock.acquired
         AND token.token_hash = ${input.presentedRefreshTokenHash}
         AND token.token_type = 'refresh'
         AND token.used_at IS NULL
@@ -761,12 +766,18 @@ export async function rotateRefreshToken(input: RefreshRotationInput): Promise<R
       WHERE family.id = consumed_refresh.family_id
       RETURNING family.id
     )
-    SELECT id FROM consumed_refresh
-    WHERE EXISTS (SELECT 1 FROM new_access)
-      AND EXISTS (SELECT 1 FROM new_refresh)
-      AND EXISTS (SELECT 1 FROM shortened_family)
-  `) as { id: number }[]
-  if (rows.length === 1) return 'rotated'
+    SELECT refresh_lock.acquired AS lock_acquired,
+      EXISTS (
+        SELECT 1 FROM consumed_refresh
+        WHERE EXISTS (SELECT 1 FROM new_access)
+          AND EXISTS (SELECT 1 FROM new_refresh)
+          AND EXISTS (SELECT 1 FROM shortened_family)
+      ) AS rotated
+    FROM refresh_lock
+  `) as { lock_acquired: boolean; rotated: boolean }[]
+  const attempt = rows[0]
+  if (!attempt?.lock_acquired) return 'overlapping'
+  if (attempt.rotated) return 'rotated'
   return (await revokeReusedRefreshToken(input)) ? 'reused' : 'invalid'
 }
 

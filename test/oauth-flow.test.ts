@@ -124,6 +124,7 @@ class MemoryOAuthStore {
   private nextResidentId = 50
   private nextFamilyId = 1
   private duplicateHandleRollbacks = 0
+  private readonly refreshRotations = new Set<string>()
 
   readonly api = {
     createAuthorizationRequest: async (input: AuthorizationRequestInput): Promise<void> => {
@@ -358,25 +359,33 @@ class MemoryOAuthStore {
     rotateRefreshToken: async (
       input: Parameters<OAuthStore['rotateRefreshToken']>[0],
     ) => {
-      const token = this.tokens.get(input.presentedRefreshTokenHash)
-      const family = token ? this.families.get(token.familyId) : undefined
-      if (
-        token?.tokenType === 'refresh' && token.used && family &&
-        family.clientId === input.clientId && family.resource === input.resource
-      ) {
-        this.revokeFamily(family.id)
-        return 'reused' as const
+      const rotationKey = input.presentedRefreshTokenHash
+      if (this.refreshRotations.has(rotationKey)) return 'overlapping' as const
+      this.refreshRotations.add(rotationKey)
+      try {
+        await Promise.resolve()
+        const token = this.tokens.get(rotationKey)
+        const family = token ? this.families.get(token.familyId) : undefined
+        if (
+          token?.tokenType === 'refresh' && token.used && family &&
+          family.clientId === input.clientId && family.resource === input.resource
+        ) {
+          this.revokeFamily(family.id)
+          return 'reused' as const
+        }
+        if (
+          !token || token.tokenType !== 'refresh' || token.used || token.revoked ||
+          token.expiresAt <= Date.now() || !family || family.revoked ||
+          family.expiresAt <= Date.now() || family.clientId !== input.clientId ||
+          family.resource !== input.resource
+        ) return 'invalid' as const
+        token.used = true
+        this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + 10 * 60_000)
+        this.addToken(input.newRefreshTokenHash, 'refresh', family.id, family.expiresAt)
+        return 'rotated' as const
+      } finally {
+        this.refreshRotations.delete(rotationKey)
       }
-      if (
-        !token || token.tokenType !== 'refresh' || token.used || token.revoked ||
-        token.expiresAt <= Date.now() || !family || family.revoked ||
-        family.expiresAt <= Date.now() || family.clientId !== input.clientId ||
-        family.resource !== input.resource
-      ) return 'invalid' as const
-      token.used = true
-      this.addToken(input.accessTokenHash, 'access', family.id, Date.now() + 10 * 60_000)
-      this.addToken(input.newRefreshTokenHash, 'refresh', family.id, family.expiresAt)
-      return 'rotated' as const
     },
 
     resolveRefreshRateLimitSubject: async (
@@ -1274,6 +1283,60 @@ test('a throttled refresh says to wait and retry instead of calling the grant in
   assertPrivate(junk)
   assert.equal(junk.headers.get('retry-after'), '17')
   assert.deepEqual(await junk.json(), expected)
+})
+
+test('two overlapping refreshes leave the successful connector grant alive', async () => {
+  const memory = new MemoryOAuthStore()
+  const diagnostics: OAuthDiagnosticRecord[] = []
+  const app = appFor(memory, record => diagnostics.push(record))
+  const first = await initialPair(app)
+  const resolveRefreshRateLimitSubject = memory.api.resolveRefreshRateLimitSubject
+  let subjectChecks = 0
+  let releaseSubjectChecks!: () => void
+  const bothSubjectsChecked = new Promise<void>(resolve => {
+    releaseSubjectChecks = resolve
+  })
+  memory.api.resolveRefreshRateLimitSubject = async input => {
+    const subject = await resolveRefreshRateLimitSubject(input)
+    subjectChecks += 1
+    if (subjectChecks === 2) releaseSubjectChecks()
+    if (subjectChecks <= 2) await bothSubjectsChecked
+    return subject
+  }
+
+  const request = (refreshToken: string) => app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: refreshToken,
+    }),
+  })
+  const responses = await Promise.all([
+    request(first.refresh_token),
+    request(first.refresh_token),
+  ])
+  const successful = responses.filter(response => response.status === 200)
+  const overlapping = responses.filter(response => response.status === 400)
+  assert.equal(successful.length, 1)
+  assert.equal(overlapping.length, 1)
+  assert.deepEqual(await overlapping[0]!.json(), { error: 'invalid_grant' })
+  assert.deepEqual(diagnostics.map(record => record.error_class), ['overlapping_refresh'])
+
+  const winner = await readTokenPair(successful[0]!)
+  assert.equal(
+    (await residentByOAuthAccessToken(winner.access_token, environment, memory.api))?.id,
+    49,
+    'the losing overlap must not revoke the winner',
+  )
+  const next = await readTokenPair(await request(winner.refresh_token))
+  assert.equal(
+    (await residentByOAuthAccessToken(next.access_token, environment, memory.api))?.id,
+    49,
+    'the refresh token returned to the winner must remain usable',
+  )
 })
 
 test('first refresh-token reuse still revokes once; later replay stops before rotation', async () => {
