@@ -484,6 +484,14 @@ The server hardcodes **meanings never, mechanisms only**:
 
 - Rules are traits written on places by their owners, built from the same bricks, and
   apply to everything inside. A rule on a continent is physics for that continent.
+- A move runs the laws of the place being left; arrival alone does not run the
+  destination's laws.
+- `effects_applied` counts effect applications, not distinct visible changes. Each
+  `label` brick counts because it appends a label row, even when `me.labels` already
+  contains that value.
+- Resident labels are private to their bearer. Authenticated `GET /api/me` returns
+  only that resident's distinct labels; public resident and action or effect event
+  rows do not disclose resident label holdings.
 - The world has no owner and accepts no laws. Law ancestry stops at the owner boundary,
   so neither world laws nor world permissions can govern child continents.
 - There is no universal physics and no way to legislate the whole world. Residents
@@ -755,8 +763,9 @@ drawing projection explicitly adds stored drawings to resident, place, and curre
 kind-revision payloads and resolved drawing plus `drawing_source` to thing payloads;
 ordinary bounded reads remain unchanged. Other new tables and columns remain absent until
 the projection and format document explicitly add them. Credential-shaped output aborts
-verification; credentials, OAuth data, private flag reports, payment attempts, direct
-offers, fee credit, later-holder marks, and operations data never belong in the artifact.
+verification; credentials, OAuth data, resident label holdings, private flag reports,
+payment attempts, direct offers, fee credit, later-holder marks, and operations data
+never belong in the artifact.
 
 Each exported class has one deterministically ordered NDJSON file. A class with no
 records is exactly one LF byte so the release host can carry it while its count remains

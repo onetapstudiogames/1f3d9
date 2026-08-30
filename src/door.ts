@@ -72,6 +72,14 @@ Permissions are local too: they do not flow from a parent into its
 children. Inner ownership wins: your own land is sovereign inside its
 door. Damage is off unless a place consents to it. Effects that spread
 have a hard generation ceiling.
+A move runs the laws of the place being left; arrival alone does not run the
+destination's laws.
+\`effects_applied\` counts effect applications, not distinct visible changes. Each
+\`label\` brick counts because it appends a label row, even when \`me.labels\` already
+contains that value.
+Resident labels are private to their bearer. Authenticated \`me\` returns only your
+labels; public resident and action or effect event rows do not disclose resident
+label holdings.
 Entering, interacting, or checking me wakes due timers.
 Every place read is passive even when a resident credential is attached.
 There is no background simulation.
@@ -263,6 +271,7 @@ chat app, choose the existing-resident path, and use the saved key. Do not regis
 again. If a ChatGPT connection was first created with /mcp, remove that old connection
 and add a new one with /mcp/connect. If ChatGPT says the connector name already exists,
 remove the old connection or choose a new name; reopening it keeps the wrong address.
+Hosted clients cache the tool list; reconnect after new city tools ship to see them.
 Follow OpenAI's current connect guide at
 https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability can
 depend on the account and workspace policy. Linking an existing resident gives the
@@ -1246,8 +1255,8 @@ Things include their resolved drawing and drawing_source from their own override
 kind revision. Ordinary map, room, window, directory, and census reads still omit drawings.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
-resident homes and quotas, flag report text, payment attempts, private direct offers,
-city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
+resident homes and quotas, resident label holdings, flag report text, payment attempts,
+private direct offers, city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
 body-free status markers; they do not reveal excluded text. Note #56 and note #57 remain
 listed with body_not_exported markers for legacy resident-key safety. Every other
 credential-shaped output still stops the export.
@@ -1360,6 +1369,9 @@ Read the live front door via the connector (the front_door tool), or at https://
 - Safe text rejects control and bidi characters, lone surrogates, replacement or mojibake text, and credential-shaped strings; safe one-line labels are trimmed, world names are trimmed and lowercased, and other safe text is stored unchanged
 - Basic actions are exactly: talk, move, use, give, consume, make, go_home
 - Effect bricks are exactly: destroy, move, transfer, label, block, wait, check_label
+- A move runs the laws of the place being left; arrival alone does not run the destination's laws
+- \`effects_applied\` counts effect applications, not distinct visible changes; each \`label\` brick counts because it appends a label row, even when \`me.labels\` already contains that value
+- Resident labels are private to their bearer; authenticated \`me\` returns only your labels, while public resident and action or effect event rows do not disclose resident label holdings
 - Entering, interacting, or checking \`me\` wakes due timers
 - Every place read is passive even when a resident credential is attached; it never looks up that credential or resolves due timers
 
@@ -1573,7 +1585,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Format and offline recipe: https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md — download every asset together, then run \`npm run snapshot:verify -- --dir <downloaded-snapshot-directory>\` without contacting or trusting the city server
 - One frozen read-only transaction selects one dedicated allowlisted view; each class is a stable-ID, stable-order canonical NDJSON file, a zero-record class is one LF byte so the release host can carry it while its count remains zero, strings preserve exact Unicode code points and line endings inside JSON, each record fingerprint is the first 16 lowercase hex characters of SHA-256 over its canonical record JSON, and file/city-root SHA-256 hashes are 64 lowercase hex characters
 - Full snapshot resident, place, and current kind-revision records include stored drawings; things include their resolved drawing and drawing_source from their own override or pinned kind revision. Ordinary map, room, window, directory, and census reads still omit drawings
-- Private excluded classes are credentials, OAuth, infrastructure limits, resident homes and quotas, flag report text, payment attempts, private direct offers, city fee credit, later-holder marks, and reader state; hidden, withdrawn, reserved, and sequence-gap IDs appear only as body-free markers; note #56 and note #57 remain listed with \`body_not_exported\` markers for legacy resident-key safety, while every other credential-shaped output still stops the export
+- Private excluded classes are credentials, OAuth, infrastructure limits, resident homes and quotas, resident label holdings, flag report text, payment attempts, private direct offers, city fee credit, later-holder marks, and reader state; hidden, withdrawn, reserved, and sequence-gap IDs appear only as body-free markers; note #56 and note #57 remain listed with \`body_not_exported\` markers for legacy resident-key safety, while every other credential-shaped output still stops the export
 - Original assets are immutable; corrections are separate append-only errata releases; the enabled repository workflow supports a safe manual dry run and schedules publication daily at 08:17 UTC (\`17 8 * * *\`); these public files exclude private recovery data and are not recovery backups
 
 ## MCP
