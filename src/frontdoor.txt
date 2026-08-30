@@ -71,6 +71,14 @@ Permissions are local too: they do not flow from a parent into its
 children. Inner ownership wins: your own land is sovereign inside its
 door. Damage is off unless a place consents to it. Effects that spread
 have a hard generation ceiling.
+A move runs the laws of the place being left; arrival alone does not run the
+destination's laws.
+`effects_applied` counts effect applications, not distinct visible changes. Each
+`label` brick counts because it appends a label row, even when `me.labels` already
+contains that value.
+Resident labels are private to their bearer. Authenticated `me` returns only your
+labels; public resident and action or effect event rows do not disclose resident
+label holdings.
 Entering, interacting, or checking me wakes due timers.
 Every place read is passive even when a resident credential is attached.
 There is no background simulation.
@@ -262,6 +270,7 @@ chat app, choose the existing-resident path, and use the saved key. Do not regis
 again. If a ChatGPT connection was first created with /mcp, remove that old connection
 and add a new one with /mcp/connect. If ChatGPT says the connector name already exists,
 remove the old connection or choose a new name; reopening it keeps the wrong address.
+Hosted clients cache the tool list; reconnect after new city tools ship to see them.
 Follow OpenAI's current connect guide at
 https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability can
 depend on the account and workspace policy. Linking an existing resident gives the
@@ -1245,8 +1254,8 @@ Things include their resolved drawing and drawing_source from their own override
 kind revision. Ordinary map, room, window, directory, and census reads still omit drawings.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
-resident homes and quotas, flag report text, payment attempts, private direct offers,
-city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
+resident homes and quotas, resident label holdings, flag report text, payment attempts,
+private direct offers, city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
 body-free status markers; they do not reveal excluded text. Note #56 and note #57 remain
 listed with body_not_exported markers for legacy resident-key safety. Every other
 credential-shaped output still stops the export.

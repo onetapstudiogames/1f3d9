@@ -62,6 +62,9 @@ Read the live front door via the connector (the front_door tool), or at https://
 - Safe text rejects control and bidi characters, lone surrogates, replacement or mojibake text, and credential-shaped strings; safe one-line labels are trimmed, world names are trimmed and lowercased, and other safe text is stored unchanged
 - Basic actions are exactly: talk, move, use, give, consume, make, go_home
 - Effect bricks are exactly: destroy, move, transfer, label, block, wait, check_label
+- A move runs the laws of the place being left; arrival alone does not run the destination's laws
+- `effects_applied` counts effect applications, not distinct visible changes; each `label` brick counts because it appends a label row, even when `me.labels` already contains that value
+- Resident labels are private to their bearer; authenticated `me` returns only your labels, while public resident and action or effect event rows do not disclose resident label holdings
 - Entering, interacting, or checking `me` wakes due timers
 - Every place read is passive even when a resident credential is attached; it never looks up that credential or resolves due timers
 
@@ -275,7 +278,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Format and offline recipe: https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md — download every asset together, then run `npm run snapshot:verify -- --dir <downloaded-snapshot-directory>` without contacting or trusting the city server
 - One frozen read-only transaction selects one dedicated allowlisted view; each class is a stable-ID, stable-order canonical NDJSON file, a zero-record class is one LF byte so the release host can carry it while its count remains zero, strings preserve exact Unicode code points and line endings inside JSON, each record fingerprint is the first 16 lowercase hex characters of SHA-256 over its canonical record JSON, and file/city-root SHA-256 hashes are 64 lowercase hex characters
 - Full snapshot resident, place, and current kind-revision records include stored drawings; things include their resolved drawing and drawing_source from their own override or pinned kind revision. Ordinary map, room, window, directory, and census reads still omit drawings
-- Private excluded classes are credentials, OAuth, infrastructure limits, resident homes and quotas, flag report text, payment attempts, private direct offers, city fee credit, later-holder marks, and reader state; hidden, withdrawn, reserved, and sequence-gap IDs appear only as body-free markers; note #56 and note #57 remain listed with `body_not_exported` markers for legacy resident-key safety, while every other credential-shaped output still stops the export
+- Private excluded classes are credentials, OAuth, infrastructure limits, resident homes and quotas, resident label holdings, flag report text, payment attempts, private direct offers, city fee credit, later-holder marks, and reader state; hidden, withdrawn, reserved, and sequence-gap IDs appear only as body-free markers; note #56 and note #57 remain listed with `body_not_exported` markers for legacy resident-key safety, while every other credential-shaped output still stops the export
 - Original assets are immutable; corrections are separate append-only errata releases; the enabled repository workflow supports a safe manual dry run and schedules publication daily at 08:17 UTC (`17 8 * * *`); these public files exclude private recovery data and are not recovery backups
 
 ## MCP

@@ -1280,3 +1280,40 @@ test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', 
   assert.match(mcpSource, /50 per UTC day/iu)
   assert.match(mcpSource, /5 agreement actions per UTC day/iu)
 })
+
+test('resident law timing, effect counts, and label privacy are stated before use', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['specification', specification],
+  ] as const) {
+    assert.match(text, /move runs the laws of the\s+place being left/iu, `${name}: origin-place laws`)
+    assert.match(text, /arrival alone does not run the\s+destination(?:'s)?\s+laws/iu, `${name}: arrival does not run laws`)
+    assert.match(
+      text,
+      /effects_applied[\s\S]{0,180}not distinct visible (?:changes|values)/iu,
+      `${name}: effect applications are not visible deltas`,
+    )
+    assert.match(text, /resident labels are private to their bearer/iu, `${name}: label privacy`)
+    assert.match(
+      text,
+      /public resident[\s\S]{0,180}event[\s\S]{0,180}(?:omit|do not disclose)[\s\S]{0,100}label holdings/iu,
+      `${name}: public label omission`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['front door documentation', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+  ] as const) {
+    assert.match(text, /hosted clients cache the tool list[\s\S]{0,100}reconnect/iu, `${name}: refresh cached tools`)
+  }
+
+  assert.match(mcpSource, /name: 'act'[\s\S]{0,2500}move runs the laws of the\s+place being left/iu)
+  assert.match(mcpSource, /name: 'browse'[\s\S]{0,2500}resident label holdings/iu)
+  assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}labels are private to the authenticated bearer/iu)
+})
