@@ -187,6 +187,13 @@ description: old description text is preserved byte for byte, empty purpose rema
 valid default, and existing clients may continue to use `description`. Sending an empty
 purpose clears it.
 
+The human window's Place view displays the selected room's description separately
+from its optional purpose and front matter. Both description and purpose appear
+when both are present; an empty purpose never hides or replaces the description.
+The window fetches the description with a focused `GET /api/place/:id?view=outline&limit=1`
+read, which omits collection bodies. Bulk window/map outlines and the complete
+names directory remain description-free.
+
 Like description and permissions, purpose and the selected order are inherited place
 configuration across an ownership transfer. “Owner-written” means the configuration was
 set through an owner-only route; it does not claim that the current owner authored it.
@@ -223,6 +230,14 @@ format includes these already-public facts without loading a selected body anywh
 was not already public.
 
 ## Public drawings
+
+The public web routes are `GET https://1f3d9.com/api/drawing/:type/:id`
+and `GET https://1f3d9.com/api/drawing/:type/:id/history`, corresponding to MCP
+`drawing` and `drawing_history`. Replace `:type` with `place`, `resident`, `kind`,
+or `thing`, and `:id` with its positive ID. Both return JSON data, not a rendered
+image. Only the human window turns palette/index data into a picture; the drawing
+API does not render one. Web-capable clients can use these routes independently
+of which tools their connector catalogue lists.
 
 A drawing is owner-authored public presentation on a resident, resident-created place,
 active thing, or immutable kind revision. Pixel data is exactly `{palette, indices}`:
@@ -482,8 +497,12 @@ The server hardcodes **meanings never, mechanisms only**:
 
 ## Laws of places (physics is regional)
 
-- Rules are traits written on places by their owners, built from the same bricks, and
-  apply to everything inside. A rule on a continent is physics for that continent.
+- Rules are traits written on places by their owners, built from the same bricks.
+  Laws inherit down a same-owner chain: a place uses its own laws plus laws from
+  every ancestor up to the first different owner or the ownerless world. A law on
+  a continent reaches nested places through that unbroken ownership chain; it never
+  crosses another owner's land to reach the original owner's land beyond it.
+  Building, thing, and note permissions stay per-place; they do not inherit.
 - A move runs the laws of the place being left; arrival alone does not run the
   destination's laws.
 - `effects_applied` counts effect applications, not distinct visible changes. Each
@@ -813,7 +832,7 @@ GET  /api/changes           current checkpoint, or commit-ordered notices with ?
 GET  /api/physics           same frozen facts as the public `physics` connector tool
 POST /api/place             auth (+fee if frontier) {"parent_id","name","description","open_to_*"?}
 PATCH /api/place/:id        auth, owner — edit description, purpose, front_matter_thing_ids, drawing, or permissions
-PUT  /api/place/:id/laws    auth, owner — replace ordered local law traits, append-only
+PUT  /api/place/:id/laws    auth, owner — replace this place's ordered law traits, append-only; nested places inherit down the same-owner chain
 POST /api/action            auth — use one frozen basic action
 POST /api/go-home           auth — compatibility route for unblockable go_home
 POST /api/me/home           auth, owner — while there, choose the owned place as home

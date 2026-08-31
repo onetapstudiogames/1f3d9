@@ -1719,7 +1719,9 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .orientation-block { min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); }
 .orientation-block + .orientation-block { border-inline-start: 2px solid var(--line); }
 .orientation-block h3 { margin: 0.35rem 0 0.8rem; font-size: 1.25rem; }
-.place-purpose-text { max-width: 54rem; margin: 0; font-size: 0.92rem; line-height: 1.55; }
+.place-description { background: #f4ecd5; border-bottom: 2px solid var(--line); }
+.place-description-text, .place-purpose-text { max-width: 54rem; margin: 0; font-size: 0.92rem; line-height: 1.55; }
+.place-description-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .front-matter-list {
   display: grid;
   gap: 0.65rem;

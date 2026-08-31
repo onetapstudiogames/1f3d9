@@ -1148,6 +1148,7 @@ test('bounded map and window rooms carry a short purpose and ordered body-free f
     parent_id: null,
     name: 'reading-room',
     owner: 'tiny-lantern',
+    description: 'A full place description stays behind the focused public place read.',
     purpose,
     front_matter: frontMatter,
     places: 0,
@@ -1185,6 +1186,7 @@ test('bounded map and window rooms carry a short purpose and ordered body-free f
 
   const readingRoom = places.find(place => place.id === 80)
   assert.equal(readingRoom?.purpose, purpose)
+  assert.ok(readingRoom && !Object.hasOwn(readingRoom, 'description'))
   assert.ok(Array.isArray(readingRoom?.front_matter))
   const headings = readingRoom?.front_matter as Array<Record<string, unknown>>
   assert.equal(headings.length, 3)

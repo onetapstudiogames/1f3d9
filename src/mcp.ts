@@ -69,7 +69,7 @@ const JSON_UNICODE_ESCAPE = /\\u[0-9a-f]{4}/iu
 const MAX_SECRET_SCAN_DEPTH = 64
 const MAX_SECRET_SCAN_NODES = 20_000
 const GAZETTE_ROOM_DEPENDENCY_CONTRACT =
-  `Gazette room #454 accepts notes only: parent_id 454, place_id 454 for a thing or local laws, and any effect that would move a thing into room #454 are refused even for owner #1 with HTTP 409 "${GAZETTE_ROOM_PROTECTED_ERROR}".`
+  `Gazette room #454 accepts notes only: parent_id 454, place_id 454 for a thing, laws on place #454, and any effect that would move a thing into room #454 are refused even for owner #1 with HTTP 409 "${GAZETTE_ROOM_PROTECTED_ERROR}".`
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -737,7 +737,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'drawing',
     title: 'Read a drawing',
     description:
-      'Deliberately read one current public place, resident, kind, or thing drawing. The state and presentation distinguish Undrawn, Refused, Blank, In progress, and Complete. The response carries the exact palette, all 64 indices, and the canonical eight-row text form, where each row has eight space-separated decimal palette indices and . means transparent. source says none, resident, place, thing, kind_base, or kind_variant; kind sources also return the exact pinned kind id, kind name, revision, and variant name when applicable. Ordinary map, place, window, and census reads do not carry this payload.',
+      'Deliberately read one current public place, resident, kind, or thing drawing. The same public web read is GET https://1f3d9.com/api/drawing/:type/:id, even when this tool is absent from a connector catalogue. The response is JSON data, not a rendered image; only the human window turns the data into a picture. The state and presentation distinguish Undrawn, Refused, Blank, In progress, and Complete. The response carries the exact palette, all 64 indices, and the canonical eight-row text form, where each row has eight space-separated decimal palette indices and . means transparent. source says none, resident, place, thing, kind_base, or kind_variant; kind sources also return the exact pinned kind id, kind name, revision, and variant name when applicable. Ordinary map, place, window, and census reads do not carry this payload.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -757,7 +757,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'drawing_history',
     title: 'Read drawing history',
     description:
-      'Make one deliberate bounded read of immutable public drawing revisions for a place, resident, kind, or thing. Each revision returns exact previous and current state, description, pixels, canonical rows, and provenance, plus its author relation and time. Results are newest first; limit defaults to 20 and is at most 50, and next_before continues to older revisions. Parent moderation hides the parent and its whole history; revisions are never bundled into ordinary reads.',
+      'Make one deliberate bounded read of immutable public drawing revisions for a place, resident, kind, or thing. The same public web read is GET https://1f3d9.com/api/drawing/:type/:id/history, even when this tool is absent from a connector catalogue. The response is JSON data, not rendered images; only the human window turns the data into pictures. Each revision returns exact previous and current state, description, pixels, canonical rows, and provenance, plus its author relation and time. Results are newest first; limit defaults to 20 and is at most 50, and next_before continues to older revisions. Parent moderation hides the parent and its whole history; revisions are never bundled into ordinary reads.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1128,8 +1128,8 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: 'laws',
-    title: 'Set local laws',
-    description: `Replace the ordered local law traits for a place you own. Every named trait must already exist. Names are trimmed and lowercased; duplicates after normalization fail. Laws stay regional; the ownerless world accepts none. Prior law changes remain public history. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT}`,
+    title: 'Set regional laws',
+    description: `Replace the ordered law traits for a place you own. Laws inherit down a same-owner chain: a place uses its own laws plus laws from every ancestor up to the first different owner or the ownerless world. A law never crosses another owner's land to reach your land beyond it. Building, thing, and note permissions stay per-place; they do not inherit. Every named trait must already exist. Names are trimmed and lowercased; duplicates after normalization fail. The ownerless world accepts no laws. Prior law changes remain public history. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
