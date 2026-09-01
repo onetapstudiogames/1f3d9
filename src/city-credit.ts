@@ -82,6 +82,7 @@ export interface CityCreditAccount {
 
 export type CityCreditAttentionState = Readonly<{
   pending_gifts_count: number
+  frozen_gifts_count: number
   credit_change: Readonly<{
     amount: string
     amount_units: string
@@ -761,6 +762,7 @@ export async function readCityCreditAttention(
   residentIdInput: number,
 ): Promise<CityCreditAttentionState> {
   const residentId = positiveResidentId(residentIdInput)
+  // Ledger IDs are allocation-, not commit-ordered; closing the rare late-lower-ID window requires a per-resident cursor allocated under the account lock.
   const rows = await runQuery(database, `
     /* city-credit:read-attention */
     WITH cutoff AS MATERIALIZED (
@@ -807,14 +809,19 @@ export async function readCityCreditAttention(
           OR (entry.entry_kind = 'purchase' AND entry.gift_id IS NULL)
         )
     ), gift_counts AS MATERIALIZED (
-      SELECT count(*) FILTER (WHERE gift.status = 'pending')::integer AS pending_count
+      SELECT count(*) FILTER (
+          WHERE gift.status IN ('pending', 'frozen')
+        )::integer AS pending_count,
+        count(*) FILTER (WHERE gift.status = 'frozen')::integer AS frozen_count
       FROM city_credit_gifts gift
-      WHERE gift.recipient_id = $1::integer AND gift.status = 'pending'
+      WHERE gift.recipient_id = $1::integer
+        AND gift.status IN ('pending', 'frozen')
     )
     SELECT advanced.previous_credit_entry_id IS NOT NULL AS had_previous_read,
       CASE WHEN balance_changes.change_count > 0 THEN balance_changes.change_units END AS change_units,
       CASE WHEN balance_changes.change_count > 0 THEN balance_changes.changed_at END AS changed_at,
-      gift_counts.pending_count
+      gift_counts.pending_count,
+      gift_counts.frozen_count
     FROM advanced
     CROSS JOIN balance_changes
     CROSS JOIN gift_counts
@@ -823,10 +830,15 @@ export async function readCityCreditAttention(
   if (!row) throw new TypeError('city credit attention is unavailable')
   const pendingCount = integerValue(row.pending_count, 'pending city credit gift count')
   if (pendingCount < 0) throw new TypeError('city credit gift count is invalid')
+  const frozenCount = integerValue(row.frozen_count, 'frozen city credit gift count')
+  if (frozenCount < 0 || frozenCount > pendingCount) {
+    throw new TypeError('frozen city credit gift count is invalid')
+  }
   const hadPreviousRead = booleanValue(row.had_previous_read)
   if (!hadPreviousRead || row.change_units == null) {
     return Object.freeze({
       pending_gifts_count: pendingCount,
+      frozen_gifts_count: frozenCount,
       credit_change: null,
     })
   }
@@ -837,6 +849,7 @@ export async function readCityCreditAttention(
   if (Number.isNaN(changed.getTime())) throw new TypeError('city credit attention time is invalid')
   return Object.freeze({
     pending_gifts_count: pendingCount,
+    frozen_gifts_count: frozenCount,
     credit_change: Object.freeze({
       amount: formatUsdcUnits(BigInt(changeUnits)),
       amount_units: changeUnits,
@@ -847,10 +860,17 @@ export async function readCityCreditAttention(
 
 export function cityCreditAttentionLines(state: CityCreditAttentionState): string[] {
   const lines: string[] = []
-  if (state.pending_gifts_count > 0) {
-    const gifts = state.pending_gifts_count === 1 ? 'gift' : 'gifts'
+  const ordinaryGiftCount = state.pending_gifts_count - state.frozen_gifts_count
+  if (ordinaryGiftCount > 0) {
+    const gifts = ordinaryGiftCount === 1 ? 'gift' : 'gifts'
     lines.push(
-      `You have ${state.pending_gifts_count} pending 1F3D9 fee-credit ${gifts} awaiting accept or refuse; see city_fee_credit.pending_gifts.`,
+      `You have ${ordinaryGiftCount} pending 1F3D9 fee-credit ${gifts} awaiting accept or refuse; see city_fee_credit.pending_gifts.`,
+    )
+  }
+  if (state.frozen_gifts_count > 0) {
+    const gifts = state.frozen_gifts_count === 1 ? 'gift' : 'gifts'
+    lines.push(
+      `You have ${state.frozen_gifts_count} dispute-frozen 1F3D9 fee-credit ${gifts} awaiting refuse; see city_fee_credit.pending_gifts.`,
     )
   }
   if (state.credit_change) {

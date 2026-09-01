@@ -5,7 +5,12 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Pool, type PoolClient } from 'pg'
-import { readCityCreditAccount } from '../../src/city-credit.ts'
+import {
+  cityCreditAttentionLines,
+  readCityCreditAccount,
+  readCityCreditAttention,
+  readCityCreditPreflight,
+} from '../../src/city-credit.ts'
 import { deliverPayPalCredit } from '../../src/paypal-credit-delivery.ts'
 import {
   applyPayPalCreditDispute,
@@ -20,6 +25,7 @@ import {
 } from '../../src/paypal-credit-store.ts'
 import {
   acceptCreditGift,
+  readPendingCreditGifts,
   redirectCreditGift,
   refuseCreditGift,
 } from '../../src/prepaid-credit.ts'
@@ -422,6 +428,40 @@ test('multi-capture disputes stage unknown captures and produce the full event-p
     const inspection = await readFounderPayPalCreditDisputes(db, 2)
     assert.equal(inspection.filter(item => item.dispute_id === created.disputeId).length, 2)
     assert.ok(inspection.every(item => item.internal_note === note.rows[0]?.body))
+  })
+})
+
+test('a dispute-frozen gift is the only gift and still receives refusal attention', {
+  timeout: 120_000,
+}, async () => {
+  await withPostgres(async (pool, db) => {
+    await readCityCreditAttention(db, 2)
+    const delivered = await deliveredGift(db, 2, 'CAPTURE-AWARENESS-FROZEN-0001')
+    await applyPayPalCreditDispute(db, dispute({
+      eventId: 'WH-AWARENESS-FROZEN-CREATED',
+      eventKind: 'CUSTOMER.DISPUTE.CREATED',
+      disputeId: 'PP-D-AWARENESS-FROZEN-0001',
+      captureId: delivered.captureId,
+      updateTime: '2026-09-01T18:00:00.000Z',
+    }))
+
+    assert.equal((await giftState(pool, delivered.giftId)).status, 'frozen')
+    const gifts = await readPendingCreditGifts(db, 2, { beforeId: null, limit: 50 })
+    assert.deepEqual(gifts.items.map(gift => ({
+      gift_id: gift.gift_id,
+      status: gift.status,
+      next_actions: gift.next_actions,
+    })), [{
+      gift_id: delivered.giftId,
+      status: 'frozen',
+      next_actions: {
+        refuse: `POST /api/city-credit/gifts/${delivered.giftId}/refuse`,
+      },
+    }])
+    assert.equal((await readCityCreditPreflight(db, 2)).pending_gifts_count, 1)
+    assert.deepEqual(cityCreditAttentionLines(await readCityCreditAttention(db, 2)), [
+      'You have 1 dispute-frozen 1F3D9 fee-credit gift awaiting refuse; see city_fee_credit.pending_gifts.',
+    ])
   })
 })
 

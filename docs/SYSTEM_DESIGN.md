@@ -705,7 +705,8 @@ of the commons; everything you do with what is already yours is free.
   executable next step.
 - `GET /api/me` also returns `help: "/api/help"` and `attention: string[]`. Attention is
   derived at the end of the same timer-waking read: it points to
-  `city_fee_credit.pending_gifts` while an ordinary pending gift awaits accept/refuse, and
+  `city_fee_credit.pending_gifts` while an ordinary pending gift awaits accept/refuse or a
+  dispute-frozen gift awaits refusal, and
   reports the net fee-credit balance change plus the latest change date since the previous
   completed `me` read. The first completed read establishes the additive per-resident
   `city_credit_last_me_reads` entry cursor without reporting old balance history. Each

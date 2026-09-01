@@ -481,7 +481,7 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
     'CONFIRM_PRODUCTION_DRAWING_RELEASE="${9-}"',
     'export CONFIRM_PRODUCTION_DRAWING_RELEASE',
-    'CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION="${9-}"',
+    'CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION="${10-}"',
     'export CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',

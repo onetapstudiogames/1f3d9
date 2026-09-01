@@ -518,6 +518,19 @@ test('prepaid credit transitions stay exact, private, nonnegative, and nonexpiri
       const cleared = await readCityCreditAttention(db, 2)
       assert.deepEqual(cityCreditAttentionLines(cleared), [])
 
+      const secondDelivered = await deliverTestPurchase(db, {
+        delivery: 'gift',
+        residentId: 2,
+        amountUnits: prepaid.parseCreditDollars('1'),
+        purchaseKind: 'paypal',
+        remoteResourceId: 'AWARENESS0003',
+      })
+      assert.ok(secondDelivered.purchase.gift_id)
+      const secondPending = await readCityCreditAttention(db, 2)
+      assert.deepEqual(cityCreditAttentionLines(secondPending), [
+        'You have 1 pending 1F3D9 fee-credit gift awaiting accept or refuse; see city_fee_credit.pending_gifts.',
+      ])
+
       const marker = await postgres.client.query<{ last_credit_entry_id: string }>(`
         SELECT last_credit_entry_id::text FROM city_credit_last_me_reads
         WHERE resident_id = 2
