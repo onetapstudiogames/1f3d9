@@ -41,8 +41,8 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 64 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 64)
+  assert.deepEqual(recorded, Array.from({ length: 65 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 65)
   assert.match(contributorGuide, /\(65 recorded decisions — do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
