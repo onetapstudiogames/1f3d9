@@ -502,7 +502,10 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       (8, 'gazette-cutoff', 'integration-test', repeat('8', 64)),
       (9, 'gazette-precutoff', 'integration-test', repeat('9', 64)),
       (10, 'gazette-clock', 'integration-test', repeat('a', 64)),
-      (11, 'gazette-boundary', 'integration-test', repeat('b', 64));
+      (11, 'gazette-boundary', 'integration-test', repeat('b', 64)),
+      (12, 'gazette-write-time', 'integration-test', repeat('c', 64)),
+      (13, 'note-replay-inside', 'integration-test', repeat('d', 64)),
+      (14, 'note-replay-outside', 'integration-test', repeat('e', 64));
 
     INSERT INTO places (
       id, parent_id, place_kind, name, description, owner_id,
@@ -528,6 +531,17 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
     WHERE parent.id = 2
     ON CONFLICT (id) DO NOTHING;
 
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    )
+    VALUES (
+      455, 2, 'place', 'write-time test room',
+      'Integration-only room for note write-time and replay proofs.', 12,
+      FALSE, FALSE, TRUE
+    )
+    ON CONFLICT (id) DO NOTHING;
+
     INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
     VALUES
       (1, 454, 454),
@@ -538,12 +552,18 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       (8, 454, 454),
       (9, 454, 454),
       (10, 454, 454),
-      (11, 454, 454)
+      (11, 454, 454),
+      (12, 455, 455),
+      (13, 455, 455),
+      (14, 455, 455)
     ON CONFLICT (resident_id) DO UPDATE SET current_place_id = 454;
   `)
 
   const sql = taggedFor(database)
-  setEngineTransactionRunnerForTests(async (_ignored, work) => {
+  const postgresTransactionRunner = async (
+    _ignored: TaggedSql,
+    work: (transaction: TaggedSql, transactionOwned: boolean) => Promise<unknown>,
+  ): Promise<unknown> => {
     const client = await database.connect()
     try {
       await client.query('BEGIN')
@@ -556,9 +576,141 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
     } finally {
       client.release()
     }
-  })
+  }
+  setEngineTransactionRunnerForTests(postgresTransactionRunner)
 
   await database.query(activationDdl)
+
+  await t.test('a note and its event share one write time while exact replay stays side-effect free', async t => {
+    t.after(() => setEngineTransactionRunnerForTests(postgresTransactionRunner))
+    setEngineTransactionRunnerForTests(async (_ignored, work) => {
+      const client = await database.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query('SELECT pg_sleep(0.05)')
+        const result = await work(taggedFor(client), true)
+        await client.query('COMMIT')
+        return result
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        client.release()
+      }
+    })
+
+    const input = {
+      placeId: 455,
+      residentId: 12,
+      residentHandle: 'gazette-write-time',
+      text: 'one clock for one public write',
+    } as const
+    const first = await runTalkNoteAction(input, sql)
+    assert.equal(first.ok, true)
+    if (!first.ok) return
+    assert.equal(first.replayed, false)
+
+    const stored = (await database.query<{
+      created_at: string
+      event_at: string
+      action_created_at: string
+      note_count: number
+      event_count: number
+      notes_today: number
+    }>(`
+      SELECT note.created_at::text,
+        event.at::text AS event_at,
+        (SELECT max(action.created_at)::text FROM action_runs action
+          WHERE action.actor_id = 12 AND action.action_name = 'talk') AS action_created_at,
+        (SELECT count(*)::integer FROM notes candidate
+          WHERE candidate.author_id = 12 AND candidate.body = $2) AS note_count,
+        (SELECT count(*)::integer FROM events candidate
+          WHERE candidate.kind = 'note'
+            AND candidate.detail->>'note_id' = note.id::text) AS event_count,
+        resident.notes_today
+      FROM notes note
+      JOIN residents resident ON resident.id = note.author_id
+      JOIN events event
+        ON event.kind = 'note' AND event.detail->>'note_id' = note.id::text
+      WHERE note.id = $1
+    `, [first.note.id, input.text])).rows[0]!
+    assert.equal(stored.created_at, stored.event_at, 'one logical write must expose one exact timestamp')
+    assert.ok(
+      Date.parse(stored.created_at) > Date.parse(stored.action_created_at),
+      'an ordinary note must take its write time after the transaction began and waited',
+    )
+    assert.deepEqual(
+      { note_count: stored.note_count, event_count: stored.event_count, notes_today: stored.notes_today },
+      { note_count: 1, event_count: 1, notes_today: 1 },
+    )
+
+    const replay = await runTalkNoteAction(input, sql)
+    assert.deepEqual(replay, { ok: true, note: first.note, replayed: true })
+    assert.deepEqual((await database.query(`
+      SELECT
+        (SELECT count(*)::integer FROM notes
+          WHERE author_id = 12 AND body = $1) AS note_count,
+        (SELECT count(*)::integer FROM events
+          WHERE kind = 'note' AND detail->>'note_id' = $2) AS event_count,
+        (SELECT notes_today FROM residents WHERE id = 12) AS notes_today
+    `, [input.text, String(first.note.id)])).rows[0], {
+      note_count: 1,
+      event_count: 1,
+      notes_today: 1,
+    })
+
+    const seeded = (await database.query<{ id: number; author_id: number }>(`
+      INSERT INTO notes (place_id, author_id, body, created_at)
+      VALUES
+        (455, 13, 'inside the replay window', statement_timestamp() - interval '4 minutes'),
+        (455, 14, 'outside the replay window', statement_timestamp() - interval '6 minutes')
+      RETURNING id, author_id
+    `)).rows
+    const insideId = seeded.find(row => row.author_id === 13)!.id
+    const outsideId = seeded.find(row => row.author_id === 14)!.id
+
+    const inside = await runTalkNoteAction({
+      placeId: 455,
+      residentId: 13,
+      residentHandle: 'note-replay-inside',
+      text: 'inside the replay window',
+    }, sql)
+    assert.equal(inside.ok, true)
+    if (!inside.ok) return
+    assert.deepEqual(
+      { id: inside.note.id, replayed: inside.replayed },
+      { id: insideId, replayed: true },
+    )
+
+    const outside = await runTalkNoteAction({
+      placeId: 455,
+      residentId: 14,
+      residentHandle: 'note-replay-outside',
+      text: 'outside the replay window',
+    }, sql)
+    assert.equal(outside.ok, true)
+    if (!outside.ok) return
+    assert.equal(outside.replayed, false)
+    assert.notEqual(outside.note.id, outsideId)
+    assert.deepEqual((await database.query(`
+      SELECT
+        (SELECT count(*)::integer FROM notes WHERE author_id = 13) AS inside_notes,
+        (SELECT count(*)::integer FROM events
+          WHERE kind = 'note' AND actor = 'note-replay-inside') AS inside_events,
+        (SELECT notes_today FROM residents WHERE id = 13) AS inside_quota,
+        (SELECT count(*)::integer FROM notes WHERE author_id = 14) AS outside_notes,
+        (SELECT count(*)::integer FROM events
+          WHERE kind = 'note' AND actor = 'note-replay-outside') AS outside_events,
+        (SELECT notes_today FROM residents WHERE id = 14) AS outside_quota
+    `)).rows[0], {
+      inside_notes: 1,
+      inside_events: 0,
+      inside_quota: 0,
+      outside_notes: 2,
+      outside_events: 1,
+      outside_quota: 1,
+    })
+  })
 
   await t.test('the database rejects every law, child-place, and thing ingress path', async () => {
     await database.query(`
@@ -1146,6 +1298,21 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       assert.ok(
         storedAt >= boundaryAt.getTime(),
         'the accepted note must use the post-lock database time in the new cycle',
+      )
+      const pairedWriteTimes = (await database.query<{
+        created_at: string
+        event_at: string
+      }>(`
+        SELECT note.created_at::text, event.at::text AS event_at
+        FROM notes note
+        JOIN events event
+          ON event.kind = 'note' AND event.detail->>'note_id' = note.id::text
+        WHERE note.id = $1
+      `, [crossing.note.id])).rows[0]!
+      assert.equal(
+        pairedWriteTimes.created_at,
+        pairedWriteTimes.event_at,
+        'the Gazette trigger-owned note clock must also reach its paired event exactly',
       )
 
       for (const text of ['new-cycle two', 'new-cycle three']) {

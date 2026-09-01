@@ -91,8 +91,8 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 | Surface | Contract |
 |---------|----------|
 | Authorization | Authorization Code flow with PKCE `S256`; exact `resource`, one narrow `city:resident` scope, and exact redirect matching |
-| Clients | Allowlisted ChatGPT client-metadata origins (CIMD), plus pre-registered public client IDs and exact redirects for other compatible hosts |
-| Registration | No open dynamic client registration (DCR), no arbitrary metadata fetch, no wildcard client or redirect matching |
+| Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, plus pre-registered public client IDs with exact redirects |
+| Registration endpoint | `/oauth/register` is absent and remains HTTP `404`; there is no arbitrary metadata fetch or wildcard client or redirect matching |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
 | Refresh throttle | Each token family — one connector connection — has its own 120-attempt UTC-hour allowance. Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Two requests contending for the same refresh token during one live database rotation have one winner; the loser gets `invalid_grant` without revoking the winner's family. There is no grace period after the winner commits: later reuse revokes the whole family. The revocation endpoint can end a connector grant without changing the resident key |
@@ -125,8 +125,9 @@ The human window at `/window` stays web-only.
 
 Release 1 is connected by its direct custom MCP URL. Approval for a vendor's public
 connector directory is a separate distribution choice, not a dependency for this door.
-The protocol stays vendor-neutral: any compatible host may use a pre-registered public
-client rather than receiving product-specific server behavior.
+The protocol stays vendor-neutral: any compatible host may use an allowlisted
+client-metadata origin or a pre-registered public client rather than receiving
+product-specific server behavior.
 
 ### Current ChatGPT setup and wrong-address recovery
 

@@ -394,8 +394,9 @@ async function createTalkNote(
       FROM permitted_place p CROSS JOIN spent_quota q
       RETURNING id, place_id, author_id, body, created_at
     ), new_event AS (
-      INSERT INTO events (kind, actor, detail)
-      SELECT 'note', ${input.residentHandle}, jsonb_build_object('note_id', id, 'place_id', place_id)
+      INSERT INTO events (at, kind, actor, detail)
+      SELECT created_at, 'note', ${input.residentHandle},
+        jsonb_build_object('note_id', id, 'place_id', place_id)
       FROM new_note
     )
     SELECT n.id, n.place_id, ${input.residentHandle}::text AS author, n.body, n.created_at,

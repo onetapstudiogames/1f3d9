@@ -56,6 +56,19 @@ The migration runner's existing production safeguards still apply. The snapshot
 exporter refuses a pooler, a missing host/database/password, another username,
 and any fallback to `DATABASE_URL`.
 
+For the 2026-09-01 event-detail parity release, the drawing-aware v1 wrapper and
+format-v2 view must already be installed. Apply the additive migration to Preview,
+export and verify a Preview snapshot, then use the separately approved Production
+path at release time. Do not publish a new snapshot between the application and
+Production migration steps:
+
+```sh
+npm run migrate:preview:public-snapshot-event-details
+npm run snapshot:export -- --out /path/to/empty-preview-candidate
+npm run snapshot:verify -- --dir /path/to/empty-preview-candidate
+npm run migrate:production:public-snapshot-event-details
+```
+
 ## 2. Prepare a local candidate
 
 Time: usually 2–10 minutes, depending on database size and network speed.
@@ -92,8 +105,11 @@ view, grants, or target secret, then create a new empty candidate directory.
 Time: usually 2–5 minutes.
 
 1. Read `manifest.json` without editing it. Confirm the intended frozen UTC time,
-   full source commit, all class counts, complete class registry, and one entry for
-   every NDJSON file.
+   full source commit, all class counts, complete class registry, and one entry
+   for every NDJSON file. For snapshots exported after the 2026-09-01
+   event-detail migration, also confirm the exact
+   `deliberately_omitted_live_detail_fields` disclosure and source-pinned
+   `documentation_url`; earlier immutable v2 manifests do not contain them.
 2. Compare the verifier's city root with a separately computed SHA-256 of the exact
    `manifest.json` bytes.
 3. Confirm every class whose manifest count is zero has an exact one-byte LF file;
