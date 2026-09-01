@@ -12,6 +12,7 @@ import {
   type SnapshotDatabaseClient,
 } from '../../scripts/export-public-snapshot.ts'
 import { PUBLIC_SNAPSHOT_CLASS_REGISTRY } from '../../src/public-snapshot-format.ts'
+import { AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS } from '../fixtures/public-snapshot-event-detail-contract.ts'
 
 const POSTGRES_IMAGE =
   'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
@@ -166,14 +167,16 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     INSERT INTO events (kind, actor, detail, at)
     VALUES ('action', 'snapshot-keeper', $1::jsonb, '2026-08-20T00:02:30Z')
   `, [JSON.stringify({
+    ...Object.fromEntries(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.map(field => [
+      field,
+      `omitted live detail fixture: ${field}`,
+    ])),
     action_id: 7,
     action: 'move',
-    error: 'internal secret-like action failure must not survive',
     status: 'applied',
     effects_applied: 1,
     from_place_id: 1,
     to_place_id: 2,
-    reason: 'safe public reason',
     unsupported_private_field: 'must not be exported',
   })])
   const scheduledEffectEvent = (await administrator.query<{ id: number }>(`
@@ -417,6 +420,9 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     from_place_id: 1,
     to_place_id: 2,
   })
+  for (const field of AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS) {
+    assert.equal(Object.hasOwn(actionDetail ?? {}, field), false, field)
+  }
   const scheduledEffectDetail = eventLines.find(
     line => line.record.id === scheduledEffectEvent.id,
   )?.record.detail
@@ -440,6 +446,15 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     id: privateRuntimeEvent.id,
     status: 'not_public_or_sequence_gap',
   })
+
+  const moderationLines = (await readFile(join(outputDirectory, 'moderation.ndjson'), 'utf8'))
+    .trimEnd().split('\n').map(line => JSON.parse(line) as {
+      record: Readonly<Record<string, unknown>>
+    })
+  const hiddenNoteModeration = moderationLines.find(
+    line => line.record.target_type === 'note' && line.record.target_id === hiddenNote.id,
+  )?.record
+  assert.equal(hiddenNoteModeration?.reason, 'fixture removal')
 
   const presenceLines = (await readFile(join(outputDirectory, 'public_presence.ndjson'), 'utf8'))
     .trimEnd().split('\n').map(line => JSON.parse(line) as {

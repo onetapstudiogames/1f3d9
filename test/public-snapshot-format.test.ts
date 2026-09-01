@@ -11,6 +11,7 @@ import {
   recordFingerprint,
   verifySnapshotDirectory,
 } from '../src/public-snapshot-format.ts'
+import { AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS } from './fixtures/public-snapshot-event-detail-contract.ts'
 
 const RECORDS = Object.freeze([
   Object.freeze({
@@ -130,7 +131,9 @@ test('snapshot bundles are deterministic, split by class, and verify offline', a
       deliberately_omitted_live_detail_fields: Readonly<Record<string, readonly string[]>>
       documentation_url: string
     }
-    assert.deepEqual(manifest.deliberately_omitted_live_detail_fields, { events: ['error'] })
+    assert.deepEqual(manifest.deliberately_omitted_live_detail_fields, {
+      events: AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
+    })
     assert.equal(
       manifest.documentation_url,
       `https://github.com/onetapstudiogames/1f3d9/blob/${'a'.repeat(40)}/docs/PUBLIC_SNAPSHOTS.md`,
@@ -226,6 +229,18 @@ test('the offline verifier rejects a false omission disclosure or documentation 
     })}\n`, 'utf8')
     await assert.rejects(() => verifySnapshotDirectory(root), /omission disclosure/iu)
 
+    await writeFile(manifestPath, `${canonicalJson({
+      ...manifest,
+      deliberately_omitted_live_detail_fields: {
+        events: AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(field => field !== 'reason'),
+      },
+    })}\n`, 'utf8')
+    await assert.rejects(
+      () => verifySnapshotDirectory(root),
+      /omission disclosure/iu,
+      'a disclosure missing one live-public field must fail closed',
+    )
+
     const documentationRoot = join(root, 'documentation')
     await createSnapshotBundle({
       outputDirectory: documentationRoot,
@@ -271,4 +286,18 @@ test('the offline verifier rejects a false omission disclosure or documentation 
   } finally {
     await rm(root, { force: true, recursive: true })
   }
+})
+
+test('the human snapshot contract matches the audited machine disclosure', async () => {
+  const documentation = await readFile(
+    new URL('../docs/PUBLIC_SNAPSHOTS.md', import.meta.url),
+    'utf8',
+  )
+  assert.doesNotMatch(documentation, /snapshot deliberately\s+omits only `error`/iu)
+  for (const field of AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS) {
+    assert.match(documentation, new RegExp(`\\b${field}\\b`, 'u'), field)
+  }
+  assert.match(documentation, /current event writer/iu)
+  assert.match(documentation, /full live history/iu)
+  assert.match(documentation, /moderatePublicEvents/iu)
 })

@@ -6,6 +6,10 @@ import {
   PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
   PUBLIC_EVENT_KINDS,
 } from '../src/public-events.ts'
+import {
+  AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
+  AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND,
+} from './fixtures/public-snapshot-event-detail-contract.ts'
 
 const migrationUrl = new URL('../db/migrations/20260823_public_snapshots.sql', import.meta.url)
 const drawingsMigrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
@@ -309,6 +313,32 @@ test('exact post-deploy Gazette activation completes the snapshot v2 privilege c
     sql,
     /GRANT SELECT ON city_snapshot\.public_records_v2 TO city_snapshot_export/iu,
   )
+})
+
+test('the audited live-detail inventory exactly names fields absent from format v2 events', () => {
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 38)
+  assert.deepEqual(
+    [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
+    AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
+  )
+  const publicKinds = new Set<string>(PUBLIC_EVENT_KINDS)
+  assert.deepEqual(
+    Object.keys(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND)
+      .filter(kind => !publicKinds.has(kind)),
+    [],
+  )
+  const effectiveV2Fields = new Set(
+    CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS.filter(field => field !== 'error'),
+  )
+  assert.deepEqual(
+    AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(field => effectiveV2Fields.has(field)),
+    [],
+    'a field exported by effective format v2 must not remain in the omission disclosure',
+  )
+  const omittedFields = new Set<string>(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS)
+  for (const required of [
+    'reason', 'gazette_submission_room_opened', 'attempt_id', 'moderated', 'moderation',
+  ]) assert.ok(omittedFields.has(required), required)
 })
 
 for (const [name, url, viewName] of [

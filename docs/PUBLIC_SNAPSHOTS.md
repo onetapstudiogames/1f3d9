@@ -154,13 +154,47 @@ after the 2026-09-01 event-detail migration, that allowlist includes
 evidence. Earlier snapshot releases are immutable and remain exactly as
 shipped, without those three fields.
 
-Of the fields present in live public event detail, the snapshot deliberately
-omits only `error`. Each snapshot exported after the migration states this
-machine-readable contract as
-`deliberately_omitted_live_detail_fields: {"events":["error"]}` and links back
-to this document at the manifest's exact source commit. The projection also
-continues to reject fields outside its allowlist, including authored event
-detail text such as `body`, `description`, and `reason`.
+The manifest calls a field omitted when it can appear as a top-level key in
+`GET /api/events` detail but is absent from the snapshot's `events.detail`.
+That comparison includes stored event JSON and the `moderated` plus
+`moderation` fields that `moderatePublicEvents` can add to the live response.
+Each snapshot exported after the migration states the current per-class
+contract and links back to this document at the manifest's exact source commit:
+
+```json
+{
+  "deliberately_omitted_live_detail_fields": {
+    "events": [
+      "acceded", "accession_open", "attempt_id", "birth_revision", "buyer",
+      "current_revision", "error", "fee_tx_hash", "from", "from_id",
+      "frontier", "gazette_submission_room_opened", "ingredient_ids",
+      "market_checkout_id", "market_draft_id", "market_listing_id",
+      "mechanical", "model", "moderated", "moderation", "name", "outcome",
+      "output_thing_id", "parties", "payment_status", "place_name",
+      "price_usdc", "reason", "repair_key", "revision", "source_place_id",
+      "source_status", "to", "to_id", "trait", "traits", "transaction",
+      "tx_hash"
+    ]
+  }
+}
+```
+
+This is a per-class precision statement, not a claim that every value is lost
+from the archive as a whole. For example, a moderation event omits `reason`
+from `events.detail`, while the separate `moderation` class retains the same
+public reason. Other names and state may likewise remain in their primary
+exported records.
+
+Completeness is checked from three independent surfaces: an exhaustive
+inventory of every current event writer and installed event-writing migration;
+a read-only, cursor-complete sweep of the full live history for stored legacy
+keys; and an explicit review of the response fields added by
+`moderatePublicEvents`. Tests lock that audited union against both the effective
+format-v2 SQL projection and the exact manifest list. The full live-history
+sweep must be repeated before release so immutable historical rows and new
+writer shapes cannot fall outside both the export and its disclosure.
+
+The projection continues to reject every field outside its allowlist.
 Gazette print events retain `place_id`, `issue_number`, and `entry_count`; their
 manifest provenance therefore names both `events` and `gazette_issues`, while
 the issue and entry files carry the permanent ledger itself.
