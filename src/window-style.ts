@@ -1463,7 +1463,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-replay-portrait[data-live-focus-resident] .live-portrait {
   outline: 4px solid var(--signal);
   outline-offset: 3px;
-  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 rgba(0, 0, 0, 0.5);
+  box-shadow: none;
 }
 .live-walker.asleep, .live-replay-portrait.asleep { opacity: 0.56; }
 .live-resident-more, .live-thing-more {

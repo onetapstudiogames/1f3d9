@@ -2472,7 +2472,7 @@ test('Live bounds concurrent note detail reads during a visible burst', async ({
   expect(fixture.maximumNoteRequests()).toBeLessThanOrEqual(4)
 })
 
-test('Live stage portraits show transparent pixels directly on the ground', async ({ page }) => {
+test('Live stage portraits stay unboxed on the ground and when focused', async ({ page }) => {
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
@@ -2506,6 +2506,21 @@ test('Live stage portraits show transparent pixels directly on the ground', asyn
     shellBackgroundImage: 'none',
     placeholderBackgroundColor: 'rgba(0, 0, 0, 0)',
     placeholderBackgroundImage: 'none',
+  })
+
+  await portrait.click()
+  await expect(portrait.locator('..')).toHaveAttribute('data-live-focus-resident')
+  expect(await portrait.evaluate(button => {
+    const style = getComputedStyle(button)
+    return {
+      boxShadow: style.boxShadow,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+    }
+  })).toEqual({
+    boxShadow: 'none',
+    outlineStyle: 'solid',
+    outlineWidth: '4px',
   })
 })
 
