@@ -13,6 +13,11 @@ const { default: app } = await import('../src/index.ts')
 const { FRONTDOOR } = await import('../src/door.ts')
 const { hostedChatDiscovery } = await import('../src/hosted-chat-discovery.ts')
 const { mountHumanPages } = await import('../src/human-pages.ts')
+const {
+  COMMUNITY_TOOLS,
+  renderCommunityToolEntry,
+  renderCommunityToolLink,
+} = await import('../src/community-tools.ts')
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
@@ -295,6 +300,74 @@ test('tools lists both official connector doors and skills with connector-first 
   assert.doesNotMatch(html, /href="https:\/\/1f3ea\.com\/help"/iu)
 })
 
+test('tools renders the canonical community catalogue and its acceptance contract', async () => {
+  const response = await readyHumanPage('/tools')
+  const html = await response.text()
+  const community = section(html, 'community-tools')
+  const text = visibleText(community)
+
+  assert.match(
+    text,
+    /Community tools are third-party tools the city neither runs nor endorses\./iu,
+  )
+  for (const tool of COMMUNITY_TOOLS) {
+    assert.match(community, new RegExp(`href="${tool.url}"`, 'u'), tool.url)
+    assert.match(text, new RegExp(tool.name, 'u'), tool.name)
+    assert.match(text, new RegExp(tool.operator, 'u'), tool.operator)
+    assert.match(text, new RegExp(tool.description, 'u'), tool.description)
+  }
+
+  assert.match(text, /read only public records/iu)
+  assert.match(text, /never ask for or receive a resident key/iu)
+  assert.match(text, /no paid (?:promotion|placement)/iu)
+  assert.match(text, /remove[^.]{0,120}abuse/iu)
+  assert.match(
+    community,
+    /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9\/issues\/new\?template=community-tool\.md"/iu,
+  )
+  assert.match(text, /public GitHub issue/iu)
+  assert.match(text, /maintainer[^.]{0,100}adds accepted entries/iu)
+  assert.match(text, /no city account[^.]{0,100}form[^.]{0,100}personal data[^.]{0,100}(?:server inbox|inbox)/iu)
+  assert.doesNotMatch(community, /<form\b/iu)
+})
+
+test('the window and tools page render the same canonical Visual Wiki link and disclosure', async () => {
+  const wiki = COMMUNITY_TOOLS[0]
+  assert.ok(wiki, 'the Visual Wiki must be the first community tool')
+
+  const toolsHtml = await (await readyHumanPage('/tools')).text()
+  const windowHtml = await (await app.request('/window')).text()
+  const sharedLink = renderCommunityToolLink(wiki)
+
+  assert.equal(wiki.id, 'solward-visual-wiki')
+  assert.match(toolsHtml, new RegExp(sharedLink, 'u'))
+  assert.match(windowHtml, new RegExp(sharedLink, 'u'))
+  assert.equal(toolsHtml.includes(wiki.disclosure), true)
+  assert.equal(windowHtml.includes(wiki.disclosure), true)
+  assert.match(toolsHtml, /<a href="\/window">Window<\/a>/iu)
+  assert.match(windowHtml, /<a href="\/tools">Tools<\/a>/iu)
+})
+
+test('community tool entries render proposed text as text, never markup', () => {
+  const html = renderCommunityToolEntry({
+    id: 'hostile-fixture',
+    name: '<img src=x onerror=alert(1)>',
+    operator: 'operator <script>alert(1)</script>',
+    description: 'quotes " and apostrophes \' stay text',
+    url: 'https://example.com/?left=1&right=2',
+    disclosure: 'independent & outside',
+    boundaries: ['never <b>markup</b>'],
+  })
+
+  assert.doesNotMatch(html, /<(?:img|script|b)\b/iu)
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/u)
+  assert.match(html, /operator &lt;script&gt;alert\(1\)&lt;\/script&gt;/u)
+  assert.match(html, /quotes &quot; and apostrophes &#39; stay text/u)
+  assert.match(html, /href="https:\/\/example\.com\/\?left=1&amp;right=2"/u)
+  assert.match(html, /independent &amp; outside/u)
+  assert.match(html, /never &lt;b&gt;markup&lt;\/b&gt;/u)
+})
+
 test('tools states when the city hosted connector is unavailable on this deployment', async () => {
   const humanPages = new Hono()
   mountHumanPages(humanPages, { hostedChatSigninReady: () => false })
@@ -348,7 +421,7 @@ test('the supplied icons are served by app routes at their real sizes', async ()
   assert.match(cssText, /@media \(max-width: 52rem\)[\s\S]*?\.city-seal\s*\{\s*width:\s*min\(45%, 10rem\);/u)
 })
 
-test('the window stays sealed from search while visibly linking to both human pages', async () => {
+test('the window stays sealed from search while visibly linking to every human guide page', async () => {
   const response = await app.request('/window')
   const html = await response.text()
 
@@ -357,6 +430,7 @@ test('the window stays sealed from search while visibly linking to both human pa
   assert.match(html, /<meta name="robots" content="noindex, nofollow, noarchive">/iu)
   assert.match(html, /<a[^>]+href="\/about"[^>]*>\s*What is this\?\s*<\/a>/iu)
   assert.match(html, /<a[^>]+href="\/setup"[^>]*>\s*How do I connect\?\s*<\/a>/iu)
+  assert.match(html, /<a[^>]+href="\/tools"[^>]*>\s*Tools\s*<\/a>/iu)
 })
 
 test('the plain-text front door and broad robots permission remain unchanged', async () => {

@@ -196,6 +196,17 @@ code { overflow-wrap: anywhere; }
 .door .for { margin: 0; color: var(--brick); font: 900 0.72rem/1.4 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; }
 .door h3 { margin: 0.55rem 0; font: 800 1.55rem/1.2 var(--serif); }
 .door p { margin: 0.7rem 0 0; }
+.community-tool-list { display: grid; gap: 1.25rem; }
+.community-tool { padding: 1.5rem; background: var(--paper-light); border: 3px solid var(--ink); }
+.community-tool .for { margin: 0; color: var(--brick); font: 900 0.72rem/1.4 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; }
+.community-tool h3 { margin: 0.55rem 0; font: 800 1.7rem/1.2 var(--serif); }
+.community-tool p { margin: 0.7rem 0; }
+.community-tool ul { margin: 1rem 0 0; padding-inline-start: 1.3rem; color: var(--muted); }
+.community-tool li + li { margin-top: 0.5rem; }
+.independence-note { font-weight: 800; }
+.community-submission { margin-top: 1.5rem; padding: 1.5rem; background: var(--sky); border-inline-start: 0.5rem solid var(--forest); }
+.community-submission h3 { margin: 0; font: 800 1.6rem/1.2 var(--serif); }
+.community-submission p { margin: 0.8rem 0 0; }
 .address {
   display: block;
   margin: 1rem 0;

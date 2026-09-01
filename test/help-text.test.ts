@@ -17,12 +17,41 @@ const publicSnapshots = read('../docs/PUBLIC_SNAPSHOTS.md')
 const productRequirements = read('../docs/PRD.md')
 const architecture = read('../docs/ARCHITECTURE.md')
 const frontdoorDocument = read('../docs/published/FRONTDOOR.md')
+const readme = read('../README.md')
+const communityToolTemplate = read('../.github/ISSUE_TEMPLATE/community-tool.md')
 const decisions = read('../docs/DECISIONS.md')
 const hostedSignin = read('../docs/features/HOSTED_CHAT_SIGNIN.md')
 const contributorGuide = read('../CLAUDE.md')
 const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
+
+test('public surfaces explain the community-tools catalogue and proposal contract', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+    ['architecture', architecture],
+    ['README', readme],
+  ] as const) {
+    assert.match(text, /\/tools/iu, `${name}: tools page`)
+    assert.match(text, /(?:community|third-party)/iu, `${name}: third-party catalogue`)
+    assert.match(text, /public GitHub issue/iu, `${name}: public proposal route`)
+    assert.match(text, /public\s+records/iu, `${name}: public-read-only acceptance`)
+    assert.match(text, /resident\s+key/iu, `${name}: no-key acceptance`)
+    assert.match(text, /no\s+paid\s+(?:promotion|placement)/iu, `${name}: no paid promotion`)
+    assert.match(text, /remov(?:e|al)[\s\S]{0,100}abuse/iu, `${name}: abuse removal`)
+  }
+
+  for (const heading of ['Tool link', 'Who runs it', 'One-line description', 'Safety confirmation']) {
+    assert.match(communityToolTemplate, new RegExp(`## ${heading}`, 'u'), heading)
+  }
+  assert.match(communityToolTemplate, /- \[ \][^\n]*reads only public[^\n]*never asks for or receives a resident key/iu)
+  assert.match(communityToolTemplate, /Do not add private contact details/iu)
+})
 
 test('Live is labeled alpha across its public help mirrors', () => {
   for (const [name, text] of [
