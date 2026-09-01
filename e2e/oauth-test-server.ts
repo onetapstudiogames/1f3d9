@@ -182,6 +182,7 @@ const publicWindowFixture = Object.freeze({
     name: 'field_lantern',
     body: thingExcerpt,
     owner: 'browser-resident',
+    kind_id: 77,
     kind: 'artifact',
     traits: ['bright'],
     created_at: '2026-08-13T19:02:00.000Z',
@@ -238,8 +239,13 @@ const publicWindowFixture = Object.freeze({
     events: 4,
   },
   body_limits: { notes: 2_000, things: 1_000, agreements: 4_000 },
+  change_marker: '9',
   refreshed_at: '2026-08-13T19:04:00.000Z',
 })
+const transparentDrawingThumbnail = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+  'base64',
+)
 
 // The followed-resident context slice: oldwalker's own notes in the side
 // room plus what a neighbor said back, newest first.
@@ -963,6 +969,17 @@ app.get('/window/:view', renderPublicWindowPage)
 app.get('/window/:kind/:id', renderPublicWindowPage)
 app.get('/window.css', windowStyle)
 app.get('/window.js', windowScript)
+app.get('/api/drawing/:type/:id/thumb.png', c => {
+  if (
+    !['place', 'resident', 'kind', 'thing'].includes(c.req.param('type')) ||
+    !/^[1-9][0-9]*$/u.test(c.req.param('id')) ||
+    c.req.query('rev') !== '9'
+  ) return c.body(null, 404, { 'Cache-Control': 'no-store' })
+  return c.body(transparentDrawingThumbnail, 200, {
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Content-Type': 'image/png',
+  })
+})
 app.get('/share/view.png', c => windowShareImage(c, 'view'))
 app.get('/share/place.png', c => windowShareImage(c, 'place'))
 app.get('/share/thing.png', c => windowShareImage(c, 'thing'))
@@ -1077,6 +1094,7 @@ app.get('/api/window', c => {
       url.searchParams.get('limit') === '25') {
     return c.json({
       notes: followedResidentContextNotes, has_more: false, next_before_id: null,
+      change_marker: publicWindowFixture.change_marker,
     })
   }
   return c.json({ error: 'unexpected deterministic window request' }, 400)
@@ -1125,12 +1143,16 @@ app.get('/api/events', c => {
   if (beforeId === null) {
     return c.json({
       events: publicWindowFixture.events, has_more: true, next_before_id: 502,
+      change_marker: publicWindowFixture.change_marker,
     })
   }
   if (beforeId !== 502) {
     return c.json({ error: 'unexpected deterministic pagination request' }, 400)
   }
-  return c.json({ events: olderPublicEvents, has_more: false, next_before_id: null })
+  return c.json({
+    events: olderPublicEvents, has_more: false, next_before_id: null,
+    change_marker: publicWindowFixture.change_marker,
+  })
 })
 app.get('/__e2e/public-window-state', c => c.json(publicWindowObservations))
 

@@ -687,6 +687,22 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     rows: rowsFor(founderWorldDrawing),
     source: 'place',
   })
+  const checkpoint = (await client.query<{ checkpoint: string }>(`
+    SELECT current_change_id::text AS checkpoint
+    FROM public_change_state
+    WHERE singleton = true
+  `)).rows[0]!.checkpoint
+  const worldThumbnailRead = await drawingApp.request(
+    `/api/drawing/place/${freshWorld.id}/thumb.png?rev=${checkpoint}`,
+  )
+  assert.equal(worldThumbnailRead.status, 200)
+  assert.equal(worldThumbnailRead.headers.get('content-type'), 'image/png')
+  assert.equal(
+    worldThumbnailRead.headers.get('cache-control'),
+    'public, max-age=31536000, immutable',
+  )
+  const worldThumbnailBytes = new Uint8Array(await worldThumbnailRead.arrayBuffer())
+  assert.deepEqual([...worldThumbnailBytes.slice(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10])
   const hiddenInheritedCurrent = await drawingApp.request(
     `/api/drawing/thing/${inheritedThingId}`,
   )
@@ -696,6 +712,11 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
     state: 'undrawn', presentation_state: 'undrawn',
     description: null, drawing: null, rows: null, source: 'none',
   })
+  const hiddenInheritedThumbnail = await drawingApp.request(
+    `/api/drawing/thing/${inheritedThingId}/thumb.png?rev=${checkpoint}`,
+  )
+  assert.equal(hiddenInheritedThumbnail.status, 404)
+  assert.equal(hiddenInheritedThumbnail.headers.get('cache-control'), 'no-store')
   const hiddenInheritedHistory = await drawingApp.request(
     `/api/drawing/thing/${inheritedThingId}/history`,
   )

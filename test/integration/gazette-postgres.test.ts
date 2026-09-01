@@ -952,6 +952,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
         {
           ordinal: 1,
           note_id: source[1]!.id,
+          author_id: 2,
           author: 'gazette-beta',
           body: '  lead\ntrail  ',
           created_at: '2026-08-24T16:00:00.000Z',
@@ -962,6 +963,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
         {
           ordinal: 2,
           note_id: source[0]!.id,
+          author_id: 1,
           author: 'gazette-alpha',
           body: 'Unicode 🏮\nunchanged',
           created_at: '2026-08-30T12:00:00.000Z',
@@ -1705,6 +1707,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(publicIssue?.entries[0], {
     ordinal: 1,
     note_id: targetId,
+    author_id: 2,
     author: 'gazette-author',
     body: `note #${targetId}, withdrawn by its author before the tick`,
     created_at: iso(target.note.created_at),
@@ -1887,6 +1890,7 @@ test('Gazette withdrawal and printing serialize on the shared weekly lock', asyn
       assert.deepEqual(entry, {
         ordinal: stored.ordinal,
         note_id: target.id,
+        author_id: 2,
         author: 'gazette-withdrawal-first',
         body: `note #${target.id}, withdrawn by its author before the tick`,
         created_at: iso(target.created_at),

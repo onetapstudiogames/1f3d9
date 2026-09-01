@@ -60,6 +60,82 @@ test('public window links to the dated public snapshot archive', async ({ page }
   )
 })
 
+test('public window shows lazy thumbnail portraits beside roster and room names', async ({ page }) => {
+  const thumbnailPaths: string[] = []
+  const transparentPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+    'base64',
+  )
+  await page.route('**/api/drawing/*/*/thumb.png*', async route => {
+    const url = new URL(route.request().url())
+    thumbnailPaths.push(url.pathname + url.search)
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+      body: transparentPng,
+    })
+  })
+
+  await page.goto('/window/map')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const rosterRow = page.locator('#resident-roster .resident-row')
+    .filter({ hasText: 'browser-resident' })
+  await rosterRow.scrollIntoViewIfNeeded()
+  const rosterPortrait = rosterRow.locator('.entity-portrait img')
+  await expect(rosterPortrait).toHaveAttribute('loading', 'lazy')
+  await expect(rosterPortrait).toHaveAttribute('width', '32')
+  await expect(rosterPortrait).toHaveAttribute('height', '32')
+  await expect(rosterPortrait).toHaveAttribute(
+    'src',
+    /\/api\/drawing\/resident\/49\/thumb\.png\?rev=9$/u,
+  )
+  const rosterPortraitShell = rosterRow.locator('.entity-portrait')
+  await expect(rosterPortraitShell).toBeVisible()
+  await expect(rosterPortraitShell).toHaveAttribute('data-portrait-state', 'loaded')
+  expect(await rosterPortraitShell.evaluate(shell => {
+    const shellStyle = getComputedStyle(shell)
+    const placeholder = shell.querySelector('.entity-portrait-placeholder')
+    const placeholderStyle = placeholder ? getComputedStyle(placeholder) : null
+    return {
+      shellBackgroundColor: shellStyle.backgroundColor,
+      shellBackgroundImage: shellStyle.backgroundImage,
+      shellBorderStyle: shellStyle.borderStyle,
+      placeholderBackgroundColor: placeholderStyle?.backgroundColor ?? null,
+      placeholderBackgroundImage: placeholderStyle?.backgroundImage ?? null,
+    }
+  })).toEqual({
+    shellBackgroundColor: 'rgba(0, 0, 0, 0)',
+    shellBackgroundImage: 'none',
+    shellBorderStyle: 'none',
+    placeholderBackgroundColor: 'rgba(0, 0, 0, 0)',
+    placeholderBackgroundImage: 'none',
+  })
+
+  await page.getByRole('tab', { name: 'Place', exact: true }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
+  const occupant = page.locator('#place-occupants .person-card')
+    .filter({ hasText: 'browser-resident' })
+  await occupant.scrollIntoViewIfNeeded()
+  await expect(occupant.locator('.entity-portrait img')).toHaveAttribute(
+    'src',
+    /\/api\/drawing\/resident\/49\/thumb\.png\?rev=9$/u,
+  )
+  const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
+  await thing.scrollIntoViewIfNeeded()
+  await expect(thing.locator('.entity-portrait img[data-portrait-type="thing"]')).toHaveAttribute(
+    'src',
+    /\/api\/drawing\/thing\/401\/thumb\.png\?rev=9$/u,
+  )
+  await expect(thing.locator('.kind-portrait img[data-portrait-type="kind"]')).toHaveAttribute(
+    'src',
+    /\/api\/drawing\/kind\/77\/thumb\.png\?rev=9$/u,
+  )
+  expect(thumbnailPaths).toContain('/api/drawing/resident/49/thumb.png?rev=9')
+  expect(thumbnailPaths).toContain('/api/drawing/thing/401/thumb.png?rev=9')
+  expect(thumbnailPaths).toContain('/api/drawing/kind/77/thumb.png?rev=9')
+})
+
 test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {
   await installClipboardRecorder(page)
   await page.goto('/window')
@@ -633,6 +709,7 @@ test('a followed resident defaults to their words and keeps room context as a se
         }],
         has_more: false,
         next_before_id: null,
+        change_marker: '9',
       },
     })
   })

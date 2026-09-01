@@ -230,9 +230,10 @@ parent moderation suppresses the complete current/history payload rather than
 editing an immutable drawing revision.
 
 The snapshot is the deliberate full public export. Ordinary map, room, window,
-directory, and census reads omit drawing fields; a live browser fetches one
-drawing through `GET /api/drawing/:type/:id` only after choosing a visible
-record. Exact redraw history is likewise absent until the deliberate bounded
+directory, and census reads omit drawing fields. The window fetches a separate
+32x32 image through `GET /api/drawing/:type/:id/thumb.png?rev=<public-change-marker>`
+only for a named row near the viewport; selected-place terrain and drawing detail
+use `GET /api/drawing/:type/:id`. Exact redraw history is likewise absent until the deliberate bounded
 `GET /api/drawing/:type/:id/history` request. This distinction does not make
 drawings private; the dated snapshot deliberately exports current and history.
 

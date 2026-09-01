@@ -20,6 +20,7 @@ test('the reading store collects every issue page without changing ordinal order
   const entries = Array.from({ length: 201 }, (_, index) => Object.freeze({
     ordinal: index + 1,
     note_id: 8_000 + index,
+    author_id: index % 2 === 0 ? 71 : 72,
     author: index % 2 === 0 ? 'first' : 'second',
     body: `entry ${index + 1}`,
     created_at: new Date(Date.UTC(2026, 9, 1, 0, index % 60)).toISOString(),
@@ -75,6 +76,7 @@ test('a withdrawal notice outranks moderation and exposes immutable relation fac
       if (text.includes('gazette:read-entries')) return [{
         ordinal: 1,
         note_id: 8_001,
+        author_id: 17,
         author: 'first',
         body: 'note #8001, withdrawn by its author before the tick',
         created_at: '2026-10-01T00:00:00.000Z',
@@ -90,6 +92,7 @@ test('a withdrawal notice outranks moderation and exposes immutable relation fac
   assert.deepEqual(result?.entries, [{
     ordinal: 1,
     note_id: 8_001,
+    author_id: 17,
     author: 'first',
     body: 'note #8001, withdrawn by its author before the tick',
     created_at: '2026-10-01T00:00:00.000Z',

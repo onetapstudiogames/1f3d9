@@ -4059,7 +4059,11 @@ test('Gazette renders attributed notes verbatim and pages issues and entries on 
   const firstEntry = panel.locator('.gazette-entry').filter({ hasText: 'leafwalker' })
   await expect(firstEntry).toHaveCount(1)
   expect(await firstEntry.locator('.gazette-entry-body').textContent()).toBe(unsafeFirstBody)
-  await expect(firstEntry.locator('img')).toHaveCount(0)
+  await expect(firstEntry.locator('.gazette-entry-body img')).toHaveCount(0)
+  const bylinePortrait = firstEntry.locator('.gazette-entry-attribution .entity-portrait')
+  await expect(bylinePortrait).toHaveCount(1)
+  await bylinePortrait.scrollIntoViewIfNeeded()
+  await expect(bylinePortrait.locator('img')).toHaveCount(1)
   expect(await page.evaluate(() => (
     window as Window & { __gazetteMarkupRan?: boolean }
   ).__gazetteMarkupRan)).toBeUndefined()

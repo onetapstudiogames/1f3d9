@@ -87,6 +87,15 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.doesNotThrow(() => new Function(WINDOW_JS))
 })
 
+test('thing kind names keep their existing id and render a lazy kind portrait', () => {
+  assert.match(WINDOW_JS, /const kindId = raw\.kind_id == null \? null : safeId\(raw\.kind_id\)/u)
+  assert.match(WINDOW_JS, /kind_id: kindId/u)
+  assert.match(
+    WINDOW_JS,
+    /portraitNode\('kind', thing\.kind_id, thing\.kind, 'kind-portrait'\)/u,
+  )
+})
+
 test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
   const views = [
     'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',

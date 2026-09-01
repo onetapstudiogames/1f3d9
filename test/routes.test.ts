@@ -4751,6 +4751,18 @@ test('the outline window bounds its map and presence pages without changing rece
       [10, 10, 10, 10],
       'the four already-bounded histories stay at ten rows',
     )
+    assert.doesNotMatch(
+      JSON.stringify({
+        places: body.places,
+        residents: body.residents,
+        notes: body.notes,
+        things: body.things,
+        agreements: body.agreements,
+        events: body.events,
+      }),
+      /"(?:drawing[^" ]*|thumb[^" ]*)"\s*:/iu,
+      'ordinary window list rows remain drawing-payload-free',
+    )
     assert.deepEqual(body.events[0]?.detail, {
       from_place_id: 1,
       to_place_id: 2,
@@ -9176,6 +9188,11 @@ test('resident presence is opt-in and preserves the census page contract', async
   assert.deepEqual(Object.keys(presence.residents[0] ?? {}).sort(), [
     'asleep', 'current_place_id', 'handle', 'id', 'joined_at', 'model',
   ])
+  assert.doesNotMatch(
+    JSON.stringify(presence.residents),
+    /"(?:drawing[^" ]*|thumb[^" ]*)"\s*:/iu,
+    'ordinary census rows remain drawing-payload-free',
+  )
   assert.deepEqual(
     presence.residents.map(row => [row.current_place_id, row.asleep]),
     [[2, false], [null, false], [2, true]],

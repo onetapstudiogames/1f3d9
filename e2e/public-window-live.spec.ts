@@ -335,7 +335,6 @@ async function expectProofDrawingContract(page: Page): Promise<void> {
     { state: 'refused', presentation: 'refused', label: 'Refused' },
     { state: 'in_progress', presentation: 'in_progress', label: 'In progress' },
     { state: 'complete', presentation: 'blank', label: 'Blank' },
-    { state: 'complete', presentation: 'complete', label: 'Complete' },
   ] as const
   for (const drawingCase of cases) {
     const drawing = proof.locator(
@@ -345,31 +344,31 @@ async function expectProofDrawingContract(page: Page): Promise<void> {
     await expect(drawing).toBeVisible()
     await expect(drawing).toHaveAttribute('aria-label', new RegExp(drawingCase.label, 'u'))
   }
-
-  const own = proof.locator('[data-drawing-source="thing"]').first()
-  const base = proof.locator('[data-drawing-source="kind_base"]').first()
-  const variant = proof.locator('[data-drawing-source="kind_variant"]').first()
-  await expect(own).toHaveAttribute('aria-label', /Own drawing/u)
-  await expect(base).toHaveAttribute('aria-label', /Kind proof-object · revision 3 · base/u)
-  await expect(variant).toHaveAttribute(
-    'aria-label', /Kind proof-object · revision 3 · variant ember glow/u,
-  )
-
-  for (const presentation of ['in_progress', 'complete']) {
-    const canvas = proof.locator(
-      `canvas[data-drawing-presentation-state="${presentation}"]`,
+  const canvas = proof.locator(
+    'canvas[data-drawing-presentation-state="in_progress"]',
+  ).first()
+  await expect(canvas).toBeVisible()
+  expect(await canvas.evaluate(node => {
+    const context = (node as HTMLCanvasElement).getContext('2d')
+    return context ? [...context.getImageData(0, 0, 1, 1).data] : []
+  })).toHaveLength(4)
+  for (const portrait of [
+    { type: 'resident', id: 9201 },
+    { type: 'thing', id: 9401 },
+  ] as const) {
+    const shell = proof.locator(
+      `.entity-portrait[data-portrait-type="${portrait.type}"]` +
+      `[data-portrait-id="${String(portrait.id)}"]`,
     ).first()
-    await expect(canvas).toBeVisible()
-    expect(await canvas.evaluate(node => {
-      const context = (node as HTMLCanvasElement).getContext('2d')
-      return context ? [...context.getImageData(0, 0, 1, 1).data] : []
-    })).toHaveLength(4)
+    await expect(shell).toHaveCount(1)
+    await expect(shell.locator('.entity-portrait-placeholder')).toHaveCount(1)
+    expect(await shell.evaluate(node =>
+      [...node.attributes].some(attribute => attribute.name.startsWith('data-drawing-')),
+    )).toBe(false)
   }
-
   await expect(proof.locator('.drawing-canonical-rows, .drawing-history')).toHaveCount(0)
   await expect(proof).not.toContainText(/Palette indices|Drawing history/u)
 }
-
 function replayPlaceScopeIds(rootId: number) {
   return new Set(replayPlaces.filter(place => {
     if (place.id === rootId) return true
@@ -504,9 +503,11 @@ async function installReplayRoutes(
   let activeDrawingRequests = 0
   let maximumDrawingRequests = 0
   let drawingRequests = 0
+  let thumbnailRequests = 0
   let focusedPlaceRequests = 0
   let focusedPlaceFailuresRemaining = controls.focusedPlaceFailures ?? 0
   const drawingRequestPaths: string[] = []
+  const thumbnailRequestPaths: string[] = []
   let releaseHeldThingPage = () => {}
   const heldThingPage = new Promise<void>(resolve => {
     releaseHeldThingPage = resolve
@@ -1005,9 +1006,25 @@ async function installReplayRoutes(
     })
   }
   await page.route('**/api/drawing/**', async route => {
-    const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(
-      new URL(route.request().url()).pathname,
+    const url = new URL(route.request().url())
+    const thumbnailMatch = /^\/api\/drawing\/(place|resident|thing)\/(\d+)\/thumb\.png$/u.exec(
+      url.pathname,
     )
+    if (thumbnailMatch) {
+      thumbnailRequests += 1
+      thumbnailRequestPaths.push(url.pathname + url.search)
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      })
+      return
+    }
+    const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(url.pathname)
     if (!match) {
       await route.fulfill({ status: 404, json: { error: 'drawing not found' } })
       return
@@ -1056,6 +1073,8 @@ async function installReplayRoutes(
     maximumDrawingRequests: () => maximumDrawingRequests,
     drawingRequests: () => drawingRequests,
     drawingRequestPaths: () => [...drawingRequestPaths],
+    thumbnailRequests: () => thumbnailRequests,
+    thumbnailRequestPaths: () => [...thumbnailRequestPaths],
     focusedPlaceRequests: () => focusedPlaceRequests,
     holdNextEmptyChange: () => {
       heldEmptyChangeGate = new Promise<void>(resolve => {
@@ -2451,6 +2470,81 @@ test('Live bounds concurrent note detail reads during a visible burst', async ({
   await expect.poll(fixture.activeNoteRequests).toBe(0)
   expect(fixture.maximumNoteRequests()).toBeGreaterThan(0)
   expect(fixture.maximumNoteRequests()).toBeLessThanOrEqual(4)
+})
+
+test('Live stage portraits stay unboxed on the ground and when focused', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const portrait = page.locator('.live-walker .live-portrait').first()
+  await portrait.scrollIntoViewIfNeeded()
+  const shell = portrait.locator('.entity-portrait')
+  await expect(shell).toHaveAttribute('data-portrait-state', 'loaded')
+  expect(await portrait.evaluate(button => {
+    const buttonStyle = getComputedStyle(button)
+    const portraitShell = button.querySelector('.entity-portrait')
+    const placeholder = button.querySelector('.entity-portrait-placeholder')
+    const shellStyle = portraitShell ? getComputedStyle(portraitShell) : null
+    const placeholderStyle = placeholder ? getComputedStyle(placeholder) : null
+    return {
+      buttonBackgroundColor: buttonStyle.backgroundColor,
+      buttonBackgroundImage: buttonStyle.backgroundImage,
+      buttonBorderStyle: buttonStyle.borderStyle,
+      buttonBoxShadow: buttonStyle.boxShadow,
+      shellBackgroundColor: shellStyle?.backgroundColor ?? null,
+      shellBackgroundImage: shellStyle?.backgroundImage ?? null,
+      placeholderBackgroundColor: placeholderStyle?.backgroundColor ?? null,
+      placeholderBackgroundImage: placeholderStyle?.backgroundImage ?? null,
+    }
+  })).toEqual({
+    buttonBackgroundColor: 'rgba(0, 0, 0, 0)',
+    buttonBackgroundImage: 'none',
+    buttonBorderStyle: 'none',
+    buttonBoxShadow: 'none',
+    shellBackgroundColor: 'rgba(0, 0, 0, 0)',
+    shellBackgroundImage: 'none',
+    placeholderBackgroundColor: 'rgba(0, 0, 0, 0)',
+    placeholderBackgroundImage: 'none',
+  })
+
+  await portrait.click()
+  await expect(portrait.locator('..')).toHaveAttribute('data-live-focus-resident')
+  expect(await portrait.evaluate(button => {
+    const style = getComputedStyle(button)
+    return {
+      boxShadow: style.boxShadow,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+    }
+  })).toEqual({
+    boxShadow: 'none',
+    outlineStyle: 'solid',
+    outlineWidth: '4px',
+  })
+})
+
+test('Live opens a 40-resident fixture with 3 full drawing reads and 10 thumbnails', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    crowdPlaceId: 2,
+    residentCrowdSize: 40,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const roster = page.locator('#live-roster .resident-row')
+  await expect(roster).toHaveCount(41)
+  await roster.nth(11).scrollIntoViewIfNeeded()
+  await expect.poll(fixture.thumbnailRequests).toBe(8)
+  for (let step = 0; step < 100 && fixture.thumbnailRequests() < 10; step += 1) {
+    await page.evaluate(() => window.scrollBy(0, 8))
+    await page.waitForTimeout(16)
+  }
+  await expect.poll(fixture.thumbnailRequests).toBe(10)
+  await expect.poll(fixture.activeDrawingRequests).toBe(0)
+
+  expect(fixture.drawingRequests()).toBe(3)
+  expect(fixture.thumbnailRequests()).toBe(10)
 })
 
 test('Live renders nearby detail and reachable distant markers without drawing the whole world', async ({ page }) => {

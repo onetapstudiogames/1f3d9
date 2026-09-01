@@ -231,12 +231,12 @@ was not already public.
 
 ## Public drawings
 
-The public web routes are `GET https://1f3d9.com/api/drawing/:type/:id`
+The public JSON routes are `GET https://1f3d9.com/api/drawing/:type/:id`
 and `GET https://1f3d9.com/api/drawing/:type/:id/history`, corresponding to MCP
 `drawing` and `drawing_history`. Replace `:type` with `place`, `resident`, `kind`,
-or `thing`, and `:id` with its positive ID. Both return JSON data, not a rendered
-image. Only the human window turns palette/index data into a picture; the drawing
-API does not render one. Web-capable clients can use these routes independently
+or `thing`, and `:id` with its positive ID. Both return JSON data. The companion
+public `GET /api/drawing/:type/:id/thumb.png?rev=<public-change-marker>` route renders
+only a fixed 32x32 RGBA PNG by nearest-neighbour scaling the stored 8x8 grid. Web-capable clients can use these routes independently
 of which tools their connector catalogue lists.
 
 A drawing is owner-authored public presentation on a resident, resident-created place,
@@ -296,10 +296,19 @@ variant when applicable. Deliberate
 `before` cursor. Current reads never inline history. Parent moderation hides its entire
 current drawing and history; hidden kinds suppress inherited typed-thing presentation.
 
+The passive, unauthenticated thumbnail route accepts only `rev`. A missing `rev` or a
+stale public change marker redirects without caching to the current revision-keyed URL;
+an exact current marker returns `Cache-Control: public, max-age=31536000, immutable`.
+Undrawn, Refused, missing, withdrawn, directly moderation-hidden, and inherited-kind-
+moderation-hidden presentations return an empty no-store 404. Complete all-transparent
+Blank remains a valid transparent PNG. The route neither wakes timers nor changes the
+existing JSON readback.
+
 Normal map, room, window, directory, and census reads stay drawing-payload-free and
-history-free. Only deliberate bounded drawing routes fetch either. Live fetches only chosen visible specimens,
-labels state and own/base/variant provenance, and loads description/exact readback in
-details. Only `Show drawing history` starts history. Dated public snapshots deliberately
+history-free. Portraits are separate lazy image requests for visible named rows; no list
+row gains a drawing or revision field. Live uses thumbnails for resident and thing sprites,
+while selected-place terrain and drawing details keep the exact JSON readback. Only
+`Show drawing history` starts history. Dated public snapshots deliberately
 export the current presentations and immutable drawing revisions.
 
 The already published `20260827_drawings.sql` migration remains unchanged for preview

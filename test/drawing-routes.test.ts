@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono, type Context } from 'hono'
 import { DRAWING_BODY_MAX_BYTES, type Drawing } from '../src/drawing.ts'
+import { renderDrawingThumbnailPng } from '../src/drawing-thumbnail.ts'
 import {
   mountDrawingRoutes,
   type DrawingRouteDatabase,
@@ -52,6 +53,7 @@ function harness(
   historyRows: readonly Record<string, unknown>[] = [],
 ) {
   const calls: Call[] = []
+  let authenticationCalls = 0
   const database: DrawingRouteDatabase = {
     query: async (text, params) => {
       calls.push(Object.freeze({ text, params: Object.freeze([...params]) }))
@@ -65,9 +67,12 @@ function harness(
   const app = new Hono()
   mountDrawingRoutes(app, {
     database,
-    authenticate: async (_context: Context) => authenticated,
+    authenticate: async (_context: Context) => {
+      authenticationCalls += 1
+      return authenticated
+    },
   })
-  return { app, calls }
+  return { app, calls, authenticationCalls: () => authenticationCalls }
 }
 
 test('public drawing reads are one deliberate fetched-not-pushed record surface', async () => {
@@ -183,6 +188,129 @@ test('current presentation distinguishes Undrawn and Refused without inventing p
     description: 'I choose to remain words today.', drawing: null, rows: null,
     source: 'resident',
   })
+})
+
+test('public thumbnails resolve to revision-keyed deterministic 32x32 PNGs without authentication', async () => {
+  const { app, calls, authenticationCalls } = harness([{
+    checkpoint: '18',
+    id: 7,
+    drawing,
+    drawing_state: 'in_progress',
+    drawing_description: 'My lantern, not finished.',
+    source: 'resident',
+    kind_id: null,
+    revision: null,
+    variant_name: null,
+  }])
+
+  const resolving = await app.request('/api/drawing/resident/7/thumb.png')
+  assert.equal(resolving.status, 307)
+  assert.equal(resolving.headers.get('location'), '/api/drawing/resident/7/thumb.png?rev=18')
+  assert.equal(resolving.headers.get('cache-control'), 'no-store')
+
+  const response = await app.request('/api/drawing/resident/7/thumb.png?rev=18')
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(response.headers.get('content-type'), 'image/png')
+  assert.equal(response.headers.get('cache-control'), 'public, max-age=31536000, immutable')
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
+  assert.deepEqual(
+    new Uint8Array(await response.arrayBuffer()),
+    renderDrawingThumbnailPng(drawing),
+  )
+  assert.equal(authenticationCalls(), 0)
+  assert.equal(calls.length, 2)
+  assert.ok(calls.every(call => /drawing:resident-thumbnail/iu.test(call.text)))
+  assert.ok(calls.every(call => !/timer|wake|update|insert|delete/iu.test(call.text)))
+})
+
+test('thumbnail revision mismatches redirect without caching current pixels under an old key', async () => {
+  const { app } = harness([{
+    checkpoint: '18',
+    id: 2,
+    drawing,
+    drawing_state: 'complete',
+    drawing_description: 'Sunlit flagstones.',
+    source: 'place',
+    kind_id: null,
+    revision: null,
+    variant_name: null,
+  }])
+  const response = await app.request('/api/drawing/place/2/thumb.png?rev=17')
+  assert.equal(response.status, 307)
+  assert.equal(response.headers.get('location'), '/api/drawing/place/2/thumb.png?rev=18')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(await response.text(), '')
+})
+
+test('thumbnail 404 states are empty, neutral-cache-safe, and include inherited moderation', async () => {
+  const fixtures = [
+    [],
+    [{
+      checkpoint: '18', id: 2, drawing: null, drawing_state: 'undrawn',
+      drawing_description: null, source: 'none', kind_id: null, revision: null,
+      variant_name: null,
+    }],
+    [{
+      checkpoint: '18', id: 7, drawing: null, drawing_state: 'refused',
+      drawing_description: 'I choose words.', source: 'resident', kind_id: null,
+      revision: null, variant_name: null,
+    }],
+    [{
+      checkpoint: '18', id: 41, drawing: null, drawing_state: 'undrawn',
+      drawing_description: null, source: 'none', kind_id: null, revision: null,
+      variant_name: null,
+    }],
+  ] as const
+
+  for (const rows of fixtures) {
+    const { app, authenticationCalls } = harness(rows)
+    const response = await app.request('/api/drawing/thing/41/thumb.png?rev=18', {
+      headers: { authorization: 'Bearer incidental-public-read' },
+    })
+    assert.equal(response.status, 404)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.equal(response.headers.get('content-type'), null)
+    assert.equal(await response.text(), '')
+    assert.equal(authenticationCalls(), 0)
+  }
+})
+
+test('thumbnail renders a Complete Blank as a transparent PNG', async () => {
+  const { app } = harness([{
+    checkpoint: '18',
+    id: 41,
+    drawing: blankDrawing,
+    drawing_state: 'complete',
+    drawing_description: 'An intentionally empty glass pane.',
+    source: 'thing',
+    kind_id: null,
+    revision: null,
+    variant_name: null,
+  }])
+  const response = await app.request('/api/drawing/thing/41/thumb.png?rev=18')
+  assert.equal(response.status, 200)
+  assert.equal(
+    Buffer.from(await response.arrayBuffer()).toString('base64'),
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+  )
+})
+
+test('thumbnail validates its bounded public path and sole rev query before SQL', async () => {
+  const { app, calls } = harness([])
+  for (const path of [
+    '/api/drawing/world/1/thumb.png',
+    '/api/drawing/place/0/thumb.png',
+    '/api/drawing/place/01/thumb.png',
+    '/api/drawing/place/2147483648/thumb.png',
+    '/api/drawing/place/2/thumb.png?include=room',
+    '/api/drawing/place/2/thumb.png?rev=01',
+    '/api/drawing/place/2/thumb.png?rev=1&rev=2',
+    '/api/drawing/place/2/thumb.png?rev=9223372036854775808',
+  ]) {
+    const response = await app.request(path)
+    assert.equal(response.status, 400, path)
+  }
+  assert.equal(calls.length, 0)
 })
 
 test('drawing reads reject unsupported types, malformed ids, and query inventions before SQL', async () => {
