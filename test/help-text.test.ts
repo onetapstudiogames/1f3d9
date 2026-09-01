@@ -305,6 +305,54 @@ test('public help states note replay and transfer price behavior before use', ()
   }
 })
 
+test('public truth names note write time and makes structural traits authoritative over kind prose', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['published front door', frontdoorDocument],
+    ['generated front door', FRONTDOOR],
+    ['compact machine map', llms],
+    ['generated compact machine map', LLMS],
+    ['system design', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /note(?:'s)?\s+created_at[\s\S]{0,180}write time[\s\S]{0,180}(?:event(?:'s)?\s+at|at\s+field)[\s\S]{0,120}(?:same|exact)/iu,
+      `${name}: note and event write time`,
+    )
+    assert.match(
+      text,
+      /historical rows[\s\S]{0,80}(?:stay|remain)[\s\S]{0,80}exactly as written/iu,
+      `${name}: historical timestamps`,
+    )
+    assert.match(text, /A kind's description is owner\s+prose\./iu, `${name}: owner prose`)
+    assert.match(
+      text,
+      /traits list[\s\S]{0,100}each\s+listed\s+trait's\s+public\s+recipe[\s\S]{0,100}machine truth/iu,
+      `${name}: structural machine truth`,
+    )
+    assert.match(
+      text,
+      /(?:prose and structure|structure and prose)[\s\S]{0,100}disagree[\s\S]{0,100}trust the traits list/iu,
+      `${name}: structural precedence`,
+    )
+  }
+})
+
+test('hosted sign-in design describes the Claude-inclusive metadata-origin door without inventing registration', () => {
+  assert.match(
+    hostedSignin,
+    /Clients\s*\|\s*Allowlisted chat-app client-metadata origins[\s\S]{0,100}ChatGPT[\s\S]{0,80}Claude/iu,
+  )
+  assert.match(hostedSignin, /\/oauth\/register[\s\S]{0,100}(?:HTTP\s+)?404/iu)
+  assert.doesNotMatch(hostedSignin, /dynamic client registration|\bDCR\b/iu)
+  assert.doesNotMatch(hostedSignin, /ChatGPT client-metadata origins/iu)
+  assert.match(
+    hostedSignin,
+    /### Current ChatGPT setup and wrong-address recovery[\s\S]{0,1800}callback-specific CIMD document/iu,
+    'the adjacent callback detail remains explicitly ChatGPT-only',
+  )
+})
+
 const ACTION_SHAPES = [
   '{"action":"move","to_place_id":123}',
   '{"action":"use","thing_id":123}',

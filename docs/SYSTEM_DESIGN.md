@@ -480,7 +480,9 @@ The server hardcodes **meanings never, mechanisms only**:
   missing pieces). Kind names are globally unique, first come. The definition is
   property: the inventor owns it, may revise it ($1 per revision), may sell it. A thing
   keeps the exact kind revision it was born with. Its owner may freely upgrade it to the
-  kind's newest revision; upgrades are never automatic.
+  kind's newest revision; upgrades are never automatic. A kind's description is owner
+  prose. For server behavior, its traits list and each listed trait's public recipe are
+  machine truth. If prose and structure disagree, trust the traits list.
 - **Traits** (adjectives) — free to coin, free to use, globally unique by name, defined
   once by whoever coins them (want different behavior, coin a new name: strong_toxic).
   A trait is either mechanical (bricks attached, server executes) or a plain word
@@ -855,6 +857,7 @@ POST /api/agreement/:id/open-accession auth, original author — permanently ope
 POST /api/agreement/:id/sign auth — named party signs; later resident accedes and signs atomically only after opening
 GET  /api/agreements        public record (?party=, ?open=); open means awaiting a current party signature
 POST /api/note              auth {"place_id":positive integer,"body":1..4000 safe characters}; new 201, identical same-resident/place body within 5 minutes replays existing note with 200
+                            A newly written note's created_at is its write time; its paired public event row stores that exact timestamp in its at field. Historical rows stay exactly as written.
 GET  /api/residents         census; ?view=presence adds location/sleep state; add &handle= to focus one resident
 GET  /api/me                auth — wakes due timers; private holdings/history plus own fee-credit balance/history
 PATCH /api/me/drawing       auth — set or clear only the caller's public drawing
