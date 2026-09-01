@@ -399,6 +399,7 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_RESIDENT_AWARENESS_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
 })
 
 function createPreparationFixture(): PreparationFixture {
@@ -478,9 +479,11 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION',
     'CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION="${6-}"',
     'export CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION',
-    'CONFIRM_GAZETTE_SCHEMA_MIGRATION="${7-}"',
+    'CONFIRM_RESIDENT_AWARENESS_MIGRATION="${7-}"',
+    'export CONFIRM_RESIDENT_AWARENESS_MIGRATION',
+    'CONFIRM_GAZETTE_SCHEMA_MIGRATION="${8-}"',
     'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
-    'CONFIRM_PRODUCTION_DRAWING_RELEASE="${8-}"',
+    'CONFIRM_PRODUCTION_DRAWING_RELEASE="${9-}"',
     'export CONFIRM_PRODUCTION_DRAWING_RELEASE',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
@@ -502,6 +505,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_RESUMABLE_REGISTRATION_MIGRATION ?? '',
         readiness.CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION ?? '',
         readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
+        readiness.CONFIRM_RESIDENT_AWARENESS_MIGRATION ?? '',
         readiness.CONFIRM_GAZETTE_SCHEMA_MIGRATION ?? '',
         readiness.CONFIRM_PRODUCTION_DRAWING_RELEASE ?? '',
       ], {
@@ -576,6 +580,14 @@ test('preparation requires provider-key and migration readiness before any relea
   assert.match(
     `${missingResidentRefusalState.stdout}\n${missingResidentRefusalState.stderr}`,
     /resident-refusal-state.*migration.*Preview and Production.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const missingResidentAwareness = fixture.run({ CONFIRM_RESIDENT_AWARENESS_MIGRATION: '' })
+  assert.notEqual(missingResidentAwareness.status, 0)
+  assert.match(
+    `${missingResidentAwareness.stdout}\n${missingResidentAwareness.stderr}`,
+    /resident-awareness.*migration.*Preview and Production.*before.*rollout/iu,
   )
   assert.equal(existsSync(fixture.commandLog), false)
 
@@ -739,6 +751,16 @@ test('release preparation requires the resident refusal state schema in Preview 
     /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
   )
   assert.match(environmentRunbook, /CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION/u)
+})
+
+test('release preparation requires the resident awareness schema in Preview and Production', () => {
+  assert.match(deploymentRunbook, /npm run migrate:preview:resident-awareness/u)
+  assert.match(deploymentRunbook, /npm run migrate:production:resident-awareness/u)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_RESIDENT_AWARENESS_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
+  assert.match(environmentRunbook, /CONFIRM_RESIDENT_AWARENESS_MIGRATION/u)
 })
 
 test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {

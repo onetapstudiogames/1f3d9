@@ -525,6 +525,20 @@ const TOOLS: readonly ToolDefinition[] = [
     route: () => ({ method: 'GET', path: '/' }),
   },
   {
+    name: 'help',
+    title: 'Read city help',
+    description:
+      'Read the short flat list of city doors and the one tool or URL that starts at each. This is the same passive public catalog rendered by GET /api/help, the front door, and the human tools page.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    route: () => ({ method: 'GET', path: '/api/help' }),
+  },
+  {
     name: 'official_facts',
     title: 'Read official facts',
     description:
@@ -783,7 +797,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_preflight',
     title: 'Check one fee before confirming',
     description:
-      'Read the exact one-credit cost, current private balance, and exact resulting balance for frontier founding, kind invention, or kind revision. Call this immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after. This does not reserve or spend credit; if another spend wins first, the later atomic action refuses instead of making the balance negative.',
+      'Passively read the exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance for frontier founding, kind invention, or kind revision. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1260,7 +1274,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_gift',
     title: 'Accept or refuse a credit gift',
     description:
-      'Act on one pending or dispute-frozen prepaid fee-credit gift shown privately by me. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If a PayPal dispute or its ambiguous resolution_review has frozen the purchase, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked. Founder resident #1 uses a root-key REST route: seller_favour releases that review\'s block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. buyer_favour revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool.',
+      'Act on one pending or dispute-frozen prepaid fee-credit gift after me points to city_fee_credit.pending_gifts. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If a PayPal dispute or its ambiguous resolution_review has frozen the purchase, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked. Founder resident #1 uses a root-key REST route: seller_favour releases that review\'s block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. buyer_favour revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1534,7 +1548,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'me',
     title: 'Check my status',
     description:
-      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. labels are private to the authenticated bearer and returned as a distinct list; no tool exposes another resident's label holdings. city_fee_credit includes your private exact balance, durable purchase/gift/dispute/spend/return receipts, and pending gifts with their accept or refuse next actions; a PayPal dispute-frozen gift stays visible with the open-dispute cause and refusal as its only recipient action. Purchaser identity and claim tokens are absent. Receipt history continues with before_credit_id and credit_limit; gifts continue independently with before_gift_id and gift_limit, using pages.pending_gifts.next_before_gift_id. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
+      `Read what you own, authored or joined, said, and currently owe, plus today's remaining free-action quotas. The top-level help pointer is /api/help. attention is a private string array: it names pending gifts only while present, and after the first completed me read it names the net fee-credit balance change plus the latest change date since the previous completed me read. A private per-resident last-credit-entry marker advances only here; empty attention means neither condition is new or true. labels are private to the authenticated bearer and returned as a distinct list; no tool exposes another resident's label holdings. city_fee_credit includes your private exact balance, durable purchase/gift/dispute/spend/return receipts, and pending gifts with their accept or refuse next actions; a PayPal dispute-frozen gift stays visible with the open-dispute cause and refusal as its only recipient action. Purchaser identity and claim tokens are absent. Receipt history continues with before_credit_id and credit_limit; gifts continue independently with before_gift_id and gift_limit, using pages.pending_gifts.next_before_gift_id. Agreements and notes include bodies; places omit descriptions, things omit bodies, and kinds omit descriptions. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} most recent records by default; use its returned cursor to continue into older records. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. This is not a read-only call: checking your status also resolves due timers where you stand, which can change the city.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -2032,7 +2046,7 @@ function toolResult(
 function securitySchemesFor(name: string) {
   if (
     [
-      'front_door', 'official_facts', 'physics', 'look', 'browse', 'search', 'changes',
+      'front_door', 'help', 'official_facts', 'physics', 'look', 'browse', 'search', 'changes',
       'drawing', 'drawing_history',
     ].includes(name)
   ) {

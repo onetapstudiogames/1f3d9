@@ -80,6 +80,15 @@ export interface CityCreditAccount {
   }
 }
 
+export type CityCreditAttentionState = Readonly<{
+  pending_gifts_count: number
+  credit_change: Readonly<{
+    amount: string
+    amount_units: string
+    changed_at: string
+  }> | null
+}>
+
 function runQuery(
   database: CityCreditDatabase,
   text: string,
@@ -747,6 +756,111 @@ export async function readCityCreditAccount(
   }
 }
 
+export async function readCityCreditAttention(
+  database: CityCreditDatabase,
+  residentIdInput: number,
+): Promise<CityCreditAttentionState> {
+  const residentId = positiveResidentId(residentIdInput)
+  const rows = await runQuery(database, `
+    /* city-credit:read-attention */
+    WITH cutoff AS MATERIALIZED (
+      SELECT coalesce(max(entry.id), 0)::bigint AS entry_id
+      FROM city_credit_entries entry
+      WHERE entry.resident_id = $1::integer
+    ), advanced AS MATERIALIZED (
+      INSERT INTO city_credit_last_me_reads (
+        resident_id, previous_credit_entry_id, last_credit_entry_id, read_at
+      )
+      SELECT $1::integer, NULL, cutoff.entry_id, clock_timestamp()
+      FROM cutoff
+      ON CONFLICT (resident_id) DO UPDATE
+      SET previous_credit_entry_id = city_credit_last_me_reads.last_credit_entry_id,
+        last_credit_entry_id = greatest(
+          city_credit_last_me_reads.last_credit_entry_id,
+          excluded.last_credit_entry_id
+        ),
+        read_at = excluded.read_at
+      RETURNING previous_credit_entry_id, last_credit_entry_id
+    ), balance_changes AS MATERIALIZED (
+      SELECT count(*)::integer AS change_count,
+        coalesce(sum(CASE
+          WHEN entry.entry_kind IN ('founder_issue', 'return', 'admin_credit', 'gift_accept')
+            THEN entry.amount_units
+          WHEN entry.entry_kind = 'purchase' AND entry.gift_id IS NULL
+            THEN entry.amount_units
+          WHEN entry.entry_kind IN ('spend', 'admin_debit')
+            THEN -entry.amount_units
+          ELSE 0
+        END), 0)::text AS change_units,
+        max(entry.created_at) AS changed_at
+      FROM city_credit_entries entry
+      CROSS JOIN advanced
+      WHERE advanced.previous_credit_entry_id IS NOT NULL
+        AND entry.resident_id = $1::integer
+        AND entry.id > advanced.previous_credit_entry_id
+        AND entry.id <= advanced.last_credit_entry_id
+        AND (
+          entry.entry_kind IN (
+            'founder_issue', 'return', 'admin_credit', 'gift_accept',
+            'spend', 'admin_debit'
+          )
+          OR (entry.entry_kind = 'purchase' AND entry.gift_id IS NULL)
+        )
+    ), gift_counts AS MATERIALIZED (
+      SELECT count(*) FILTER (WHERE gift.status = 'pending')::integer AS pending_count
+      FROM city_credit_gifts gift
+      WHERE gift.recipient_id = $1::integer AND gift.status = 'pending'
+    )
+    SELECT advanced.previous_credit_entry_id IS NOT NULL AS had_previous_read,
+      CASE WHEN balance_changes.change_count > 0 THEN balance_changes.change_units END AS change_units,
+      CASE WHEN balance_changes.change_count > 0 THEN balance_changes.changed_at END AS changed_at,
+      gift_counts.pending_count
+    FROM advanced
+    CROSS JOIN balance_changes
+    CROSS JOIN gift_counts
+  `, [residentId])
+  const row = rows[0]
+  if (!row) throw new TypeError('city credit attention is unavailable')
+  const pendingCount = integerValue(row.pending_count, 'pending city credit gift count')
+  if (pendingCount < 0) throw new TypeError('city credit gift count is invalid')
+  const hadPreviousRead = booleanValue(row.had_previous_read)
+  if (!hadPreviousRead || row.change_units == null) {
+    return Object.freeze({
+      pending_gifts_count: pendingCount,
+      credit_change: null,
+    })
+  }
+  const changeUnits = bigintString(row.change_units, 'city credit attention change')
+  const changed = row.changed_at instanceof Date
+    ? row.changed_at
+    : new Date(String(row.changed_at ?? ''))
+  if (Number.isNaN(changed.getTime())) throw new TypeError('city credit attention time is invalid')
+  return Object.freeze({
+    pending_gifts_count: pendingCount,
+    credit_change: Object.freeze({
+      amount: formatUsdcUnits(BigInt(changeUnits)),
+      amount_units: changeUnits,
+      changed_at: changed.toISOString(),
+    }),
+  })
+}
+
+export function cityCreditAttentionLines(state: CityCreditAttentionState): string[] {
+  const lines: string[] = []
+  if (state.pending_gifts_count > 0) {
+    const gifts = state.pending_gifts_count === 1 ? 'gift' : 'gifts'
+    lines.push(
+      `You have ${state.pending_gifts_count} pending 1F3D9 fee-credit ${gifts} awaiting accept or refuse; see city_fee_credit.pending_gifts.`,
+    )
+  }
+  if (state.credit_change) {
+    lines.push(
+      `Your 1F3D9 fee-credit balance changed by ${state.credit_change.amount} since your previous me read; the latest change was on ${state.credit_change.changed_at}.`,
+    )
+  }
+  return lines
+}
+
 export async function readCityCreditPreflight(
   database: CityCreditDatabase,
   residentIdInput: number,
@@ -755,6 +869,9 @@ export async function readCityCreditPreflight(
   const rows = await runQuery(database, `
     /* city-credit:preflight */
     SELECT coalesce(account.balance_units, 0)::text AS balance_units,
+      (SELECT count(*)::text FROM city_credit_gifts gift
+        WHERE gift.recipient_id = resident.id
+          AND gift.status IN ('pending', 'frozen')) AS pending_gifts_count,
       statement_timestamp() AS observed_at
     FROM residents resident
     LEFT JOIN city_credit_accounts account ON account.resident_id = resident.id
@@ -765,6 +882,8 @@ export async function readCityCreditPreflight(
   const balanceBefore = BigInt(bigintString(row.balance_units, 'city credit preflight balance'))
   if (balanceBefore < 0n) throw new TypeError('city credit preflight balance is invalid')
   const canConfirm = balanceBefore >= CITY_FEE_CREDIT_UNITS
+  const pendingGiftsCount = integerValue(row.pending_gifts_count, 'pending city credit gift count')
+  if (pendingGiftsCount < 0) throw new TypeError('pending city credit gift count is invalid')
   const balanceAfter = canConfirm ? balanceBefore - CITY_FEE_CREDIT_UNITS : null
   const observed = row.observed_at instanceof Date
     ? row.observed_at
@@ -778,6 +897,7 @@ export async function readCityCreditPreflight(
     balance_before_units: balanceBefore.toString(),
     balance_after: balanceAfter === null ? null : formatUsdcUnits(balanceAfter),
     balance_after_units: balanceAfter === null ? null : balanceAfter.toString(),
+    pending_gifts_count: pendingGiftsCount,
     can_confirm: canConfirm,
     observed_at: observed.toISOString(),
     applies_to: Object.freeze(['frontier', 'kind_invention', 'kind_revision'] as const),

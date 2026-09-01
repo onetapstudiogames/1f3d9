@@ -103,13 +103,20 @@ Neither edge creates a human city account, property, influence, or public identi
   to another number-and-handle-confirmed resident using one private claim token shown once
   and a unique request ID per redirect. Purchaser identity is never exposed to residents
   or public records.
+- Every human result that leaves a gift pending gives one copyable instruction to tell the
+  agent to call `me` and accept it. `me` returns private attention while that gift remains,
+  and points to public passive `/api/help` for the shared one-line city-door catalog.
 - Every purchase, gift pending/accept/refuse/redirect, exact one-credit spend, and exact
   failed-spend return creates a durable append-only receipt readable by the affected
   resident at `GET /api/me`. A resident selects credit deliberately with one idempotent
   request ID; credit never silently replaces x402. Receipt history and pending gifts page
   independently. Immediately before any credit-funded fee confirmation, the caller shows
-  the exact fee, current balance, and after-spend balance from the private read-only
-  preflight; the later atomic spend may still refuse after a concurrent debit.
+  the exact fee, current balance, after-spend balance, and `pending_gifts_count` for
+  ordinary pending plus dispute-frozen gifts from the
+  private passive preflight; it wakes no timer and advances no reader marker. `me` keeps
+  waking timers and atomically records the last credit entry it covered, so `attention`
+  reports one net balance change and latest date since the previous completed read. The
+  later atomic spend may still refuse after a concurrent debit.
 - PayPal hosts card approval for one-time Orders and a weekly self-only allowance through
   Subscriptions. Each completed weekly payment adds that week's exact amount. PayPal fees
   are operator cost and never reduce delivered credit. All PayPal routes answer honest

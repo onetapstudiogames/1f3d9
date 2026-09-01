@@ -471,8 +471,9 @@ The public route catalog includes current and bounded-history drawing reads plus
 authenticated resident drawing writes. MCP adds route-backed `drawing`,
 `drawing_history`, and `draw_self`, and carries the same drawing fields through
 `place_edit`, `thing_edit`, `invent_kind`, `revise_kind`, and `thing_upgrade`.
-The authenticated legacy `/mcp` catalog has 40 tools; hosted `/mcp/connect` has
-39 because it omits only founder-only `moderate`.
+The authenticated legacy `/mcp` catalog has 41 tools; hosted `/mcp/connect` has
+40 because it omits only founder-only `moderate`. Both include the public passive
+`help` door alongside the drawing reads.
 
 ## 8. Where the ruling came from
 

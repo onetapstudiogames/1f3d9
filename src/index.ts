@@ -70,6 +70,7 @@ import {
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
+import { mountCityHelpRoute } from './city-help.ts'
 import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
@@ -133,7 +134,9 @@ import {
   parseCityCreditHistoryCursor,
   parseCityCreditHistoryLimit,
   readCityCreditAccount,
+  readCityCreditAttention,
   readCityCreditPreflight,
+  cityCreditAttentionLines,
 } from './city-credit.ts'
 import {
   parsePendingGiftCursor,
@@ -467,6 +470,7 @@ app.get('/llms.txt', c => c.text(hostedChatDiscovery(
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
 mountHumanPages(app, { hostedChatSigninReady: () => hostedChatSignin.ready })
+mountCityHelpRoute(app)
 mountLegalRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
@@ -953,7 +957,11 @@ app.get('/api/me', async c => {
       AND (expires_at IS NULL OR expires_at > now())
     ORDER BY label
   ` as Array<{ label: string }>
+  const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
+  const attention = cityCreditAttentionLines(creditAttention)
   return c.json({
+    help: '/api/help',
+    attention,
     front_door_tool: 'front_door',
     front_door: `${configuredPublicDomain().domain}/`,
     handle: resident.handle,

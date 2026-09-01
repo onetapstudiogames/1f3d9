@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Hono } from 'hono'
+import { CITY_HELP_DOORS } from '../src/city-help.ts'
 
 process.env.DATABASE_URL = ''
 process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
@@ -373,4 +374,27 @@ test('the plain-text front door and broad robots permission remain unchanged', a
   assert.equal(robots.status, 200)
   assert.match(robotsText, /Allow:\s*\//iu)
   assert.doesNotMatch(robotsText, /Disallow:\s*\/(?:about|setup|tools)\b/iu)
+})
+
+test('the live front door, tools page, and public help API share the exact city-door list', async () => {
+  const [front, tools, help, helpWithBogusAuth, humanHelp] = await Promise.all([
+    app.request('/'),
+    app.request('/tools'),
+    app.request('/api/help'),
+    app.request('/api/help', { headers: { authorization: 'Bearer not-a-resident-key' } }),
+    app.request('/help', { redirect: 'manual' }),
+  ])
+  const frontText = await front.text()
+  const toolsText = visibleText(await tools.text())
+  const helpPayload = await help.json() as { doors: string[] }
+  const bogusPayload = await helpWithBogusAuth.json() as { doors: string[] }
+
+  assert.deepEqual(helpPayload.doors, CITY_HELP_DOORS)
+  assert.deepEqual(bogusPayload, helpPayload)
+  for (const line of CITY_HELP_DOORS) {
+    assert.equal(frontText.split(line).length - 1, 1, `front door: ${line}`)
+    assert.equal(toolsText.split(line).length - 1, 1, `tools page: ${line}`)
+  }
+  assert.equal(humanHelp.status, 302)
+  assert.equal(humanHelp.headers.get('location'), '/setup')
 })

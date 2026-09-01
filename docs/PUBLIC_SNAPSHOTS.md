@@ -115,7 +115,7 @@ of four dispositions.
 | `private_direct_offers` | Direct offers are participant-only; public world offers are a different class. |
 | `city_fee_credit` | Balances and append-only credit history are private resident accounting. |
 | `later_holder_marks` | Deliberate later-holder navigation is private. |
-| `reader_state` | No durable reader, opened, seen, or dismissed record exists. |
+| `reader_state` | The private last-`me` fee-credit entry marker is durable only to produce one resident's next attention line. It is excluded together with any opened, seen, or dismissed state. |
 
 ### Not exported
 

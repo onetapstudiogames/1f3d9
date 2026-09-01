@@ -5,6 +5,7 @@ import {
   CREDIT_BUY_JS,
   renderCreditBuyPage,
 } from '../src/credit-buy-page.ts'
+import { PENDING_GIFT_RELAY_LINE } from '../src/credit-awareness.ts'
 import {
   CREDIT_GIFT_REDIRECT_PAGE_JS,
   renderCreditGiftRedirectPage,
@@ -177,6 +178,15 @@ test('captured gift copy follows pending, refused, frozen, accepted, and revoked
   assert.doesNotMatch(html, /no payment dispute is open or ambiguous terminal result/iu)
   assert.match(html, /id="result-gift-redirect-help"/u)
   assert.match(html, /id="result-gift-redirect-link"/u)
+})
+
+test('every human path that leaves a gift pending shows one identical relay line', () => {
+  const html = renderCreditBuyPage()
+  assert.equal(html.split(PENDING_GIFT_RELAY_LINE).length - 1, 1)
+  assert.match(CREDIT_BUY_JS, /pendingGiftRelayLine/u)
+  assert.match(CREDIT_BUY_JS, /giftStatus === 'pending'[\s\S]*pendingGiftRelayLine/u)
+  assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /pendingGiftRelayLine/u)
+  assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /payload\.status !== 'pending'[\s\S]*pendingGiftRelayLine/u)
 })
 
 test('gift redirect remains a standalone non-PayPal recovery door', () => {

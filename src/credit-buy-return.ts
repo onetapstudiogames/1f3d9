@@ -1,6 +1,9 @@
+import { PENDING_GIFT_RELAY_LINE } from './credit-awareness.ts'
+
 // Interpolated inside CREDIT_BUY_JS's private IIFE. It uses the validated
 // same-origin request helpers and the standalone gift-redirect form binding.
 export const CREDIT_BUY_RETURN_CLIENT = `
+  const pendingGiftRelayLine = ${JSON.stringify(PENDING_GIFT_RELAY_LINE)}
   const completeReturn = async (purchaseId, paypalOrderId) => {
     showOnly(resultStep, resultHeading, 'paypal')
     resultNewPurchase.hidden = true
@@ -52,8 +55,8 @@ export const CREDIT_BUY_RETURN_CLIENT = `
             ? 'Save this gift ID and private key. Redirect is blocked while the funding payment dispute is open.'
             : 'Save this gift ID with the private redirect key. Both are needed to redirect this refused gift.'
           resultGiftRedirectLink.hidden = Boolean(blockedReason)
-        } else {
-          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is pending. It adds nothing until that resident accepts it in /api/me.'
+        } else if (giftStatus === 'pending') {
+          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is pending. It adds nothing until that resident accepts it in /api/me. ' + pendingGiftRelayLine
           resultGiftRedirectHelp.textContent = 'Save this gift ID with the private redirect key. Both are needed to redirect this pending gift.'
         }
       } else {
