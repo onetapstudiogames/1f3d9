@@ -1607,7 +1607,9 @@ export const WINDOW_JS = `(() => {
   }
 
   let portraitObserver = null
-  const observedPortraitImages = new Set()
+  const observedPortraitShells = new Set()
+  const pendingPortraitShells = new Set()
+  let portraitObservationScheduled = false
 
   function portraitUrl(type, id) {
     const path = '/api/drawing/' + encodeURIComponent(type) + '/' + String(id) + '/thumb.png'
@@ -1615,16 +1617,30 @@ export const WINDOW_JS = `(() => {
     return revision ? path + '?rev=' + encodeURIComponent(revision) : path
   }
 
-  function loadPortraitImage(image) {
-    if (!image.isConnected || image.dataset.loaded === 'true') return
-    image.dataset.loaded = 'true'
-    image.src = portraitUrl(image.dataset.portraitType, image.dataset.portraitId)
+  function loadPortraitImage(shell) {
+    if (!shell.isConnected || shell.dataset.loaded === 'true') return
+    shell.dataset.loaded = 'true'
+    const image = element('img', 'entity-portrait-image')
+    image.alt = ''
+    image.width = 32
+    image.height = 32
+    image.loading = 'lazy'
+    image.decoding = 'async'
+    image.dataset.portraitType = shell.dataset.portraitType
+    image.dataset.portraitId = shell.dataset.portraitId
+    image.addEventListener('load', () => { shell.dataset.portraitState = 'loaded' })
+    image.addEventListener('error', () => {
+      shell.dataset.portraitState = 'placeholder'
+      image.remove()
+    })
+    shell.append(image)
+    image.src = portraitUrl(shell.dataset.portraitType, shell.dataset.portraitId)
   }
 
-  function observePortraitImage(image) {
-    if (!image.isConnected) return
+  function observePortraitShell(shell) {
+    if (!shell.isConnected) return
     if (!('IntersectionObserver' in window)) {
-      loadPortraitImage(image)
+      loadPortraitImage(shell)
       return
     }
     if (!portraitObserver) {
@@ -1632,41 +1648,41 @@ export const WINDOW_JS = `(() => {
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
           portraitObserver.unobserve(entry.target)
-          observedPortraitImages.delete(entry.target)
+          observedPortraitShells.delete(entry.target)
           loadPortraitImage(entry.target)
         }
       }, { rootMargin: '48px' })
     }
-    observedPortraitImages.add(image)
-    portraitObserver.observe(image)
+    observedPortraitShells.add(shell)
+    portraitObserver.observe(shell)
+  }
+
+  function schedulePortraitShell(shell) {
+    pendingPortraitShells.add(shell)
+    if (portraitObservationScheduled) return
+    portraitObservationScheduled = true
+    window.queueMicrotask(() => {
+      portraitObservationScheduled = false
+      const pending = [...pendingPortraitShells]
+      pendingPortraitShells.clear()
+      for (const shell of pending) observePortraitShell(shell)
+    })
   }
 
   function resetPortraitImages() {
-    if (!portraitObserver) return
-    portraitObserver.disconnect()
-    observedPortraitImages.clear()
+    pendingPortraitShells.clear()
+    if (portraitObserver) portraitObserver.disconnect()
+    observedPortraitShells.clear()
   }
 
   function portraitNode(type, id, label, className = '') {
     const shell = element('span', 'entity-portrait' + (className ? ' ' + className : ''))
     shell.setAttribute('aria-hidden', 'true')
     shell.title = label + ' drawing'
-    const placeholder = element('span', 'entity-portrait-placeholder')
-    const image = element('img', 'entity-portrait-image')
-    image.alt = ''
-    image.width = 32
-    image.height = 32
-    image.loading = 'lazy'
-    image.decoding = 'async'
-    image.dataset.portraitType = type
-    image.dataset.portraitId = String(id)
-    image.addEventListener('load', () => { shell.dataset.portraitState = 'loaded' })
-    image.addEventListener('error', () => {
-      shell.dataset.portraitState = 'placeholder'
-      image.remove()
-    })
-    shell.append(placeholder, image)
-    window.queueMicrotask(() => observePortraitImage(image))
+    shell.dataset.portraitType = type
+    shell.dataset.portraitId = String(id)
+    shell.append(element('span', 'entity-portrait-placeholder'))
+    schedulePortraitShell(shell)
     return shell
   }
 

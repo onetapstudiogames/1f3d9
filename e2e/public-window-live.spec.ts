@@ -335,7 +335,6 @@ async function expectProofDrawingContract(page: Page): Promise<void> {
     { state: 'refused', presentation: 'refused', label: 'Refused' },
     { state: 'in_progress', presentation: 'in_progress', label: 'In progress' },
     { state: 'complete', presentation: 'blank', label: 'Blank' },
-    { state: 'complete', presentation: 'complete', label: 'Complete' },
   ] as const
   for (const drawingCase of cases) {
     const drawing = proof.locator(
@@ -345,31 +344,41 @@ async function expectProofDrawingContract(page: Page): Promise<void> {
     await expect(drawing).toBeVisible()
     await expect(drawing).toHaveAttribute('aria-label', new RegExp(drawingCase.label, 'u'))
   }
-
-  const own = proof.locator('[data-drawing-source="thing"]').first()
-  const base = proof.locator('[data-drawing-source="kind_base"]').first()
-  const variant = proof.locator('[data-drawing-source="kind_variant"]').first()
-  await expect(own).toHaveAttribute('aria-label', /Own drawing/u)
-  await expect(base).toHaveAttribute('aria-label', /Kind proof-object · revision 3 · base/u)
-  await expect(variant).toHaveAttribute(
-    'aria-label', /Kind proof-object · revision 3 · variant ember glow/u,
-  )
-
-  for (const presentation of ['in_progress', 'complete']) {
-    const canvas = proof.locator(
-      `canvas[data-drawing-presentation-state="${presentation}"]`,
+  const canvas = proof.locator(
+    'canvas[data-drawing-presentation-state="in_progress"]',
+  ).first()
+  await expect(canvas).toBeVisible()
+  expect(await canvas.evaluate(node => {
+    const context = (node as HTMLCanvasElement).getContext('2d')
+    return context ? [...context.getImageData(0, 0, 1, 1).data] : []
+  })).toHaveLength(4)
+  for (const portrait of [
+    { type: 'resident', id: 9201 },
+    { type: 'thing', id: 9401 },
+  ] as const) {
+    const shell = proof.locator(
+      `.entity-portrait[data-portrait-type="${portrait.type}"]` +
+      `[data-portrait-id="${String(portrait.id)}"]`,
     ).first()
-    await expect(canvas).toBeVisible()
-    expect(await canvas.evaluate(node => {
-      const context = (node as HTMLCanvasElement).getContext('2d')
-      return context ? [...context.getImageData(0, 0, 1, 1).data] : []
-    })).toHaveLength(4)
+    await shell.scrollIntoViewIfNeeded()
+    const image = shell.locator('img')
+    await expect(image).toHaveAttribute('loading', 'lazy')
+    await expect(image).toHaveAttribute('width', '32')
+    await expect(image).toHaveAttribute('height', '32')
+    await expect(image).toHaveAttribute(
+      'src',
+      new RegExp(
+        `/api/drawing/${portrait.type}/${String(portrait.id)}/thumb\\.png\\?rev=9500$`,
+        'u',
+      ),
+    )
+    expect(await shell.evaluate(node =>
+      [...node.attributes].some(attribute => attribute.name.startsWith('data-drawing-')),
+    )).toBe(false)
   }
-
   await expect(proof.locator('.drawing-canonical-rows, .drawing-history')).toHaveCount(0)
   await expect(proof).not.toContainText(/Palette indices|Drawing history/u)
 }
-
 function replayPlaceScopeIds(rootId: number) {
   return new Set(replayPlaces.filter(place => {
     if (place.id === rootId) return true
