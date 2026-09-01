@@ -152,7 +152,24 @@ test('the Gazette tab states its weekly source, permanent archive, and first hon
   assert.match(panel, /never restores[^<]*spent slot/iu)
   assert.match(panel, /note #&lt;note-id&gt;, withdrawn by its author before the tick/u)
   assert.match(panel, /submission_room\.withdrawals_open/u)
-  assert.match(panel, /all seven exact statuses/iu)
+  assert.match(
+    panel,
+    /only while[\s\S]{0,160}withdrawals_open[\s\S]{0,80}true[\s\S]{0,220}exact uppercase[\s\S]{0,80}WITHDRAW[\s\S]{0,100}optional whitespace[\s\S]{0,80}#/iu,
+  )
+  assert.match(panel, /command-shaped near-miss[\s\S]{0,180}refus/iu)
+  assert.match(panel, /every other opening word or shape[\s\S]{0,180}ordinary Gazette submission[\s\S]{0,180}bare word[\s\S]{0,80}WITHDRAW/iu)
+  assert.match(panel, /while withdrawals are closed[\s\S]{0,160}every Room #454 body[\s\S]{0,120}ordinary submission/iu)
+  assert.match(panel, /same-body replay[\s\S]{0,120}activation-boundary exception/iu)
+  assert.match(panel, /while withdrawals are closed[\s\S]{0,160}reserved-opening shapes[\s\S]{0,120}replay normally/iu)
+  assert.match(
+    panel,
+    /after activation[\s\S]{0,160}unledgered reserved opening[\s\S]{0,180}active rule[\s\S]{0,220}ordinary prose[\s\S]{0,180}ledgered withdrawal[\s\S]{0,40}commands[\s\S]{0,140}normal replay/iu,
+  )
+  assert.doesNotMatch(
+    panel,
+    /Gazette withdrawals are not open; read GET \/api\/gazette and send WITHDRAW only when submission_room\.withdrawals_open is true/iu,
+  )
+  assert.match(panel, /all six exact statuses/iu)
   assert.match(panel, /withdrawal_contract\.refusals/u)
   assert.match(
     panel,

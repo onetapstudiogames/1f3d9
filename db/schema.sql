@@ -7620,7 +7620,7 @@ LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
 AS $$
-  SELECT value COLLATE "C" ~ '^WITHDRAW([[:space:]]|#|$)'
+  SELECT value COLLATE "C" ~ '^WITHDRAW[[:space:]]*#'
 $$;
 
 CREATE OR REPLACE FUNCTION validate_gazette_issue_entry()
@@ -7736,8 +7736,8 @@ AS $$
       AND candidate.open_to_building = FALSE
       AND candidate.open_to_things = FALSE
       AND candidate.open_to_notes = TRUE
-      AND candidate.description = 'Leave a note here for The Gazette. Every Monday at 16:00 UTC, the automatic printer permanently assigns every unprinted submission made before the cutoff to the next issue, oldest first with its author, note ID, and time. An author may withdraw their own submission strictly before that same print tick by leaving exactly WITHDRAW #<their-note-id>; the issue keeps that entry''s place as a one-line withdrawal notice. The founder and other residents have no override. Printing and withdrawal never delete, edit, move, or copy the source note.'
-      AND candidate.purpose = 'Residents may submit up to three notes per Gazette week (Monday 16:00 UTC to Monday 16:00 UTC); each submission and withdrawal command uses the ordinary daily note quota. A withdrawal command uses no weekly slot, never prints, and never restores the target''s spent slot.'
+      AND candidate.description = 'Leave a note here for The Gazette. Every Monday at 16:00 UTC, the automatic printer permanently assigns every unprinted submission made before the cutoff to the next issue, oldest first with its author, note ID, and time. An author may withdraw their own submission strictly before that same print tick by leaving exactly WITHDRAW #<their-note-id>; the issue keeps that entry''s place as a one-line withdrawal notice. Only while withdrawals are open, a note whose opening is exact uppercase WITHDRAW, optional whitespace, then # is read as a withdrawal command; every other opening or shape is an ordinary submission. A reserved opening that is not exactly WITHDRAW #<their-note-id> is refused instead of printing. The founder and other residents have no override. Printing and withdrawal never delete, edit, move, or copy the source note.'
+      AND candidate.purpose = 'Three submissions per resident per Gazette week; all notes use the daily quota. Closed: every body is a submission. Open: uppercase WITHDRAW plus optional whitespace then # is reserved; commands use no weekly slot, never print, and do not restore the target slot.'
     THEN 'withdrawals_open'
     ELSE 'invalid'
   END
@@ -8034,7 +8034,6 @@ DECLARE
   parsed_target_id INTEGER;
   target_place_id INTEGER;
   target_author_id INTEGER;
-  target_body TEXT;
   target_created_at TIMESTAMPTZ;
   printed_issue INTEGER;
   print_tick TIMESTAMPTZ;
@@ -8043,6 +8042,10 @@ BEGIN
   IF NOT gazette_withdrawals_are_open() THEN
     RAISE EXCEPTION 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_withdrawals_closed';
+  END IF;
+  IF pg_trigger_depth() <> 2 THEN
+    RAISE EXCEPTION 'Gazette withdrawal ledger rows are created only by inserting a new withdrawal command note in room #454'
+      USING ERRCODE = '23514', CONSTRAINT = 'gazette_withdrawal_command_not_note_insert';
   END IF;
 
   SELECT note.place_id, note.author_id, note.body, note.created_at
@@ -8057,12 +8060,15 @@ BEGIN
     RAISE EXCEPTION 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_withdrawal_command_invalid';
   END IF;
-
-  SELECT note.place_id, note.author_id, note.body, note.created_at
-  INTO target_place_id, target_author_id, target_body, target_created_at
+  SELECT note.place_id, note.author_id, note.created_at
+  INTO target_place_id, target_author_id, target_created_at
   FROM notes note WHERE note.id = NEW.target_note_id;
   IF target_place_id IS DISTINCT FROM 454
-    OR gazette_withdrawal_target(target_body) IS NOT NULL
+    OR NEW.target_note_id = NEW.command_note_id
+    OR EXISTS (
+      SELECT 1 FROM gazette_withdrawals withdrawal
+      WHERE withdrawal.command_note_id = NEW.target_note_id
+    )
   THEN
     RAISE EXCEPTION 'Gazette submission note #% was not found in room #454', NEW.target_note_id
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_withdrawal_no_such_submission';
@@ -8105,6 +8111,7 @@ DECLARE
   target_note_id INTEGER;
 BEGIN
   IF NEW.place_id <> 454 THEN RETURN NEW; END IF;
+  IF NOT gazette_withdrawals_are_open() THEN RETURN NEW; END IF;
   target_note_id := gazette_withdrawal_target(NEW.body);
   IF target_note_id IS NULL THEN RETURN NEW; END IF;
   INSERT INTO gazette_withdrawals (target_note_id, command_note_id, withdrawn_at)
@@ -8160,15 +8167,13 @@ BEGIN
   -- escape a weekly quota or create a retroactive print candidate by supplying
   -- a past or future created_at value.
   NEW.created_at := clock_timestamp();
-  IF gazette_withdrawal_command_reserved(NEW.body) THEN
+  IF gazette_withdrawals_are_open()
+    AND gazette_withdrawal_command_reserved(NEW.body)
+  THEN
     withdrawal_target := gazette_withdrawal_target(NEW.body);
     IF withdrawal_target IS NULL THEN
       RAISE EXCEPTION 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'
         USING ERRCODE = '23514', CONSTRAINT = 'gazette_withdrawal_command_invalid';
-    END IF;
-    IF NOT gazette_withdrawals_are_open() THEN
-      RAISE EXCEPTION 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'
-        USING ERRCODE = '23514', CONSTRAINT = 'gazette_withdrawals_closed';
     END IF;
     RETURN NEW;
   END IF;

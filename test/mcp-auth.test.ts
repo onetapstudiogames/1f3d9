@@ -717,6 +717,41 @@ test('both MCP doors keep every shared tool label, input, and safety hint identi
   }
 })
 
+function assertGazetteWithdrawalCommandInterpretation(description: string, label: string): void {
+  assert.match(
+    description,
+    /only while[\s\S]{0,160}withdrawals_open[\s\S]{0,80}true[\s\S]{0,220}exact uppercase WITHDRAW[\s\S]{0,100}optional whitespace[\s\S]{0,80}#/iu,
+    `${label}: active-only reserved opening`,
+  )
+  assert.match(description, /command-shaped near-miss[\s\S]{0,180}refus/iu, `${label}: malformed near-miss`)
+  assert.match(
+    description,
+    /every other opening word or shape[\s\S]{0,180}ordinary Gazette submission[\s\S]{0,180}bare word WITHDRAW/iu,
+    `${label}: ordinary WITHDRAW prose`,
+  )
+  assert.match(
+    description,
+    /while withdrawals are closed[\s\S]{0,160}every Room #454 body[\s\S]{0,120}ordinary submission/iu,
+    `${label}: dormant interception is inert`,
+  )
+  assert.match(description, /same-body replay[\s\S]{0,120}activation-boundary exception/iu, `${label}: replay exception`)
+  assert.match(
+    description,
+    /while withdrawals are closed[\s\S]{0,160}reserved-opening shapes[\s\S]{0,120}replay normally/iu,
+    `${label}: dormant reserved-shape replay`,
+  )
+  assert.match(
+    description,
+    /after activation[\s\S]{0,160}unledgered reserved opening[\s\S]{0,180}active rule[\s\S]{0,220}ordinary prose[\s\S]{0,180}ledgered withdrawal[\s\S]{0,40}commands[\s\S]{0,140}normal replay/iu,
+    `${label}: activation-boundary replay`,
+  )
+  assert.doesNotMatch(
+    description,
+    /Gazette withdrawals are not open; read GET \/api\/gazette and send WITHDRAW only when submission_room\.withdrawals_open is true/iu,
+    `${label}: inactive command shapes are not refused`,
+  )
+}
+
 test('say states its placement, body, status, and duplicate-note contract', async () => {
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
@@ -779,6 +814,7 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
       /withdrawals_open true[\s\S]*body exactly WITHDRAW #<your-note-id>/iu,
       path,
     )
+    assertGazetteWithdrawalCommandInterpretation(say.description, path)
     assert.match(say.description, /Only the author[\s\S]*founder #1 has no administrative override/iu, path)
     assert.match(say.description, /strictly before[\s\S]*same existing printer tick[\s\S]*no second clock/iu, path)
     assert.match(say.description, /ordinary daily 50-note limit[\s\S]*no Gazette weekly slot/iu, path)
@@ -786,7 +822,6 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
     assert.match(say.description, /note #<note-id>, withdrawn by its author before the tick/u, path)
     for (const [status, refusal] of [
       [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
-      [409, 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'],
       [404, 'Gazette submission note #<note-id> was not found in room #454'],
       [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
       [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn'],
@@ -1030,6 +1065,7 @@ test('browse states where to read the live Gazette submission and withdrawal gat
   )
   assert.match(browse.description, /WITHDRAW #<your-note-id>/u)
   assert.match(browse.description, /complete refusals[\s\S]*HTTP 400[\s\S]*HTTP 404[\s\S]*HTTP 403[\s\S]*already withdrawn/iu)
+  assertGazetteWithdrawalCommandInterpretation(browse.description, 'browse')
 })
 
 test('MCP descriptions state enforced caller contracts before use', async () => {

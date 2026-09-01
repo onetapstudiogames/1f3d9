@@ -246,7 +246,10 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     INSERT INTO residents (id, handle, model, secret_hash)
     VALUES
       (1, 'gazette-founder', 'integration-test', repeat('1', 64)),
-      (2, 'gazette-upgrade-author', 'integration-test', repeat('2', 64));
+      (2, 'gazette-upgrade-author', 'integration-test', repeat('2', 64)),
+      (6, 'gazette-upgrade-near-miss', 'integration-test', repeat('6', 64)),
+      (7, 'gazette-upgrade-prose', 'integration-test', repeat('7', 64)),
+      (8, 'gazette-upgrade-active', 'integration-test', repeat('8', 64));
 
     INSERT INTO places (
       id, parent_id, place_kind, name, description, owner_id,
@@ -269,7 +272,12 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     );
 
     INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
-    VALUES (1, 454, 454), (2, 454, 454);
+    VALUES
+      (1, 454, 454),
+      (2, 454, 454),
+      (6, 454, 454),
+      (7, 454, 454),
+      (8, 454, 454);
   `)
 
   const roomStateQuery = `
@@ -300,6 +308,10 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     RETURNING id, created_at
   `)).rows[0]!
   const cycle = gazetteRuntime.gazetteCycleFor(target.created_at)
+  const sql = taggedFor(database)
+  const submit = (residentId: number, residentHandle: string, text: string) => (
+    runTalkNoteAction({ placeId: 454, residentId, residentHandle, text }, sql)
+  )
 
   await database.query(withdrawalMigrationDdl)
   assert.deepEqual((await database.query(`
@@ -308,32 +320,39 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
       gazette_withdrawals_are_open() AS withdrawals_open
     FROM places place WHERE id = 454
   `)).rows[0], { state: 'open', submissions_open: true, withdrawals_open: false })
-  await assert.rejects(
-    database.query(`
-      INSERT INTO notes (place_id, author_id, body)
-      VALUES (454, 2, $1)
-    `, [`WITHDRAW #${target.id}`]),
-    (error: unknown) => {
-      assert.equal((error as { constraint?: string }).constraint, 'gazette_withdrawals_closed')
-      return true
-    },
+  const dormantExact = await submit(
+    2,
+    'gazette-upgrade-author',
+    `WITHDRAW #${target.id}`,
   )
-  const postDormantSubmission = (await database.query<{ id: number }>(`
-    INSERT INTO notes (place_id, author_id, body)
-    VALUES (454, 2, 'Submission filed while withdrawal support is dormant.')
-    RETURNING id
-  `)).rows[0]!
+  const dormantNearMiss = await submit(
+    6,
+    'gazette-upgrade-near-miss',
+    'WITHDRAW #12x',
+  )
+  const dormantProse = await submit(
+    7,
+    'gazette-upgrade-prose',
+    'WITHDRAW my nomination for mayor, a poem',
+  )
+  for (const result of [dormantExact, dormantNearMiss, dormantProse]) {
+    assert.equal(result.ok, true, 'every body is an ordinary submission while dormant')
+    if (!result.ok) return
+    assert.equal(result.replayed, false)
+    assert.equal(result.gazetteWithdrawal, undefined)
+  }
+  if (!dormantExact.ok || !dormantNearMiss.ok || !dormantProse.ok) return
   const dormantPrinted = await gazetteRuntime.printGazetteIssuesDue!(
-    taggedFor(database),
+    sql,
     cycle.startsAt,
   )
   assert.ok(dormantPrinted.length >= 1, 'the already-open printer remains live')
   assert.deepEqual((await database.query(`
     SELECT
       (SELECT count(*)::integer FROM gazette_issue_entries
-        WHERE note_id IN ($1, $2)) AS current_entries,
+        WHERE note_id = ANY($1::integer[])) AS current_entries,
       (SELECT count(*)::integer FROM gazette_withdrawals) AS withdrawals
-  `, [target.id, postDormantSubmission.id])).rows[0], {
+  `, [[target.id, dormantExact.note.id, dormantNearMiss.note.id, dormantProse.note.id]])).rows[0], {
     current_entries: 0,
     withdrawals: 0,
   })
@@ -363,11 +382,61 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     withdrawals_open: true,
   })
 
-  const command = (await database.query<{ id: number }>(`
-    INSERT INTO notes (place_id, author_id, body)
-    VALUES (454, 2, $1)
-    RETURNING id
-  `, [`WITHDRAW #${target.id}`])).rows[0]!
+  await assert.rejects(
+    database.query(`
+      INSERT INTO gazette_withdrawals (target_note_id, command_note_id, withdrawn_at)
+      SELECT $1, command.id, command.created_at
+      FROM notes command
+      WHERE command.id = $2
+    `, [target.id, dormantExact.note.id]),
+    (error: unknown) => {
+      assert.equal(
+        (error as { constraint?: string }).constraint,
+        'gazette_withdrawal_command_not_note_insert',
+      )
+      return true
+    },
+    'a dormant ordinary note can never be retroactively reclassified as a command',
+  )
+
+  assert.deepEqual(
+    await submit(6, 'gazette-upgrade-near-miss', 'WITHDRAW #12x'),
+    {
+      ok: false,
+      status: 400,
+      error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+    },
+    'a dormant near-miss replay must be reclassified after activation',
+  )
+  assert.deepEqual(
+    await submit(8, 'gazette-upgrade-active', `WITHDRAW#${target.id}`),
+    {
+      ok: false,
+      status: 400,
+      error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+    },
+  )
+  assert.deepEqual(
+    await submit(7, 'gazette-upgrade-prose', 'WITHDRAW my nomination for mayor, a poem'),
+    { ...dormantProse, replayed: true },
+    'ordinary prose keeps the normal five-minute replay rule after activation',
+  )
+  const activeProse = await submit(
+    8,
+    'gazette-upgrade-active',
+    'WITHDRAW my nomination for mayor, a poem in a second voice',
+  )
+  assert.equal(activeProse.ok, true)
+  if (!activeProse.ok) return
+  assert.equal(activeProse.replayed, false)
+  assert.equal(activeProse.gazetteWithdrawal, undefined)
+
+  const commandResult = await submit(2, 'gazette-upgrade-author', `WITHDRAW #${target.id}`)
+  assert.equal(commandResult.ok, true)
+  if (!commandResult.ok) return
+  assert.equal(commandResult.replayed, false)
+  assert.notEqual(commandResult.note.id, dormantExact.note.id)
+  const command = commandResult.note
   assert.deepEqual((await database.query(`
     SELECT target_note_id, command_note_id
     FROM gazette_withdrawals
@@ -376,16 +445,37 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     target_note_id: target.id,
     command_note_id: command.id,
   })
-  await gazetteRuntime.printGazetteIssuesDue!(taggedFor(database), cycle.endsAt)
+  await gazetteRuntime.printGazetteIssuesDue!(sql, cycle.endsAt)
+  const printedIssue = (await database.query<{ issue_number: number }>(`
+    SELECT issue_number FROM gazette_issues WHERE scheduled_for = $1
+  `, [cycle.endsAt])).rows[0]!
   assert.deepEqual((await database.query(`
     SELECT entry.ordinal, entry.note_id
     FROM gazette_issue_entries entry
-    WHERE entry.note_id IN ($1, $2)
+    WHERE entry.note_id = ANY($1::integer[])
     ORDER BY entry.ordinal
-  `, [target.id, postDormantSubmission.id])).rows, [
+  `, [[
+    target.id,
+    dormantExact.note.id,
+    dormantNearMiss.note.id,
+    dormantProse.note.id,
+    activeProse.note.id,
+  ]])).rows, [
     { ordinal: 1, note_id: target.id },
-    { ordinal: 2, note_id: postDormantSubmission.id },
+    { ordinal: 2, note_id: dormantExact.note.id },
+    { ordinal: 3, note_id: dormantNearMiss.note.id },
+    { ordinal: 4, note_id: dormantProse.note.id },
+    { ordinal: 5, note_id: activeProse.note.id },
   ])
+  assert.deepEqual(
+    await submit(2, 'gazette-upgrade-author', `WITHDRAW #${dormantExact.note.id}`),
+    {
+      ok: false,
+      status: 409,
+      error: `Gazette submission note #${dormantExact.note.id} already printed in issue #${printedIssue.issue_number} and cannot be withdrawn`,
+    },
+    'the dormant exact-looking note remained a printable ordinary submission',
+  )
 })
 
 test('Gazette prints and weekly submissions hold under real PostgreSQL', async t => {
@@ -1319,6 +1409,22 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.equal(target.ok, true)
   if (!target.ok) return
   const targetId = target.note.id
+
+  const selfTargetId = Number((await database.query<{ id: number }>(`
+    SELECT last_value::integer + 1 AS id FROM notes_id_seq
+  `)).rows[0]!.id)
+  const selfTargetBody = `WITHDRAW #${selfTargetId}`
+  assert.deepEqual(await submit(2, 'gazette-author', selfTargetBody), {
+    ok: false,
+    status: 404,
+    error: `Gazette submission note #${selfTargetId} was not found in room #454`,
+  })
+  assert.deepEqual((await database.query(`
+    SELECT
+      (SELECT count(*)::integer FROM notes WHERE id = $1) AS command_notes,
+      (SELECT count(*)::integer FROM gazette_withdrawals
+        WHERE target_note_id = $1 OR command_note_id = $1) AS withdrawals
+  `, [selfTargetId])).rows[0], { command_notes: 0, withdrawals: 0 })
 
   assert.deepEqual(await submit(2, 'gazette-author', 'WITHDRAW #0'), {
     ok: false,

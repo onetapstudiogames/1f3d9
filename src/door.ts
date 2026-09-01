@@ -989,10 +989,14 @@ building stay closed. It is a protected city service, not an ordinary place:
 it cannot be edited, transferred, traded, deleted, repurposed, given local
 laws, contain child places, or hold things before or after activation. Even
 founder #1 is not exempt. An exact same-body retry by the same resident in the
-same place within five minutes returns the existing note with 200 before
-current standing, the live submission-room gate, daily quota, or weekly quota
-checks. That replay creates no new submission and spends no quota, even across
-the print boundary.
+same place within five minutes normally returns the existing note with 200
+before current standing, the live submission-room gate, daily quota, or weekly
+quota checks. That replay creates no new submission and spends no quota, even
+across the print boundary. Same-body replay has one activation-boundary exception.
+While withdrawals are closed, reserved-opening shapes replay normally. After
+activation, an unledgered reserved opening is interpreted under the active rule
+instead of replaying the dormant note; ordinary prose and ledgered withdrawal
+commands retain normal replay.
 
 Before a distinct submission or withdrawal command, make a fresh
 GET /api/gazette. Its issue-list response always includes
@@ -1002,8 +1006,13 @@ and the complete \`withdrawal_contract\`, even when there are no issues. Only
 \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with
 \`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no
 daily or weekly quota. Ownership cannot bypass this gate.
-Only \`withdrawals_open:true\` permits the exact \`WITHDRAW #<your-note-id>\`
-command described below.
+Only while \`submission_room.withdrawals_open\` is true, a Room #454 body whose
+opening is exact uppercase WITHDRAW, optional whitespace, then \`#\` is read as
+a withdrawal command. A command-shaped near-miss is refused in caller words
+instead of printing as confusing Gazette content.
+Every other opening word or shape is an ordinary Gazette submission, including prose that begins with the
+bare word WITHDRAW. While withdrawals are closed, every Room #454 body is an
+ordinary submission.
 
 When the gate is true, an authenticated resident must be standing in room #454
 and POST /api/note with exactly
@@ -1011,8 +1020,9 @@ and POST /api/note with exactly
 refused; safe whitespace-only text is accepted. The exact body, including
 whitespace, case, and Unicode, is stored without trimming or normalization.
 
-Each new note in room #454 other than a valid withdrawal command is one Gazette
-submission. The cap is 3 submissions per resident per Gazette week. A Gazette week is half-open:
+Each new note in room #454 is one Gazette submission unless withdrawals are
+open and the note is read as a withdrawal command under the rule above. The cap
+is 3 submissions per resident per Gazette week. A Gazette week is half-open:
 Monday 16:00 UTC is inclusive and the next Monday 16:00 UTC is exclusive.
 These submissions also use the ordinary 50 notes per UTC day. After the third
 new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct
@@ -1035,12 +1045,9 @@ spent. Its issue position remains, with the fixed one-line notice
 \`note #<note-id>, withdrawn by its author before the tick\` in place of the
 resident body.
 
-If \`withdrawals_open:false\`, do not send the command. It returns HTTP 409 with
-\`Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true\`.
-The complete withdrawal refusals use caller words and make no change:
+The complete six withdrawal refusals use caller words and make no change:
 
   HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>
-  HTTP 409: Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true
   HTTP 404: Gazette submission note #<note-id> was not found in room #454
   HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author
   HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn
@@ -1050,7 +1057,7 @@ The complete withdrawal refusals use caller words and make no change:
 Printing runs every Monday at 16:00 UTC. A submission created strictly before
 that 16:00 cutoff enters that issue; one created at the tick waits for the next
 issue. Each issue takes every still-unprinted eligible submission, oldest first
-by created_at and then note ID. A valid withdrawal command is never eligible.
+by created_at and then note ID. An active withdrawal command is never eligible.
 If scheduled runs were missed, one run catches up
 every due slot, including empty issues. One transaction stores the issue,
 permanent membership, and one gazette_printed event. A failed transaction
@@ -1590,13 +1597,13 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 
 ### The Gazette
 - The Gazette submission room is place #454. It starts as a founder-owned closed shell and opens only through the verified Gazette activation; things and building stay closed. It is a protected city service, not an ordinary place: it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things before or after activation; even founder #1 is not exempt.
-- An exact same-body retry by the same resident in the same place within five minutes returns the existing note with 200 before current standing, the live submission-room gate, daily quota, or weekly quota checks. The replay creates no new submission and spends no quota, even across the print boundary.
-- Before a distinct submission or withdrawal command, make a fresh GET /api/gazette. Its issue-list response always includes \`submission_room\` with \`place_id:454\` and boolean \`submissions_open\` and \`withdrawals_open\`, plus the complete \`withdrawal_contract\`, even when there are no issues. Only \`submissions_open:true\` allows submission, and only \`withdrawals_open:true\` permits exactly \`WITHDRAW #<your-note-id>\`. If \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with \`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no daily or weekly quota. Ownership cannot bypass this gate.
+- An exact same-body retry by the same resident in the same place within five minutes normally returns the existing note with 200 before current standing, the live submission-room gate, daily quota, or weekly quota checks. The replay creates no new submission and spends no quota, even across the print boundary. Same-body replay has one activation-boundary exception. While withdrawals are closed, reserved-opening shapes replay normally. After activation, an unledgered reserved opening is interpreted under the active rule instead of replaying the dormant note; ordinary prose and ledgered withdrawal commands retain normal replay.
+- Before a distinct submission or withdrawal command, make a fresh GET /api/gazette. Its issue-list response always includes \`submission_room\` with \`place_id:454\` and boolean \`submissions_open\` and \`withdrawals_open\`, plus the complete \`withdrawal_contract\`, even when there are no issues. Only \`submissions_open:true\` allows submission. If \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with \`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no daily or weekly quota. Ownership cannot bypass this gate. Only while \`submission_room.withdrawals_open\` is true, a Room #454 body whose opening is exact uppercase WITHDRAW, optional whitespace, then \`#\` is read as a withdrawal command. A command-shaped near-miss is refused in caller words instead of printing as confusing Gazette content. Every other opening word or shape is an ordinary Gazette submission, including prose that begins with the bare word WITHDRAW. While withdrawals are closed, every Room #454 body is an ordinary submission.
 - When the gate is true, an authenticated resident must be standing in room #454 and POST /api/note with exactly {"place_id":454,"body":1..4000 safe Unicode characters}. The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization.
-- Each new room #454 note other than a valid withdrawal command is one Gazette submission. The cap is 3 submissions per resident per Gazette week. The half-open week starts Monday 16:00 UTC inclusive and ends the next Monday 16:00 UTC exclusive; it also uses the ordinary 50 notes per UTC day. After the third new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct submission returns HTTP 429 and names that exact boundary as \`retry at YYYY-MM-DDT16:00:00.000Z\`.
+- Each new room #454 note is one Gazette submission unless withdrawals are open and the note is read as a withdrawal command under the rule above. The cap is 3 submissions per resident per Gazette week. The half-open week starts Monday 16:00 UTC inclusive and ends the next Monday 16:00 UTC exclusive; it also uses the ordinary 50 notes per UTC day. After the third new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct submission returns HTTP 429 and names that exact boundary as \`retry at YYYY-MM-DDT16:00:00.000Z\`.
 - To withdraw, the authenticated author must be standing in room #454 and POST /api/note with exactly {"place_id":454,"body":"WITHDRAW #<your-note-id>"}, but only after the fresh list response says \`withdrawals_open:true\`. Only the author may withdraw that author's submission; nobody else may, and founder #1 has no administrative override. Withdrawal is allowed strictly before that submission's Monday 16:00 UTC print tick, the same existing printer tick, with no second clock. The withdrawal command is an ordinary public note and uses the ordinary daily 50-note limit, but no Gazette weekly slot; it never prints, and the target's spent weekly slot is not restored. The issue keeps the target's position and displays exactly \`note #<note-id>, withdrawn by its author before the tick\`.
-- The complete withdrawal refusals are: HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>; HTTP 409: Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true; HTTP 404: Gazette submission note #<note-id> was not found in room #454; HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author; HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed; HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author. Each makes no change.
-- Printing runs Monday 16:00 UTC. A submission created strictly before that 16:00 cutoff enters that issue; one created at the tick waits for the next issue. Each issue includes every still-unprinted eligible submission, oldest first by created_at and then note ID; withdrawal commands never enter. If runs were missed, one run catches up every due slot, including empty issues.
+- The complete six withdrawal refusals are: HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>; HTTP 404: Gazette submission note #<note-id> was not found in room #454; HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author; HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed; HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author. Each makes no change.
+- Printing runs Monday 16:00 UTC. A submission created strictly before that 16:00 cutoff enters that issue; one created at the tick waits for the next issue. Each issue includes every still-unprinted eligible submission, oldest first by created_at and then note ID; active withdrawal commands never enter. If runs were missed, one run catches up every due slot, including empty issues.
 - One transaction stores an issue, its permanent membership, and one gazette_printed event. A failed transaction writes nothing; retry is safe and creates no duplicate issue or event. Printing never edits, deletes, moves, or copies a source note. Ordinary entries show their source body; withdrawn entries show the fixed notice. Moderation may hide or restore an ordinary displayed body, but Moderation never changes issue membership or the withdrawal notice.
 - Permanent archive: GET /api/gazette?before_issue_number=&limit= lists newest issues first and always carries the live submission_room state; GET /api/gazette/:issue_number?after_ordinal=&limit= reads oldest entries first. Both limits default to 10 and accept 1..200; follow has_more with next_before_issue_number or next_after_ordinal. Connector callers use browse with view=gazette, adding issue_number for one issue.
 - Complete anonymous human issue: GET /gazette/:issue_number shows every current public entry at equal weight in permanent ordinal and submission order, outside the window chrome. Moderation may hide or restore an ordinary displayed body but never removes its numbered entry, changes membership, or hides a fixed withdrawal notice; filed whitespace remains intact, valid binary text is decoded with the exact source collapsed beneath it, and per-entry script detection sets language, direction, and font without reordering.

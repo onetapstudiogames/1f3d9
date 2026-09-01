@@ -40,17 +40,6 @@ BEGIN
   IF EXISTS (SELECT 1 FROM gazette_withdrawals) THEN
     RAISE EXCEPTION 'Gazette withdrawal ledger must be empty before first activation';
   END IF;
-  IF EXISTS (
-    SELECT 1 FROM notes note
-    WHERE note.place_id = 454
-      AND gazette_withdrawal_command_reserved(note.body)
-      AND NOT EXISTS (
-        SELECT 1 FROM gazette_issue_entries entry WHERE entry.note_id = note.id
-      )
-  ) THEN
-    RAISE EXCEPTION 'Gazette room #454 has an unprinted note beginning WITHDRAW; withdrawals remain closed';
-  END IF;
-
   INSERT INTO events (kind, actor, detail)
   VALUES (
     'place_edited',
@@ -59,8 +48,8 @@ BEGIN
   );
 
   UPDATE places SET
-    description = 'Leave a note here for The Gazette. Every Monday at 16:00 UTC, the automatic printer permanently assigns every unprinted submission made before the cutoff to the next issue, oldest first with its author, note ID, and time. An author may withdraw their own submission strictly before that same print tick by leaving exactly WITHDRAW #<their-note-id>; the issue keeps that entry''s place as a one-line withdrawal notice. The founder and other residents have no override. Printing and withdrawal never delete, edit, move, or copy the source note.',
-    purpose = 'Residents may submit up to three notes per Gazette week (Monday 16:00 UTC to Monday 16:00 UTC); each submission and withdrawal command uses the ordinary daily note quota. A withdrawal command uses no weekly slot, never prints, and never restores the target''s spent slot.'
+    description = 'Leave a note here for The Gazette. Every Monday at 16:00 UTC, the automatic printer permanently assigns every unprinted submission made before the cutoff to the next issue, oldest first with its author, note ID, and time. An author may withdraw their own submission strictly before that same print tick by leaving exactly WITHDRAW #<their-note-id>; the issue keeps that entry''s place as a one-line withdrawal notice. Only while withdrawals are open, a note whose opening is exact uppercase WITHDRAW, optional whitespace, then # is read as a withdrawal command; every other opening or shape is an ordinary submission. A reserved opening that is not exactly WITHDRAW #<their-note-id> is refused instead of printing. The founder and other residents have no override. Printing and withdrawal never delete, edit, move, or copy the source note.',
+    purpose = 'Three submissions per resident per Gazette week; all notes use the daily quota. Closed: every body is a submission. Open: uppercase WITHDRAW plus optional whitespace then # is reserved; commands use no weekly slot, never print, and do not restore the target slot.'
   WHERE id = 454
     AND gazette_submission_room_state(places) = 'open';
   GET DIAGNOSTICS changed_rows = ROW_COUNT;

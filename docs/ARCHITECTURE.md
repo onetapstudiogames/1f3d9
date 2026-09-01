@@ -219,26 +219,34 @@ strictly before one Monday 16:00 UTC cutoff or belongs to the next issue; it can
 between them. After that lock, the database clock replaces every supplied Gazette note
 time, so direct writers cannot escape a quota or create retroactive print candidates.
 Per-resident note retries take their own lock before exact-body replay and weekly quota
-work. The printer refuses to write unless the canonical room-opening state is still true.
+work. While withdrawals are closed, reserved-opening shapes replay normally. After
+activation, an unledgered reserved opening is interpreted under the active rule instead
+of replaying the dormant note; ordinary prose and ledgered withdrawal commands retain
+normal replay. The printer refuses to write unless the canonical room-opening state is still true.
 
 Before either action, `GET /api/gazette` exposes boolean `submissions_open` and
-`withdrawals_open` plus the complete `withdrawal_contract`. With withdrawals open, the
-authenticated author standing in room #454 sends exactly `WITHDRAW #<your-note-id>`
-through `POST /api/note`. Only that author may withdraw; founder #1 has no administrative
-override. The command must commit strictly before the target submission's existing
+`withdrawals_open` plus the complete `withdrawal_contract`. Only while
+`submission_room.withdrawals_open` is true, a Room #454 body whose opening is exact
+uppercase WITHDRAW, optional whitespace, then `#` is read as a withdrawal command. A
+command-shaped near-miss is refused in caller words. Every other opening word or shape is
+an ordinary Gazette submission, including prose that begins with the bare word WITHDRAW.
+While withdrawals are closed, every Room #454 body is an ordinary submission. With
+withdrawals open, the authenticated author standing in room #454 sends exactly
+`WITHDRAW #<your-note-id>` through `POST /api/note`. Only that author may withdraw; founder
+#1 has no administrative override. The command must commit strictly before the target submission's existing
 Monday 16:00 UTC print tick. It uses the ordinary daily note limit, no Gazette weekly
 slot, never prints, and never restores the target's spent slot. The target keeps its
 ordinal with `note #<note-id>, withdrawn by its author before the tick` in place of its
-body. Callers read all seven exact messages and statuses before use from
+body. Callers read all six exact messages and statuses before use from
 `GET /api/gazette` at `withdrawal_contract.refusals`: HTTP 400 for a malformed command;
-HTTP 409 while `submission_room.withdrawals_open` is false; HTTP 404 for no room #454
-submission; HTTP 403 for author mismatch; HTTP 409 for an already printed target; HTTP
-409 when the target's print tick has passed; and HTTP 409 for an already withdrawn target.
+HTTP 404 for no room #454 submission; HTTP 403 for author mismatch; HTTP 409 for an already
+printed target; HTTP 409 when the target's print tick has passed; and HTTP 409 for an
+already withdrawn target.
 
 One printer transaction creates every due issue, its oldest-first note
 membership, and one `gazette_printed` event; rollback changes none of them, and uniqueness
 plus deferred count/order checks on both issue and entry inserts seal membership against
-later additions. Withdrawal command notes are excluded from both the weekly count and
+later additions. Active withdrawal command notes are excluded from both the weekly count and
 issue membership, while the withdrawn target remains counted. Append-only triggers make
 update/delete attempts fail. Archive reads join the permanent note ID back to current
 moderated display or the fixed withdrawal notice without changing membership.
@@ -269,7 +277,9 @@ keeping v2. Both migrations are guarded operator actions and neither runs as par
 application deployment. Production remains closed while the pull request is open; its
 activation follows only a human merge and proof of the matching Production deployment.
 The later `gazette-withdrawal` migration adds the dormant immutable withdrawal ledger,
-parser, guards, and public projection without opening withdrawals. Its separate
+activation-gated parser and guards, and public projection without opening withdrawals. In
+that dormant state every Room #454 body remains an ordinary submission: nothing is
+intercepted, refused, or recorded as a withdrawal. Its separate
 `gazette-withdrawal-activation` migration uses the same exact-commit proof before moving
 the already-open room to its exact withdrawals-open contract.
 Once a room is open, that database must stay behind a Gazette-capable application; an

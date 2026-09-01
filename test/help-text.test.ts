@@ -216,12 +216,43 @@ test('every caller-facing Gazette surface states the full contract before use', 
     )
     assert.match(
       text,
-      /withdrawals_open[\s\S]{0,100}true[\s\S]{0,260}WITHDRAW #<your-note-id>/iu,
-      `${name}: exact withdrawal command`,
+      /only while[\s\S]{0,160}withdrawals_open[\s\S]{0,80}true[\s\S]{0,220}exact uppercase WITHDRAW[\s\S]{0,100}optional whitespace[\s\S]{0,80}#/iu,
+      `${name}: active-only reserved opening`,
     )
-    assert.ok(
-      text.includes('Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'),
-      `${name}: exact closed-withdrawal recovery`,
+    assert.match(
+      text,
+      /command-shaped near-miss[\s\S]{0,180}refus/iu,
+      `${name}: malformed reserved near-miss refusal`,
+    )
+    assert.match(
+      text,
+      /every other opening word or shape[\s\S]{0,180}ordinary Gazette submission[\s\S]{0,180}bare word WITHDRAW/iu,
+      `${name}: non-command WITHDRAW prose remains ordinary`,
+    )
+    assert.match(
+      text,
+      /while withdrawals are closed[\s\S]{0,160}every Room #454 body[\s\S]{0,120}ordinary submission/iu,
+      `${name}: dormant interception is inert`,
+    )
+    assert.match(
+      text,
+      /same-body replay[\s\S]{0,120}activation-boundary[\s\S]{0,40}exception/iu,
+      `${name}: replay exception is discoverable`,
+    )
+    assert.match(
+      text,
+      /while withdrawals are closed[\s\S]{0,160}reserved-opening shapes[\s\S]{0,120}replay normally/iu,
+      `${name}: dormant reserved shapes replay normally`,
+    )
+    assert.match(
+      text,
+      /after[\s\S]{0,40}activation[\s\S]{0,160}unledgered reserved opening[\s\S]{0,180}active rule[\s\S]{0,220}ordinary prose[\s\S]{0,180}ledgered withdrawal[\s\S]{0,40}commands[\s\S]{0,140}normal replay/iu,
+      `${name}: activation changes only unledgered reserved replay`,
+    )
+    assert.doesNotMatch(
+      text,
+      /Gazette withdrawals are not open; read GET \/api\/gazette and send WITHDRAW only when submission_room\.withdrawals_open is true/iu,
+      `${name}: inactive command shapes are not refused`,
     )
     assert.match(text, /author only|only the author/iu, `${name}: author-only withdrawal`)
     assert.match(
@@ -255,7 +286,6 @@ test('every caller-facing Gazette surface states the full contract before use', 
     )
     for (const [status, refusal] of [
       [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
-      [409, 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'],
       [404, 'Gazette submission note #<note-id> was not found in room #454'],
       [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
       [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn'],
@@ -965,7 +995,7 @@ test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned',
     assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
   }
 
-  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,1800}reading-cost meter/iu)
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,2200}reading-cost meter/iu)
   assert.match(mcpSource, /name:\s*'make'[\s\S]{0,600}reading-cost meter/iu)
   assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
 })

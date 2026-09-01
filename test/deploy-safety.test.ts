@@ -688,6 +688,32 @@ test('Gazette withdrawal release instructions keep schema dormant until exact-co
     /Preview database lacks the Gazette base schema[\s\S]*500[\s\S]*not[\s\S]*withdrawal rollout/iu,
   )
   assert.match(
+    deploymentRunbook,
+    /while[\s\S]{0,180}withdrawals_open[\s\S]{0,80}false[\s\S]{0,320}intercepts? no[\s\S]{0,100}(?:Room #454 )?bod/iu,
+  )
+  assert.match(
+    deploymentRunbook,
+    /WITHDRAW #<digits>[\s\S]{0,260}WITHDRAW #12x[\s\S]{0,260}WITHDRAW my nomination for mayor, a poem[\s\S]{0,260}ordinary submissions/iu,
+  )
+  assert.match(
+    deploymentRunbook,
+    /ordinary submissions[\s\S]{0,320}(?:use|spend)[\s\S]{0,120}weekly[\s\S]{0,80}slot[\s\S]{0,260}(?:can|may|eligible to) print[\s\S]{0,260}no withdrawal ledger[\s\S]{0,200}no withdrawal refusal/iu,
+  )
+  assert.match(
+    deploymentRunbook,
+    /withdrawals_open[\s\S]{0,80}true[\s\S]{0,180}exact uppercase[\s\S]{0,80}WITHDRAW[\s\S]{0,100}optional whitespace[\s\S]{0,80}#/iu,
+  )
+  assert.match(deploymentRunbook, /command-shaped near-miss[\s\S]{0,120}refus/iu)
+  assert.match(deploymentRunbook, /all six[\s\S]{0,80}refusal statuses and messages/iu)
+  assert.match(
+    deploymentRunbook,
+    /withdrawals[\s\S]{0,40}(?:are|remain) closed[\s\S]{0,180}reserved-opening shapes[\s\S]{0,160}(?:replay normally|normal same-body replay)/iu,
+  )
+  assert.match(
+    deploymentRunbook,
+    /after[\s\S]{0,40}activation[\s\S]{0,160}unledgered reserved opening[\s\S]{0,180}active rule[\s\S]{0,220}ordinary prose[\s\S]{0,180}ledgered withdrawal[\s\S]{0,40}commands[\s\S]{0,140}normal replay/iu,
+  )
+  assert.match(
     environmentRunbook,
     /CONFIRM_GAZETTE_WITHDRAWAL[\s\S]*INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER[\s\S]*CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION[\s\S]*OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT/iu,
   )

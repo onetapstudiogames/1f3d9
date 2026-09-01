@@ -310,12 +310,19 @@ in front of the open room.
 ### Gazette withdrawal two-phase prerequisite
 
 Gazette withdrawal is another two-phase database change. The
-`gazette-withdrawal` migration installs the ledger, guards, command exclusion, and
-public projection while leaving `submission_room.withdrawals_open: false`. It must be
+`gazette-withdrawal` migration installs the ledger, activation-gated guards and command
+exclusion, and public projection while leaving `submission_room.withdrawals_open: false`.
+It must be
 installed before the withdrawal-capable application can roll out. The separate
 `gazette-withdrawal-activation` migration changes the protected room contract and opens
 withdrawals only after the exact withdrawal-capable commit is live. Neither migration
 runs as part of application deployment.
+
+Once `submission_room.withdrawals_open` is true, a Room #454 body
+whose opening is exact uppercase `WITHDRAW`, optional whitespace, then `#` is reserved.
+An exact `WITHDRAW #<your-note-id>` may become a command; a command-shaped near-miss is
+refused in caller words. Every other opening remains an ordinary submission. The public
+`withdrawal_contract.refusals` contains all six active refusal statuses and messages.
 
 The current Preview database lacks the Gazette base schema, so Gazette routes there
 return the already-recorded 500 response. That is expected and is not part of this
@@ -334,8 +341,17 @@ future isolated Preview branch that has the base Gazette schema.
 
    Verify ordinary submissions and printing still work, the withdrawal ledger is empty,
    the protected room retains its pre-withdrawal contract, and `GET /api/gazette` reports
-   `submission_room.withdrawals_open: false`. A withdrawal command must be refused without
-   creating a note, event, ledger row, or quota change.
+   `submission_room.withdrawals_open: false`. While
+   `submission_room.withdrawals_open` is false, the dormant schema intercepts no Room #454
+   body. `WITHDRAW #<digits>`, `WITHDRAW #12x`, and
+   `WITHDRAW my nomination for mayor, a poem` are ordinary submissions. Those ordinary
+   submissions use a weekly submission slot, can print, and create no withdrawal ledger
+   row and no withdrawal refusal. This is the behavior-identical old-application window;
+   it introduces no new error the old application would need to map. While withdrawals
+   remain closed, those reserved-opening shapes also keep normal same-body replay. After
+   activation, an unledgered reserved opening is interpreted under the active rule instead
+   of replaying its dormant note; ordinary prose and ledgered withdrawal commands retain
+   normal replay.
 2. After that exact candidate is serving from its immutable Preview origin, use
    exact-commit proof through `GET /api/official`, then activate with the same clean local
    commit:
@@ -362,9 +378,10 @@ future isolated Preview branch that has the base Gazette schema.
    npm run migrate:production:gazette-withdrawal
    ```
 
-   Record the snapshot ID and the same dormant postconditions. Production submissions
-   and printing must remain live, withdrawals must remain closed, and the ledger must
-   remain empty. After the staged real-PostgreSQL suite passes, set this non-secret
+   Record the snapshot ID and the same inert dormant postconditions. Production
+   submissions and printing must remain live, every Room #454 body must remain an ordinary
+   submission, withdrawals must remain closed, and the ledger must remain empty. After
+   the staged real-PostgreSQL suite passes, set this non-secret
    release-preparation acknowledgement:
 
    ```sh

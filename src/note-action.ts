@@ -21,6 +21,8 @@ export const NOTE_IDEMPOTENCY_WINDOW_SECONDS = 5 * 60
 const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
 const NOTE_COMMIT_UNCONFIRMED_ERROR =
   'note outcome could not be confirmed; retrying the identical body in the same place is safe'
+const GAZETTE_NOTE_COMMIT_UNCONFIRMED_ERROR =
+  'Gazette note outcome could not be confirmed; withdrawal command interpretation may have changed. Re-read GET /api/gazette and your recent notes in room #454 before deciding whether to submit again'
 const GAZETTE_QUOTA_RULE =
   `${QUOTAS.gazetteSubmissions} Gazette submissions per resident are allowed from ` +
   'Monday 16:00 UTC inclusive to the next Monday 16:00 UTC exclusive'
@@ -38,6 +40,11 @@ export type GazetteWithdrawalResult = Readonly<{
   command_note_id: number
   withdrawn_at: string
   notice: string
+}>
+
+export type TalkNoteReplay = Readonly<{
+  note: TalkNote
+  gazetteWithdrawal?: GazetteWithdrawalResult
 }>
 
 interface TalkNoteActionInput {
@@ -65,6 +72,10 @@ interface GazetteWithdrawalRow {
   readonly target_note_id?: unknown
   readonly command_note_id?: unknown
   readonly withdrawn_at?: unknown
+}
+
+interface GazetteCommandReservedRow {
+  readonly command_reserved?: unknown
 }
 
 export type TalkNoteActionResult =
@@ -200,6 +211,12 @@ function gazetteWithdrawalTarget(
     : null
 }
 
+function gazetteWithdrawalOpeningReserved(
+  input: Pick<TalkNoteActionInput, 'placeId' | 'text'>,
+): boolean {
+  return input.placeId === GAZETTE_ROOM_ID && /^WITHDRAW\s*#/u.test(input.text)
+}
+
 async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
   const value = await promise
   if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
@@ -272,6 +289,17 @@ async function findRecentDuplicate(
   input: TalkNoteActionInput,
 ): Promise<TalkNote | null> {
   if (!database.query) throw new EngineError(500, 'transaction query support is unavailable')
+  const gazetteReplayRule = input.placeId === GAZETTE_ROOM_ID
+    ? `AND (
+        NOT gazette_withdrawals_are_open()
+        OR NOT gazette_withdrawal_command_reserved(note.body)
+        OR EXISTS (
+          SELECT 1
+          FROM gazette_withdrawals withdrawal
+          WHERE withdrawal.command_note_id = note.id
+        )
+      )`
+    : ''
   const rows = await database.query(`
     /* note-action:recent-duplicate */
     SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
@@ -282,6 +310,7 @@ async function findRecentDuplicate(
       AND note.body COLLATE "C" = $3::text COLLATE "C"
       AND note.created_at >= statement_timestamp()
         - ($4::integer * interval '1 second')
+      ${gazetteReplayRule}
     ORDER BY note.created_at DESC, note.id DESC
     LIMIT 1
   `, [
@@ -293,11 +322,44 @@ async function findRecentDuplicate(
   return rows[0] ?? null
 }
 
-export async function findRecentTalkNoteDuplicate(
+async function findRecentTalkNoteReplayInTransaction(
+  input: TalkNoteActionInput,
+  transaction: TaggedSql,
+): Promise<TalkNoteReplay | null> {
+  await lockResidentNoteRetries(transaction, input.residentId)
+  if (input.placeId === GAZETTE_ROOM_ID) await lockGazettePrintCycle(transaction)
+  const note = await findRecentDuplicate(transaction, input)
+  if (!note) return null
+  const gazetteWithdrawal = await readGazetteWithdrawalForNote(input, note, transaction)
+  return Object.freeze({
+    note,
+    ...(gazetteWithdrawal ? { gazetteWithdrawal } : {}),
+  })
+}
+
+export async function findRecentTalkNoteReplay(
   input: TalkNoteActionInput,
   database: TaggedSql = engineSql,
-): Promise<TalkNote | null> {
-  return findRecentDuplicate(database, input)
+): Promise<TalkNoteReplay | null> {
+  return withEngineTransaction(database, transaction => (
+    findRecentTalkNoteReplayInTransaction(input, transaction)
+  ))
+}
+
+async function gazetteWithdrawalCommandIsReserved(
+  transaction: TaggedSql,
+  input: Pick<TalkNoteActionInput, 'placeId' | 'text'>,
+): Promise<boolean> {
+  if (input.placeId !== GAZETTE_ROOM_ID) return false
+  const rows = await queryRows<GazetteCommandReservedRow>(transaction`
+    /* note-action:gazette-command-reserved */
+    SELECT gazette_withdrawals_are_open()
+      AND gazette_withdrawal_command_reserved(${input.text}) AS command_reserved
+  `)
+  if (rows.length !== 1 || typeof rows[0]?.command_reserved !== 'boolean') {
+    throw new EngineError(500, 'database returned an invalid Gazette command state')
+  }
+  return rows[0].command_reserved
 }
 
 async function createTalkNote(
@@ -391,18 +453,17 @@ async function attemptTalkNoteAction(
   database: TaggedSql,
 ): Promise<TalkNoteActionResult> {
   return withEngineTransaction(database, async transaction => {
-    await lockResidentNoteRetries(transaction, input.residentId)
-    const existing = await findRecentDuplicate(transaction, input)
-    if (existing) {
-      const gazetteWithdrawal = await readGazetteWithdrawalForNote(input, existing, transaction)
+    const replay = await findRecentTalkNoteReplayInTransaction(input, transaction)
+    if (replay) {
       return {
         ok: true,
-        note: existing,
+        note: replay.note,
         replayed: true,
-        ...(gazetteWithdrawal ? { gazetteWithdrawal } : {}),
+        ...(replay.gazetteWithdrawal
+          ? { gazetteWithdrawal: replay.gazetteWithdrawal }
+          : {}),
       }
     }
-    if (input.placeId === GAZETTE_ROOM_ID) await lockGazettePrintCycle(transaction)
 
     let note: TalkNote | undefined
     const action = await runAction({
@@ -426,7 +487,12 @@ async function attemptTalkNoteAction(
     const gazetteWithdrawal = note
       ? await readGazetteWithdrawalForNote(input, note, transaction)
       : undefined
-    if (note && gazetteWithdrawalTarget(input) !== null && !gazetteWithdrawal) {
+    if (
+      note
+      && gazetteWithdrawalTarget(input) !== null
+      && !gazetteWithdrawal
+      && await gazetteWithdrawalCommandIsReserved(transaction, input)
+    ) {
       throw new EngineError(500, 'database did not record the Gazette withdrawal')
     }
     return note
@@ -457,20 +523,27 @@ export async function runTalkNoteAction(
     }
     if (error instanceof CommitOutcomeUnknownError) {
       try {
-        const existing = await findRecentDuplicate(database, input)
-        if (existing) {
-          const gazetteWithdrawal = await readGazetteWithdrawalForNote(input, existing, database)
+        const replay = await findRecentTalkNoteReplay(input, database)
+        if (replay) {
           return {
             ok: true,
-            note: existing,
+            note: replay.note,
             replayed: true,
-            ...(gazetteWithdrawal ? { gazetteWithdrawal } : {}),
+            ...(replay.gazetteWithdrawal
+              ? { gazetteWithdrawal: replay.gazetteWithdrawal }
+              : {}),
           }
         }
       } catch {
-        // A safe identical retry remains available when the canonical read fails.
+        // The bounded response below does not assume which side of activation committed.
       }
-      return { ok: false, status: 500, error: NOTE_COMMIT_UNCONFIRMED_ERROR }
+      return {
+        ok: false,
+        status: 500,
+        error: gazetteWithdrawalOpeningReserved(input)
+          ? GAZETTE_NOTE_COMMIT_UNCONFIRMED_ERROR
+          : NOTE_COMMIT_UNCONFIRMED_ERROR,
+      }
     }
     if (error instanceof EngineError) {
       return { ok: false, status: error.status, error: noteFacingError(error.message) }

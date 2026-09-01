@@ -5,7 +5,6 @@ import { cronBearerAuthorization } from './cron-auth.ts'
 import {
   GAZETTE_FIRST_PRINT_AT,
   GAZETTE_WITHDRAWAL_COMMAND,
-  GAZETTE_WITHDRAWALS_CLOSED_ERROR,
   gazetteWithdrawalNotice,
 } from './gazette.ts'
 import { allowedPublicQuery, parsePublicPage } from './public-pagination.ts'
@@ -104,6 +103,14 @@ function issueEntry(entry: GazetteIssueEntry): GazetteIssueEntry {
 
 const GAZETTE_WITHDRAWAL_CONTRACT = Object.freeze({
   command: GAZETTE_WITHDRAWAL_COMMAND,
+  command_interpretation: Object.freeze({
+    active_when: 'submission_room.withdrawals_open is true',
+    reserved_opening: 'exact uppercase WITHDRAW followed by optional whitespace and #',
+    reserved_opening_behavior: 'read as a withdrawal command; malformed near-misses are refused',
+    otherwise: 'ordinary Gazette submission, including any other body that starts with WITHDRAW',
+    while_inactive: 'all room #454 bodies are ordinary Gazette submissions',
+    same_body_replay: 'while withdrawals are closed, command-shaped bodies replay normally; after activation, an unledgered reserved opening is interpreted under the active rule, while ordinary prose and ledgered withdrawal commands retain normal same-body replay',
+  }),
   author_only: true,
   founder_override: false,
   deadline: "strictly before that submission's Monday 16:00 UTC print tick",
@@ -117,10 +124,6 @@ const GAZETTE_WITHDRAWAL_CONTRACT = Object.freeze({
     malformed_command: Object.freeze({
       status: 400,
       error: `Gazette withdrawal must be exactly ${GAZETTE_WITHDRAWAL_COMMAND}`,
-    }),
-    withdrawals_inactive: Object.freeze({
-      status: 409,
-      error: GAZETTE_WITHDRAWALS_CLOSED_ERROR,
     }),
     no_such_submission: Object.freeze({
       status: 404,

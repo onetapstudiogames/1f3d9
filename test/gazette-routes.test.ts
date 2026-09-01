@@ -133,6 +133,53 @@ const summaries = Object.freeze([
   },
 ] satisfies readonly IssueSummary[])
 
+const withdrawalContract = Object.freeze({
+  command: 'WITHDRAW #<your-note-id>',
+  command_interpretation: Object.freeze({
+    active_when: 'submission_room.withdrawals_open is true',
+    reserved_opening: 'exact uppercase WITHDRAW followed by optional whitespace and #',
+    reserved_opening_behavior: 'read as a withdrawal command; malformed near-misses are refused',
+    otherwise: 'ordinary Gazette submission, including any other body that starts with WITHDRAW',
+    while_inactive: 'all room #454 bodies are ordinary Gazette submissions',
+    same_body_replay: 'while withdrawals are closed, command-shaped bodies replay normally; after activation, an unledgered reserved opening is interpreted under the active rule, while ordinary prose and ledgered withdrawal commands retain normal same-body replay',
+  }),
+  author_only: true,
+  founder_override: false,
+  deadline: "strictly before that submission's Monday 16:00 UTC print tick",
+  weekly_slot_restored: false,
+  command_counts_toward_weekly_limit: false,
+  command_counts_toward_daily_note_limit: true,
+  command_visibility: 'stored as an ordinary public note in room #454',
+  command_printed: false,
+  printed_notice: 'note #<note-id>, withdrawn by its author before the tick',
+  refusals: Object.freeze({
+    malformed_command: Object.freeze({
+      status: 400,
+      error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+    }),
+    no_such_submission: Object.freeze({
+      status: 404,
+      error: 'Gazette submission note #<note-id> was not found in room #454',
+    }),
+    author_mismatch: Object.freeze({
+      status: 403,
+      error: 'only the author may withdraw Gazette submission note #<note-id>; you are not its author',
+    }),
+    already_printed: Object.freeze({
+      status: 409,
+      error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
+    }),
+    tick_passed: Object.freeze({
+      status: 409,
+      error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed",
+    }),
+    already_withdrawn: Object.freeze({
+      status: 409,
+      error: 'Gazette submission note #<note-id> was already withdrawn by its author',
+    }),
+  }),
+})
+
 test('the public issue list is newest-first, cursor-paged, and body-free', async () => {
   const calls: Array<Readonly<{ beforeIssueNumber: number | null; limit: number }>> = []
   const app = createApp(dependencies({
@@ -155,48 +202,7 @@ test('the public issue list is newest-first, cursor-paged, and body-free', async
       submissions_open: true,
       withdrawals_open: true,
     },
-    withdrawal_contract: {
-      command: 'WITHDRAW #<your-note-id>',
-      author_only: true,
-      founder_override: false,
-      deadline: "strictly before that submission's Monday 16:00 UTC print tick",
-      weekly_slot_restored: false,
-      command_counts_toward_weekly_limit: false,
-      command_counts_toward_daily_note_limit: true,
-      command_visibility: 'stored as an ordinary public note in room #454',
-      command_printed: false,
-      printed_notice: 'note #<note-id>, withdrawn by its author before the tick',
-      refusals: {
-        malformed_command: {
-          status: 400,
-          error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
-        },
-        withdrawals_inactive: {
-          status: 409,
-          error: 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true',
-        },
-        no_such_submission: {
-          status: 404,
-          error: 'Gazette submission note #<note-id> was not found in room #454',
-        },
-        author_mismatch: {
-          status: 403,
-          error: 'only the author may withdraw Gazette submission note #<note-id>; you are not its author',
-        },
-        already_printed: {
-          status: 409,
-          error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
-        },
-        tick_passed: {
-          status: 409,
-          error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed",
-        },
-        already_withdrawn: {
-          status: 409,
-          error: 'Gazette submission note #<note-id> was already withdrawn by its author',
-        },
-      },
-    },
+    withdrawal_contract: withdrawalContract,
     issues: [
       {
         issue_number: 4,
@@ -254,48 +260,7 @@ test('the pre-first-print list is honestly empty and names the authoritative fir
       submissions_open: false,
       withdrawals_open: false,
     },
-    withdrawal_contract: {
-      command: 'WITHDRAW #<your-note-id>',
-      author_only: true,
-      founder_override: false,
-      deadline: "strictly before that submission's Monday 16:00 UTC print tick",
-      weekly_slot_restored: false,
-      command_counts_toward_weekly_limit: false,
-      command_counts_toward_daily_note_limit: true,
-      command_visibility: 'stored as an ordinary public note in room #454',
-      command_printed: false,
-      printed_notice: 'note #<note-id>, withdrawn by its author before the tick',
-      refusals: {
-        malformed_command: {
-          status: 400,
-          error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
-        },
-        withdrawals_inactive: {
-          status: 409,
-          error: 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true',
-        },
-        no_such_submission: {
-          status: 404,
-          error: 'Gazette submission note #<note-id> was not found in room #454',
-        },
-        author_mismatch: {
-          status: 403,
-          error: 'only the author may withdraw Gazette submission note #<note-id>; you are not its author',
-        },
-        already_printed: {
-          status: 409,
-          error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
-        },
-        tick_passed: {
-          status: 409,
-          error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed",
-        },
-        already_withdrawn: {
-          status: 409,
-          error: 'Gazette submission note #<note-id> was already withdrawn by its author',
-        },
-      },
-    },
+    withdrawal_contract: withdrawalContract,
     issues: [],
     has_more: false,
     next_before_issue_number: null,
