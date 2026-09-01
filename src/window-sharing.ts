@@ -487,7 +487,7 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
   }),
   gazette: Object.freeze({
     title: 'The Gazette — 1F3D9',
-    description: 'Read the permanent weekly Gazette printed verbatim from public notes in Room #454.',
+    description: 'Read the permanent weekly Gazette: ordinary public submissions print exactly as filed, while author withdrawals print fixed notices.',
   }),
 })
 
@@ -538,7 +538,7 @@ export function createWindowShareMetadata(
         : view.title,
       description: request.state.view === 'gazette' && gazetteIssueId !== null
         ? gazetteIssueState === 'available'
-          ? `Open weekly Gazette issue ${gazetteIssueId}, a permanent public archive printed from Room #454 in 1F3D9.`
+          ? `Open weekly Gazette issue ${gazetteIssueId}, a permanent public archive of ordinary submissions and fixed author-withdrawal notices from Room #454 in 1F3D9.`
           : gazetteIssueState === 'missing'
             ? `This Gazette link names issue ${gazetteIssueId}, which is not publicly available now.`
             : `This Gazette link names issue ${gazetteIssueId}, but its public availability could not be checked right now.`

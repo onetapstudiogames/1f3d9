@@ -18,6 +18,10 @@ const gazetteActivationUrl = new URL(
   '../db/migrations/20260827_gazette_room_activation.sql',
   import.meta.url,
 )
+const gazetteWithdrawalMigrationUrl = new URL(
+  '../db/migrations/20260901_gazette_withdrawal.sql',
+  import.meta.url,
+)
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
@@ -297,3 +301,42 @@ test('exact post-deploy Gazette activation completes the snapshot v2 privilege c
     /GRANT SELECT ON city_snapshot\.public_records_v2 TO city_snapshot_export/iu,
   )
 })
+
+for (const [name, url] of [
+  ['Gazette withdrawal migration', gazetteWithdrawalMigrationUrl],
+  ['fresh schema', schemaUrl],
+] as const) {
+  test(`${name} adds a body-free withdrawal ledger without changing dormant entries`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.lastIndexOf('CREATE OR REPLACE VIEW city_snapshot.public_records_v2')
+    const viewEnd = sql.indexOf('GRANT SELECT ON city_snapshot.public_records_v2', viewStart)
+    assert.ok(viewStart >= 0 && viewEnd > viewStart, `${name}: current snapshot v2 view`)
+    const view = sql.slice(viewStart, viewEnd)
+
+    const entriesStart = view.indexOf("SELECT 'gazette_issue_entries'")
+    const withdrawalsStart = view.indexOf("SELECT 'gazette_withdrawals'", entriesStart)
+    assert.ok(entriesStart >= 0 && withdrawalsStart > entriesStart)
+    const entries = view.slice(entriesStart, withdrawalsStart)
+    assert.match(
+      entries,
+      /LEFT JOIN public\.gazette_withdrawals withdrawal\s+ON withdrawal\.target_note_id = entry\.note_id/iu,
+    )
+    assert.match(entries, /WHEN withdrawal\.target_note_id IS NULL\s+THEN '\{\}'::jsonb/iu)
+    assert.match(entries, /'withdrawn',\s*TRUE/iu)
+    assert.match(entries, /'withdrawal_note_id',\s*withdrawal\.command_note_id/iu)
+    assert.match(entries, /'withdrawn_at',\s*withdrawal\.withdrawn_at/iu)
+    assert.doesNotMatch(entries, /'body'/iu)
+
+    const withdrawals = view.slice(withdrawalsStart)
+    assert.match(withdrawals, /withdrawal\.target_note_id::TEXT AS record_id/iu)
+    assert.match(withdrawals, /withdrawal\.target_note_id::BIGINT AS sort_key/iu)
+    for (const field of [
+      'id', 'status', 'target_note_id', 'withdrawal_note_id',
+      'author_id', 'author', 'withdrawn_at',
+    ]) assert.match(withdrawals, new RegExp(`'${field}'`, 'u'), field)
+    assert.match(withdrawals, /'withdrawal_note_id',\s*withdrawal\.command_note_id/iu)
+    assert.match(withdrawals, /JOIN public\.notes target_note ON target_note\.id = withdrawal\.target_note_id/iu)
+    assert.match(withdrawals, /JOIN public\.residents author ON author\.id = target_note\.author_id/iu)
+    assert.doesNotMatch(withdrawals, /'body'/iu)
+  })
+}

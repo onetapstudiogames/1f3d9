@@ -65,6 +65,8 @@
     "migrate:preview:drawing-contract": "node --experimental-strip-types scripts/migrate.ts --target preview --migration drawing-contract",
     "migrate:preview:gazette": "node --experimental-strip-types scripts/migrate.ts --target preview --migration gazette",
     "migrate:preview:gazette-room-activation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration gazette-room-activation",
+    "migrate:preview:gazette-withdrawal": "node --experimental-strip-types scripts/migrate.ts --target preview --migration gazette-withdrawal",
+    "migrate:preview:gazette-withdrawal-activation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration gazette-withdrawal-activation",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:world-root-description": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-description",
@@ -102,7 +104,9 @@
     "migrate:production:drawings": "node --experimental-strip-types scripts/migrate.ts --target production --migration drawings",
     "migrate:production:drawing-contract": "node --experimental-strip-types scripts/migrate.ts --target production --migration drawing-contract",
     "migrate:production:gazette": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette",
-    "migrate:production:gazette-room-activation": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette-room-activation"
+    "migrate:production:gazette-room-activation": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette-room-activation",
+    "migrate:production:gazette-withdrawal": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette-withdrawal",
+    "migrate:production:gazette-withdrawal-activation": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette-withdrawal-activation"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

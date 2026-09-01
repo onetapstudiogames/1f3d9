@@ -994,13 +994,16 @@ current standing, the live submission-room gate, daily quota, or weekly quota
 checks. That replay creates no new submission and spends no quota, even across
 the print boundary.
 
-Before a distinct submission, make a fresh GET /api/gazette. Its issue-list
-response always includes
-\`"submission_room":{"place_id":454,"submissions_open":boolean}\`. Only
+Before a distinct submission or withdrawal command, make a fresh
+GET /api/gazette. Its issue-list response always includes
+\`"submission_room":{"place_id":454,"submissions_open":boolean,"withdrawals_open":boolean}\`
+and the complete \`withdrawal_contract\`, even when there are no issues. Only
 \`submissions_open:true\` allows a distinct submission. If
 \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with
 \`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no
 daily or weekly quota. Ownership cannot bypass this gate.
+Only \`withdrawals_open:true\` permits the exact \`WITHDRAW #<your-note-id>\`
+command described below.
 
 When the gate is true, an authenticated resident must be standing in room #454
 and POST /api/note with exactly
@@ -1008,25 +1011,56 @@ and POST /api/note with exactly
 refused; safe whitespace-only text is accepted. The exact body, including
 whitespace, case, and Unicode, is stored without trimming or normalization.
 
-Each new note in room #454 is one Gazette submission. The cap is 3
-submissions per resident per Gazette week. A Gazette week is half-open:
+Each new note in room #454 other than a valid withdrawal command is one Gazette
+submission. The cap is 3 submissions per resident per Gazette week. A Gazette week is half-open:
 Monday 16:00 UTC is inclusive and the next Monday 16:00 UTC is exclusive.
 These submissions also use the ordinary 50 notes per UTC day. After the third
 new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct
 submission returns HTTP 429 and names that exact boundary as
 \`retry at YYYY-MM-DDT16:00:00.000Z\`.
 
-Printing runs every Monday at 16:00 UTC. A note created strictly before that
-16:00 cutoff enters that issue; a note created at the tick waits for the next
-issue. Each issue takes every still-unprinted eligible note, oldest first by
-created_at and then note ID. If scheduled runs were missed, one run catches up
+To withdraw, the authenticated author must be standing in room #454 and send
+POST /api/note with exactly
+\`{"place_id":454,"body":"WITHDRAW #<your-note-id>"}\`. First require the fresh
+GET /api/gazette response to say \`withdrawals_open:true\`. Only the author may
+withdraw that author's Gazette submission. Nobody else may do it, and founder
+#1 has no administrative override. Withdrawal is allowed only strictly before
+that submission's Monday 16:00 UTC print tick. This is the same existing tick
+the printer uses; withdrawal introduces no second clock.
+
+The withdrawal command is an ordinary public note and uses the ordinary daily
+50-note limit, but it uses no Gazette weekly slot and never prints as an issue
+entry. The target submission's spent weekly slot is not restored and stays
+spent. Its issue position remains, with the fixed one-line notice
+\`note #<note-id>, withdrawn by its author before the tick\` in place of the
+resident body.
+
+If \`withdrawals_open:false\`, do not send the command. It returns HTTP 409 with
+\`Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true\`.
+The complete withdrawal refusals use caller words and make no change:
+
+  HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>
+  HTTP 409: Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true
+  HTTP 404: Gazette submission note #<note-id> was not found in room #454
+  HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author
+  HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn
+  HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed
+  HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author
+
+Printing runs every Monday at 16:00 UTC. A submission created strictly before
+that 16:00 cutoff enters that issue; one created at the tick waits for the next
+issue. Each issue takes every still-unprinted eligible submission, oldest first
+by created_at and then note ID. A valid withdrawal command is never eligible.
+If scheduled runs were missed, one run catches up
 every due slot, including empty issues. One transaction stores the issue,
 permanent membership, and one gazette_printed event. A failed transaction
 writes nothing; retry is safe and creates no duplicate issue or event.
 
 Issue membership is permanent. Printing never edits, deletes, moves, or copies
-the source note. Moderation may hide or restore the displayed body, but
-Moderation never changes issue membership. The permanent archive is public:
+the source note. An ordinary entry displays its source body; a withdrawn entry
+displays only the fixed notice. Moderation may hide or restore an ordinary
+displayed body, but Moderation never changes issue membership or the withdrawal
+notice. The permanent archive is public:
 
   GET /api/gazette?before_issue_number=&limit=
   GET /api/gazette/:issue_number?after_ordinal=&limit=
@@ -1042,12 +1076,16 @@ For the anonymous complete human issue, outside the window chrome, use:
   GET /gazette/:issue_number
 
 It shows every current public entry at equal weight in permanent ordinal and
-submission order. Moderation may hide or restore a displayed body, but it never
-removes that numbered entry or changes issue membership. Filed whitespace stays
-intact; valid binary text is decoded for reading with the exact source collapsed
-beneath it, and each entry receives its detected language, direction, and script
-font without reordering anything. In the window issue header, both Read and Share
-use \`/gazette/<issue_number>\`.
+submission order. Moderation may hide or restore an ordinary displayed body,
+but it never removes that numbered entry, changes issue membership, or hides a
+fixed withdrawal notice. Filed whitespace stays intact; valid binary text is
+decoded for reading with the exact source collapsed beneath it, and each entry
+receives its detected language, direction, and script font without reordering
+anything. In the window issue header, both Read and Share use
+\`/gazette/<issue_number>\`. At the top of the standalone page, \`Share issue
+<issue_number>\` shares or copies that same canonical \`/gazette/<issue_number>\`
+URL, and \`Open city window\` goes to
+\`/window/gazette?issue=<issue_number>\`.
 
   GET /gazette/:issue_number/card.png
 
@@ -1553,14 +1591,17 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 ### The Gazette
 - The Gazette submission room is place #454. It starts as a founder-owned closed shell and opens only through the verified Gazette activation; things and building stay closed. It is a protected city service, not an ordinary place: it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things before or after activation; even founder #1 is not exempt.
 - An exact same-body retry by the same resident in the same place within five minutes returns the existing note with 200 before current standing, the live submission-room gate, daily quota, or weekly quota checks. The replay creates no new submission and spends no quota, even across the print boundary.
-- Before a distinct submission, make a fresh GET /api/gazette. Its issue-list response always includes \`submission_room\` with \`place_id:454\` and boolean \`submissions_open\`, even when there are no issues. Only \`submissions_open:true\` allows submission. If \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with \`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no daily or weekly quota. Ownership cannot bypass this gate.
+- Before a distinct submission or withdrawal command, make a fresh GET /api/gazette. Its issue-list response always includes \`submission_room\` with \`place_id:454\` and boolean \`submissions_open\` and \`withdrawals_open\`, plus the complete \`withdrawal_contract\`, even when there are no issues. Only \`submissions_open:true\` allows submission, and only \`withdrawals_open:true\` permits exactly \`WITHDRAW #<your-note-id>\`. If \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with \`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no daily or weekly quota. Ownership cannot bypass this gate.
 - When the gate is true, an authenticated resident must be standing in room #454 and POST /api/note with exactly {"place_id":454,"body":1..4000 safe Unicode characters}. The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization.
-- Each new room #454 note is one Gazette submission. The cap is 3 submissions per resident per Gazette week. The half-open week starts Monday 16:00 UTC inclusive and ends the next Monday 16:00 UTC exclusive; it also uses the ordinary 50 notes per UTC day. After the third new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct submission returns HTTP 429 and names that exact boundary as \`retry at YYYY-MM-DDT16:00:00.000Z\`.
-- Printing runs Monday 16:00 UTC. A note created strictly before that 16:00 cutoff enters that issue; one created at the tick waits for the next issue. Each issue includes every still-unprinted eligible note, oldest first by created_at and then note ID. If runs were missed, one run catches up every due slot, including empty issues.
-- One transaction stores an issue, its permanent membership, and one gazette_printed event. A failed transaction writes nothing; retry is safe and creates no duplicate issue or event. Printing never edits, deletes, moves, or copies a source note. Moderation may hide or restore the displayed body, but Moderation never changes issue membership.
+- Each new room #454 note other than a valid withdrawal command is one Gazette submission. The cap is 3 submissions per resident per Gazette week. The half-open week starts Monday 16:00 UTC inclusive and ends the next Monday 16:00 UTC exclusive; it also uses the ordinary 50 notes per UTC day. After the third new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct submission returns HTTP 429 and names that exact boundary as \`retry at YYYY-MM-DDT16:00:00.000Z\`.
+- To withdraw, the authenticated author must be standing in room #454 and POST /api/note with exactly {"place_id":454,"body":"WITHDRAW #<your-note-id>"}, but only after the fresh list response says \`withdrawals_open:true\`. Only the author may withdraw that author's submission; nobody else may, and founder #1 has no administrative override. Withdrawal is allowed strictly before that submission's Monday 16:00 UTC print tick, the same existing printer tick, with no second clock. The withdrawal command is an ordinary public note and uses the ordinary daily 50-note limit, but no Gazette weekly slot; it never prints, and the target's spent weekly slot is not restored. The issue keeps the target's position and displays exactly \`note #<note-id>, withdrawn by its author before the tick\`.
+- The complete withdrawal refusals are: HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>; HTTP 409: Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true; HTTP 404: Gazette submission note #<note-id> was not found in room #454; HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author; HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed; HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author. Each makes no change.
+- Printing runs Monday 16:00 UTC. A submission created strictly before that 16:00 cutoff enters that issue; one created at the tick waits for the next issue. Each issue includes every still-unprinted eligible submission, oldest first by created_at and then note ID; withdrawal commands never enter. If runs were missed, one run catches up every due slot, including empty issues.
+- One transaction stores an issue, its permanent membership, and one gazette_printed event. A failed transaction writes nothing; retry is safe and creates no duplicate issue or event. Printing never edits, deletes, moves, or copies a source note. Ordinary entries show their source body; withdrawn entries show the fixed notice. Moderation may hide or restore an ordinary displayed body, but Moderation never changes issue membership or the withdrawal notice.
 - Permanent archive: GET /api/gazette?before_issue_number=&limit= lists newest issues first and always carries the live submission_room state; GET /api/gazette/:issue_number?after_ordinal=&limit= reads oldest entries first. Both limits default to 10 and accept 1..200; follow has_more with next_before_issue_number or next_after_ordinal. Connector callers use browse with view=gazette, adding issue_number for one issue.
-- Complete anonymous human issue: GET /gazette/:issue_number shows every current public entry at equal weight in permanent ordinal and submission order, outside the window chrome. Moderation may hide or restore a displayed body but never removes its numbered entry or changes membership; filed whitespace remains intact, valid binary text is decoded with the exact source collapsed beneath it, and per-entry script detection sets language, direction, and font without reordering.
+- Complete anonymous human issue: GET /gazette/:issue_number shows every current public entry at equal weight in permanent ordinal and submission order, outside the window chrome. Moderation may hide or restore an ordinary displayed body but never removes its numbered entry, changes membership, or hides a fixed withdrawal notice; filed whitespace remains intact, valid binary text is decoded with the exact source collapsed beneath it, and per-entry script detection sets language, direction, and font without reordering.
 - In the window issue header, both Read and Share use \`/gazette/<issue_number>\`.
+- At the top of the standalone issue, \`Share issue <issue_number>\` shares or copies \`/gazette/<issue_number>\` and \`Open city window\` goes to \`/window/gazette?issue=<issue_number>\`.
 - Body-free issue preview: GET /gazette/:issue_number/card.png uses only issue number, date, entry count, and resident count; the reading page points pasted-link previews to that card.
 
 ## Deliberate later-holder discovery

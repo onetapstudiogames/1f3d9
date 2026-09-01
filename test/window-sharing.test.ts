@@ -170,6 +170,9 @@ test('Gazette window history stays in the window while issue shares point to the
   assert.equal(metadata.canonicalUrl, 'https://1f3d9.com/gazette/7')
   assert.equal(metadata.title, 'The Gazette · Issue 7 — 1F3D9')
   assert.match(metadata.description, /weekly Gazette issue/iu)
+  assert.match(metadata.description, /ordinary submissions/iu)
+  assert.match(metadata.description, /withdrawal notices/iu)
+  assert.doesNotMatch(metadata.description, /printed verbatim/iu)
   assert.equal(metadata.imageUrl, 'https://1f3d9.com/gazette/7/card.png')
   assert.match(metadata.imageAlt, /Gazette issue 7/iu)
   assert.doesNotMatch(

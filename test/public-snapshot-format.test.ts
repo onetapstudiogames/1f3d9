@@ -54,7 +54,7 @@ test('the registry explicitly classifies exported, private, derived, and absent 
     'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
     'agreements', 'events', 'moderation', 'drawing_revisions', 'treasury_fees',
     'world_market_offers',
-    'gazette_issues', 'gazette_issue_entries', 'official', 'physics',
+    'gazette_issues', 'gazette_issue_entries', 'gazette_withdrawals', 'official', 'physics',
   ]) assert.equal(classes.get(name)?.disposition, 'exported', name)
   for (const name of [
     'credentials', 'oauth', 'resident_private_state', 'private_flags', 'payment_attempts',
@@ -72,7 +72,10 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   assert.deepEqual(classes.get('events')?.database_sources, ['events', 'gazette_issues'])
   assert.deepEqual(classes.get('gazette_issues')?.database_sources, ['gazette_issues'])
   assert.deepEqual(classes.get('gazette_issue_entries')?.database_sources, [
-    'gazette_issue_entries', 'notes', 'residents',
+    'gazette_issue_entries', 'gazette_withdrawals', 'notes', 'residents',
+  ])
+  assert.deepEqual(classes.get('gazette_withdrawals')?.database_sources, [
+    'gazette_withdrawals', 'notes', 'residents',
   ])
   assert.deepEqual(classes.get('resident_private_state')?.database_sources, [
     'resident_presence.home_place_id',

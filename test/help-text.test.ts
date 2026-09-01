@@ -168,11 +168,11 @@ test('anti-loop help excludes payment and promises no deliberate wait, not zero 
 test('every caller-facing Gazette surface states the full contract before use', () => {
   for (const [name, text] of [
     ['front door', frontdoor],
+    ['compact machine map', llms],
+    ['system design', specification],
     ['published front door', frontdoorDocument],
     ['generated front door', FRONTDOOR],
-    ['compact machine map', llms],
     ['generated compact machine map', LLMS],
-    ['system design', specification],
   ] as const) {
     assert.match(text, /Gazette\s+submission\s+room[\s\S]{0,160}(?:place|room)\s+#454/iu, `${name}: room`)
     assert.match(text, /authenticated\s+resident[\s\S]{0,240}standing[\s\S]{0,140}(?:#454|room)/iu, `${name}: standing and auth`)
@@ -211,6 +211,64 @@ test('every caller-facing Gazette surface states the full contract before use', 
     )
     assert.match(
       text,
+      /GET \/api\/gazette[\s\S]{0,320}(?:withdrawals_open[\s\S]{0,100}boolean|boolean[\s\S]{0,100}withdrawals_open)/iu,
+      `${name}: withdrawal discovery`,
+    )
+    assert.match(
+      text,
+      /withdrawals_open[\s\S]{0,100}true[\s\S]{0,260}WITHDRAW #<your-note-id>/iu,
+      `${name}: exact withdrawal command`,
+    )
+    assert.ok(
+      text.includes('Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'),
+      `${name}: exact closed-withdrawal recovery`,
+    )
+    assert.match(text, /author only|only the author/iu, `${name}: author-only withdrawal`)
+    assert.match(
+      text,
+      /founder(?:\s+(?:#?1|account))?[\s\S]{0,100}(?:no|cannot|has no)[\s\S]{0,80}(?:override|administrative)/iu,
+      `${name}: no founder override`,
+    )
+    assert.match(
+      text,
+      /withdraw[\s\S]{0,180}strictly before[\s\S]{0,180}(?:same|existing|that submission)[\s\S]{0,180}(?:print )?tick/iu,
+      `${name}: one strict print boundary`,
+    )
+    assert.match(
+      text,
+      /withdrawal command[\s\S]{0,180}(?:ordinary )?daily[\s\S]{0,180}(?:no|not|does not use)[\s\S]{0,120}weekly/iu,
+      `${name}: withdrawal command quota`,
+    )
+    assert.match(
+      text,
+      /(?:slot|submission)[\s\S]{0,180}(?:does not come back|not restored|never restores|stays spent)/iu,
+      `${name}: spent slot stays spent`,
+    )
+    assert.match(
+      text,
+      /withdrawal command[\s\S]{0,160}(?:never|does not)[\s\S]{0,80}print/iu,
+      `${name}: command never prints`,
+    )
+    assert.ok(
+      text.includes('note #<note-id>, withdrawn by its author before the tick'),
+      `${name}: fixed printed notice`,
+    )
+    for (const [status, refusal] of [
+      [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
+      [409, 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'],
+      [404, 'Gazette submission note #<note-id> was not found in room #454'],
+      [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
+      [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn'],
+      [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed'],
+      [409, 'Gazette submission note #<note-id> was already withdrawn by its author'],
+    ] as const) {
+      assert.ok(
+        text.includes(`HTTP ${status}: ${refusal}`),
+        `${name}: HTTP ${status} ${refusal}`,
+      )
+    }
+    assert.match(
+      text,
       /(?:HTTP\s+)?409[\s\S]{0,260}(?:creates?|writes?)\s+no\s+(?:new\s+)?note[\s\S]{0,160}(?:spends?|uses?)\s+no\s+(?:daily\s+or\s+weekly\s+)?quota/iu,
       `${name}: closed state spends nothing`,
     )
@@ -233,9 +291,9 @@ test('every caller-facing Gazette surface states the full contract before use', 
     assert.match(text, /newest[\s\S]{0,120}issues[\s\S]{0,220}oldest[\s\S]{0,120}entries/iu, `${name}: page order`)
   }
 
-  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,2200}Gazette submission room #454/iu)
+  assert.match(mcpSource, /name:\s*'say'[\s\S]{0,5000}Gazette submission room #454/iu)
   assert.match(mcpSource, /name:\s*'browse'[\s\S]{0,1600}view=gazette/iu)
-  assert.match(mcpSource, /view=gazette without issue_number[\s\S]{0,320}submission_room[\s\S]{0,160}submissions_open/iu)
+  assert.match(mcpSource, /view=gazette without issue_number[\s\S]{0,520}submission_room[\s\S]{0,220}submissions_open[\s\S]{0,220}withdrawals_open/iu)
   assert.match(mcpSource, /before_issue_number[\s\S]{0,500}after_ordinal/iu)
   assert.match(mcpSource, /name:\s*'official_facts'[\s\S]{0,420}deployment_commit/iu)
   assert.match(specification, /GET\s+\/api\/official[\s\S]{0,260}deployment_commit/iu)

@@ -21,6 +21,9 @@ export type GazetteIssueEntry = Readonly<{
   author: string
   body: string
   created_at: string
+  withdrawn: boolean
+  withdrawal_note_id: number | null
+  withdrawn_at: string | null
 }>
 
 export type GazetteIssueFacts = GazetteIssueSummary & Readonly<{
@@ -55,6 +58,10 @@ function nonnegativeInteger(value: unknown, field: string): number {
   return parsed
 }
 
+function nullablePositiveInteger(value: unknown, field: string): number | null {
+  return value === null || value === undefined ? null : positiveInteger(value, field)
+}
+
 function instant(value: unknown, field: string): string {
   const milliseconds = value instanceof Date
     ? value.getTime()
@@ -65,6 +72,10 @@ function instant(value: unknown, field: string): string {
     throw new Error(`database returned an invalid Gazette ${field}`)
   }
   return new Date(milliseconds).toISOString()
+}
+
+function nullableInstant(value: unknown, field: string): string | null {
+  return value === null || value === undefined ? null : instant(value, field)
 }
 
 function issueSummary(row: Row): GazetteIssueSummary {
@@ -78,15 +89,23 @@ function issueSummary(row: Row): GazetteIssueSummary {
 
 export async function readGazetteSubmissionRoomState(
   database: GazetteQueryDatabase,
-): Promise<Readonly<{ submissionsOpen: boolean }>> {
+): Promise<Readonly<{ submissionsOpen: boolean; withdrawalsOpen: boolean }>> {
   const found = await rows(database, `
     /* gazette:submission-room-state */
-    SELECT gazette_submission_room_is_open() AS submissions_open
+    SELECT gazette_submission_room_is_open() AS submissions_open,
+      gazette_withdrawals_are_open() AS withdrawals_open
   `, [])
-  if (found.length !== 1 || typeof found[0]?.submissions_open !== 'boolean') {
+  if (
+    found.length !== 1
+    || typeof found[0]?.submissions_open !== 'boolean'
+    || typeof found[0]?.withdrawals_open !== 'boolean'
+  ) {
     throw new Error('database returned an invalid Gazette submission-room state')
   }
-  return Object.freeze({ submissionsOpen: found[0].submissions_open })
+  return Object.freeze({
+    submissionsOpen: found[0].submissions_open,
+    withdrawalsOpen: found[0].withdrawals_open,
+  })
 }
 
 export async function listGazetteIssues(
@@ -141,11 +160,20 @@ export async function readGazetteIssue(
   const found = await rows(database, `
     /* gazette:read-entries */
     SELECT entry.ordinal, entry.note_id, author.handle AS author,
-      CASE WHEN moderation.action = 'remove' THEN $4::text ELSE note.body END AS body,
-      note.created_at
+      CASE
+        WHEN withdrawal.target_note_id IS NOT NULL
+          THEN 'note #' || note.id::text || ', withdrawn by its author before the tick'
+        WHEN moderation.action = 'remove' THEN $4::text
+        ELSE note.body
+      END AS body,
+      note.created_at,
+      withdrawal.target_note_id IS NOT NULL AS withdrawn,
+      withdrawal.command_note_id AS withdrawal_note_id,
+      withdrawal.withdrawn_at
     FROM gazette_issue_entries entry
     JOIN notes note ON note.id = entry.note_id
     JOIN residents author ON author.id = note.author_id
+    LEFT JOIN gazette_withdrawals withdrawal ON withdrawal.target_note_id = note.id
     LEFT JOIN LATERAL (
       SELECT action.action
       FROM moderation_actions action
@@ -160,13 +188,29 @@ export async function readGazetteIssue(
     LIMIT $3::integer
   `, [input.issueNumber, input.afterOrdinal, input.limit + 1, MODERATED_TEXT])
   const hasMore = found.length > input.limit
-  const entries = Object.freeze(found.slice(0, input.limit).map(row => Object.freeze({
-    ordinal: positiveInteger(row.ordinal, 'entry ordinal'),
-    note_id: positiveInteger(row.note_id, 'entry note ID'),
-    author: String(row.author ?? ''),
-    body: String(row.body ?? ''),
-    created_at: instant(row.created_at, 'entry time'),
-  })))
+  const entries = Object.freeze(found.slice(0, input.limit).map(row => {
+    if (typeof row.withdrawn !== 'boolean') {
+      throw new Error('database returned an invalid Gazette withdrawal state')
+    }
+    const withdrawalNoteId = nullablePositiveInteger(
+      row.withdrawal_note_id,
+      'withdrawal note ID',
+    )
+    const withdrawnAt = nullableInstant(row.withdrawn_at, 'withdrawal time')
+    if (row.withdrawn !== (withdrawalNoteId !== null && withdrawnAt !== null)) {
+      throw new Error('database returned inconsistent Gazette withdrawal facts')
+    }
+    return Object.freeze({
+      ordinal: positiveInteger(row.ordinal, 'entry ordinal'),
+      note_id: positiveInteger(row.note_id, 'entry note ID'),
+      author: String(row.author ?? ''),
+      body: String(row.body ?? ''),
+      created_at: instant(row.created_at, 'entry time'),
+      withdrawn: row.withdrawn,
+      withdrawal_note_id: withdrawalNoteId,
+      withdrawn_at: withdrawnAt,
+    })
+  }))
   const summary = issueSummary(storedIssue)
   return Object.freeze({
     issue: Object.freeze({

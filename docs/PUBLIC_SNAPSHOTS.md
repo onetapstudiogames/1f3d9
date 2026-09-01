@@ -11,8 +11,8 @@ The release tag is derived from the frozen database time:
 `city-snapshot-v2-YYYYMMDDTHHMMSSZ`.
 
 Published `city-snapshot-v1-*` releases remain immutable. Format v2 adds the
-permanent Gazette issue and membership ledgers; verify any release from the
-source commit named by that release's manifest.
+permanent Gazette issue, membership, and body-free withdrawal ledgers; verify
+any release from the source commit named by that release's manifest.
 
 ## Artifact layout
 
@@ -26,10 +26,10 @@ drawing_revisions.ndjson      official.ndjson
 events.ndjson                 physics.ndjson
 gazette_issue_entries.ndjson  places.ndjson
 gazette_issues.ndjson         public_presence.ndjson
-kinds.ndjson                  residents.ndjson
-moderation.ndjson             things.ndjson
-traits.ndjson                 treasury_fees.ndjson
-world_market_offers.ndjson
+gazette_withdrawals.ndjson    residents.ndjson
+kinds.ndjson                  things.ndjson
+moderation.ndjson             traits.ndjson
+treasury_fees.ndjson          world_market_offers.ndjson
 manifest.json
 ```
 
@@ -95,7 +95,8 @@ of four dispositions.
 | `treasury_fees` | Public city-fee books. |
 | `world_market_offers` | Public world-aisle locks, state, and receipts only; a moderated thing leaves only a body-free offer marker. |
 | `gazette_issues` | Permanent issues: the issue number appears as both generic `id` and explicit `issue_number`, followed by schedule, print time, exact system header, entry count, and print-event reference. |
-| `gazette_issue_entries` | Permanent source-note membership: note ID, issue number, ordinal, author identity, and source time. Bodies remain in `notes`; a moderated note remains body-free while its issue membership stays public. |
+| `gazette_issue_entries` | Permanent source-note membership: note ID, issue number, ordinal, author identity, and source time. A withdrawn entry additionally carries `withdrawn: true`, its `withdrawal_note_id`, and `withdrawn_at`; an ordinary entry's payload remains unchanged. Bodies remain in `notes`; moderation and withdrawal never remove public membership. |
+| `gazette_withdrawals` | Body-free author withdrawal ledger: target note ID, withdrawal-command note ID, author identity, and the command's database-owned time. The original submission and command bodies remain only in `notes`. |
 | `official` | Versioned canonical domain, network, money, source, and no-token facts from the exporter. |
 | `physics` | Versioned frozen actions, effect bricks, and safety ceilings from the exporter. |
 
@@ -137,9 +138,11 @@ of four dispositions.
 
 The exact machine-readable registry is embedded in every manifest and locked
 in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts). The
-reviewed drawing and Gazette projections are explicit parts of format v2; other
-new tables and fields remain absent until the database and registry boundaries
-both add them. A format change requires a new version: already-published
+reviewed drawing and Gazette projections are explicit parts of format v2. The
+withdrawal projection adds fields to an issue entry only when its immutable
+ledger row exists, so dormant ordinary entry payloads remain exact; other new
+tables and fields remain absent until the database and registry boundaries both
+add them. A format change requires a new version: already-published
 format-v1 releases keep their original registry, and format v2 is a separate
 tag series whose original releases remain fixed to their manifest source commit.
 

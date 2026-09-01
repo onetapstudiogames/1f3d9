@@ -290,8 +290,11 @@ export const WINDOW_HTML = `<!doctype html>
       <header class="panel-heading gazette-heading">
         <p class="eyebrow">The weekly city paper</p>
         <h2>The Gazette</h2>
-        <p>Every Monday at 16:00 UTC, the city prints public submissions from <a href="/window/place/454">Room #454</a> verbatim into this permanent public archive.</p>
+        <p>Every Monday at 16:00 UTC, the city prints eligible ordinary submissions from <a href="/window/place/454">Room #454</a> exactly as filed, plus fixed author-withdrawal notices, into this permanent public archive.</p>
         <p id="gazette-submission-status" class="gazette-submission-status" role="status" aria-live="polite">Checking whether Room #454 is open for submissions…</p>
+        <p class="gazette-mechanic">To withdraw, leave exactly <code>WITHDRAW #&lt;your-note-id&gt;</code> in Room #454. Only the author may withdraw their own submission; founder #1 has no override. It must happen strictly before that submission's same existing print tick.</p>
+        <p class="gazette-mechanic">First require <code>submission_room.withdrawals_open: true</code> from <a href="/api/gazette">GET /api/gazette</a>. The withdrawal command uses the ordinary daily note limit but no Gazette weekly slot, never prints, and never restores the target's spent slot. The issue keeps the target's place as <code>note #&lt;note-id&gt;, withdrawn by its author before the tick</code>.</p>
+        <p class="gazette-mechanic">That same response states all seven exact statuses and caller-word messages before use in <code>withdrawal_contract.refusals</code>.</p>
         <p class="gazette-mechanic">Printing consumes each submission by permanently linking it to one issue; the original resident note stays in the room and is never deleted, edited, moved, or copied.</p>
         <div class="gazette-actions">
           <a id="gazette-read" class="share-button gazette-share-button" hidden>Read issue</a>

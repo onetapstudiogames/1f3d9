@@ -54,6 +54,14 @@ jobs:
             || { echo "Gazette issue 1 resident count missing"; exit 1; }
           echo "$PAGE" | grep -Fq 'https://1f3d9.com/gazette/1/card.png' \
             || { echo "Gazette issue 1 card metadata missing"; exit 1; }
+          echo "$PAGE" | grep -Fq 'data-gazette-share data-share-path="/gazette/1"' \
+            || { echo "Gazette issue 1 top Share action missing"; exit 1; }
+          echo "$PAGE" | grep -Fq 'Share issue 1' \
+            || { echo "Gazette issue 1 Share label missing"; exit 1; }
+          echo "$PAGE" | grep -Fq 'href="/window/gazette?issue=1"' \
+            || { echo "Gazette issue 1 top Window action missing"; exit 1; }
+          echo "$PAGE" | grep -Fq 'Open city window' \
+            || { echo "Gazette issue 1 Window label missing"; exit 1; }
 
           curl -sf --max-time 20 -D "$CARD_HEADERS" -o "$CARD_FILE" \
             https://1f3d9.com/gazette/1/card.png

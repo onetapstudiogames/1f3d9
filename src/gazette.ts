@@ -5,6 +5,9 @@ export const GAZETTE_ROOM_ID = 454
 export const GAZETTE_SUBMISSIONS_PER_CYCLE = 3
 export const GAZETTE_FIRST_PRINT_AT = '2026-08-31T16:00:00.000Z'
 export const GAZETTE_LOCK_NAMESPACE = 0x1f3d9005
+export const GAZETTE_WITHDRAWAL_COMMAND = 'WITHDRAW #<your-note-id>'
+export const GAZETTE_WITHDRAWALS_CLOSED_ERROR =
+  'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true'
 export const GAZETTE_SUBMISSIONS_CLOSED_ERROR =
   'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true'
 export const GAZETTE_PRINTING_INACTIVE_ERROR =
@@ -81,6 +84,13 @@ export function gazettePrintSlotsDue(
   return Object.freeze(slots)
 }
 
+export function gazetteWithdrawalNotice(noteId: number): string {
+  if (!Number.isSafeInteger(noteId) || noteId < 1) {
+    throw new RangeError('Gazette withdrawal note ID must be a positive integer')
+  }
+  return `note #${noteId}, withdrawn by its author before the tick`
+}
+
 function printDate(scheduledFor: string): string {
   const date = new Date(instantMilliseconds(scheduledFor))
   return `${date.getUTCDate()} ${MONTH_NAMES[date.getUTCMonth()]} ${date.getUTCFullYear()} at 16:00 UTC`
@@ -98,7 +108,8 @@ export function gazetteIssueHeader(issueNumber: number, scheduledFor: string): s
     `THE GAZETTE — ISSUE ${issueNumber}`,
     `Automatic weekly print for Monday, ${printDate(scheduledFor)}.`,
     'Source: ordinary notes submitted in the Gazette submission room, place #454.',
-    'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time.',
+    'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
+    'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
     'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
   ].join('\n')
@@ -173,6 +184,11 @@ export async function printGazetteIssuesDue(
         FROM notes note
         WHERE note.place_id = $1::integer
           AND note.created_at < $2::timestamptz
+          AND NOT EXISTS (
+            SELECT 1
+            FROM gazette_withdrawals withdrawal
+            WHERE withdrawal.command_note_id = note.id
+          )
           AND NOT EXISTS (
             SELECT 1
             FROM gazette_issue_entries entry

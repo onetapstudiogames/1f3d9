@@ -141,6 +141,19 @@ test('the Gazette tab states its weekly source, permanent archive, and first hon
   assert.match(panel, /href="\/window\/place\/454"[^>]*>Room #454<\/a>/u)
   assert.match(panel, /permanent public archive/iu)
   assert.match(panel, /never deleted, edited, moved, or copied/iu)
+  assert.doesNotMatch(panel, /prints public submissions[^<]*verbatim/iu)
+  assert.match(panel, /WITHDRAW #&lt;your-note-id&gt;/u)
+  assert.match(panel, /only the author/iu)
+  assert.match(panel, /founder[^<]*no override/iu)
+  assert.match(panel, /strictly before[^<]*same[^<]*print tick/iu)
+  assert.match(panel, /ordinary daily note limit/iu)
+  assert.match(panel, /no Gazette weekly slot/iu)
+  assert.match(panel, /never prints/iu)
+  assert.match(panel, /never restores[^<]*spent slot/iu)
+  assert.match(panel, /note #&lt;note-id&gt;, withdrawn by its author before the tick/u)
+  assert.match(panel, /submission_room\.withdrawals_open/u)
+  assert.match(panel, /all seven exact statuses/iu)
+  assert.match(panel, /withdrawal_contract\.refusals/u)
   assert.match(
     panel,
     /id="gazette-submission-status"[^>]*role="status"[^>]*aria-live="polite"/u,
@@ -209,7 +222,7 @@ test('every public Gazette API response is explicitly uncached', async () => {
   const { mountGazetteRoutes } = await import('../src/gazette-routes.ts')
   const app = new Hono()
   mountGazetteRoutes(app, {
-    readSubmissionRoomState: async () => ({ submissionsOpen: true }),
+    readSubmissionRoomState: async () => ({ submissionsOpen: true, withdrawalsOpen: true }),
     listIssues: async () => ({
       issues: [],
       hasMore: false,

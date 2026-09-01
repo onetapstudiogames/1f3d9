@@ -396,6 +396,8 @@ const laterHolderReleaseReady = Object.freeze({
     'DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED',
   CONFIRM_GAZETTE_SCHEMA_MIGRATION:
     'APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED',
+  CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION:
+    'APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN',
   CONFIRM_RESUMABLE_REGISTRATION_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_THING_MAKER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
@@ -482,6 +484,8 @@ function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_GAZETTE_SCHEMA_MIGRATION',
     'CONFIRM_PRODUCTION_DRAWING_RELEASE="${8-}"',
     'export CONFIRM_PRODUCTION_DRAWING_RELEASE',
+    'CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION="${9-}"',
+    'export CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -504,6 +508,7 @@ function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION ?? '',
         readiness.CONFIRM_GAZETTE_SCHEMA_MIGRATION ?? '',
         readiness.CONFIRM_PRODUCTION_DRAWING_RELEASE ?? '',
+        readiness.CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -597,6 +602,26 @@ test('preparation requires provider-key and migration readiness before any relea
   )
   assert.equal(existsSync(fixture.commandLog), false)
 
+  const missingGazetteWithdrawal = fixture.run({
+    CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION: '',
+  })
+  assert.notEqual(missingGazetteWithdrawal.status, 0)
+  assert.match(
+    `${missingGazetteWithdrawal.stdout}\n${missingGazetteWithdrawal.stderr}`,
+    /Gazette withdrawal schema.*Production.*withdrawals remained closed.*real PostgreSQL.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
+  const wrongGazetteWithdrawalState = fixture.run({
+    CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION: 'APPLIED_TO_PRODUCTION',
+  })
+  assert.notEqual(wrongGazetteWithdrawalState.status, 0)
+  assert.match(
+    `${wrongGazetteWithdrawalState.stdout}\n${wrongGazetteWithdrawalState.stderr}`,
+    /Gazette withdrawal schema.*Production.*withdrawals remained closed.*real PostgreSQL.*before.*rollout/iu,
+  )
+  assert.equal(existsSync(fixture.commandLog), false)
+
   const missingDrawingRelease = fixture.run({ CONFIRM_PRODUCTION_DRAWING_RELEASE: '' })
   assert.notEqual(missingDrawingRelease.status, 0)
   assert.match(
@@ -627,6 +652,48 @@ test('release instructions require maker provenance before later-holder marks in
   assert.match(
     deploymentRunbook,
     /CONFIRM_THING_MAKER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+  )
+})
+
+test('Gazette withdrawal release instructions keep schema dormant until exact-commit activation', () => {
+  const previewDormant = deploymentRunbook.indexOf(
+    'npm run migrate:preview:gazette-withdrawal',
+  )
+  const previewActivation = deploymentRunbook.indexOf(
+    'npm run migrate:preview:gazette-withdrawal-activation',
+  )
+  const productionDormant = deploymentRunbook.indexOf(
+    'npm run migrate:production:gazette-withdrawal',
+  )
+  const productionActivation = deploymentRunbook.indexOf(
+    'npm run migrate:production:gazette-withdrawal-activation',
+  )
+
+  assert.ok(previewDormant >= 0 && previewDormant < previewActivation)
+  assert.ok(productionDormant >= 0 && productionDormant < productionActivation)
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_GAZETTE_WITHDRAWAL=INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER/u,
+  )
+  assert.match(
+    deploymentRunbook,
+    /CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION=OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT/u,
+  )
+  assert.match(
+    deploymentRunbook,
+    /withdrawals_open[\s\S]*false[\s\S]*exact[ -]commit[\s\S]*\/api\/official[\s\S]*withdrawals_open[\s\S]*true/iu,
+  )
+  assert.match(
+    deploymentRunbook,
+    /Preview database lacks the Gazette base schema[\s\S]*500[\s\S]*not[\s\S]*withdrawal rollout/iu,
+  )
+  assert.match(
+    environmentRunbook,
+    /CONFIRM_GAZETTE_WITHDRAWAL[\s\S]*INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER[\s\S]*CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION[\s\S]*OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT/iu,
+  )
+  assert.match(
+    environmentRunbook,
+    /GAZETTE_DEPLOYMENT_COMMIT[\s\S]*room and withdrawal activations/iu,
   )
 })
 

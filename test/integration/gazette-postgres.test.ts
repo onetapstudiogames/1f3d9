@@ -36,6 +36,14 @@ const activationDdl = await readFile(
   new URL('../../db/migrations/20260827_gazette_room_activation.sql', import.meta.url),
   'utf8',
 )
+const withdrawalMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260901_gazette_withdrawal.sql', import.meta.url),
+  'utf8',
+)
+const withdrawalActivationDdl = await readFile(
+  new URL('../../db/migrations/20260901_gazette_withdrawal_activation.sql', import.meta.url),
+  'utf8',
+)
 
 type GazetteRuntime = Readonly<{
   gazetteCycleFor: (value: string | Date) => Readonly<{
@@ -45,13 +53,14 @@ type GazetteRuntime = Readonly<{
   printGazetteIssuesDue?: (
     database: TaggedSql,
     through: string | Date,
-  ) => Promise<unknown>
+  ) => Promise<readonly unknown[]>
+  gazetteWithdrawalNotice?: (noteId: number) => string
 }>
 
 type GazetteStoreRuntime = Readonly<{
   readGazetteSubmissionRoomState?: (
     database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
-  ) => Promise<Readonly<{ submissionsOpen: boolean }>>
+  ) => Promise<Readonly<{ submissionsOpen: boolean; withdrawalsOpen: boolean }>>
   listGazetteIssues?: (
     database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
     input: Readonly<{ beforeIssueNumber: number | null; limit: number }>,
@@ -206,9 +215,10 @@ async function assertGazetteDependencyWriteRejected(
   )
 }
 
-test('dormant Gazette migration installs over the exact closed pre-Gazette shell and reruns', async t => {
+test('an old open Gazette upgrades through dormant withdrawal installation and activation', async t => {
   const { database, containerName } = await startPostgres()
   t.after(async () => {
+    setEngineTransactionRunnerForTests(null)
     await database.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', containerName], {
       encoding: 'utf8',
@@ -216,10 +226,27 @@ test('dormant Gazette migration installs over the exact closed pre-Gazette shell
     })
   })
 
+  setEngineTransactionRunnerForTests(async (_ignored, work) => {
+    const client = await database.connect()
+    try {
+      await client.query('BEGIN')
+      const result = await work(taggedFor(client), true)
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
+  })
+
   await database.query(preGazetteSchemaDdl)
   await database.query(`
     INSERT INTO residents (id, handle, model, secret_hash)
-    VALUES (1, 'gazette-founder', 'integration-test', repeat('1', 64));
+    VALUES
+      (1, 'gazette-founder', 'integration-test', repeat('1', 64)),
+      (2, 'gazette-upgrade-author', 'integration-test', repeat('2', 64));
 
     INSERT INTO places (
       id, parent_id, place_kind, name, description, owner_id,
@@ -240,6 +267,9 @@ test('dormant Gazette migration installs over the exact closed pre-Gazette shell
       'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
       '', 1, FALSE, FALSE, FALSE
     );
+
+    INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+    VALUES (1, 454, 454), (2, 454, 454);
   `)
 
   const roomStateQuery = `
@@ -262,6 +292,100 @@ test('dormant Gazette migration installs over the exact closed pre-Gazette shell
       AND trigger.tgenabled IN ('O', 'A')
       AND NOT trigger.tgisinternal
   `)).rows, [{ trigger_name: 'gazette_note_submission_limit' }])
+
+  await database.query(activationDdl)
+  const target = (await database.query<{ id: number; created_at: Date }>(`
+    INSERT INTO notes (place_id, author_id, body)
+    VALUES (454, 2, 'Submission filed before withdrawal support.')
+    RETURNING id, created_at
+  `)).rows[0]!
+  const cycle = gazetteRuntime.gazetteCycleFor(target.created_at)
+
+  await database.query(withdrawalMigrationDdl)
+  assert.deepEqual((await database.query(`
+    SELECT gazette_submission_room_state(place) AS state,
+      gazette_submission_room_is_open() AS submissions_open,
+      gazette_withdrawals_are_open() AS withdrawals_open
+    FROM places place WHERE id = 454
+  `)).rows[0], { state: 'open', submissions_open: true, withdrawals_open: false })
+  await assert.rejects(
+    database.query(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES (454, 2, $1)
+    `, [`WITHDRAW #${target.id}`]),
+    (error: unknown) => {
+      assert.equal((error as { constraint?: string }).constraint, 'gazette_withdrawals_closed')
+      return true
+    },
+  )
+  const postDormantSubmission = (await database.query<{ id: number }>(`
+    INSERT INTO notes (place_id, author_id, body)
+    VALUES (454, 2, 'Submission filed while withdrawal support is dormant.')
+    RETURNING id
+  `)).rows[0]!
+  const dormantPrinted = await gazetteRuntime.printGazetteIssuesDue!(
+    taggedFor(database),
+    cycle.startsAt,
+  )
+  assert.ok(dormantPrinted.length >= 1, 'the already-open printer remains live')
+  assert.deepEqual((await database.query(`
+    SELECT
+      (SELECT count(*)::integer FROM gazette_issue_entries
+        WHERE note_id IN ($1, $2)) AS current_entries,
+      (SELECT count(*)::integer FROM gazette_withdrawals) AS withdrawals
+  `, [target.id, postDormantSubmission.id])).rows[0], {
+    current_entries: 0,
+    withdrawals: 0,
+  })
+
+  await database.query(
+    'ALTER TABLE gazette_issue_entries ENABLE REPLICA TRIGGER gazette_issue_entry_source',
+  )
+  try {
+    await assert.rejects(
+      database.query(withdrawalActivationDdl),
+      /withdrawal ledger and guards must be installed before withdrawals can open/iu,
+    )
+  } finally {
+    await database.query(
+      'ALTER TABLE gazette_issue_entries ENABLE TRIGGER gazette_issue_entry_source',
+    )
+  }
+  await database.query(withdrawalActivationDdl)
+  assert.deepEqual((await database.query(`
+    SELECT gazette_submission_room_state(place) AS state,
+      gazette_submission_room_is_open() AS submissions_open,
+      gazette_withdrawals_are_open() AS withdrawals_open
+    FROM places place WHERE id = 454
+  `)).rows[0], {
+    state: 'withdrawals_open',
+    submissions_open: true,
+    withdrawals_open: true,
+  })
+
+  const command = (await database.query<{ id: number }>(`
+    INSERT INTO notes (place_id, author_id, body)
+    VALUES (454, 2, $1)
+    RETURNING id
+  `, [`WITHDRAW #${target.id}`])).rows[0]!
+  assert.deepEqual((await database.query(`
+    SELECT target_note_id, command_note_id
+    FROM gazette_withdrawals
+    WHERE target_note_id = $1
+  `, [target.id])).rows[0], {
+    target_note_id: target.id,
+    command_note_id: command.id,
+  })
+  await gazetteRuntime.printGazetteIssuesDue!(taggedFor(database), cycle.endsAt)
+  assert.deepEqual((await database.query(`
+    SELECT entry.ordinal, entry.note_id
+    FROM gazette_issue_entries entry
+    WHERE entry.note_id IN ($1, $2)
+    ORDER BY entry.ordinal
+  `, [target.id, postDormantSubmission.id])).rows, [
+    { ordinal: 1, note_id: target.id },
+    { ordinal: 2, note_id: postDormantSubmission.id },
+  ])
 })
 
 test('Gazette prints and weekly submissions hold under real PostgreSQL', async t => {
@@ -589,6 +713,9 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
           author: 'gazette-beta',
           body: '  lead\ntrail  ',
           created_at: '2026-08-24T16:00:00.000Z',
+          withdrawn: false,
+          withdrawal_note_id: null,
+          withdrawn_at: null,
         },
         {
           ordinal: 2,
@@ -596,6 +723,9 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
           author: 'gazette-alpha',
           body: 'Unicode 🏮\nunchanged',
           created_at: '2026-08-30T12:00:00.000Z',
+          withdrawn: false,
+          withdrawal_note_id: null,
+          withdrawn_at: null,
         },
       ],
       hasMore: true,
@@ -1112,6 +1242,550 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
   })
 })
 
+test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a notice', async t => {
+  const { database, containerName } = await startPostgres()
+  t.after(async () => {
+    setEngineTransactionRunnerForTests(null)
+    await database.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', containerName], {
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+  })
+
+  await database.query(schemaDdl)
+  await database.query(`
+    INSERT INTO residents (id, handle, model, secret_hash)
+    VALUES
+      (1, 'gazette-founder', 'integration-test', repeat('1', 64)),
+      (2, 'gazette-author', 'integration-test', repeat('2', 64));
+
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    )
+    SELECT
+      2, world.id, 'continent', 'gazette withdrawal test continent',
+      'Integration-only parent for the Gazette room.', 1,
+      FALSE, FALSE, FALSE
+    FROM places world
+    WHERE world.place_kind = 'world';
+
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, purpose, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    ) VALUES (
+      454, 2, 'place', 'the gazette submission room',
+      'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+      '', 1, FALSE, FALSE, FALSE
+    );
+
+    INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+    VALUES (1, 454, 454), (2, 454, 454);
+  `)
+  await database.query(withdrawalMigrationDdl)
+  await database.query(activationDdl)
+  await database.query(withdrawalActivationDdl)
+
+  const sql = taggedFor(database)
+  const publicDatabase = Object.freeze({
+    query: async (text: string, params: readonly unknown[] = []) => (
+      await database.query(text, [...params])
+    ).rows,
+  })
+  setEngineTransactionRunnerForTests(async (_ignored, work) => {
+    const client = await database.connect()
+    try {
+      await client.query('BEGIN')
+      const result = await work(taggedFor(client), true)
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
+  })
+  const submit = (residentId: number, residentHandle: string, text: string) => (
+    runTalkNoteAction({ placeId: 454, residentId, residentHandle, text }, sql)
+  )
+
+  assert.deepEqual(
+    await gazetteStoreRuntime.readGazetteSubmissionRoomState!(publicDatabase),
+    { submissionsOpen: true, withdrawalsOpen: true },
+  )
+  const target = await submit(2, 'gazette-author', 'Draft that needs one correction.')
+  assert.equal(target.ok, true)
+  if (!target.ok) return
+  const targetId = target.note.id
+
+  assert.deepEqual(await submit(2, 'gazette-author', 'WITHDRAW #0'), {
+    ok: false,
+    status: 400,
+    error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+  })
+  assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW#${targetId}`), {
+    ok: false,
+    status: 400,
+    error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+  })
+  assert.deepEqual(await submit(2, 'gazette-author', 'WITHDRAW #2147483647'), {
+    ok: false,
+    status: 404,
+    error: 'Gazette submission note #2147483647 was not found in room #454',
+  })
+  assert.deepEqual(await submit(1, 'gazette-founder', `WITHDRAW #${targetId}`), {
+    ok: false,
+    status: 403,
+    error: `only the author may withdraw Gazette submission note #${targetId}; you are not its author`,
+  })
+
+  const withdrawn = await submit(2, 'gazette-author', `WITHDRAW #${targetId}`)
+  assert.equal(withdrawn.ok, true)
+  if (!withdrawn.ok) return
+  const withdrawal = (withdrawn as typeof withdrawn & {
+    gazetteWithdrawal?: Readonly<{
+      target_note_id: number
+      command_note_id: number
+      withdrawn_at: string
+      notice: string
+    }>
+  }).gazetteWithdrawal
+  assert.deepEqual(withdrawal, {
+    target_note_id: targetId,
+    command_note_id: withdrawn.note.id,
+    withdrawn_at: iso(withdrawn.note.created_at),
+    notice: `note #${targetId}, withdrawn by its author before the tick`,
+  })
+  assert.deepEqual(
+    await submit(2, 'gazette-author', `WITHDRAW #${targetId}`),
+    { ...withdrawn, replayed: true },
+  )
+  await assert.rejects(
+    database.query(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES (454, 2, $1)
+    `, [`WITHDRAW #${targetId}`]),
+    (error: unknown) => {
+      assert.equal(
+        (error as { constraint?: string }).constraint,
+        'gazette_withdrawal_already_withdrawn',
+      )
+      return true
+    },
+  )
+
+  const second = await submit(2, 'gazette-author', 'Second kept submission.')
+  const third = await submit(2, 'gazette-author', 'Third kept submission.')
+  assert.equal(second.ok, true)
+  assert.equal(third.ok, true)
+  assert.equal((await submit(2, 'gazette-author', 'Fourth submission must stay refused.')).ok, false)
+  const cycle = gazetteRuntime.gazetteCycleFor(new Date())
+  assert.deepEqual((await database.query(`
+    SELECT resident.notes_today,
+      count(note.id) FILTER (
+        WHERE note.place_id = 454
+          AND note.created_at >= $1
+          AND note.created_at < $2
+          AND NOT EXISTS (
+            SELECT 1 FROM gazette_withdrawals withdrawal
+            WHERE withdrawal.command_note_id = note.id
+          )
+      )::integer AS weekly_submissions,
+      count(note.id) FILTER (WHERE note.place_id = 454)::integer AS room_notes,
+      (SELECT count(*)::integer FROM gazette_withdrawals) AS withdrawals
+    FROM residents resident
+    LEFT JOIN notes note ON note.author_id = resident.id
+    WHERE resident.id = 2
+    GROUP BY resident.id
+  `, [cycle.startsAt, cycle.endsAt])).rows[0], {
+    notes_today: 4,
+    weekly_submissions: 3,
+    room_notes: 4,
+    withdrawals: 1,
+  })
+
+  assert.equal(typeof gazetteRuntime.printGazetteIssuesDue, 'function')
+  await gazetteRuntime.printGazetteIssuesDue!(sql, cycle.endsAt)
+  const stored = (await database.query<{
+    issue_number: number
+    ordinal: number
+    note_id: number
+  }>(`
+    SELECT entry.issue_number, entry.ordinal, entry.note_id
+    FROM gazette_issue_entries entry
+    WHERE entry.note_id = $1
+  `, [targetId])).rows[0]!
+  assert.equal(stored.ordinal, 1)
+  assert.equal((await database.query(`
+    SELECT count(*)::integer AS count
+    FROM gazette_issue_entries
+    WHERE note_id = $1
+  `, [withdrawn.note.id])).rows[0].count, 0)
+
+  const publicIssue = await gazetteStoreRuntime.readGazetteIssue!(publicDatabase, {
+    issueNumber: stored.issue_number,
+    afterOrdinal: null,
+    limit: 200,
+  })
+  assert.deepEqual(publicIssue?.entries[0], {
+    ordinal: 1,
+    note_id: targetId,
+    author: 'gazette-author',
+    body: `note #${targetId}, withdrawn by its author before the tick`,
+    created_at: iso(target.note.created_at),
+    withdrawn: true,
+    withdrawal_note_id: withdrawn.note.id,
+    withdrawn_at: iso(withdrawn.note.created_at),
+  })
+
+  await database.query(`
+    INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+    VALUES ('note', $1, 'remove', 1, 'withdrawal notice precedence')
+  `, [targetId])
+  assert.equal(
+    (await gazetteStoreRuntime.readGazetteIssue!(publicDatabase, {
+      issueNumber: stored.issue_number, afterOrdinal: null, limit: 200,
+    }))?.entries[0]?.body,
+    `note #${targetId}, withdrawn by its author before the tick`,
+  )
+  await database.query(`
+    INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+    VALUES ('note', $1, 'restore', 1, 'withdrawal notice remains permanent')
+  `, [targetId])
+  assert.equal(
+    (await gazetteStoreRuntime.readGazetteIssue!(publicDatabase, {
+      issueNumber: stored.issue_number, afterOrdinal: null, limit: 200,
+    }))?.entries[0]?.body,
+    `note #${targetId}, withdrawn by its author before the tick`,
+  )
+
+  await assert.rejects(
+    database.query('UPDATE gazette_withdrawals SET withdrawn_at = withdrawn_at WHERE target_note_id = $1', [targetId]),
+    /append-only|history/iu,
+  )
+  await assert.rejects(
+    database.query('DELETE FROM gazette_withdrawals WHERE target_note_id = $1', [targetId]),
+    /append-only|history/iu,
+  )
+  await assert.rejects(
+    database.query('TRUNCATE gazette_withdrawals'),
+    /append-only|history/iu,
+  )
+  await assert.rejects(
+    database.query('TRUNCATE gazette_issue_entries'),
+    /append-only|history/iu,
+  )
+  await assert.rejects(
+    database.query('TRUNCATE gazette_issues CASCADE'),
+    /append-only|history/iu,
+  )
+  assert.equal(
+    (await gazetteStoreRuntime.readGazetteIssue!(publicDatabase, {
+      issueNumber: stored.issue_number, afterOrdinal: null, limit: 200,
+    }))?.entries[0]?.body,
+    `note #${targetId}, withdrawn by its author before the tick`,
+  )
+  if (!second.ok) return
+  assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${second.note.id}`), {
+    ok: false,
+    status: 409,
+    error: `Gazette submission note #${second.note.id} already printed in issue #${stored.issue_number} and cannot be withdrawn`,
+  })
+
+  await database.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')
+  let passedTickTargetId = 0
+  try {
+    passedTickTargetId = (await database.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body, created_at)
+      VALUES (454, 2, 'Printer-delayed historical submission.', $1::timestamptz - interval '1 second')
+      RETURNING id
+    `, [cycle.startsAt])).rows[0]!.id
+  } finally {
+    await database.query('ALTER TABLE notes ENABLE TRIGGER gazette_note_submission_limit')
+  }
+  assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${passedTickTargetId}`), {
+    ok: false,
+    status: 409,
+    error: `Gazette submission note #${passedTickTargetId} can be withdrawn only strictly before ${cycle.startsAt}; that print tick has passed`,
+  })
+})
+
+test('Gazette withdrawal and printing serialize on the shared weekly lock', async t => {
+  const { database, containerName } = await startPostgres()
+  t.after(async () => {
+    setEngineTransactionRunnerForTests(null)
+    await database.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', containerName], {
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+  })
+
+  await database.query(schemaDdl)
+  await database.query(`
+    INSERT INTO residents (id, handle, model, secret_hash)
+    VALUES
+      (1, 'gazette-founder', 'integration-test', repeat('1', 64)),
+      (2, 'gazette-withdrawal-first', 'integration-test', repeat('2', 64)),
+      (3, 'gazette-printer-first', 'integration-test', repeat('3', 64)),
+      (12, 'gazette-tick-boundary', 'integration-test', repeat('4', 64));
+
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    )
+    SELECT
+      2, world.id, 'continent', 'gazette lock test continent',
+      'Integration-only parent for Gazette lock-order tests.', 1,
+      FALSE, FALSE, FALSE
+    FROM places world
+    WHERE world.place_kind = 'world';
+
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, purpose, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    ) VALUES (
+      454, 2, 'place', 'the gazette submission room',
+      'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+      '', 1, FALSE, FALSE, FALSE
+    );
+
+    INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+    VALUES (1, 454, 454), (2, 454, 454), (3, 454, 454), (12, 454, 454);
+  `)
+  await database.query(withdrawalMigrationDdl)
+  await database.query(activationDdl)
+  await database.query(withdrawalActivationDdl)
+  setEngineTransactionRunnerForTests(null)
+
+  const printGazetteIssuesDue = gazetteRuntime.printGazetteIssuesDue!
+  const cycle = gazetteRuntime.gazetteCycleFor(new Date())
+  const publicDatabase = Object.freeze({
+    query: async (text: string, params: readonly unknown[] = []) => (
+      await database.query(text, [...params])
+    ).rows,
+  })
+  const waitState = async (operation: Promise<unknown>): Promise<'settled' | 'waiting'> => (
+    Promise.race([
+      operation.then(() => 'settled' as const, () => 'settled' as const),
+      delay(100).then(() => 'waiting' as const),
+    ])
+  )
+
+  await t.test('withdrawal-first makes the waiting printer publish the notice', async () => {
+    const target = (await database.query<{ id: number; created_at: Date }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES (454, 2, 'Withdrawal-first draft.')
+      RETURNING id, created_at
+    `)).rows[0]!
+    const withdrawal = await database.connect()
+    const printer = await database.connect()
+    try {
+      await withdrawal.query('BEGIN')
+      await withdrawal.query(`SET LOCAL statement_timeout = '5s'`)
+      const command = (await withdrawal.query<{ id: number; created_at: Date }>(`
+        INSERT INTO notes (place_id, author_id, body)
+        VALUES (454, 2, $1)
+        RETURNING id, created_at
+      `, [`WITHDRAW #${target.id}`])).rows[0]!
+
+      await printer.query('BEGIN')
+      await printer.query(`SET LOCAL statement_timeout = '5s'`)
+      const print = printGazetteIssuesDue(taggedFor(printer), cycle.endsAt)
+      const observedState = await waitState(print)
+      await withdrawal.query('COMMIT')
+      await print
+      await printer.query('COMMIT')
+
+      assert.equal(observedState, 'waiting', 'the printer must wait for the withdrawal lock')
+      const stored = (await database.query<{ issue_number: number; ordinal: number }>(`
+        SELECT issue_number, ordinal
+        FROM gazette_issue_entries
+        WHERE note_id = $1
+      `, [target.id])).rows[0]!
+      const issue = await gazetteStoreRuntime.readGazetteIssue!(publicDatabase, {
+        issueNumber: stored.issue_number,
+        afterOrdinal: null,
+        limit: 200,
+      })
+      const entry = issue?.entries.find(candidate => candidate.note_id === target.id)
+      assert.deepEqual(entry, {
+        ordinal: stored.ordinal,
+        note_id: target.id,
+        author: 'gazette-withdrawal-first',
+        body: `note #${target.id}, withdrawn by its author before the tick`,
+        created_at: iso(target.created_at),
+        withdrawn: true,
+        withdrawal_note_id: command.id,
+        withdrawn_at: iso(command.created_at),
+      })
+    } catch (error) {
+      await withdrawal.query('ROLLBACK').catch(() => undefined)
+      await printer.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      withdrawal.release()
+      printer.release()
+    }
+  })
+
+  await t.test('printer-first makes the waiting withdrawal report already printed', async () => {
+    const target = (await database.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES (454, 3, 'Printer-first draft.')
+      RETURNING id
+    `)).rows[0]!
+    const printer = await database.connect()
+    const withdrawal = await database.connect()
+    try {
+      await printer.query('BEGIN')
+      await printer.query(`SET LOCAL statement_timeout = '5s'`)
+      const followingTick = new Date(
+        Date.parse(cycle.endsAt) + (7 * 24 * 60 * 60 * 1_000),
+      ).toISOString()
+      await printGazetteIssuesDue(taggedFor(printer), followingTick)
+
+      await withdrawal.query('BEGIN')
+      await withdrawal.query(`SET LOCAL statement_timeout = '5s'`)
+      const command = withdrawal.query(`
+        INSERT INTO notes (place_id, author_id, body)
+        VALUES (454, 3, $1)
+      `, [`WITHDRAW #${target.id}`]).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      const observedState = await waitState(command)
+      await printer.query('COMMIT')
+      const outcome = await command
+      await withdrawal.query('ROLLBACK').catch(() => undefined)
+
+      assert.equal(observedState, 'waiting', 'the withdrawal must wait for the printer lock')
+      assert.equal(outcome.ok, false)
+      if (outcome.ok) return
+      const stored = (await database.query<{ issue_number: number }>(`
+        SELECT issue_number
+        FROM gazette_issue_entries
+        WHERE note_id = $1
+      `, [target.id])).rows[0]!
+      assert.equal(
+        (outcome.error as { constraint?: string }).constraint,
+        'gazette_withdrawal_already_printed',
+      )
+      assert.equal(
+        (outcome.error as { message?: string }).message,
+        `Gazette submission note #${target.id} already printed in issue #${stored.issue_number} and cannot be withdrawn`,
+      )
+    } catch (error) {
+      await printer.query('ROLLBACK').catch(() => undefined)
+      await withdrawal.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      printer.release()
+      withdrawal.release()
+    }
+  })
+
+  await t.test('a withdrawal blocked across its tick uses the post-lock database clock', async () => {
+    const target = (await database.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES (454, 12, 'Boundary-crossing draft.')
+      RETURNING id
+    `)).rows[0]!
+    const originalCycleFunction = (await database.query<{ definition: string }>(`
+      SELECT pg_get_functiondef(
+        'gazette_cycle_start(timestamp with time zone)'::regprocedure
+      ) AS definition
+    `)).rows[0]!.definition
+    await database.query(`
+      CREATE TABLE gazette_withdrawal_boundary_test_control (
+        singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+        boundary_at TIMESTAMPTZ NOT NULL
+      )
+    `)
+    const boundaryAt = (await database.query<{ boundary_at: Date }>(`
+      INSERT INTO gazette_withdrawal_boundary_test_control (boundary_at)
+      VALUES (clock_timestamp() + interval '2 seconds')
+      RETURNING boundary_at
+    `)).rows[0]!.boundary_at
+    await database.query(`
+      CREATE OR REPLACE FUNCTION gazette_cycle_start(value TIMESTAMPTZ)
+      RETURNS TIMESTAMPTZ
+      LANGUAGE sql
+      STABLE
+      PARALLEL SAFE
+      AS $$
+        SELECT boundary_at - interval '7 days'
+        FROM gazette_withdrawal_boundary_test_control
+        WHERE singleton
+      $$
+    `)
+
+    const holder = await database.connect()
+    const withdrawal = await database.connect()
+    try {
+      await holder.query('BEGIN')
+      await holder.query(`SET LOCAL statement_timeout = '5s'`)
+      await holder.query(
+        'SELECT pg_advisory_xact_lock($1::integer, $2::integer)',
+        [524128261, 454],
+      )
+      const startedAt = (await holder.query<{ current_time: Date }>(
+        'SELECT clock_timestamp() AS current_time',
+      )).rows[0]!.current_time
+      assert.ok(startedAt < boundaryAt, 'the withdrawal request must begin before the tick')
+
+      await withdrawal.query('BEGIN')
+      await withdrawal.query(`SET LOCAL statement_timeout = '5s'`)
+      const commandBody = `WITHDRAW #${target.id}`
+      const command = withdrawal.query(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        VALUES (454, 12, $1, TIMESTAMPTZ '1900-01-01 00:00:00+00')
+      `, [commandBody]).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      const observedState = await waitState(command)
+      await holder.query(
+        `SELECT pg_sleep_until($1::timestamptz + interval '50 milliseconds')`,
+        [boundaryAt],
+      )
+      const releasedAt = (await holder.query<{ current_time: Date }>(
+        'SELECT clock_timestamp() AS current_time',
+      )).rows[0]!.current_time
+      await holder.query('COMMIT')
+      const outcome = await command
+      await withdrawal.query('ROLLBACK').catch(() => undefined)
+
+      assert.equal(observedState, 'waiting', 'the command must wait for the Gazette lock')
+      assert.ok(releasedAt >= boundaryAt, 'the Gazette lock must stay held through the tick')
+      assert.equal(outcome.ok, false)
+      if (outcome.ok) return
+      assert.equal(
+        (outcome.error as { constraint?: string }).constraint,
+        'gazette_withdrawal_tick_passed',
+      )
+      assert.equal(
+        (outcome.error as { message?: string }).message,
+        `Gazette submission note #${target.id} can be withdrawn only strictly before ${boundaryAt.toISOString()}; that print tick has passed`,
+      )
+      assert.deepEqual((await database.query(`
+        SELECT
+          (SELECT count(*)::integer FROM notes WHERE body = $1) AS command_notes,
+          (SELECT count(*)::integer FROM gazette_withdrawals WHERE target_note_id = $2) AS withdrawals
+      `, [commandBody, target.id])).rows[0], { command_notes: 0, withdrawals: 0 })
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined)
+      await withdrawal.query('ROLLBACK').catch(() => undefined)
+      holder.release()
+      withdrawal.release()
+      await database.query(originalCycleFunction)
+      await database.query('DROP TABLE IF EXISTS gazette_withdrawal_boundary_test_control')
+    }
+  })
+})
+
 test('Gazette schema stays dormant until the post-deploy room activation and both rerun cleanly', async t => {
   const { database, containerName } = await startPostgres()
   t.after(async () => {
@@ -1268,6 +1942,7 @@ test('Gazette schema stays dormant until the post-deploy room activation and bot
   })
 
   await database.query(migrationDdl)
+  await database.query(withdrawalMigrationDdl)
   await database.query(`
     WITH new_trait AS (
       INSERT INTO traits (name, description, recipe, coiner_id)
@@ -1298,7 +1973,7 @@ test('Gazette schema stays dormant until the post-deploy room activation and bot
   if (!readSubmissionRoomState) assert.fail('implement the public Gazette submission-room state')
   assert.deepEqual(
     await readSubmissionRoomState(publicDatabase),
-    { submissionsOpen: false },
+    { submissionsOpen: false, withdrawalsOpen: false },
   )
   const stillClosed = (await database.query(`
     SELECT description, purpose, open_to_building, open_to_things, open_to_notes
@@ -1453,7 +2128,7 @@ test('Gazette schema stays dormant until the post-deploy room activation and bot
   })
   assert.deepEqual(
     await readSubmissionRoomState(publicDatabase),
-    { submissionsOpen: true },
+    { submissionsOpen: true, withdrawalsOpen: false },
   )
   assert.equal((await database.query(`
     SELECT count(*)::integer AS count
@@ -1521,7 +2196,7 @@ test('Gazette schema stays dormant until the post-deploy room activation and bot
       )).rows[0].submissions_open, false)
       assert.deepEqual(
         await readSubmissionRoomState(publicDatabase),
-        { submissionsOpen: false },
+        { submissionsOpen: false, withdrawalsOpen: false },
       )
       await database.query(`
         UPDATE places SET description =
@@ -1601,7 +2276,7 @@ test('Gazette schema stays dormant until the post-deploy room activation and bot
     WHERE name = 'gazette-race-marker'
   `)
 
-  await database.query(migrationDdl)
+  await database.query(withdrawalMigrationDdl)
 
   const openedSubmission = await runTalkNoteAction({
     placeId: 454,

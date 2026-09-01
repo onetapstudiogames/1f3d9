@@ -24,6 +24,9 @@ type IssueEntry = Readonly<{
   author: string
   body: string
   created_at: string
+  withdrawn?: boolean
+  withdrawal_note_id?: number | null
+  withdrawn_at?: string | null
 }>
 
 type IssueDetail = Readonly<{
@@ -35,7 +38,10 @@ type IssueDetail = Readonly<{
 }>
 
 interface GazetteRouteDependencies {
-  readSubmissionRoomState(): Promise<Readonly<{ submissionsOpen: boolean }>>
+  readSubmissionRoomState(): Promise<Readonly<{
+    submissionsOpen: boolean
+    withdrawalsOpen: boolean
+  }>>
   listIssues(input: Readonly<{
     beforeIssueNumber: number | null
     limit: number
@@ -72,7 +78,7 @@ function dependencies(
   overrides: Partial<GazetteRouteDependencies> = {},
 ): GazetteRouteDependencies {
   return {
-    readSubmissionRoomState: async () => ({ submissionsOpen: false }),
+    readSubmissionRoomState: async () => ({ submissionsOpen: false, withdrawalsOpen: false }),
     listIssues: async () => ({
       issues: [], hasMore: false, nextBeforeIssueNumber: null,
     }),
@@ -130,7 +136,7 @@ const summaries = Object.freeze([
 test('the public issue list is newest-first, cursor-paged, and body-free', async () => {
   const calls: Array<Readonly<{ beforeIssueNumber: number | null; limit: number }>> = []
   const app = createApp(dependencies({
-    readSubmissionRoomState: async () => ({ submissionsOpen: true }),
+    readSubmissionRoomState: async () => ({ submissionsOpen: true, withdrawalsOpen: true }),
     listIssues: async input => {
       calls.push(input)
       return input.beforeIssueNumber === null
@@ -144,7 +150,53 @@ test('the public issue list is newest-first, cursor-paged, and body-free', async
   const firstBody = await firstResponse.json()
   assert.deepEqual(firstBody, {
     first_print_at: FIRST_PRINT_AT,
-    submission_room: { place_id: 454, submissions_open: true },
+    submission_room: {
+      place_id: 454,
+      submissions_open: true,
+      withdrawals_open: true,
+    },
+    withdrawal_contract: {
+      command: 'WITHDRAW #<your-note-id>',
+      author_only: true,
+      founder_override: false,
+      deadline: "strictly before that submission's Monday 16:00 UTC print tick",
+      weekly_slot_restored: false,
+      command_counts_toward_weekly_limit: false,
+      command_counts_toward_daily_note_limit: true,
+      command_visibility: 'stored as an ordinary public note in room #454',
+      command_printed: false,
+      printed_notice: 'note #<note-id>, withdrawn by its author before the tick',
+      refusals: {
+        malformed_command: {
+          status: 400,
+          error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+        },
+        withdrawals_inactive: {
+          status: 409,
+          error: 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true',
+        },
+        no_such_submission: {
+          status: 404,
+          error: 'Gazette submission note #<note-id> was not found in room #454',
+        },
+        author_mismatch: {
+          status: 403,
+          error: 'only the author may withdraw Gazette submission note #<note-id>; you are not its author',
+        },
+        already_printed: {
+          status: 409,
+          error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
+        },
+        tick_passed: {
+          status: 409,
+          error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed",
+        },
+        already_withdrawn: {
+          status: 409,
+          error: 'Gazette submission note #<note-id> was already withdrawn by its author',
+        },
+      },
+    },
     issues: [
       {
         issue_number: 4,
@@ -168,7 +220,12 @@ test('the public issue list is newest-first, cursor-paged, and body-free', async
   const olderBody = await olderResponse.json() as Record<string, unknown>
   assert.deepEqual(olderBody, {
     first_print_at: FIRST_PRINT_AT,
-    submission_room: { place_id: 454, submissions_open: true },
+    submission_room: {
+      place_id: 454,
+      submissions_open: true,
+      withdrawals_open: true,
+    },
+    withdrawal_contract: firstBody.withdrawal_contract,
     issues: summaries.slice(2).map(issue => ({
       issue_number: issue.issue_number,
       scheduled_for: issue.scheduled_for,
@@ -192,14 +249,60 @@ test('the pre-first-print list is honestly empty and names the authoritative fir
   assert.equal(response.status, 200)
   assert.deepEqual(await response.json(), {
     first_print_at: FIRST_PRINT_AT,
-    submission_room: { place_id: 454, submissions_open: false },
+    submission_room: {
+      place_id: 454,
+      submissions_open: false,
+      withdrawals_open: false,
+    },
+    withdrawal_contract: {
+      command: 'WITHDRAW #<your-note-id>',
+      author_only: true,
+      founder_override: false,
+      deadline: "strictly before that submission's Monday 16:00 UTC print tick",
+      weekly_slot_restored: false,
+      command_counts_toward_weekly_limit: false,
+      command_counts_toward_daily_note_limit: true,
+      command_visibility: 'stored as an ordinary public note in room #454',
+      command_printed: false,
+      printed_notice: 'note #<note-id>, withdrawn by its author before the tick',
+      refusals: {
+        malformed_command: {
+          status: 400,
+          error: 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>',
+        },
+        withdrawals_inactive: {
+          status: 409,
+          error: 'Gazette withdrawals are not open; read GET /api/gazette and send WITHDRAW only when submission_room.withdrawals_open is true',
+        },
+        no_such_submission: {
+          status: 404,
+          error: 'Gazette submission note #<note-id> was not found in room #454',
+        },
+        author_mismatch: {
+          status: 403,
+          error: 'only the author may withdraw Gazette submission note #<note-id>; you are not its author',
+        },
+        already_printed: {
+          status: 409,
+          error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
+        },
+        tick_passed: {
+          status: 409,
+          error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed",
+        },
+        already_withdrawn: {
+          status: 409,
+          error: 'Gazette submission note #<note-id> was already withdrawn by its author',
+        },
+      },
+    },
     issues: [],
     has_more: false,
     next_before_issue_number: null,
   })
 })
 
-test('issue detail pages entries oldest-first with exact verbatim attribution fields', async () => {
+test('issue detail pages stay oldest-first with exact attribution and withdrawal notices', async () => {
   const calls: Array<Readonly<{
     issueNumber: number
     afterOrdinal: number | null
@@ -224,8 +327,11 @@ test('issue detail pages entries oldest-first with exact verbatim attribution fi
       ordinal: 2,
       note_id: 84,
       author: 'second-resident',
-      body: 'Unicode 🏮 stays verbatim.',
+      body: 'pulled draft that must not cross the public route',
       created_at: '2026-10-07T00:00:00.000Z',
+      withdrawn: true,
+      withdrawal_note_id: 108,
+      withdrawn_at: '2026-10-11T15:59:00.000Z',
     },
     {
       ordinal: 3,
@@ -253,12 +359,20 @@ test('issue detail pages entries oldest-first with exact verbatim attribution fi
 
   const firstResponse = await app.request('/api/gazette/7?limit=2')
   assert.equal(firstResponse.status, 200)
-  assert.deepEqual(await firstResponse.json(), {
+  const firstBody = await firstResponse.json()
+  assert.deepEqual(firstBody, {
     issue,
-    entries: entries.slice(0, 2),
+    entries: [
+      entries[0],
+      {
+        ...entries[1],
+        body: 'note #84, withdrawn by its author before the tick',
+      },
+    ],
     has_more: true,
     next_after_ordinal: 2,
   })
+  assert.doesNotMatch(JSON.stringify(firstBody), /pulled draft/iu)
 
   const restResponse = await app.request('/api/gazette/7?after_ordinal=2&limit=2')
   assert.equal(restResponse.status, 200)

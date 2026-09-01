@@ -64,6 +64,8 @@ type RemoteMigration =
   | 'drawing-contract'
   | 'gazette'
   | 'gazette-room-activation'
+  | 'gazette-withdrawal'
+  | 'gazette-withdrawal-activation'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -106,6 +108,8 @@ export type MigrationFile =
   | 'db/migrations/20260828_drawing_contract.sql'
   | 'db/migrations/20260827_gazette.sql'
   | 'db/migrations/20260827_gazette_room_activation.sql'
+  | 'db/migrations/20260901_gazette_withdrawal.sql'
+  | 'db/migrations/20260901_gazette_withdrawal_activation.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -145,6 +149,10 @@ const GAZETTE_ACKNOWLEDGEMENT =
   'INSTALL_GAZETTE_ARCHIVE_AND_SUBMISSION_LIMIT'
 const GAZETTE_ROOM_ACTIVATION_ACKNOWLEDGEMENT =
   'OPEN_GAZETTE_ROOM_AFTER_MATCHING_APP_DEPLOYMENT'
+const GAZETTE_WITHDRAWAL_ACKNOWLEDGEMENT =
+  'INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER'
+const GAZETTE_WITHDRAWAL_ACTIVATION_ACKNOWLEDGEMENT =
+  'OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT'
 const CITY_CREDIT = Object.freeze({ 'city-credit': '20260822_city_credit.sql' } as const)
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
 const GIT_COMMIT = /^[0-9a-f]{40}$/u
@@ -203,6 +211,9 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'drawing-contract': 'db/migrations/20260828_drawing_contract.sql',
   gazette: 'db/migrations/20260827_gazette.sql',
   'gazette-room-activation': 'db/migrations/20260827_gazette_room_activation.sql',
+  'gazette-withdrawal': 'db/migrations/20260901_gazette_withdrawal.sql',
+  'gazette-withdrawal-activation':
+    'db/migrations/20260901_gazette_withdrawal_activation.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
@@ -218,10 +229,13 @@ function gazetteLiveDeployment(
   target: MigrationTarget,
   environment: MigrationEnvironment,
 ): MigrationRun['liveDeployment'] {
-  if (migration !== 'gazette-room-activation') return undefined
+  if (
+    migration !== 'gazette-room-activation'
+    && migration !== 'gazette-withdrawal-activation'
+  ) return undefined
   const commit = environment.GAZETTE_DEPLOYMENT_COMMIT ?? ''
   if (!GIT_COMMIT.test(commit)) {
-    throw new Error('Gazette room activation requires GAZETTE_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters')
+    throw new Error('Gazette activation requires GAZETTE_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters')
   }
   if (target === 'production') {
     return Object.freeze({ origin: 'https://1f3d9.com', commit })
@@ -360,6 +374,25 @@ export function resolveMigrationRun(
       GAZETTE_ROOM_ACTIVATION_ACKNOWLEDGEMENT,
     )
   }
+  if (
+    migration === 'gazette-withdrawal'
+    && environment.CONFIRM_GAZETTE_WITHDRAWAL !== GAZETTE_WITHDRAWAL_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      'Gazette withdrawal migration requires CONFIRM_GAZETTE_WITHDRAWAL=' +
+      GAZETTE_WITHDRAWAL_ACKNOWLEDGEMENT,
+    )
+  }
+  if (
+    migration === 'gazette-withdrawal-activation'
+    && environment.CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION
+      !== GAZETTE_WITHDRAWAL_ACTIVATION_ACKNOWLEDGEMENT
+  ) {
+    throw new Error(
+      'Gazette withdrawal activation requires CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION=' +
+      GAZETTE_WITHDRAWAL_ACTIVATION_ACKNOWLEDGEMENT,
+    )
+  }
   const liveDeployment = gazetteLiveDeployment(migration, target, environment)
 
   if (target === 'preview') {
@@ -429,7 +462,7 @@ export function verifyGazetteLocalCandidate(
 ): void {
   if (!GIT_COMMIT.test(expectedCommit)) {
     throw new Error(
-      'Gazette room activation requires GAZETTE_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters',
+      'Gazette activation requires GAZETTE_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters',
     )
   }
 
@@ -438,12 +471,12 @@ export function verifyGazetteLocalCandidate(
     worktreeState = git(['status', '--porcelain=v1', '--untracked-files=all'])
   } catch {
     throw new Error(
-      'Gazette room activation could not prove a clean local candidate, including tracked and untracked files; room #454 remains closed',
+      'Gazette activation could not prove a clean local candidate, including tracked and untracked files; activation remains unapplied',
     )
   }
   if (worktreeState !== '') {
     throw new Error(
-      'Gazette room activation requires a clean local candidate, including tracked and untracked files; room #454 remains closed',
+      'Gazette activation requires a clean local candidate, including tracked and untracked files; activation remains unapplied',
     )
   }
 
@@ -452,17 +485,17 @@ export function verifyGazetteLocalCandidate(
     localCommit = git(['rev-parse', '--verify', 'HEAD^{commit}']).trim()
   } catch {
     throw new Error(
-      'Gazette room activation could not prove a full lowercase Git HEAD; room #454 remains closed',
+      'Gazette activation could not prove a full lowercase Git HEAD; activation remains unapplied',
     )
   }
   if (!GIT_COMMIT.test(localCommit)) {
     throw new Error(
-      'Gazette room activation could not prove a full lowercase Git HEAD; room #454 remains closed',
+      'Gazette activation could not prove a full lowercase Git HEAD; activation remains unapplied',
     )
   }
   if (localCommit !== expectedCommit) {
     throw new Error(
-      'GAZETTE_DEPLOYMENT_COMMIT does not match the clean local candidate HEAD; room #454 remains closed',
+      'GAZETTE_DEPLOYMENT_COMMIT does not match the clean local candidate HEAD; Gazette activation remains unapplied',
     )
   }
 }
@@ -501,7 +534,7 @@ export async function verifyGazetteDeployment(
     ? (body as Record<string, unknown>).deployment_commit
     : null
   if (deployedCommit !== expected.commit) {
-    throw new Error('Gazette deployed commit did not match GAZETTE_DEPLOYMENT_COMMIT; room #454 remains closed')
+    throw new Error('Gazette deployed commit did not match GAZETTE_DEPLOYMENT_COMMIT; activation remains unapplied')
   }
 }
 

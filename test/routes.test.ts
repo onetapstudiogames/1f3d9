@@ -285,6 +285,7 @@ interface FakeState {
   publicReadMarkerRaceNeedle: string | null
   laterHolderItems: FakeLaterHolderItem[]
   recentNote: FakeRecentNote | null
+  gazetteWithdrawalCommandIds: Set<number>
   nextNoteId: number
   residentRefusalStates: Map<number, FakeResidentRefusalState>
   actionResolved?: boolean
@@ -386,6 +387,7 @@ const initialState = (): FakeState => ({
     body_text_bytes: Buffer.byteLength('warm light', 'utf8'),
   }],
   recentNote: null,
+  gazetteWithdrawalCommandIds: new Set(),
   nextNoteId: 52,
   residentRefusalStates: new Map(),
 })
@@ -2340,7 +2342,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       body: String(params.at(-3) ?? 'hello from the square'),
       created_at: '2026-08-11T00:00:00.000Z',
     }
-    state = { ...state, recentNote: note, nextNoteId: state.nextNoteId + 1 }
+    const gazetteWithdrawalCommandIds = /^WITHDRAW #[1-9][0-9]*$/u.test(note.body)
+      ? new Set([...state.gazetteWithdrawalCommandIds, note.id])
+      : state.gazetteWithdrawalCommandIds
+    state = {
+      ...state,
+      recentNote: note,
+      gazetteWithdrawalCommandIds,
+      nextNoteId: state.nextNoteId + 1,
+    }
     return [note]
   }
   if (q.includes('notes_today = notes_today + 1')) return state.quota.notes ? [{ id: state.actorId }] : []
@@ -2996,6 +3006,20 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       && note.place_id === Number(params[1])
       && note.body === String(params[2])
       ? [{ ...note }]
+      : []
+  }
+  if (q.includes('/* note-action:gazette-withdrawal */')) {
+    const commandNoteId = Number(params[0])
+    const note = state.recentNote
+    const target = note && note.id === commandNoteId
+      ? /^WITHDRAW #([1-9][0-9]*)$/u.exec(note.body)
+      : null
+    return target && state.gazetteWithdrawalCommandIds.has(commandNoteId)
+      ? [{
+          target_note_id: Number(target[1]),
+          command_note_id: commandNoteId,
+          withdrawn_at: note!.created_at,
+        }]
       : []
   }
   if (q.includes('insert into notes')) {
@@ -3900,6 +3924,76 @@ test('a Gazette same-body replay survives the print boundary gates without a new
   assert.deepEqual(await changed.json(), {
     error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
   })
+})
+
+test('a Gazette withdrawal uses the ordinary note route and replays its public facts', async () => {
+  reset({
+    scenario: 'note retry',
+    currentPlaceId: 454,
+    placeOwnerId: 1,
+    openToNotes: true,
+    gazetteActivated: true,
+  })
+  const request = () => app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 454, body: 'WITHDRAW #8101' }),
+  })
+
+  const first = await request()
+  assert.equal(first.status, 201)
+  const firstBody = await first.json() as {
+    note: { id: number; created_at: string }
+    gazette_withdrawal: Record<string, unknown>
+  }
+  assert.deepEqual(firstBody.gazette_withdrawal, {
+    target_note_id: 8101,
+    command_note_id: firstBody.note.id,
+    withdrawn_at: new Date(firstBody.note.created_at).toISOString(),
+    notice: 'note #8101, withdrawn by its author before the tick',
+  })
+
+  state = { ...state, calls: [], quota: { ...state.quota, notes: false } }
+  const replay = await request()
+  assert.equal(replay.status, 200)
+  assert.deepEqual(
+    (await replay.json() as { gazette_withdrawal: unknown }).gazette_withdrawal,
+    firstBody.gazette_withdrawal,
+  )
+  assert.equal(inserted('notes'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(inserted('action_runs'), 0)
+})
+
+test('a legacy Gazette command-shaped replay never invents withdrawal facts without its ledger row', async () => {
+  reset({
+    scenario: 'note retry',
+    currentPlaceId: 2,
+    openToNotes: false,
+    gazetteActivated: false,
+    quota: { things: true, notes: false, agreements: true },
+    recentNote: {
+      id: 51,
+      place_id: 454,
+      author_id: 7,
+      author: 'tiny-lantern',
+      body: 'WITHDRAW #8101',
+      created_at: '2026-08-11T00:00:00.000Z',
+    },
+  })
+
+  const response = await app.request('/api/note', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ place_id: 454, body: 'WITHDRAW #8101' }),
+  })
+
+  assert.equal(response.status, 200)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(Object.hasOwn(body, 'gazette_withdrawal'), false)
+  assert.equal(inserted('notes'), 0)
+  assert.equal(inserted('events'), 0)
+  assert.equal(inserted('action_runs'), 0)
 })
 
 test('the founder cannot submit to the closed Gazette shell before its canonical activation', async () => {
