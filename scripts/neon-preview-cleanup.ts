@@ -1,6 +1,7 @@
 import { appendFile, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { safeErrorDetail } from './safe-error-detail.ts'
 
 type NeonBranch = Readonly<{ id: string; name: string; primary: boolean }>
 const SHARED_BRANCH = 'preview/shared-vercel-testing'
@@ -15,7 +16,6 @@ export function selectPreviewBranchForClosedPullRequest(
 ): Readonly<{ id: string; name: string }> | null {
   if (!headReference || /[\x00-\x1f]/u.test(headReference)) return null
   const expected = `preview/${headReference}`
-  if (expected === SHARED_BRANCH || expected === 'main' || !expected.startsWith('preview/')) return null
   const matches = branches.filter(branch => branch.name === expected)
   if (matches.length > 1) throw new Error('Multiple Neon branches match the closed pull request')
   const match = matches[0]
@@ -64,6 +64,8 @@ async function listBranches(projectId: string, token: string, fetcher: typeof fe
 }
 
 export async function runNeonPreviewCleanup(input: Readonly<{
+  dryRun?: boolean
+  headReference?: string
   environment?: NodeJS.ProcessEnv
   event?: unknown
   fetcher?: typeof fetch
@@ -83,19 +85,26 @@ export async function runNeonPreviewCleanup(input: Readonly<{
     await writeSummary('Neon preview cleanup: SKIPPED — NEON_API_KEY or NEON_PROJECT_ID is absent.')
     return
   }
-  if (!input.event && !eventPath) throw new Error('GITHUB_EVENT_PATH is absent')
-  const event: unknown = input.event ?? JSON.parse(await readFile(eventPath!, 'utf8'))
-  const pullRequest = isObject(event) && isObject(event.pull_request) ? event.pull_request : undefined
-  const head = pullRequest && isObject(pullRequest.head) ? pullRequest.head : undefined
-  const headReference = head?.ref
-  if (typeof headReference !== 'string') throw new Error('Closed pull request head ref is absent')
-  const headRepository = head && isObject(head.repo) ? head.repo.full_name : undefined
-  if (typeof environment.GITHUB_REPOSITORY !== 'string' || typeof headRepository !== 'string') {
-    throw new Error('Closed pull request repository identity is absent')
+  if (input.headReference !== undefined && !input.dryRun) {
+    throw new Error('A direct head ref is allowed only in rehearsal mode')
   }
-  if (headRepository !== environment.GITHUB_REPOSITORY) {
-    await writeSummary('Neon preview cleanup: SKIPPED — the closed PR came from a fork.')
-    return
+
+  let headReference = input.headReference
+  if (headReference === undefined) {
+    if (!input.event && !eventPath) throw new Error('GITHUB_EVENT_PATH is absent')
+    const event: unknown = input.event ?? JSON.parse(await readFile(eventPath!, 'utf8'))
+    const pullRequest = isObject(event) && isObject(event.pull_request) ? event.pull_request : undefined
+    const head = pullRequest && isObject(pullRequest.head) ? pullRequest.head : undefined
+    headReference = typeof head?.ref === 'string' ? head.ref : undefined
+    if (headReference === undefined) throw new Error('Closed pull request head ref is absent')
+    const headRepository = head && isObject(head.repo) ? head.repo.full_name : undefined
+    if (typeof environment.GITHUB_REPOSITORY !== 'string' || typeof headRepository !== 'string') {
+      throw new Error('Closed pull request repository identity is absent')
+    }
+    if (headRepository !== environment.GITHUB_REPOSITORY) {
+      await writeSummary('Neon preview cleanup: SKIPPED — the closed PR came from a fork.')
+      return
+    }
   }
 
   const target = selectPreviewBranchForClosedPullRequest(headReference, await listBranches(projectId, token, fetcher))
@@ -117,6 +126,11 @@ export async function runNeonPreviewCleanup(input: Readonly<{
     throw new Error('Neon branch changed before deletion; refusing cleanup')
   }
 
+  if (input.dryRun) {
+    await writeSummary(`Neon preview cleanup: would have deleted ${target.name}; nothing was deleted.`)
+    return
+  }
+
   const deleteResponse = await request(branchUrl, token, fetcher, { method: 'DELETE' })
   if (deleteResponse.status === 404) {
     await writeSummary(`Neon preview cleanup: ${target.name} was already absent during deletion.`)
@@ -128,11 +142,23 @@ export async function runNeonPreviewCleanup(input: Readonly<{
   await writeSummary(`Neon preview cleanup: requested deletion of ${target.name}.`)
 }
 
+export function parseNeonPreviewCleanupArguments(arguments_: readonly string[]): Readonly<{
+  dryRun: true
+  headReference: string
+}> {
+  if (arguments_.length === 3 && arguments_[0] === '--dry-run' &&
+      arguments_[1] === '--head-ref' && arguments_[2]) {
+    return Object.freeze({ dryRun: true, headReference: arguments_[2] })
+  }
+  throw new Error('Usage: node --experimental-strip-types scripts/neon-preview-cleanup.ts --dry-run --head-ref <closed-pr-head-ref>')
+}
+
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
 if (invokedPath === fileURLToPath(import.meta.url)) {
-  runNeonPreviewCleanup().catch(error => {
-    const message = error instanceof Error ? error.message.replace(/[\r\n]+/gu, ' ').slice(0, 240) : 'unknown error'
-    const line = `Neon preview cleanup: FAILED — ${message}`
+  Promise.resolve().then(() => runNeonPreviewCleanup(
+    process.argv.length > 2 ? parseNeonPreviewCleanupArguments(process.argv.slice(2)) : undefined,
+  )).catch(error => {
+    const line = `Neon preview cleanup: FAILED — ${safeErrorDetail(error)}`
     const write = process.env.GITHUB_STEP_SUMMARY
       ? appendFile(process.env.GITHUB_STEP_SUMMARY, `${line}\n`)
       : Promise.resolve()

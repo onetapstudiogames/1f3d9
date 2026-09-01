@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  parseNeonPreviewCleanupArguments,
   runNeonPreviewCleanup,
   selectPreviewBranchForClosedPullRequest,
 } from '../scripts/neon-preview-cleanup.ts'
+import { safeErrorDetail } from '../scripts/safe-error-detail.ts'
 
 const branches = Object.freeze([
   Object.freeze({ id: 'br-main', name: 'main', primary: true }),
@@ -19,7 +21,10 @@ test('cleanup selects only the exact non-primary branch for the closed PR', () =
 })
 
 test('cleanup refuses protected, near-match, duplicate, and malformed targets', () => {
-  assert.equal(selectPreviewBranchForClosedPullRequest('shared-vercel-testing', branches), null)
+  assert.throws(
+    () => selectPreviewBranchForClosedPullRequest('shared-vercel-testing', branches),
+    /protected/i,
+  )
   assert.equal(selectPreviewBranchForClosedPullRequest('feature/cost', branches), null)
   assert.equal(selectPreviewBranchForClosedPullRequest('', branches), null)
   assert.throws(
@@ -59,6 +64,68 @@ test('cleanup proves the exact branch again before deleting by ID', async () => 
   assert.deepEqual(requests.map(value => value.method), ['GET', 'GET', 'DELETE'])
   assert.match(requests[2]!.url, /\/branches\/br-feature$/u)
   assert.deepEqual(logs, ['Neon preview cleanup: requested deletion of preview/feature/cost-safe.'])
+})
+
+test('rehearsal proves the exact branch but makes no DELETE request', async () => {
+  const requests: Array<{ url: string; method: string }> = []
+  const logs: string[] = []
+  await runNeonPreviewCleanup({
+    dryRun: true,
+    headReference: 'feature/cost-safe',
+    environment: { NEON_API_KEY: 'key', NEON_PROJECT_ID: 'project' },
+    log: line => { logs.push(line) },
+    fetcher: (async (input, init) => {
+      const method = init?.method ?? 'GET'
+      const url = String(input)
+      requests.push({ url, method })
+      if (url.endsWith('/branches?limit=100')) return new Response(JSON.stringify({
+        branches: [{ id: 'br-feature', name: 'preview/feature/cost-safe', primary: false }],
+        pagination: {},
+      }), { status: 200 })
+      return new Response(JSON.stringify({
+        branch: { id: 'br-feature', name: 'preview/feature/cost-safe', primary: false },
+      }), { status: 200 })
+    }) as typeof fetch,
+  })
+
+  assert.deepEqual(requests.map(value => value.method), ['GET', 'GET'])
+  assert.deepEqual(logs, [
+    'Neon preview cleanup: would have deleted preview/feature/cost-safe; nothing was deleted.',
+  ])
+})
+
+test('terminal arguments require rehearsal mode and one head ref', () => {
+  assert.deepEqual(
+    parseNeonPreviewCleanupArguments(['--dry-run', '--head-ref', 'feature/cost-safe']),
+    { dryRun: true, headReference: 'feature/cost-safe' },
+  )
+  for (const arguments_ of [
+    [],
+    ['--head-ref', 'feature/cost-safe'],
+    ['--dry-run'],
+    ['--dry-run', '--head-ref', 'feature/cost-safe', 'extra'],
+  ]) assert.throws(() => parseNeonPreviewCleanupArguments(arguments_), /usage/i)
+})
+
+test('a direct head ref can never select live deletion', async () => {
+  let requests = 0
+  await assert.rejects(runNeonPreviewCleanup({
+    headReference: 'feature/cost-safe',
+    environment: { NEON_API_KEY: 'key', NEON_PROJECT_ID: 'project' },
+    log: () => {},
+    fetcher: (async () => {
+      requests += 1
+      throw new Error('must not fetch')
+    }) as typeof fetch,
+  }), /only in rehearsal mode/i)
+  assert.equal(requests, 0)
+})
+
+test('shared error detail removes URLs and control characters', () => {
+  assert.equal(
+    safeErrorDetail(new Error('failed at https://example.test/path?token=secret\nnext line')),
+    'failed at [URL redacted] next line',
+  )
 })
 
 test('cleanup reports a DELETE race as already absent', async () => {

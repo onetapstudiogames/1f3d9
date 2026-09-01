@@ -30,6 +30,7 @@ test('preview cleanup runs only for closed PRs and keeps secrets out of shell te
   assert.match(workflow, /NEON_API_KEY:\s*\$\{\{ secrets\.NEON_API_KEY \}\}/u)
   assert.match(workflow, /GITHUB_EVENT_PATH/u)
   assert.match(workflow, /neon-preview-cleanup/u)
+  assert.doesNotMatch(workflow, /neon-preview-cleanup[^\n]*--dry-run/u)
   assert.doesNotMatch(workflow, /github\.event\.pull_request\.head\.ref/u)
   assert.doesNotMatch(workflow, /run:[^\n]*(?:secrets\.|NEON_API_KEY)/u)
 })
