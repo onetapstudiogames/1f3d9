@@ -19,6 +19,7 @@ import {
   responseJson,
   verifyNeonDatabaseTarget,
 } from './database-target.ts'
+import { withoutInheritedGitEnvironment } from './child-process-environment.ts'
 
 export { publicSearchIndexRecoveryStatements } from './public-search-index-migration.ts'
 
@@ -162,6 +163,7 @@ type GitCommand = (args: readonly string[]) => string
 const directGitCommand: GitCommand = args => execFileSync('git', [...args], {
   cwd: new URL('..', import.meta.url),
   encoding: 'utf8',
+  env: withoutInheritedGitEnvironment(),
   windowsHide: true,
   shell: false,
 })

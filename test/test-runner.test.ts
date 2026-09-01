@@ -17,6 +17,7 @@ import {
   parseTestRunnerArguments,
   withIsolatedTestEnvironment,
 } from '../scripts/run-tests.ts'
+import { withoutInheritedGitEnvironment } from '../scripts/child-process-environment.ts'
 
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -92,6 +93,7 @@ test('isolated environment redirects every temp variable and prefers Git Bash on
     'C:\\suite-temp',
     {
       KEEP_ME: 'yes',
+      GIT_DIR: 'C:\\poisoned-git-dir',
       NODE_TEST_CONTEXT: 'child-v8',
       Path: 'C:\\Windows\\System32',
       TEMP: 'C:\\old-temp',
@@ -113,7 +115,30 @@ test('isolated environment redirects every temp variable and prefers Git Bash on
   )
   assert.equal(environment.Path, undefined)
   assert.equal(environment.NODE_TEST_CONTEXT, undefined)
+  assert.equal(environment.GIT_DIR, undefined)
   assert.equal(environment.KEEP_ME, 'yes')
+})
+
+test('child process environments drop every inherited Git variable without mutating the parent', () => {
+  const poisonedEnvironment = {
+    KEEP_ME: 'yes',
+    GIT_DIR: 'poisoned-dir',
+    GIT_WORK_TREE: 'poisoned-work-tree',
+    GIT_INDEX_FILE: 'poisoned-index',
+    GIT_OBJECT_DIRECTORY: 'poisoned-objects',
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: 'poisoned-alternate-objects',
+    GIT_PREFIX: 'poisoned-prefix',
+    GIT_COMMON_DIR: 'poisoned-common-dir',
+    GIT_NAMESPACE: 'poisoned-namespace',
+    GIT_CEILING_DIRECTORIES: 'poisoned-ceiling',
+    Git_Future_Scope: 'poisoned-future-scope',
+  }
+  const originalEnvironment = { ...poisonedEnvironment }
+
+  assert.deepEqual(withoutInheritedGitEnvironment(poisonedEnvironment), {
+    KEEP_ME: 'yes',
+  })
+  assert.deepEqual(poisonedEnvironment, originalEnvironment)
 })
 
 function runOldDeployFixture(shouldFail: boolean): Readonly<{
