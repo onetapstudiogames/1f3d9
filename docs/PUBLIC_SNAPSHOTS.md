@@ -185,14 +185,21 @@ from `events.detail`, while the separate `moderation` class retains the same
 public reason. Other names and state may likewise remain in their primary
 exported records.
 
-Completeness is checked from three independent surfaces: an exhaustive
-inventory of every current event writer and installed event-writing migration;
-a read-only, cursor-complete sweep of the full live history for stored legacy
-keys; and an explicit review of the response fields added by
-`moderatePublicEvents`. Tests lock that audited union against both the effective
-format-v2 SQL projection and the exact manifest list. The full live-history
-sweep must be repeated before release so immutable historical rows and new
-writer shapes cannot fall outside both the export and its disclosure.
+Completeness is checked from three independent surfaces. The test named
+`every source-written event-detail field has an export or disclosure
+disposition` in `test/public-snapshot-schema.test.ts` mechanically scans every
+`INSERT INTO events` in `src`, event-writing scripts, installed migrations, and
+`db/schema.sql`. It derives top-level keys from direct SQL objects, serialized
+TypeScript objects, and the known SQL alias carrier; it fails with the writer
+location when a shape cannot be derived or a key is in neither the effective
+format-v2 allowlist nor the production manifest disclosure. Separate tests
+lock that disclosure to the per-kind audit and human documentation.
+
+A read-only, cursor-complete sweep of the full live history covers stored
+legacy keys, and an explicit review covers the response fields added by
+`moderatePublicEvents`. The full live-history sweep must be repeated before
+release so immutable historical rows cannot fall outside both the export and
+its disclosure.
 
 The projection continues to reject every field outside its allowlist.
 Gazette print events retain `place_id`, `issue_number`, and `entry_count`; their

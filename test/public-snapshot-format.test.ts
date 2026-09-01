@@ -297,7 +297,12 @@ test('the human snapshot contract matches the audited machine disclosure', async
   for (const field of AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS) {
     assert.match(documentation, new RegExp(`\\b${field}\\b`, 'u'), field)
   }
-  assert.match(documentation, /current event writer/iu)
+  assert.match(
+    documentation,
+    /every source-written event-detail field has an export or disclosure\s+disposition/iu,
+  )
+  assert.match(documentation, /INSERT INTO events/iu)
+  assert.match(documentation, /fails with the writer\s+location/iu)
   assert.match(documentation, /full live history/iu)
   assert.match(documentation, /moderatePublicEvents/iu)
 })

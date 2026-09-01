@@ -6,10 +6,16 @@ import {
   PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
   PUBLIC_EVENT_KINDS,
 } from '../src/public-events.ts'
+import { PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS } from '../src/public-snapshot-format.ts'
 import {
   AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
   AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND,
 } from './fixtures/public-snapshot-event-detail-contract.ts'
+import {
+  assertEveryEventDetailFieldClassified,
+  readRepositoryEventWriterSources,
+  scanEventDetailWriters,
+} from './helpers/public-event-detail-writer-scan.ts'
 
 const migrationUrl = new URL('../db/migrations/20260823_public_snapshots.sql', import.meta.url)
 const drawingsMigrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
@@ -42,6 +48,11 @@ const CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
   'effects_applied',
   'due_at',
   'generation',
+].sort()
+const EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
+  ...CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS.filter(field => field !== 'error'),
+  'issue_number',
+  'entry_count',
 ].sort()
 
 for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaUrl]] as const) {
@@ -327,9 +338,7 @@ test('the audited live-detail inventory exactly names fields absent from format 
       .filter(kind => !publicKinds.has(kind)),
     [],
   )
-  const effectiveV2Fields = new Set(
-    CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS.filter(field => field !== 'error'),
-  )
+  const effectiveV2Fields = new Set(EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
   assert.deepEqual(
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(field => effectiveV2Fields.has(field)),
     [],
@@ -339,6 +348,23 @@ test('the audited live-detail inventory exactly names fields absent from format 
   for (const required of [
     'reason', 'gazette_submission_room_opened', 'attempt_id', 'moderated', 'moderation',
   ]) assert.ok(omittedFields.has(required), required)
+})
+
+test('every source-written event-detail field has an export or disclosure disposition', async () => {
+  const sources = await readRepositoryEventWriterSources(new URL('../', import.meta.url))
+  const sourceWriterCount = sources.reduce((count, source) => (
+    count + [...source.source.matchAll(
+      /\bINSERT\s+INTO\s+(?:ONLY\s+)?(?:(?:"?public"?)\s*\.\s*)?(?:"events"|events)(?=\s|\()/giu,
+    )].length
+  ), 0)
+  const scan = scanEventDetailWriters(sources)
+  assert.equal(scan.writerCount, sourceWriterCount, 'every event INSERT must be parsed')
+  assert.ok(scan.writerCount >= 46, `the source scan must find real writers, saw ${scan.writerCount}`)
+
+  assertEveryEventDetailFieldClassified(scan.fields, [
+    ...EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS,
+    ...PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS.events,
+  ])
 })
 
 for (const [name, url, viewName] of [

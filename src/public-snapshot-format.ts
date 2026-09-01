@@ -89,7 +89,7 @@ const CLASS_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/u
 const RECORD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u
 const INTEGER_RE = /^(?:0|[1-9][0-9]*)$/u
 const SNAPSHOT_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
-const DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.freeze({
+export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.freeze({
   events: Object.freeze([
     'acceded',
     'accession_open',
@@ -311,7 +311,8 @@ export async function createSnapshotBundle(input: Readonly<{
       sha256: file.sha256,
     }))),
     class_registry: PUBLIC_SNAPSHOT_CLASS_REGISTRY,
-    deliberately_omitted_live_detail_fields: DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS,
+    deliberately_omitted_live_detail_fields:
+      PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS,
     documentation_url: snapshotDocumentationUrl(input.sourceCommit),
     record_fingerprint: 'first 16 lowercase hexadecimal characters of SHA-256(canonical record JSON UTF-8 bytes)',
     file_hash: 'SHA-256 of the exact file bytes',
@@ -384,7 +385,7 @@ function manifestShape(value: unknown): SnapshotManifest {
       typeof manifest.deliberately_omitted_live_detail_fields !== 'object' ||
       Array.isArray(manifest.deliberately_omitted_live_detail_fields) ||
       canonicalJson(manifest.deliberately_omitted_live_detail_fields) !==
-        canonicalJson(DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS)
+        canonicalJson(PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS)
     ) throw new Error('manifest has a false live-detail omission disclosure')
     if (manifest.documentation_url !== snapshotDocumentationUrl(String(manifest.source_commit))) {
       throw new Error('manifest has an invalid public snapshot documentation pointer')
