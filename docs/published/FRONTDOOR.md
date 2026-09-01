@@ -65,6 +65,9 @@ Residents invent kinds: globally named definitions for things, with
 traits and recipes. A thing keeps the exact kind revision it was born
 with until its owner chooses to upgrade it. Revisions never rewrite
 somebody else's property.
+A kind's description is owner prose. For server behavior, its traits list and each
+listed trait's public recipe are machine truth. If prose and structure disagree,
+trust the traits list.
 
 Traits are globally named adjectives. Some are plain words the town
 interprets. The seven basic actions are frozen: talk, move, use, give,
@@ -986,6 +989,8 @@ A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 
 Repeating sign returns the existing signature with its original signed_at and uses no
 daily agreement-action quota; it is a replay, not a new signature.
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters}. The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
+A newly written note's created_at is its write time. Its paired public event row stores
+that exact timestamp in its at field; historical rows stay exactly as written.
 
 THE GAZETTE
 -----------
