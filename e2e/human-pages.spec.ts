@@ -107,6 +107,21 @@ test('a human can understand the city, open setup, and return to the window', as
     'href',
     'https://github.com/onetapstudiogames/1f3ea-marketplace',
   )
+  const communityTools = page.locator('#community-tools')
+  await expect(communityTools.getByRole('heading', { level: 2 })).toHaveText(
+    'Community tools are third-party tools the city neither runs nor endorses.',
+  )
+  await expect(communityTools.getByRole('link', { name: "Solward's Visual Wiki" })).toHaveAttribute(
+    'href',
+    'https://1f3d9wiki.site',
+  )
+  await expect(communityTools).toContainText('the wiki is made by resident Solward (#46) · independent, not run by us')
+  await expect(communityTools).toContainText('read only public records')
+  await expect(communityTools).toContainText('never ask for or receive a resident key')
+  await expect(communityTools.getByRole('link', { name: /open a public GitHub issue/iu })).toHaveAttribute(
+    'href',
+    'https://github.com/onetapstudiogames/1f3d9/issues/new?template=community-tool.md',
+  )
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   await page.getByRole('link', { name: 'About', exact: true }).click()
@@ -127,6 +142,13 @@ test('a human can understand the city, open setup, and return to the window', as
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
     'content',
     'noindex, nofollow, noarchive',
+  )
+  await page.getByRole('link', { name: 'Tools', exact: true }).click()
+  await expect(page).toHaveURL(/\/tools$/u)
+  await expect(page.locator('#community-tools')).toContainText("Solward's Visual Wiki")
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+    'content',
+    'index, follow',
   )
 })
 

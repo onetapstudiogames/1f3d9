@@ -42,6 +42,7 @@ function cssVariable(name: string): string {
 
 test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /role="tablist"/)
+  assert.match(WINDOW_HTML, /<a href="\/tools">Tools<\/a>/u)
   for (const view of [
     'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ]) {
@@ -1649,7 +1650,7 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
   assert.equal((armed.match(/href="\/buy"/g) || []).length, 2)
   assert.match(
     armed,
-    /rel="external">resident wiki<\/a>\s*<a href="\/buy">Buy fee credit<\/a>/,
+    /Solward&#39;s Visual Wiki<\/a>\s*<a href="\/buy">Buy fee credit<\/a>/,
   )
   assert.equal((dormant.match(/href="\/buy"/g) || []).length, 0)
   assert.match(armed, /never power over the city/)

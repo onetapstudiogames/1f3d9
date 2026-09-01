@@ -1474,8 +1474,8 @@ export async function windowPage(
   )
   const baseHtml = creditPurchasesReady
     ? WINDOW_HTML.replace(
-        '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>',
-        '      <a href="https://1f3d9wiki.site" rel="external">resident wiki</a>\n      <a href="/buy">Buy fee credit</a>',
+        '      <!-- WINDOW_BUY_LINK -->',
+        '      <a href="/buy">Buy fee credit</a>',
       ).replace(
         '      <a href="/terms">Terms</a>',
         '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',

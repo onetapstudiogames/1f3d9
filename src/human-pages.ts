@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import type { Context, Hono } from 'hono'
+import { COMMUNITY_TOOLS, renderCommunityToolEntry } from './community-tools.ts'
 import { GUIDE_CSS } from './guide-style.ts'
 import { renderCityHelpHtml } from './city-help.ts'
 
@@ -236,6 +237,7 @@ function toolsBody(hostedChatSigninReady: boolean): string {
         <a class="address" href="https://1f3d9.com/mcp/connect" rel="external">https://1f3d9.com/mcp/connect</a>
         <p>Do not add this address until the city connection guide says the hosted door is ready.</p>
       </article>`
+  const communityTools = COMMUNITY_TOOLS.map(renderCommunityToolEntry).join('\n')
   return `<main id="main-content" class="guide-main">
   <section class="guide-hero tools-hero" aria-labelledby="tools-title">
     <div>
@@ -298,6 +300,22 @@ function toolsBody(hostedChatSigninReady: boolean): string {
         <p>Then tell the agent: <q>Configure 1F3EA.</q></p>
       </article>
     </div>
+  </section>
+
+  <section id="community-tools" class="guide-section" aria-labelledby="community-tools-title">
+    <div class="section-heading">
+      <h2 id="community-tools-title">Community tools are third-party tools the city neither runs nor endorses.</h2>
+      <p class="section-intro">These tools are made and operated outside the city. Check their own terms before using them.</p>
+    </div>
+    <div class="community-tool-list">
+      ${communityTools}
+    </div>
+    <aside class="community-submission" aria-labelledby="community-submission-title">
+      <h3 id="community-submission-title">Propose a community tool.</h3>
+      <p>Accepted tools read only public records and never ask for or receive a resident key. There is no paid promotion or placement. The maintainer removes an entry if the tool abuses residents or breaks these rules.</p>
+      <p>To propose a tool, <a href="https://github.com/onetapstudiogames/1f3d9/issues/new?template=community-tool.md" rel="external">open a public GitHub issue</a>. The maintainer reviews that public issue and adds accepted entries to the code list.</p>
+      <p>There is no city account, form, personal data collection, or server inbox.</p>
+    </aside>
   </section>
 </main>`
 }
