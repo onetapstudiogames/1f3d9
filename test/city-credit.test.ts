@@ -4,10 +4,12 @@ import { canonicalPaymentRequest } from '../src/payment-attempts.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
   beginCityCreditSpend,
+  cityCreditAttentionLines,
   formatUsdcUnits,
   issueCityFeeCredit,
   parseCityCreditRequestId,
   readCityCreditAccount,
+  readCityCreditAttention,
   readCityCreditPreflight,
   returnCityCreditSpend,
   returnExpiredCityCreditSpend,
@@ -63,10 +65,11 @@ const REQUEST = Object.freeze({
 })
 const CANONICAL_REQUEST = canonicalPaymentRequest(REQUEST)
 
-test('preflight shows exact cost and before/after balance without a debit', async () => {
+test('preflight shows exact cost, pending-or-frozen gift count, and before/after balance without a debit', async () => {
   const database = new MarkerDatabase({
     preflight: [[{
       balance_units: '3000000',
+      pending_gifts_count: '2',
       observed_at: '2026-08-26T23:30:00.000Z',
     }]],
   })
@@ -79,13 +82,72 @@ test('preflight shows exact cost and before/after balance without a debit', asyn
     balance_before_units: '3000000',
     balance_after: '2.000000',
     balance_after_units: '2000000',
+    pending_gifts_count: 2,
     can_confirm: true,
     observed_at: '2026-08-26T23:30:00.000Z',
     applies_to: ['frontier', 'kind_invention', 'kind_revision'],
     freshness: 'read_only_snapshot',
   })
   assert.equal(database.calls.length, 1)
+  assert.match(database.calls[0]!.text, /gift\.status IN \('pending', 'frozen'\)/iu)
   assert.doesNotMatch(database.calls[0]!.text, /\b(?:INSERT|UPDATE|DELETE)\b/iu)
+})
+
+test('a me read advances one private marker and reports only balance-changing credit entries', async () => {
+  const database = new MarkerDatabase({
+    'read-attention': [[{
+      had_previous_read: true,
+      change_units: '2000000',
+      changed_at: '2026-09-01T14:30:00.000Z',
+      pending_count: 1,
+      frozen_count: 0,
+    }]],
+  })
+
+  assert.deepEqual(await readCityCreditAttention(database, 7), {
+    pending_gifts_count: 1,
+    frozen_gifts_count: 0,
+    credit_change: {
+      amount: '2.000000',
+      amount_units: '2000000',
+      changed_at: '2026-09-01T14:30:00.000Z',
+    },
+  })
+  assert.equal(database.calls.length, 1)
+  assert.match(database.calls[0]!.text, /city_credit_last_me_reads/iu)
+  assert.match(database.calls[0]!.text, /ON CONFLICT \(resident_id\) DO UPDATE/iu)
+  assert.match(database.calls[0]!.text, /previous_credit_entry_id/iu)
+  assert.match(database.calls[0]!.text, /gift_accept/iu)
+  assert.match(database.calls[0]!.text, /gift\.status IN \('pending', 'frozen'\)/iu)
+})
+
+test('attention distinguishes ordinary gifts from dispute-frozen refusal-only gifts', () => {
+  assert.deepEqual(cityCreditAttentionLines({
+    pending_gifts_count: 3,
+    frozen_gifts_count: 1,
+    credit_change: null,
+  }), [
+    'You have 2 pending 1F3D9 fee-credit gifts awaiting accept or refuse; see city_fee_credit.pending_gifts.',
+    'You have 1 dispute-frozen 1F3D9 fee-credit gift awaiting refuse; see city_fee_credit.pending_gifts.',
+  ])
+})
+
+test('the first me read establishes a baseline without inventing an old credit change', async () => {
+  const database = new MarkerDatabase({
+    'read-attention': [[{
+      had_previous_read: false,
+      change_units: null,
+      changed_at: null,
+      pending_count: 0,
+      frozen_count: 0,
+    }]],
+  })
+
+  assert.deepEqual(await readCityCreditAttention(database, 7), {
+    pending_gifts_count: 0,
+    frozen_gifts_count: 0,
+    credit_change: null,
+  })
 })
 
 function issueRow(overrides: QueryRow = {}): QueryRow {

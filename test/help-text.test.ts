@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { BROWSER_REFUSAL_REASONS } from '../src/browser-refusal.ts'
+import { renderCityHelpText } from '../src/city-help.ts'
 import { FRONTDOOR, LLMS } from '../src/door.ts'
 import { SETUP_HTML } from '../src/human-pages.ts'
 
@@ -829,8 +830,9 @@ test('canonical and generated discovery text stays synchronized', () => {
   assert.ok(fenceStart >= 0 && fenceEnd > fenceStart, 'FRONTDOOR.md canonical fence is missing')
   const fencedCopy = `${frontdoorDocument.slice(fenceStart + 4, fenceEnd)}\n`
 
-  assert.equal(normalizeLines(fencedCopy), normalizeLines(frontdoor))
-  assert.equal(normalizeLines(FRONTDOOR), normalizeLines(frontdoor))
+  const renderedFrontdoor = renderCityHelpText(frontdoor)
+  assert.equal(normalizeLines(fencedCopy), normalizeLines(renderedFrontdoor))
+  assert.equal(normalizeLines(FRONTDOOR), normalizeLines(renderedFrontdoor))
   assert.equal(normalizeLines(LLMS), normalizeLines(llms))
 })
 
@@ -1088,12 +1090,12 @@ test('Wave 2 lightweight room, passive look, and compatibility truths stay align
   )
   assert.match(
     specification,
-    /shared catalog has 40 tools[\s\S]{0,900}legacy `\/mcp` advertises all 40[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}39[\s\S]{0,100}omits founder-only `moderate`/iu,
+    /shared catalog has 41 tools[\s\S]{0,900}legacy `\/mcp` advertises all 41[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}40[\s\S]{0,100}omits founder-only `moderate`/iu,
     'the specification distinguishes the exact legacy and hosted catalogs',
   )
   assert.match(
     hostedSignin,
-    /shared and\s+authenticated legacy[\s\S]{0,100}catalog has 40 tools[\s\S]{0,100}hosted chat advertises 39[\s\S]{0,100}omits\s+founder-only `moderate`/iu,
+    /shared and\s+authenticated legacy[\s\S]{0,100}catalog has 41 tools[\s\S]{0,100}hosted chat advertises 40[\s\S]{0,100}omits\s+founder-only `moderate`/iu,
     'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
   )
 })

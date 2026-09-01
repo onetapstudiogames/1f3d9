@@ -3257,6 +3257,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS city_credit_entries_one_return_per_spend
 CREATE INDEX IF NOT EXISTS city_credit_entries_resident_history
   ON city_credit_entries (resident_id, id DESC);
 
+CREATE TABLE IF NOT EXISTS city_credit_last_me_reads (
+  resident_id          INTEGER PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE,
+  previous_credit_entry_id BIGINT CHECK (previous_credit_entry_id >= 0),
+  last_credit_entry_id BIGINT NOT NULL CHECK (last_credit_entry_id >= 0),
+  read_at              TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE OR REPLACE FUNCTION validate_city_credit_entry() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   attempt payment_attempts%ROWTYPE;

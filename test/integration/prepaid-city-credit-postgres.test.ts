@@ -8,6 +8,8 @@ import test from 'node:test'
 import { Pool } from 'pg'
 import {
   beginCityCreditSpend,
+  cityCreditAttentionLines,
+  readCityCreditAttention,
   readCityCreditPreflight,
   returnCityCreditSpend,
 } from '../../src/city-credit.ts'
@@ -24,7 +26,9 @@ const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1f
 const POSTGRES_DATABASE = 'prepaid_city_credit_integration'
 const PREPAID_MODULE_URL = new URL('../../src/prepaid-credit.ts', import.meta.url)
 const MIGRATION_URL = new URL('../../db/migrations/20260826_prepaid_city_credit.sql', import.meta.url)
+const AWARENESS_MIGRATION_URL = new URL('../../db/migrations/20260901_resident_awareness.sql', import.meta.url)
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const awarenessMigrationDdl = await readFile(AWARENESS_MIGRATION_URL, 'utf8')
 
 type QueryRow = Record<string, unknown>
 
@@ -126,6 +130,8 @@ async function resetFresh(client: Pool, migrationDdl: string): Promise<void> {
   await client.query(schemaDdl)
   await client.query(migrationDdl)
   await client.query(migrationDdl)
+  await client.query(awarenessMigrationDdl)
+  await client.query(awarenessMigrationDdl)
   await client.query(`
     INSERT INTO residents (id, handle, model, secret_hash) VALUES
       (1, 'founder', 'prepaid-credit-test', repeat('1', 64)),
@@ -470,6 +476,91 @@ test('prepaid credit transitions stay exact, private, nonnegative, and nonexpiri
         await receiptKinds(postgres.client, 2),
         ['purchase', 'gift_pending', 'gift_accept'],
       )
+    })
+
+    await t.test('me attention moves from pending gift to one dated balance change, then clears', async () => {
+      await resetFresh(postgres.client, migrationDdl)
+      const db = database(postgres.client)
+
+      const baseline = await readCityCreditAttention(db, 2)
+      assert.deepEqual(cityCreditAttentionLines(baseline), [])
+
+      const delivered = await deliverTestPurchase(db, {
+        delivery: 'gift',
+        residentId: 2,
+        amountUnits: prepaid.parseCreditDollars('4'),
+        purchaseKind: 'paypal',
+        remoteResourceId: 'AWARENESS0001',
+      })
+      const giftId = delivered.purchase.gift_id!
+      assert.equal(await balance(postgres.client, 2), '0')
+
+      const pending = await readCityCreditAttention(db, 2)
+      assert.deepEqual(cityCreditAttentionLines(pending), [
+        'You have 1 pending 1F3D9 fee-credit gift awaiting accept or refuse; see city_fee_credit.pending_gifts.',
+      ])
+      const preflight = await readCityCreditPreflight(db, 2)
+      assert.equal(preflight.pending_gifts_count, 1)
+
+      await prepaid.acceptCreditGift(db, { residentId: 2, giftId })
+      const acceptedAt = await postgres.client.query<{ created_at: Date }>(`
+        SELECT created_at FROM city_credit_entries
+        WHERE resident_id = 2 AND entry_kind = 'gift_accept'
+        ORDER BY id DESC LIMIT 1
+      `)
+      const acceptedAtIso = acceptedAt.rows[0]!.created_at.toISOString()
+      const accepted = await readCityCreditAttention(db, 2)
+      assert.deepEqual(cityCreditAttentionLines(accepted), [
+        `Your 1F3D9 fee-credit balance changed by 4.000000 since your previous me read; the latest change was on ${acceptedAtIso}.`,
+      ])
+      assert.equal(await balance(postgres.client, 2), '4000000')
+
+      const cleared = await readCityCreditAttention(db, 2)
+      assert.deepEqual(cityCreditAttentionLines(cleared), [])
+
+      const secondDelivered = await deliverTestPurchase(db, {
+        delivery: 'gift',
+        residentId: 2,
+        amountUnits: prepaid.parseCreditDollars('1'),
+        purchaseKind: 'paypal',
+        remoteResourceId: 'AWARENESS0003',
+      })
+      assert.ok(secondDelivered.purchase.gift_id)
+      const secondPending = await readCityCreditAttention(db, 2)
+      assert.deepEqual(cityCreditAttentionLines(secondPending), [
+        'You have 1 pending 1F3D9 fee-credit gift awaiting accept or refuse; see city_fee_credit.pending_gifts.',
+      ])
+
+      const marker = await postgres.client.query<{ last_credit_entry_id: string }>(`
+        SELECT last_credit_entry_id::text FROM city_credit_last_me_reads
+        WHERE resident_id = 2
+      `)
+      const latest = await postgres.client.query<{ id: string }>(`
+        SELECT max(id)::text AS id FROM city_credit_entries WHERE resident_id = 2
+      `)
+      assert.equal(marker.rows[0]!.last_credit_entry_id, latest.rows[0]!.id)
+    })
+
+    await t.test('simultaneous me reads report one balance change only once', async () => {
+      await resetFresh(postgres.client, migrationDdl)
+      const db = database(postgres.client)
+      await readCityCreditAttention(db, 2)
+      await deliverTestPurchase(db, {
+        delivery: 'self',
+        residentId: 2,
+        amountUnits: prepaid.parseCreditDollars('2'),
+        purchaseKind: 'paypal',
+        remoteResourceId: 'AWARENESS0002',
+      })
+
+      const results = await Promise.all([
+        readCityCreditAttention(db, 2),
+        readCityCreditAttention(db, 2),
+      ])
+      const changeLines = results.flatMap(cityCreditAttentionLines)
+        .filter(line => line.includes('balance changed'))
+      assert.equal(changeLines.length, 1)
+      assert.match(changeLines[0]!, /changed by 2\.000000/u)
     })
 
     await t.test('every pending gift remains reachable after the first private page', async () => {

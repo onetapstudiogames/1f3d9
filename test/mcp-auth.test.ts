@@ -53,7 +53,7 @@ interface ToolResult {
 }
 
 const EXISTING_TOOL_NAMES = [
-  'front_door', 'official_facts', 'physics', 'search', 'changes', 'look',
+  'front_door', 'help', 'official_facts', 'physics', 'search', 'changes', 'look',
   'browse', 'drawing', 'drawing_history', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
   'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
   'draw_self', 'act', 'laws', 'home', 'withdraw',
@@ -63,12 +63,13 @@ const EXISTING_TOOL_NAMES = [
   'mark_for_later', 'me', 'moderate',
 ] as const
 const PUBLIC_ANONYMOUS_TOOL_NAMES = [
-  'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
+  'front_door', 'help', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
   'drawing', 'drawing_history',
 ] as const
 
 const TOOL_TITLES: Readonly<Record<(typeof EXISTING_TOOL_NAMES)[number], string>> = Object.freeze({
   front_door: 'Read front door',
+  help: 'Read city help',
   official_facts: 'Read official facts',
   physics: 'Read city physics',
   search: 'Search public records',
@@ -133,6 +134,7 @@ function createHarness() {
 
   const city = new Hono()
   city.get('/', c => c.text('connector-native front door\n'))
+  city.get('/api/help', c => c.json({ doors: ['City map: `look` starts here.'] }))
   city.get('/api/official', c => c.json({ domain: PUBLIC_ORIGIN, token: null }))
   city.get('/api/physics', c => c.json({ basic_actions: ['move'], max_effect_depth: 12 }))
   city.get('/api/me', async c => {
@@ -417,7 +419,7 @@ test('connector-native reference tools accept no arguments and are safe anonymou
     openWorldHint: true,
   }
 
-  for (const name of ['front_door', 'official_facts', 'physics'] as const) {
+  for (const name of ['front_door', 'help', 'official_facts', 'physics'] as const) {
     const tool = toolByName(tools, name)
     assert.equal(tool.inputSchema.additionalProperties, false, `${name}: closed input`)
     assert.deepEqual(tool.inputSchema.properties ?? {}, {}, `${name}: no arguments`)
@@ -431,11 +433,12 @@ test('connector-native reference tools execute anonymously with identical conten
   const { gateway } = createHarness()
   const expected = {
     front_door: 'connector-native front door\n',
+    help: JSON.stringify({ doors: ['City map: `look` starts here.'] }),
     official_facts: JSON.stringify({ domain: PUBLIC_ORIGIN, token: null }),
     physics: JSON.stringify({ basic_actions: ['move'], max_effect_depth: 12 }),
   } as const
 
-  for (const name of ['front_door', 'official_facts', 'physics'] as const) {
+  for (const name of ['front_door', 'help', 'official_facts', 'physics'] as const) {
     const legacy = await callTool(gateway, name, {}, undefined, '/mcp')
     const hosted = await callTool(gateway, name, {}, undefined, '/mcp/connect')
     assert.equal(legacy.isError, false, `/mcp: ${name}`)
@@ -504,8 +507,8 @@ test('a hosted resident can open a visit through connector tools without a globa
 })
 
 test('every advertised MCP tool has a short plain title on its exact door catalog', async () => {
-  assert.equal(EXISTING_TOOL_NAMES.length, 40)
-  assert.equal(HOSTED_TOOL_NAMES.length, 39)
+  assert.equal(EXISTING_TOOL_NAMES.length, 41)
+  assert.equal(HOSTED_TOOL_NAMES.length, 40)
   for (const [hosted, path, authorization, expectedNames] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`, HOSTED_TOOL_NAMES],
     [false, '/mcp', `Bearer ${LEGACY_SECRET}`, EXISTING_TOOL_NAMES],

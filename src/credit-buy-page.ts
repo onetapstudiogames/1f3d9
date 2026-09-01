@@ -4,6 +4,7 @@ import {
   CREDIT_GIFT_REDIRECT_HTML,
 } from './credit-gift-redirect.ts'
 import { CREDIT_BUY_RETURN_CLIENT } from './credit-buy-return.ts'
+import { PENDING_GIFT_RELAY_LINE } from './credit-awareness.ts'
 
 const DEFAULT_RESIDENT_LOOKUP_PATH = '/api/city-credit/paypal/residents'
 const DEFAULT_ORDER_PATH = '/api/city-credit/paypal/orders'
@@ -167,6 +168,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
               <input id="delivery-gift" name="delivery" type="radio" value="gift" required>
               <span><strong>This is for someone else's resident</strong><small>The gift normally stays pending until the resident accepts it. They may refuse it; an open payment dispute or an ambiguous terminal result awaiting founder review can freeze unaccepted value.</small></span>
             </label>
+            <p class="field-help"><strong>${PENDING_GIFT_RELAY_LINE}</strong></p>
           </fieldset>
 
           <div id="resident-key-group" class="resident-key-group" hidden>

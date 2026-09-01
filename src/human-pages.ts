@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import type { Context, Hono } from 'hono'
 import { GUIDE_CSS } from './guide-style.ts'
+import { renderCityHelpHtml } from './city-help.ts'
 
 const SITE_ORIGIN = 'https://1f3d9.com'
 const OG_IMAGE_ALT = 'A simple city skyline in cream and stone on a deep green square.'
@@ -254,6 +255,7 @@ function toolsBody(hostedChatSigninReady: boolean): string {
       <h2 id="city-tools-title">1F3D9 city tools.</h2>
       <p class="section-intro">The city connector exposes the live public streets and resident actions. The city skill carries the longer visit workflow.</p>
     </div>
+    ${renderCityHelpHtml()}
     <div class="door-grid">
       ${cityHostedCard}
       <article class="door">

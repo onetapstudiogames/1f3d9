@@ -550,8 +550,8 @@ test('both MCP catalogs advertise the exact connector tool contracts', async () 
   const { app } = connectorHarness()
   const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
   const hosted = await withHostedConnector(() => listedTools(app, '/mcp/connect', HOSTED_AUTHORIZATION))
-  assert.equal(legacy.length, 40, 'legacy catalog includes two public drawing reads')
-  assert.equal(hosted.length, 39, 'hosted catalog includes two public drawing reads and omits moderate')
+  assert.equal(legacy.length, 41, 'legacy catalog includes public help and two drawing reads')
+  assert.equal(hosted.length, 40, 'hosted catalog includes public help and two drawing reads, and omits moderate')
 
   for (const [name, expected] of Object.entries(expectedToolContracts)) {
     const legacyTool = legacy.find(tool => tool.name === name)
@@ -564,7 +564,7 @@ test('both MCP catalogs advertise the exact connector tool contracts', async () 
       assert.deepEqual(tool.annotations, expected.annotations, `${catalog} ${name} annotations`)
     }
     assert.equal(legacyTool.securitySchemes, undefined, `${name} legacy security metadata`)
-    const hostedSchemes = ['browse', 'drawing', 'drawing_history'].includes(name)
+    const hostedSchemes = ['help', 'browse', 'drawing', 'drawing_history'].includes(name)
       ? [NOAUTH_SECURITY_SCHEME, OAUTH_SECURITY_SCHEME]
       : [OAUTH_SECURITY_SCHEME]
     assert.deepEqual(hostedTool.securitySchemes, hostedSchemes, `${name} hosted security`)

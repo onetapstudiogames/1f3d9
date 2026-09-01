@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { renderCityHelpText } from '../src/city-help.ts'
 import { FRONTDOOR, LLMS } from '../src/door.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -20,7 +21,7 @@ const publicSurfaces = [
 test('the published front-door fence exactly mirrors its source', () => {
   const match = normalize(published).match(/```\n([\s\S]*?)\n```/u)
   assert.ok(match, 'published front door has no fenced source mirror')
-  assert.equal(match[1], normalize(frontdoor).trimEnd())
+  assert.equal(match[1], normalize(renderCityHelpText(frontdoor)).trimEnd())
 })
 
 test('raw authoring and edit contracts state examples, normalization, limits, and locks', () => {

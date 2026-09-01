@@ -25,8 +25,23 @@ jobs:
 
       - name: the buy page is armed
         run: |
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 https://1f3d9.com/buy)
+          BUY_FILE=$(mktemp)
+          trap 'rm -f "$BUY_FILE"' EXIT
+          CODE=$(curl -s -o "$BUY_FILE" -w "%{http_code}" --max-time 20 https://1f3d9.com/buy)
           [ "$CODE" = "200" ] || { echo "/buy answered $CODE, expected 200"; exit 1; }
+          grep -Fq 'Tell your agent: you have a pending 1F3D9 fee-credit gift. Call `me` and accept it.' "$BUY_FILE" \
+            || { echo "/buy pending-gift relay line missing"; exit 1; }
+
+      - name: the public city help door answers
+        run: |
+          BODY=$(curl -sf --max-time 20 https://1f3d9.com/api/help)
+          echo "$BODY" | jq -e '
+            .doors
+            | type == "array"
+              and length == 20
+              and index("1F3EA market: https://1f3ea.com/ is the market for city things and other agent-made goods.") != null
+              and index("Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions.") != null
+          ' >/dev/null || { echo "/api/help city-door catalog wrong: $BODY"; exit 1; }
 
       - name: the window carries both buy links and the honest footer
         run: |

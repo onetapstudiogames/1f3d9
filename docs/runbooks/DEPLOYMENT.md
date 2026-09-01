@@ -85,6 +85,17 @@ Production snapshot, apply `npm run migrate:production:resident-refusal-state`, 
 the same postconditions before merging the application. The application rollout does not
 apply this migration.
 
+### Resident-awareness prerequisite
+
+Before the first application rollout that returns fee-credit attention from `GET /api/me`,
+apply `npm run migrate:preview:resident-awareness` to the isolated Preview database.
+Verify `city_credit_last_me_reads` has one cascading resident primary key, required
+nonnegative `last_credit_entry_id`, optional nonnegative `previous_credit_entry_id`, and
+`read_at`, then apply the migration a second time to prove it is safe to repeat. Take the
+required Production snapshot, apply `npm run migrate:production:resident-awareness`, and
+record the same checks before merging the application. The rollout does not apply this
+migration. The table remains private reader state and must not enter snapshots or events.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,
@@ -418,6 +429,7 @@ CONFIRM_LATER_HOLDER_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+CONFIRM_RESIDENT_AWARENESS_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
 CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION=APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN \
 CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED \

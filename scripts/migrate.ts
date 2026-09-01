@@ -62,6 +62,7 @@ type RemoteMigration =
   | 'resumable-registration'
   | 'paypal-credit-disputes'
   | 'resident-refusal-state'
+  | 'resident-awareness'
   | 'drawings'
   | 'drawing-contract'
   | 'gazette'
@@ -107,6 +108,7 @@ export type MigrationFile =
   | 'db/migrations/20260826_resumable_registration.sql'
   | 'db/migrations/20260827_paypal_credit_disputes.sql'
   | 'db/migrations/20260827_resident_refusal_state.sql'
+  | 'db/migrations/20260901_resident_awareness.sql'
   | 'db/migrations/20260827_drawings.sql'
   | 'db/migrations/20260828_drawing_contract.sql'
   | 'db/migrations/20260827_gazette.sql'
@@ -212,6 +214,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'resumable-registration': 'db/migrations/20260826_resumable_registration.sql',
   'paypal-credit-disputes': 'db/migrations/20260827_paypal_credit_disputes.sql',
   'resident-refusal-state': 'db/migrations/20260827_resident_refusal_state.sql',
+  'resident-awareness': 'db/migrations/20260901_resident_awareness.sql',
   drawings: 'db/migrations/20260827_drawings.sql',
   'drawing-contract': 'db/migrations/20260828_drawing_contract.sql',
   gazette: 'db/migrations/20260827_gazette.sql',

@@ -922,6 +922,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_more: matching.length > limit,
     }]
   }
+  if (q.includes('/* city-credit:read-attention */')) {
+    return [{
+      had_previous_read: false,
+      change_units: null,
+      changed_at: null,
+      pending_count: 0,
+      frozen_count: 0,
+    }]
+  }
   if (q.includes('/* paypal-credit:founder-dispute-inspection */')) return []
   if (q.includes('/* paypal-credit:rate-limit */')) {
     const maximum = Number(params[1])
@@ -1016,6 +1025,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     if (![1, 7, 8].includes(residentId)) return []
     return [{
       balance_units: String(state.cityCreditBalances.get(residentId) ?? 0n),
+      pending_gifts_count: '0',
       observed_at: '2026-08-26T23:30:00.000Z',
     }]
   }
@@ -7452,12 +7462,16 @@ test('/api/me reports a private exact zero city fee credit account before any is
   const response = await app.request('/api/me', { headers: authHeaders() })
   assert.equal(response.status, 200, await response.clone().text())
   const body = await response.json() as {
+    help: string
+    attention: string[]
     city_fee_credit: Record<string, unknown>
     pages: {
       city_fee_credit: Record<string, unknown>
       pending_gifts: Record<string, unknown>
     }
   }
+  assert.equal(body.help, '/api/help')
+  assert.deepEqual(body.attention, [])
   assert.deepEqual(body.city_fee_credit, {
     resident_id: 7,
     balance: '0.000000',
@@ -7498,6 +7512,7 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
     balance_before_units: '3000000',
     balance_after: '2.000000',
     balance_after_units: '2000000',
+    pending_gifts_count: 0,
     can_confirm: true,
     observed_at: '2026-08-26T23:30:00.000Z',
     applies_to: ['frontier', 'kind_invention', 'kind_revision'],
@@ -7513,6 +7528,23 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
   assert.equal(invalid.status, 400)
   const denied = await app.request('/api/city-credit/preflight')
   assert.equal(denied.status, 401)
+})
+
+test('/api/help is anonymous, queryless, and leaves auth, timers, quota, and SQL untouched', async () => {
+  reset({ scheduledLabelAt: Date.now() - 1_000 })
+  const beforeState = state
+  const anonymous = await app.request('/api/help')
+  const credentialBearing = await app.request('/api/help', { headers: authHeaders() })
+  assert.equal(anonymous.status, 200)
+  assert.equal(credentialBearing.status, 200)
+  assert.deepEqual(await credentialBearing.json(), await anonymous.json())
+  assert.equal(state.pendingResolved, false)
+  assert.equal(state.actorId, beforeState.actorId)
+  assert.equal(state.calls.length, 0)
+
+  const invalid = await app.request('/api/help?extra=true')
+  assert.equal(invalid.status, 400)
+  assert.equal(state.calls.length, 0)
 })
 
 const CITY_CREDIT_ROUTE_CASES = [
@@ -9620,7 +9652,7 @@ test('MCP advertises the city tools and dispatches through bearer-header API aut
     result: { tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[] }
   }
   assert.deepEqual(listBody.result.tools.map(tool => tool.name), [
-    'front_door', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
+    'front_door', 'help', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
     'drawing', 'drawing_history', 'credit_preflight', 'buy_credit', 'found', 'place_edit',
     'coin_trait', 'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade',
     'draw_self', 'act', 'laws', 'home', 'withdraw',
