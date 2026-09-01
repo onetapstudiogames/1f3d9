@@ -42,6 +42,28 @@ function functionBody(ddl: string, name: string): string {
   ).exec(ddl)?.[1] ?? ''
 }
 
+function normalizedFunctionBody(ddl: string, name: string): string {
+  return functionBody(ddl, name)
+    .replace(/^\s*--.*$/gmu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+test('the withdrawal migration installs the fresh-schema room lifecycle guard', () => {
+  const migrationGuard = normalizedFunctionBody(
+    withdrawalMigration,
+    'protect_gazette_submission_room',
+  )
+  const schemaGuard = normalizedFunctionBody(schema, 'protect_gazette_submission_room')
+  assert.notEqual(migrationGuard, '', 'the production migration must replace the lifecycle guard')
+  assert.notEqual(schemaGuard, '', 'the fresh schema must define the lifecycle guard')
+  assert.equal(
+    migrationGuard,
+    schemaGuard,
+    'every production CREATE OR REPLACE must preserve the complete fresh-schema guard',
+  )
+})
+
 test('fresh and upgraded databases carry one append-only author withdrawal relation', () => {
   assert.equal(existsSync(withdrawalMigrationUrl), true, 'add the dormant withdrawal migration')
   for (const ddl of [schema, withdrawalMigration]) {

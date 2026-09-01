@@ -490,7 +490,8 @@ BEGIN
 
   IF gazette_submission_room_state(OLD) = 'open'
     AND gazette_submission_room_state(NEW) = 'withdrawals_open'
-    AND gazette_withdrawal_guards_ready()
+    AND gazette_submission_room_has_no_forbidden_contents()
+    AND gazette_submission_room_guards_ready()
     AND (
       SELECT count(*) FROM events event
       WHERE event.kind = 'place_edited' AND event.actor = 'the city'
