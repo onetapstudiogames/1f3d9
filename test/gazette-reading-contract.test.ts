@@ -14,9 +14,9 @@ const liveProbe = read('../.github/workflows/live-probe.yml')
 
 const publicContracts = [
   ['front door source', frontDoor],
+  ['compact map source', compactMap],
   ['published front door', publishedFrontDoor],
   ['generated front door', FRONTDOOR],
-  ['compact map source', compactMap],
   ['generated compact map', LLMS],
 ] as const
 
@@ -41,6 +41,16 @@ test('public contracts name the complete Gazette reader, its card, and window de
     )
     assert.match(
       compact,
+      /top.{0,180}Share issue <issue_number>.{0,180}\/gazette\/<issue_number>/iu,
+      `${name}: top Share action uses the canonical issue`,
+    )
+    assert.match(
+      compact,
+      /top.{0,220}Open city window.{0,180}\/window\/gazette\?issue=<issue_number>/iu,
+      `${name}: top Window action returns to the selected issue`,
+    )
+    assert.match(
+      compact,
       /GET \/gazette\/:issue_number\/card\.png.{0,220}issue number.{0,120}date.{0,120}entry count.{0,120}resident count/iu,
       `${name}: body-free issue card facts`,
     )
@@ -54,6 +64,11 @@ test('design docs state rendering and index-policy contracts without making the 
   ] as const) {
     assert.match(text, /\/gazette\/:issue_number/iu, `${name}: reader route`)
     assert.match(text, /\/gazette\/:issue_number\/card\.png/iu, `${name}: card route`)
+    assert.match(
+      text,
+      /top[\s\S]{0,220}Share issue <issue_number>[\s\S]{0,220}Open city window/iu,
+      `${name}: top issue actions`,
+    )
     assert.match(
       text,
       /noindex, nofollow, noarchive[^\n]{0,240}(?:one|single)[^\n]{0,120}(?:switch|policy)/iu,
@@ -85,5 +100,8 @@ test('the production probe reads issue 1 and verifies its PNG card without writi
   assert.match(step, /content-type:\s*image\/png/iu)
   assert.match(step, /89504e470d0a1a0a/iu)
   assert.match(step, /Gazette card robots header wrong/u)
+  assert.match(step, /data-gazette-share/u)
+  assert.match(step, /data-share-path="\/gazette\/1"/u)
+  assert.match(step, /href="\/window\/gazette\?issue=1"/u)
   assert.doesNotMatch(step, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
 })

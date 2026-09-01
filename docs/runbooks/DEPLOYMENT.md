@@ -307,6 +307,103 @@ application that enforces the room gate, quota, archive, and printer contract. C
 bad rollout with a forward Gazette-capable deployment; do not place an older application
 in front of the open room.
 
+### Gazette withdrawal two-phase prerequisite
+
+Gazette withdrawal is another two-phase database change. The
+`gazette-withdrawal` migration installs the ledger, activation-gated guards and command
+exclusion, and public projection while leaving `submission_room.withdrawals_open: false`.
+It must be
+installed before the withdrawal-capable application can roll out. The separate
+`gazette-withdrawal-activation` migration changes the protected room contract and opens
+withdrawals only after the exact withdrawal-capable commit is live. Neither migration
+runs as part of application deployment.
+
+Once `submission_room.withdrawals_open` is true, a Room #454 body
+whose opening is exact uppercase `WITHDRAW`, optional whitespace, then `#` is reserved.
+An exact `WITHDRAW #<your-note-id>` may become a command; a command-shaped near-miss is
+refused in caller words. Every other opening remains an ordinary submission. The public
+`withdrawal_contract.refusals` contains all six active refusal statuses and messages.
+
+The current Preview database lacks the Gazette base schema, so Gazette routes there
+return the already-recorded 500 response. That is expected and is not part of this
+withdrawal rollout. Do not install the base Gazette feature or treat the Preview 500 as
+withdrawal verification in this change. Prove the complete dormant-to-active upgrade in
+the real PostgreSQL Gazette suite instead. The Preview commands below are retained for a
+future isolated Preview branch that has the base Gazette schema.
+
+1. On a Preview database that has the base Gazette schema, install the dormant migration:
+
+   ```sh
+   CONFIRM_GAZETTE_WITHDRAWAL=INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER \
+   CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+   npm run migrate:preview:gazette-withdrawal
+   ```
+
+   Verify ordinary submissions and printing still work, the withdrawal ledger is empty,
+   the protected room retains its pre-withdrawal contract, and `GET /api/gazette` reports
+   `submission_room.withdrawals_open: false`. While
+   `submission_room.withdrawals_open` is false, the dormant schema intercepts no Room #454
+   body. `WITHDRAW #<digits>`, `WITHDRAW #12x`, and
+   `WITHDRAW my nomination for mayor, a poem` are ordinary submissions. Those ordinary
+   submissions use a weekly submission slot, can print, and create no withdrawal ledger
+   row and no withdrawal refusal. This is the behavior-identical old-application window;
+   it introduces no new error the old application would need to map. While withdrawals
+   remain closed, those reserved-opening shapes also keep normal same-body replay. After
+   activation, an unledgered reserved opening is interpreted under the active rule instead
+   of replaying its dormant note; ordinary prose and ledgered withdrawal commands retain
+   normal replay.
+2. After that exact candidate is serving from its immutable Preview origin, use
+   exact-commit proof through `GET /api/official`, then activate with the same clean local
+   commit:
+
+   ```sh
+   CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION=OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT \
+   GAZETTE_PREVIEW_ORIGIN=https://1f3d9-a1b2c3d4e-onetapstudiogames-projects.vercel.app \
+   GAZETTE_DEPLOYMENT_COMMIT=<40-lowercase-hex-preview-commit> \
+   CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+   npm run migrate:preview:gazette-withdrawal-activation
+   ```
+
+   The migrator proves the clean local commit, exact deployment, isolated database target,
+   and exact deployment again immediately before activation DDL. Afterward,
+   `submission_room.withdrawals_open` must be `true`. Record one authorized withdrawal,
+   its exclusion from source commands, its one-line printed notice, and refusal of a
+   different author without recording a bearer secret.
+3. Before merging the application change, take the required Production snapshot and
+   install only the dormant migration from the reviewed clean candidate:
+
+   ```sh
+   CONFIRM_GAZETTE_WITHDRAWAL=INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER \
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   npm run migrate:production:gazette-withdrawal
+   ```
+
+   Record the snapshot ID and the same inert dormant postconditions. Production
+   submissions and printing must remain live, every Room #454 body must remain an ordinary
+   submission, withdrawals must remain closed, and the ledger must remain empty. After
+   the staged real-PostgreSQL suite passes, set this non-secret
+   release-preparation acknowledgement:
+
+   ```sh
+   CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION=APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN
+   ```
+4. Merge only after the dormant Production state and release gates are recorded. Wait for
+   Vercel to serve the exact merged `main` commit, verify it through Production
+   `GET /api/official`, choose a fresh Production snapshot name, and activate:
+
+   ```sh
+   CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION=OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT \
+   GAZETTE_DEPLOYMENT_COMMIT=<40-lowercase-hex-production-commit> \
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   npm run migrate:production:gazette-withdrawal-activation
+   ```
+
+   Verify `submission_room.withdrawals_open: true`, one authorized withdrawal and printed
+   notice, every caller-worded refusal, and the scheduled `live-probe` workflow. The
+   activation is transactionally safe to rerun after rechecking the target and using a
+   fresh Production snapshot name. Once active, do not roll back below a
+   withdrawal-capable application; repair with a forward deployment.
+
 For the first rollout and every later release preparation, re-confirm that the required
 provider keys remain configured, the maker and later-holder migrations remain applied in
 that order, and the resumable-registration, PayPal credit-disputes, resident refusal-state,
@@ -322,12 +419,16 @@ CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
+CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION=APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN \
 CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED \
 scripts/deploy.sh --prepare
 ```
 
 The Gazette acknowledgement records the historical safe installation state. After
-activation, it does not claim that room #454 is still closed.
+activation, it does not claim that room #454 is still closed. The separate withdrawal
+acknowledgement records that its Production schema was installed while withdrawals were
+still closed and that the staged upgrade passed against real PostgreSQL; it never claims
+the known schema-less Preview is Gazette-capable or authorizes activation.
 
 These acknowledgements contain no key material. The preparation script never reads an
 environment file, queries or changes Vercel, or applies a migration; it only blocks the

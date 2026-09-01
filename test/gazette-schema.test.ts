@@ -15,11 +15,305 @@ const activationUrl = new URL(
 const activation = existsSync(activationUrl)
   ? read('../db/migrations/20260827_gazette_room_activation.sql')
   : ''
+const withdrawalMigrationUrl = new URL(
+  '../db/migrations/20260901_gazette_withdrawal.sql',
+  import.meta.url,
+)
+const withdrawalMigration = existsSync(withdrawalMigrationUrl)
+  ? read('../db/migrations/20260901_gazette_withdrawal.sql')
+  : ''
+const withdrawalActivationUrl = new URL(
+  '../db/migrations/20260901_gazette_withdrawal_activation.sql',
+  import.meta.url,
+)
+const withdrawalActivation = existsSync(withdrawalActivationUrl)
+  ? read('../db/migrations/20260901_gazette_withdrawal_activation.sql')
+  : ''
 
 function tableBody(ddl: string, table: string): string {
   return new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\);`, 'u')
     .exec(ddl)?.[1] ?? ''
 }
+
+function functionBody(ddl: string, name: string): string {
+  return new RegExp(
+    `CREATE OR REPLACE FUNCTION ${name}\\([^)]*\\)[\\s\\S]*?AS \\$\\$([\\s\\S]*?)\\$\\$;`,
+    'u',
+  ).exec(ddl)?.[1] ?? ''
+}
+
+function normalizedFunctionBody(ddl: string, name: string): string {
+  return functionBody(ddl, name)
+    .replace(/^\s*--.*$/gmu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+test('the withdrawal migration installs the fresh-schema room lifecycle guard', () => {
+  const migrationGuard = normalizedFunctionBody(
+    withdrawalMigration,
+    'protect_gazette_submission_room',
+  )
+  const schemaGuard = normalizedFunctionBody(schema, 'protect_gazette_submission_room')
+  assert.notEqual(migrationGuard, '', 'the production migration must replace the lifecycle guard')
+  assert.notEqual(schemaGuard, '', 'the fresh schema must define the lifecycle guard')
+  assert.equal(
+    migrationGuard,
+    schemaGuard,
+    'every production CREATE OR REPLACE must preserve the complete fresh-schema guard',
+  )
+})
+
+test('fresh and upgraded databases carry one append-only author withdrawal relation', () => {
+  assert.equal(existsSync(withdrawalMigrationUrl), true, 'add the dormant withdrawal migration')
+  for (const ddl of [schema, withdrawalMigration]) {
+    const table = tableBody(ddl, 'gazette_withdrawals')
+    assert.match(
+      table,
+      /target_note_id\s+INTEGER\s+PRIMARY\s+KEY\s+REFERENCES\s+notes\(id\)\s+ON\s+DELETE\s+RESTRICT/iu,
+    )
+    assert.match(
+      table,
+      /command_note_id\s+INTEGER\s+NOT\s+NULL\s+UNIQUE\s+REFERENCES\s+notes\(id\)\s+ON\s+DELETE\s+RESTRICT/iu,
+    )
+    assert.match(table, /withdrawn_at\s+TIMESTAMPTZ\s+NOT\s+NULL/iu)
+    assert.match(table, /CHECK\s*\(target_note_id\s*<>\s*command_note_id\)/iu)
+    assert.match(
+      ddl,
+      /CREATE TRIGGER gazette_withdrawals_append_only[\s\S]*ON gazette_withdrawals/iu,
+    )
+    assert.match(
+      ddl,
+      /CREATE TRIGGER gazette_withdrawals_no_truncate\s+BEFORE TRUNCATE ON gazette_withdrawals\s+FOR EACH STATEMENT/iu,
+    )
+    assert.match(
+      ddl,
+      /\('gazette_withdrawals',\s*'gazette_withdrawals_no_truncate'\)/iu,
+      'the live gate must require the statement-level truncate denial',
+    )
+    assert.match(
+      ddl,
+      /\('gazette_issue_entries',\s*'gazette_issue_entry_source'\)/iu,
+      'withdrawal activation must require the database command-exclusion guard',
+    )
+    assert.match(
+      ddl,
+      /CREATE TRIGGER gazette_issues_no_truncate\s+BEFORE TRUNCATE ON gazette_issues\s+FOR EACH STATEMENT/iu,
+    )
+    assert.match(
+      ddl,
+      /CREATE TRIGGER gazette_issue_entries_no_truncate\s+BEFORE TRUNCATE ON gazette_issue_entries\s+FOR EACH STATEMENT/iu,
+    )
+    assert.match(ddl, /\('gazette_issues',\s*'gazette_issues_no_truncate'\)/iu)
+    assert.match(
+      ddl,
+      /\('gazette_issue_entries',\s*'gazette_issue_entries_no_truncate'\)/iu,
+    )
+    const finalRoomValidation = ddl.lastIndexOf(
+      'IF gazette_submission_room_has_no_forbidden_contents()',
+    )
+    assert.ok(finalRoomValidation > 0, 'the installed contract must validate room state')
+    for (const trigger of [
+      'CREATE TRIGGER gazette_issue_entry_source',
+      'CREATE TRIGGER gazette_issues_no_truncate',
+      'CREATE TRIGGER gazette_issue_entries_no_truncate',
+    ]) {
+      assert.ok(
+        ddl.lastIndexOf(trigger) < finalRoomValidation,
+        `${trigger} must exist before the final room-state validation`,
+      )
+    }
+    assert.match(
+      ddl,
+      /CREATE TRIGGER gazette_note_record_withdrawal\s+AFTER INSERT ON notes[\s\S]*record_gazette_withdrawal/iu,
+    )
+  }
+})
+
+test('the database alone enforces exact author-only pre-tick withdrawal semantics', () => {
+  for (const ddl of [schema, withdrawalMigration]) {
+    assert.match(ddl, /\^WITHDRAW #\[1-9\]\[0-9\]\*\$/u)
+    assert.match(
+      ddl,
+      /\^WITHDRAW\[\[:space:\]\]\*#/u,
+      'only WITHDRAW followed by optional whitespace and # is reserved',
+    )
+    assert.doesNotMatch(
+      ddl,
+      /\^WITHDRAW\(\[\[:space:\]\]\|#\|\$\)/u,
+      'bare WITHDRAW prose must remain an ordinary printable submission',
+    )
+    assert.match(ddl, /gazette_withdrawals_are_open\(\)/iu)
+    assert.match(ddl, /gazette_withdrawal_command_invalid/iu)
+    assert.match(ddl, /gazette_withdrawals_closed/iu)
+    assert.match(ddl, /gazette_withdrawal_no_such_submission/iu)
+    assert.match(ddl, /gazette_withdrawal_author_mismatch/iu)
+    assert.match(ddl, /gazette_withdrawal_already_printed/iu)
+    assert.match(ddl, /gazette_withdrawal_tick_passed/iu)
+    assert.match(ddl, /gazette_withdrawal_already_withdrawn/iu)
+    assert.match(
+      ddl,
+      /target_author_id\s*<>\s*command_author_id/iu,
+      'founder status must not create an administrative override',
+    )
+    assert.match(ddl, /NEW\.created_at\s*:=\s*clock_timestamp\(\)/iu)
+    assert.match(
+      ddl,
+      /print_tick\s*:=\s*gazette_cycle_start\(target_created_at\)\s*\+\s*interval\s*'7 days'/iu,
+      'withdrawal must reuse the target submission cycle and PostgreSQL clock',
+    )
+    assert.match(
+      ddl,
+      /pg_advisory_xact_lock\([^;]*524128261[^;]*454/iu,
+      'withdrawal and printing must use the one Gazette lock',
+    )
+    assert.match(
+      ddl,
+      /count\(\*\)[\s\S]*NOT EXISTS\s*\([\s\S]*command_note_id\s*=\s*existing\.id/iu,
+      'withdrawal commands use no weekly slot while the target remains counted',
+    )
+  }
+})
+
+test('room-note interception begins only at the canonical withdrawal activation', () => {
+  for (const [label, ddl] of [
+    ['fresh schema', schema],
+    ['dormant migration', withdrawalMigration],
+  ] as const) {
+    const submissionGuard = functionBody(ddl, 'enforce_gazette_submission_limit')
+    assert.match(
+      submissionGuard,
+      /IF\s+gazette_withdrawals_are_open\(\)\s+AND\s+gazette_withdrawal_command_reserved\(NEW\.body\)\s+THEN/iu,
+      `${label}: the BEFORE trigger must not recognize commands while withdrawals are closed`,
+    )
+    assert.doesNotMatch(
+      submissionGuard,
+      /gazette_withdrawals_closed/iu,
+      `${label}: a dormant room note is never refused as a withdrawal command`,
+    )
+
+    const recorder = functionBody(ddl, 'record_gazette_withdrawal')
+    const commandParseOffset = recorder.indexOf('gazette_withdrawal_target(NEW.body)')
+    assert.ok(commandParseOffset >= 0, `${label}: the AFTER trigger must retain exact command parsing`)
+    assert.match(
+      recorder.slice(0, commandParseOffset),
+      /IF\s+NOT\s+gazette_withdrawals_are_open\(\)\s+THEN\s+RETURN NEW;\s+END IF;/iu,
+      `${label}: the AFTER trigger must return before parsing while withdrawals are closed`,
+    )
+  }
+})
+
+test('dormant installation and activation never reinterpret room-note history', () => {
+  for (const [label, ddl] of [
+    ['dormant migration', withdrawalMigration],
+    ['withdrawal activation', withdrawalActivation],
+  ] as const) {
+    assert.doesNotMatch(
+      ddl,
+      /WHERE\s+note\.place_id\s*=\s*454\s+AND\s+gazette_withdrawal_command_reserved\(note\.body\)/iu,
+      `${label}: notes accepted before activation stay ordinary and cannot block rollout`,
+    )
+  }
+})
+
+test('only ledger membership makes a note a command and self-targets stay caller-safe', () => {
+  for (const [label, ddl] of [
+    ['fresh schema', schema],
+    ['dormant migration', withdrawalMigration],
+  ] as const) {
+    const validation = functionBody(ddl, 'validate_gazette_withdrawal')
+    assert.doesNotMatch(
+      validation,
+      /gazette_withdrawal_target\(target_body\)/iu,
+      `${label}: a dormant exact-shaped submission is not retroactively a command`,
+    )
+    assert.match(
+      validation,
+      /FROM\s+gazette_withdrawals\s+withdrawal\s+WHERE\s+withdrawal\.command_note_id\s*=\s*NEW\.target_note_id/iu,
+      `${label}: committed ledger membership is the command-note identity`,
+    )
+    assert.match(
+      validation,
+      /NEW\.target_note_id\s*(?:=\s*NEW\.command_note_id|IS\s+NOT\s+DISTINCT\s+FROM\s+NEW\.command_note_id)[\s\S]*gazette_withdrawal_no_such_submission/iu,
+      `${label}: a predicted self-target must receive the caller-safe no-such refusal`,
+    )
+    assert.match(
+      validation,
+      /pg_trigger_depth\(\)\s*<>\s*2[\s\S]*gazette_withdrawal_command_not_note_insert/iu,
+      `${label}: the ledger must be created only by the newly inserted command note`,
+    )
+    assert.doesNotMatch(
+      validation,
+      /command_created_at\s*[<>]=?\s*withdrawals_opened_at/iu,
+      `${label}: activation provenance must not depend on wall-clock ordering`,
+    )
+  }
+})
+
+test('withdrawal activation has one exact city provenance and precedes the room transition', () => {
+  assert.match(
+    withdrawalActivation,
+    /WHERE\s+kind\s*=\s*'place_edited'\s+AND\s+actor\s*=\s*'the city'\s+AND\s+detail\s*=\s*'\{"place_id":454,"gazette_withdrawals_opened":true\}'::jsonb/iu,
+  )
+  assert.match(
+    withdrawalActivation,
+    /IF\s+gazette_withdrawals_are_open\(\)\s+AND\s+activation_events\s*=\s*1\s+THEN\s+RETURN;/iu,
+    'an exact completed activation is the only replay-safe early return',
+  )
+  assert.match(
+    withdrawalActivation,
+    /IF\s+activation_events\s*<>\s*0\s+THEN[\s\S]*activation record is not the one verified state/iu,
+    'an orphaned or forged exact-looking event must block rather than bless activation',
+  )
+  const lockOffset = withdrawalActivation.indexOf('pg_advisory_xact_lock(524128261, 454)')
+  const stateCheckOffset = withdrawalActivation.indexOf('gazette_withdrawals_are_open()')
+  const eventOffset = withdrawalActivation.indexOf('INSERT INTO events')
+  const roomOffset = withdrawalActivation.indexOf('UPDATE places SET')
+  assert.ok(lockOffset >= 0, 'activation must share the one Gazette transaction lock')
+  assert.ok(stateCheckOffset > lockOffset, 'activation state is decided only while holding that lock')
+  assert.ok(eventOffset >= 0, 'activation must create its exact provenance event')
+  assert.ok(roomOffset > eventOffset, 'the lifecycle trigger must see provenance before room activation')
+
+  for (const [label, ddl] of [
+    ['fresh schema', schema],
+    ['dormant migration', withdrawalMigration],
+  ] as const) {
+    assert.match(
+      functionBody(ddl, 'gazette_withdrawals_are_open'),
+      /event\.kind\s*=\s*'place_edited'[\s\S]*event\.actor\s*=\s*'the city'[\s\S]*event\.detail\s*=\s*'\{"place_id":454,"gazette_withdrawals_opened":true\}'::jsonb[\s\S]*\)\s*=\s*1/iu,
+      `${label}: the canonical gate requires exactly one exact city activation event`,
+    )
+  }
+})
+
+test('withdrawal rollout is dormant before an exact post-deploy contract activation', () => {
+  assert.equal(existsSync(withdrawalActivationUrl), true, 'add withdrawal activation migration')
+  const dormantSql = withdrawalMigration.replace(/^\s*--.*$/gmu, '')
+  assert.match(withdrawalMigration, /^BEGIN;/u)
+  assert.match(withdrawalMigration, /COMMIT;\s*$/u)
+  assert.doesNotMatch(dormantSql, /UPDATE\s+places\s+SET/iu)
+  assert.doesNotMatch(
+    dormantSql,
+    /INSERT\s+INTO\s+events[\s\S]*gazette_withdrawals_opened/iu,
+    'the dormant migration may recognize but must not create the activation record',
+  )
+
+  assert.match(withdrawalActivation, /^BEGIN;/u)
+  assert.match(withdrawalActivation, /COMMIT;\s*$/u)
+  assert.match(withdrawalActivation, /to_regclass\('public\.gazette_withdrawals'\)/iu)
+  assert.match(withdrawalActivation, /NOT gazette_withdrawal_guards_ready\(\)/iu)
+  assert.match(
+    withdrawalActivation,
+    /kind\s*=\s*'place_edited'[\s\S]*actor\s*=\s*'the city'[\s\S]*gazette_withdrawals_opened/iu,
+  )
+  assert.match(
+    withdrawalActivation,
+    /FROM\s+places[\s\S]*WHERE\s+id\s*=\s*454[\s\S]*FOR\s+UPDATE/iu,
+  )
+  assert.match(withdrawalActivation, /UPDATE\s+places\s+SET[\s\S]*description\s*=[\s\S]*purpose\s*=/iu)
+  assert.match(withdrawalActivation, /GET DIAGNOSTICS[\s\S]*ROW_COUNT/iu)
+  assert.match(withdrawalActivation, /gazette_withdrawals_are_open\(\)/iu)
+})
 
 test('fresh and upgraded databases carry the same immutable weekly issue ledger', () => {
   assert.equal(existsSync(migrationUrl), true, 'add the additive Gazette migration')
@@ -259,9 +553,7 @@ test('the note quota guard exists before either SQL path validates room readines
     ['dormant migration', migration],
   ] as const) {
     const triggerOffset = ddl.indexOf('CREATE TRIGGER gazette_note_submission_limit')
-    const validationOffset = ddl.indexOf(
-      "RAISE EXCEPTION 'Gazette room #454 is not the verified closed shell or verified-open room",
-    )
+    const validationOffset = ddl.indexOf('DECLARE\n  room_state TEXT;', triggerOffset)
 
     assert.ok(triggerOffset >= 0, `${label} must install the note quota trigger`)
     assert.ok(validationOffset >= 0, `${label} must validate the existing room state`)

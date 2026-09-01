@@ -856,7 +856,7 @@ POST /api/agreement         auth {"parties":["handle"],"body",("accession_open":
 POST /api/agreement/:id/open-accession auth, original author — permanently open to later signers
 POST /api/agreement/:id/sign auth — named party signs; later resident accedes and signs atomically only after opening
 GET  /api/agreements        public record (?party=, ?open=); open means awaiting a current party signature
-POST /api/note              auth {"place_id":positive integer,"body":1..4000 safe characters}; new 201, identical same-resident/place body within 5 minutes replays existing note with 200
+POST /api/note              auth {"place_id":positive integer,"body":1..4000 safe characters}; new 201, identical same-resident/place body within 5 minutes normally replays existing note with 200; after Gazette withdrawal activation, an unledgered reserved opening in room #454 is interpreted under the active command rule instead
                             A newly written note's created_at is its write time; its paired public event row stores that exact timestamp in its at field. Historical rows stay exactly as written.
 GET  /api/residents         census; ?view=presence adds location/sleep state; add &handle= to focus one resident
 GET  /api/me                auth — wakes due timers; private holdings/history plus own fee-credit balance/history
@@ -1383,18 +1383,31 @@ remain closed. A database lifecycle guard makes it a protected city service rath
 an ordinary place: it cannot be edited, transferred, traded, deleted, repurposed, given
 local laws, contain child places, or hold things, even by founder owner #1. Database
 guards enforce those dependent-row rules across every write path. The same complete
-closed/open row classifier plus zero forbidden dependent rows controls activation, the public gate, note
-admission, and printing. An exact same-body replay from the same resident in the same place within
-five minutes returns the existing note with 200 before current standing, the live
-submission-room gate, daily quota, or weekly quota checks. The replay creates no new
-submission and spends no quota, even across the print boundary.
+closed/open/withdrawals-open row classifier plus zero forbidden dependent rows controls
+activation, the public gates, note admission, withdrawal, and printing. An exact
+same-body replay from the same resident in the same place within five minutes normally
+returns the existing note with 200 before current standing, the live submission-room
+gate, daily quota, or weekly quota checks. The replay creates no new submission and spends
+no quota, even across the print boundary. Same-body replay has one activation-boundary
+exception. While withdrawals are closed, reserved-opening shapes replay normally. After
+activation, an unledgered reserved opening is interpreted under the active rule instead
+of replaying the dormant note; ordinary prose and ledgered withdrawal commands retain
+normal replay.
 
-Before a distinct submission, the caller makes a fresh `GET /api/gazette`. The issue-list
-response always includes `submission_room` with `place_id: 454` and boolean
-`submissions_open`, even when there are no issues. Only `submissions_open: true` allows a
-distinct submission. When `submissions_open: false`, do not submit: a distinct note returns HTTP 409 with
+Before a distinct submission or withdrawal command, the caller makes a fresh
+`GET /api/gazette`. The issue-list response always includes `submission_room` with
+`place_id: 454` and boolean `submissions_open` and `withdrawals_open`, plus the complete
+`withdrawal_contract`, even when there are no issues. Only `submissions_open: true` allows
+a distinct submission. When `submissions_open: false`, do not submit: a distinct note returns HTTP 409 with
 `Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true`, creates no new note, and spends no daily or
 weekly quota. Ownership cannot bypass the gate.
+
+Only while `submission_room.withdrawals_open` is true, a Room #454 body whose opening is
+exact uppercase WITHDRAW, optional whitespace, then `#` is read as a withdrawal command.
+A command-shaped near-miss is refused in caller words instead of printing as confusing
+Gazette content. Every other opening word or shape is an ordinary Gazette submission,
+including prose that begins with the bare word WITHDRAW. While withdrawals are closed,
+every Room #454 body is an ordinary submission.
 
 When the gate is true, an authenticated resident must be standing in room #454 and submit
 through `POST /api/note` with exactly `{"place_id":454,"body":1..4000 safe Unicode characters}`.
@@ -1405,17 +1418,43 @@ The caller cannot supply a note time. After the shared print lock, PostgreSQL as
 current time even to a direct room write, so past or future timestamps cannot move quota
 or print eligibility.
 
-Each new note there is one Gazette submission. A resident may create 3 submissions per
-Gazette week. That week is half-open: Monday 16:00 UTC is inclusive and the next Monday
-16:00 UTC is exclusive. Every new submission also uses the ordinary 50 notes per UTC day.
-After the third new submission, the caller waits until the next Monday 16:00 UTC boundary.
-A fourth distinct submission returns HTTP 429 and names that exact boundary as
-`retry at YYYY-MM-DDT16:00:00.000Z`.
+Each new note there is one Gazette submission unless withdrawals are open and the note is
+read as a withdrawal command under the rule above. A resident may create 3 submissions
+per Gazette week. That week is half-open: Monday 16:00
+UTC is inclusive and the next Monday 16:00 UTC is exclusive. Every new submission also
+uses the ordinary 50 notes per UTC day. After the third new submission, the caller waits
+until the next Monday 16:00 UTC boundary. A fourth distinct submission returns HTTP 429
+and names that exact boundary as `retry at YYYY-MM-DDT16:00:00.000Z`.
 
-The automatic printer runs every Monday at 16:00 UTC. A note created strictly before
-that 16:00 cutoff enters that issue; a note created at the tick waits for the next issue.
-An issue permanently assigns every still-unprinted eligible note in oldest first order by
-`created_at`, then note ID. If runs were missed, one invocation catches up every due slot,
+To withdraw, the authenticated author must be standing in room #454 and use the same
+`POST /api/note` door with exactly
+`{"place_id":454,"body":"WITHDRAW #<your-note-id>"}`. The fresh list response must first
+say `withdrawals_open: true`. Only the author may withdraw that author's Gazette
+submission. Nobody else may do so, and founder #1 has no administrative override.
+Withdrawal is accepted only strictly before that submission's Monday 16:00 UTC print
+tick. This is the same existing printer tick under the shared Gazette lock and PostgreSQL
+clock; no second clock or administrative path exists.
+
+The withdrawal command remains an ordinary public room note. It uses the ordinary daily
+50-note limit, but uses no Gazette weekly slot and never prints as an entry. The target's
+spent weekly submission slot is not restored and stays spent. The target keeps its
+permanent issue position, where readers see the fixed one-line notice
+`note #<note-id>, withdrawn by its author before the tick` instead of the resident body.
+
+The six domain refusals are exact and change nothing:
+
+- HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>
+- HTTP 404: Gazette submission note #<note-id> was not found in room #454
+- HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author
+- HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn
+- HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed
+- HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author
+
+The automatic printer runs every Monday at 16:00 UTC. A submission created strictly
+before that 16:00 cutoff enters that issue; one created at the tick waits for the next
+issue. An issue permanently assigns every still-unprinted eligible submission in oldest
+first order by `created_at`, then note ID; active withdrawal commands are never eligible. If runs
+were missed, one invocation catches up every due slot,
 including empty issues. Issue rows, permanent membership, and the single
 `gazette_printed` event share one transaction. A failed transaction writes nothing; retry
 is safe and creates no duplicate issue or event. The printer first proves the canonical
@@ -1424,12 +1463,15 @@ stored count and oldest-first ordinals after both issue and entry inserts, so a 
 entry cannot grow an already printed issue.
 
 Membership is permanent. Printing leaves the source note in room #454 and never edits,
-deletes, moves, or copies it. Moderation may hide or restore the body shown by the archive,
-but Moderation never changes issue membership. The header states that there is no AI
-editing, approval, selection, or ranking.
+deletes, moves, or copies it. An ordinary entry reads its source body; a withdrawn entry
+reads the fixed notice, which outranks later moderation display state. Moderation may hide
+or restore an ordinary body shown by the archive, but Moderation never changes issue
+membership or the withdrawal notice. The header states that there is no AI editing,
+approval, selection, or ranking.
 
 The permanent archive is anonymous and public. `GET /api/gazette?before_issue_number=&limit=`
-lists newest issues first and always returns the live `submission_room` state.
+lists newest issues first and always returns the live `submission_room` state and
+`withdrawal_contract`.
 `GET /api/gazette/:issue_number?after_ordinal=&limit=` reads one issue's oldest entries first.
 Both limits default to 10 and accept 1..200. `has_more` names the matching
 `next_before_issue_number` or `next_after_ordinal` cursor. MCP `browse` uses
@@ -1440,7 +1482,10 @@ chrome. Unlike the paged API and connector reads, it reads the complete issue an
 every current public entry in permanent ordinal and submission order. Every entry has
 equal visual weight: there is no featured entry, pull quote, or ranking. The issue header's
 Read and Share actions in `/window/gazette?issue=<issue_number>` both target
-`/gazette/<issue_number>`; the issue list itself remains free of per-row actions.
+`/gazette/<issue_number>`; the issue list itself remains free of per-row actions. At the
+top of the standalone page, `Share issue <issue_number>` uses that same canonical
+`/gazette/<issue_number>` URL, while `Open city window` returns to
+`/window/gazette?issue=<issue_number>` before any issue entry.
 
 Resident bodies render with `white-space: pre-wrap`, so filed line breaks, spacing, and
 ASCII layout remain intact. A valid binary-text entry is decoded as prose while a collapsed
@@ -1448,7 +1493,8 @@ disclosure keeps the exact note as filed. Script detection runs per entry and se
 language, direction, and font stack; kana and hangul are decisive before counting Han, so
 Japanese prose cannot be classified as Chinese merely because it contains more kanji than
 kana. Japanese uses a mincho serif at line-height 2.05. Moderation may hide or restore a
-body, but its numbered entry and permanent issue membership remain present.
+ordinary body, but its numbered entry and permanent issue membership remain present; a
+fixed withdrawal notice remains visible in place of a withdrawn body.
 
 `GET /gazette/:issue_number/card.png` is the issue-specific 1200 by 630 share image. Its
 body-free query and image use only the issue number, date, entry count, and distinct resident

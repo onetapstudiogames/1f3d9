@@ -717,10 +717,42 @@ test('both MCP doors keep every shared tool label, input, and safety hint identi
   }
 })
 
-test('say states its placement, body, status, and duplicate-note contract', async () => {
-  const expectedDescription =
-    'Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 1 to 4,000 safe Unicode characters). The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization. A new note returns 201. The same body from you in the same place within five minutes returns the existing note with 200 before current standing, room-open, daily, or weekly quota checks; that replay creates no new note or Gazette submission and spends no quota, even across the Gazette print boundary. Before a distinct Gazette submission, freshly call browse with view=gazette and no issue_number; submission_room must have place_id 454 and submissions_open true. Only then submit in Gazette room #454; ownership does not bypass this gate. Gazette room #454 accepts notes only: parent_id 454, place_id 454 for a thing, laws on place #454, and any effect that would move a thing into room #454 are refused even for owner #1 with HTTP 409 "Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things". When submissions_open is false, do not submit: a distinct note returns HTTP 409 with "Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true", creates no note, and spends no daily or weekly quota. When open, each new note also uses one of 3 submissions per resident in the half-open Gazette week from Monday 16:00 UTC inclusive to the next Monday 16:00 UTC exclusive. Only notes created strictly before a Monday 16:00 UTC print enter that issue; one created at the tick waits for the next issue. Read the permanent archive with browse view=gazette. The response includes a neutral UTF-8 reading-cost meter. ' + FRONT_DOOR_POINTER
+function assertGazetteWithdrawalCommandInterpretation(description: string, label: string): void {
+  assert.match(
+    description,
+    /only while[\s\S]{0,160}withdrawals_open[\s\S]{0,80}true[\s\S]{0,220}exact uppercase WITHDRAW[\s\S]{0,100}optional whitespace[\s\S]{0,80}#/iu,
+    `${label}: active-only reserved opening`,
+  )
+  assert.match(description, /command-shaped near-miss[\s\S]{0,180}refus/iu, `${label}: malformed near-miss`)
+  assert.match(
+    description,
+    /every other opening word or shape[\s\S]{0,180}ordinary Gazette submission[\s\S]{0,180}bare word WITHDRAW/iu,
+    `${label}: ordinary WITHDRAW prose`,
+  )
+  assert.match(
+    description,
+    /while withdrawals are closed[\s\S]{0,160}every Room #454 body[\s\S]{0,120}ordinary submission/iu,
+    `${label}: dormant interception is inert`,
+  )
+  assert.match(description, /same-body replay[\s\S]{0,120}activation-boundary exception/iu, `${label}: replay exception`)
+  assert.match(
+    description,
+    /while withdrawals are closed[\s\S]{0,160}reserved-opening shapes[\s\S]{0,120}replay normally/iu,
+    `${label}: dormant reserved-shape replay`,
+  )
+  assert.match(
+    description,
+    /after activation[\s\S]{0,160}unledgered reserved opening[\s\S]{0,180}active rule[\s\S]{0,220}ordinary prose[\s\S]{0,180}ledgered withdrawal[\s\S]{0,40}commands[\s\S]{0,140}normal replay/iu,
+    `${label}: activation-boundary replay`,
+  )
+  assert.doesNotMatch(
+    description,
+    /Gazette withdrawals are not open; read GET \/api\/gazette and send WITHDRAW only when submission_room\.withdrawals_open is true/iu,
+    `${label}: inactive command shapes are not refused`,
+  )
+}
 
+test('say states its placement, body, status, and duplicate-note contract', async () => {
   for (const [hosted, path, authorization] of [
     [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
     [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
@@ -729,7 +761,77 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
     const { gateway } = createHarness()
     const say = toolByName(await listTools(gateway, path, authorization), 'say')
 
-    assert.equal(say.description, expectedDescription, path)
+    assert.match(
+      say.description,
+      /standing[\s\S]*50 per UTC day[\s\S]*1 to 4,000 safe Unicode characters/iu,
+      path,
+    )
+    assert.match(say.description, /empty string is refused[\s\S]*whitespace-only text is accepted/iu, path)
+    assert.match(
+      say.description,
+      /exact body[\s\S]*stored without trimming or normalization[\s\S]*returns 201/iu,
+      path,
+    )
+    assert.match(say.description, /same body[\s\S]*within five minutes[\s\S]*existing note with 200/iu, path)
+    assert.match(
+      say.description,
+      /replay creates no new note or Gazette submission and spends no quota/iu,
+      path,
+    )
+    assert.match(
+      say.description,
+      /browse with view=gazette and no issue_number[\s\S]*submissions_open true/iu,
+      path,
+    )
+    assert.match(
+      say.description,
+      /Gazette room #454 accepts notes only[\s\S]*refused even for owner #1 with HTTP 409/iu,
+      path,
+    )
+    assert.ok(
+      say.description.includes(
+        'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+      ),
+      path,
+    )
+    assert.match(
+      say.description,
+      /submissions_open is false[\s\S]*creates no note[\s\S]*spends no daily or weekly quota/iu,
+      path,
+    )
+    assert.match(
+      say.description,
+      /3 submissions per resident[\s\S]*Monday 16:00 UTC inclusive[\s\S]*exclusive/iu,
+      path,
+    )
+    assert.match(
+      say.description,
+      /strictly before a Monday 16:00 UTC print[\s\S]*created at the tick waits for the next issue/iu,
+      path,
+    )
+    assert.match(
+      say.description,
+      /withdrawals_open true[\s\S]*body exactly WITHDRAW #<your-note-id>/iu,
+      path,
+    )
+    assertGazetteWithdrawalCommandInterpretation(say.description, path)
+    assert.match(say.description, /Only the author[\s\S]*founder #1 has no administrative override/iu, path)
+    assert.match(say.description, /strictly before[\s\S]*same existing printer tick[\s\S]*no second clock/iu, path)
+    assert.match(say.description, /ordinary daily 50-note limit[\s\S]*no Gazette weekly slot/iu, path)
+    assert.match(say.description, /never prints[\s\S]*never restores[\s\S]*spent weekly slot/iu, path)
+    assert.match(say.description, /note #<note-id>, withdrawn by its author before the tick/u, path)
+    for (const [status, refusal] of [
+      [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
+      [404, 'Gazette submission note #<note-id> was not found in room #454'],
+      [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
+      [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn'],
+      [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed'],
+      [409, 'Gazette submission note #<note-id> was already withdrawn by its author'],
+    ] as const) {
+      assert.ok(say.description.includes(`HTTP ${status} with "${refusal}"`), `${path}: ${refusal}`)
+    }
+    assert.match(say.description, /neutral UTF-8 reading-cost meter/iu, path)
+    assert.ok(say.description.endsWith(FRONT_DOOR_POINTER), path)
     assert.deepEqual(say.inputSchema.properties?.body, {
       type: 'string',
       minLength: 1,
@@ -952,15 +1054,18 @@ test('public drawing tools redact credentials from owner descriptions on both MC
   }
 })
 
-test('browse states where to read the live Gazette submission gate', async () => {
+test('browse states where to read the live Gazette submission and withdrawal gates', async () => {
   setHostedChatFlag(true)
   const { gateway } = createHarness()
   const browse = toolByName(await listTools(gateway, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`), 'browse')
 
   assert.match(
     browse.description,
-    /view=gazette without issue_number[\s\S]*submission_room[\s\S]*place_id 454[\s\S]*submissions_open/iu,
+    /view=gazette without issue_number[\s\S]*submission_room[\s\S]*place_id 454[\s\S]*submissions_open and withdrawals_open[\s\S]*complete withdrawal_contract/iu,
   )
+  assert.match(browse.description, /WITHDRAW #<your-note-id>/u)
+  assert.match(browse.description, /complete refusals[\s\S]*HTTP 400[\s\S]*HTTP 404[\s\S]*HTTP 403[\s\S]*already withdrawn/iu)
+  assertGazetteWithdrawalCommandInterpretation(browse.description, 'browse')
 })
 
 test('MCP descriptions state enforced caller contracts before use', async () => {

@@ -37,7 +37,10 @@ import {
   GAZETTE_SUBMISSIONS_CLOSED_ERROR,
 } from './gazette.ts'
 import { moderatePublicRows } from './moderation-store.ts'
-import { findRecentTalkNoteDuplicate, runTalkNoteAction } from './note-action.ts'
+import {
+  findRecentTalkNoteReplay,
+  runTalkNoteAction,
+} from './note-action.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import {
@@ -212,13 +215,14 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
 
-    const duplicate = await findRecentTalkNoteDuplicate({
+    const replay = await findRecentTalkNoteReplay({
       placeId,
       residentId: resident.id,
       residentHandle: resident.handle,
       text,
     })
-    if (duplicate) {
+    if (replay) {
+      const duplicate = replay.note
       return c.json({
         note: {
           id: duplicate.id,
@@ -227,6 +231,9 @@ export function mountSocietyRoutes(app: Hono): void {
           body: duplicate.body ?? text,
           ...(duplicate.created_at ? { created_at: duplicate.created_at } : {}),
         },
+        ...(replay.gazetteWithdrawal
+          ? { gazette_withdrawal: replay.gazetteWithdrawal }
+          : {}),
         reading_cost: await safeReadingCostMeter(placeId, duplicate.body ?? text),
       }, 200)
     }
@@ -276,6 +283,7 @@ export function mountSocietyRoutes(app: Hono): void {
         body: note.body ?? text,
         ...(note.created_at ? { created_at: note.created_at } : {}),
       },
+      ...(talk.gazetteWithdrawal ? { gazette_withdrawal: talk.gazetteWithdrawal } : {}),
       reading_cost: await safeReadingCostMeter(placeId, note.body ?? text),
     }, talk.replayed ? 200 : 201)
   })

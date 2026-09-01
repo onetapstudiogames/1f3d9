@@ -221,17 +221,37 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     WHERE id = 454
   `)
   await administrator.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')
-  const gazetteNote = await (async (): Promise<{ id: number }> => {
+  const { gazetteNote, withdrawalNote } = await (async (): Promise<Readonly<{
+    gazetteNote: { id: number }
+    withdrawalNote: { id: number; created_at: Date }
+  }>> => {
+    await administrator.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_record_withdrawal')
     try {
-      return (await administrator.query<{ id: number }>(`
+      const gazetteNote = (await administrator.query<{ id: number }>(`
         INSERT INTO notes (place_id, author_id, body, created_at)
         VALUES (454, 2, 'moderated Gazette body must not survive', '2026-08-31T15:59:59Z')
         RETURNING id
       `)).rows[0]!
+      const withdrawalNote = (await administrator.query<{ id: number; created_at: Date }>(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        VALUES (454, 2, $1, '2026-08-31T15:59:59.5Z')
+        RETURNING id, created_at
+      `, [`WITHDRAW #${gazetteNote.id}`])).rows[0]!
+      return Object.freeze({ gazetteNote, withdrawalNote })
     } finally {
+      await administrator.query('ALTER TABLE notes ENABLE TRIGGER gazette_note_record_withdrawal')
       await administrator.query('ALTER TABLE notes ENABLE TRIGGER gazette_note_submission_limit')
     }
   })()
+  await administrator.query('ALTER TABLE gazette_withdrawals DISABLE TRIGGER USER')
+  try {
+    await administrator.query(`
+      INSERT INTO gazette_withdrawals (target_note_id, command_note_id, withdrawn_at)
+      VALUES ($1, $2, $3)
+    `, [gazetteNote.id, withdrawalNote.id, withdrawalNote.created_at])
+  } finally {
+    await administrator.query('ALTER TABLE gazette_withdrawals ENABLE TRIGGER USER')
+  }
   await administrator.query('BEGIN')
   const gazetteEvent = (await administrator.query<{ id: number }>(`
     INSERT INTO events (kind, actor, detail, at)
@@ -381,10 +401,32 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     author_id: 2,
     author: 'unicode-writer',
     created_at: '2026-08-31T15:59:59+00:00',
+    withdrawn: true,
+    withdrawal_note_id: withdrawalNote.id,
+    withdrawn_at: '2026-08-31T15:59:59.5+00:00',
   }])
   assert.doesNotMatch(
     await readFile(join(outputDirectory, 'gazette_issue_entries.ndjson'), 'utf8'),
     /moderated Gazette body/iu,
+  )
+  const gazetteWithdrawals = (await readFile(
+    join(outputDirectory, 'gazette_withdrawals.ndjson'),
+    'utf8',
+  )).trimEnd().split('\n').map(line => JSON.parse(line) as {
+    record: Readonly<Record<string, unknown>>
+  })
+  assert.deepEqual(gazetteWithdrawals.map(line => line.record), [{
+    id: gazetteNote.id,
+    status: 'exported',
+    target_note_id: gazetteNote.id,
+    withdrawal_note_id: withdrawalNote.id,
+    author_id: 2,
+    author: 'unicode-writer',
+    withdrawn_at: '2026-08-31T15:59:59.5+00:00',
+  }])
+  assert.doesNotMatch(
+    await readFile(join(outputDirectory, 'gazette_withdrawals.ndjson'), 'utf8'),
+    /moderated Gazette body|WITHDRAW #/iu,
   )
 
   const thingLines = (await readFile(join(outputDirectory, 'things.ndjson'), 'utf8'))
@@ -498,6 +540,10 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     )
     await assert.rejects(
       () => deniedReader.query('SELECT * FROM public.gazette_issues'),
+      /permission denied/iu,
+    )
+    await assert.rejects(
+      () => deniedReader.query('SELECT * FROM public.gazette_withdrawals'),
       /permission denied/iu,
     )
     await assert.rejects(
