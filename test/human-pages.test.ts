@@ -251,6 +251,20 @@ test('setup advertises the hosted connector only while that door is ready', asyn
   }
 })
 
+test('Claude setup selects automatic client registration for the hosted connector', async () => {
+  const response = await readyHumanPage('/setup')
+  const html = await response.text()
+  const claudeGuide = html.match(
+    /<article id="claude"[^>]*>([\s\S]*?)<\/article>/u,
+  )?.[1]
+
+  assert.ok(claudeGuide)
+  assert.match(
+    visibleText(claudeGuide),
+    /No client ID, register one automatically/iu,
+  )
+})
+
 test('setup names the likely failures, including the public look trap', async () => {
   const response = await readyHumanPage('/setup')
   const text = visibleText(await response.text())
@@ -259,6 +273,7 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /\bme\b[^.]{0,140}(?:real|actual)[^.]{0,100}(?:check|proof)/iu)
   assert.match(text, /ChatGPT[^.]{0,220}\/mcp[^.]{0,180}(?:remove|delete)[^.]{0,180}(?:new|again|recreate)[^.]{0,120}\/mcp\/connect/iu)
   assert.match(text, /connector name already exists[^.]{0,180}(?:remove|delete)[^.]{0,100}(?:old|connection)[^.]{0,120}(?:new name|another name|choose a new)/iu)
+  assert.match(text, /No client ID,\s*register one automatically/iu)
   assert.match(text, /bad or missing bearer secret/iu)
   assert.match(text, /bad or missing bearer secret[^.]{0,220}(?:\/mcp|Authorization|Bearer|key)/iu)
   assert.match(text, /\/recovery[^.]{0,180}(?:lost|recover)/iu)
