@@ -78,6 +78,18 @@ test('export uses one frozen read-only transaction through the exact dual-view G
             exported_at: '2026-08-23T12:34:56.000Z',
           },
           {
+            class_name: 'gazette_issue_entries',
+            record_id: '20',
+            sort_key: '20',
+            payload: {
+              id: 20, status: 'exported', issue_number: 1, ordinal: 2,
+              note_id: 20, author_id: 2, author: 'writer',
+              created_at: '2026-08-31T15:59:59.250Z', withdrawn: true,
+              withdrawal_note_id: 21, withdrawn_at: '2026-08-31T15:59:59.500Z',
+            },
+            exported_at: '2026-08-23T12:34:56.000Z',
+          },
+          {
             class_name: 'gazette_issues',
             record_id: '1',
             sort_key: '1',
@@ -85,7 +97,18 @@ test('export uses one frozen read-only transaction through the exact dual-view G
               id: 1, status: 'exported', issue_number: 1,
               scheduled_for: '2026-08-31T16:00:00.000Z',
               printed_at: '2026-08-31T16:00:01.000Z',
-              header: 'THE GAZETTE — ISSUE 1', entry_count: 1, event_id: 41,
+              header: 'THE GAZETTE — ISSUE 1', entry_count: 2, event_id: 41,
+            },
+            exported_at: '2026-08-23T12:34:56.000Z',
+          },
+          {
+            class_name: 'gazette_withdrawals',
+            record_id: '20',
+            sort_key: '20',
+            payload: {
+              id: 20, status: 'exported', target_note_id: 20,
+              withdrawal_note_id: 21, author_id: 2, author: 'writer',
+              withdrawn_at: '2026-08-31T15:59:59.500Z',
             },
             exported_at: '2026-08-23T12:34:56.000Z',
           },
@@ -112,7 +135,8 @@ test('export uses one frozen read-only transaction through the exact dual-view G
     })
     assert.equal(result.counts.residents, 1)
     assert.equal(result.counts.gazette_issues, 1)
-    assert.equal(result.counts.gazette_issue_entries, 1)
+    assert.equal(result.counts.gazette_issue_entries, 2)
+    assert.equal(result.counts.gazette_withdrawals, 1)
     assert.match(calls[0]!.text, /BEGIN[\s\S]*REPEATABLE READ[\s\S]*READ ONLY/iu)
     assert.match(calls.at(-1)!.text, /COMMIT/iu)
     assert.equal(calls.filter(call => /snapshot-export:records/iu.test(call.text)).length, 1)
@@ -129,6 +153,32 @@ test('export uses one frozen read-only transaction through the exact dual-view G
       calls.find(call => /snapshot-export:attest-role/iu.test(call.text))!.text,
       /public\.resident_refusal_state/iu,
     )
+    const entryRecords = (await readFile(join(root, 'gazette_issue_entries.ndjson'), 'utf8'))
+      .trimEnd().split('\n').map(line => (
+        JSON.parse(line) as { record: Readonly<Record<string, unknown>> }
+      ).record)
+    assert.deepEqual(entryRecords, [
+      {
+        id: 19, status: 'exported', issue_number: 1, ordinal: 1,
+        note_id: 19, author_id: 2, author: 'writer',
+        created_at: '2026-08-31T15:59:59.000Z',
+      },
+      {
+        id: 20, status: 'exported', issue_number: 1, ordinal: 2,
+        note_id: 20, author_id: 2, author: 'writer',
+        created_at: '2026-08-31T15:59:59.250Z', withdrawn: true,
+        withdrawal_note_id: 21, withdrawn_at: '2026-08-31T15:59:59.500Z',
+      },
+    ])
+    const withdrawalEnvelope = JSON.parse(
+      await readFile(join(root, 'gazette_withdrawals.ndjson'), 'utf8'),
+    ) as { record: Readonly<Record<string, unknown>> }
+    assert.deepEqual(withdrawalEnvelope.record, {
+      id: 20, status: 'exported', target_note_id: 20,
+      withdrawal_note_id: 21, author_id: 2, author: 'writer',
+      withdrawn_at: '2026-08-31T15:59:59.500Z',
+    })
+    assert.equal(Object.hasOwn(withdrawalEnvelope.record, 'body'), false)
     const officialFile = await readFile(join(root, 'official.ndjson'), 'utf8')
     const officialEnvelope = JSON.parse(officialFile.trim()) as {
       record: {

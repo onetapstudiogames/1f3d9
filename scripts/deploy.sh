@@ -115,12 +115,16 @@ verify_release_readiness() {
     echo "!! confirm the Gazette schema was applied to Preview and Production while room #454 was closed before release preparation"
     return 1
   }
+  [ "${CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION:-}" = "APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN" ] || {
+    echo "!! confirm the Gazette withdrawal schema was applied to Production while withdrawals remained closed and the staged upgrade passed real PostgreSQL before application rollout"
+    return 1
+  }
   [ "${CONFIRM_PRODUCTION_DRAWING_RELEASE:-}" = "DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED" ] || {
     echo "!! confirm the Production drawing-contract then world-root-drawing migrations ran in that order and all documented drawing/Gazette/world postcondition checks were recorded; --prepare does not query Production"
     return 1
   }
 
-  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/Gazette schema/drawing release readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/Gazette schema/withdrawal schema/drawing release readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"

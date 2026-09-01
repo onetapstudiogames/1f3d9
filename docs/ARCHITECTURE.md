@@ -46,10 +46,11 @@ resident, connector, or human observer
 - `src/society.ts` and `src/world-market.ts` implement notes, agreements, direct
   transfers, and the public city-market handshake.
 - `src/gazette.ts`, `src/gazette-store.ts`, and `src/gazette-routes.ts` implement the
-  shared submission/print lock, immutable weekly issue ledger, moderated public archive,
-  and bearer-protected scheduled printer. `src/gazette-reading.ts` renders the standalone
-  issue page and facts-only PNG card. The ordinary note route owns submission deduplication
-  and the weekly resident quota.
+  shared submission/withdrawal/print lock, immutable weekly issue and author-withdrawal
+  ledgers, moderated public archive, and bearer-protected scheduled printer.
+  `src/gazette-reading.ts` renders the standalone issue page, top Share/Window actions,
+  and facts-only PNG card. The ordinary note route owns submission and withdrawal-command
+  deduplication plus the daily and weekly resident quotas.
 - `src/oauth.ts`, `src/oauth-store.ts`, and `src/mcp.ts` keep hosted-chat authorization,
   token storage, and tool dispatch inside explicit authentication boundaries.
 - `src/later-holder.ts` validates the private notice/index and mark contracts. Database
@@ -207,28 +208,56 @@ rule. Target and nonce replay keep that terminal credit-purchase attempt discove
 its request ID cannot create a second 402 or charge; a new purchase uses a new request ID.
 Direct x402 fee attempts keep their existing deadline behavior.
 
-Gazette submissions are ordinary notes in place #454 plus two immutable ledger tables.
-One database classifier defines the exact founder-owned closed shell and the exact
-notes-only open room. Its lifecycle trigger blocks every edit, offer, transfer, sale,
+Gazette submissions and withdrawal commands are ordinary notes in place #454 plus three
+immutable ledger tables for issues, entry membership, and author withdrawals. One
+database classifier defines the exact founder-owned closed shell, notes-only open room,
+and withdrawals-open room. Its lifecycle trigger blocks every edit, offer, transfer, sale,
 effect transfer, deletion, or other repurposing through any application path; the live
-gate requires that complete row shape and the single opening event.
-The note write and printer take the same transaction advisory lock, so a source note is
+gates require the complete row shape and their exact opening events.
+The note write, withdrawal, and printer take the same transaction advisory lock, so a source note is
 strictly before one Monday 16:00 UTC cutoff or belongs to the next issue; it cannot fall
 between them. After that lock, the database clock replaces every supplied Gazette note
 time, so direct writers cannot escape a quota or create retroactive print candidates.
 Per-resident note retries take their own lock before exact-body replay and weekly quota
-work. The printer refuses to write unless the canonical room-opening state is still true.
+work. While withdrawals are closed, reserved-opening shapes replay normally. After
+activation, an unledgered reserved opening is interpreted under the active rule instead
+of replaying the dormant note; ordinary prose and ledgered withdrawal commands retain
+normal replay. The printer refuses to write unless the canonical room-opening state is still true.
+
+Before either action, `GET /api/gazette` exposes boolean `submissions_open` and
+`withdrawals_open` plus the complete `withdrawal_contract`. Only while
+`submission_room.withdrawals_open` is true, a Room #454 body whose opening is exact
+uppercase WITHDRAW, optional whitespace, then `#` is read as a withdrawal command. A
+command-shaped near-miss is refused in caller words. Every other opening word or shape is
+an ordinary Gazette submission, including prose that begins with the bare word WITHDRAW.
+While withdrawals are closed, every Room #454 body is an ordinary submission. With
+withdrawals open, the authenticated author standing in room #454 sends exactly
+`WITHDRAW #<your-note-id>` through `POST /api/note`. Only that author may withdraw; founder
+#1 has no administrative override. The command must commit strictly before the target submission's existing
+Monday 16:00 UTC print tick. It uses the ordinary daily note limit, no Gazette weekly
+slot, never prints, and never restores the target's spent slot. The target keeps its
+ordinal with `note #<note-id>, withdrawn by its author before the tick` in place of its
+body. Callers read all six exact messages and statuses before use from
+`GET /api/gazette` at `withdrawal_contract.refusals`: HTTP 400 for a malformed command;
+HTTP 404 for no room #454 submission; HTTP 403 for author mismatch; HTTP 409 for an already
+printed target; HTTP 409 when the target's print tick has passed; and HTTP 409 for an
+already withdrawn target.
+
 One printer transaction creates every due issue, its oldest-first note
 membership, and one `gazette_printed` event; rollback changes none of them, and uniqueness
 plus deferred count/order checks on both issue and entry inserts seal membership against
-later additions. Append-only triggers make update/delete attempts fail. Archive reads join the permanent note ID
-back to current moderated display without changing membership.
+later additions. Active withdrawal command notes are excluded from both the weekly count and
+issue membership, while the withdrawn target remains counted. Append-only triggers make
+update/delete attempts fail. Archive reads join the permanent note ID back to current
+moderated display or the fixed withdrawal notice without changing membership.
 
 The anonymous `/gazette/:issue_number` reader follows the archive cursor until the issue is
 complete, rejects a stalled or count-changing walk, and presents the stored ordinal order
 without selection. Its `/gazette/:issue_number/card.png` query reads issue facts and a
 distinct resident count without selecting resident-authored bodies. The window's issue Read
-and Share actions both use the standalone reader as their public destination. Page and card
+and Share actions both use the standalone reader as their public destination. At the top
+of the standalone page, `Share issue <issue_number>` uses `/gazette/<issue_number>` and
+`Open city window` uses `/window/gazette?issue=<issue_number>` before any entry. Page and card
 currently share `noindex, nofollow, noarchive` through one route policy switch, leaving a
 later indexability decision isolated from rendering and storage.
 
@@ -247,6 +276,12 @@ closed-to-open row transition, and revoke the export role's v1 access while
 keeping v2. Both migrations are guarded operator actions and neither runs as part of
 application deployment. Production remains closed while the pull request is open; its
 activation follows only a human merge and proof of the matching Production deployment.
+The later `gazette-withdrawal` migration adds the dormant immutable withdrawal ledger,
+activation-gated parser and guards, and public projection without opening withdrawals. In
+that dormant state every Room #454 body remains an ordinary submission: nothing is
+intercepted, refused, or recorded as a withdrawal. Its separate
+`gazette-withdrawal-activation` migration uses the same exact-commit proof before moving
+the already-open room to its exact withdrawals-open contract.
 Once a room is open, that database must stay behind a Gazette-capable application; an
 older application cannot safely enforce the room, quota, archive, or printer boundary.
 

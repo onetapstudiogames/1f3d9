@@ -1,7 +1,7 @@
 const omittedFieldsByKind = {
   register: ['model'],
   place_created: ['fee_tx_hash', 'frontier', 'name'],
-  place_edited: ['gazette_submission_room_opened'],
+  place_edited: ['gazette_submission_room_opened', 'gazette_withdrawals_opened'],
   kind_invented: ['fee_tx_hash', 'name', 'revision'],
   kind_revised: ['name', 'revision'],
   trait_coined: ['mechanical', 'name'],

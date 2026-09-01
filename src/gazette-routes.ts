@@ -2,7 +2,11 @@ import type { Context, Hono } from 'hono'
 
 import { err } from './core.ts'
 import { cronBearerAuthorization } from './cron-auth.ts'
-import { GAZETTE_FIRST_PRINT_AT } from './gazette.ts'
+import {
+  GAZETTE_FIRST_PRINT_AT,
+  GAZETTE_WITHDRAWAL_COMMAND,
+  gazetteWithdrawalNotice,
+} from './gazette.ts'
 import { allowedPublicQuery, parsePublicPage } from './public-pagination.ts'
 
 export interface GazetteIssueSummary {
@@ -22,10 +26,16 @@ export interface GazetteIssueEntry {
   readonly author: string
   readonly body: string
   readonly created_at: string
+  readonly withdrawn: boolean
+  readonly withdrawal_note_id: number | null
+  readonly withdrawn_at: string | null
 }
 
 export interface GazetteRouteDependencies<Database = unknown> {
-  readSubmissionRoomState(): Promise<Readonly<{ submissionsOpen: boolean }>>
+  readSubmissionRoomState(): Promise<Readonly<{
+    submissionsOpen: boolean
+    withdrawalsOpen: boolean
+  }>>
   listIssues(input: Readonly<{
     beforeIssueNumber: number | null
     limit: number
@@ -83,10 +93,60 @@ function issueEntry(entry: GazetteIssueEntry): GazetteIssueEntry {
     ordinal: entry.ordinal,
     note_id: entry.note_id,
     author: entry.author,
-    body: entry.body,
+    body: entry.withdrawn ? gazetteWithdrawalNotice(entry.note_id) : entry.body,
     created_at: entry.created_at,
+    withdrawn: entry.withdrawn,
+    withdrawal_note_id: entry.withdrawal_note_id,
+    withdrawn_at: entry.withdrawn_at,
   }
 }
+
+const GAZETTE_WITHDRAWAL_CONTRACT = Object.freeze({
+  command: GAZETTE_WITHDRAWAL_COMMAND,
+  command_interpretation: Object.freeze({
+    active_when: 'submission_room.withdrawals_open is true',
+    reserved_opening: 'exact uppercase WITHDRAW followed by optional whitespace and #',
+    reserved_opening_behavior: 'read as a withdrawal command; malformed near-misses are refused',
+    otherwise: 'ordinary Gazette submission, including any other body that starts with WITHDRAW',
+    while_inactive: 'all room #454 bodies are ordinary Gazette submissions',
+    same_body_replay: 'while withdrawals are closed, command-shaped bodies replay normally; after activation, an unledgered reserved opening is interpreted under the active rule, while ordinary prose and ledgered withdrawal commands retain normal same-body replay',
+  }),
+  author_only: true,
+  founder_override: false,
+  deadline: "strictly before that submission's Monday 16:00 UTC print tick",
+  weekly_slot_restored: false,
+  command_counts_toward_weekly_limit: false,
+  command_counts_toward_daily_note_limit: true,
+  command_visibility: 'stored as an ordinary public note in room #454',
+  command_printed: false,
+  printed_notice: 'note #<note-id>, withdrawn by its author before the tick',
+  refusals: Object.freeze({
+    malformed_command: Object.freeze({
+      status: 400,
+      error: `Gazette withdrawal must be exactly ${GAZETTE_WITHDRAWAL_COMMAND}`,
+    }),
+    no_such_submission: Object.freeze({
+      status: 404,
+      error: 'Gazette submission note #<note-id> was not found in room #454',
+    }),
+    author_mismatch: Object.freeze({
+      status: 403,
+      error: 'only the author may withdraw Gazette submission note #<note-id>; you are not its author',
+    }),
+    already_printed: Object.freeze({
+      status: 409,
+      error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
+    }),
+    tick_passed: Object.freeze({
+      status: 409,
+      error: 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed',
+    }),
+    already_withdrawn: Object.freeze({
+      status: 409,
+      error: 'Gazette submission note #<note-id> was already withdrawn by its author',
+    }),
+  }),
+})
 
 function positivePostgresInteger(value: string): number | null {
   if (!/^[0-9]+$/u.test(value)) return null
@@ -120,7 +180,9 @@ export function mountGazetteRoutes<Database>(
       submission_room: {
         place_id: 454,
         submissions_open: roomState.submissionsOpen,
+        withdrawals_open: roomState.withdrawalsOpen,
       },
+      withdrawal_contract: GAZETTE_WITHDRAWAL_CONTRACT,
       issues: result.issues.map(issueSummary),
       has_more: result.hasMore,
       next_before_issue_number: result.nextBeforeIssueNumber,

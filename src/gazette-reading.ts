@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto'
 import { deflateSync, inflateSync } from 'node:zlib'
 import type { Context, Hono } from 'hono'
+
+import { gazetteWithdrawalNotice } from './gazette.ts'
 
 export type GazetteReadingRobots = 'index, follow' | 'noindex, nofollow, noarchive'
 
@@ -20,6 +23,9 @@ export type GazetteReadingEntry = Readonly<{
   author: string
   body: string
   created_at: string
+  withdrawn?: boolean
+  withdrawal_note_id?: number | null
+  withdrawn_at?: string | null
 }>
 
 export type GazetteReadingIssueFacts = Readonly<{
@@ -44,13 +50,37 @@ type ScriptCode = 'ja' | 'ko' | 'zh' | 'ar' | 'he' | 'ru' | 'hi' | 'th'
 
 const ISSUE_ID_MAX = 2_147_483_647
 const BINARY_BYTE = /\b[01]{8}\b/gu
+const GAZETTE_SHARE_SCRIPT = `(() => {
+  const button = document.querySelector('[data-gazette-share]')
+  const status = document.querySelector('[data-gazette-share-status]')
+  if (!(button instanceof HTMLButtonElement) || !(status instanceof HTMLElement)) return
+
+  button.addEventListener('click', async () => {
+    const path = button.dataset.sharePath
+    if (!path || !/^\\/gazette\\/[1-9][0-9]*$/u.test(path)) return
+    const absoluteUrl = new URL(path, window.location.origin).href
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(absoluteUrl)
+      button.textContent = 'Issue link copied'
+      status.textContent = 'Link copied: ' + absoluteUrl
+      status.dataset.tone = 'success'
+    } catch {
+      status.textContent = 'The link could not copy. Copy this URL: ' + absoluteUrl
+      status.dataset.tone = 'error'
+    }
+  })
+})()`
+const GAZETTE_SHARE_SCRIPT_HASH = createHash('sha256')
+  .update(GAZETTE_SHARE_SCRIPT)
+  .digest('base64')
 const READING_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'none'",
-  "script-src 'none'",
+  `script-src 'sha256-${GAZETTE_SHARE_SCRIPT_HASH}'`,
   "style-src 'unsafe-inline' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   "img-src 'self'",
@@ -95,7 +125,14 @@ body{
 .foot::before{bottom:-2.2rem;left:calc(-1 * clamp(1.1rem,5vw,3rem) - 1px);border-bottom:2px solid var(--line);border-left:2px solid var(--line)}
 .foot::after{bottom:-2.2rem;right:calc(-1 * clamp(1.1rem,5vw,3rem) - 1px);border-bottom:2px solid var(--line);border-right:2px solid var(--line)}
 .machine{font-family:"Courier Prime",ui-monospace,monospace;font-size:.73rem;letter-spacing:.02em;color:var(--muted)}
-.plate{display:flex;justify-content:space-between;gap:.4rem 1rem;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:.6rem;margin-bottom:2.4rem}
+.plate{display:flex;justify-content:space-between;gap:.4rem 1rem;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:.6rem;margin-bottom:1rem}
+.issue-actions{display:flex;justify-content:flex-end;gap:.55rem;flex-wrap:wrap}
+.issue-action{display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:.45rem .75rem;color:var(--ink);background:var(--ground);border:1px solid var(--line);font:700 .73rem "Courier Prime",ui-monospace,monospace;letter-spacing:.02em;text-decoration:none;cursor:pointer}
+.issue-action:hover,.issue-action:focus-visible{color:var(--sheet);background:var(--accent)}
+.issue-action:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.share-status{min-height:1.4rem;margin:.35rem 0 2.4rem;text-align:right;overflow-wrap:anywhere}
+.share-status[data-tone="success"]{color:var(--ink)}
+.share-status[data-tone="error"]{color:var(--accent)}
 .accent{color:var(--accent)}
 .mast{text-align:center}
 .eyebrow{font-family:"Courier Prime",ui-monospace,monospace;font-size:.72rem;letter-spacing:.32em;text-transform:uppercase;color:var(--accent);margin-bottom:.9rem}
@@ -117,6 +154,7 @@ body{
 .stamp{display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin-bottom:1.05rem;font-family:"Courier Prime",ui-monospace,monospace;font-size:.71rem;letter-spacing:.03em;color:var(--muted)}
 .stamp .ordinal{color:var(--accent);font-weight:700}
 .entry-body{white-space:pre-wrap;overflow-wrap:break-word;unicode-bidi:plaintext}
+.withdrawal-notice{margin:0;color:var(--muted);font-style:italic;unicode-bidi:plaintext}
 .body-ja{font-family:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",serif;line-height:2.05}
 .body-ko{font-family:"Noto Serif KR","Apple SD Gothic Neo",serif;line-height:1.95}
 .body-zh{font-family:"Noto Serif SC","Songti SC",STSong,serif;line-height:1.95}
@@ -139,7 +177,8 @@ body{
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
 @media print{
   :root{--ground:#fff9e8;--sheet:#fff9e8;--ink:#15231d;--muted:#555e55;--line:#9d9276;--accent:#ad3f25}
-  .skip-link{display:none}.press{padding:0}.sheet{border:0;max-width:none;padding:0;background:var(--sheet)}
+  .skip-link,.issue-actions,.share-status{display:none}.press{padding:0}.sheet{border:0;max-width:none;padding:0;background:var(--sheet)}
+  .plate{margin-bottom:2.4rem}
   .sheet::before,.sheet::after,.foot::before,.foot::after{display:none}
   .entry{break-inside:avoid-page}.raw[open] .bits{max-height:none;overflow:visible}
   a{color:inherit;text-decoration:none}
@@ -251,6 +290,9 @@ function promiseFromHeader(header: string): string {
 }
 
 function entryBody(entry: GazetteReadingEntry): string {
+  if (entry.withdrawn === true) {
+    return `<p class="withdrawal-notice">${escapeHtml(gazetteWithdrawalNotice(entry.note_id))}</p>`
+  }
   const decoded = decodeBinary(entry.body)
   const script = scriptOf(decoded ?? entry.body)
   const className = `entry-body${script === null ? '' : ` body-${script}`}`
@@ -283,7 +325,9 @@ function renderContents(entries: readonly GazetteReadingEntry[]): string {
     const ordinal = String(entry.ordinal).padStart(2, '0')
     return `<a class="toc-row" href="#entry-${ordinal}">
         <span class="toc-number">${ordinal}</span>
-        <span class="toc-title">${escapeHtml(titleOf(entry.body))}</span>
+        <span class="toc-title">${escapeHtml(
+          entry.withdrawn === true ? 'Withdrawn submission' : titleOf(entry.body),
+        )}</span>
         <span class="toc-author"><bdi>${escapeHtml(entry.author)}</bdi></span>
       </a>`
   }).join('\n')
@@ -345,6 +389,11 @@ function issueDocument(
         <span>PLATE <span class="accent">${plateNumber}</span> · 1F3D9 / ROOM 454</span>
         <span>PRESS RUN <span class="accent">${escapeHtml(issue.scheduled_for.slice(0, 10))}</span></span>
       </div>
+      <div class="issue-actions machine" aria-label="Issue actions">
+        <button class="issue-action" type="button" data-gazette-share data-share-path="/gazette/${issueNumber}" aria-describedby="gazette-share-status">Share issue ${issueNumber}</button>
+        <a class="issue-action" href="/window/gazette?issue=${issueNumber}">Open city window</a>
+      </div>
+      <p id="gazette-share-status" class="share-status machine" data-gazette-share-status role="status" aria-live="polite"></p>
       <header class="mast">
         <div class="eyebrow">Issue No. ${issueNumber}</div>
         <h1>The Gazette</h1>
@@ -370,6 +419,7 @@ ${entries.map(renderEntry).join('\n')}
       </footer>
     </div>
   </main>
+  <script>${GAZETTE_SHARE_SCRIPT}</script>
 </body>
 </html>
 `

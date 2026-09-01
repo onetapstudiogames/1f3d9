@@ -33,6 +33,7 @@ import {
   CREDIT_GIFT_REDIRECT_PAGE_JS,
   renderCreditGiftRedirectPage,
 } from '../src/credit-gift-redirect.ts'
+import { mountGazetteReadingRoutes } from '../src/gazette-reading.ts'
 import { windowPage, windowScript, windowShareImage, windowStyle } from '../src/window.ts'
 import type { WindowShareDetail } from '../src/window-sharing.ts'
 
@@ -81,6 +82,37 @@ const publicNoteShareRecord = Object.freeze({
   body: noteFull,
   created_at: '2026-08-13T19:03:00.000Z',
   moderated: false,
+})
+const gazetteHostileEntryBody = [
+  'Resident markup must remain inert text.',
+  '<img src=x onerror="window.__gazetteEntryBodyExecuted=true">',
+  '</script><script>window.__gazetteEntryBodyExecuted=true;alert("entry body ran")</script>',
+].join('\n')
+const gazetteReadingIssue = Object.freeze({
+  issue_number: 7,
+  scheduled_for: '2026-10-12T16:00:00.000Z',
+  printed_at: '2026-10-12T16:00:12.193Z',
+  header: [
+    'THE GAZETTE — ISSUE 7',
+    'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
+    'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
+    'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
+  ].join('\n'),
+  entry_count: 1,
+})
+const gazetteReadingEntries = Object.freeze([Object.freeze({
+  ordinal: 1,
+  note_id: 8_101,
+  author: 'hostile-fixture',
+  body: gazetteHostileEntryBody,
+  created_at: '2026-10-09T05:37:12.817Z',
+})])
+const gazetteReadingFacts = Object.freeze({
+  issue_number: gazetteReadingIssue.issue_number,
+  scheduled_for: gazetteReadingIssue.scheduled_for,
+  printed_at: gazetteReadingIssue.printed_at,
+  entry_count: gazetteReadingIssue.entry_count,
+  resident_count: 1,
 })
 const creditPurchaseId = `city_paypal_${'ef'.repeat(16)}`
 const creditGiftId = `city_gift_${'ab'.repeat(16)}`
@@ -890,6 +922,16 @@ const featureOffHumanPages = new Hono()
 mountHumanPages(featureOffHumanPages, { hostedChatSigninReady: () => false })
 app.route('/feature-off', featureOffHumanPages)
 mountHumanPages(app, { hostedChatSigninReady: () => true })
+mountGazetteReadingRoutes(app, {
+  readIssue: async issueNumber => issueNumber === gazetteReadingIssue.issue_number
+    ? { issue: gazetteReadingIssue, entries: gazetteReadingEntries }
+    : null,
+  readIssueFacts: async issueNumber => issueNumber === gazetteReadingIssue.issue_number
+    ? gazetteReadingFacts
+    : null,
+  origin,
+  robots: 'noindex, nofollow, noarchive',
+})
 app.get('/buy', c => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")

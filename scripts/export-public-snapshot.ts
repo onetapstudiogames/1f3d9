@@ -11,6 +11,7 @@ import {
   publicOfficialFacts,
   publicPhysicsFacts,
 } from '../src/public-reference-facts.ts'
+import { withoutInheritedGitEnvironment } from './child-process-environment.ts'
 
 const SNAPSHOT_ROLE = 'city_snapshot_export'
 const SNAPSHOT_VIEW_COLUMNS = Object.freeze(['class_name', 'record_id', 'sort_key', 'payload'])
@@ -62,6 +63,7 @@ function sourceCommitFromGit(): string {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: new URL('..', import.meta.url),
     encoding: 'utf8',
+    env: withoutInheritedGitEnvironment(),
     windowsHide: true,
   }).trim()
   if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error('Git did not return a full lowercase source commit')

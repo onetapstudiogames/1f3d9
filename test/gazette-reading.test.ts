@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { Hono } from 'hono'
 
 type Issue = Readonly<{
@@ -24,6 +25,9 @@ type Entry = Readonly<{
   author: string
   body: string
   created_at: string
+  withdrawn?: boolean
+  withdrawal_note_id?: number | null
+  withdrawn_at?: string | null
 }>
 
 type CompleteIssue = Readonly<{
@@ -67,7 +71,8 @@ const issue = Object.freeze({
     'THE GAZETTE — ISSUE 7',
     'Automatic weekly print for Monday, 12 October 2026 at 16:00 UTC.',
     'Source: ordinary notes submitted in the Gazette submission room, place #454.',
-    'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time.',
+    'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
+    'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
     'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
   ].join('\n'),
@@ -140,7 +145,7 @@ async function pngBytes(response: Response): Promise<Uint8Array> {
   return bytes
 }
 
-test('the Gazette page is a no-window reading view with issue-only metadata', async () => {
+test('the Gazette page has safe top Share and Window actions with issue-only metadata', async () => {
   let fullReads = 0
   let factReads = 0
   const app = createApp({
@@ -162,8 +167,11 @@ test('the Gazette page is a no-window reading view with issue-only metadata', as
   assert.equal(factReads, 0)
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive')
-  assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'none'/u)
-  assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'none'/u)
+  const csp = response.headers.get('content-security-policy') ?? ''
+  assert.match(csp, /default-src 'none'/u)
+  assert.match(csp, /connect-src 'none'/u)
+  assert.match(csp, /form-action 'none'/u)
+  assert.doesNotMatch(csp, /script-src[^;]*(?:'self'|'unsafe-inline')/u)
   assert.match(response.headers.get('x-content-type-options') ?? '', /nosniff/iu)
   assert.match(html, /^<!doctype html>/iu)
   assert.match(html, /<meta name="robots" content="noindex, nofollow, noarchive">/iu)
@@ -183,6 +191,19 @@ test('the Gazette page is a no-window reading view with issue-only metadata', as
   assert.match(html, /<meta name="twitter:card" content="summary_large_image">/u)
   assert.doesNotMatch(head, /zenith-bard|ferro|matsu|Part 2|かな/u)
   assert.doesNotMatch(html, /role="tablist"|Gazette tab|How do I connect\?|What is this\?/iu)
+  const firstHeading = html.indexOf('<h1>The Gazette</h1>')
+  const shareButton = html.indexOf('data-gazette-share')
+  const windowAction = html.indexOf('href="/window/gazette?issue=7"')
+  assert.ok(shareButton >= 0 && shareButton < firstHeading, 'Share must be at the top')
+  assert.ok(windowAction >= 0 && windowAction < firstHeading, 'Window must be at the top')
+  assert.match(html, /<button[^>]*data-gazette-share[^>]*data-share-path="\/gazette\/7"[^>]*>\s*Share issue 7\s*<\/button>/u)
+  assert.match(html, /<a[^>]*href="\/window\/gazette\?issue=7"[^>]*>\s*Open city window\s*<\/a>/u)
+  assert.match(html, /role="status"[^>]*aria-live="polite"/u)
+  const shareScript = html.match(/<script>([\s\S]*?)<\/script>/u)?.[1]
+  assert.ok(shareScript, 'the Share action needs one static script')
+  const scriptHash = createHash('sha256').update(shareScript).digest('base64')
+  assert.match(csp, new RegExp(`script-src 'sha256-${scriptHash.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'u'))
+  assert.doesNotMatch(shareScript, /entry-body|resident|author|innerHTML|fetch\s*\(/iu)
   assert.match(html, />The Gazette<\/h1>/u)
   assert.match(visibleText(html), /PLATE 07 · 1F3D9 \/ ROOM 454/u)
   assert.match(html, /Issue N(?:o|º|&ordm;)\.?\s*7/iu)
@@ -230,11 +251,39 @@ test('resident-controlled text is escaped and RTL entries are isolated', async (
   const html = await response.text()
 
   assert.equal(response.status, 200)
-  assert.doesNotMatch(html, /<script>|<img src=x/iu)
+  assert.doesNotMatch(html, /<script>\s*alert\(1\)|<img src=x/iu)
   assert.match(html, /resident&quot;&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;/u)
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/u)
   assert.match(html, /class="entry-body body-ar" lang="ar" dir="rtl"/u)
   assert.match(html, /unicode-bidi:\s*plaintext/u)
+  const shareScript = html.match(/<script>([\s\S]*?)<\/script>/u)?.[1] ?? ''
+  assert.doesNotMatch(shareScript, /resident|alert\(1\)|مرحبا/u)
+})
+
+test('a withdrawn entry renders only the fixed one-line notice in its original position', async () => {
+  const withdrawnEntries = Object.freeze([
+    {
+      ordinal: 1,
+      note_id: 9_223,
+      author: 'waypost',
+      body: 'note #9223, withdrawn by its author before the tick',
+      created_at: '2026-10-09T05:37:12.817Z',
+      withdrawn: true,
+      withdrawal_note_id: 9_852,
+      withdrawn_at: '2026-10-11T15:59:00.000Z',
+    },
+  ] satisfies readonly Entry[])
+  const app = createApp({
+    readIssue: async () => ({ issue: { ...issue, entry_count: 1 }, entries: withdrawnEntries }),
+  })
+  const html = await (await app.request('/gazette/7')).text()
+
+  assert.match(
+    html,
+    /ENTRY 01[\s\S]*class="withdrawal-notice"[^>]*>note #9223, withdrawn by its author before the tick<\/p>/u,
+  )
+  assert.equal((html.match(/note #9223, withdrawn by its author before the tick/gu) ?? []).length, 1)
+  assert.doesNotMatch(html, /show the binary as filed|class="entry-body/iu)
 })
 
 test('the issue card is a facts-only, issue-specific 1200 by 630 PNG', async () => {

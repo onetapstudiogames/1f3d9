@@ -38,6 +38,10 @@ const residentRefusalMigrationFile =
   'db/migrations/20260827_resident_refusal_state.sql' as const
 const drawingsMigrationFile = 'db/migrations/20260827_drawings.sql' as const
 const drawingContractMigrationFile = 'db/migrations/20260828_drawing_contract.sql' as const
+const gazetteWithdrawalMigrationFile =
+  'db/migrations/20260901_gazette_withdrawal.sql' as const
+const gazetteWithdrawalActivationMigrationFile =
+  'db/migrations/20260901_gazette_withdrawal_activation.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -778,6 +782,109 @@ test('Gazette schema installation and post-deploy room activation are separate g
     packageJson.scripts?.['migrate:production:gazette-room-activation'] ?? '',
     /--target production --migration gazette-room-activation$/u,
   )
+})
+
+test('Gazette withdrawal installation is dormant and only its activation proves the deployed commit', () => {
+  const previewEnvironment = {
+    CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+    NEON_API_KEY: 'secret-neon-key',
+    NEON_PROJECT_ID: 'project-one',
+    NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+    NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+    PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+  }
+
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'gazette-withdrawal'],
+      previewEnvironment,
+    ),
+    /CONFIRM_GAZETTE_WITHDRAWAL/iu,
+  )
+  const dormant = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'gazette-withdrawal'],
+    {
+      ...previewEnvironment,
+      CONFIRM_GAZETTE_WITHDRAWAL: 'INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER',
+      GAZETTE_DEPLOYMENT_COMMIT: 'a'.repeat(40),
+      GAZETTE_PREVIEW_ORIGIN:
+        'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    },
+  )
+  assert.equal(dormant.migrationFile, gazetteWithdrawalMigrationFile)
+  assert.equal(dormant.executionMode, 'transactional')
+  assert.equal(dormant.liveDeployment, undefined)
+
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'gazette-withdrawal-activation'],
+      previewEnvironment,
+    ),
+    /CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION/iu,
+  )
+  assert.throws(
+    () => resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'gazette-withdrawal-activation'],
+      {
+        ...previewEnvironment,
+        CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION:
+          'OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT',
+      },
+    ),
+    /GAZETTE_DEPLOYMENT_COMMIT/iu,
+  )
+
+  const activation = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'gazette-withdrawal-activation'],
+    {
+      ...previewEnvironment,
+      CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION:
+        'OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT',
+      GAZETTE_DEPLOYMENT_COMMIT: 'b'.repeat(40),
+      GAZETTE_PREVIEW_ORIGIN:
+        'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    },
+  )
+  assert.equal(activation.migrationFile, gazetteWithdrawalActivationMigrationFile)
+  assert.equal(activation.executionMode, 'transactional')
+  assert.deepEqual(activation.liveDeployment, {
+    origin: 'https://1f3d9-qg56l10xf-onetapstudiogames-projects.vercel.app',
+    commit: 'b'.repeat(40),
+  })
+
+  const productionActivation = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'gazette-withdrawal-activation'],
+    {
+      CONFIRM_GAZETTE_WITHDRAWAL_ACTIVATION:
+        'OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT',
+      GAZETTE_DEPLOYMENT_COMMIT: 'c'.repeat(40),
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'gazette-withdrawal-activation',
+    },
+  )
+  assert.equal(productionActivation.migrationFile, gazetteWithdrawalActivationMigrationFile)
+  assert.deepEqual(productionActivation.liveDeployment, {
+    origin: 'https://1f3d9.com',
+    commit: 'c'.repeat(40),
+  })
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  for (const target of ['preview', 'production'] as const) {
+    assert.match(
+      packageJson.scripts?.[`migrate:${target}:gazette-withdrawal`] ?? '',
+      new RegExp(`--target ${target} --migration gazette-withdrawal$`, 'u'),
+    )
+    assert.match(
+      packageJson.scripts?.[`migrate:${target}:gazette-withdrawal-activation`] ?? '',
+      new RegExp(`--target ${target} --migration gazette-withdrawal-activation$`, 'u'),
+    )
+  }
 })
 
 test('Gazette room activation proves the exact no-store deployed application commit', async () => {

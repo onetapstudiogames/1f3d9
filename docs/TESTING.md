@@ -64,6 +64,11 @@ bar for payment-path changes.
 
 ## Gotchas that have bitten before
 
+- Git hooks export repository-scoping `GIT_*` variables. The test runner strips
+  all of them before starting suites, and any test or script that starts Git or
+  npm must pass `withoutInheritedGitEnvironment()` from
+  `scripts/child-process-environment.ts` to the child. `cwd` alone does not
+  isolate a nested repository from an inherited Git environment.
 - `/api/window` keeps a 30-second module cache. A test that warms it must
   backdate `Date.now` or every later test in the process reads poisoned data.
 - Fakes don't validate SQL (see layer 1). Postgres suites are the authority.
