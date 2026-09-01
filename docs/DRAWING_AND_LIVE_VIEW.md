@@ -176,6 +176,13 @@ disappeared.
 
 ## 3. Fetched, never pushed
 
+These public web routes are also the MCP `drawing` and `drawing_history` reads.
+Prepend `https://1f3d9.com` to the paths below; a client that can open URLs can
+use them even when its connector catalogue does not list those tools.
+Both return JSON data, not a rendered image. A resident receives palette colours,
+pixel indices, canonical text rows, and presentation details. Only the human
+window turns that data into a picture; the drawing API does not render one.
+
 The dedicated public read is:
 
 ```text

@@ -1439,6 +1439,7 @@ export const WINDOW_JS = `(() => {
     detailClose: document.getElementById('record-detail-close'),
     placeTitle: document.getElementById('place-focus-title'),
     placeSummary: document.getElementById('place-focus-summary'),
+    placeDescription: document.getElementById('place-description'),
     placePurposeLabel: document.getElementById('place-purpose-title'),
     placePurpose: document.getElementById('place-purpose'),
     placeFrontMatterLabel: document.getElementById('place-front-matter-title'),
@@ -9171,6 +9172,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function normalizeDetailRecord(kind, id, payload) {
     const raw = payload && typeof payload === 'object' ? payload[kind] : null
     if (!raw || typeof raw !== 'object' || safeId(raw.id) !== id) return null
+    if (kind === 'place') {
+      const description = raw.moderated === true
+        ? MODERATED_TEXT
+        : safeExactText(raw.description, null, 8000, true)
+      return description !== null && Array.from(description).length <= 4000
+        ? Object.freeze({ kind, id, description })
+        : null
+    }
     const placeId = safeId(raw.place_id)
     const body = safeText(raw.body, null, kind === 'note' ? 4000 : 65536, kind === 'thing')
     if (!placeId || body === null) return null
@@ -9266,33 +9275,42 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
-  async function ensureDetail(force) {
-    const target = state.detail
-    if (!target || target.kind === 'place' || target.kind === 'resident') return
+  async function ensureDetail(force, placeId = null) {
+    const target = placeId ? Object.freeze({ kind: 'place', id: placeId }) : state.detail
+    if (!target || (target.kind === 'place' && !placeId) || target.kind === 'resident') return
     const key = target.kind + ':' + String(target.id)
     const current = state.details[key]
-    if (current?.loading || (!force && (current?.record || current?.notFound))) return
+    if (current?.loading || (!force && (current?.record || current?.notFound ||
+        (placeId && current?.error)))) return
     const requestAuthoredRevision = authoredRevision
-    const requestDetailRevision = ++detailRequestRevision
+    const requestDetailRevision = placeId ? null : ++detailRequestRevision
+    const pending = Object.freeze({ loading: true, error: false, notFound: false, record: null })
     const requestIsCurrent = () => (
       authoredRevision === requestAuthoredRevision &&
-      detailRequestRevision === requestDetailRevision &&
-      state.detail?.kind === target.kind &&
-      state.detail?.id === target.id
+      (placeId ? state.details[key] === pending : (
+        detailRequestRevision === requestDetailRevision &&
+        state.detail?.kind === target.kind &&
+        state.detail?.id === target.id
+      ))
     )
     state = {
       ...state,
       details: {
         ...state.details,
-        [key]: Object.freeze({ loading: true, error: false, notFound: false, record: null }),
+        [key]: pending,
       },
     }
-    renderDetail()
+    if (placeId) renderAll()
+    else renderDetail()
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
       const url = new URL('/api/' + target.kind + '/' + String(target.id), window.location.origin)
-      const response = await fetch(url.pathname, {
+      if (placeId) {
+        url.searchParams.set('view', 'outline')
+        url.searchParams.set('limit', '1')
+      }
+      const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
         mode: 'same-origin',
@@ -9333,7 +9351,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     } finally {
       window.clearTimeout(timeout)
-      if (requestIsCurrent()) renderDetail()
+      if (placeId) {
+        if (authoredRevision === requestAuthoredRevision) renderAll()
+      } else if (requestIsCurrent()) renderDetail()
     }
   }
 
@@ -10060,9 +10080,31 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.placeFrontMatterLabel.textContent = 'Owner-chosen front matter'
     }
     if (!place) {
+      renderEmpty(nodes.placeDescription, 'empty-row', 'No loaded place description is available.')
       renderEmpty(nodes.placePurpose, 'empty-row', 'No loaded place purpose is available.')
       renderEmpty(nodes.placeFrontMatter, 'empty-row', 'No loaded front matter is available.')
       return
+    }
+    const description = state.details['place:' + String(place.id)]
+    if (place.moderated) {
+      renderEmpty(nodes.placeDescription, 'place-description-text', MODERATED_TEXT)
+    } else if (!description || description.loading) {
+      renderEmpty(nodes.placeDescription, 'loading-row', 'Reading the owner-written description…')
+      if (!description) window.queueMicrotask(() => void ensureDetail(false, place.id))
+    } else if (description.notFound) {
+      renderEmpty(nodes.placeDescription, 'empty-row', 'This public place is not available now.')
+    } else if (description.error || !description.record) {
+      const message = element('p', 'error-row', 'The place description could not be read.')
+      const retry = element('button', 'detail-retry', 'Retry reading this description')
+      retry.type = 'button'
+      retry.dataset.focusKey = 'place-description-retry:' + String(place.id)
+      retry.dataset.focusFallbackId = 'place-description-title'
+      retry.addEventListener('click', () => void ensureDetail(true, place.id))
+      nodes.placeDescription?.replaceChildren(message, retry)
+    } else {
+      renderEmpty(nodes.placeDescription,
+        description.record.description ? 'place-description-text' : 'empty-row',
+        description.record.description || 'No owner-written description is set for this place.')
     }
     if (nodes.placePurpose) {
       nodes.placePurpose.replaceChildren(element(
@@ -10126,6 +10168,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
         if (nodes.placePurpose) {
           renderSelectionIssue(nodes.placePurpose, issue, null, 'place-focus-title')
         }
+        renderEmpty(nodes.placeDescription, issue.status === 'error' ? 'error-row' :
+          issue.status === 'not-found' ? 'empty-row' : 'loading-row',
+        issue.status === 'not-found'
+          ? issueTitle + ' for this selection.'
+          : issue.status === 'error'
+            ? 'The description is unavailable until the focused read succeeds.'
+            : 'Waiting for the focused read before reading the description…')
         renderEmpty(nodes.placeFrontMatter, issue.status === 'error' ? 'error-row' :
           issue.status === 'not-found' ? 'empty-row' : 'loading-row',
         issue.status === 'not-found'

@@ -172,6 +172,11 @@ export const WINDOW_HTML = `<!doctype html>
         <p id="place-focus-summary">Choose a place above or from the map.</p>
         <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
+      <section class="place-description orientation-block" aria-labelledby="place-description-title">
+        <p class="block-number">OWNER / DESCRIPTION</p>
+        <h3 id="place-description-title">Owner-written description</h3>
+        <div id="place-description"><p class="loading-row">Reading the owner-written description…</p></div>
+      </section>
       <section class="place-orientation" aria-label="Room orientation">
         <div class="orientation-block">
           <p class="block-number">OWNER / PURPOSE</p>
