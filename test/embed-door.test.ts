@@ -10,11 +10,13 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { withoutInheritedGitEnvironment } from '../scripts/child-process-environment.ts'
 
 const generatorPath = fileURLToPath(new URL('../scripts/embed-door.mjs', import.meta.url))
+const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 const createFixture = (
   frontdoorDocument: string,
@@ -29,13 +31,20 @@ const createFixture = (
   return root
 }
 
-const runGenerator = (root: string) => spawnSync(process.execPath, [generatorPath], {
+const runGenerator = (
+  root: string,
+  environment: NodeJS.ProcessEnv = process.env,
+) => spawnSync(process.execPath, [generatorPath], {
   cwd: root,
   encoding: 'utf8',
+  env: withoutInheritedGitEnvironment(environment),
   windowsHide: true,
 })
 
-const runDoorCheck = (root: string) => {
+const runDoorCheck = (
+  root: string,
+  environment: NodeJS.ProcessEnv = process.env,
+) => {
   const command = process.platform === 'win32'
     ? process.env.ComSpec ?? 'cmd.exe'
     : 'npm'
@@ -46,9 +55,21 @@ const runDoorCheck = (root: string) => {
   return spawnSync(command, arguments_, {
     cwd: root,
     encoding: 'utf8',
+    env: withoutInheritedGitEnvironment(environment),
     windowsHide: true,
   })
 }
+
+const runGit = (
+  root: string,
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
+) => spawnSync('git', [...arguments_], {
+  cwd: root,
+  encoding: 'utf8',
+  env: withoutInheritedGitEnvironment(environment),
+  windowsHide: true,
+})
 
 test('embed-door regenerates the fenced published mirror without changing its wrapper', () => {
   const original = '# Wrapper\n\nKeep before.\n\n```\nSTALE COPY\n```\n\nKeep after.\n'
@@ -98,24 +119,61 @@ test('embed-door refuses invalid published mirror fences before writing outputs'
   }
 })
 
-test('door:check fails stale tracked mirrors clearly and passes synchronized mirrors', () => {
+test('door:check isolates nested Git from a poisoned parent while checking mirrors', () => {
   const original = '# Wrapper\n\n```\nOLD FRONT DOOR\n```\n'
   const root = createFixture(original, 'OLD FRONT DOOR\n')
+  const victimRoot = mkdtempSync(join(tmpdir(), '1f3d9-git-env-victim-'))
 
   try {
+    // The canary setup stays independent of the sanitizer under test, so a
+    // regression can target only this disposable repository.
+    const fixtureBaseEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !/^GIT_/iu.test(name)),
+    )
+    const victimGitDirectory = join(victimRoot, '.git')
+    mkdirSync(victimGitDirectory)
+    writeFileSync(join(victimGitDirectory, 'HEAD'), 'ref: refs/heads/main\n')
+    const victimConfig = join(victimGitDirectory, 'config')
+    writeFileSync(victimConfig, [
+      '[core]',
+      '\trepositoryformatversion = 0',
+      '\tbare = false',
+      '[test]',
+      '\tguard = untouched',
+      '',
+    ].join('\n'))
+    const victimConfigBefore = readFileSync(victimConfig, 'utf8')
+    const projectGitDirectory = runGit(projectRoot, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ])
+    assert.equal(projectGitDirectory.status, 0, projectGitDirectory.stderr)
+    const projectConfig = join(projectGitDirectory.stdout.trim(), 'config')
+    const projectConfigBefore = readFileSync(projectConfig, 'utf8')
+    const poisonedEnvironment = {
+      ...fixtureBaseEnvironment,
+      GIT_DIR: victimGitDirectory,
+      GIT_WORK_TREE: victimRoot,
+    }
+
     mkdirSync(join(root, 'scripts'))
     copyFileSync(generatorPath, join(root, 'scripts', 'embed-door.mjs'))
     copyFileSync(
       fileURLToPath(new URL('../package.json', import.meta.url)),
       join(root, 'package.json'),
     )
-    const initialGeneration = runGenerator(root)
+    const initialGeneration = runGenerator(root, poisonedEnvironment)
     assert.equal(initialGeneration.status, 0, initialGeneration.stderr)
-    assert.equal(spawnSync('git', ['init', '--quiet'], { cwd: root }).status, 0)
-    assert.equal(spawnSync('git', ['add', '.'], { cwd: root }).status, 0)
+    assert.equal(runGit(root, ['init', '--quiet'], poisonedEnvironment).status, 0)
+    assert.equal(runGit(root, ['add', '.'], poisonedEnvironment).status, 0)
+    assert.equal(existsSync(join(root, '.git')), true)
+    const fixtureTopLevel = runGit(root, ['rev-parse', '--show-toplevel'], poisonedEnvironment)
+    assert.equal(fixtureTopLevel.status, 0, fixtureTopLevel.stderr)
+    assert.equal(resolve(fixtureTopLevel.stdout.trim()), resolve(root))
 
     writeFileSync(join(root, 'src', 'frontdoor.txt'), 'NEW FRONT DOOR\n')
-    const staleCheck = runDoorCheck(root)
+    const staleCheck = runDoorCheck(root, poisonedEnvironment)
     assert.notEqual(staleCheck.status, 0)
     assert.match(
       `${staleCheck.stdout}${staleCheck.stderr}`,
@@ -123,21 +181,24 @@ test('door:check fails stale tracked mirrors clearly and passes synchronized mir
     )
 
     assert.equal(
-      spawnSync('git', [
+      runGit(root, [
         'add',
         'src/frontdoor.txt',
         'src/door.ts',
         'docs/published/FRONTDOOR.md',
-      ], { cwd: root }).status,
+      ], poisonedEnvironment).status,
       0,
     )
-    const synchronizedCheck = runDoorCheck(root)
+    const synchronizedCheck = runDoorCheck(root, poisonedEnvironment)
     assert.equal(
       synchronizedCheck.status,
       0,
       `${synchronizedCheck.stdout}${synchronizedCheck.stderr}`,
     )
+    assert.equal(readFileSync(victimConfig, 'utf8'), victimConfigBefore)
+    assert.equal(readFileSync(projectConfig, 'utf8'), projectConfigBefore)
   } finally {
     rmSync(root, { force: true, recursive: true })
+    rmSync(victimRoot, { force: true, recursive: true })
   }
 })

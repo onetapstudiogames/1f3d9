@@ -23,6 +23,7 @@ import {
   verifyPreviewDatabaseTarget,
   verifyProductionDatabaseTarget,
 } from '../scripts/migrate.ts'
+import { withoutInheritedGitEnvironment } from '../scripts/child-process-environment.ts'
 
 const deployScript = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'utf8')
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
@@ -126,14 +127,6 @@ const paymentLateFinalityRecheckMigrationUrl = new URL(
   '../db/migrations/20260825_payment_late_finality_recheck.sql',
   import.meta.url,
 )
-
-function withoutGitHookEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const environment = { ...process.env }
-  for (const name of Object.keys(environment)) {
-    if (name.startsWith('GIT_')) delete environment[name]
-  }
-  return { ...environment, ...overrides }
-}
 
 function finalNonEmptyLine(output: string): string | undefined {
   return output
@@ -410,10 +403,11 @@ function createPreparationFixture(): PreparationFixture {
   const hooks = createPreparationFixtureRoot('1f3d9-deploy-hooks-')
   const bin = createPreparationFixtureRoot('1f3d9-deploy-bin-')
   const commandLog = join(bin, 'npm.log')
-  const gitEnvironment = withoutGitHookEnvironment({
+  const gitEnvironment = {
+    ...withoutInheritedGitEnvironment(),
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_GLOBAL: 'NUL',
-  })
+  }
   const git = (...args: string[]) => execFileSync(
     'git',
     ['-c', `core.hooksPath=${hooks}`, '-C', root, ...args],
@@ -428,7 +422,7 @@ function createPreparationFixture(): PreparationFixture {
   const bashRemoteRoot = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: remoteRoot,
     encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
+    env: withoutInheritedGitEnvironment(),
   }).stdout.trim()
   mkdirSync(join(root, 'scripts'))
   mkdirSync(join(root, 'node_modules'))
@@ -454,12 +448,12 @@ function createPreparationFixture(): PreparationFixture {
   const bashBin = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: bin,
     encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
+    env: withoutInheritedGitEnvironment(),
   }).stdout.trim()
   const bashRoot = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: root,
     encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
+    env: withoutInheritedGitEnvironment(),
   }).stdout.trim()
   const wrapper = join(bin, 'run-prepare.sh')
   writeFileSync(wrapper, [
@@ -512,7 +506,7 @@ function createPreparationFixture(): PreparationFixture {
       ], {
         cwd: root,
         encoding: 'utf8',
-        env: withoutGitHookEnvironment(),
+        env: withoutInheritedGitEnvironment(),
       })
     },
     cleanup: () => {
@@ -529,7 +523,7 @@ test('manual deploy invocation fails closed with GitHub-to-Vercel guidance', t =
   const result = spawnSync('bash', ['scripts/deploy.sh'], {
     cwd: fixture.root,
     encoding: 'utf8',
-    env: withoutGitHookEnvironment(),
+    env: withoutInheritedGitEnvironment(),
   })
 
   assert.notEqual(result.status, 0)
