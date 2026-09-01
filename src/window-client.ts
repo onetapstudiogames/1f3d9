@@ -13,6 +13,7 @@ import {
   validateWindowDirectorySearch,
   windowDetailShareState,
   windowSharePath,
+  windowShareTargetPath,
 } from './window-sharing.ts'
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
@@ -1245,6 +1246,7 @@ const VALIDATE_WINDOW_ARCHIVE_QUERY_JS = validateWindowArchiveQuery.toString()
 const VALIDATE_WINDOW_DIRECTORY_SEARCH_JS = validateWindowDirectorySearch.toString()
 const WINDOW_DETAIL_SHARE_STATE_JS = windowDetailShareState.toString()
 const WINDOW_SHARE_PATH_JS = windowSharePath.toString()
+const WINDOW_SHARE_TARGET_PATH_JS = windowShareTargetPath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
 const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
@@ -1358,6 +1360,7 @@ export const WINDOW_JS = `(() => {
   const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}
   const windowDetailShareState = ${WINDOW_DETAIL_SHARE_STATE_JS}
   const windowSharePath = ${WINDOW_SHARE_PATH_JS}
+  const windowShareTargetPath = ${WINDOW_SHARE_TARGET_PATH_JS}
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
@@ -1459,6 +1462,7 @@ export const WINDOW_JS = `(() => {
     archiveSearch: document.getElementById('archive-search'),
     archiveResults: document.getElementById('archive-results'),
     archivePage: document.getElementById('archive-page'),
+    gazetteRead: document.getElementById('gazette-read'),
     gazetteShare: document.getElementById('gazette-share'),
     gazetteSubmissionStatus: document.getElementById('gazette-submission-status'),
     gazetteIssueList: document.getElementById('gazette-issue-list'),
@@ -2925,7 +2929,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const shareState = button?.dataset.shareScope === 'detail'
       ? windowDetailShareState(current)
       : current
-    return shareState ? windowSharePath(shareState) : null
+    return shareState ? windowShareTargetPath(shareState) : null
   }
 
   async function copyCurrentShareLink(button) {
@@ -3757,6 +3761,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : 'Share this Gazette'
       nodes.gazetteShare.dataset.shareLabel = label
       nodes.gazetteShare.textContent = label
+    }
+    if (nodes.gazetteRead) {
+      const issueNumber = safeId(state.gazetteIssueId) ? state.gazetteIssueId : null
+      nodes.gazetteRead.hidden = issueNumber === null
+      nodes.gazetteRead.textContent = issueNumber === null
+        ? 'Read issue'
+        : 'Read issue ' + String(issueNumber)
+      if (issueNumber === null) nodes.gazetteRead.removeAttribute('href')
+      else nodes.gazetteRead.href = '/gazette/' + String(issueNumber)
     }
     nodes.gazetteIssueList.setAttribute('aria-busy', String(gazette.listLoading))
     if (gazette.listLoading && !gazette.issues.length) {

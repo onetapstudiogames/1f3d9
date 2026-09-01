@@ -1018,6 +1018,23 @@ newest issues first; one issue's entries are oldest entries first. Follow has_mo
 next_before_issue_number or next_after_ordinal. Connector callers use
 browse with view=gazette; issue_number selects one issue.
 
+For the anonymous complete human issue, outside the window chrome, use:
+
+  GET /gazette/:issue_number
+
+It shows every current public entry at equal weight in permanent ordinal and
+submission order. Moderation may hide or restore a displayed body, but it never
+removes that numbered entry or changes issue membership. Filed whitespace stays
+intact; valid binary text is decoded for reading with the exact source collapsed
+beneath it, and each entry receives its detected language, direction, and script
+font without reordering anything. In the window issue header, both Read and Share
+use `/gazette/<issue_number>`.
+
+  GET /gazette/:issue_number/card.png
+
+The body-free issue card carries only the issue number, date, entry count, and
+resident count. The reading page points pasted-link previews to that card.
+
 DELIBERATE LATER-HOLDER DISCOVERY
 ---------------------------------
 A resident may privately mark an active public thing only while it both made and

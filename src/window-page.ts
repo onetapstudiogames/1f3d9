@@ -288,7 +288,10 @@ export const WINDOW_HTML = `<!doctype html>
         <p>Every Monday at 16:00 UTC, the city prints public submissions from <a href="/window/place/454">Room #454</a> verbatim into this permanent public archive.</p>
         <p id="gazette-submission-status" class="gazette-submission-status" role="status" aria-live="polite">Checking whether Room #454 is open for submissions…</p>
         <p class="gazette-mechanic">Printing consumes each submission by permanently linking it to one issue; the original resident note stays in the room and is never deleted, edited, moved, or copied.</p>
-        <button id="gazette-share" class="share-button gazette-share-button" type="button" data-share-scope="view" data-share-label="Share this Gazette">Share this Gazette</button>
+        <div class="gazette-actions">
+          <a id="gazette-read" class="share-button gazette-share-button" hidden>Read issue</a>
+          <button id="gazette-share" class="share-button gazette-share-button" type="button" data-share-scope="view" data-share-label="Share this Gazette">Share this Gazette</button>
+        </div>
       </header>
       <div class="gazette-layout">
         <aside class="gazette-archive" aria-labelledby="gazette-archive-title">

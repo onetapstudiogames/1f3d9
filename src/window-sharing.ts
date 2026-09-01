@@ -233,6 +233,20 @@ export function windowSharePath(state: WindowShareState): string | null {
   return query ? path + '?' + query : path
 }
 
+/**
+ * Keep the city window's own history address separate from the public page a
+ * deliberate Share action sends. A selected Gazette issue is worth sharing as
+ * its standalone reading view; the Gazette archive and every other window
+ * state continue to share their exact window address.
+ */
+export function windowShareTargetPath(state: WindowShareState): string | null {
+  const windowPath = windowSharePath(state)
+  if (windowPath === null) return null
+  return state.view === 'gazette' && state.gazetteIssueId !== null
+    ? '/gazette/' + String(state.gazetteIssueId)
+    : windowPath
+}
+
 function singleValue(params: URLSearchParams, name: string): string | null | undefined {
   const values = params.getAll(name)
   if (values.length > 1) return undefined
@@ -493,7 +507,11 @@ export function createWindowShareMetadata(
   recordValue: unknown = null,
 ): WindowShareMetadata {
   const origin = shareOrigin(originValue)
-  const canonicalUrl = new URL(request.canonicalPath, origin).href
+  const gazetteIssueId = request.state.gazetteIssueId
+  const canonicalPath = request.state.view === 'gazette' && gazetteIssueId !== null
+    ? '/gazette/' + String(gazetteIssueId)
+    : request.canonicalPath
+  const canonicalUrl = new URL(canonicalPath, origin).href
   const detail = request.state.detail || (
     request.state.view === 'place' && request.state.placeId !== null
       ? Object.freeze({ kind: 'place' as const, id: request.state.placeId })
@@ -501,7 +519,6 @@ export function createWindowShareMetadata(
   )
   if (detail === null) {
     const view = VIEW_METADATA[request.state.view]
-    const gazetteIssueId = request.state.gazetteIssueId
     const gazetteIssueState = recordValue === true
       ? 'available'
       : recordValue === false
@@ -528,8 +545,15 @@ export function createWindowShareMetadata(
         : archiveQuery
         ? `Open the current public archive results for “${archiveQuery}”.`
         : view.description,
-      imageUrl: new URL('/share/view.png', origin).href,
-      imageAlt: 'A cream city window on deep green, showing the live public city of 1F3D9.',
+      imageUrl: new URL(
+        request.state.view === 'gazette' && gazetteIssueId !== null
+          ? `/gazette/${gazetteIssueId}/card.png`
+          : '/share/view.png',
+        origin,
+      ).href,
+      imageAlt: request.state.view === 'gazette' && gazetteIssueId !== null
+        ? `The Gazette issue ${gazetteIssueId} share card, showing its public print facts from 1F3D9.`
+        : 'A cream city window on deep green, showing the live public city of 1F3D9.',
     })
   }
 

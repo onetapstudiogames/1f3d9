@@ -69,6 +69,23 @@ type GazetteStoreRuntime = Readonly<{
     hasMore: boolean
     nextAfterOrdinal: number | null
   }> | null>
+  readCompleteGazetteIssue?: (
+    database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
+    issueNumber: number,
+  ) => Promise<Readonly<{
+    issue: Record<string, unknown>
+    entries: readonly Record<string, unknown>[]
+  }> | null>
+  readGazetteIssueFacts?: (
+    database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
+    issueNumber: number,
+  ) => Promise<Readonly<{
+    issue_number: number
+    scheduled_for: string
+    printed_at: string
+    entry_count: number
+    resident_count: number
+  }> | null>
 }>
 
 const gazetteRuntime = await import('../../src/gazette.ts') as GazetteRuntime
@@ -427,7 +444,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
 
     await printGazetteIssuesDue(sql, '2026-08-31T16:00:00.000Z')
     const firstPrint = (await database.query(`
-      SELECT issue.issue_number, issue.scheduled_for, issue.header, issue.entry_count,
+      SELECT issue.issue_number, issue.scheduled_for, issue.printed_at, issue.header, issue.entry_count,
         entry.ordinal, entry.note_id, note.body, resident.handle, note.created_at
       FROM gazette_issues issue
       LEFT JOIN gazette_issue_entries entry USING (issue_number)
@@ -437,6 +454,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
     `)).rows.map(row => ({
       ...row,
       scheduled_for: iso(row.scheduled_for),
+      printed_at: iso(row.printed_at),
       created_at: iso(row.created_at),
     }))
     assert.deepEqual(firstPrint.map(row => ({
@@ -467,7 +485,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
     const immutableSnapshot = JSON.stringify(firstPrint)
     await printGazetteIssuesDue(sql, '2026-08-31T16:00:00.000Z')
     const replaySnapshot = JSON.stringify((await database.query(`
-      SELECT issue.issue_number, issue.scheduled_for, issue.header, issue.entry_count,
+      SELECT issue.issue_number, issue.scheduled_for, issue.printed_at, issue.header, issue.entry_count,
         entry.ordinal, entry.note_id, note.body, resident.handle, note.created_at
       FROM gazette_issues issue
       LEFT JOIN gazette_issue_entries entry USING (issue_number)
@@ -477,6 +495,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
     `)).rows.map(row => ({
       ...row,
       scheduled_for: iso(row.scheduled_for),
+      printed_at: iso(row.printed_at),
       created_at: iso(row.created_at),
     })))
     assert.equal(replaySnapshot, immutableSnapshot, 'replaying a print tick changes nothing')
@@ -510,6 +529,16 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       typeof gazetteStoreRuntime.readGazetteIssue,
       'function',
       'implement permanent public Gazette issue detail',
+    )
+    assert.equal(
+      typeof gazetteStoreRuntime.readCompleteGazetteIssue,
+      'function',
+      'implement the complete standalone Gazette issue read',
+    )
+    assert.equal(
+      typeof gazetteStoreRuntime.readGazetteIssueFacts,
+      'function',
+      'implement body-free Gazette issue facts',
     )
     const publicDatabase = Object.freeze({
       query: async (text: string, params: readonly unknown[] = []) => (
@@ -547,7 +576,7 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       issue: {
         issue_number: 1,
         scheduled_for: '2026-08-31T16:00:00.000Z',
-        printed_at: '2026-08-31T16:00:00.000Z',
+        printed_at: firstPrint[0]!.printed_at as string,
         header: gazetteRuntime.printGazetteIssuesDue
           ? (firstPrint[0]!.header as string)
           : '',
@@ -571,6 +600,28 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       ],
       hasMore: true,
       nextAfterOrdinal: 2,
+    })
+    const completeIssue = await gazetteStoreRuntime.readCompleteGazetteIssue!(publicDatabase, 1)
+    assert.deepEqual(
+      completeIssue?.entries.map(entry => ({
+        ordinal: entry.ordinal,
+        note_id: entry.note_id,
+        author: entry.author,
+        body: entry.body,
+      })),
+      [
+        { ordinal: 1, note_id: source[1]!.id, author: 'gazette-beta', body: '  lead\ntrail  ' },
+        { ordinal: 2, note_id: source[0]!.id, author: 'gazette-alpha', body: 'Unicode 🏮\nunchanged' },
+        { ordinal: 3, note_id: source[2]!.id, author: 'gazette-beta', body: 'same instant, later note ID' },
+      ],
+      'the standalone reader must collect every entry without changing stored ordinal order',
+    )
+    assert.deepEqual(await gazetteStoreRuntime.readGazetteIssueFacts!(publicDatabase, 1), {
+      issue_number: 1,
+      scheduled_for: '2026-08-31T16:00:00.000Z',
+      printed_at: firstPrint[0]!.printed_at as string,
+      entry_count: 3,
+      resident_count: 2,
     })
 
     const unchanged = (await database.query(`

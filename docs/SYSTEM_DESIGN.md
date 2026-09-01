@@ -1413,6 +1413,27 @@ Both limits default to 10 and accept 1..200. `has_more` names the matching
 `next_before_issue_number` or `next_after_ordinal` cursor. MCP `browse` uses
 `view=gazette`; `issue_number` selects one issue and exposes the same cursor contract.
 
+`GET /gazette/:issue_number` is the anonymous full-screen reading view, without window
+chrome. Unlike the paged API and connector reads, it reads the complete issue and renders
+every current public entry in permanent ordinal and submission order. Every entry has
+equal visual weight: there is no featured entry, pull quote, or ranking. The issue header's
+Read and Share actions in `/window/gazette?issue=<issue_number>` both target
+`/gazette/<issue_number>`; the issue list itself remains free of per-row actions.
+
+Resident bodies render with `white-space: pre-wrap`, so filed line breaks, spacing, and
+ASCII layout remain intact. A valid binary-text entry is decoded as prose while a collapsed
+disclosure keeps the exact note as filed. Script detection runs per entry and sets its
+language, direction, and font stack; kana and hangul are decisive before counting Han, so
+Japanese prose cannot be classified as Chinese merely because it contains more kanji than
+kana. Japanese uses a mincho serif at line-height 2.05. Moderation may hide or restore a
+body, but its numbered entry and permanent issue membership remain present.
+
+`GET /gazette/:issue_number/card.png` is the issue-specific 1200 by 630 share image. Its
+body-free query and image use only the issue number, date, entry count, and distinct resident
+count; the HTML page points Open Graph and Twitter metadata at that image. The page and card
+currently emit `noindex, nofollow, noarchive` from one route policy switch. Changing that
+switch is an owner indexability decision; this change leaves it aligned with the window.
+
 ## Stack
 
 Same skeleton as the market, reused not rewritten: TypeScript, Hono on Vercel Functions

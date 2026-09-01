@@ -10,6 +10,7 @@ import {
   windowDetailShareState,
   windowShareMetadataOrigin,
   windowSharePath,
+  windowShareTargetPath,
   type WindowShareState,
 } from '../src/window-sharing.ts'
 
@@ -130,9 +131,11 @@ test('window share paths are clean, stable, and preserve the reproducible public
   } as unknown as WindowShareState), null)
 })
 
-test('Gazette issue shares are canonical, bounded, and body-free', () => {
+test('Gazette window history stays in the window while issue shares point to the body-free reader', () => {
   assert.equal(windowSharePath(gazetteShareState(null)), '/window/gazette')
   assert.equal(windowSharePath(gazetteShareState(7)), '/window/gazette?issue=7')
+  assert.equal(windowShareTargetPath(gazetteShareState(null)), '/window/gazette')
+  assert.equal(windowShareTargetPath(gazetteShareState(7)), '/gazette/7')
 
   const parsed = parseWindowShareRequest('/window/gazette', '?issue=7')
   assert.ok(parsed)
@@ -145,14 +148,17 @@ test('Gazette issue shares are canonical, bounded, and body-free', () => {
   )
 
   const missing = createWindowShareMetadata('https://1f3d9.com', parsed, false)
-  assert.equal(missing.canonicalUrl, 'https://1f3d9.com/window/gazette?issue=7')
+  assert.equal(missing.canonicalUrl, 'https://1f3d9.com/gazette/7')
   assert.equal(missing.title, 'The Gazette · Issue 7 is unavailable — 1F3D9')
   assert.match(missing.description, /not publicly available now/iu)
+  assert.equal(missing.imageUrl, 'https://1f3d9.com/gazette/7/card.png')
 
   const unverified = createWindowShareMetadata('https://1f3d9.com', parsed, null)
+  assert.equal(unverified.canonicalUrl, 'https://1f3d9.com/gazette/7')
   assert.equal(unverified.title, 'The Gazette · Issue 7 could not be checked — 1F3D9')
   assert.match(unverified.description, /availability could not be checked right now/iu)
   assert.doesNotMatch(unverified.description, /not publicly available/iu)
+  assert.equal(unverified.imageUrl, 'https://1f3d9.com/gazette/7/card.png')
 
   const forgedFromResidentText = createWindowShareMetadata('https://1f3d9.com', parsed, {
     author: 'leafwalker',
@@ -161,10 +167,11 @@ test('Gazette issue shares are canonical, bounded, and body-free', () => {
   assert.equal(forgedFromResidentText.title, unverified.title)
 
   const metadata = createWindowShareMetadata('https://1f3d9.com', parsed, true)
-  assert.equal(metadata.canonicalUrl, 'https://1f3d9.com/window/gazette?issue=7')
+  assert.equal(metadata.canonicalUrl, 'https://1f3d9.com/gazette/7')
   assert.equal(metadata.title, 'The Gazette · Issue 7 — 1F3D9')
   assert.match(metadata.description, /weekly Gazette issue/iu)
-  assert.equal(metadata.imageUrl, 'https://1f3d9.com/share/view.png')
+  assert.equal(metadata.imageUrl, 'https://1f3d9.com/gazette/7/card.png')
+  assert.match(metadata.imageAlt, /Gazette issue 7/iu)
   assert.doesNotMatch(
     `${metadata.title}\n${metadata.description}\n${forgedFromResidentText.description}`,
     /RESIDENT BODY|leafwalker/u,
@@ -180,6 +187,12 @@ test('Gazette issue shares are canonical, bounded, and body-free', () => {
     assert.equal(parseWindowShareRequest('/window/gazette', query), null, query)
   }
   assert.equal(parseWindowShareRequest('/window/map', '?issue=7'), null)
+
+  const archive = parseWindowShareRequest('/window/gazette', '')
+  assert.ok(archive)
+  const archiveMetadata = createWindowShareMetadata('https://1f3d9.com', archive)
+  assert.equal(archiveMetadata.canonicalUrl, 'https://1f3d9.com/window/gazette')
+  assert.equal(archiveMetadata.imageUrl, 'https://1f3d9.com/share/view.png')
 })
 
 test('window sharing refuses private-looking or invalid state instead of placing it in a URL', () => {

@@ -145,6 +145,16 @@ test('the Gazette tab states its weekly source, permanent archive, and first hon
     panel,
     /id="gazette-submission-status"[^>]*role="status"[^>]*aria-live="polite"/u,
   )
+  const actions = panel.match(/<div class="gazette-actions">[\s\S]*?<\/div>/u)?.[0] ?? ''
+  assert.match(
+    actions,
+    /<a id="gazette-read" class="share-button gazette-share-button" hidden>Read issue<\/a>/u,
+  )
+  assert.match(
+    actions,
+    /<button id="gazette-share" class="share-button gazette-share-button"[^>]*data-share-scope="view"/u,
+  )
+  assert.doesNotMatch(actions, /data-share-scope="read"/u)
 
   assert.match(WINDOW_JS, /\/api\/gazette/u)
   assert.match(WINDOW_JS, /payload\.submission_room\.place_id\s*!==\s*454/u)
@@ -159,6 +169,17 @@ test('the Gazette tab states its weekly source, permanent archive, and first hon
     /Room #454 is closed for Gazette submissions\. Wait until this notice says open before submitting\./u,
   )
   assert.match(WINDOW_JS, /safeGazetteStoredText\(rawEntry\.body,\s*65536\)/u)
+  assert.match(WINDOW_JS, /Read issue /u)
+  assert.match(WINDOW_JS, /Share issue /u)
+  const issueListRendererStart = WINDOW_JS.indexOf('function gazetteIssueLink')
+  const issueListRendererEnd = WINDOW_JS.indexOf('function gazetteListRetryButton')
+  assert.notEqual(issueListRendererStart, -1)
+  assert.ok(issueListRendererEnd > issueListRendererStart)
+  const issueListRenderer = WINDOW_JS.slice(
+    issueListRendererStart,
+    issueListRendererEnd,
+  )
+  assert.doesNotMatch(issueListRenderer, /<button|element\('button'|gazette-read|gazette-share/u)
   assert.match(WINDOW_JS, /first_print_at/u)
   assert.match(WINDOW_JS, /before_issue_number/u)
   assert.match(WINDOW_JS, /after_ordinal/u)
@@ -227,6 +248,8 @@ test('share controls copy absolute canonical paths and visibly report clipboard 
   assert.match(WINDOW_JS, /could not copy/iu)
   assert.match(WINDOW_JS, /credential[\s\S]{0,240}replace/iu)
   assert.match(WINDOW_JS, /filter[\s\S]{0,240}public URL/iu)
+  assert.match(WINDOW_JS, /windowShareTargetPath\(shareState\)/u)
+  assert.match(WINDOW_JS, /Issue link copied/u)
   assert.doesNotMatch(WINDOW_JS, /document\.execCommand/u)
 })
 
@@ -1660,7 +1683,11 @@ test('canonical window pages render current public metadata and self-contained i
   assert.match(gazetteHtml, /<title>The Gazette · Issue 7 — 1F3D9<\/title>/u)
   assert.match(
     gazetteHtml,
-    /<link rel="canonical" href="https:\/\/1f3d9\.com\/window\/gazette\?issue=7">/u,
+    /<link rel="canonical" href="https:\/\/1f3d9\.com\/gazette\/7">/u,
+  )
+  assert.match(
+    gazetteHtml,
+    /<meta property="og:image" content="https:\/\/1f3d9\.com\/gazette\/7\/card\.png">/u,
   )
   assert.equal(reads.length, 2, 'a body-free issue unfurl must not load resident note text')
   assert.deepEqual(gazetteIssueReads, [7])
@@ -1670,6 +1697,7 @@ test('canonical window pages render current public metadata and self-contained i
   const missingGazetteHtml = await missingGazetteIssue.text()
   assert.match(missingGazetteHtml, /<title>The Gazette · Issue 8 is unavailable — 1F3D9<\/title>/u)
   assert.match(missingGazetteHtml, /not publicly available now/iu)
+  assert.match(missingGazetteHtml, /href="https:\/\/1f3d9\.com\/gazette\/8"/u)
   assert.deepEqual(gazetteIssueReads, [7, 8])
   assert.equal(reads.length, 2, 'Gazette existence checks must never read resident note text')
 
@@ -1682,6 +1710,7 @@ test('canonical window pages render current public metadata and self-contained i
   )
   assert.match(unverifiedGazetteHtml, /availability could not be checked right now/iu)
   assert.doesNotMatch(unverifiedGazetteHtml, /not publicly available now/iu)
+  assert.match(unverifiedGazetteHtml, /href="https:\/\/1f3d9\.com\/gazette\/9"/u)
   assert.deepEqual(gazetteIssueReads, [7, 8, 9])
 
   const image = await app.request('/share/thing.png')
