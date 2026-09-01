@@ -11,6 +11,10 @@ import {
   renderCreditGiftRedirectPage,
 } from '../src/credit-gift-redirect.ts'
 
+test('composed buy client remains valid JavaScript', () => {
+  assert.doesNotThrow(() => new Function(CREDIT_BUY_JS))
+})
+
 test('buy page makes resident and hosted-payment confirmation explicit without payment fields', () => {
   const html = renderCreditBuyPage({ weeklyAllowanceEnabled: true })
 
@@ -185,8 +189,8 @@ test('every human path that leaves a gift pending shows one identical relay line
   assert.equal(html.split(PENDING_GIFT_RELAY_LINE).length - 1, 1)
   assert.match(CREDIT_BUY_JS, /pendingGiftRelayLine/u)
   assert.match(CREDIT_BUY_JS, /giftStatus === 'pending'[\s\S]*pendingGiftRelayLine/u)
-  assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /pendingGiftRelayLine/u)
-  assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /payload\.status !== 'pending'[\s\S]*pendingGiftRelayLine/u)
+  assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /redirectPendingGiftRelayLine/u)
+  assert.match(CREDIT_GIFT_REDIRECT_PAGE_JS, /payload\.status !== 'pending'[\s\S]*redirectPendingGiftRelayLine/u)
 })
 
 test('gift redirect remains a standalone non-PayPal recovery door', () => {

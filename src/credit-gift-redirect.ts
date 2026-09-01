@@ -115,7 +115,7 @@ export const CREDIT_GIFT_REDIRECT_CSS = `
 // This fragment is interpolated inside CREDIT_BUY_JS's private IIFE. It reuses
 // that script's bounded same-origin request, resident validation, and request-id helpers.
 export const CREDIT_GIFT_REDIRECT_CLIENT = `
-  const pendingGiftRelayLine = ${JSON.stringify(PENDING_GIFT_RELAY_LINE)}
+  const redirectPendingGiftRelayLine = ${JSON.stringify(PENDING_GIFT_RELAY_LINE)}
   const giftRedirectBasePath = '/api/city-credit/gifts'
   const redirectLookupForm = byId('gift-redirect-lookup-form')
   const redirectGiftIdInput = byId('redirect-gift-id')
@@ -258,7 +258,7 @@ export const CREDIT_GIFT_REDIRECT_CLIENT = `
       redirectStatus.textContent = ''
       redirectMessage(
         redirectResult,
-        'Gift redirected to @' + redirectDestination.handle + '. It remains pending until that resident accepts it. ' + pendingGiftRelayLine,
+        'Gift redirected to @' + redirectDestination.handle + '. It remains pending until that resident accepts it. ' + redirectPendingGiftRelayLine,
       )
       if (redirectClaimTokenInput instanceof HTMLInputElement) redirectClaimTokenInput.value = ''
       rawClaimToken = ''
