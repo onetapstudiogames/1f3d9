@@ -22,6 +22,64 @@ prefer a `DATABASE_URL` already set in the process, then read `.env.local`, then
 Production and preview deployments read environment values stored in Vercel, never
 files from this folder.
 
+## Repository cost automation
+
+The public repository's weekly `Cost tripwire` workflow reads provider metadata but
+never receives application or database credentials. Configure these values under
+**GitHub repository Settings → Secrets and variables → Actions**:
+
+| Kind | Name | Purpose |
+|---|---|---|
+| Secret | `VERCEL_TOKEN` | Vercel access token allowed to read the team's FOCUS billing charges. |
+| Secret | `NEON_API_KEY` | Project-scoped Neon API key allowed to list branches and delete the exact branch selected by the PR-close guard. |
+| Variable | `VERCEL_TEAM_ID` | Non-secret Vercel team ID supplied to the billing endpoint. |
+| Variable | `NEON_PROJECT_ID` | Non-secret city Neon project ID supplied to branch list/delete endpoints. |
+
+GitHub supplies the issue-writing token itself. Provider secrets exist only in the
+step that needs them and must never be copied into workflow arguments, logs, issue
+text, or job summaries. A missing secret or variable skips that provider check and
+opens or updates the issue with `SKIPPED`; an API or response-shape failure is
+`FAILED`. Neither state is reported as zero usage.
+
+[`config/cost-tripwire.json`](../../config/cost-tripwire.json) is the reviewed source
+for thresholds. Its initial values are 60,000 daily Edge Requests and 60,000 daily
+Function Invocations for `1f3d9`, $5 maximum effective team cost in one UTC day, and
+eight `preview/*` Neon branches. Eight leaves two places inside Neon's first ten for
+`main` and the protected `preview/shared-vercel-testing`. Usage alerts only when it is
+greater than three times a daily project baseline; exact equality is not an alert.
+Every project name returned by Vercel must have a baseline. An unknown project makes
+the report incomplete and keeps the issue loud until its reviewed baseline is added.
+
+The workflow reads the previous seven complete UTC days every Monday and can be run
+manually. Manual runs default to dry-run: provider reads happen, the full proposed
+issue text is printed, and GitHub is not changed. A normal alert reuses the one open
+issue titled `Cost tripwire` and appends a dated, run-marked comment; a healthy run
+adds no issue noise. When the issue appears:
+
+1. Check `FAILED`, `SKIPPED`, and unconfigured-project lines before trusting totals.
+2. Find the first UTC day and project above its displayed limit; compare Vercel paths,
+   deployments, drains, and recent releases for that window.
+3. If Neon is high, identify owners before deleting anything; `main` and
+   `preview/shared-vercel-testing` are protected.
+4. Contain the cost source, run the workflow in dry-run, then run it normally to append
+   the verified numbers to the existing issue.
+
+Check that the Neon–Vercel integration's own cleanup is enabled as defense in depth.
+In the Neon-managed integration, select **Automatically delete obsolete Neon branches**;
+that cleanup detects a deleted Git branch only on later preview activity. In the
+Vercel-managed integration, cleanup follows deletion of the last associated Vercel
+deployment, which is governed by Vercel's pre-production deployment retention.
+Neither path promises deletion at PR close. The separate PR-close workflow therefore
+lists all active branches, derives only `preview/<closed PR head>`, re-reads the exact
+matching branch ID, and deletes only when the name still matches. The
+`pull_request_target` workflow definition and checked-out script both come from the
+reviewed default branch, and a job-level repository identity check skips every fork
+before secrets are available. Provider cleanup and the weekly branch cap remain the
+fork backstop. Missing configuration, absent branches, and every action are written
+to the job summary.
+See Neon's [branch cleanup guide](https://neon.com/docs/guides/vercel-branch-cleanup)
+and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-retention).
+
 ## Runtime variables (set in Vercel; read by the deployed application)
 
 | Name | Purpose |
@@ -231,7 +289,7 @@ curl --silent --show-error --fail-with-body \
         "type": "head_sampling",
         "rate": 0,
         "env": "production",
-        "requestPath": "/api/internal/log-drain"
+        "requestPath": "/api/internal/log-drain?verification=${VERCEL_ENDPOINT_VERIFICATION_CODE}"
       },
       {
         "type": "head_sampling",
@@ -262,9 +320,11 @@ unset VERCEL_ACCESS_TOKEN LOG_DRAIN_SECRET VERCEL_ENDPOINT_VERIFICATION_CODE
 
 This request assumes both projects belong to the same Vercel team. It selects
 production Lambda and Edge runtime logs from both projects. The first ordered
-sampling rule drops the receiver's own invocation logs before the full-rate
-catch-all. The drain must not be created without this exclusion: otherwise each
-delivery can generate another eligible delivery and feed itself. Do not create
+sampling rule drops the receiver's exact delivery path, including its fixed
+verification query, before the full-rate catch-all. A bare-path rule does not match
+that delivery URL. The drain must not be created without this exclusion; it must be
+the exact delivery path including the fixed query. Otherwise each delivery can
+generate another eligible delivery and feed itself. Do not create
 the drain before the migration, environment value, and newer city deployment
 are live; Vercel tests the endpoint during creation and may disable a repeatedly
 failing delivery target. The receiver rejects compressed deliveries, so keep
