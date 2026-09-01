@@ -1,0 +1,56 @@
+name: Cost tripwire
+
+on:
+  schedule:
+    - cron: '23 14 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Read providers and print the issue update without writing it
+        required: true
+        default: true
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: cost-tripwire
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out reviewed default-branch code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Use Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Read costs and report a normal run
+        if: github.event_name == 'schedule' || inputs.dry-run == false
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run cost-tripwire
+      - name: Read costs without changing the issue
+        if: github.event_name == 'workflow_dispatch' && inputs.dry-run == true
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+        run: npm run cost-tripwire -- --dry-run

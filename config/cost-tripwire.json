@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "vercel": {
+    "maxDailySpendUsd": 5,
+    "projects": {
+      "1f3d9": {
+        "edgeRequestsPerDay": 60000,
+        "functionInvocationsPerDay": 60000
+      }
+    }
+  },
+  "neon": {
+    "maxPreviewBranches": 8
+  }
+}

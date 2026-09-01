@@ -23,6 +23,7 @@
     "snapshot:export": "node --experimental-strip-types scripts/export-public-snapshot.ts",
     "snapshot:verify": "node --experimental-strip-types scripts/verify-public-snapshot.ts",
     "snapshot:publish": "node --experimental-strip-types scripts/publish-public-snapshot.ts",
+    "cost-tripwire": "node --experimental-strip-types scripts/cost-tripwire.ts",
     "outcome:thog-actions": "node --experimental-strip-types scripts/check-thog-public-actions.ts",
     "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
