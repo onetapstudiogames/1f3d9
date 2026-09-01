@@ -360,18 +360,8 @@ async function expectProofDrawingContract(page: Page): Promise<void> {
       `.entity-portrait[data-portrait-type="${portrait.type}"]` +
       `[data-portrait-id="${String(portrait.id)}"]`,
     ).first()
-    await shell.scrollIntoViewIfNeeded()
-    const image = shell.locator('img')
-    await expect(image).toHaveAttribute('loading', 'lazy')
-    await expect(image).toHaveAttribute('width', '32')
-    await expect(image).toHaveAttribute('height', '32')
-    await expect(image).toHaveAttribute(
-      'src',
-      new RegExp(
-        `/api/drawing/${portrait.type}/${String(portrait.id)}/thumb\\.png\\?rev=9500$`,
-        'u',
-      ),
-    )
+    await expect(shell).toHaveCount(1)
+    await expect(shell.locator('.entity-portrait-placeholder')).toHaveCount(1)
     expect(await shell.evaluate(node =>
       [...node.attributes].some(attribute => attribute.name.startsWith('data-drawing-')),
     )).toBe(false)

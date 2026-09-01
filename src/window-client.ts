@@ -1675,12 +1675,6 @@ export const WINDOW_JS = `(() => {
     observedPortraitShells.clear()
   }
 
-  function observeRenderedPortraits() {
-    for (const shell of document.querySelectorAll('.entity-portrait')) {
-      if (shell.dataset.loaded !== 'true') schedulePortraitShell(shell)
-    }
-  }
-
   function portraitNode(type, id, label, className = '') {
     const shell = element('span', 'entity-portrait' + (className ? ' ' + className : ''))
     shell.setAttribute('aria-hidden', 'true')
@@ -11206,10 +11200,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderDetail()
     if (state.view === 'archive') renderArchive()
     if (state.view === 'gazette') renderGazette()
-    if (!snapshot) {
-      observeRenderedPortraits()
-      return
-    }
+    if (!snapshot) return
     renderCounts(snapshot)
     renderScope(snapshot)
     if (state.view === 'map') {
@@ -11231,7 +11222,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     renderDirectorySearch(snapshot)
     if (nodes.residentFilter) nodes.residentFilter.value = state.resident || ''
     restoreFocus(focusKey, focusFallbackKey, focusFallbackId)
-    observeRenderedPortraits()
   }
 
   function choosePlace(id, openPlace) {
