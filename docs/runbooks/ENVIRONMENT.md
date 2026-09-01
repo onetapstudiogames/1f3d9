@@ -28,6 +28,11 @@ The public repository's weekly `Cost tripwire` workflow reads provider metadata 
 never receives application or database credentials. Configure these values under
 **GitHub repository Settings → Secrets and variables → Actions**:
 
+Before adding `NEON_API_KEY` to GitHub, set it and `NEON_PROJECT_ID` in your shell and
+rehearse once with a real closed PR's head ref: `node --experimental-strip-types
+scripts/neon-preview-cleanup.ts --dry-run --head-ref "feature/cost-safe"`. The rehearsal
+lists and re-proves the exact Neon branch but makes no delete call.
+
 | Kind | Name | Purpose |
 |---|---|---|
 | Secret | `VERCEL_TOKEN` | Vercel access token allowed to read the team's FOCUS billing charges. |

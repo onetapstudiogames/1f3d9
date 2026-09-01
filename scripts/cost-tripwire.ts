@@ -1,6 +1,7 @@
 import { appendFile, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { safeErrorDetail } from './safe-error-detail.ts'
 
 const ALERT_MULTIPLIER = 3
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -213,11 +214,6 @@ export function compareCostMetrics(input: Readonly<{
   })
 }
 
-function safeDetail(error: unknown): string {
-  const raw = error instanceof Error ? error.message : 'unknown error'
-  return raw.replace(/[\r\n\x00-\x1f]+/gu, ' ').replace(/https?:\/\/\S+/gu, '[URL redacted]').slice(0, 240)
-}
-
 async function readBoundedResponse(response: Response, provider: string): Promise<string> {
   const declared = Number(response.headers.get('content-length') ?? 0)
   if (declared > MAX_RESPONSE_BYTES) throw new Error(`${provider} response exceeded size limit`)
@@ -383,7 +379,7 @@ export async function runCostTripwire(input: Readonly<{
     summary = summarizeFocusBilling(parseFocusBillingJsonl(text))
     statuses.push({ provider: 'Vercel', status: 'ok', detail: 'Seven complete UTC days read.' })
   } catch (error) {
-    statuses.push({ provider: 'Vercel', status: 'failed', detail: safeDetail(error) })
+    statuses.push({ provider: 'Vercel', status: 'failed', detail: safeErrorDetail(error) })
   }
 
   if (!environment.NEON_API_KEY || !environment.NEON_PROJECT_ID) {
@@ -393,7 +389,7 @@ export async function runCostTripwire(input: Readonly<{
     previewBranchCount = branches.filter(name => name.startsWith('preview/')).length
     statuses.push({ provider: 'Neon', status: 'ok', detail: 'All active branches read.' })
   } catch (error) {
-    statuses.push({ provider: 'Neon', status: 'failed', detail: safeDetail(error) })
+    statuses.push({ provider: 'Neon', status: 'failed', detail: safeErrorDetail(error) })
   }
 
   const comparison = compareCostMetrics({
@@ -434,7 +430,7 @@ function parseArguments(arguments_: readonly string[]): Readonly<{ dryRun: boole
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
 if (invokedPath === fileURLToPath(import.meta.url)) {
   runCostTripwire(parseArguments(process.argv.slice(2))).catch(error => {
-    console.error(`Cost tripwire failed: ${safeDetail(error)}`)
+    console.error(`Cost tripwire failed: ${safeErrorDetail(error)}`)
     process.exitCode = 1
   })
 }
