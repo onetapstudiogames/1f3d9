@@ -504,9 +504,11 @@ async function installReplayRoutes(
   let activeDrawingRequests = 0
   let maximumDrawingRequests = 0
   let drawingRequests = 0
+  let thumbnailRequests = 0
   let focusedPlaceRequests = 0
   let focusedPlaceFailuresRemaining = controls.focusedPlaceFailures ?? 0
   const drawingRequestPaths: string[] = []
+  const thumbnailRequestPaths: string[] = []
   let releaseHeldThingPage = () => {}
   const heldThingPage = new Promise<void>(resolve => {
     releaseHeldThingPage = resolve
@@ -1005,9 +1007,25 @@ async function installReplayRoutes(
     })
   }
   await page.route('**/api/drawing/**', async route => {
-    const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(
-      new URL(route.request().url()).pathname,
+    const url = new URL(route.request().url())
+    const thumbnailMatch = /^\/api\/drawing\/(place|resident|thing)\/(\d+)\/thumb\.png$/u.exec(
+      url.pathname,
     )
+    if (thumbnailMatch) {
+      thumbnailRequests += 1
+      thumbnailRequestPaths.push(url.pathname + url.search)
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      })
+      return
+    }
+    const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(url.pathname)
     if (!match) {
       await route.fulfill({ status: 404, json: { error: 'drawing not found' } })
       return
@@ -1056,6 +1074,8 @@ async function installReplayRoutes(
     maximumDrawingRequests: () => maximumDrawingRequests,
     drawingRequests: () => drawingRequests,
     drawingRequestPaths: () => [...drawingRequestPaths],
+    thumbnailRequests: () => thumbnailRequests,
+    thumbnailRequestPaths: () => [...thumbnailRequestPaths],
     focusedPlaceRequests: () => focusedPlaceRequests,
     holdNextEmptyChange: () => {
       heldEmptyChangeGate = new Promise<void>(resolve => {

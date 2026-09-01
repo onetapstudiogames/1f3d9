@@ -10,6 +10,8 @@ import {
   type Drawing,
   type DrawingState,
 } from './drawing.ts'
+import { renderDrawingThumbnailPng } from './drawing-thumbnail.ts'
+import { parsePublicChangeMarker } from './public-changes.ts'
 
 const DRAWING_RECORD_TYPES = Object.freeze(['place', 'resident', 'kind', 'thing'] as const)
 const DRAWING_RECORD_TYPE_SET: ReadonlySet<string> = new Set(DRAWING_RECORD_TYPES)
@@ -311,6 +313,21 @@ function drawingHistorySql(recordType: DrawingRecordType): string {
   `
 }
 
+function drawingThumbnailSql(recordType: DrawingRecordType): string {
+  return `
+    /* drawing:${recordType}-thumbnail */
+    WITH drawing AS MATERIALIZED (
+      ${DRAWING_READ_SQL[recordType]}
+    )
+    SELECT (
+      SELECT current_change_id::text
+      FROM public_change_state
+      WHERE singleton = true
+    ) AS checkpoint, drawing.*
+    FROM drawing
+  `
+}
+
 function drawingRecordType(value: string): DrawingRecordType | null {
   return DRAWING_RECORD_TYPE_SET.has(value) ? value as DrawingRecordType : null
 }
@@ -403,7 +420,61 @@ function privateHeaders(c: Context): void {
   c.header('Vary', 'Authorization')
 }
 
+function thumbnailEmpty(c: Context, status: 400 | 404 | 500): Response {
+  return c.body(null, status, {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  })
+}
+
 export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependencies): void {
+  app.get('/api/drawing/:type/:id/thumb.png', async c => {
+    const recordType = drawingRecordType(c.req.param('type'))
+    if (!recordType) return thumbnailEmpty(c, 400)
+    const id = exactPositiveId(c.req.param('id'))
+    if (id === null) return thumbnailEmpty(c, 400)
+
+    const query = new URL(c.req.url).searchParams
+    if ([...query.keys()].some(key => key !== 'rev') || query.getAll('rev').length > 1) {
+      return thumbnailEmpty(c, 400)
+    }
+    const requestedRevisionValue = query.get('rev')
+    const requestedRevision = requestedRevisionValue === null
+      ? null
+      : parsePublicChangeMarker(requestedRevisionValue)
+    if (requestedRevisionValue !== null && requestedRevision === null) {
+      return thumbnailEmpty(c, 400)
+    }
+
+    const rows = await dependencies.database.query(drawingThumbnailSql(recordType), [id])
+    const row = rows[0] as StoredDrawingRow | undefined
+    if (!row || row.id == null) return thumbnailEmpty(c, 404)
+    const checkpoint = parsePublicChangeMarker(String(row.checkpoint ?? ''))
+    if (checkpoint === null) return thumbnailEmpty(c, 500)
+    const drawing = publicStoredDrawing(row)
+    if (drawing === 'invalid') return thumbnailEmpty(c, 500)
+    if (
+      drawing.drawing === null || drawing.state === 'undrawn' || drawing.state === 'refused'
+    ) return thumbnailEmpty(c, 404)
+
+    const canonical = `/api/drawing/${recordType}/${id}/thumb.png?rev=${checkpoint}`
+    if (requestedRevision !== checkpoint) {
+      return c.body(null, 307, {
+        'Cache-Control': 'no-store',
+        Location: canonical,
+        'X-Content-Type-Options': 'nosniff',
+      })
+    }
+
+    const png = renderDrawingThumbnailPng(drawing.drawing)
+    return c.body(png, 200, {
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Content-Length': String(png.byteLength),
+      'Content-Type': 'image/png',
+      'X-Content-Type-Options': 'nosniff',
+    })
+  })
+
   app.get('/api/drawing/:type/:id/history', async c => {
     c.header('Cache-Control', 'no-store')
     const recordType = drawingRecordType(c.req.param('type'))

@@ -22,6 +22,7 @@ type IssueFacts = Readonly<{
 type Entry = Readonly<{
   ordinal: number
   note_id: number
+  author_id: number
   author: string
   body: string
   created_at: string
@@ -91,6 +92,7 @@ const entries = Object.freeze([
   {
     ordinal: 1,
     note_id: 8101,
+    author_id: 71,
     author: 'zenith-bard',
     body: 'Part 2 arrived before Part 1.\nThat order stays because submission order is the record.',
     created_at: '2026-10-09T05:37:12.817Z',
@@ -98,6 +100,7 @@ const entries = Object.freeze([
   {
     ordinal: 2,
     note_id: 8102,
+    author_id: 71,
     author: 'zenith-bard',
     body: 'Part 3 was filed next.',
     created_at: '2026-10-09T06:37:12.817Z',
@@ -105,6 +108,7 @@ const entries = Object.freeze([
   {
     ordinal: 3,
     note_id: 8103,
+    author_id: 71,
     author: 'zenith-bard',
     body: 'Part 1 was filed last.',
     created_at: '2026-10-09T07:37:12.817Z',
@@ -112,6 +116,7 @@ const entries = Object.freeze([
   {
     ordinal: 4,
     note_id: 8104,
+    author_id: 72,
     author: 'ferro',
     body: '01010100 01101000 01100101 00100000 01110010 01101111 01101111 01101101 00100000 01110011 01110000 01101111 01101011 01100101 00101110 00001010 01001001 01110100 00100000 01110011 01110100 01101001 01101100 01101100 00100000 01100011 01101111 01110101 01101110 01110100 01110011 00101110',
     created_at: '2026-10-09T08:11:42.001Z',
@@ -119,6 +124,7 @@ const entries = Object.freeze([
   {
     ordinal: 5,
     note_id: 8105,
+    author_id: 73,
     author: 'matsu',
     body: 'かながあるので漢字が多くても日本語として組まれる。\n改行もそのまま残る。',
     created_at: '2026-10-09T09:22:10.500Z',
@@ -212,6 +218,16 @@ test('the Gazette page has safe top Share and Window actions with issue-only met
   assert.match(html, /In this issue/u)
   assert.match(html, /href="#entry-01"[\s\S]*href="#entry-02"[\s\S]*href="#entry-03"/u)
   assert.match(html, /ENTRY 01[\s\S]*ENTRY 02[\s\S]*ENTRY 03/u)
+  assert.equal(
+    html.match(/data="\/api\/drawing\/resident\/71\/thumb\.png"/gu)?.length,
+    6,
+    'three repeated resident bylines each have portraits in the contents and entry stamp',
+  )
+  assert.match(
+    html,
+    /class="gazette-portrait"[^>]*loading="lazy"[^>]*width="32"[^>]*height="32"[^>]*>[\s\S]*class="gazette-portrait-fallback"/u,
+  )
+  assert.match(response.headers.get('content-security-policy') ?? '', /object-src 'self'/u)
   assert.match(html, /white-space:\s*pre-wrap/u)
   assert.match(html, /@media\s+print/u)
 })
@@ -238,6 +254,7 @@ test('resident-controlled text is escaped and RTL entries are isolated', async (
     {
       ordinal: 1,
       note_id: 9101,
+      author_id: 91,
       author: 'resident"><script>alert(1)</script>',
       body: '<img src=x onerror=alert(1)>\nمرحبا بالعالم مرحبا بالعالم مرحبا بالعالم',
       created_at: '2026-10-09T05:37:12.817Z',
@@ -265,6 +282,7 @@ test('a withdrawn entry renders only the fixed one-line notice in its original p
     {
       ordinal: 1,
       note_id: 9_223,
+      author_id: 22,
       author: 'waypost',
       body: 'note #9223, withdrawn by its author before the tick',
       created_at: '2026-10-09T05:37:12.817Z',

@@ -18,6 +18,7 @@ export type GazetteIssueDetail = GazetteIssueSummary & Readonly<{
 export type GazetteIssueEntry = Readonly<{
   ordinal: number
   note_id: number
+  author_id: number
   author: string
   body: string
   created_at: string
@@ -159,7 +160,7 @@ export async function readGazetteIssue(
 
   const found = await rows(database, `
     /* gazette:read-entries */
-    SELECT entry.ordinal, entry.note_id, author.handle AS author,
+    SELECT entry.ordinal, entry.note_id, author.id AS author_id, author.handle AS author,
       CASE
         WHEN withdrawal.target_note_id IS NOT NULL
           THEN 'note #' || note.id::text || ', withdrawn by its author before the tick'
@@ -203,6 +204,7 @@ export async function readGazetteIssue(
     return Object.freeze({
       ordinal: positiveInteger(row.ordinal, 'entry ordinal'),
       note_id: positiveInteger(row.note_id, 'entry note ID'),
+      author_id: positiveInteger(row.author_id, 'entry author ID'),
       author: String(row.author ?? ''),
       body: String(row.body ?? ''),
       created_at: instant(row.created_at, 'entry time'),

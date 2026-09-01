@@ -28,7 +28,7 @@ test('the directory stays below 64 KiB at the live city scale', async () => {
   assert.ok(Buffer.byteLength(encoded, 'utf8') < 64 * 1024)
 })
 
-test('the directory performs one moderated, projection-only statement and returns exact public keys', async () => {
+test('ordinary directory rows keep exact public keys and carry no drawing or thumbnail fields', async () => {
   const calls: Array<{ text: string; params: readonly unknown[] }> = []
   const query: PublicDirectoryQuery = async (text, params) => {
     calls.push({ text, params })
@@ -71,6 +71,7 @@ test('the directory performs one moderated, projection-only statement and return
   assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents'])
   assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
   assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id', 'type'])
+  assert.doesNotMatch(JSON.stringify(directory), /"(?:drawing[^" ]*|thumb[^" ]*)"\s*:/iu)
   assert.deepEqual(directory, {
     places: [{ type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]' }],
     residents: [{ type: 'resident', id: 7, handle: 'tiny-lantern' }],

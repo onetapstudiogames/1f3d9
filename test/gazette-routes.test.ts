@@ -21,6 +21,7 @@ type IssueSummary = Readonly<{
 type IssueEntry = Readonly<{
   ordinal: number
   note_id: number
+  author_id?: number
   author: string
   body: string
   created_at: string
@@ -284,6 +285,7 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
     {
       ordinal: 1,
       note_id: 81,
+      author_id: 7,
       author: 'tiny-lantern',
       body: '  first line\nsecond line  ',
       created_at: '2026-10-06T00:00:00.000Z',
@@ -291,6 +293,7 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
     {
       ordinal: 2,
       note_id: 84,
+      author_id: 8,
       author: 'second-resident',
       body: 'pulled draft that must not cross the public route',
       created_at: '2026-10-07T00:00:00.000Z',
@@ -301,6 +304,7 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
     {
       ordinal: 3,
       note_id: 90,
+      author_id: 7,
       author: 'tiny-lantern',
       body: 'third',
       created_at: '2026-10-08T00:00:00.000Z',
@@ -308,6 +312,7 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
     {
       ordinal: 4,
       note_id: 92,
+      author_id: 9,
       author: 'third-resident',
       body: 'fourth',
       created_at: '2026-10-09T00:00:00.000Z',
@@ -327,13 +332,9 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
   const firstBody = await firstResponse.json()
   assert.deepEqual(firstBody, {
     issue,
-    entries: [
-      entries[0],
-      {
-        ...entries[1],
-        body: 'note #84, withdrawn by its author before the tick',
-      },
-    ],
+    entries: entries.slice(0, 2).map(({ author_id: _authorId, ...entry }) => entry.withdrawn
+      ? { ...entry, body: 'note #84, withdrawn by its author before the tick' }
+      : entry),
     has_more: true,
     next_after_ordinal: 2,
   })
@@ -343,7 +344,7 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
   assert.equal(restResponse.status, 200)
   assert.deepEqual(await restResponse.json(), {
     issue,
-    entries: entries.slice(2),
+    entries: entries.slice(2).map(({ author_id: _authorId, ...entry }) => entry),
     has_more: false,
     next_after_ordinal: null,
   })

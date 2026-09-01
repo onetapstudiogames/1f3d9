@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { deflateSync, inflateSync } from 'node:zlib'
+import { inflateSync } from 'node:zlib'
 import type { Context, Hono } from 'hono'
+import { encodePng } from './drawing-thumbnail.ts'
 
 import { gazetteWithdrawalNotice } from './gazette.ts'
 
@@ -20,6 +21,7 @@ export type GazetteReadingIssue = Readonly<{
 export type GazetteReadingEntry = Readonly<{
   ordinal: number
   note_id: number
+  author_id: number
   author: string
   body: string
   created_at: string
@@ -77,7 +79,7 @@ const GAZETTE_SHARE_SCRIPT_HASH = createHash('sha256')
 const READING_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
-  "object-src 'none'",
+  "object-src 'self'",
   "frame-ancestors 'none'",
   "form-action 'none'",
   `script-src 'sha256-${GAZETTE_SHARE_SCRIPT_HASH}'`,
@@ -148,11 +150,16 @@ body{
 .toc-row:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .toc-number{font-family:"Courier Prime",ui-monospace,monospace;font-size:.74rem;color:var(--muted);font-variant-numeric:tabular-nums;grid-row:span 2}
 .toc-title{font-size:.94rem;line-height:1.42;unicode-bidi:plaintext}
-.toc-author{font-family:"Courier Prime",ui-monospace,monospace;font-size:.7rem;color:var(--muted);overflow-wrap:anywhere}
+.toc-author{display:inline-flex;align-items:center;gap:.35rem;font-family:"Courier Prime",ui-monospace,monospace;font-size:.7rem;color:var(--muted);overflow-wrap:anywhere}
 .entry{padding-top:2.6rem;scroll-margin-top:1rem}
 .entry+.entry{margin-top:2.6rem;border-top:1px solid var(--line)}
 .stamp{display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin-bottom:1.05rem;font-family:"Courier Prime",ui-monospace,monospace;font-size:.71rem;letter-spacing:.03em;color:var(--muted)}
 .stamp .ordinal{color:var(--accent);font-weight:700}
+.gazette-byline{display:inline-flex;align-items:center;gap:.35rem}
+.gazette-portrait-shell,.gazette-portrait{display:inline-block;width:32px;height:32px;flex:0 0 32px}
+.gazette-portrait-shell{overflow:hidden;border:1px solid var(--line);background:linear-gradient(135deg,var(--ground),var(--line));image-rendering:pixelated}
+.gazette-portrait{object-fit:cover;color:transparent;font-size:0;image-rendering:pixelated}
+.gazette-portrait-fallback{display:block;width:100%;height:100%;background:linear-gradient(135deg,var(--ground),var(--line))}
 .entry-body{white-space:pre-wrap;overflow-wrap:break-word;unicode-bidi:plaintext}
 .withdrawal-notice{margin:0;color:var(--muted);font-style:italic;unicode-bidi:plaintext}
 .body-ja{font-family:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",serif;line-height:2.05}
@@ -307,12 +314,16 @@ function entryBody(entry: GazetteReadingEntry): string {
       </details>`
 }
 
+function residentPortrait(entry: GazetteReadingEntry): string {
+  return `<span class="gazette-portrait-shell" aria-hidden="true"><object class="gazette-portrait" loading="lazy" width="32" height="32" type="image/png" data="/api/drawing/resident/${entry.author_id}/thumb.png"><span class="gazette-portrait-fallback"></span></object></span>`
+}
+
 function renderEntry(entry: GazetteReadingEntry): string {
   const ordinal = String(entry.ordinal).padStart(2, '0')
   return `<article class="entry" id="entry-${ordinal}">
       <header class="stamp">
         <span class="ordinal">ENTRY ${ordinal}</span>
-        <span><bdi>${escapeHtml(entry.author)}</bdi></span>
+        <span class="gazette-byline">${residentPortrait(entry)}<bdi>${escapeHtml(entry.author)}</bdi></span>
         <span>note ${entry.note_id}</span>
         <time datetime="${escapeHtml(entry.created_at)}">${escapeHtml(machineDate(entry.created_at))}</time>
       </header>
@@ -328,7 +339,7 @@ function renderContents(entries: readonly GazetteReadingEntry[]): string {
         <span class="toc-title">${escapeHtml(
           entry.withdrawn === true ? 'Withdrawn submission' : titleOf(entry.body),
         )}</span>
-        <span class="toc-author"><bdi>${escapeHtml(entry.author)}</bdi></span>
+        <span class="toc-author">${residentPortrait(entry)}<bdi>${escapeHtml(entry.author)}</bdi></span>
       </a>`
   }).join('\n')
 }
@@ -517,49 +528,6 @@ function drawNameplate(pixels: Buffer, centerX: number, y: number, color: Rgb): 
   }
 }
 
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff
-  for (const byte of bytes) {
-    crc ^= byte
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0
-}
-
-function pngChunk(type: string, data: Uint8Array): Buffer {
-  const typeBytes = Buffer.from(type, 'ascii')
-  const body = Buffer.from(data)
-  const chunk = Buffer.alloc(12 + body.length)
-  chunk.writeUInt32BE(body.length, 0)
-  typeBytes.copy(chunk, 4)
-  body.copy(chunk, 8)
-  chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, body])), 8 + body.length)
-  return chunk
-}
-
-function encodePng(pixels: Buffer): Uint8Array<ArrayBuffer> {
-  const stride = CARD_WIDTH * 3
-  const raw = Buffer.alloc((stride + 1) * CARD_HEIGHT)
-  for (let row = 0; row < CARD_HEIGHT; row += 1) {
-    const target = row * (stride + 1)
-    raw[target] = 0
-    pixels.copy(raw, target + 1, row * stride, (row + 1) * stride)
-  }
-  const header = Buffer.alloc(13)
-  header.writeUInt32BE(CARD_WIDTH, 0)
-  header.writeUInt32BE(CARD_HEIGHT, 4)
-  header[8] = 8
-  header[9] = 2
-  return Uint8Array.from(Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk('IHDR', header),
-    pngChunk('IDAT', deflateSync(raw, { level: 9 })),
-    pngChunk('IEND', new Uint8Array()),
-  ]))
-}
-
 function issueCard(facts: GazetteReadingIssueFacts): Uint8Array<ArrayBuffer> {
   const pixels = Buffer.alloc(CARD_WIDTH * CARD_HEIGHT * 3)
   fillRect(pixels, 0, 0, CARD_WIDTH, CARD_HEIGHT, CARD_NIGHT)
@@ -576,7 +544,7 @@ function issueCard(facts: GazetteReadingIssueFacts): Uint8Array<ArrayBuffer> {
   drawText(pixels, longDate(facts.scheduled_for).toUpperCase(), CARD_WIDTH / 2, 370, 4, CARD_SKY)
   drawText(pixels, `${plural(facts.entry_count, 'entry')} / ${plural(facts.resident_count, 'resident')}`, CARD_WIDTH / 2, 442, 5, CARD_PAPER)
   drawText(pixels, 'NOTHING CHOSEN / NOTHING REORDERED', CARD_WIDTH / 2, 516, 3, CARD_SIGNAL)
-  return encodePng(pixels)
+  return encodePng(pixels, CARD_WIDTH, CARD_HEIGHT, 3)
 }
 
 function responseHeaders(c: Context, robots: GazetteReadingRobots, cacheControl: string): void {

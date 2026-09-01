@@ -253,12 +253,15 @@ button { color: inherit; }
 }
 .directory-search-option {
   display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
   gap: 0.12rem;
+  align-items: center;
   width: 100%;
   padding: 0.58rem 0.65rem;
   border-block-end: 1px solid var(--paper-line);
   cursor: pointer;
 }
+.directory-search-option-copy { display: grid; gap: 0.12rem; min-width: 0; }
 .directory-search-option:last-child { border-block-end: 0; }
 .directory-search-option[aria-selected="true"] {
   color: var(--ink);
@@ -877,6 +880,38 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   color: var(--sky);
   font: 0.62rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
+.entity-portrait {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  overflow: hidden;
+  vertical-align: middle;
+  background: #d8d3c2;
+  border: 1px solid var(--paper-line);
+  image-rendering: pixelated;
+}
+.entity-portrait-placeholder,
+.entity-portrait-image {
+  grid-area: 1 / 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.entity-portrait-placeholder {
+  background:
+    linear-gradient(135deg, transparent 45%, rgba(32, 56, 47, 0.18) 45% 55%, transparent 55%),
+    #e6e0cf;
+}
+.entity-portrait-image { object-fit: contain; image-rendering: pixelated; }
+.resident-reference,
+.front-matter-title {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  vertical-align: middle;
+}
 .drawing-grid {
   position: relative;
   display: block;
@@ -955,6 +990,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   cursor: pointer;
 }
 .live-portrait > .drawing-grid { height: 100%; aspect-ratio: auto; }
+.live-portrait > .entity-portrait { width: 100%; height: 100%; }
 .live-portrait.asleep { opacity: 0.48; }
 .live-speech-bubble {
   position: absolute;
@@ -1008,6 +1044,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   text-decoration: none;
 }
 .live-thing-name { overflow-wrap: anywhere; }
+.live-thing-specimen > .entity-portrait { width: 2.5rem; height: 2.5rem; }
 .live-trace-arrowhead { fill: var(--brick); }
 .live-footnote-mark, .live-action-mark {
   position: absolute;
@@ -1057,7 +1094,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 0.72rem; line-height: 1.5; }
 .live-ledger-time { color: var(--sky); font: 0.58rem ui-monospace, monospace; white-space: nowrap; }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
-.live-roster-list .resident-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); justify-content: normal; align-items: center; }
+.live-roster-list .resident-row { display: grid; grid-template-columns: 2rem minmax(0, 1fr); justify-content: normal; align-items: center; }
 .live-roster-list .resident-number { grid-column: 2; }
 .live-roster-list .resident-drawing-detail { grid-column: 2; justify-self: start; }
 .live-focus-interactions {
@@ -1082,6 +1119,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   border: 2px solid var(--line);
 }
 .live-focus-resident-card .drawing-grid { width: 2.4rem; border: 1px solid var(--paper-line); }
+.live-focus-resident-card > .entity-portrait { width: 2.4rem; height: 2.4rem; }
 .live-focus-resident-card-copy { display: grid; min-width: 0; gap: 0.12rem; }
 .live-focus-resident-card .resident-drawing-detail { grid-column: 2; justify-self: start; }
 .live-focus-resident-card-name {
@@ -1568,13 +1606,16 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .place-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
   gap: 0.35rem 0.85rem;
   padding: 0.78rem 0.85rem;
   background: var(--paper-light);
   border: 2px solid var(--line);
   box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.13);
 }
+.place-card > .place-portrait { grid-column: 1; grid-row: 1 / 3; }
+.place-card > .place-watch { grid-column: 2; grid-row: 1; }
+.place-card > .place-owner { grid-column: 2; grid-row: 2; }
 .place-card[data-watched="true"] { border-color: var(--brick); box-shadow: 5px 5px 0 rgba(173, 63, 37, 0.23); }
 .place-name, .place-owner, .activity-copy, .note-body, .thing-body, .agreement-body {
   unicode-bidi: plaintext;
@@ -1640,7 +1681,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .place-owner { color: var(--forest); font-size: 0.75rem; font-weight: 750; }
 .place-facts {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1 / 3;
   align-self: center;
   color: var(--muted);
@@ -1667,6 +1708,8 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   font-weight: 780;
 }
 .occupant-chip { color: #fff; background: var(--forest); }
+.occupant-chip .entity-portrait,
+.signature-chip .entity-portrait { width: 1.5rem; height: 1.5rem; flex-basis: 1.5rem; }
 .occupant-chip::before { content: "●"; color: var(--signal); }
 .occupant-chip.asleep { opacity: 0.45; }
 .occupant-chip.asleep::before { content: "○"; }
@@ -1706,7 +1749,13 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .navigation-page p { margin: 0; color: var(--sky); font-size: 0.68rem; line-height: 1.45; }
 .roster-group { padding: 0.75rem 0; border-top: 1px solid rgba(255, 255, 255, 0.22); }
 .roster-place { margin: 0 0 0.5rem; color: var(--sky); font-size: 0.72rem; font-weight: 850; }
-.resident-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0; }
+.resident-row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+}
 .resident-row .resident-follow { color: #fff; font-size: 0.78rem; }
 .resident-number { color: var(--signal); font: 0.63rem ui-monospace, monospace; }
 
@@ -1733,6 +1782,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   background: var(--paper-light);
   border: 2px solid var(--line);
 }
+.front-matter-title { display: flex; }
 .front-matter-link { color: var(--forest-deep); font-weight: 900; overflow-wrap: anywhere; }
 .front-matter-meta { margin-block-start: 0.4rem; }
 
@@ -1750,10 +1800,15 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   background: var(--paper-light);
   border: 2px solid var(--line);
 }
-.person-card { display: flex; justify-content: space-between; gap: 1rem; }
+.person-card {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+}
 .person-card strong { color: var(--forest-deep); }
 .thing-card { display: grid; gap: 0.55rem; }
-.thing-card h4 { margin: 0; font-size: 1rem; }
+.thing-card h4 { display: flex; gap: 0.5rem; align-items: center; margin: 0; font-size: 1rem; }
 .thing-meta, .note-meta, .agreement-meta { margin: 0; color: var(--muted); font-size: 0.64rem; line-height: 1.45; }
 .thing-body, .note-body, .agreement-body { white-space: pre-wrap; }
 .thing-body { margin: 0; color: #344039; font-size: 0.84rem; line-height: 1.55; }
@@ -2029,6 +2084,12 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }
+.gazette-entry-attribution {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
 .gazette-issue {
   min-width: 0;
   padding: clamp(1rem, 3vw, 1.6rem);
@@ -2212,8 +2273,11 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .conversation-choices { width: 100%; }
   .conversation-mode-button { flex: 1 1 12rem; }
   .place-tree .place-tree { margin-inline-start: 0.55rem; }
-  .place-card { grid-template-columns: 1fr; }
-  .place-facts { grid-column: 1; grid-row: auto; text-align: start; }
+  .place-card { grid-template-columns: 2rem minmax(0, 1fr); }
+  .place-card > .place-portrait { grid-column: 1; grid-row: 1 / 3; }
+  .place-card > .place-watch { grid-column: 2; }
+  .place-card > .place-owner { grid-column: 2; }
+  .place-facts { grid-column: 1 / -1; grid-row: auto; text-align: start; }
   .archive-form { grid-template-columns: 1fr; }
   .archive-query-field { grid-column: auto; }
   .archive-card { grid-template-columns: 1fr; }

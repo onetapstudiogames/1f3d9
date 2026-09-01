@@ -1606,6 +1606,70 @@ export const WINDOW_JS = `(() => {
     return node
   }
 
+  let portraitObserver = null
+  const observedPortraitImages = new Set()
+
+  function portraitUrl(type, id) {
+    const path = '/api/drawing/' + encodeURIComponent(type) + '/' + String(id) + '/thumb.png'
+    const revision = state.changeMarker || state.snapshot?.changeMarker || null
+    return revision ? path + '?rev=' + encodeURIComponent(revision) : path
+  }
+
+  function loadPortraitImage(image) {
+    if (!image.isConnected || image.dataset.loaded === 'true') return
+    image.dataset.loaded = 'true'
+    image.src = portraitUrl(image.dataset.portraitType, image.dataset.portraitId)
+  }
+
+  function observePortraitImage(image) {
+    if (!image.isConnected) return
+    if (!('IntersectionObserver' in window)) {
+      loadPortraitImage(image)
+      return
+    }
+    if (!portraitObserver) {
+      portraitObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          portraitObserver.unobserve(entry.target)
+          observedPortraitImages.delete(entry.target)
+          loadPortraitImage(entry.target)
+        }
+      }, { rootMargin: '48px' })
+    }
+    observedPortraitImages.add(image)
+    portraitObserver.observe(image)
+  }
+
+  function resetPortraitImages() {
+    if (!portraitObserver) return
+    portraitObserver.disconnect()
+    observedPortraitImages.clear()
+  }
+
+  function portraitNode(type, id, label, className = '') {
+    const shell = element('span', 'entity-portrait' + (className ? ' ' + className : ''))
+    shell.setAttribute('aria-hidden', 'true')
+    shell.title = label + ' drawing'
+    const placeholder = element('span', 'entity-portrait-placeholder')
+    const image = element('img', 'entity-portrait-image')
+    image.alt = ''
+    image.width = 32
+    image.height = 32
+    image.loading = 'lazy'
+    image.decoding = 'async'
+    image.dataset.portraitType = type
+    image.dataset.portraitId = String(id)
+    image.addEventListener('load', () => { shell.dataset.portraitState = 'loaded' })
+    image.addEventListener('error', () => {
+      shell.dataset.portraitState = 'placeholder'
+      image.remove()
+    })
+    shell.append(placeholder, image)
+    window.queueMicrotask(() => observePortraitImage(image))
+    return shell
+  }
+
   function drawingRowsFor(drawing) {
     return Object.freeze(Array.from({ length: 8 }, (_, row) => drawing.indices
       .slice(row * 8, row * 8 + 8)
@@ -3646,7 +3710,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const source = element('a', 'gazette-source-note', 'Note #' + String(entry.noteId))
     source.href = '/window/note/' + String(entry.noteId)
     attribution.append(
-      document.createTextNode('by ' + entry.author + ' · '),
+      document.createTextNode('by '),
+      residentNode(entry.author, 'gazette-entry-author',
+        'gazette-entry-author:' + String(entry.noteId)),
+      document.createTextNode(' · '),
       source,
       document.createTextNode(' · ' + gazetteDateLabel(entry.createdAt)),
     )
@@ -4136,10 +4203,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const hasProvenance = [raw.maker_id, raw.made_by, raw.current_owner_id, raw.current_owner]
         .some(value => value !== null && value !== undefined)
       const kind = raw.kind == null ? null : safeWorldName(raw.kind)
+      const kindId = raw.kind_id == null ? null : safeId(raw.kind_id)
       const createdAt = safeDate(raw.created_at)
       if (
         !id || !placeId || !name || body === null || !currentOwner || !owner ||
         owner !== currentOwner || !createdAt || (raw.kind != null && !kind) ||
+        (raw.kind_id != null && !kindId) ||
         (hasProvenance && (!makerId || !madeBy || !currentOwnerId))
       ) return []
       const traits = Array.isArray(raw.traits)
@@ -4148,7 +4217,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       return [{ id, place_id: placeId, name, body,
         maker_id: makerId, made_by: madeBy,
         current_owner_id: currentOwnerId, current_owner: currentOwner,
-        owner, open_to_use: raw.open_to_use === true, kind, traits,
+        owner, open_to_use: raw.open_to_use === true, kind_id: kindId, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
         kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true }]
     })
@@ -5773,10 +5842,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         option.id = 'directory-search-option-' + String(index)
         option.setAttribute('role', 'option')
         option.setAttribute('aria-selected', String(index === activeIndex))
-        option.append(
+        const copy = element('span', 'directory-search-option-copy')
+        copy.append(
           element('strong', '', result.label),
           element('small', '', result.kind === 'place' ? 'Place · ' + result.detail : result.detail),
         )
+        option.append(portraitNode(result.kind, result.id, result.label), copy)
         option.addEventListener('mousedown', event => event.preventDefault())
         option.addEventListener('mouseenter', () => {
           if (state.directorySearchIndex === index) return
@@ -6012,11 +6083,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function occupantChip(resident) {
-    const chip = element('button', resident.asleep ? 'occupant-chip asleep' : 'occupant-chip', resident.handle)
+    const chip = element('button', resident.asleep ? 'occupant-chip asleep' : 'occupant-chip')
     chip.type = 'button'
     chip.dataset.focusKey = 'occupant:' + resident.handle
     if (resident.asleep) chip.title = 'dimmed by a two-week public-activity display heuristic · not proof they are offline'
     chip.addEventListener('click', () => chooseResident(resident.handle))
+    chip.append(
+      portraitNode('resident', resident.id, resident.handle, 'occupant-portrait'),
+      document.createTextNode(resident.handle),
+    )
     return chip
   }
 
@@ -6222,11 +6297,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
       watch.dataset.focusKey = 'watch:' + String(place.id)
       watch.addEventListener('click', () => choosePlace(place.id, true))
       const occupants = residentsAt(snapshot, place.id)
+      const owner = element('span', 'place-owner')
+      if (place.owner) {
+        owner.append(
+          document.createTextNode('kept by '),
+          residentNode(place.owner, 'place-owner-resident',
+            'place-owner:' + String(place.id)),
+        )
+      } else {
+        owner.textContent = 'unowned · transit only'
+      }
       card.append(
+        portraitNode('place', place.id, place.name, 'place-portrait'),
         watch,
-        element('span', 'place-owner', place.owner
-          ? 'kept by ' + place.owner
-          : 'unowned · transit only'),
+        owner,
         element('span', 'place-facts', String(place.places) +
           (place.places === 1 ? ' place inside · ' : ' places inside · ') +
           String(occupants.length) +
@@ -6483,6 +6567,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
           'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
+        row.prepend(portraitNode('resident', resident.id, resident.handle))
         group.append(row)
       }
       fragment.append(group)
@@ -7095,7 +7180,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : 'Focus on ' + resident.handle
       portrait.setAttribute('aria-label', portrait.title)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
-      portrait.append(drawingNode('resident', resident.id, resident.handle))
+      portrait.append(portraitNode('resident', resident.id, resident.handle, 'live-entity-portrait'))
       const shell = livePortraitShell(
         portrait,
         bubbles?.get(resident.handle),
@@ -7404,7 +7489,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         bindLiveHighlight(specimen, pulse.key, 'pulse')
       }
       specimen.append(
-        drawingNode('thing', thing.id, thing.name),
+        portraitNode('thing', thing.id, thing.name, 'live-entity-portrait'),
         element('span', 'live-thing-name', thing.name),
       )
       bindLiveActivation(specimen, specimen, itemKey, null)
@@ -7661,7 +7746,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('span', 'live-focus-resident-card-location', 'Outside this plate · ' + location),
       )
       card.append(
-        drawingNode('resident', focused.id, focused.handle),
+        portraitNode('resident', focused.id, focused.handle, 'live-entity-portrait'),
         copy,
         openDrawingDetailButton(
           'resident',
@@ -7746,7 +7831,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         ? 'Place #' + String(resident.current_place_id)
         : 'Between places'
       row.append(
-        drawingNode('resident', resident.id, resident.handle),
+        portraitNode('resident', resident.id, resident.handle, 'live-entity-portrait'),
         follow,
         element('span', 'resident-number', location + (resident.asleep ? ' · asleep' : '')),
         openDrawingDetailButton(
@@ -8214,7 +8299,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         shell.dataset.replayDuration = String(held.duration)
       }
       portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
-      portrait.append(drawingNode('resident', resident.id, actor))
+      portrait.append(portraitNode('resident', resident.id, actor, 'live-entity-portrait'))
       layer.append(shell)
     }
   }
@@ -8845,6 +8930,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function renderLive(snapshot) {
+    resetPortraitImages()
     if (!nodes.livePlates || !nodes.liveStage) return
     livePlotDetailContext = null
     if (nodes.liveMapCaption) nodes.liveMapCaption.hidden = true
@@ -9116,6 +9202,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       item.append(follow, element('span', 'resident-number',
         'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '') +
         (location ? ' · at ' + location : '')))
+      item.prepend(portraitNode('resident', resident.id, resident.handle))
       return item
     }))
     target.replaceChildren(list)
@@ -9146,7 +9233,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     follow.dataset.focusKey = focusKey
     follow.title = 'Follow ' + handle
     follow.addEventListener('click', () => chooseResident(handle))
-    return follow
+    const reference = element('span', 'resident-reference')
+    reference.append(portraitNode('resident', known.id, handle), follow)
+    return reference
   }
 
   function openDetailLink(kind, id, label, className) {
@@ -9957,10 +10046,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
       thingMeta.append(
         document.createTextNode(' · currently owned by '),
         residentNode(thing.current_owner, 'thing-owner', 'thing-owner:' + String(thing.id)),
-        document.createTextNode(
-          (thing.kind ? ' · kind: ' + thing.kind : ' · one of a kind') +
-          (thing.open_to_use ? ' · open to shared use' : ' · owner use only')),
       )
+      if (thing.kind) {
+        thingMeta.append(document.createTextNode(' · kind: '))
+        if (thing.kind_id) {
+          thingMeta.append(portraitNode('kind', thing.kind_id, thing.kind, 'kind-portrait'))
+        }
+        thingMeta.append(document.createTextNode(thing.kind))
+      } else {
+        thingMeta.append(document.createTextNode(' · one of a kind'))
+      }
+      thingMeta.append(document.createTextNode(
+        thing.open_to_use ? ' · open to shared use' : ' · owner use only'))
       const location = windowPlaceLabel(
         thing.place_id,
         placeOf ? placeOf(thing.place_id) : null,
@@ -9972,9 +10069,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         )
       }
       const heading = element('h4', '')
-      heading.append(openDetailLink(
-        'thing', thing.id, thing.name, 'detail-link thing-detail-link',
-      ))
+      heading.append(
+        portraitNode('thing', thing.id, thing.name),
+        openDetailLink('thing', thing.id, thing.name, 'detail-link thing-detail-link'),
+      )
       item.append(heading, thingMeta)
       if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
       const traits = element('div', 'trait-list')
@@ -10141,7 +10239,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         ),
         document.createTextNode(' · ' + String(heading.body_text_bytes) + ' UTF-8 bytes'),
       )
-      item.append(link, meta)
+      const title = element('span', 'front-matter-title')
+      title.append(portraitNode('thing', heading.id, heading.name), link)
+      item.append(title, meta)
       return item
     }))
     nodes.placeFrontMatter.replaceChildren(list)
@@ -10548,8 +10648,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       signatures.append(...named.concat(agreement.acceded).map(party => {
         const acceded = agreement.acceded.includes(party)
         const signed = agreement.signatures.includes(party)
-        const chip = element('span', 'signature-chip',
-          (acceded ? '+ ' : signed ? '✓ ' : '○ ') + party)
+        const chip = element('span', 'signature-chip')
+        const resident = residentReference(snapshot, party)
+        if (resident) {
+          chip.append(portraitNode('resident', resident.id, party, 'signature-portrait'))
+        }
+        chip.append(document.createTextNode((acceded ? '+ ' : signed ? '✓ ' : '○ ') + party))
         chip.dataset.signed = String(signed)
         if (acceded) {
           chip.dataset.acceded = 'true'
@@ -11064,6 +11168,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function renderAll() {
+    resetPortraitImages()
     const snapshot = state.snapshot
     const active = document.activeElement
     const focusKey = active && active.dataset ? active.dataset.focusKey || null : null
