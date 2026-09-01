@@ -225,7 +225,16 @@ test('the Gazette page has safe top Share and Window actions with issue-only met
   )
   assert.match(
     html,
-    /class="gazette-portrait"[^>]*loading="lazy"[^>]*width="32"[^>]*height="32"[^>]*>[\s\S]*class="gazette-portrait-fallback"/u,
+    /class="gazette-portrait"[^>]*width="32"[^>]*height="32"[^>]*>[\s\S]*class="gazette-portrait-fallback"/u,
+  )
+  assert.doesNotMatch(html, /class="gazette-portrait"[^>]*loading=/u)
+  assert.match(
+    html,
+    /\.gazette-portrait-shell\{[^}]*border:0[^}]*background:transparent[^}]*\}/u,
+  )
+  assert.match(
+    html,
+    /\.gazette-portrait-fallback\{[^}]*background:transparent[^}]*\}/u,
   )
   assert.match(response.headers.get('content-security-policy') ?? '', /object-src 'self'/u)
   assert.match(html, /white-space:\s*pre-wrap/u)

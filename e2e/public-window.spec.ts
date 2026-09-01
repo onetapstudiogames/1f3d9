@@ -90,7 +90,27 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
     'src',
     /\/api\/drawing\/resident\/49\/thumb\.png\?rev=9$/u,
   )
-  await expect(rosterRow.locator('.entity-portrait')).toBeVisible()
+  const rosterPortraitShell = rosterRow.locator('.entity-portrait')
+  await expect(rosterPortraitShell).toBeVisible()
+  await expect(rosterPortraitShell).toHaveAttribute('data-portrait-state', 'loaded')
+  expect(await rosterPortraitShell.evaluate(shell => {
+    const shellStyle = getComputedStyle(shell)
+    const placeholder = shell.querySelector('.entity-portrait-placeholder')
+    const placeholderStyle = placeholder ? getComputedStyle(placeholder) : null
+    return {
+      shellBackgroundColor: shellStyle.backgroundColor,
+      shellBackgroundImage: shellStyle.backgroundImage,
+      shellBorderStyle: shellStyle.borderStyle,
+      placeholderBackgroundColor: placeholderStyle?.backgroundColor ?? null,
+      placeholderBackgroundImage: placeholderStyle?.backgroundImage ?? null,
+    }
+  })).toEqual({
+    shellBackgroundColor: 'rgba(0, 0, 0, 0)',
+    shellBackgroundImage: 'none',
+    shellBorderStyle: 'none',
+    placeholderBackgroundColor: 'rgba(0, 0, 0, 0)',
+    placeholderBackgroundImage: 'none',
+  })
 
   await page.getByRole('tab', { name: 'Place', exact: true }).click()
   await expect(page).toHaveURL(/\/window\/place\/11$/u)

@@ -157,9 +157,9 @@ body{
 .stamp .ordinal{color:var(--accent);font-weight:700}
 .gazette-byline{display:inline-flex;align-items:center;gap:.35rem}
 .gazette-portrait-shell,.gazette-portrait{display:inline-block;width:32px;height:32px;flex:0 0 32px}
-.gazette-portrait-shell{overflow:hidden;border:1px solid var(--line);background:linear-gradient(135deg,var(--ground),var(--line));image-rendering:pixelated}
+.gazette-portrait-shell{overflow:hidden;border:0;background:transparent;image-rendering:pixelated}
 .gazette-portrait{object-fit:cover;color:transparent;font-size:0;image-rendering:pixelated}
-.gazette-portrait-fallback{display:block;width:100%;height:100%;background:linear-gradient(135deg,var(--ground),var(--line))}
+.gazette-portrait-fallback{display:block;width:100%;height:100%;background:transparent}
 .entry-body{white-space:pre-wrap;overflow-wrap:break-word;unicode-bidi:plaintext}
 .withdrawal-notice{margin:0;color:var(--muted);font-style:italic;unicode-bidi:plaintext}
 .body-ja{font-family:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",serif;line-height:2.05}
@@ -315,7 +315,7 @@ function entryBody(entry: GazetteReadingEntry): string {
 }
 
 function residentPortrait(entry: GazetteReadingEntry): string {
-  return `<span class="gazette-portrait-shell" aria-hidden="true"><object class="gazette-portrait" loading="lazy" width="32" height="32" type="image/png" data="/api/drawing/resident/${entry.author_id}/thumb.png"><span class="gazette-portrait-fallback"></span></object></span>`
+  return `<span class="gazette-portrait-shell" aria-hidden="true"><object class="gazette-portrait" width="32" height="32" type="image/png" data="/api/drawing/resident/${entry.author_id}/thumb.png"><span class="gazette-portrait-fallback"></span></object></span>`
 }
 
 function renderEntry(entry: GazetteReadingEntry): string {

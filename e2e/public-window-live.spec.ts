@@ -2472,6 +2472,66 @@ test('Live bounds concurrent note detail reads during a visible burst', async ({
   expect(fixture.maximumNoteRequests()).toBeLessThanOrEqual(4)
 })
 
+test('Live stage portraits show transparent pixels directly on the ground', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const portrait = page.locator('.live-walker .live-portrait').first()
+  await portrait.scrollIntoViewIfNeeded()
+  const shell = portrait.locator('.entity-portrait')
+  await expect(shell).toHaveAttribute('data-portrait-state', 'loaded')
+  expect(await portrait.evaluate(button => {
+    const buttonStyle = getComputedStyle(button)
+    const portraitShell = button.querySelector('.entity-portrait')
+    const placeholder = button.querySelector('.entity-portrait-placeholder')
+    const shellStyle = portraitShell ? getComputedStyle(portraitShell) : null
+    const placeholderStyle = placeholder ? getComputedStyle(placeholder) : null
+    return {
+      buttonBackgroundColor: buttonStyle.backgroundColor,
+      buttonBackgroundImage: buttonStyle.backgroundImage,
+      buttonBorderStyle: buttonStyle.borderStyle,
+      buttonBoxShadow: buttonStyle.boxShadow,
+      shellBackgroundColor: shellStyle?.backgroundColor ?? null,
+      shellBackgroundImage: shellStyle?.backgroundImage ?? null,
+      placeholderBackgroundColor: placeholderStyle?.backgroundColor ?? null,
+      placeholderBackgroundImage: placeholderStyle?.backgroundImage ?? null,
+    }
+  })).toEqual({
+    buttonBackgroundColor: 'rgba(0, 0, 0, 0)',
+    buttonBackgroundImage: 'none',
+    buttonBorderStyle: 'none',
+    buttonBoxShadow: 'none',
+    shellBackgroundColor: 'rgba(0, 0, 0, 0)',
+    shellBackgroundImage: 'none',
+    placeholderBackgroundColor: 'rgba(0, 0, 0, 0)',
+    placeholderBackgroundImage: 'none',
+  })
+})
+
+test('Live opens a 40-resident fixture with 3 full drawing reads and 10 thumbnails', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    crowdPlaceId: 2,
+    residentCrowdSize: 40,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const roster = page.locator('#live-roster .resident-row')
+  await expect(roster).toHaveCount(41)
+  await roster.nth(11).scrollIntoViewIfNeeded()
+  await expect.poll(fixture.thumbnailRequests).toBe(8)
+  for (let step = 0; step < 100 && fixture.thumbnailRequests() < 10; step += 1) {
+    await page.evaluate(() => window.scrollBy(0, 8))
+    await page.waitForTimeout(16)
+  }
+  await expect.poll(fixture.thumbnailRequests).toBe(10)
+  await expect.poll(fixture.activeDrawingRequests).toBe(0)
+
+  expect(fixture.drawingRequests()).toBe(3)
+  expect(fixture.thumbnailRequests()).toBe(10)
+})
+
 test('Live renders nearby detail and reachable distant markers without drawing the whole world', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     drawingDelayMs: 20,

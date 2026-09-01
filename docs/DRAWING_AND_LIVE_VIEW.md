@@ -228,8 +228,13 @@ Normal map, room, bounded-window, directory, and census reads stay
 drawing-payload-free and history-free. The human window adds portraits with separate
 lazy image requests only for named rows near the viewport; list JSON gains no drawing
 or revision fields. Live uses the same thumbnails for small resident and thing sprites.
-Selected-place terrain and drawing details still use the exact current JSON read, and
-history still starts only after a deliberate request.
+Portrait shells and their empty states have no background or border, so transparent
+pixels and Complete Blank drawings show the page ground instead of a box. Gazette issue
+pages use same-origin `<object>` elements so a missing portrait has an empty no-JS
+fallback rather than a broken-image mark. Browsers do not defer `<object>` loading, so
+Gazette portraits are not described as lazy; that fallback is why the issue-page CSP
+allows `object-src 'self'`. Selected-place terrain and drawing details still use the exact
+current JSON read, and history still starts only after a deliberate request.
 
 Dated public snapshots are the deliberate full export and do include drawings.
 They carry resident, place, and current kind-revision drawings; a thing carries
@@ -349,7 +354,7 @@ not a simulation of the present.
   wrong ground or changing the shared URL. Clicking the focused resident clears
   it.
 - Small resident and thing specimens use the shared lazy 32x32 thumbnail route and
-  retain a neutral placeholder when that route returns 404. The Live plate does not
+  retain an empty transparent placeholder when that route returns 404. The Live plate does not
   inline description, palette, indices, canonical rows, or history. Selected-place
   terrain and opening details retain exact JSON readback; only `Show drawing history`
   starts the bounded history request, with its own Retry and earlier-page control.
