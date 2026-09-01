@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { withoutInheritedGitEnvironment } from './child-process-environment.ts'
 
 const TEST_FILE_PATTERN = 'test/*.test.ts'
 const TEMPORARY_DIRECTORY_PREFIX = '1f3d9-test-suite-'
@@ -77,6 +78,7 @@ export function buildTestEnvironment(
   options: EnvironmentOptions = {},
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform
+  const inheritedEnvironment = withoutInheritedGitEnvironment(baseEnvironment)
   const replacedNames = new Set([
     'node_test_context',
     'temp',
@@ -85,7 +87,7 @@ export function buildTestEnvironment(
     ...(platform === 'win32' ? ['path'] : []),
   ])
   const retainedEnvironment = Object.fromEntries(
-    Object.entries(baseEnvironment).filter(
+    Object.entries(inheritedEnvironment).filter(
       ([key]) => !replacedNames.has(key.toLowerCase()),
     ),
   )
@@ -101,7 +103,7 @@ export function buildTestEnvironment(
     throw new Error('Git Bash directory is required to run tests on Windows')
   }
 
-  const existingPath = findEnvironmentValue(baseEnvironment, 'PATH')
+  const existingPath = findEnvironmentValue(inheritedEnvironment, 'PATH')
   const path = existingPath
     ? `${options.gitBashDirectory}${delimiter}${existingPath}`
     : options.gitBashDirectory
@@ -109,17 +111,11 @@ export function buildTestEnvironment(
   return { ...redirectedEnvironment, PATH: path }
 }
 
-function withoutGitHookEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(environment).filter(([name]) => !name.startsWith('GIT_')),
-  )
-}
-
 function resolveGitBashDirectory(environment: NodeJS.ProcessEnv): string {
   const gitExecPath = execFileSync('git', ['--exec-path'], {
     cwd: tmpdir(),
     encoding: 'utf8',
-    env: withoutGitHookEnvironment(environment),
+    env: withoutInheritedGitEnvironment(environment),
   }).trim()
   const bashExecutable = resolve(gitExecPath, '..', '..', '..', 'bin', 'bash.exe')
 
