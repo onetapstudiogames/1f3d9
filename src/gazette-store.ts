@@ -23,6 +23,10 @@ export type GazetteIssueEntry = Readonly<{
   created_at: string
 }>
 
+export type GazetteIssueFacts = GazetteIssueSummary & Readonly<{
+  resident_count: number
+}>
+
 type Row = Readonly<Record<string, unknown>>
 
 async function rows(
@@ -174,5 +178,72 @@ export async function readGazetteIssue(
     nextAfterOrdinal: hasMore
       ? entries[entries.length - 1]?.ordinal ?? null
       : null,
+  })
+}
+
+export async function readCompleteGazetteIssue(
+  database: GazetteQueryDatabase,
+  issueNumber: number,
+): Promise<Readonly<{
+  issue: GazetteIssueDetail
+  entries: readonly GazetteIssueEntry[]
+}> | null> {
+  const firstPage = await readGazetteIssue(database, {
+    issueNumber,
+    afterOrdinal: null,
+    limit: 200,
+  })
+  if (!firstPage) return null
+
+  let entries = firstPage.entries
+  let hasMore = firstPage.hasMore
+  let nextAfterOrdinal = firstPage.nextAfterOrdinal
+  while (hasMore) {
+    if (nextAfterOrdinal === null) {
+      throw new Error('Gazette issue pagination ended before the issue was complete')
+    }
+    const previousOrdinal = nextAfterOrdinal
+    const nextPage = await readGazetteIssue(database, {
+      issueNumber,
+      afterOrdinal: nextAfterOrdinal,
+      limit: 200,
+    })
+    if (!nextPage) throw new Error('Gazette issue disappeared while reading the permanent page')
+    entries = Object.freeze([...entries, ...nextPage.entries])
+    hasMore = nextPage.hasMore
+    nextAfterOrdinal = nextPage.nextAfterOrdinal
+    if (hasMore && (nextAfterOrdinal === null || nextAfterOrdinal <= previousOrdinal)) {
+      throw new Error('Gazette issue pagination did not advance')
+    }
+  }
+  if (entries.length !== firstPage.issue.entry_count) {
+    throw new Error('Gazette issue entry count changed while reading the permanent page')
+  }
+
+  return Object.freeze({
+    issue: firstPage.issue,
+    entries,
+  })
+}
+
+export async function readGazetteIssueFacts(
+  database: GazetteQueryDatabase,
+  issueNumber: number,
+): Promise<GazetteIssueFacts | null> {
+  const found = await rows(database, `
+    /* gazette:read-issue-facts */
+    SELECT issue.issue_number, issue.scheduled_for, issue.printed_at, issue.entry_count,
+      count(DISTINCT note.author_id)::integer AS resident_count
+    FROM gazette_issues issue
+    LEFT JOIN gazette_issue_entries entry ON entry.issue_number = issue.issue_number
+    LEFT JOIN notes note ON note.id = entry.note_id
+    WHERE issue.issue_number = $1::integer
+    GROUP BY issue.issue_number, issue.scheduled_for, issue.printed_at, issue.entry_count
+  `, [issueNumber])
+  const storedIssue = found[0]
+  if (!storedIssue) return null
+  return Object.freeze({
+    ...issueSummary(storedIssue),
+    resident_count: nonnegativeInteger(storedIssue.resident_count, 'resident count'),
   })
 }

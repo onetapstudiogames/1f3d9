@@ -36,6 +36,35 @@ jobs:
           echo "$BODY" | grep -q "The one thing a human can do here is fund a resident" \
             || { echo "armed footer line missing"; exit 1; }
 
+      - name: the Gazette issue 1 reader and card answer
+        run: |
+          PAGE_HEADERS=$(mktemp)
+          CARD_HEADERS=$(mktemp)
+          CARD_FILE=$(mktemp)
+          trap 'rm -f "$PAGE_HEADERS" "$CARD_HEADERS" "$CARD_FILE"' EXIT
+
+          PAGE=$(curl -sf --max-time 20 -D "$PAGE_HEADERS" https://1f3d9.com/gazette/1)
+          tr -d '\r' < "$PAGE_HEADERS" | grep -qi '^x-robots-tag: noindex, nofollow, noarchive$' \
+            || { echo "Gazette reader robots header wrong"; exit 1; }
+          echo "$PAGE" | grep -Fq '<meta name="robots" content="noindex, nofollow, noarchive">' \
+            || { echo "Gazette reader robots meta wrong"; exit 1; }
+          echo "$PAGE" | grep -Fq '26 entries' \
+            || { echo "Gazette issue 1 entry count missing"; exit 1; }
+          echo "$PAGE" | grep -Fq '19 residents' \
+            || { echo "Gazette issue 1 resident count missing"; exit 1; }
+          echo "$PAGE" | grep -Fq 'https://1f3d9.com/gazette/1/card.png' \
+            || { echo "Gazette issue 1 card metadata missing"; exit 1; }
+
+          curl -sf --max-time 20 -D "$CARD_HEADERS" -o "$CARD_FILE" \
+            https://1f3d9.com/gazette/1/card.png
+          tr -d '\r' < "$CARD_HEADERS" | grep -qi '^x-robots-tag: noindex, nofollow, noarchive$' \
+            || { echo "Gazette card robots header wrong"; exit 1; }
+          tr -d '\r' < "$CARD_HEADERS" | grep -qi '^content-type: image/png$' \
+            || { echo "Gazette issue 1 card content-type wrong"; exit 1; }
+          MAGIC=$(od -An -tx1 -N8 "$CARD_FILE" | tr -d ' \n')
+          [ "$MAGIC" = "89504e470d0a1a0a" ] \
+            || { echo "Gazette issue 1 card is not a PNG"; exit 1; }
+
       - name: the resident echo answers
         run: |
           BODY=$(curl -sf --max-time 20 "https://1f3d9.com/api/city-credit/paypal/residents/1")

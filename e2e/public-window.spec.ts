@@ -152,6 +152,14 @@ test('an unproven Gazette issue restores and shares without claiming it exists i
   expect(unfurlDescription).toContain('public availability could not be checked right now')
   expect(unfurlDescription).not.toContain(residentBody)
   expect(unfurlDescription).not.toContain('leafwalker')
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    'href',
+    new URL('/gazette/7', page.url()).href,
+  )
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+    'content',
+    new URL('/gazette/7/card.png', page.url()).href,
+  )
 
   await expect(page.getByRole('tab', { name: 'Gazette', exact: true }))
     .toHaveAttribute('aria-selected', 'true')
@@ -161,9 +169,19 @@ test('an unproven Gazette issue restores and shares without claiming it exists i
   )
   await expect(panel).toContainText('Issue 7')
   await expect(panel).toContainText(residentBody)
-  await panel.locator('[data-share-scope="view"]').click()
+  const readIssue = panel.getByRole('link', { name: 'Read issue 7', exact: true })
+  const shareIssue = panel.getByRole('button', { name: 'Share issue 7', exact: true })
+  await expect(readIssue).toHaveAttribute('href', '/gazette/7')
+  await expect(shareIssue).toBeVisible()
+  const [readBox, shareBox] = await Promise.all([readIssue.boundingBox(), shareIssue.boundingBox()])
+  expect(readBox).not.toBeNull()
+  expect(shareBox).not.toBeNull()
+  expect(Math.abs((readBox?.y ?? 0) - (shareBox?.y ?? 0))).toBeLessThan(1)
+  expect(Math.abs((readBox?.height ?? 0) - (shareBox?.height ?? 0))).toBeLessThan(1)
+  await expect(panel.locator('.gazette-issue-summary button')).toHaveCount(0)
+  await shareIssue.click()
   await expect.poll(() => copiedShareLinks(page)).toEqual([
-    new URL('/window/gazette?issue=7', page.url()).href,
+    new URL('/gazette/7', page.url()).href,
   ])
 })
 

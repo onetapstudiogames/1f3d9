@@ -114,3 +114,11 @@ test('protected room write refusals stay caller-worded at both execution boundar
   assert.match(index, /gazetteRoomLifecycleRefusal\(error\)[\s\S]*err\(c, 409/iu)
   assert.match(engine, /gazetteRoomLifecycleRefusal\(error\)[\s\S]*EngineError\(409/iu)
 })
+
+test('the deployed app mounts the complete Gazette reader and body-free card facts', () => {
+  const index = read('../src/index.ts')
+  assert.match(index, /mountGazetteReadingRoutes/iu)
+  assert.match(index, /readCompleteGazetteIssue\(runtimeDatabase/iu)
+  assert.match(index, /readGazetteIssueFacts\(runtimeDatabase/iu)
+  assert.match(index, /origin:\s*DOMAIN/iu)
+})

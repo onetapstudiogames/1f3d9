@@ -74,11 +74,17 @@ import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
 import { mountGazetteRoutes } from './gazette-routes.ts'
+import {
+  GAZETTE_ROBOTS_POLICY,
+  mountGazetteReadingRoutes,
+} from './gazette-reading.ts'
 import { printGazetteIssuesDue } from './gazette.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
   listGazetteIssues,
+  readCompleteGazetteIssue,
   readGazetteIssue,
+  readGazetteIssueFacts,
   readGazetteSubmissionRoomState,
 } from './gazette-store.ts'
 import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
@@ -648,6 +654,12 @@ mountGazetteRoutes(app, {
   database: engineSql,
   printGazetteIssuesDue: async database => printGazetteIssuesDue(database),
   environment: process.env,
+})
+mountGazetteReadingRoutes(app, {
+  readIssue: async issueNumber => readCompleteGazetteIssue(runtimeDatabase, issueNumber),
+  readIssueFacts: async issueNumber => readGazetteIssueFacts(runtimeDatabase, issueNumber),
+  origin: DOMAIN,
+  robots: GAZETTE_ROBOTS_POLICY,
 })
 mountWorldRoutes(app)
 mountSocietyRoutes(app)

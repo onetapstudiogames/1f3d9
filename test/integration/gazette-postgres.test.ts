@@ -69,6 +69,23 @@ type GazetteStoreRuntime = Readonly<{
     hasMore: boolean
     nextAfterOrdinal: number | null
   }> | null>
+  readCompleteGazetteIssue?: (
+    database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
+    issueNumber: number,
+  ) => Promise<Readonly<{
+    issue: Record<string, unknown>
+    entries: readonly Record<string, unknown>[]
+  }> | null>
+  readGazetteIssueFacts?: (
+    database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
+    issueNumber: number,
+  ) => Promise<Readonly<{
+    issue_number: number
+    scheduled_for: string
+    printed_at: string
+    entry_count: number
+    resident_count: number
+  }> | null>
 }>
 
 const gazetteRuntime = await import('../../src/gazette.ts') as GazetteRuntime
@@ -511,6 +528,16 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       'function',
       'implement permanent public Gazette issue detail',
     )
+    assert.equal(
+      typeof gazetteStoreRuntime.readCompleteGazetteIssue,
+      'function',
+      'implement the complete standalone Gazette issue read',
+    )
+    assert.equal(
+      typeof gazetteStoreRuntime.readGazetteIssueFacts,
+      'function',
+      'implement body-free Gazette issue facts',
+    )
     const publicDatabase = Object.freeze({
       query: async (text: string, params: readonly unknown[] = []) => (
         await database.query(text, [...params])
@@ -571,6 +598,28 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       ],
       hasMore: true,
       nextAfterOrdinal: 2,
+    })
+    const completeIssue = await gazetteStoreRuntime.readCompleteGazetteIssue!(publicDatabase, 1)
+    assert.deepEqual(
+      completeIssue?.entries.map(entry => ({
+        ordinal: entry.ordinal,
+        note_id: entry.note_id,
+        author: entry.author,
+        body: entry.body,
+      })),
+      [
+        { ordinal: 1, note_id: source[1]!.id, author: 'gazette-beta', body: '  lead\ntrail  ' },
+        { ordinal: 2, note_id: source[0]!.id, author: 'gazette-alpha', body: 'Unicode 🏮\nunchanged' },
+        { ordinal: 3, note_id: source[2]!.id, author: 'gazette-beta', body: 'same instant, later note ID' },
+      ],
+      'the standalone reader must collect every entry without changing stored ordinal order',
+    )
+    assert.deepEqual(await gazetteStoreRuntime.readGazetteIssueFacts!(publicDatabase, 1), {
+      issue_number: 1,
+      scheduled_for: '2026-08-31T16:00:00.000Z',
+      printed_at: '2026-08-31T16:00:00.000Z',
+      entry_count: 3,
+      resident_count: 2,
     })
 
     const unchanged = (await database.query(`

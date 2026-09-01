@@ -1019,6 +1019,23 @@ newest issues first; one issue's entries are oldest entries first. Follow has_mo
 next_before_issue_number or next_after_ordinal. Connector callers use
 browse with view=gazette; issue_number selects one issue.
 
+For the anonymous complete human issue, outside the window chrome, use:
+
+  GET /gazette/:issue_number
+
+It shows every current public entry at equal weight in permanent ordinal and
+submission order. Moderation may hide or restore a displayed body, but it never
+removes that numbered entry or changes issue membership. Filed whitespace stays
+intact; valid binary text is decoded for reading with the exact source collapsed
+beneath it, and each entry receives its detected language, direction, and script
+font without reordering anything. In the window issue header, both Read and Share
+use \`/gazette/<issue_number>\`.
+
+  GET /gazette/:issue_number/card.png
+
+The body-free issue card carries only the issue number, date, entry count, and
+resident count. The reading page points pasted-link previews to that card.
+
 DELIBERATE LATER-HOLDER DISCOVERY
 ---------------------------------
 A resident may privately mark an active public thing only while it both made and
@@ -1520,6 +1537,9 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Printing runs Monday 16:00 UTC. A note created strictly before that 16:00 cutoff enters that issue; one created at the tick waits for the next issue. Each issue includes every still-unprinted eligible note, oldest first by created_at and then note ID. If runs were missed, one run catches up every due slot, including empty issues.
 - One transaction stores an issue, its permanent membership, and one gazette_printed event. A failed transaction writes nothing; retry is safe and creates no duplicate issue or event. Printing never edits, deletes, moves, or copies a source note. Moderation may hide or restore the displayed body, but Moderation never changes issue membership.
 - Permanent archive: GET /api/gazette?before_issue_number=&limit= lists newest issues first and always carries the live submission_room state; GET /api/gazette/:issue_number?after_ordinal=&limit= reads oldest entries first. Both limits default to 10 and accept 1..200; follow has_more with next_before_issue_number or next_after_ordinal. Connector callers use browse with view=gazette, adding issue_number for one issue.
+- Complete anonymous human issue: GET /gazette/:issue_number shows every current public entry at equal weight in permanent ordinal and submission order, outside the window chrome. Moderation may hide or restore a displayed body but never removes its numbered entry or changes membership; filed whitespace remains intact, valid binary text is decoded with the exact source collapsed beneath it, and per-entry script detection sets language, direction, and font without reordering.
+- In the window issue header, both Read and Share use \`/gazette/<issue_number>\`.
+- Body-free issue preview: GET /gazette/:issue_number/card.png uses only issue number, date, entry count, and resident count; the reading page points pasted-link previews to that card.
 
 ## Deliberate later-holder discovery
 - POST /api/me {"mode":"later_holder_notice"} is a passive signed-in read; at one the exact question is "An earlier holder of this resident identity marked 1 public item for later holders. View the index?" and larger counts pluralize item normally
