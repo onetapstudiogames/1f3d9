@@ -6,6 +6,16 @@ import {
   PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
   PUBLIC_EVENT_KINDS,
 } from '../src/public-events.ts'
+import { PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS } from '../src/public-snapshot-format.ts'
+import {
+  AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
+  AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND,
+} from './fixtures/public-snapshot-event-detail-contract.ts'
+import {
+  assertEveryEventDetailFieldClassified,
+  readRepositoryEventWriterSources,
+  scanEventDetailWriters,
+} from './helpers/public-event-detail-writer-scan.ts'
 
 const migrationUrl = new URL('../db/migrations/20260823_public_snapshots.sql', import.meta.url)
 const drawingsMigrationUrl = new URL('../db/migrations/20260827_drawings.sql', import.meta.url)
@@ -18,6 +28,10 @@ const gazetteActivationUrl = new URL(
   '../db/migrations/20260827_gazette_room_activation.sql',
   import.meta.url,
 )
+const eventDetailMigrationUrl = new URL(
+  '../db/migrations/20260901_public_snapshot_event_details.sql',
+  import.meta.url,
+)
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
@@ -28,6 +42,17 @@ const V1_PUBLIC_EVENT_DETAIL_FIELDS = [
   ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
   ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS.filter(field =>
     field !== 'issue_number' && field !== 'entry_count'),
+].sort()
+const CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
+  ...V1_PUBLIC_EVENT_DETAIL_FIELDS,
+  'effects_applied',
+  'due_at',
+  'generation',
+].sort()
+const EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
+  ...CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS.filter(field => field !== 'error'),
+  'issue_number',
+  'entry_count',
 ].sort()
 
 for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaUrl]] as const) {
@@ -90,8 +115,9 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlEventDetailFields = [...eventProjection.matchAll(
       /'([a-z_]+)',\s*event\.detail->'\1'/gu,
     )].map(match => match[1]!).sort()
-    const expectedEventDetailFields = V1_PUBLIC_EVENT_DETAIL_FIELDS
-      .filter(field => name !== 'migration' || field !== 'source_thing_id')
+    const expectedEventDetailFields = name === 'fresh schema'
+      ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
+      : V1_PUBLIC_EVENT_DETAIL_FIELDS.filter(field => field !== 'source_thing_id')
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
@@ -191,7 +217,9 @@ for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh
     assert.deepEqual(
       [...eventProjection.matchAll(/'([a-z_]+)',\s*event\.detail->'\1'/gu)]
         .map(match => match[1]!).sort(),
-      V1_PUBLIC_EVENT_DETAIL_FIELDS,
+      name === 'fresh schema'
+        ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
+        : V1_PUBLIC_EVENT_DETAIL_FIELDS,
     )
   })
 }
@@ -297,3 +325,67 @@ test('exact post-deploy Gazette activation completes the snapshot v2 privilege c
     /GRANT SELECT ON city_snapshot\.public_records_v2 TO city_snapshot_export/iu,
   )
 })
+
+test('the audited live-detail inventory exactly names fields absent from format v2 events', () => {
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 38)
+  assert.deepEqual(
+    [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
+    AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
+  )
+  const publicKinds = new Set<string>(PUBLIC_EVENT_KINDS)
+  assert.deepEqual(
+    Object.keys(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND)
+      .filter(kind => !publicKinds.has(kind)),
+    [],
+  )
+  const effectiveV2Fields = new Set(EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
+  assert.deepEqual(
+    AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(field => effectiveV2Fields.has(field)),
+    [],
+    'a field exported by effective format v2 must not remain in the omission disclosure',
+  )
+  const omittedFields = new Set<string>(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS)
+  for (const required of [
+    'reason', 'gazette_submission_room_opened', 'attempt_id', 'moderated', 'moderation',
+  ]) assert.ok(omittedFields.has(required), required)
+})
+
+test('every source-written event-detail field has an export or disclosure disposition', async () => {
+  const sources = await readRepositoryEventWriterSources(new URL('../', import.meta.url))
+  const sourceWriterCount = sources.reduce((count, source) => (
+    count + [...source.source.matchAll(
+      /\bINSERT\s+INTO\s+(?:ONLY\s+)?(?:(?:"?public"?)\s*\.\s*)?(?:"events"|events)(?=\s|\()/giu,
+    )].length
+  ), 0)
+  const scan = scanEventDetailWriters(sources)
+  assert.equal(scan.writerCount, sourceWriterCount, 'every event INSERT must be parsed')
+  assert.ok(scan.writerCount >= 46, `the source scan must find real writers, saw ${scan.writerCount}`)
+
+  assertEveryEventDetailFieldClassified(scan.fields, [
+    ...EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS,
+    ...PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS.events,
+  ])
+})
+
+for (const [name, url, viewName] of [
+  ['event-detail migration', eventDetailMigrationUrl, 'public_records_without_drawing_contract'],
+  ['fresh schema', schemaUrl, 'public_records'],
+] as const) {
+  test(`${name} exports every approved live scalar needed to audit action effects`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(new RegExp(
+      `CREATE OR REPLACE VIEW city_snapshot\\.${viewName}\\b`,
+      'iu',
+    ))
+    assert.ok(viewStart >= 0, `${name}: snapshot base view`)
+    const view = sql.slice(viewStart)
+    const eventsStart = view.indexOf("SELECT 'events'")
+    const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
+    assert.ok(eventsStart >= 0 && moderationStart > eventsStart, `${name}: events projection`)
+    const eventProjection = view.slice(eventsStart, moderationStart)
+    const fields = [...eventProjection.matchAll(
+      /'([a-z_]+)',\s*event\.detail->'\1'/gu,
+    )].map(match => match[1]!).sort()
+    assert.deepEqual(fields, CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
+  })
+}

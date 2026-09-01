@@ -12,11 +12,29 @@ import {
   type SnapshotDatabaseClient,
 } from '../../scripts/export-public-snapshot.ts'
 import { PUBLIC_SNAPSHOT_CLASS_REGISTRY } from '../../src/public-snapshot-format.ts'
+import { AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS } from '../fixtures/public-snapshot-event-detail-contract.ts'
 
 const POSTGRES_IMAGE =
   'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'public_snapshot_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const eventDetailMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260901_public_snapshot_event_details.sql', import.meta.url),
+  'utf8',
+)
+
+function schemaBeforeEventDetailMigration(): string {
+  const fields = ['effects_applied', 'due_at', 'generation'] as const
+  const previousSchema = fields.reduce(
+    (sql, field) => sql.replace(
+      new RegExp(`^\\s*'${field}', event\\.detail->'${field}',?\\r?$`, 'mu'),
+      '',
+    ),
+    schemaDdl,
+  )
+  assert.notEqual(previousSchema, schemaDdl, 'fresh schema must contain the migrated event fields')
+  return previousSchema
+}
 
 function docker(args: readonly string[], allowFailure = false): string {
   const result = spawnSync('docker', [...args], {
@@ -80,7 +98,8 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     host: '127.0.0.1', port, user: 'postgres', password: administratorPassword,
     database: POSTGRES_DATABASE, ssl: false,
   })
-  await administrator.query(schemaDdl)
+  await administrator.query(schemaBeforeEventDetailMigration())
+  await administrator.query(eventDetailMigrationDdl)
   await administrator.query(`ALTER ROLE city_snapshot_export PASSWORD '${snapshotPassword}'`)
   await administrator.query(`
     INSERT INTO residents (id, handle, model, secret_hash, joined_at)
@@ -148,16 +167,29 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     INSERT INTO events (kind, actor, detail, at)
     VALUES ('action', 'snapshot-keeper', $1::jsonb, '2026-08-20T00:02:30Z')
   `, [JSON.stringify({
+    ...Object.fromEntries(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.map(field => [
+      field,
+      `omitted live detail fixture: ${field}`,
+    ])),
     action_id: 7,
     action: 'move',
-    error: 'internal secret-like action failure must not survive',
     status: 'applied',
     effects_applied: 1,
     from_place_id: 1,
     to_place_id: 2,
-    reason: 'safe public reason',
     unsupported_private_field: 'must not be exported',
   })])
+  const scheduledEffectEvent = (await administrator.query<{ id: number }>(`
+    INSERT INTO events (kind, actor, detail, at)
+    VALUES ('effect_scheduled', 'snapshot-keeper', $1::jsonb, '2026-08-20T00:02:31Z')
+    RETURNING id
+  `, [JSON.stringify({
+    effect_id: 19,
+    due_at: '2026-08-20T00:03:31.000Z',
+    generation: 3,
+    error: 'internal scheduled-effect error must not survive',
+    unsupported_private_field: 'must not be exported',
+  })])).rows[0]!
   const privateRuntimeEvent = (await administrator.query<{ id: number }>(`
     INSERT INTO events (kind, actor, detail, at)
     VALUES ('private_runtime_probe', 'nonpublic-only', '{}', transaction_timestamp())
@@ -384,8 +416,20 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     action_id: 7,
     action: 'move',
     status: 'applied',
+    effects_applied: 1,
     from_place_id: 1,
     to_place_id: 2,
+  })
+  for (const field of AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS) {
+    assert.equal(Object.hasOwn(actionDetail ?? {}, field), false, field)
+  }
+  const scheduledEffectDetail = eventLines.find(
+    line => line.record.id === scheduledEffectEvent.id,
+  )?.record.detail
+  assert.deepEqual(scheduledEffectDetail, {
+    effect_id: 19,
+    due_at: '2026-08-20T00:03:31.000Z',
+    generation: 3,
   })
   const gazetteDetail = eventLines.find(
     line => line.record.detail?.issue_number === 1,
@@ -402,6 +446,15 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     id: privateRuntimeEvent.id,
     status: 'not_public_or_sequence_gap',
   })
+
+  const moderationLines = (await readFile(join(outputDirectory, 'moderation.ndjson'), 'utf8'))
+    .trimEnd().split('\n').map(line => JSON.parse(line) as {
+      record: Readonly<Record<string, unknown>>
+    })
+  const hiddenNoteModeration = moderationLines.find(
+    line => line.record.target_type === 'note' && line.record.target_id === hiddenNote.id,
+  )?.record
+  assert.equal(hiddenNoteModeration?.reason, 'fixture removal')
 
   const presenceLines = (await readFile(join(outputDirectory, 'public_presence.ndjson'), 'utf8'))
     .trimEnd().split('\n').map(line => JSON.parse(line) as {
@@ -430,7 +483,7 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   ))).join('')
   assert.doesNotMatch(
     allPublicBytes,
-    /private_runtime_probe|private report body|internal secret-like action failure|withdrawn body|hidden market body|Hidden market fixture|1{64}|2{64}|5{64}|6{64}/iu,
+    /private_runtime_probe|private report body|internal secret-like action failure|internal scheduled-effect error|withdrawn body|hidden market body|Hidden market fixture|1{64}|2{64}|5{64}|6{64}/iu,
   )
 
   const deniedReader = await connect({ connectionString: snapshotUrl, ssl: false })

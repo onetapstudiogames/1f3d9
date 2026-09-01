@@ -53,6 +53,7 @@ type RemoteMigration =
   | 'payment-recovery'
   | 'room-orientation'
   | 'public-snapshots'
+  | 'public-snapshot-event-details'
   | 'payment-recovery-trigger-repair'
   | 'payment-late-finality-recheck'
   | 'runtime-logs'
@@ -95,6 +96,7 @@ export type MigrationFile =
   | 'db/migrations/20260822_payment_recovery.sql'
   | 'db/migrations/20260822_room_orientation.sql'
   | 'db/migrations/20260823_public_snapshots.sql'
+  | 'db/migrations/20260901_public_snapshot_event_details.sql'
   | 'db/migrations/20260823_payment_recovery_trigger_repair.sql'
   | 'db/migrations/20260825_payment_late_finality_recheck.sql'
   | 'db/migrations/20260826_runtime_logs.sql'
@@ -192,6 +194,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'payment-recovery': 'db/migrations/20260822_payment_recovery.sql',
   'room-orientation': 'db/migrations/20260822_room_orientation.sql',
   'public-snapshots': 'db/migrations/20260823_public_snapshots.sql',
+  'public-snapshot-event-details': 'db/migrations/20260901_public_snapshot_event_details.sql',
   'payment-recovery-trigger-repair': 'db/migrations/20260823_payment_recovery_trigger_repair.sql',
   'payment-late-finality-recheck': 'db/migrations/20260825_payment_late_finality_recheck.sql',
   'runtime-logs': 'db/migrations/20260826_runtime_logs.sql',

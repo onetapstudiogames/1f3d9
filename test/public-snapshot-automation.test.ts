@@ -13,6 +13,8 @@ const packageJson = JSON.parse(source('package.json')) as {
   scripts: Readonly<Record<string, string>>
 }
 const migrationFile = 'db/migrations/20260823_public_snapshots.sql' as const
+const eventDetailMigrationFile =
+  'db/migrations/20260901_public_snapshot_event_details.sql' as const
 
 test('the public snapshot migration is explicitly selectable for preview and production', () => {
   const preview = resolveMigrationRun(
@@ -44,6 +46,36 @@ test('the public snapshot migration is explicitly selectable for preview and pro
   assert.equal(production.executionMode, 'transactional')
 })
 
+test('the event-detail parity migration is guarded for preview and production release use', () => {
+  const preview = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'public-snapshot-event-details'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'test-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(preview.migrationFile, eventDetailMigrationFile)
+  assert.equal(preview.executionMode, 'transactional')
+
+  const production = resolveMigrationRun(
+    ['--target', 'production', '--migration', 'public-snapshot-event-details'],
+    {
+      CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+      NEON_API_KEY: 'test-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      PRODUCTION_SNAPSHOT_NAME: 'public-snapshot-event-details-release',
+    },
+  )
+  assert.equal(production.migrationFile, eventDetailMigrationFile)
+  assert.equal(production.executionMode, 'transactional')
+})
+
 test('package scripts expose migration, snapshot, and PostgreSQL proof commands', () => {
   assert.match(
     packageJson.scripts['migrate:preview:public-snapshots'] ?? '',
@@ -52,6 +84,14 @@ test('package scripts expose migration, snapshot, and PostgreSQL proof commands'
   assert.match(
     packageJson.scripts['migrate:production:public-snapshots'] ?? '',
     /--target production --migration public-snapshots$/u,
+  )
+  assert.match(
+    packageJson.scripts['migrate:preview:public-snapshot-event-details'] ?? '',
+    /--target preview --migration public-snapshot-event-details$/u,
+  )
+  assert.match(
+    packageJson.scripts['migrate:production:public-snapshot-event-details'] ?? '',
+    /--target production --migration public-snapshot-event-details$/u,
   )
   assert.equal(
     packageJson.scripts['snapshot:export'],
