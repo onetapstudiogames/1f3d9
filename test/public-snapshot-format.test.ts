@@ -126,6 +126,16 @@ test('snapshot bundles are deterministic, split by class, and verify offline', a
     ])
     assert.equal(first.files.every(file => /^[0-9a-f]{64}$/u.test(file.sha256)), true)
 
+    const manifest = JSON.parse(await readFile(join(root, 'first', 'manifest.json'), 'utf8')) as {
+      deliberately_omitted_live_detail_fields: Readonly<Record<string, readonly string[]>>
+      documentation_url: string
+    }
+    assert.deepEqual(manifest.deliberately_omitted_live_detail_fields, { events: ['error'] })
+    assert.equal(
+      manifest.documentation_url,
+      `https://github.com/onetapstudiogames/1f3d9/blob/${'a'.repeat(40)}/docs/PUBLIC_SNAPSHOTS.md`,
+    )
+
     const noteBytes = await readFile(join(root, 'first', 'notes.ndjson'))
     const noteLine = JSON.parse(noteBytes.toString('utf8')) as {
       fingerprint: string
@@ -194,6 +204,70 @@ test('the offline verifier rejects changed records, file hashes, counts, and cre
         payload: { id: 1, status: 'exported', body: `do not export 1f3d9_sk_${'ab'.repeat(24)}` },
       }],
     }), /credential/iu)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('the offline verifier rejects a false omission disclosure or documentation pointer', async () => {
+  const root = await mkdtemp(join(tmpdir(), '1f3d9-snapshot-disclosure-'))
+  try {
+    await createSnapshotBundle({
+      outputDirectory: root,
+      exportedAt: '2026-08-23T12:34:56.000Z',
+      sourceCommit: 'e'.repeat(40),
+      records: RECORDS,
+    })
+    const manifestPath = join(root, 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>
+    await writeFile(manifestPath, `${canonicalJson({
+      ...manifest,
+      deliberately_omitted_live_detail_fields: { events: [] },
+    })}\n`, 'utf8')
+    await assert.rejects(() => verifySnapshotDirectory(root), /omission disclosure/iu)
+
+    const documentationRoot = join(root, 'documentation')
+    await createSnapshotBundle({
+      outputDirectory: documentationRoot,
+      exportedAt: '2026-08-23T12:34:56.000Z',
+      sourceCommit: 'e'.repeat(40),
+      records: RECORDS,
+    })
+    const documentationManifestPath = join(documentationRoot, 'manifest.json')
+    const documentationManifest = JSON.parse(
+      await readFile(documentationManifestPath, 'utf8'),
+    ) as Record<string, unknown>
+    await writeFile(documentationManifestPath, `${canonicalJson({
+      ...documentationManifest,
+      documentation_url: 'https://example.test/not-the-snapshot-format',
+    })}\n`, 'utf8')
+    await assert.rejects(
+      () => verifySnapshotDirectory(documentationRoot),
+      /documentation pointer/iu,
+    )
+
+    const historicalRoot = join(root, 'historical-v2')
+    await createSnapshotBundle({
+      outputDirectory: historicalRoot,
+      exportedAt: '2026-08-23T12:34:56.000Z',
+      sourceCommit: 'e'.repeat(40),
+      records: RECORDS,
+    })
+    const historicalManifestPath = join(historicalRoot, 'manifest.json')
+    const historicalManifest = JSON.parse(
+      await readFile(historicalManifestPath, 'utf8'),
+    ) as Record<string, unknown>
+    const {
+      deliberately_omitted_live_detail_fields: _omissionDisclosure,
+      documentation_url: _documentationUrl,
+      ...historicalV2Shape
+    } = historicalManifest
+    await writeFile(
+      historicalManifestPath,
+      `${canonicalJson(historicalV2Shape)}\n`,
+      'utf8',
+    )
+    await verifySnapshotDirectory(historicalRoot)
   } finally {
     await rm(root, { force: true, recursive: true })
   }

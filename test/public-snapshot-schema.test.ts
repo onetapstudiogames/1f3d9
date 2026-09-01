@@ -18,6 +18,10 @@ const gazetteActivationUrl = new URL(
   '../db/migrations/20260827_gazette_room_activation.sql',
   import.meta.url,
 )
+const eventDetailMigrationUrl = new URL(
+  '../db/migrations/20260901_public_snapshot_event_details.sql',
+  import.meta.url,
+)
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
@@ -28,6 +32,12 @@ const V1_PUBLIC_EVENT_DETAIL_FIELDS = [
   ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
   ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS.filter(field =>
     field !== 'issue_number' && field !== 'entry_count'),
+].sort()
+const CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
+  ...V1_PUBLIC_EVENT_DETAIL_FIELDS,
+  'effects_applied',
+  'due_at',
+  'generation',
 ].sort()
 
 for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaUrl]] as const) {
@@ -90,8 +100,9 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlEventDetailFields = [...eventProjection.matchAll(
       /'([a-z_]+)',\s*event\.detail->'\1'/gu,
     )].map(match => match[1]!).sort()
-    const expectedEventDetailFields = V1_PUBLIC_EVENT_DETAIL_FIELDS
-      .filter(field => name !== 'migration' || field !== 'source_thing_id')
+    const expectedEventDetailFields = name === 'fresh schema'
+      ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
+      : V1_PUBLIC_EVENT_DETAIL_FIELDS.filter(field => field !== 'source_thing_id')
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
@@ -191,7 +202,9 @@ for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh
     assert.deepEqual(
       [...eventProjection.matchAll(/'([a-z_]+)',\s*event\.detail->'\1'/gu)]
         .map(match => match[1]!).sort(),
-      V1_PUBLIC_EVENT_DETAIL_FIELDS,
+      name === 'fresh schema'
+        ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
+        : V1_PUBLIC_EVENT_DETAIL_FIELDS,
     )
   })
 }
@@ -297,3 +310,26 @@ test('exact post-deploy Gazette activation completes the snapshot v2 privilege c
     /GRANT SELECT ON city_snapshot\.public_records_v2 TO city_snapshot_export/iu,
   )
 })
+
+for (const [name, url, viewName] of [
+  ['event-detail migration', eventDetailMigrationUrl, 'public_records_without_drawing_contract'],
+  ['fresh schema', schemaUrl, 'public_records'],
+] as const) {
+  test(`${name} exports every approved live scalar needed to audit action effects`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(new RegExp(
+      `CREATE OR REPLACE VIEW city_snapshot\\.${viewName}\\b`,
+      'iu',
+    ))
+    assert.ok(viewStart >= 0, `${name}: snapshot base view`)
+    const view = sql.slice(viewStart)
+    const eventsStart = view.indexOf("SELECT 'events'")
+    const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
+    assert.ok(eventsStart >= 0 && moderationStart > eventsStart, `${name}: events projection`)
+    const eventProjection = view.slice(eventsStart, moderationStart)
+    const fields = [...eventProjection.matchAll(
+      /'([a-z_]+)',\s*event\.detail->'\1'/gu,
+    )].map(match => match[1]!).sort()
+    assert.deepEqual(fields, CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
+  })
+}

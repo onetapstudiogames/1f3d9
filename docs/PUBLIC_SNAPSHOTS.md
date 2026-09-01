@@ -44,7 +44,10 @@ records; the exporter supplies the versioned `official` and `physics`
 records from the same source commit. The manifest names the format, format
 version, original-snapshot status, frozen export time, source commit, count
 for every exported class, exact bytes and SHA-256 for every NDJSON file, the
-complete class registry, and the verification recipe.
+complete class registry, and the verification recipe. Snapshots exported after
+the 2026-09-01 event-detail migration also carry a per-class list of live detail
+fields deliberately omitted from the export and a source-commit-pinned link to
+this document. Earlier format-v2 manifests keep their original shape.
 
 ## Deterministic bytes and hashes
 
@@ -143,11 +146,21 @@ both add them. A format change requires a new version: already-published
 format-v1 releases keep their original registry, and format v2 is a separate
 tag series whose original releases remain fixed to their manifest source commit.
 
-`events.detail` is also fail-closed. Version 2 keeps only the identifier fields
-in `PUBLIC_EVENT_DETAIL_ID_FIELDS` and the scalar fields in
-`PUBLIC_EVENT_DETAIL_SCALAR_FIELDS` except `error`, from
-[`src/public-events.ts`](../src/public-events.ts). It does not export authored
-event detail text such as `body`, `description`, `reason`, or `error`.
+`events.detail` is also fail-closed. Version 2 keeps only the explicit SQL
+identifier and scalar allowlist. Beginning with the first snapshot exported
+after the 2026-09-01 event-detail migration, that allowlist includes
+`action.detail.effects_applied` and `effect_scheduled.detail.due_at` plus
+`effect_scheduled.detail.generation`, matching the already-public live event
+evidence. Earlier snapshot releases are immutable and remain exactly as
+shipped, without those three fields.
+
+Of the fields present in live public event detail, the snapshot deliberately
+omits only `error`. Each snapshot exported after the migration states this
+machine-readable contract as
+`deliberately_omitted_live_detail_fields: {"events":["error"]}` and links back
+to this document at the manifest's exact source commit. The projection also
+continues to reject fields outside its allowlist, including authored event
+detail text such as `body`, `description`, and `reason`.
 Gazette print events retain `place_id`, `issue_number`, and `entry_count`; their
 manifest provenance therefore names both `events` and `gazette_issues`, while
 the issue and entry files carry the permanent ledger itself.

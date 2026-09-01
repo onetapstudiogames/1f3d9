@@ -89,6 +89,13 @@ const CLASS_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/u
 const RECORD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u
 const INTEGER_RE = /^(?:0|[1-9][0-9]*)$/u
 const SNAPSHOT_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.freeze({
+  events: Object.freeze(['error']),
+})
+
+function snapshotDocumentationUrl(sourceCommit: string): string {
+  return `https://github.com/onetapstudiogames/1f3d9/blob/${sourceCommit}/docs/PUBLIC_SNAPSHOTS.md`
+}
 
 export type PublicSnapshotRecord = Readonly<{
   class_name: string
@@ -265,6 +272,8 @@ export async function createSnapshotBundle(input: Readonly<{
       sha256: file.sha256,
     }))),
     class_registry: PUBLIC_SNAPSHOT_CLASS_REGISTRY,
+    deliberately_omitted_live_detail_fields: DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS,
+    documentation_url: snapshotDocumentationUrl(input.sourceCommit),
     record_fingerprint: 'first 16 lowercase hexadecimal characters of SHA-256(canonical record JSON UTF-8 bytes)',
     file_hash: 'SHA-256 of the exact file bytes',
     city_root: 'SHA-256 of the exact canonical manifest.json bytes; this is also the full manifest file hash',
@@ -306,6 +315,8 @@ type SnapshotManifest = Readonly<{
     sha256: string
   }>[]
   class_registry: readonly SnapshotClassRegistryEntry[]
+  deliberately_omitted_live_detail_fields?: Readonly<Record<string, readonly string[]>>
+  documentation_url?: string
 }>
 
 function manifestShape(value: unknown): SnapshotManifest {
@@ -320,6 +331,26 @@ function manifestShape(value: unknown): SnapshotManifest {
     !manifest.counts || typeof manifest.counts !== 'object' || Array.isArray(manifest.counts) ||
     !Array.isArray(manifest.files) || !Array.isArray(manifest.class_registry)
   ) throw new Error(`manifest has an invalid format v${PUBLIC_SNAPSHOT_FORMAT_VERSION} shape`)
+  const hasOmissionDisclosure = Object.hasOwn(
+    manifest,
+    'deliberately_omitted_live_detail_fields',
+  )
+  const hasDocumentationPointer = Object.hasOwn(manifest, 'documentation_url')
+  if (hasOmissionDisclosure !== hasDocumentationPointer) {
+    throw new Error('manifest must pair its live-detail omission disclosure and documentation pointer')
+  }
+  if (hasOmissionDisclosure) {
+    if (
+      !manifest.deliberately_omitted_live_detail_fields ||
+      typeof manifest.deliberately_omitted_live_detail_fields !== 'object' ||
+      Array.isArray(manifest.deliberately_omitted_live_detail_fields) ||
+      canonicalJson(manifest.deliberately_omitted_live_detail_fields) !==
+        canonicalJson(DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS)
+    ) throw new Error('manifest has a false live-detail omission disclosure')
+    if (manifest.documentation_url !== snapshotDocumentationUrl(String(manifest.source_commit))) {
+      throw new Error('manifest has an invalid public snapshot documentation pointer')
+    }
+  }
   return manifest as SnapshotManifest
 }
 
