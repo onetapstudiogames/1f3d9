@@ -422,6 +422,13 @@ test('large public searches use maintained indexes without changing archive trut
       }
 
       await postgres.client.query(`
+        SELECT setval(
+          pg_get_serial_sequence('places', 'id')::regclass,
+          GREATEST((SELECT max(id) FROM places), 454),
+          true
+        )
+      `)
+      await postgres.client.query(`
         INSERT INTO places (parent_id, place_kind, name, owner_id, created_at)
         SELECT $1, 'place', 'ordinary former place ' || item_number, 1,
           '2026-01-03T00:00:00Z'::timestamptz + item_number * interval '1 millisecond'

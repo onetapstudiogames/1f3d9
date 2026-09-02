@@ -272,6 +272,7 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
   database = postgres.client
   try {
     const { craftKindThing } = await import('../../src/crafting.ts')
+    const { makeThingThroughEngine } = await import('../../src/thing-making.ts')
     const { replacePlaceLaws } = await import('../../src/laws.ts')
     const { withdrawThing } = await import('../../src/withdrawal.ts')
 
@@ -1015,14 +1016,13 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
           await retiring.query('BEGIN')
           await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
           await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
-          const request = app.request('/api/thing', {
-            method: 'POST',
-            headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
-            body: JSON.stringify({
-              place_id: roomId,
-              name: 'must-not-be-made',
-              body: '',
-            }),
+          const making = makeThingThroughEngine({
+            actor,
+            placeId: roomId,
+            name: 'must-not-be-made',
+            body: '',
+            kindId: null,
+            ingredientIds: [],
           })
           const makingPid = await Promise.race([
             runnerStarted.promise,
@@ -1031,9 +1031,9 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
           assert.ok(makingPid > 0, 'kindless making did not reach its transaction')
           await assertWaitingOnDatabaseLock(makingPid, 'kindless making')
           await retiring.query('COMMIT')
-          const response = await request
-          assert.equal(response.status, 409, await response.clone().text())
-          assert.deepEqual(await response.json(), {
+          assert.deepEqual(await making, {
+            ok: false,
+            status: 409,
             error: 'place is retired; restore it before making things there',
           })
         } catch (error) {
