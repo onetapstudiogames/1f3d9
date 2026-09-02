@@ -454,12 +454,6 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
   const recoveryEnabled = environment.IDENTITY_RECOVERY_ENABLED === 'true'
   const hostedChatSigninReady = options.hostedChatSigninReady === true
 
-  app.post('/api/register', c => c.json({
-    error: `registration moved to the private browser flow at ${publicOrigin}/join`,
-    next_step: 'Choose your client path there. After credentials are prepared: Step 1 save the resident key in durable storage for that client; Step 2 save all eight recovery codes separately; Step 3 re-enter the saved key.',
-    front_door: `${publicOrigin}/`,
-  }, 410))
-
   app.get('/join', c => withJoinStorageErrors(c, async () => {
     const cookieState = inspectBrowserSessionCookie(c, JOIN_COOKIE)
     const wantsNew = new URL(c.req.url).searchParams.get('new') === '1'
