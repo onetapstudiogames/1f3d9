@@ -476,7 +476,7 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
   )
 })
 
-test('phone roster rows keep wrapping location text below names', async ({ page }) => {
+test('presence rows keep handles and long locations separate at phone and desktop widths', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.route('**/api/window*', async route => {
     const response = await route.fetch()
@@ -488,15 +488,27 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
       await route.fulfill({ response })
       return
     }
+    const residents = Array.isArray(body.residents)
+      ? body.residents.map(resident => resident && typeof resident === 'object'
+        ? {
+            ...resident,
+            handle: Number((resident as { id?: unknown }).id) === 49
+              ? 'fable-lyrebird'
+              : Number((resident as { id?: unknown }).id) === 48
+                ? 'off-by-one'
+                : (resident as { handle?: unknown }).handle,
+            current_place_id: Number((resident as { id?: unknown }).id) === 48
+              ? 11
+              : (resident as { current_place_id?: unknown }).current_place_id,
+            has_drawing: Number((resident as { id?: unknown }).id) === 49,
+          }
+        : resident)
+      : []
     await route.fulfill({
       response,
       json: {
         ...body,
-        residents: Array.isArray(body.residents)
-          ? body.residents.map(resident => resident && typeof resident === 'object'
-            ? { ...resident, has_drawing: Number((resident as { id?: unknown }).id) === 49 }
-            : resident)
-          : body.residents,
+        residents,
         things: Array.isArray(body.things)
           ? body.things.map(thing => thing && typeof thing === 'object'
             ? { ...thing, has_drawing: Number((thing as { id?: unknown }).id) === 401 }
@@ -514,7 +526,7 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
   await expect(page.locator('#window-status')).toContainText('Watching')
 
   const placeRow = page.locator('#place-occupants .person-card')
-    .filter({ hasText: 'browser-resident' })
+    .filter({ hasText: 'fable-lyrebird' })
   const placeHandle = placeRow.locator('.resident-follow')
   const placeMeta = placeRow.locator('.resident-number')
   await expect(placeRow).toBeVisible()
@@ -539,10 +551,41 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
   expect(placePortraitBox!.y).toBeLessThan(placeHandleBox!.y + placeHandleBox!.height)
   expect(placePortraitBox!.y + placePortraitBox!.height).toBeGreaterThan(placeHandleBox!.y)
 
-  const undrawnPlaceRow = page.locator('#place-occupants .person-card').filter({ hasText: 'oldwalker' })
-  if (await undrawnPlaceRow.count()) {
-    await expect(undrawnPlaceRow.locator('.entity-portrait')).toHaveCount(0)
+  const undrawnPlaceRow = page.locator('#place-occupants .person-card')
+    .filter({ hasText: 'off-by-one' })
+  await expect(undrawnPlaceRow).toHaveCount(1)
+  await expect(undrawnPlaceRow.locator('.entity-portrait')).toHaveCount(0)
+  const [phoneUndrawnHandleBox, phoneUndrawnMetaBox] = await Promise.all([
+    undrawnPlaceRow.locator('.resident-follow').boundingBox(),
+    undrawnPlaceRow.locator('.resident-number').boundingBox(),
+  ])
+  expect(phoneUndrawnHandleBox).not.toBeNull()
+  expect(phoneUndrawnMetaBox).not.toBeNull()
+  expect(boxesIntersect(phoneUndrawnHandleBox!, phoneUndrawnMetaBox!)).toBe(false)
+  expect(phoneUndrawnMetaBox!.y).toBeGreaterThanOrEqual(
+    phoneUndrawnHandleBox!.y + phoneUndrawnHandleBox!.height - 0.5,
+  )
+  expect(phoneUndrawnHandleBox!.x).toBeLessThan(placeHandleBox!.x)
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  for (const row of [placeRow, undrawnPlaceRow]) {
+    const [handleBox, metaBox] = await Promise.all([
+      row.locator('.resident-follow').boundingBox(),
+      row.locator('.resident-number').boundingBox(),
+    ])
+    expect(handleBox).not.toBeNull()
+    expect(metaBox).not.toBeNull()
+    expect(boxesIntersect(handleBox!, metaBox!)).toBe(false)
   }
+  const [desktopDrawnHandleBox, desktopUndrawnHandleBox] = await Promise.all([
+    placeRow.locator('.resident-follow').boundingBox(),
+    undrawnPlaceRow.locator('.resident-follow').boundingBox(),
+  ])
+  expect(desktopDrawnHandleBox).not.toBeNull()
+  expect(desktopUndrawnHandleBox).not.toBeNull()
+  expect(desktopUndrawnHandleBox!.x).toBeLessThan(desktopDrawnHandleBox!.x)
+
+  await page.setViewportSize({ width: 390, height: 844 })
 
   const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   const [thingNameBox, thingMetaBox] = await Promise.all([
@@ -556,7 +599,7 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
 
   await page.getByRole('tab', { name: 'Map', exact: true }).click()
   const rosterRow = page.locator('#resident-roster .resident-row')
-    .filter({ hasText: 'browser-resident' })
+    .filter({ hasText: 'fable-lyrebird' })
   await expect(rosterRow).toBeVisible()
   const rosterMeta = rosterRow.locator('.resident-number')
   await rosterMeta.evaluate(element => {
@@ -578,6 +621,15 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
     range.selectNodeContents(element)
     return range.getClientRects().length
   })).toBeGreaterThanOrEqual(2)
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const [desktopRosterHandleBox, desktopRosterMetaBox] = await Promise.all([
+    rosterRow.locator('.resident-follow').boundingBox(),
+    rosterMeta.boundingBox(),
+  ])
+  expect(desktopRosterHandleBox).not.toBeNull()
+  expect(desktopRosterMetaBox).not.toBeNull()
+  expect(boxesIntersect(desktopRosterHandleBox!, desktopRosterMetaBox!)).toBe(false)
 })
 
 test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {

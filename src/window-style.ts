@@ -1767,14 +1767,21 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .roster-place { margin: 0 0 0.5rem; color: var(--sky); font-size: 0.72rem; font-weight: 850; }
 .resident-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(min-content, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0;
 }
-.resident-row:has(> .entity-portrait) { grid-template-columns: 2rem minmax(0, 1fr) auto; }
-.resident-row .resident-follow { color: #fff; font-size: 0.78rem; }
-.resident-number { color: var(--signal); font: 0.63rem ui-monospace, monospace; }
+.resident-row:has(> .entity-portrait) {
+  grid-template-columns: 2rem minmax(min-content, max-content) minmax(0, 1fr);
+}
+.resident-row .resident-follow { max-width: 100%; color: #fff; font-size: 0.78rem; }
+.resident-number {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--signal);
+  font: 0.63rem ui-monospace, monospace;
+}
 
 .place-orientation {
   display: grid;
@@ -1819,11 +1826,14 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .person-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(min-content, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
 }
-.person-card:has(> .entity-portrait) { grid-template-columns: 2rem minmax(0, 1fr) auto; }
+.person-card:has(> .entity-portrait) {
+  grid-template-columns: 2rem minmax(min-content, max-content) minmax(0, 1fr);
+}
+.person-card > .resident-follow { max-width: 100%; }
 .person-card strong { color: var(--forest-deep); }
 .thing-card { display: grid; gap: 0.55rem; }
 .thing-card h4 { display: flex; gap: 0.5rem; align-items: center; margin: 0; font-size: 1rem; }
