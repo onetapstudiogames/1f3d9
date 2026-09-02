@@ -152,14 +152,10 @@ test('target redactors remove authored payloads and retain public history', () =
       targetType: 'place' as const,
       record: {
         id: 2, parent_id: 1, owner_id: 7, owner: 'keeper', created_at: '2026-08-11T01:00:00Z',
-        name: 'unsafe place name', founding_name: 'unsafe founding name',
-        name_history: [
-          { name: 'unsafe founding name', started_at: '2026-08-11T01:00:00Z', ended_at: null },
-        ],
-        description: 'unsafe place description', open_to_notes: true,
+        name: 'unsafe place name', description: 'unsafe place description', open_to_notes: true,
       },
       redact: redactPlace,
-      displayFields: ['name', 'founding_name', 'description'],
+      displayFields: ['name', 'description'],
     },
     {
       targetType: 'thing' as const,
@@ -238,14 +234,6 @@ test('target redactors remove authored payloads and retain public history', () =
     if (targetType === 'trait') {
       assert.equal(redactedRecord.recipe, null)
       assert.equal(redactedRecord.mechanical, false)
-    }
-    if (targetType === 'place') {
-      assert.deepEqual(redactedRecord.name_history, [{
-        name: MODERATED_TEXT,
-        started_at: '2026-08-11T01:00:00Z',
-        ended_at: null,
-      }])
-      assert.equal(Object.isFrozen(redactedRecord.name_history), true)
     }
   }
 })

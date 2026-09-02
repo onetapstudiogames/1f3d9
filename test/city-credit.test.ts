@@ -85,10 +85,7 @@ test('preflight shows exact cost, pending-or-frozen gift count, and before/after
     pending_gifts_count: 2,
     can_confirm: true,
     observed_at: '2026-08-26T23:30:00.000Z',
-    applies_to: [
-      'frontier', 'kind_invention', 'kind_revision',
-      'place_rename', 'place_retire', 'place_restore',
-    ],
+    applies_to: ['frontier', 'kind_invention', 'kind_revision'],
     freshness: 'read_only_snapshot',
   })
   assert.equal(database.calls.length, 1)

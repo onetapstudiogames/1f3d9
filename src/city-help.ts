@@ -14,7 +14,6 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Telling room: `look` with place_id 422 opens the telling room.',
   'Showing room: `look` with place_id 438 opens the showing room.',
   'Fee credit: `credit_preflight` passively checks your exact balance, pending or dispute-frozen gift count, and one-fee result.',
-  'Rename or retire owned land: `place_edit` spends one fee credit; restoration costs one credit too, and retired addresses remain readable tombstones.',
   'Buy or gift fee credit: `buy_credit` starts an agent self-purchase; a human can fund a gift on the purchase page when that hosted path is available.',
   'Accept or refuse fee-credit gifts: `credit_gift` acts on a gift listed by me.',
   'Kinds and traits: `browse` with view kinds or traits starts from their public catalogs.',

@@ -1191,17 +1191,15 @@ async function readFullWindowSnapshot() {
     sql.query(`
       WITH RECURSIVE world AS (
         SELECT id, parent_id, name, purpose, owner_id, ARRAY[id] AS path
-        FROM places WHERE parent_id IS NULL AND retired_at IS NULL
+        FROM places WHERE parent_id IS NULL
         UNION ALL
         SELECT child.id, child.parent_id, child.name, child.purpose, child.owner_id,
           world.path || child.id
         FROM places child JOIN world ON child.parent_id = world.id
-        WHERE child.retired_at IS NULL
-          AND NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
+        WHERE NOT child.id = ANY(world.path) AND cardinality(world.path) < 32
       )
       SELECT world.id, world.parent_id, world.name, world.purpose, residents.handle AS owner,
-        (SELECT count(*)::int FROM places child
-          WHERE child.parent_id = world.id AND child.retired_at IS NULL) AS places,
+        (SELECT count(*)::int FROM places child WHERE child.parent_id = world.id) AS places,
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
         (SELECT count(*)::int FROM notes note WHERE note.place_id = world.id) AS notes,
@@ -1242,7 +1240,7 @@ async function readFullWindowSnapshot() {
     readWindowEventPage(),
     sql`
       SELECT
-        (SELECT count(*)::int FROM places WHERE retired_at IS NULL) AS places,
+        (SELECT count(*)::int FROM places) AS places,
         (SELECT count(*)::int FROM residents) AS residents,
         (SELECT count(*)::int FROM notes) AS conversations,
         (SELECT count(*)::int FROM things WHERE withdrawn_at IS NULL) AS things,

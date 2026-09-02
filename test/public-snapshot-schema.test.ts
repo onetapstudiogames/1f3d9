@@ -40,15 +40,6 @@ const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const currentPublicEventKinds = PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
   : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)]
-const PLACE_LIFECYCLE_EVENT_KINDS = new Set([
-  'place_renamed', 'place_retired', 'place_restored',
-])
-const legacyPublicEventKinds = currentPublicEventKinds.filter(
-  kind => !PLACE_LIFECYCLE_EVENT_KINDS.has(kind),
-)
-const withoutPlaceLifecycleDetailFields = (fields: readonly string[]) => fields.filter(
-  field => field !== 'name' && field !== 'former_name',
-)
 
 const V1_PUBLIC_EVENT_KINDS = currentPublicEventKinds.filter(kind => kind !== 'gazette_printed')
 const V1_PUBLIC_EVENT_DETAIL_FIELDS = [
@@ -67,19 +58,6 @@ const EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
   'issue_number',
   'entry_count',
 ].sort()
-
-function snapshotEventDetailFields(projection: string): string[] {
-  const fields = [...projection.matchAll(
-    /'([a-z_]+)',\s*event\.detail->'\1'/gu,
-  )].map(match => match[1]!)
-  for (const field of ['name', 'former_name']) {
-    if (new RegExp(
-      `'${field}',\\s*CASE[\\s\\S]{0,240}?ELSE event\\.detail->'${field}' END`,
-      'u',
-    ).test(projection)) fields.push(field)
-  }
-  return [...new Set(fields)].sort()
-}
 
 for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaUrl]] as const) {
   test(`${name} installs one explicit fail-closed public snapshot view`, async () => {
@@ -125,9 +103,7 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const sqlPublicKinds = [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
     const expectedKinds = name === 'migration'
-      ? legacyPublicEventKinds.filter(
-        kind => kind !== 'gazette_printed' && kind !== 'resident_edited',
-      )
+      ? V1_PUBLIC_EVENT_KINDS.filter(kind => kind !== 'resident_edited')
       : V1_PUBLIC_EVENT_KINDS
     assert.deepEqual(sqlPublicKinds, expectedKinds)
     assert.ok(sqlPublicKinds.includes('payment_repair'))
@@ -140,12 +116,12 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
     const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
     assert.ok(eventsStart >= 0 && moderationStart > eventsStart)
     const eventProjection = view.slice(eventsStart, moderationStart)
-    const sqlEventDetailFields = snapshotEventDetailFields(eventProjection)
+    const sqlEventDetailFields = [...eventProjection.matchAll(
+      /'([a-z_]+)',\s*event\.detail->'\1'/gu,
+    )].map(match => match[1]!).sort()
     const expectedEventDetailFields = name === 'fresh schema'
       ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
-      : withoutPlaceLifecycleDetailFields(
-        V1_PUBLIC_EVENT_DETAIL_FIELDS.filter(field => field !== 'source_thing_id'),
-      )
+      : V1_PUBLIC_EVENT_DETAIL_FIELDS.filter(field => field !== 'source_thing_id')
     assert.deepEqual(sqlEventDetailFields, expectedEventDetailFields)
     assert.ok(sqlEventDetailFields.includes('action'))
     assert.doesNotMatch(
@@ -237,18 +213,17 @@ for (const [name, url] of [['drawings migration', drawingsMigrationUrl], ['fresh
     assert.ok(publicKindsCte)
     assert.deepEqual(
       [...publicKindsCte.matchAll(/\('([^']+)'\)/gu)].map(match => match[1]!),
-      name === 'fresh schema'
-        ? V1_PUBLIC_EVENT_KINDS
-        : legacyPublicEventKinds.filter(kind => kind !== 'gazette_printed'),
+      V1_PUBLIC_EVENT_KINDS,
     )
     const eventsStart = view.indexOf("SELECT 'events'")
     const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
     const eventProjection = view.slice(eventsStart, moderationStart)
     assert.deepEqual(
-      snapshotEventDetailFields(eventProjection),
+      [...eventProjection.matchAll(/'([a-z_]+)',\s*event\.detail->'\1'/gu)]
+        .map(match => match[1]!).sort(),
       name === 'fresh schema'
         ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
-        : withoutPlaceLifecycleDetailFields(V1_PUBLIC_EVENT_DETAIL_FIELDS),
+        : V1_PUBLIC_EVENT_DETAIL_FIELDS,
     )
   })
 }
@@ -275,8 +250,8 @@ for (const [name, url] of [
     const v2PublicKinds = [...v2KindsCte.matchAll(/\('([^']+)'\)/gu)]
       .map(match => match[1]!)
     const expectedV2Kinds = name === 'Gazette migration'
-      ? legacyPublicEventKinds.filter(kind => kind !== 'resident_edited')
-      : name === 'fresh schema' ? currentPublicEventKinds : legacyPublicEventKinds
+      ? currentPublicEventKinds.filter(kind => kind !== 'resident_edited')
+      : currentPublicEventKinds
     assert.deepEqual(v2PublicKinds, expectedV2Kinds)
     assert.match(
       view,
@@ -408,9 +383,7 @@ test('the audited live-detail inventory exactly names fields absent from format 
   )
   const effectiveV2Fields = new Set(EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
   assert.deepEqual(
-    AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(
-      field => effectiveV2Fields.has(field) && field !== 'name',
-    ),
+    AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(field => effectiveV2Fields.has(field)),
     [],
     'a field exported by effective format v2 must not remain in the omission disclosure',
   )
@@ -454,12 +427,9 @@ for (const [name, url, viewName] of [
     const moderationStart = view.indexOf("SELECT 'moderation'", eventsStart)
     assert.ok(eventsStart >= 0 && moderationStart > eventsStart, `${name}: events projection`)
     const eventProjection = view.slice(eventsStart, moderationStart)
-    const fields = snapshotEventDetailFields(eventProjection)
-    assert.deepEqual(
-      fields,
-      name === 'fresh schema'
-        ? CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS
-        : withoutPlaceLifecycleDetailFields(CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS),
-    )
+    const fields = [...eventProjection.matchAll(
+      /'([a-z_]+)',\s*event\.detail->'\1'/gu,
+    )].map(match => match[1]!).sort()
+    assert.deepEqual(fields, CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
   })
 }

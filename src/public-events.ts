@@ -5,9 +5,6 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   home_set: 'set their home',
   place_created: 'founded a place',
   place_edited: 'changed a place',
-  place_renamed: 'renamed a place',
-  place_retired: 'retired a place',
-  place_restored: 'restored a place',
   kind_invented: 'invented a kind',
   kind_revised: 'revised a kind',
   trait_coined: 'coined a trait',
@@ -88,6 +85,4 @@ export const PUBLIC_EVENT_DETAIL_SCALAR_FIELDS = Object.freeze([
   'channel',
   'issue_number',
   'entry_count',
-  'name',
-  'former_name',
 ] as const)

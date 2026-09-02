@@ -20,9 +20,6 @@ export interface PaymentRecoveryAttempt {
     | 'kind_invention'
     | 'kind_revision'
     | 'credit_purchase'
-    | 'place_rename'
-    | 'place_retire'
-    | 'place_restore'
     | 'direct_sale'
     | 'world_sale'
   readonly method: RecoverablePaymentMethod

@@ -23,7 +23,6 @@ const DIRECTORY_SQL = `
     ORDER BY moderation.created_at DESC, moderation.id DESC
     LIMIT 1
   ) latest_moderation ON TRUE
-  WHERE place.retired_at IS NULL
   UNION ALL
   SELECT 'resident'::text AS entry_type,
     resident.id,

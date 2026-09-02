@@ -67,7 +67,6 @@ export type FeePayment = X402FeePayment | CityCreditFeePayment
 
 interface TreasuryFeeOperation {
   operation: 'frontier' | 'kind_invention' | 'kind_revision'
-    | 'place_rename' | 'place_retire' | 'place_restore'
   targetKey: string
   assetType?: PaymentAttemptRecord['assetType']
   assetId?: number | null
@@ -192,7 +191,6 @@ function safeTreasuryCompletionText(error: unknown): string | null {
 export function reportTreasuryCompletionFailure(
   input: Readonly<{
     operation: 'frontier' | 'kind_invention' | 'kind_revision'
-      | 'place_rename' | 'place_retire' | 'place_restore'
     rail: FeePayment['rail']
     attemptId: string
     status: number

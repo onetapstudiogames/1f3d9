@@ -16,56 +16,16 @@ export type PublicNoteRecord = Readonly<{
  * Read one current place by an already-validated ID from 1 through 2,147,483,647.
  * Returns its moderated public record, or null when that place does not exist.
  */
-export type PublicPlaceRecordQuery = (
-  text: string,
-  params: readonly unknown[],
-) => Promise<readonly Record<string, unknown>[]>
-
-export type PublicPlaceRecordModerator = (
-  rows: readonly PublicPlaceRecord[],
-) => Promise<readonly PublicPlaceRecord[]>
-
-const executePublicPlaceRecordQuery: PublicPlaceRecordQuery = async (text, params) =>
-  await sql.query(text, [...params]) as readonly Record<string, unknown>[]
-
-const moderatePublicPlaceRecords: PublicPlaceRecordModerator = async rows =>
-  await moderatePublicRows('place', rows)
-
-export async function loadPublicPlaceRecord(
-  id: number,
-  query: PublicPlaceRecordQuery = executePublicPlaceRecordQuery,
-  moderate: PublicPlaceRecordModerator = moderatePublicPlaceRecords,
-): Promise<PublicPlaceRecord | null> {
-  const rows = (await query(`
-    SELECT p.id, p.parent_id, p.name, p.founding_name,
-      history.name_history,
-      p.retired_at,
-      CASE WHEN p.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
-      p.description, p.purpose,
+export async function loadPublicPlaceRecord(id: number): Promise<PublicPlaceRecord | null> {
+  const rows = (await sql`
+    SELECT p.id, p.parent_id, p.name, p.description, p.purpose,
       p.owner_id, owner.handle AS owner,
       p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
     FROM places p
     LEFT JOIN residents owner ON owner.id = p.owner_id
-    LEFT JOIN LATERAL (
-      SELECT coalesce(jsonb_agg(jsonb_build_object(
-        'name', span.name,
-        'started_at', to_char(span.started_at AT TIME ZONE 'UTC',
-          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-        'ended_at', CASE WHEN span.ended_at IS NULL THEN NULL ELSE to_char(
-          span.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END
-      ) ORDER BY span.started_at, span.id), '[]'::jsonb) AS name_history
-      FROM (
-        SELECT history.id, history.name, history.started_at,
-          lead(history.started_at) OVER (
-            PARTITION BY history.place_id ORDER BY history.started_at, history.id
-          ) AS ended_at
-        FROM place_name_history history
-        WHERE history.place_id = p.id
-      ) span
-    ) history ON TRUE
-    WHERE p.id = $1::integer
-  `, [id])) as PublicPlaceRecord[]
-  const publicRows = await moderate(rows)
+    WHERE p.id = ${id}
+  `) as PublicPlaceRecord[]
+  const publicRows = await moderatePublicRows('place', rows)
   return publicRows[0] ?? null
 }
 

@@ -1656,13 +1656,6 @@ test('search-index retry keeps exact indexes and repairs only interrupted builds
       columns: ["lower((name || ' '::text) || body)"],
       operator_classes: ['gin_trgm_ops'],
     },
-    {
-      index_schema: 'public', index_name: 'place_name_history_name_search',
-      table_schema: 'public', table_name: 'place_name_history', valid: true, ready: true,
-      unique_index: false, access_method: 'gin', key_column_count: 1,
-      total_column_count: 1, unfiltered: true, predicate: null,
-      columns: ['lower(name)'], operator_classes: ['gin_trgm_ops'],
-    },
   ] as const
 
   assert.deepEqual(publicSearchIndexRecoveryStatements(exactRows, createStatements), [])

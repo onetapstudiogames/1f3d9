@@ -48,15 +48,10 @@ import {
   completeTreasuryPaymentOperation,
   type TreasuryPaymentOperationDatabase,
 } from './payment-treasury-operations.ts'
-import {
-  completePlaceLifecycleOperation,
-  type PlaceLifecycleOperationDatabase,
-} from './place-lifecycle-operation.ts'
 
 const RECOVERY_LEASE_MILLISECONDS = 30_000
 const RECOVERY_OPERATIONS = new Set<PaymentRecoveryAttempt['operation']>([
   'frontier', 'kind_invention', 'kind_revision', 'credit_purchase',
-  'place_rename', 'place_retire', 'place_restore',
   'direct_sale', 'world_sale',
 ])
 const RETURN_REASON = 'automatic payment recovery deadline passed'
@@ -66,7 +61,6 @@ export type PaymentRecoveryRuntimeDatabase = PaymentAttemptDatabase
   & CityCreditDatabase
   & PaymentSaleDatabase
   & TreasuryPaymentOperationDatabase
-  & PlaceLifecycleOperationDatabase
 
 type LeaseResult = Awaited<ReturnType<typeof acquireSettlementLease>>
 
@@ -86,7 +80,6 @@ export interface PaymentRecoveryRuntimeServices {
     nextLeaseOwner: () => string,
   ): Promise<LeaseResult>
   completeTreasury: typeof completeTreasuryPaymentOperation
-  completePlaceLifecycle: typeof completePlaceLifecycleOperation
   completeCreditPurchase: typeof completeCityCreditPurchase
   completeDirectSale: typeof completeDirectSalePayment
   completeWorldSale: typeof completeWorldSalePayment
@@ -253,7 +246,6 @@ const baseServices: Omit<PaymentRecoveryRuntimeServices, 'returnDueCredit'> = {
   acquireLease: acquireSettlementLease,
   acquireDueLease: acquireDueSettlementLease,
   completeTreasury: completeTreasuryPaymentOperation,
-  completePlaceLifecycle: completePlaceLifecycleOperation,
   completeCreditPurchase: completeCityCreditPurchase,
   completeDirectSale: completeDirectSalePayment,
   completeWorldSale: completeWorldSalePayment,
@@ -369,13 +361,6 @@ export function createPaymentRecoveryRuntime(
       }
       if (input.attempt.operation === 'credit_purchase') {
         return operationResult(await services.completeCreditPurchase(database, operationInput))
-      }
-      if (
-        input.attempt.operation === 'place_rename'
-        || input.attempt.operation === 'place_retire'
-        || input.attempt.operation === 'place_restore'
-      ) {
-        return operationResult(await services.completePlaceLifecycle(database, operationInput))
       }
       return operationResult(await services.completeTreasury(database, operationInput))
     },

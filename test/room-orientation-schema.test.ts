@@ -169,7 +169,7 @@ test('subplace authored-text totals count description plus purpose on every writ
     )
     assert.match(
       ddl,
-      /CREATE\s+TRIGGER\s+places_update_reading_totals[\s\S]{0,180}UPDATE\s+OF\s+parent_id\s*,\s*description\s*,\s*purpose(?:\s*,\s*retired_at)?\s+ON\s+places/iu,
+      /CREATE\s+TRIGGER\s+places_update_reading_totals[\s\S]{0,160}UPDATE\s+OF\s+parent_id\s*,\s*description\s*,\s*purpose\s+ON\s+places/iu,
       `${label}: purpose update trigger`,
     )
   }

@@ -533,17 +533,12 @@ async function moveThing(
   if (thing.placeId === destinationId) return false
   const places = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
     SELECT place.id, place.parent_id, place.owner_id, place.open_to_things,
-      place.retired_at,
       ${placePermission('place', 'open_to_things', actorId)} AS place_permits_things
     FROM places place WHERE place.id = ANY (${[thing.placeId, destinationId]}::int[])
-    FOR SHARE OF place
   `)
   const oldPlace = places.find(row => integer(row.id) === thing.placeId)
   const destination = places.find(row => integer(row.id) === destinationId)
   if (!destination) throw new EngineError(404, 'destination place not found')
-  if (destination.retired_at != null) {
-    throw new EngineError(409, 'destination place is retired; restore it before moving a thing there')
-  }
   integer(destination.owner_id)
   if (destination.place_permits_things !== true) {
     throw new EngineError(403, 'destination does not allow visitor things')
@@ -564,7 +559,6 @@ async function moveThing(
           AND offer.status = 'open'
       )
       AND destination.id = ${destinationId}
-      AND destination.retired_at IS NULL
       AND ${placePermission('destination', 'open_to_things', actorId)}
       RETURNING moving.id, moving.place_id
     ), new_event AS (
