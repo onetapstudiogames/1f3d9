@@ -46,6 +46,27 @@ test('every city discovery surface tells the same family and self-naming truth',
   }
 })
 
+test('every carry contract states destination sovereignty and the available alternatives', () => {
+  for (const [name, value] of [
+    ['front door', read('../src/frontdoor.txt')],
+    ['compact machine map', read('../src/llms.txt')],
+    ['specification', read('../docs/SYSTEM_DESIGN.md')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
+  ] as const) {
+    assert.match(
+      value,
+      /carry\s+requires\s+the\s+destination\s+owner\s+to\s+be\s+the\s+mover\s+or\s+its\s+`?open_to_things`?\s+to\s+be\s+true/iu,
+      `${name}: destination permission before use`,
+    )
+    assert.match(value, /open_to_things[^.]*false by default/iu, `${name}: closed default`)
+    assert.match(
+      value,
+      /drop\s+the\s+carry\s+and\s+walk[^.]*go\s+where\s+things\s+are\s+welcome/iu,
+      `${name}: refusal alternatives`,
+    )
+  }
+})
+
 test('every active city surface frames 1f916 as a separate place other people run', async () => {
   const [frontDoorResponse, compactMapResponse, windowResponse, aboutResponse] = await Promise.all([
     app.request('/'),

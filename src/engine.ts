@@ -17,6 +17,7 @@ import {
 } from './engine-effects.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -186,6 +187,7 @@ interface BaseActionInput {
   readonly sourceThingId?: number | null
   readonly target?: RuntimeTarget | null
   readonly destinationPlaceId?: number | null
+  readonly carryThingId?: number | null
   readonly recipientId?: number | null
   readonly payload?: Readonly<Record<string, unknown>>
 }
@@ -228,6 +230,7 @@ interface RequiredActionInput {
   readonly sourceThingId: number | null
   readonly target: RuntimeTarget | null
   readonly destinationPlaceId: number | null
+  readonly carryThingId: number | null
   readonly recipientId: number | null
   readonly payload: Readonly<Record<string, unknown>>
   readonly primitiveHandledByCaller: boolean
@@ -684,6 +687,10 @@ function normalizeActionInput(input: ActionInput): RequiredActionInput {
   const payload = input.payload ?? {}
   if (!objectRecord(payload)) throw new EngineError(400, 'payload must be an object')
   json(payload)
+  const carryThingId = optionalId(input.carryThingId, 'carry thing id')
+  if (carryThingId !== null && input.action !== 'move') {
+    throw new EngineError(400, 'carry_thing_id is accepted only for move')
+  }
   return {
     actorId,
     actorHandle: input.actorHandle,
@@ -692,8 +699,12 @@ function normalizeActionInput(input: ActionInput): RequiredActionInput {
     sourceThingId: optionalId(input.sourceThingId, 'source thing id'),
     target: normalizeTarget(input.target),
     destinationPlaceId: optionalId(input.destinationPlaceId, 'destination place id'),
+    carryThingId,
     recipientId: optionalId(input.recipientId, 'recipient id'),
-    payload,
+    payload: carryThingId === null ? payload : {
+      ...payload,
+      carry_thing_id: carryThingId,
+    },
     primitiveHandledByCaller: input.primitiveHandledByCaller === true,
     primitiveEmitsTypedEvent: input.primitiveHandledByCaller === true
       && input.primitiveEmitsTypedEvent === true,
@@ -732,7 +743,9 @@ function publicActionEventDetail(
     : null
   const sourcePlaceId = integer(detail.source_place_id)
   const sourceThingId = integer(detail.source_thing_id)
+  const thingId = integer(detail.thing_id)
   const placeId = integer(detail.place_id)
+  const mode = detail.mode === 'carry' ? 'carry' : null
   return Object.freeze({
     action_id: actionId,
     action,
@@ -745,7 +758,9 @@ function publicActionEventDetail(
     ...(trait === null ? {} : { trait }),
     ...(sourcePlaceId === null || sourcePlaceId <= 0 ? {} : { source_place_id: sourcePlaceId }),
     ...(sourceThingId === null || sourceThingId <= 0 ? {} : { source_thing_id: sourceThingId }),
+    ...(thingId === null || thingId <= 0 ? {} : { thing_id: thingId }),
     ...(placeId === null || placeId <= 0 ? {} : { place_id: placeId }),
+    ...(mode === null ? {} : { mode }),
   })
 }
 
@@ -998,14 +1013,142 @@ function intrinsicActionOutcome(
   return Object.freeze({ applied, emittedTypedPublicEvent })
 }
 
+async function moveResidentWithCarry(
+  input: RequiredActionInput,
+  actionId: number,
+  db: TaggedSql,
+): Promise<void> {
+  if (input.destinationPlaceId === null) throw new EngineError(400, 'move needs a destination place')
+  if (input.carryThingId === null) {
+    await moveResident(input.actorId, input.destinationPlaceId, db)
+    return
+  }
+  if (input.placeId === null) {
+    throw new EngineError(409, 'you cannot carry a thing because your current place is unset')
+  }
+  if (input.destinationPlaceId === input.placeId) {
+    throw new EngineError(400, 'carry_thing_id requires a move to a different adjacent place')
+  }
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT thing.id, thing.owner_id, thing.place_id, thing.withdrawn_at,
+      thing.active_offer_id,
+      EXISTS (
+        SELECT 1 FROM transfer_offers offer
+        WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
+          AND offer.status = 'open'
+      ) AS has_open_offer,
+      EXISTS (
+        SELECT 1 FROM thing_later_holder_marks mark
+        WHERE mark.thing_id = thing.id AND mark.resident_id <> ${input.actorId}
+      ) AS marked_by_other,
+      (
+        SELECT moderation.action FROM moderation_actions moderation
+        WHERE moderation.target_type = 'thing' AND moderation.target_id = thing.id
+        ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+      ) AS moderation_action
+    FROM things thing
+    WHERE thing.id = ${input.carryThingId}
+    FOR UPDATE OF thing
+  `)
+  const thing = rows[0]
+  if (!thing || thing.withdrawn_at !== null) {
+    throw new EngineError(404, 'carry_thing_id was not found or is withdrawn')
+  }
+  const ownerId = rowId(thing.owner_id, 'carry thing owner id')
+  const placeId = rowId(thing.place_id, 'carry thing place id')
+  if (ownerId !== input.actorId) throw new EngineError(403, 'you can carry only a thing you own')
+  if (placeId !== input.placeId) {
+    throw new EngineError(
+      403,
+      `carry_thing_id must be in the place you are leaving (place_id ${input.placeId}); its current place_id is ${placeId}`,
+    )
+  }
+  if (thing.active_offer_id !== null || thing.has_open_offer === true) {
+    throw new EngineError(409, 'carry_thing_id has an open sale offer or market lock')
+  }
+  if (thing.marked_by_other === true) {
+    throw new EngineError(409, 'carry_thing_id is marked for a later holder by another resident')
+  }
+  if (thing.moderation_action === 'remove') {
+    throw new EngineError(409, 'carry_thing_id is under a moderation hold')
+  }
+
+  const destinations = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
+    SELECT destination.id,
+      ${placePermission('destination', 'open_to_things', input.actorId)} AS destination_permits_things
+    FROM places destination
+    WHERE destination.id = ${input.destinationPlaceId}
+    FOR UPDATE OF destination
+  `)
+  if (destinations[0] && destinations[0].destination_permits_things !== true) {
+    throw new EngineError(
+      403,
+      'destination place does not accept visitor things; drop the carry and walk, or go where things are welcome',
+    )
+  }
+
+  await moveResident(input.actorId, input.destinationPlaceId, db)
+  const moved = await queryRows(db`
+    WITH carry_request AS (
+      SELECT ${input.carryThingId}::integer AS thing_id,
+        ${input.actorId}::integer AS actor_id,
+        ${input.placeId}::integer AS origin_place_id,
+        ${input.destinationPlaceId}::integer AS destination_place_id,
+        ${actionId}::bigint AS action_id
+    ), carried AS (
+      UPDATE things carrying SET place_id = carry_request.destination_place_id
+      FROM carry_request
+      WHERE carrying.id = carry_request.thing_id
+        AND carrying.owner_id = carry_request.actor_id
+        AND carrying.place_id = carry_request.origin_place_id
+        AND carrying.withdrawn_at IS NULL AND carrying.active_offer_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'thing' AND offer.asset_id = carrying.id
+            AND offer.status = 'open'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM thing_later_holder_marks mark
+          WHERE mark.thing_id = carrying.id AND mark.resident_id <> carry_request.actor_id
+        )
+        AND COALESCE((
+          SELECT moderation.action FROM moderation_actions moderation
+          WHERE moderation.target_type = 'thing' AND moderation.target_id = carrying.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+        ), 'restore') <> 'remove'
+      RETURNING carrying.id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_moved', resident.handle, jsonb_build_object(
+        'thing_id', carried.id,
+        'action_id', carry_request.action_id,
+        'resident_id', carry_request.actor_id,
+        'mode', 'carry',
+        'from_place_id', carry_request.origin_place_id,
+        'place_id', carry_request.destination_place_id
+      )
+      FROM carried
+      CROSS JOIN carry_request
+      JOIN residents resident ON resident.id = carry_request.actor_id
+    )
+    SELECT id FROM carried
+  `)
+  if (!moved[0]) {
+    throw new EngineError(
+      409,
+      'carry_thing_id, ownership, place, sale/lock, later-holder mark, or moderation hold changed before the move; re-read it',
+    )
+  }
+}
+
 async function intrinsicAction(
   input: RequiredActionInput,
+  actionId: number,
   db: TaggedSql,
 ): Promise<IntrinsicActionOutcome> {
   if (input.primitiveHandledByCaller) return intrinsicActionOutcome(false, false)
   if (input.action === 'move') {
-    if (input.destinationPlaceId === null) throw new EngineError(400, 'move needs a destination place')
-    await moveResident(input.actorId, input.destinationPlaceId, db)
+    await moveResidentWithCarry(input, actionId, db)
     return intrinsicActionOutcome(true, false)
   }
   if (input.action === 'give') {
@@ -1156,7 +1299,7 @@ export async function runAction(
         transaction,
         input.primitiveHandledByCaller,
         async () => {
-          const intrinsic = await intrinsicAction(input, transaction)
+          const intrinsic = await intrinsicAction(input, actionId, transaction)
           const base = actionContext(actionId, input, sharedSourceThingId)
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
@@ -1219,6 +1362,9 @@ export async function runAction(
             ? {
                 from_place_id: input.placeId,
                 to_place_id: input.destinationPlaceId,
+                ...(input.carryThingId === null
+                  ? {}
+                  : { thing_id: input.carryThingId, mode: 'carry' }),
               }
             : {}),
           ...(input.action === 'use' && input.sourceThingId !== null
@@ -1229,7 +1375,7 @@ export async function runAction(
             : {}),
         },
         transaction,
-        !emittedTypedPublicEvent,
+        input.action === 'move' || !emittedTypedPublicEvent,
       )
       return { actionId, status, httpStatus: 200, error: null, effectsApplied }
     })
