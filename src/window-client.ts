@@ -5835,12 +5835,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ...directoryResults,
       ...thingResults.slice(0, 20 - directoryResults.length),
     ]
+    const total = directoryPage.total + thingResults.length
     return Object.freeze({
       ...directoryPage,
       results: Object.freeze(combined.slice(0, 20)),
-      total: directoryPage.total + thingResults.length,
+      total,
       thingCount: thingResults.length,
-      hasMore: directoryPage.hasMore || state.thingLookup.hasMore || combined.length > 20,
+      hasMore: total > combined.length || state.thingLookup.hasMore,
       thingHasMore: state.thingLookup.hasMore,
     })
   }

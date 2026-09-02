@@ -51,6 +51,14 @@ async function copiedShareLinks(page: Page): Promise<readonly string[]> {
   ])
 }
 
+function boxesIntersect(
+  left: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  right: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): boolean {
+  return left.x < right.x + right.width && left.x + left.width > right.x &&
+    left.y < right.y + right.height && left.y + left.height > right.y
+}
+
 test('public window links to the dated public snapshot archive', async ({ page }) => {
   await page.goto('/window')
   const link = page.getByRole('link', { name: 'Public snapshots' })
@@ -160,7 +168,7 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
     return {
       id,
       place_id: id % 2 === 0 ? 12 : 11,
-      name: id === 427 ? 'Transparent Beacon' : `Public thing ${id}`,
+      name: id === 427 ? 'transparent-beacon' : `Public thing ${id}`,
       kind_id: 77,
       kind: 'artifact',
       maker_id: 49,
@@ -172,7 +180,7 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
     }
   })
   const frontMatter = [{
-    type: 'thing', id: 427, name: 'Transparent Beacon', body_text_bytes: 37,
+    type: 'thing', id: 427, name: 'transparent-beacon', body_text_bytes: 37,
     maker_id: 49, made_by: 'browser-resident', current_owner_id: 49,
     current_owner: 'browser-resident', owner_id: 49, owner: 'browser-resident',
   }]
@@ -274,7 +282,7 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
     expect(indexRequests).toBe(1)
 
     const firstRow = page.locator('#things-list .thing-index-row').first()
-    await expect(firstRow).toContainText('Transparent Beacon')
+    await expect(firstRow).toContainText('transparent-beacon')
     await expect(firstRow).toContainText('37 UTF-8 body bytes')
     await expect(firstRow).not.toContainText('must not cross')
     const portrait = firstRow.locator('.entity-portrait[data-portrait-type="thing"]')
@@ -312,7 +320,7 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
 
   await page.goto('/window/map')
   const mapHeading = page.locator('#place-map .place-card-thing')
-    .filter({ hasText: 'Transparent Beacon' })
+    .filter({ hasText: 'transparent-beacon' })
   await mapHeading.scrollIntoViewIfNeeded()
   await expect(mapHeading.locator(
     '.entity-portrait[data-portrait-type="thing"] img',
@@ -322,10 +330,13 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
   )
 
   const search = page.getByRole('combobox', { name: 'Search places, residents, and things' })
-  await search.fill('Transparent Beacon')
-  await expect(page.getByRole('option', { name: /Transparent Beacon · Thing #427/u })).toBeVisible()
+  await search.fill('transparent-beacon')
+  await expect(page.getByRole('option', { name: /transparent-beacon · Thing #427/u })).toBeVisible()
+  await expect(page.locator('#directory-search-status')).toContainText(
+    'Showing the first 20 of 21 exact matches',
+  )
   await search.fill('#427')
-  await expect(page.getByRole('option', { name: /Transparent Beacon · Thing #427/u })).toBeVisible()
+  await expect(page.getByRole('option', { name: /transparent-beacon · Thing #427/u })).toBeVisible()
 
   await page.goto('/window/things?place=11')
   await expect(page.locator('#things-list .thing-index-row')).toHaveCount(25)
@@ -342,6 +353,95 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
   await expect(page.locator('#things-summary')).toHaveText(
     '13 of 13 public things shown. Bodies stay closed until you choose one.',
   )
+})
+
+test('phone roster rows keep wrapping location text below names', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.route('**/api/window*', async route => {
+    const response = await route.fetch()
+    const body = await response.json() as {
+      readonly places?: ReadonlyArray<Record<string, unknown>>
+      readonly [key: string]: unknown
+    }
+    if (!body.places) {
+      await route.fulfill({ response })
+      return
+    }
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        places: body.places.map(place => place.id === 11 ? {
+          ...place,
+          name: 'frontier valley / the corrigenda room / the long lantern gallery',
+        } : place),
+      },
+    })
+  })
+
+  await page.goto('/window/place/11')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const placeRow = page.locator('#place-occupants .person-card')
+    .filter({ hasText: 'browser-resident' })
+  const placeHandle = placeRow.locator('.resident-follow')
+  const placeMeta = placeRow.locator('.resident-number')
+  await expect(placeRow).toBeVisible()
+  const [placeHandleBox, placeMetaBox] = await Promise.all([
+    placeHandle.boundingBox(),
+    placeMeta.boundingBox(),
+  ])
+  expect(placeHandleBox).not.toBeNull()
+  expect(placeMetaBox).not.toBeNull()
+  expect(boxesIntersect(placeHandleBox!, placeMetaBox!)).toBe(false)
+  expect(placeMetaBox!.y).toBeGreaterThanOrEqual(
+    placeHandleBox!.y + placeHandleBox!.height - 0.5,
+  )
+  expect(await placeMeta.evaluate(element => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return range.getClientRects().length
+  })).toBeGreaterThanOrEqual(2)
+
+  const placePortraitBox = await placeRow.locator('.entity-portrait').boundingBox()
+  expect(placePortraitBox).not.toBeNull()
+  expect(placePortraitBox!.y).toBeLessThan(placeHandleBox!.y + placeHandleBox!.height)
+  expect(placePortraitBox!.y + placePortraitBox!.height).toBeGreaterThan(placeHandleBox!.y)
+
+  const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
+  const [thingNameBox, thingMetaBox] = await Promise.all([
+    thing.locator('h4').boundingBox(),
+    thing.locator('.thing-meta').boundingBox(),
+  ])
+  expect(thingNameBox).not.toBeNull()
+  expect(thingMetaBox).not.toBeNull()
+  expect(boxesIntersect(thingNameBox!, thingMetaBox!)).toBe(false)
+  expect(thingMetaBox!.y).toBeGreaterThanOrEqual(thingNameBox!.y + thingNameBox!.height - 0.5)
+
+  await page.getByRole('tab', { name: 'Map', exact: true }).click()
+  const rosterRow = page.locator('#resident-roster .resident-row')
+    .filter({ hasText: 'browser-resident' })
+  await expect(rosterRow).toBeVisible()
+  const rosterMeta = rosterRow.locator('.resident-number')
+  await rosterMeta.evaluate(element => {
+    element.textContent =
+      'resident #49 · at frontier valley / the corrigenda room / the long lantern gallery'
+  })
+  const [rosterHandleBox, rosterMetaBox] = await Promise.all([
+    rosterRow.locator('.resident-follow').boundingBox(),
+    rosterMeta.boundingBox(),
+  ])
+  expect(rosterHandleBox).not.toBeNull()
+  expect(rosterMetaBox).not.toBeNull()
+  expect(boxesIntersect(rosterHandleBox!, rosterMetaBox!)).toBe(false)
+  expect(rosterMetaBox!.y).toBeGreaterThanOrEqual(
+    rosterHandleBox!.y + rosterHandleBox!.height - 0.5,
+  )
+  expect(await rosterMeta.evaluate(element => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return range.getClientRects().length
+  })).toBeGreaterThanOrEqual(2)
 })
 
 test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {
