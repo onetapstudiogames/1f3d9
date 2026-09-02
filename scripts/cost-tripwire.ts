@@ -16,7 +16,7 @@ type FocusBillingRow = Readonly<{
   ConsumedQuantity: number | null
   EffectiveCost: number
   ServiceName: string
-  Tags: Readonly<{ ProjectName: string }>
+  Tags: Readonly<{ ProjectName?: string }>
 }>
 
 export type CostThresholds = Readonly<{
@@ -108,39 +108,44 @@ export function validateCostThresholds(value: unknown): CostThresholds {
   })
 }
 
-function finiteNumber(value: unknown, label: string, allowNegative = false): number {
-  const number = typeof value === 'string' && value.trim() ? Number(value) : value
-  if (typeof number !== 'number' || !Number.isFinite(number) || (!allowNegative && number < 0)) {
-    throw new Error(`FOCUS ${label} must be a ${allowNegative ? '' : 'non-negative '}finite number`)
+function finiteNumber(value: unknown, lineNumber: number, label: string, allowNegative = false): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || (!allowNegative && value < 0)) {
+    throw new Error(`FOCUS line ${lineNumber} ${label} must be a ${allowNegative ? '' : 'non-negative '}finite number`)
   }
-  return number
+  return value
 }
 
 export function parseFocusBillingJsonl(text: string): readonly FocusBillingRow[] {
-  const lines = text.split(/\r?\n/u).filter(line => line.trim())
-  return lines.map((line, index) => {
+  const lines = text.split(/\r?\n/u)
+    .map((line, index) => ({ line, lineNumber: index + 1 }))
+    .filter(({ line }) => line.trim())
+  return lines.map(({ line, lineNumber }) => {
     let value: unknown
-    try { value = JSON.parse(line) } catch { throw new Error(`FOCUS line ${index + 1} is invalid JSON`) }
-    if (!isPlainObject(value)) throw new Error(`FOCUS line ${index + 1} must be an object`)
-    if (value.BillingCurrency !== 'USD') throw new Error(`FOCUS line ${index + 1} is not USD`)
+    try { value = JSON.parse(line) } catch { throw new Error(`FOCUS line ${lineNumber} is invalid JSON`) }
+    if (!isPlainObject(value)) throw new Error(`FOCUS line ${lineNumber} must be an object`)
+    if (value.BillingCurrency !== 'USD') throw new Error(`FOCUS line ${lineNumber} is not USD`)
     if (typeof value.ChargePeriodStart !== 'string' || !/^\d{4}-\d{2}-\d{2}T/u.test(value.ChargePeriodStart)) {
-      throw new Error(`FOCUS line ${index + 1} has an invalid charge start`)
+      throw new Error(`FOCUS line ${lineNumber} has an invalid charge start`)
     }
-    if (typeof value.ServiceName !== 'string' || !isPlainObject(value.Tags) ||
-        typeof value.Tags.ProjectName !== 'string' || !value.Tags.ProjectName.trim()) {
-      throw new Error(`FOCUS line ${index + 1} has invalid service or project tags`)
+    if (typeof value.ServiceName !== 'string' || !value.ServiceName.trim()) {
+      throw new Error(`FOCUS line ${lineNumber} has an invalid service name`)
+    }
+    if (!isPlainObject(value.Tags)) throw new Error(`FOCUS line ${lineNumber} tags must be an object`)
+    const projectName = value.Tags.ProjectName
+    if (projectName !== undefined && (typeof projectName !== 'string' || !projectName.trim())) {
+      throw new Error(`FOCUS line ${lineNumber} has an invalid project name tag`)
     }
     const measuresRequests = value.ServiceName === 'Edge Requests' || value.ServiceName === 'Function Invocations'
     const consumedQuantity = value.ConsumedQuantity === null && !measuresRequests
       ? null
-      : finiteNumber(value.ConsumedQuantity, 'quantity')
+      : finiteNumber(value.ConsumedQuantity, lineNumber, 'quantity')
     return Object.freeze({
       BillingCurrency: 'USD' as const,
       ChargePeriodStart: value.ChargePeriodStart,
       ConsumedQuantity: consumedQuantity,
-      EffectiveCost: finiteNumber(value.EffectiveCost, 'effective cost', true),
+      EffectiveCost: finiteNumber(value.EffectiveCost, lineNumber, 'effective cost', true),
       ServiceName: value.ServiceName,
-      Tags: Object.freeze({ ProjectName: value.Tags.ProjectName }),
+      Tags: Object.freeze(projectName === undefined ? {} : { ProjectName: projectName }),
     })
   })
 }
@@ -156,9 +161,11 @@ export function summarizeFocusBilling(rows: readonly FocusBillingRow[]): Billing
   for (const row of rows) {
     const date = row.ChargePeriodStart.slice(0, 10)
     spend.set(date, (spend.get(date) ?? 0) + row.EffectiveCost)
-    const key = `${date}\0${row.Tags.ProjectName}`
+    const project = row.Tags.ProjectName
+    if (!project) continue
+    const key = `${date}\0${project}`
     const current = projects.get(key) ?? {
-      date, project: row.Tags.ProjectName, edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 0,
+      date, project, edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 0,
     }
     projects.set(key, {
       ...current,
