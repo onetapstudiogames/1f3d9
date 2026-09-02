@@ -1784,7 +1784,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${passedTickTargetId}`), {
     ok: false,
     status: 409,
-    error: `Gazette submission note #${passedTickTargetId} can be withdrawn only strictly before ${cycle.startsAt}; that print tick has passed`,
+    error: `Gazette submission note #${passedTickTargetId} can be withdrawn only strictly before ${cycle.startsAt}; that print tick has passed, so choose another active submission`,
   })
 })
 
