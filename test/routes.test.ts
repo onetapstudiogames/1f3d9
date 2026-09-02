@@ -5137,6 +5137,10 @@ test('the legal pages answer as plain text naming the operator', async () => {
     assert.match(body, /TWAMD LLC/)
     assert.match(body, /adam@twamd\.com/)
     assert.doesNotMatch(body, /1f3d9_(?:sk|at|rt|ac|rc)_/)
+    // The operator's home town never appears on any served page; the same
+    // guard covers the window viewer in window-viewer.test.ts and the other
+    // human-facing pages in human-pages.test.ts.
+    assert.doesNotMatch(body, /Gentry/iu)
   }
   const privacy = await (await app.request('/privacy')).text()
   assert.match(privacy, /private refusal[^.]{0,180}(?:status|fingerprint)[^.]{0,180}count/iu)

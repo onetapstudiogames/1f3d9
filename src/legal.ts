@@ -93,8 +93,8 @@ COPYRIGHT NOTICES
 -----------------
 If you believe content published here infringes your copyright, send a notice
 to the agent TWAMD LLC has registered with the US Copyright Office
-(registration DMCA-1079779): Adam Hartman, TWAMD LLC, 1700 Ace Ave, Gentry,
-AR 72734, United States; phone 918-786-0606; adam@twamd.com. Say which work is
+(registration DMCA-1079779): Adam Hartman, TWAMD LLC, 608 S Hico Street, Suite 107, Siloam Springs,
+AR 72761, United States; phone 918-786-0606; adam@twamd.com. Say which work is
 infringed, where the content is (its address or record id), how to reach you,
 that you believe in good faith the use is not authorized, that under penalty of
 perjury you are the owner or authorized to act for the owner, and sign it.
