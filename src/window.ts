@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import type { Context } from 'hono'
-import { HANDLE_RE, WORLD_NAME_RE } from './core.ts'
+import { HANDLE_RE, WORLD_NAME_RE, sha256 } from './core.ts'
 import { sql } from './db.ts'
 import { publicText } from './input.ts'
 import { MODERATED_TEXT } from './moderation.ts'
@@ -30,6 +30,7 @@ import { WINDOW_CSS } from './window-style.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 import { isBasicAction } from './physics.ts'
 import {
+  PUBLIC_CREDENTIAL_PATTERN_SOURCE,
   PUBLIC_CREDENTIAL_REDACTION,
   containsPublicCredential,
 } from './credential-safety.ts'
@@ -39,6 +40,7 @@ import {
   readPublicResidentPage,
 } from './public-residents.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { takePublicSearchToken } from './public-search-rate-limit.ts'
 import {
   PublicChangeFutureError,
   PublicChangeReadConflictError,
@@ -207,6 +209,20 @@ interface PublicThing {
   moderated: boolean
   kind_moderated: boolean
   truncated?: true
+}
+
+export interface PublicThingHeading {
+  id: number
+  place_id: number
+  name: string
+  kind_id: number | null
+  kind: string | null
+  maker_id: number
+  made_by: string
+  current_owner_id: number
+  current_owner: string
+  body_text_bytes: number
+  created_at: string
 }
 
 interface PublicAgreement {
@@ -513,6 +529,46 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
   }).slice(0, PUBLIC_PAGE_MAX)
 }
 
+export function publicWindowThingHeadings(values: unknown[]): PublicThingHeading[] {
+  return values.flatMap(value => {
+    if (!value || typeof value !== 'object') return []
+    const row = value as Record<string, unknown>
+    const id = positiveInteger(row.id)
+    const placeId = positiveInteger(row.place_id)
+    const name = safePublicText(row.name, 120)?.text ?? null
+    const kindId = row.kind_id === null ? null : positiveInteger(row.kind_id)
+    const kind = row.kind === null ? null : safePublicText(row.kind, 120)?.text ?? null
+    const makerId = positiveInteger(row.maker_id)
+    const madeBy = typeof row.made_by === 'string' && HANDLE_RE.test(row.made_by)
+      ? row.made_by
+      : null
+    const currentOwnerId = positiveInteger(row.current_owner_id)
+    const currentOwner = typeof row.current_owner === 'string' && HANDLE_RE.test(row.current_owner)
+      ? row.current_owner
+      : null
+    const bodyTextBytes = Number(row.body_text_bytes)
+    const createdAt = safeDate(row.created_at)
+    if (
+      !id || !placeId || !name || !makerId || !madeBy || !currentOwnerId || !currentOwner ||
+      !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 0 || !createdAt ||
+      (kindId === null) !== (kind === null)
+    ) return []
+    return [Object.freeze({
+      id,
+      place_id: placeId,
+      name,
+      kind_id: kindId,
+      kind,
+      maker_id: makerId,
+      made_by: madeBy,
+      current_owner_id: currentOwnerId,
+      current_owner: currentOwner,
+      body_text_bytes: bodyTextBytes,
+      created_at: createdAt,
+    })]
+  }).slice(0, PUBLIC_PAGE_MAX)
+}
+
 export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
   return values.flatMap(value => {
     if (!value || typeof value !== 'object') return []
@@ -656,6 +712,7 @@ export function mergeWindowThingTraits(
 
 const WINDOW_HISTORY_KEYS = new Set([
   'collection', 'before_id', 'limit', 'place_id', 'within_place_id', 'resident', 'context',
+  'presentation', 'find',
 ])
 const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements'])
 
@@ -679,6 +736,8 @@ export interface WindowHistoryQuery {
   readonly includeDescendants?: boolean
   readonly resident: string | null
   readonly context: boolean
+  readonly presentation?: 'headings'
+  readonly find?: string | null
 }
 
 function oneWindowQueryValue(
@@ -727,6 +786,33 @@ export function parseWindowHistoryQuery(
       (contextValue !== 'place' || collection !== 'notes' || resident === null)) return null
 
   const context = contextValue === 'place'
+  const presentationValue = oneWindowQueryValue(queries, 'presentation')
+  const findValue = oneWindowQueryValue(queries, 'find')
+  if (
+    presentationValue !== undefined &&
+    (collection !== 'things' || presentationValue !== 'headings')
+  ) return null
+  if (findValue !== undefined && presentationValue !== 'headings') return null
+
+  let find: string | null = null
+  if (findValue !== undefined) {
+    if (typeof findValue !== 'string') return null
+    try {
+      find = findValue.normalize('NFC').trim()
+    } catch {
+      return null
+    }
+    if (
+      !find || /[\r\n\u2028\u2029]/u.test(find) ||
+      publicText(find, { maximumCharacters: 120 }) === null
+    ) return null
+    if (/^#\d+$/u.test(find) && !/^#[1-9]\d{0,9}$/u.test(find)) return null
+    if (/^#[1-9]\d{0,9}$/u.test(find) && positiveInteger(find.slice(1)) === null) return null
+  }
+
+  const headingOptions = presentationValue === 'headings'
+    ? { presentation: 'headings' as const, find }
+    : {}
   return Object.freeze({
     collection: collection as WindowHistoryQuery['collection'],
     beforeId: page.cursor,
@@ -735,6 +821,7 @@ export function parseWindowHistoryQuery(
     includeDescendants,
     resident,
     context,
+    ...headingOptions,
   })
 }
 
@@ -826,6 +913,55 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
     })
   }
   if (options.collection === 'things') {
+    if (options.presentation === 'headings') {
+      const findId = options.find && /^#[1-9]\d{0,9}$/u.test(options.find)
+        ? positiveInteger(options.find.slice(1))
+        : null
+      const findName = options.find && findId === null ? options.find : null
+      const indexedFindPattern = findName === null
+        ? null
+        : `%${findName.replace(/[\\%_]/gu, character => `\\${character}`)}%`
+      return Object.freeze({
+        text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT
+            thing.id, thing.place_id, thing.name,
+            thing.kind_id, kind.name AS kind,
+            thing.maker_id, maker.handle AS made_by,
+            thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
+            octet_length(thing.body)::integer AS body_text_bytes,
+            thing.created_at
+          FROM things thing
+          JOIN residents maker ON maker.id = thing.maker_id
+          JOIN residents current_owner ON current_owner.id = thing.owner_id
+          LEFT JOIN kinds kind ON kind.id = thing.kind_id
+          WHERE thing.withdrawn_at IS NULL
+            AND ($1::integer IS NULL OR thing.id < $1::integer)
+            AND ${placePredicate('thing.place_id')}
+            AND ($3::text IS NULL OR current_owner.handle = $3::text)
+            AND (($5::text IS NULL AND $6::integer IS NULL) OR coalesce((
+                SELECT moderation.action
+                FROM moderation_actions moderation
+                WHERE moderation.target_type = 'thing' AND moderation.target_id = thing.id
+                ORDER BY moderation.created_at DESC, moderation.id DESC
+                LIMIT 1
+              ), 'restore') <> 'remove')
+            AND ($5::text IS NULL OR thing.name !~* $8::text)
+            AND ($7::text IS NULL OR lower(thing.name || ' ' || thing.body)
+              LIKE lower($7::text) ESCAPE E'\\\\')
+            AND (
+              ($5::text IS NULL AND $6::integer IS NULL)
+              OR ($5::text IS NOT NULL AND thing.name ILIKE
+                ('%' || replace(replace(replace($5::text, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%')
+                ESCAPE '\\')
+              OR ($6::integer IS NOT NULL AND thing.id = $6::integer)
+            )
+          ORDER BY thing.id DESC
+          LIMIT $4::integer`,
+        values: Object.freeze([
+          options.beforeId, options.placeId, options.resident, fetchLimit,
+          findName, findId, indexedFindPattern, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+        ]),
+      })
+    }
     return Object.freeze({
       text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT thing.id, thing.place_id, thing.name, thing.body,
           thing.maker_id, maker.handle AS made_by,
@@ -915,7 +1051,7 @@ export async function loadWindowCollectionRows(
 }
 
 interface WindowCollectionPage {
-  readonly items: readonly (PublicNote | PublicThing | PublicAgreement)[]
+  readonly items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement)[]
   readonly hasMore: boolean
   readonly nextBeforeId: number | null
 }
@@ -947,7 +1083,7 @@ export async function readWindowCollectionPage(
     rows as readonly (Record<string, unknown> & { id: number })[],
     options.limit,
   )
-  let items: readonly (PublicNote | PublicThing | PublicAgreement)[]
+  let items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement)[]
   if (options.collection === 'notes') {
     const moderated = await moderatePublicRows(
       'note',
@@ -956,6 +1092,15 @@ export async function readWindowCollectionPage(
     items = publicWindowNotes([...moderated])
   } else if (options.collection === 'things') {
     const rawThings = [...rawPage.items]
+    if (options.presentation === 'headings') {
+      const details = await moderatePlaceDetails(rawThings, [])
+      items = publicWindowThingHeadings([...details.things])
+      return Object.freeze({
+        items: Object.freeze(items),
+        hasMore: rawPage.hasMore,
+        nextBeforeId: rawPage.nextCursor,
+      })
+    }
     const [details, facets] = await Promise.all([
       moderatePlaceDetails(rawThings, []),
       moderatePublicKinds(kindFacets(rawThings)),
@@ -1370,6 +1515,18 @@ export async function windowSnapshot(c: Context) {
     if (!request) {
       return c.json({ error: 'invalid public window history query' }, 400)
     }
+    if (request.find !== null && request.find !== undefined) {
+      const forwarded = process.env.VERCEL === '1'
+        ? c.req.header('x-vercel-forwarded-for')?.split(',').map(part => part.trim())
+          .filter(Boolean).at(-1) ?? 'unknown'
+        : 'unknown'
+      const admission = takePublicSearchToken(sha256(`search:ip:${forwarded}`))
+      if (!admission.allowed) {
+        c.header('Cache-Control', 'no-store')
+        c.header('Retry-After', String(admission.retryAfterSeconds))
+        return c.json({ error: 'public search rate limit reached; retry' }, 429)
+      }
+    }
     const minimumMarker = afterMarkerValue.value === null
       ? null
       : parsePublicChangeMarker(afterMarkerValue.value)
@@ -1380,12 +1537,22 @@ export async function windowSnapshot(c: Context) {
     let changeMarker: string | null = null
     try {
       if (minimumMarker === null) {
-        page = await readWindowCollectionPage(request)
+        page = await readWindowCollectionPage(
+          request,
+          request.find == null
+            ? executePublicQuery
+            : (text, params) => executeBudgetedExactQuery(text, params),
+        )
       } else {
         const stable = await readAtStablePublicChangeCheckpoint(
           executePublicQuery,
           minimumMarker,
-          () => readWindowCollectionPage(request),
+          () => readWindowCollectionPage(
+            request,
+            request.find == null
+              ? executePublicQuery
+              : (text, params) => executeBudgetedExactQuery(text, params),
+          ),
         )
         page = stable.value
         changeMarker = stable.changeMarker

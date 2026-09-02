@@ -4,6 +4,7 @@ import { containsMalformedPublicText, publicText } from './input.ts'
 export type WindowShareView =
   | 'map'
   | 'live'
+  | 'things'
   | 'place'
   | 'conversations'
   | 'happenings'
@@ -167,7 +168,7 @@ export function validateWindowArchiveQuery(
  */
 export function windowSharePath(state: WindowShareState): string | null {
   const views = new Set([
-    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ])
   const safeId = (value: unknown): value is number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647
@@ -293,7 +294,7 @@ export function parseWindowShareRequest(
     view = 'map'
   } else if (parts.length === 2) {
     if (![
-      'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
     ].includes(segment!)) {
       return null
     }
@@ -464,6 +465,10 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
   live: Object.freeze({
     title: 'The recent city, drawn — 1F3D9',
     description: 'Watch recent verified public events cross fixed place plots on the city’s authored ground.',
+  }),
+  things: Object.freeze({
+    title: 'Public things — 1F3D9',
+    description: 'Browse current public things newest first without opening their bodies.',
   }),
   place: Object.freeze({
     title: 'A live public place — 1F3D9',

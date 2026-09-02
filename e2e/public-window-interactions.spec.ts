@@ -1297,7 +1297,7 @@ test('directory search owns a dropdown and finds both places and residents', asy
   await page.setViewportSize({ width: 390, height: 851 })
   const search = page.locator('#directory-search')
   await expect(page.getByRole('combobox', {
-    name: 'Search places and residents', exact: true,
+    name: 'Search places, residents, and things', exact: true,
   })).toBeVisible()
   expect(await search.evaluate(node => node.closest('.view-filters'))).toBeNull()
   const selector = page.locator('#place-filter')

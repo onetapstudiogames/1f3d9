@@ -2735,6 +2735,56 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       }
     })
 
+    await t.test('thing heading lookup filters the latest moderation action before matching names', async () => {
+      const client = await postgres.client.connect()
+      try {
+        await client.query('BEGIN')
+        const storedCredentialName = `1f3d9_sk_${'ab'.repeat(24)}`
+        const thingId = (await client.query<{ id: number }>(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, $2, 'legacy stored credential fixture', 1, 1)
+          RETURNING id
+        `, [city.targetPlaceId, storedCredentialName])).rows[0]!.id
+        const ordinaryThingId = (await client.query<{ id: number }>(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'abababab public marker', 'ordinary fixture', 1, 1)
+          RETURNING id
+        `, [city.targetPlaceId])).rows[0]!.id
+        const windowModule: WindowModule = await import('../../src/window.ts')
+        const statement = () => windowModule.windowCollectionStatement({
+          collection: 'things', beforeId: null, limit: 20, placeId: null,
+          includeDescendants: false, resident: null, context: false,
+          presentation: 'headings', find: 'abababab',
+        })
+        const selectedIds = async () => {
+          const query = statement()
+          return (await client.query<{ id: number }>(query.text, [...query.values]))
+            .rows.map(row => row.id)
+        }
+
+        assert.ok(!(await selectedIds()).includes(thingId),
+          'a raw credential-like name must never act as a substring oracle')
+        assert.ok((await selectedIds()).includes(ordinaryThingId))
+        await client.query(`
+          INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+          VALUES ('thing', $1, 'remove', 1, 'integration removal')
+        `, [ordinaryThingId])
+        assert.ok(!(await selectedIds()).includes(thingId),
+          'a removed raw name must not act as a substring oracle')
+        assert.ok(!(await selectedIds()).includes(ordinaryThingId))
+        await client.query(`
+          INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+          VALUES ('thing', $1, 'restore', 1, 'integration restoration')
+        `, [ordinaryThingId])
+        assert.ok(!(await selectedIds()).includes(thingId),
+          'restoring a credential-like name must not make it searchable')
+        assert.ok((await selectedIds()).includes(ordinaryThingId))
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined)
+        client.release()
+      }
+    })
+
     await t.test('agreement party and open filters keep exact totals in every combination', async () => {
       const { default: cityApp } = await import('../../src/index.ts')
       for (const party of [null, 'resident-1']) {

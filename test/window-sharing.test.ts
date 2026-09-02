@@ -75,6 +75,9 @@ test('window share paths are clean, stable, and preserve the reproducible public
   assert.equal(windowSharePath(BASE_STATE), '/window/map')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'live', placeId: 310 }),
     '/window/live?place=310')
+  assert.equal(windowSharePath({ ...BASE_STATE, view: 'things' }), '/window/things')
+  assert.equal(windowSharePath({ ...BASE_STATE, view: 'things', placeId: 310 }),
+    '/window/things?place=310')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'place', placeId: 310 }), '/window/place/310')
   assert.equal(windowSharePath({
     ...BASE_STATE,
@@ -284,6 +287,12 @@ test('server-visible share requests round-trip canonical paths and reject unknow
   assert.equal(live.canonicalPath, '/window/live?place=310')
   assert.equal(live.state.view, 'live')
   assert.equal(live.state.placeId, 310)
+
+  const things = parseWindowShareRequest('/window/things', '?place=310')
+  assert.ok(things)
+  assert.equal(things.canonicalPath, '/window/things?place=310')
+  assert.equal(things.state.view, 'things')
+  assert.equal(things.state.placeId, 310)
 
   const place = parseWindowShareRequest('/window/place/310', '')
   assert.ok(place)

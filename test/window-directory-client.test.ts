@@ -153,8 +153,11 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_HTML, /aria-controls="directory-search-results"/)
   assert.match(WINDOW_HTML, /id="directory-search-results"[^>]*role="listbox"/)
   assert.match(WINDOW_HTML, /type="search"/)
-  assert.match(WINDOW_HTML, /placeholder="Type a name or place #id or resident #id"/i)
-  assert.match(WINDOW_HTML, /Search places and residents/i)
+  assert.match(
+    WINDOW_HTML,
+    /placeholder="Type a name, place #id, resident #id, or thing #id"/i,
+  )
+  assert.match(WINDOW_HTML, /Search places, residents, and things/i)
   assert.match(WINDOW_HTML, />All places</)
   assert.match(WINDOW_HTML, />All residents</)
   assert.match(WINDOW_HTML, /id="directory-status"/)
