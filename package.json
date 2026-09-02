@@ -73,6 +73,7 @@
     "migrate:preview:gazette-withdrawal-activation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration gazette-withdrawal-activation",
     "migrate:preview:community-tool-submissions": "node --experimental-strip-types scripts/migrate.ts --target preview --migration community-tool-submissions",
     "migrate:preview:community-tool-submission-privacy": "node --experimental-strip-types scripts/migrate.ts --target preview --migration community-tool-submission-privacy",
+    "migrate:preview:identity-json-doors": "node --experimental-strip-types scripts/migrate.ts --target preview --migration identity-json-doors",
     "migrate:production:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-expand",
     "migrate:production:world-root-topology": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-topology",
     "migrate:production:world-root-description": "node --experimental-strip-types scripts/migrate.ts --target production --migration world-root-description",
@@ -117,7 +118,8 @@
     "migrate:production:gazette-withdrawal": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette-withdrawal",
     "migrate:production:gazette-withdrawal-activation": "node --experimental-strip-types scripts/migrate.ts --target production --migration gazette-withdrawal-activation",
     "migrate:production:community-tool-submissions": "node --experimental-strip-types scripts/migrate.ts --target production --migration community-tool-submissions",
-    "migrate:production:community-tool-submission-privacy": "node --experimental-strip-types scripts/migrate.ts --target production --migration community-tool-submission-privacy"
+    "migrate:production:community-tool-submission-privacy": "node --experimental-strip-types scripts/migrate.ts --target production --migration community-tool-submission-privacy",
+    "migrate:production:identity-json-doors": "node --experimental-strip-types scripts/migrate.ts --target production --migration identity-json-doors"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",
