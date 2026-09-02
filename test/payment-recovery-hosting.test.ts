@@ -7,7 +7,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 test('Vercel invokes the bounded payment recovery endpoint every five minutes', () => {
   const configuration = JSON.parse(read('../vercel.json')) as {
     crons?: Array<{ path: string; schedule: string }>
-    functions?: Record<string, { maxDuration?: number; includeFiles?: string | string[] }>
+    functions?: Record<string, { maxDuration?: number; includeFiles?: string }>
   }
   assert.deepEqual(configuration.crons?.find(cron => (
     cron.path === '/api/internal/payment-recovery'
@@ -15,14 +15,7 @@ test('Vercel invokes the bounded payment recovery endpoint every five minutes', 
     path: '/api/internal/payment-recovery',
     schedule: '*/5 * * * *',
   })
-  // The changelog page reads the checked-in root CHANGELOG.md at runtime, so
-  // it must ship alongside src/** in the deployed function bundle too. An
-  // array of plain globs (not a brace-expansion string) is what Vercel's
-  // includeFiles reliably matches.
-  assert.deepEqual(
-    configuration.functions?.['api/index.ts']?.includeFiles,
-    ['src/**', 'CHANGELOG.md'],
-  )
+  assert.equal(configuration.functions?.['api/index.ts']?.includeFiles, 'src/**')
   assert.equal(configuration.functions?.['api/index.ts']?.maxDuration, 300)
 })
 

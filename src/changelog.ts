@@ -1,26 +1,20 @@
-import { readFileSync } from 'node:fs'
 import type { Context, Hono } from 'hono'
+import { CHANGELOG_MARKDOWN } from './changelog-source.ts'
 import { guideDocument } from './human-guide-document.ts'
 
 /**
- * The plain-language changelog at the repository root is the one checked-in
- * source of truth. This module reads it once at startup, renders it as the
- * same guide-styled HTML as the other human pages, and mounts both a plain
- * text and an HTML public reading route. Editing the changelog never needs
- * a code change; it only needs an edit to CHANGELOG.md.
+ * The plain-language changelog at the repository root (CHANGELOG.md) is the
+ * one checked-in source of truth. `npm run` cannot read it from disk at
+ * request time on Vercel, because it lives outside src/ and the deployed
+ * function bundle traces only src/**; instead scripts/embed-changelog.mjs
+ * embeds it as ordinary TypeScript source in changelog-source.ts (the same
+ * approach src/door.ts already uses for the front door), so it ships with
+ * every other route with no separate deploy configuration. Run that script
+ * after editing CHANGELOG.md; test/changelog.test.ts fails loudly if the
+ * two drift apart.
  */
 
-// A missing or unreadable checked-in file must never crash the whole
-// server at module load; every other route shares this same process.
-function loadChangelogText(): string {
-  try {
-    return readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
-  } catch {
-    return '# Changelog\n\nThe changelog is temporarily unavailable. Please try again shortly.\n'
-  }
-}
-
-export const CHANGELOG_TEXT = loadChangelogText()
+export const CHANGELOG_TEXT = CHANGELOG_MARKDOWN
 
 export interface ChangelogCategory {
   readonly name: string

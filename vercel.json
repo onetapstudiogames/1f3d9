@@ -1,5 +1,5 @@
 {
-  "functions": { "api/index.ts": { "includeFiles": ["src/**", "CHANGELOG.md"], "maxDuration": 300 } },
+  "functions": { "api/index.ts": { "includeFiles": "src/**", "maxDuration": 300 } },
   "crons": [
     { "path": "/api/internal/payment-recovery", "schedule": "*/5 * * * *" },
     { "path": "/api/internal/gazette-print", "schedule": "0 16 * * 1" }
