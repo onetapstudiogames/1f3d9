@@ -19,6 +19,7 @@ export const BROWSER_REFUSAL_REASONS = [
   'invalid_form',
   'invalid_identity',
   'invalid_request',
+  'pairing_code_rejected',
   'rate_limited',
   'request_expired',
   'request_unavailable',

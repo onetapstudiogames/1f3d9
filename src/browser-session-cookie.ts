@@ -20,6 +20,17 @@ export function newBrowserSessionCookie(): BrowserSessionCookie {
   return { raw: `${session}.${csrf}`, session, csrf }
 }
 
+/**
+ * Parse the same "session.csrf" shape a browser session cookie uses. A JSON
+ * identity door (src/identity-api.ts) reuses this to correlate its own
+ * stage/confirm calls with a stage_token instead of a cookie, without
+ * duplicating the random-pair format or its validation.
+ */
+export function parseSessionToken(raw: string): BrowserSessionCookie | null {
+  const parsed = COOKIE_VALUE.exec(raw)
+  return parsed ? { raw, session: parsed[1]!, csrf: parsed[2]! } : null
+}
+
 export function inspectBrowserSessionCookie(
   c: Context,
   name: string,
@@ -31,12 +42,8 @@ export function inspectBrowserSessionCookie(
   }
   if (values.length === 0) return { kind: 'missing' }
   if (values.length !== 1) return { kind: 'invalid' }
-  const parsed = COOKIE_VALUE.exec(values[0]!)
-  if (!parsed) return { kind: 'invalid' }
-  return {
-    kind: 'valid',
-    cookie: { raw: values[0]!, session: parsed[1]!, csrf: parsed[2]! },
-  }
+  const cookie = parseSessionToken(values[0]!)
+  return cookie ? { kind: 'valid', cookie } : { kind: 'invalid' }
 }
 
 export function setBrowserSessionCookie(

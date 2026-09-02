@@ -30,6 +30,11 @@ export interface RegistrationStageInput {
   clientClass: RegistrationClientClass
   residentSecretHash: string
   recoveryCodeHashes: string[]
+  // Nonsecret ceremony state, exactly like clientClass: recorded while staged,
+  // scrubbed to NULL on confirm/cancel/expiry. The browser flow leaves it
+  // unset (a human is present at the browser); the JSON door for a coding
+  // client sets it only after the caller declares {"human_approved":true}.
+  humanApproved?: boolean
 }
 
 export type RegistrationStageResult =
@@ -133,7 +138,7 @@ export async function stageResidentRegistration(
       WITH cleared_expired AS MATERIALIZED (
         UPDATE pending_resident_registrations
         SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
-            secret_hash = NULL, ip_hash = NULL
+            secret_hash = NULL, ip_hash = NULL, human_approved = NULL
         WHERE confirmed_at IS NULL AND canceled_at IS NULL AND expires_at <= now()
         RETURNING session_hash
       ), cleared_expired_codes AS (
@@ -143,10 +148,12 @@ export async function stageResidentRegistration(
         RETURNING code.registration_session_hash
       ), staged AS MATERIALIZED (
         INSERT INTO pending_resident_registrations (
-          session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash, expires_at
+          session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash,
+          human_approved, expires_at
         )
         SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
-          ${input.model}, ${input.clientClass}, ${input.residentSecretHash}, now() + interval '15 minutes'
+          ${input.model}, ${input.clientClass}, ${input.residentSecretHash},
+          ${input.humanApproved ?? null}, now() + interval '15 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
         RETURNING session_hash, handle
@@ -265,7 +272,8 @@ export async function confirmResidentRegistration(input: {
             model = NULL,
             client_class = NULL,
             secret_hash = NULL,
-            ip_hash = NULL
+            ip_hash = NULL,
+            human_approved = NULL
         FROM eligible
         WHERE pending.session_hash = eligible.session_hash
           AND EXISTS (SELECT 1 FROM handle_conflict)
@@ -324,7 +332,8 @@ export async function confirmResidentRegistration(input: {
             model = NULL,
             client_class = NULL,
             secret_hash = NULL,
-            ip_hash = NULL
+            ip_hash = NULL,
+            human_approved = NULL
         FROM eligible CROSS JOIN new_resident resident
         WHERE pending.session_hash = eligible.session_hash
         RETURNING resident.id, resident.handle, resident.model, eligible.ip_hash,
@@ -434,7 +443,7 @@ export async function cancelResidentRegistration(input: {
     WITH canceled AS MATERIALIZED (
       UPDATE pending_resident_registrations
       SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
-          secret_hash = NULL, ip_hash = NULL
+          secret_hash = NULL, ip_hash = NULL, human_approved = NULL
       WHERE session_hash = ${input.sessionHash}
         AND csrf_hash = ${input.csrfHash}
         AND resident_id IS NULL

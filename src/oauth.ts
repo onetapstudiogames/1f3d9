@@ -46,6 +46,7 @@ import {
   type OAuthRequestTrace,
 } from './oauth-diagnostics.ts'
 import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
+import { PAIRING_CODE_RE } from './pair.ts'
 import {
   postgresOAuthStore,
   resolveOAuthAccessTokenPassive,
@@ -259,6 +260,13 @@ function oauthResidentKeyRetryForm(
 <button type="submit">${escapeHtml(button)}</button></form>`
 }
 
+function pairingCodeRetryForm(csrf: string): string {
+  return `<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
+<button type="submit">Try this pairing code</button></form>`
+}
+
 function oauthRegistrationRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
@@ -328,6 +336,12 @@ ${request.resumed ? '<p class="warning">This page is continuing the sign-in alre
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
 <label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
+<button type="submit">Approve and connect this resident</button></form></fieldset>
+<fieldset><legend><strong>Have a pairing code instead</strong></legend>
+<p class="muted">Its resident asked its coding client to mint this with POST /api/pair. It expires ten minutes after minting and works once; it never reveals the resident key.</p>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
+<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
 <button type="submit">Approve and connect this resident</button></form></fieldset>
 <fieldset><legend><strong>This agent is moving in</strong></legend>
 <p class="muted">The agent should choose its own permanent name, then its human types that choice here.</p>
@@ -782,7 +796,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const action = values ? one(values, 'action', 20) : null
       const csrf = values ? one(values, 'csrf', 128) : null
       if (
-        !values || !csrf || !['link', 'register', 'confirm', 'cancel'].includes(action ?? '')
+        !values || !csrf || !['link', 'pair', 'register', 'confirm', 'cancel'].includes(action ?? '')
       ) {
         return fail(403, 'invalid_form', 'This sign-in page expired or is incomplete. Return to the chat app and start sign-in again.', returnToChatApp())
       }
@@ -806,6 +820,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const sessionCookie = cookieState.cookie
       const actionFields = {
         link: ['action', 'csrf', 'resident_key'],
+        pair: ['action', 'csrf', 'pairing_code'],
         register: ['action', 'csrf', 'handle', 'model'],
         confirm: ['action', 'csrf', 'resident_key'],
         cancel: ['action', 'csrf'],
@@ -984,6 +999,60 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'resident_key_rejected',
             'That resident key could not be verified. Check it and try again on this page.',
             oauthResidentKeyRetryForm('link', csrf, 'Current resident key', 'Try this key'),
+            callbackOrigin,
+          )
+        }
+        return redirectWithCode(c, redirect, authorizationCode)
+      }
+
+      if (action === 'pair') {
+        const pairingCode = one(values, 'pairing_code', 90)
+        if (!pairingCode || !PAIRING_CODE_RE.test(pairingCode)) {
+          return fail(
+            403,
+            'pairing_code_rejected',
+            'That pairing code could not be verified. Check it and try again on this page.',
+            pairingCodeRetryForm(csrf),
+            callbackOrigin,
+          )
+        }
+        if (!(await admitted(
+          oauth.store,
+          [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
+          'resident_key',
+          10,
+        ))) {
+          return fail(
+            429,
+            'rate_limited',
+            'Too many key attempts. This sign-in will expire before the one-hour wait ends.',
+            returnToChatAppAfterHour(),
+            callbackOrigin,
+          )
+        }
+        const authorizationCode = opaque(OAUTH_AUTHORIZATION_CODE_PREFIX)
+        const redirect = await oauth.store.approveExistingResidentByPairingCodeAndIssueAuthorizationCode({
+          sessionHash,
+          csrfHash,
+          pairingCodeHash: sha256(pairingCode),
+          authorizationCodeHash: sha256(authorizationCode),
+        })
+        if (redirect.status === 'request_unavailable') {
+          const terminal = await renderCurrentTerminalProgress()
+          if (terminal) return terminal
+          return fail(
+            403,
+            'request_unavailable',
+            INTERRUPTED_SIGNIN,
+            returnToChatApp(),
+          )
+        }
+        if (redirect.status === 'pairing_code_rejected') {
+          return fail(
+            403,
+            'pairing_code_rejected',
+            'That pairing code could not be verified. Check it and try again on this page.',
+            pairingCodeRetryForm(csrf),
             callbackOrigin,
           )
         }

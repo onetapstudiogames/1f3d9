@@ -38,6 +38,8 @@ import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
+import { mountIdentityApiRoutes } from './identity-api.ts'
+import { mountPairRoutes } from './pair.ts'
 import {
   engineSql,
   residentPresence,
@@ -626,6 +628,11 @@ if (IDENTITY_BROWSER_READY) {
     environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
     hostedChatSigninReady: hostedChatSignin.ready,
   })
+  // Decision row 74: the same identity ceremony, reachable by a coding
+  // client through authenticated JSON instead of a browser page.
+  mountIdentityApiRoutes(app, {
+    environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
+  })
 } else {
   const unavailableIdentity = (c: Context) => {
     c.header('Cache-Control', 'no-store')
@@ -635,16 +642,22 @@ if (IDENTITY_BROWSER_READY) {
   app.all('/rotate', unavailableIdentity)
   app.all('/recovery', unavailableIdentity)
   app.post('/api/register', unavailableIdentity)
+  app.post('/api/rotate', unavailableIdentity)
+  app.post('/api/recovery', unavailableIdentity)
 }
 
-app.post('/api/rotate', async c => {
-  if (!IDENTITY_BROWSER_READY) {
-    return c.json({ error: 'identity browser routes are unavailable' }, 503)
-  }
-  return c.json({
-    error: `root-key rotation moved to the private browser flow at ${DOMAIN}/rotate`,
-  }, 410)
-})
+if (hostedChatSignin.ready) {
+  // Decision row 74: a signed-in coding client mints a ten-minute, single-use
+  // pairing code so a human can finish hosted-chat sign-in without typing the
+  // resident key. Pairing has nowhere to redeem a code when OAuth itself is
+  // unconfigured, so the door stays unmounted until hosted sign-in is ready.
+  mountPairRoutes(app, { authenticate: authRootKey })
+} else {
+  app.post('/api/pair', c => {
+    c.header('Cache-Control', 'no-store')
+    return c.json({ error: 'hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed' }, 503)
+  })
+}
 
 mountActionRoutes(app)
 mountDrawingRoutes(app, { database: runtimeDatabase, authenticate: auth })
