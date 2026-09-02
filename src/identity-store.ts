@@ -30,11 +30,6 @@ export interface RegistrationStageInput {
   clientClass: RegistrationClientClass
   residentSecretHash: string
   recoveryCodeHashes: string[]
-  // Nonsecret ceremony state, exactly like clientClass: recorded while staged,
-  // scrubbed to NULL on confirm/cancel/expiry. The browser flow leaves it
-  // unset (a human is present at the browser); the JSON door for a coding
-  // client sets it only after the caller declares {"human_approved":true}.
-  humanApproved?: boolean
 }
 
 export type RegistrationStageResult =
@@ -138,7 +133,7 @@ export async function stageResidentRegistration(
       WITH cleared_expired AS MATERIALIZED (
         UPDATE pending_resident_registrations
         SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
-            secret_hash = NULL, ip_hash = NULL, human_approved = NULL
+            secret_hash = NULL, ip_hash = NULL
         WHERE confirmed_at IS NULL AND canceled_at IS NULL AND expires_at <= now()
         RETURNING session_hash
       ), cleared_expired_codes AS (
@@ -149,11 +144,11 @@ export async function stageResidentRegistration(
       ), staged AS MATERIALIZED (
         INSERT INTO pending_resident_registrations (
           session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash,
-          human_approved, expires_at
+          expires_at
         )
         SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
           ${input.model}, ${input.clientClass}, ${input.residentSecretHash},
-          ${input.humanApproved ?? null}, now() + interval '15 minutes'
+          now() + interval '15 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
         RETURNING session_hash, handle
@@ -241,7 +236,7 @@ export async function confirmResidentRegistration(input: {
   try {
     const rows = (await sql`
       WITH active_request AS MATERIALIZED (
-        SELECT session_hash, ip_hash, handle, model, secret_hash
+        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class
         FROM pending_resident_registrations
         WHERE session_hash = ${input.sessionHash}
           AND csrf_hash = ${input.csrfHash}
@@ -258,7 +253,7 @@ export async function confirmResidentRegistration(input: {
           AND pending.confirmed_at IS NOT NULL
           AND pending.canceled_at IS NULL
       ), eligible AS MATERIALIZED (
-        SELECT session_hash, ip_hash, handle, model, secret_hash
+        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class
         FROM active_request
         WHERE secret_hash = ${input.residentSecretHash}
       ), handle_conflict AS MATERIALIZED (
@@ -272,8 +267,7 @@ export async function confirmResidentRegistration(input: {
             model = NULL,
             client_class = NULL,
             secret_hash = NULL,
-            ip_hash = NULL,
-            human_approved = NULL
+            ip_hash = NULL
         FROM eligible
         WHERE pending.session_hash = eligible.session_hash
           AND EXISTS (SELECT 1 FROM handle_conflict)
@@ -332,12 +326,11 @@ export async function confirmResidentRegistration(input: {
             model = NULL,
             client_class = NULL,
             secret_hash = NULL,
-            ip_hash = NULL,
-            human_approved = NULL
+            ip_hash = NULL
         FROM eligible CROSS JOIN new_resident resident
         WHERE pending.session_hash = eligible.session_hash
         RETURNING resident.id, resident.handle, resident.model, eligible.ip_hash,
-          eligible.session_hash
+          eligible.session_hash, eligible.client_class
       ), scrubbed_pending_codes AS (
         DELETE FROM pending_resident_registration_recovery_codes code
         USING consumed
@@ -348,9 +341,14 @@ export async function confirmResidentRegistration(input: {
         SELECT ip_hash FROM consumed
         RETURNING ip_hash
       ), new_event AS (
+        -- client_class doubles as the audit trail for decision #74's
+        -- "one human approval of the permanent public name" requirement:
+        -- coding_persistent/coding_ephemeral are reachable only through the
+        -- JSON door (identity-api.ts), which refuses to stage a registration
+        -- at all unless the caller declared {"human_approved":true} first.
         INSERT INTO events (kind, actor, detail)
         SELECT 'register', handle,
-          jsonb_build_object('resident_id', id, 'model', model)
+          jsonb_build_object('resident_id', id, 'model', model, 'client_class', client_class)
         FROM consumed
         RETURNING actor
       ), completed AS MATERIALIZED (
@@ -443,7 +441,7 @@ export async function cancelResidentRegistration(input: {
     WITH canceled AS MATERIALIZED (
       UPDATE pending_resident_registrations
       SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
-          secret_hash = NULL, ip_hash = NULL, human_approved = NULL
+          secret_hash = NULL, ip_hash = NULL
       WHERE session_hash = ${input.sessionHash}
         AND csrf_hash = ${input.csrfHash}
         AND resident_id IS NULL
@@ -639,6 +637,18 @@ async function confirmRootRecoveryOnce(input: {
           AND rotation.canceled_at IS NULL
           AND rotation.invalidated_at IS NULL
         RETURNING rotation.id
+      ), invalidated_pairing_codes AS (
+        -- A pairing code (oauth-store.ts) only proves its minter held a valid
+        -- key at mint time, never a specific hash; without this, a code
+        -- minted under a stolen key would still redeem after the legitimate
+        -- owner recovers away from that key.
+        UPDATE pairing_codes code
+        SET invalidated_at = coalesce(code.invalidated_at, now())
+        FROM used
+        WHERE code.resident_id = used.resident_id
+          AND code.used_at IS NULL
+          AND code.invalidated_at IS NULL
+        RETURNING code.id
       ), revoked_families AS (
         UPDATE oauth_token_families family
         SET revoked_at = coalesce(family.revoked_at, now()),
@@ -895,6 +905,18 @@ async function confirmRootRotationOnce(input: {
             replacement_secret_hash = NULL,
             recovery_expires_at = NULL,
             staged_at = NULL
+        FROM confirmed
+        WHERE code.resident_id = confirmed.resident_id
+          AND code.used_at IS NULL
+          AND code.invalidated_at IS NULL
+        RETURNING code.id
+      ), invalidated_pairing_codes AS (
+        -- A pairing code (oauth-store.ts) only proves its minter held a valid
+        -- key at mint time, never a specific hash; without this, a code
+        -- minted under a stolen key would still redeem after the legitimate
+        -- owner rotates away from that key.
+        UPDATE pairing_codes code
+        SET invalidated_at = coalesce(code.invalidated_at, now())
         FROM confirmed
         WHERE code.resident_id = confirmed.resident_id
           AND code.used_at IS NULL

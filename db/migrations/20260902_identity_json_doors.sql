@@ -4,33 +4,50 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
 -- Decision row 74: coding clients get a script-shaped identity door. This
--- migration is purely additive: one nullable ceremony column on the existing
--- staged-registration table, one new table for short-lived pairing codes, and
--- one closed-enum extension so pairing-code minting can share the existing
--- OAuth rate-limit machinery. Nothing here alters an existing row, and it is
--- never run against any database by this change -- the PR only ships the file.
+-- migration is purely additive: one new table for short-lived pairing codes
+-- and one closed-enum extension so pairing-code minting can share the
+-- existing OAuth rate-limit machinery. Nothing here alters an existing row,
+-- and it is never run against any database by this change -- the doors it
+-- unblocks stay behind CODING_IDENTITY_DOORS_ENABLED (default off, see
+-- index.ts) until an operator runs this migration, verifies it, and flips
+-- that flag.
+--
+-- human_approved is enforced entirely in-process at identity-api.ts before a
+-- registration is ever staged; it needs no column here. The declaration is
+-- captured for audit in the confirmed registration's `register` event detail
+-- (client_class, which is coding_persistent or coding_ephemeral only when the
+-- JSON door required and received {"human_approved":true}) instead of a
+-- schema change, so this shared live path never needs a pre-deploy migration
+-- just to keep working.
 
--- human_approved is nonsecret ceremony state, exactly like client_class added
--- in 20260826_resumable_registration.sql. The browser flow satisfies it
--- implicitly (a human is present at the browser) and leaves it NULL; the JSON
--- door requires the caller to declare {"human_approved":true} before staging
--- and the value is scrubbed to NULL on confirm/cancel/expiry, the same way
--- client_class already is.
-ALTER TABLE pending_resident_registrations
-  ADD COLUMN IF NOT EXISTS human_approved BOOLEAN;
-
--- A signed-in coding client mints a pairing code bound to its own resident.
--- The hosted OAuth sign-in page consumes it in place of a typed resident key.
--- Only a hash is ever stored; the raw code is shown once in the mint response.
+-- A signed-in coding client mints a pairing code bound to its own resident,
+-- at the secret hash the resident held at that moment. The hosted OAuth
+-- sign-in page consumes it in place of a typed resident key. Only a hash is
+-- ever stored; the raw code is shown once in the mint response.
+--
+-- Two independent defenses close the same hole -- a pairing code minted under
+-- a since-replaced key must never resolve:
+--   1. confirmRootRotation and confirmRootRecovery (identity-store.ts)
+--      invalidate every unused pairing code for that resident in the same
+--      transaction as the key change (invalidated_at), exactly like they
+--      already do for sibling rotations and recovery codes.
+--   2. Redemption also re-checks secret_hash_at_mint against the resident's
+--      CURRENT secret_hash and rejects a mismatch. This is deliberately
+--      redundant with (1): it still fails closed even if some future code
+--      path changes a resident's key without going through those two
+--      transactions.
 CREATE TABLE IF NOT EXISTS pairing_codes (
-  id           BIGSERIAL PRIMARY KEY,
-  resident_id  INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
-  code_hash    TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at   TIMESTAMPTZ NOT NULL,
-  used_at      TIMESTAMPTZ,
+  id                  BIGSERIAL PRIMARY KEY,
+  resident_id         INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  code_hash           TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  secret_hash_at_mint TEXT NOT NULL CHECK (secret_hash_at_mint ~ '^[0-9a-f]{64}$'),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at          TIMESTAMPTZ NOT NULL,
+  used_at             TIMESTAMPTZ,
+  invalidated_at      TIMESTAMPTZ,
   CHECK (expires_at > created_at AND expires_at <= created_at + interval '10 minutes'),
-  CHECK (used_at IS NULL OR (used_at >= created_at AND used_at <= expires_at))
+  CHECK (used_at IS NULL OR (used_at >= created_at AND used_at <= expires_at)),
+  CHECK (invalidated_at IS NULL OR invalidated_at >= created_at)
 );
 
 CREATE INDEX IF NOT EXISTS pairing_codes_resident

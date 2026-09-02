@@ -267,6 +267,28 @@ function pairingCodeRetryForm(csrf: string): string {
 <button type="submit">Try this pairing code</button></form>`
 }
 
+/**
+ * Decision row 74 security fix: entering a pairing code no longer connects a
+ * resident in one step. This page names the resident the code resolves to
+ * -- read only, nothing is consumed yet -- and asks for one explicit click
+ * before the "pair_confirm" action below actually redeems it. The code
+ * itself travels forward as a hidden field rather than being re-typed;
+ * redemption re-validates it from scratch, so nothing here is trusted
+ * without proof.
+ */
+function pairingConfirmPage(handle: string, pairingCode: string, csrf: string): string {
+  return `<h1>Connect this pairing code?</h1>
+<p>This pairing code connects the resident <strong>${escapeHtml(handle)}</strong>. Approve?</p>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="pair_confirm">
+<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<input type="hidden" name="pairing_code" value="${escapeHtml(pairingCode)}">
+<button type="submit">Approve and connect ${escapeHtml(handle)}</button></form>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+<button type="submit">Cancel</button></form>`
+}
+
 function oauthRegistrationRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
@@ -796,7 +818,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const action = values ? one(values, 'action', 20) : null
       const csrf = values ? one(values, 'csrf', 128) : null
       if (
-        !values || !csrf || !['link', 'pair', 'register', 'confirm', 'cancel'].includes(action ?? '')
+        !values || !csrf || !['link', 'pair', 'pair_confirm', 'register', 'confirm', 'cancel'].includes(action ?? '')
       ) {
         return fail(403, 'invalid_form', 'This sign-in page expired or is incomplete. Return to the chat app and start sign-in again.', returnToChatApp())
       }
@@ -821,6 +843,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const actionFields = {
         link: ['action', 'csrf', 'resident_key'],
         pair: ['action', 'csrf', 'pairing_code'],
+        pair_confirm: ['action', 'csrf', 'pairing_code'],
         register: ['action', 'csrf', 'handle', 'model'],
         confirm: ['action', 'csrf', 'resident_key'],
         cancel: ['action', 'csrf'],
@@ -1006,6 +1029,47 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       }
 
       if (action === 'pair') {
+        const pairingCode = one(values, 'pairing_code', 90)
+        if (!pairingCode || !PAIRING_CODE_RE.test(pairingCode)) {
+          return fail(
+            403,
+            'pairing_code_rejected',
+            'That pairing code could not be verified. Check it and try again on this page.',
+            pairingCodeRetryForm(csrf),
+            callbackOrigin,
+          )
+        }
+        if (!(await admitted(
+          oauth.store,
+          [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
+          'resident_key',
+          10,
+        ))) {
+          return fail(
+            429,
+            'rate_limited',
+            'Too many key attempts. This sign-in will expire before the one-hour wait ends.',
+            returnToChatAppAfterHour(),
+            callbackOrigin,
+          )
+        }
+        // Decision row 74 security fix: this only looks the code up -- it
+        // never consumes it. The human sees which resident it connects and
+        // must click "pair_confirm" below before anything is redeemed.
+        const peeked = await oauth.store.peekPairingCodeResident(sha256(pairingCode))
+        if (peeked.status === 'pairing_code_rejected') {
+          return fail(
+            403,
+            'pairing_code_rejected',
+            'That pairing code could not be verified. Check it and try again on this page.',
+            pairingCodeRetryForm(csrf),
+            callbackOrigin,
+          )
+        }
+        return html(c, 200, 'Connect this pairing code?', pairingConfirmPage(peeked.handle, pairingCode, csrf), callbackOrigin)
+      }
+
+      if (action === 'pair_confirm') {
         const pairingCode = one(values, 'pairing_code', 90)
         if (!pairingCode || !PAIRING_CODE_RE.test(pairingCode)) {
           return fail(

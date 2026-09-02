@@ -395,7 +395,7 @@ for (const [name, url] of [
 }
 
 test('the audited live-detail inventory exactly names fields absent from format v2 events', () => {
-  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 39)
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 40)
   assert.deepEqual(
     [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,

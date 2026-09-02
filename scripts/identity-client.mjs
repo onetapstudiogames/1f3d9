@@ -4,22 +4,24 @@
 // JSON identity doors (POST /api/register, POST /api/rotate,
 // POST /api/recovery). It writes the resident key and recovery codes to the
 // operating system's secure credential store -- Windows Credential Manager
-// via `cmdkey`, macOS Keychain via `security`, and a 0600 file under the
-// user's home everywhere else -- then prints only the resident's handle and
-// where its secrets were stored. It never prints, logs, or returns a secret.
+// via `cmdkey`/CredRead, macOS Keychain via `security`, and a 0600 file
+// under the user's home everywhere else -- then prints only the resident's
+// handle and where its secrets were stored. A secret value reaches the
+// terminal only when the caller passes --reveal at an interactive TTY; by
+// default this script never prints, logs, or returns one.
 //
 // Usage:
 //   node identity-client.mjs register --origin https://1f3d9.com \
 //     --handle my-agent --client-class coding_persistent \
-//     [--model "claude-opus"] [--human-approved]
+//     [--model "claude-opus"] [--human-approved] [--reveal]
 //   node identity-client.mjs rotate --origin https://1f3d9.com \
-//     --resident-key 1f3d9_sk_...   (or set 1F3D9_RESIDENT_KEY)
+//     --resident-key-file /path/to/key   (or - for stdin, or set 1F3D9_RESIDENT_KEY) [--reveal]
 //   node identity-client.mjs recover generate --origin https://1f3d9.com \
-//     --resident-key 1f3d9_sk_...
+//     --resident-key-file /path/to/key [--reveal]
 //   node identity-client.mjs recover begin --origin https://1f3d9.com \
-//     --recovery-code 1f3d9_rc_...
+//     --recovery-code-file /path/to/code [--reveal]
 //   node identity-client.mjs pair --origin https://1f3d9.com \
-//     --resident-key 1f3d9_sk_...
+//     --resident-key-file /path/to/key
 //
 // `register` without --human-approved prompts on stdin for a human to
 // confirm the exact permanent handle before it is claimed; use
@@ -27,14 +29,16 @@
 // (for example, a human typed the handle into the command that invoked this
 // script) -- it is a caller declaration, never a real substitute for asking.
 //
-// register and the recover/begin step print the resident key and recovery
-// codes to the terminal exactly once, immediately before writing them to
-// storage, matching the browser pages' one-time reveal. Nothing else in this
-// script ever prints a secret value.
+// --resident-key and --recovery-code are refused as BARE argv flags: a bare
+// flag value lands in shell history and in any process listing (`ps`, Task
+// Manager) for as long as the process runs. Use --resident-key-file or
+// --recovery-code-file <path> instead, pointing at a file this script reads
+// and never echoes -- or pass `-` as that file's path to read the one value
+// from stdin.
 
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { mkdirSync, writeFileSync, chmodSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -92,6 +96,78 @@ async function askYesNo(question) {
   }
 }
 
+// --- Secret input: argv is refused, a file path or stdin is required ------
+
+// argv-flag name -> the -file flag that must supply it instead. Both values
+// here can authenticate a request or consume a one-use credential, so
+// neither may ever be a bare argv flag.
+const SECRET_ARGV_FLAGS = {
+  'resident-key': 'resident-key-file',
+  'recovery-code': 'recovery-code-file',
+}
+
+async function readStdinText() {
+  process.stdin.setEncoding('utf8')
+  let text = ''
+  for await (const chunk of process.stdin) text += chunk
+  return text
+}
+
+async function readSecretFromPathOrStdin(source) {
+  const raw = source === '-' ? await readStdinText() : readFileSync(source, 'utf8')
+  const value = raw.trim()
+  if (!value) throw new Error(`no value read from ${source === '-' ? 'stdin' : source}`)
+  return value
+}
+
+/**
+ * Refuses --resident-key or --recovery-code as a bare flag and resolves the
+ * matching --*-file flag (a path, or `-` for stdin) into the plain secret
+ * value the caller below expects. Falls back to the given environment
+ * variables only when neither argv form is present -- an environment
+ * variable is not visible in a process listing the way argv is, so it stays
+ * allowed as before.
+ */
+async function resolveSecretArg(flags, bareName, envNames = []) {
+  const fileName = SECRET_ARGV_FLAGS[bareName]
+  if (bareName in flags) {
+    throw new Error(
+      `--${bareName} is refused as a bare flag: it would land in shell history and process ` +
+      `listings. Use --${fileName} <path> (or --${fileName} - to read one value from stdin) ` +
+      'instead.',
+    )
+  }
+  if (fileName in flags) {
+    const source = flags[fileName]
+    if (typeof source !== 'string') throw new Error(`--${fileName} requires a path or -`)
+    return readSecretFromPathOrStdin(source)
+  }
+  for (const envName of envNames) {
+    if (process.env[envName]) return process.env[envName]
+  }
+  return null
+}
+
+// --- Secret output: hidden unless the caller opts in at a real TTY --------
+
+/**
+ * Prints `values` only when the caller passed --reveal AND stdout is an
+ * interactive TTY (never a pipe, redirect, or captured subprocess output --
+ * exactly where a secret could land in a log or another program's memory).
+ * Otherwise prints only a pointer to where the value already went.
+ */
+function revealOrHide(flags, label, values) {
+  if (flags.reveal === true && process.stdout.isTTY) {
+    console.log(`${label} (shown once):`)
+    for (const value of values) console.log(value)
+    return
+  }
+  console.log(
+    `${label}: not printed to the terminal (pass --reveal at an interactive TTY to see it ` +
+    'once); read it back from storage instead.',
+  )
+}
+
 // --- Secure storage -----------------------------------------------------
 
 function vaultTarget(origin, handleOrLabel) {
@@ -102,6 +178,11 @@ function credentialsFilePath(origin, handleOrLabel) {
   const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
   const safeLabel = handleOrLabel.replace(/[^a-z0-9._-]/giu, '_')
   return join(homedir(), '.1f3d9', 'credentials', `${safeOrigin}__${safeLabel}.json`)
+}
+
+/** The staging label a replacement credential is written under before it is confirmed. */
+function pendingLabel(handle, kind) {
+  return `${handle}--pending-${kind}`
 }
 
 /**
@@ -144,6 +225,123 @@ function storeSecret(origin, label, payload) {
     // Best effort on filesystems that do not support POSIX permissions.
   }
   return `local file ${filePath} (mode 0600)`
+}
+
+/**
+ * The counterpart to storeSecret: reads back the JSON bundle this script
+ * wrote for `label`, or null if nothing is stored there (or it cannot be
+ * read). Used by rotate/recoverBegin below to carry forward fields --
+ * recovery codes, client_class -- that the replacement key alone does not
+ * carry, so promoting a rotated key never silently drops them.
+ */
+function readSecret(origin, label) {
+  const os = platform()
+  if (os === 'win32') {
+    const target = vaultTarget(origin, label)
+    const escapedTarget = target.replaceAll("'", "''")
+    // cmdkey itself has no way to print a stored password back out -- by
+    // design it only lists the account name. Reading it back needs the real
+    // Win32 Credential Manager API (CredRead), reached here through a small
+    // inline PowerShell/.NET shim.
+    const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Cred1F3D9 {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct CREDENTIAL {
+    public int Flags; public int Type; public IntPtr TargetName; public IntPtr Comment;
+    public long LastWritten; public int CredentialBlobSize; public IntPtr CredentialBlob;
+    public int Persist; public int AttributeCount; public IntPtr Attributes;
+    public IntPtr TargetAlias; public IntPtr UserName;
+  }
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool CredRead(string target, int type, int flags, out IntPtr credential);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  public static extern void CredFree(IntPtr credential);
+}
+'@
+$ptr = [IntPtr]::Zero
+$ok = [Cred1F3D9]::CredRead('${escapedTarget}', 1, 0, [ref]$ptr)
+if (-not $ok) { exit 1 }
+$cred = [System.Runtime.InteropServices.Marshal]::PtrToStructure($ptr, [type][Cred1F3D9+CREDENTIAL])
+$bytes = New-Object byte[] $cred.CredentialBlobSize
+[System.Runtime.InteropServices.Marshal]::Copy($cred.CredentialBlob, $bytes, 0, $cred.CredentialBlobSize)
+[Cred1F3D9]::CredFree($ptr)
+[Console]::Out.Write([System.Text.Encoding]::Unicode.GetString($bytes))
+`
+    let encoded
+    try {
+      encoded = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { encoding: 'utf8' },
+      )
+    } catch {
+      return null
+    }
+    if (!encoded) return null
+    try {
+      return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
+    } catch {
+      return null
+    }
+  }
+  if (os === 'darwin') {
+    const service = vaultTarget(origin, label)
+    let serialized
+    try {
+      serialized = execFileSync(
+        'security',
+        ['find-generic-password', '-a', label, '-s', service, '-w'],
+        { encoding: 'utf8' },
+      )
+    } catch {
+      return null
+    }
+    try {
+      return JSON.parse(serialized.trim())
+    } catch {
+      return null
+    }
+  }
+  const filePath = credentialsFilePath(origin, label)
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** Removes a stored secret bundle. Best effort: a missing entry is not an error. */
+function deleteSecret(origin, label) {
+  const os = platform()
+  if (os === 'win32') {
+    try {
+      execFileSync('cmdkey', [`/delete:${vaultTarget(origin, label)}`], { stdio: 'ignore' })
+    } catch {
+      // Best effort: nothing to delete, or cmdkey already reports failure loudly enough elsewhere.
+    }
+    return
+  }
+  if (os === 'darwin') {
+    try {
+      execFileSync(
+        'security',
+        ['delete-generic-password', '-a', label, '-s', vaultTarget(origin, label)],
+        { stdio: 'ignore' },
+      )
+    } catch {
+      // Best effort, same as above.
+    }
+    return
+  }
+  try {
+    rmSync(credentialsFilePath(origin, label), { force: true })
+  } catch {
+    // Best effort, same as above.
+  }
 }
 
 // --- HTTP -----------------------------------------------------------------
@@ -221,12 +419,6 @@ async function register(flags) {
     human_approved: true,
   })
 
-  // One-time reveal: shown once here, then written to storage immediately.
-  console.log('Resident key (shown once, write it down now if you are watching this run live):')
-  console.log(staged.resident_key)
-  console.log('Recovery codes (shown once, save all eight separately from the key):')
-  for (const code of staged.recovery_codes) console.log(code)
-
   const location = storeSecret(origin, handle, {
     kind: 'resident',
     handle: staged.handle,
@@ -243,6 +435,8 @@ async function register(flags) {
     resident_key: staged.resident_key,
   })
 
+  revealOrHide(flags, 'Resident key', [staged.resident_key])
+  revealOrHide(flags, 'Recovery codes (all eight)', staged.recovery_codes)
   console.log(`handle: ${confirmed.handle}`)
   console.log(`resident_id: ${confirmed.resident_id}`)
   console.log(`stored: ${location}`)
@@ -250,16 +444,21 @@ async function register(flags) {
 
 async function rotate(flags) {
   const origin = originOf(flags)
-  const residentKey = flags['resident-key'] ?? process.env['1F3D9_RESIDENT_KEY'] ?? process.env.IDENTITY_RESIDENT_KEY
+  const residentKey = await resolveSecretArg(
+    flags, 'resident-key', ['1F3D9_RESIDENT_KEY', 'IDENTITY_RESIDENT_KEY'],
+  )
   if (!residentKey || !ROOT_KEY_RE.test(residentKey)) {
-    throw new Error('--resident-key (or IDENTITY_RESIDENT_KEY) must be the current, valid resident key')
+    throw new Error('--resident-key-file (or IDENTITY_RESIDENT_KEY) must point to the current, valid resident key')
   }
 
   const staged = await postJson(origin, '/api/rotate', { action: 'begin', resident_key: residentKey })
-  console.log('Replacement resident key (shown once):')
-  console.log(staged.resident_key)
 
-  const location = storeSecret(origin, staged.handle, {
+  // Stage the replacement under a DISTINCT vault target first -- never
+  // overwrite the live entry before confirm succeeds. If confirm below
+  // fails for any reason, the live entry (still the OLD, still-valid key)
+  // is never touched; only this staging copy exists, and it is deleted.
+  const stagingLabel = pendingLabel(staged.handle, 'rotation')
+  storeSecret(origin, stagingLabel, {
     kind: 'resident',
     handle: staged.handle,
     resident_key: staged.resident_key,
@@ -267,25 +466,48 @@ async function rotate(flags) {
     stored_at: new Date().toISOString(),
   })
 
-  const confirmed = await postJson(origin, '/api/rotate', {
-    action: 'confirm',
-    stage_token: staged.stage_token,
-    resident_key: staged.resident_key,
-  })
+  let confirmed
+  try {
+    confirmed = await postJson(origin, '/api/rotate', {
+      action: 'confirm',
+      stage_token: staged.stage_token,
+      resident_key: staged.resident_key,
+    })
+  } catch (error) {
+    deleteSecret(origin, stagingLabel)
+    throw error
+  }
 
+  // Promote: merge the now-confirmed replacement key with whatever the live
+  // entry already held (recovery codes, client_class), so rotation never
+  // silently drops fields that only the pre-rotation entry carried. Only
+  // now does the live entry change; the staging copy is then deleted.
+  const previous = readSecret(origin, staged.handle)
+  const location = storeSecret(origin, staged.handle, {
+    kind: 'resident',
+    handle: staged.handle,
+    ...(previous?.client_class ? { client_class: previous.client_class } : {}),
+    resident_key: staged.resident_key,
+    ...(previous?.recovery_codes ? { recovery_codes: previous.recovery_codes } : {}),
+    origin,
+    stored_at: new Date().toISOString(),
+  })
+  deleteSecret(origin, stagingLabel)
+
+  revealOrHide(flags, 'Replacement resident key', [staged.resident_key])
   console.log(`handle: ${confirmed.handle}`)
   console.log(`stored: ${location}`)
 }
 
 async function recoverGenerate(flags) {
   const origin = originOf(flags)
-  const residentKey = flags['resident-key'] ?? process.env['1F3D9_RESIDENT_KEY'] ?? process.env.IDENTITY_RESIDENT_KEY
+  const residentKey = await resolveSecretArg(
+    flags, 'resident-key', ['1F3D9_RESIDENT_KEY', 'IDENTITY_RESIDENT_KEY'],
+  )
   if (!residentKey || !ROOT_KEY_RE.test(residentKey)) {
-    throw new Error('--resident-key (or IDENTITY_RESIDENT_KEY) must be the current, valid resident key')
+    throw new Error('--resident-key-file (or IDENTITY_RESIDENT_KEY) must point to the current, valid resident key')
   }
   const generated = await postJson(origin, '/api/recovery', { action: 'generate', resident_key: residentKey })
-  console.log('New recovery codes (shown once, replace every earlier set):')
-  for (const code of generated.recovery_codes) console.log(code)
 
   const location = storeSecret(origin, `${generated.handle}-recovery`, {
     kind: 'recovery_codes',
@@ -294,20 +516,25 @@ async function recoverGenerate(flags) {
     origin,
     stored_at: new Date().toISOString(),
   })
+  revealOrHide(flags, 'New recovery codes (replace every earlier set)', generated.recovery_codes)
   console.log(`handle: ${generated.handle}`)
   console.log(`stored: ${location}`)
 }
 
 async function recoverBegin(flags) {
   const origin = originOf(flags)
-  const recoveryCode = requireFlag(flags, 'recovery-code')
-  if (!RECOVERY_CODE_RE.test(recoveryCode)) throw new Error('--recovery-code is not a valid recovery code')
+  const recoveryCode = await resolveSecretArg(flags, 'recovery-code')
+  if (!recoveryCode || !RECOVERY_CODE_RE.test(recoveryCode)) {
+    throw new Error('--recovery-code-file must point to a valid, unused recovery code')
+  }
 
   const staged = await postJson(origin, '/api/recovery', { action: 'begin', recovery_code: recoveryCode })
-  console.log('Replacement resident key (shown once):')
-  console.log(staged.resident_key)
 
-  const location = storeSecret(origin, staged.handle, {
+  // Same staging discipline as rotate() above, and for the same reason: the
+  // old key still works until confirm below actually succeeds, so the live
+  // vault entry must not be touched before that.
+  const stagingLabel = pendingLabel(staged.handle, 'recovery')
+  storeSecret(origin, stagingLabel, {
     kind: 'resident',
     handle: staged.handle,
     resident_key: staged.resident_key,
@@ -315,25 +542,47 @@ async function recoverBegin(flags) {
     stored_at: new Date().toISOString(),
   })
 
-  const confirmed = await postJson(origin, '/api/recovery', {
-    action: 'confirm',
-    stage_token: staged.stage_token,
-    resident_key: staged.resident_key,
-  })
+  let confirmed
+  try {
+    confirmed = await postJson(origin, '/api/recovery', {
+      action: 'confirm',
+      stage_token: staged.stage_token,
+      resident_key: staged.resident_key,
+    })
+  } catch (error) {
+    deleteSecret(origin, stagingLabel)
+    throw error
+  }
 
+  const previous = readSecret(origin, staged.handle)
+  const location = storeSecret(origin, staged.handle, {
+    kind: 'resident',
+    handle: staged.handle,
+    ...(previous?.client_class ? { client_class: previous.client_class } : {}),
+    resident_key: staged.resident_key,
+    origin,
+    stored_at: new Date().toISOString(),
+  })
+  deleteSecret(origin, stagingLabel)
+
+  revealOrHide(flags, 'Replacement resident key', [staged.resident_key])
   console.log(`handle: ${confirmed.handle}`)
   console.log(`stored: ${location}`)
 }
 
 async function pair(flags) {
   const origin = originOf(flags)
-  const residentKey = flags['resident-key'] ?? process.env['1F3D9_RESIDENT_KEY'] ?? process.env.IDENTITY_RESIDENT_KEY
+  const residentKey = await resolveSecretArg(
+    flags, 'resident-key', ['1F3D9_RESIDENT_KEY', 'IDENTITY_RESIDENT_KEY'],
+  )
   if (!residentKey || !ROOT_KEY_RE.test(residentKey)) {
-    throw new Error('--resident-key (or IDENTITY_RESIDENT_KEY) must be the current, valid resident key')
+    throw new Error('--resident-key-file (or IDENTITY_RESIDENT_KEY) must point to the current, valid resident key')
   }
   const minted = await postAuthed(origin, '/api/pair', residentKey, {})
   // The pairing code is meant to be read by a human, not stored -- it is
   // single-use, expires in ten minutes, and never substitutes for the key.
+  // Printing it is the entire point of this command, so it is not gated
+  // behind --reveal the way the resident key and recovery codes are above.
   console.log('Pairing code (shown once, give it to the human completing hosted-chat sign-in):')
   console.log(minted.pairing_code)
   console.log(`expires_at: ${minted.expires_at}`)

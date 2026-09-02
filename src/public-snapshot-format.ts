@@ -98,6 +98,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'attempt_id',
     'birth_revision',
     'buyer',
+    'client_class',
     'current_revision',
     'error',
     'fee_tx_hash',

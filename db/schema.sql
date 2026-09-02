@@ -201,11 +201,10 @@ $resumable_registration_client_class$;
 ALTER TABLE pending_resident_registrations
   VALIDATE CONSTRAINT pending_resident_registrations_client_class_valid;
 
--- Decision row 74: human_approved is nonsecret ceremony state for the JSON
--- identity doors, mirroring client_class above -- NULL for the browser flow,
--- declared true by a coding client, and scrubbed to NULL on any terminal state.
-ALTER TABLE pending_resident_registrations
-  ADD COLUMN IF NOT EXISTS human_approved BOOLEAN;
+-- Decision row 74: the JSON identity doors' human_approved declaration is
+-- enforced in-process at identity-api.ts before a registration is ever
+-- staged and needs no column here; it is captured for audit in the confirmed
+-- registration's `register` event detail via client_class instead.
 
 CREATE TABLE IF NOT EXISTS pending_resident_registration_recovery_codes (
   registration_session_hash TEXT NOT NULL
@@ -493,18 +492,26 @@ CREATE INDEX IF NOT EXISTS oauth_rate_limits_expiry
   ON oauth_rate_limits (window_start, attempt_kind);
 
 -- Decision row 74: a signed-in coding client mints a pairing code bound to its
--- own resident. The hosted OAuth sign-in page consumes it in place of a typed
--- resident key. Only a hash is ever stored; the raw code is shown once in the
--- mint response.
+-- own resident, at the secret hash the resident held at that moment. The
+-- hosted OAuth sign-in page consumes it in place of a typed resident key.
+-- Only a hash is ever stored; the raw code is shown once in the mint
+-- response. Two independent defenses close a code minted under a
+-- since-replaced key: confirmRootRotation/confirmRootRecovery invalidate
+-- every unused code for that resident in the same transaction as the key
+-- change (invalidated_at), and redemption separately re-checks
+-- secret_hash_at_mint against the resident's CURRENT secret_hash.
 CREATE TABLE IF NOT EXISTS pairing_codes (
-  id           BIGSERIAL PRIMARY KEY,
-  resident_id  INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
-  code_hash    TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at   TIMESTAMPTZ NOT NULL,
-  used_at      TIMESTAMPTZ,
+  id                  BIGSERIAL PRIMARY KEY,
+  resident_id         INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  code_hash           TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  secret_hash_at_mint TEXT NOT NULL CHECK (secret_hash_at_mint ~ '^[0-9a-f]{64}$'),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at          TIMESTAMPTZ NOT NULL,
+  used_at             TIMESTAMPTZ,
+  invalidated_at      TIMESTAMPTZ,
   CHECK (expires_at > created_at AND expires_at <= created_at + interval '10 minutes'),
-  CHECK (used_at IS NULL OR (used_at >= created_at AND used_at <= expires_at))
+  CHECK (used_at IS NULL OR (used_at >= created_at AND used_at <= expires_at)),
+  CHECK (invalidated_at IS NULL OR invalidated_at >= created_at)
 );
 CREATE INDEX IF NOT EXISTS pairing_codes_resident
   ON pairing_codes (resident_id, id);

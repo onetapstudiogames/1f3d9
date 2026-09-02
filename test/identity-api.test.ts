@@ -38,7 +38,6 @@ function memoryIdentityStore(options: MemoryOptions = {}) {
     clientClass: RegistrationClientClass
     secretHash: string
     recoveryCodeHashes: string[]
-    humanApproved: boolean | undefined
     status: 'staged' | 'confirmed' | 'canceled'
     residentId?: number
   }>()
@@ -114,7 +113,6 @@ function memoryIdentityStore(options: MemoryOptions = {}) {
         clientClass: input.clientClass,
         secretHash: input.residentSecretHash,
         recoveryCodeHashes: [...input.recoveryCodeHashes],
-        humanApproved: input.humanApproved,
         status: 'staged',
       })
       return { status: 'staged', handle: input.handle }
@@ -354,6 +352,20 @@ test('registration refuses without human_approved: true', async () => {
   }
 })
 
+test('registration refuses a model field containing a bidi override, the same as the browser join page', async () => {
+  const app = appFor()
+  const response = await postJson(app, '/api/register', {
+    ...STAGE_BODY,
+    model: 'claude\u202Eevil-lookalike',
+  })
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'invalid_identity')
+  assert.match(
+    (await response.json() as { error: string }).error,
+    /handle, client_class, and model/iu,
+  )
+})
+
 test('registration refuses a reserved handle before touching the store', async () => {
   const app = appFor()
   const response = await postJson(app, '/api/register', { ...STAGE_BODY, handle: 'founder' })
@@ -526,5 +538,39 @@ test('an invalid action name is refused with invalid_request', async () => {
     const response = await postJson(app, path, { action: 'not-real' })
     assert.equal(response.status, 400)
     assert.equal(response.headers.get('x-1f3d9-reason'), 'invalid_request')
+  }
+})
+
+test('a store throw answers 503 storage_unavailable with Retry-After, not a generic 500, on every door', async () => {
+  const base = memoryIdentityStore()
+  const throwingStores = [
+    {
+      path: '/api/register',
+      body: STAGE_BODY,
+      store: { ...base, stageResidentRegistration: async () => { throw new Error('injected register storage failure') } },
+    },
+    {
+      path: '/api/rotate',
+      body: { action: 'begin', resident_key: `1f3d9_sk_${'a'.repeat(48)}` },
+      store: { ...base, stageRootRotation: async () => { throw new Error('injected rotate storage failure') } },
+    },
+    {
+      path: '/api/recovery',
+      body: { action: 'generate', resident_key: `1f3d9_sk_${'a'.repeat(48)}` },
+      store: { ...base, generateRecoveryCodes: async () => { throw new Error('injected recovery storage failure') } },
+    },
+  ] as const
+
+  for (const attempt of throwingStores) {
+    const app = appFor({ store: attempt.store })
+    const response = await postJson(app, attempt.path, attempt.body)
+    assert.equal(response.status, 503, attempt.path)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'storage_unavailable', attempt.path)
+    assert.equal(response.headers.get('retry-after'), '1', attempt.path)
+    const parsedBody = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
+    assert.match(parsedBody.error, /final state could not be verified/iu, attempt.path)
+    assert.equal(parsedBody.reason, 'storage_unavailable', attempt.path)
+    assert.ok(parsedBody.next_step.length > 0, attempt.path)
+    assert.ok(parsedBody.request_id.length > 0, attempt.path)
   }
 })

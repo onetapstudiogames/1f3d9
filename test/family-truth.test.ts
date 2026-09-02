@@ -6,6 +6,7 @@ process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/f
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 process.env.IDENTITY_RECOVERY_ENABLED = 'true'
 process.env.IDENTITY_ROTATION_ENABLED = 'true'
+process.env.CODING_IDENTITY_DOORS_ENABLED = 'true'
 
 const { default: app } = await import('../src/index.ts')
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -236,8 +237,9 @@ test('every identity surface uses private browser capture, and decision 74 names
       rotate: 'https://1f3d9.com/api/rotate',
       recovery: 'https://1f3d9.com/api/recovery',
       client_classes: ['coding_persistent', 'coding_ephemeral'],
+      doors_enabled: true,
     },
-    root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only; never MCP or chat output',
+    root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only when its coding-client doors are enabled; never MCP or chat output',
   })
 })
 

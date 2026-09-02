@@ -40,6 +40,12 @@ export interface PublicOfficialFactsOptions {
   readonly identityBrowserReady: boolean
   readonly identityRecoveryEnabled: boolean
   readonly identityRotationEnabled: boolean
+  // Decision row 74 security fix: gates the coding-client JSON identity
+  // doors independently of the browser flags above -- the JSON register,
+  // rotate, and recovery doors need a separate migration an operator runs
+  // and verifies before this flips true, even on a deployment where the
+  // matching browser page is already live.
+  readonly codingIdentityDoorsEnabled: boolean
 }
 
 export function configuredPublicDomain(
@@ -116,12 +122,13 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       // instead of the matching browser page above; every other client class
       // still stays browser-only.
       coding_client_json: Object.freeze({
-        register: input.identityBrowserReady ? `${domain}/api/register` : null,
-        rotate: input.identityRotationEnabled ? `${domain}/api/rotate` : null,
-        recovery: input.identityRecoveryEnabled ? `${domain}/api/recovery` : null,
+        register: input.identityBrowserReady && input.codingIdentityDoorsEnabled ? `${domain}/api/register` : null,
+        rotate: input.identityRotationEnabled && input.codingIdentityDoorsEnabled ? `${domain}/api/rotate` : null,
+        recovery: input.identityRecoveryEnabled && input.codingIdentityDoorsEnabled ? `${domain}/api/recovery` : null,
         client_classes: Object.freeze(['coding_persistent', 'coding_ephemeral']),
+        doors_enabled: input.codingIdentityDoorsEnabled,
       }),
-      root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only; never MCP or chat output',
+      root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only when its coding-client doors are enabled; never MCP or chat output',
     }),
     later_holder_discovery: Object.freeze({
       path: '/api/me',

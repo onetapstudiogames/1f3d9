@@ -453,6 +453,18 @@ class MemoryOAuthStore {
       return { expiresAt: new Date(expiresAt).toISOString() }
     },
 
+    peekPairingCodeResident: async (
+      codeHash: Parameters<OAuthStore['peekPairingCodeResident']>[0],
+    ) => {
+      const pairing = this.pairingCodes.get(codeHash)
+      if (!pairing || pairing.usedAt !== null || pairing.expiresAt <= Date.now()) {
+        return { status: 'pairing_code_rejected' as const }
+      }
+      const resident = this.residents.get(pairing.residentId)
+      if (!resident) return { status: 'pairing_code_rejected' as const }
+      return { status: 'valid' as const, handle: resident.handle }
+    },
+
     approveExistingResidentByPairingCodeAndIssueAuthorizationCode: async (
       input: Parameters<OAuthStore['approveExistingResidentByPairingCodeAndIssueAuthorizationCode']>[0],
     ) => {
@@ -2562,60 +2574,80 @@ test('the consent page offers a pairing-code fieldset that never asks for the re
   assert.match(session.html, /never reveals the resident key/iu)
 })
 
-test('a valid pairing code approves the resident and issues a code, never revealing a resident key', async () => {
+test('entering a pairing code first names the resident it connects and asks for one click, without consuming it', async () => {
   const { app, memory } = fixture()
   const pairingCode = await mintedPairingCode(memory)
   const session = await begin(app)
   const response = await browserPost(app, session, {
     action: 'pair', csrf: session.csrf, pairing_code: pairingCode,
   })
-  const responseBody = await response.clone().text()
-  const responseSurface = `${responseBody}\n${[...response.headers].flat().join('\n')}`
-  assert.doesNotMatch(responseSurface, /1f3d9_sk_/i)
-  const code = authorizationCode(response)
+  assert.equal(response.status, 200)
+  const body = await response.text()
+  assert.match(body, /This pairing code connects the resident <strong>chatty<\/strong>\. Approve\?/iu)
+  assert.match(body, /name="action" value="pair_confirm"/u)
+  assert.match(body, new RegExp(`name="pairing_code" value="${pairingCode}"`, 'u'))
+  assert.doesNotMatch(body, /1f3d9_sk_/i)
+
+  // Peeking must not have consumed the code: it is still valid for a real pair_confirm.
+  const confirmed = await browserPost(app, session, {
+    action: 'pair_confirm', csrf: session.csrf, pairing_code: pairingCode,
+  })
+  const code = authorizationCode(confirmed)
   const pair = await readTokenPair(await exchangeCode(app, code))
   assert.ok(pair.access_token)
 })
 
-test('an unrecognized pairing code is refused as pairing_code_rejected with a retry form', async () => {
+test('an unrecognized pairing code is refused as pairing_code_rejected with a retry form, at either step', async () => {
   const { app } = fixture()
-  const session = await begin(app)
-  const response = await browserPost(app, session, {
-    action: 'pair', csrf: session.csrf, pairing_code: PAIRING_CODE_PREFIX + '22'.repeat(32),
-  })
-  assert.equal(response.status, 403)
-  assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
-  const body = await response.text()
-  assert.match(body, /pairing code could not be verified/iu)
-  assert.match(body, /name="action" value="pair"/u)
-  assert.match(body, /name="pairing_code"[^>]*type="password"/iu)
+  for (const action of ['pair', 'pair_confirm'] as const) {
+    const session = await begin(app)
+    const response = await browserPost(app, session, {
+      action, csrf: session.csrf, pairing_code: PAIRING_CODE_PREFIX + '22'.repeat(32),
+    })
+    assert.equal(response.status, 403)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+    const body = await response.text()
+    assert.match(body, /pairing code could not be verified/iu)
+    assert.match(body, /name="action" value="pair"/u)
+    assert.match(body, /name="pairing_code"[^>]*type="password"/iu)
+  }
 })
 
-test('an expired pairing code is refused the same as an unknown one', async () => {
+test('an expired pairing code is refused the same as an unknown one, at either step', async () => {
   const { app, memory } = fixture()
-  const pairingCode = await mintedPairingCode(memory)
-  memory.expirePairingCode(sha256(pairingCode))
-  const session = await begin(app)
-  const response = await browserPost(app, session, {
-    action: 'pair', csrf: session.csrf, pairing_code: pairingCode,
-  })
-  assert.equal(response.status, 403)
-  assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+  for (const action of ['pair', 'pair_confirm'] as const) {
+    const pairingCode = await mintedPairingCode(memory)
+    memory.expirePairingCode(sha256(pairingCode))
+    const session = await begin(app)
+    const response = await browserPost(app, session, {
+      action, csrf: session.csrf, pairing_code: pairingCode,
+    })
+    assert.equal(response.status, 403)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+  }
 })
 
-test('a pairing code works exactly once', async () => {
+test('a pairing code works exactly once, and a second confirm attempt is refused', async () => {
   const { app, memory } = fixture()
   const pairingCode = await mintedPairingCode(memory)
   const firstSession = await begin(app)
   const first = await browserPost(app, firstSession, {
-    action: 'pair', csrf: firstSession.csrf, pairing_code: pairingCode,
+    action: 'pair_confirm', csrf: firstSession.csrf, pairing_code: pairingCode,
   })
   authorizationCode(first)
 
   const secondSession = await begin(app)
   const second = await browserPost(app, secondSession, {
-    action: 'pair', csrf: secondSession.csrf, pairing_code: pairingCode,
+    action: 'pair_confirm', csrf: secondSession.csrf, pairing_code: pairingCode,
   })
   assert.equal(second.status, 403)
   assert.equal(second.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+
+  // The confirmation page also reports it as no longer valid.
+  const thirdSession = await begin(app)
+  const peekAfterUse = await browserPost(app, thirdSession, {
+    action: 'pair', csrf: thirdSession.csrf, pairing_code: pairingCode,
+  })
+  assert.equal(peekAfterUse.status, 403)
+  assert.equal(peekAfterUse.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
 })

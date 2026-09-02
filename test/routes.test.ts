@@ -31,6 +31,7 @@ process.env.BASE_RPC_URL = 'https://base-rpc.test'
 process.env.FACILITATOR_URL = 'https://facilitator.test'
 process.env.LATER_HOLDER_CURSOR_KEY = LATER_HOLDER_CURSOR_KEY
 process.env.VERCEL_GIT_COMMIT_SHA = 'e'.repeat(40)
+process.env.CODING_IDENTITY_DOORS_ENABLED = 'true'
 
 const TREASURY = process.env.TREASURY_ADDRESS
 const SELLER_WALLET = '0x1111111111111111111111111111111111111111'

@@ -42,12 +42,14 @@ const IDENTITY_MODULES = new Set([
   'oauth-store.ts',
   'oauth-recovery.ts',
   'oauth-diagnostics.ts',
-  // Decision row 74: the coding-client JSON identity doors and the pairing-code
-  // mint door are the same identity domain as the four modules above, and are
-  // covered exhaustively by their own dedicated test/identity-api.test.ts,
-  // test/pair.test.ts, and the pairing tests in test/oauth-flow.test.ts.
+  // Decision row 74: the JSON identity doors' own refusal helper (jsonError)
+  // lives here and is exercised exhaustively by test/identity-api.test.ts;
+  // identity-api.ts stays excluded the same way the other identity modules
+  // above are. pair.ts, which calls that same exported jsonError rather than
+  // defining its own refusal shape, is deliberately NOT excluded below (a
+  // security-review fix) -- its refusals are covered by this census like any
+  // other module's, via the jsonError entry in MESSAGE_HELPERS.
   'identity-api.ts',
-  'pair.ts',
 ])
 const NON_BOUNDARY_MODULES = new Set([
   'window-client.ts',
@@ -219,6 +221,12 @@ const MESSAGE_HELPERS = new Map<string, number>([
   ['err', 2],
   ['rpcError', 4],
   ['classifiedErrorText', 0],
+  // Decision row 74 security fix: identity-api.ts's exported jsonError(c,
+  // status, reason, message, nextStep) is the shared refusal shape pair.ts
+  // now calls too; this lets the census reach pair.ts's call sites (the
+  // module the definition itself lives in stays excluded, see
+  // IDENTITY_MODULES above, so this never doubles up on identity-api.ts).
+  ['jsonError', 3],
 ])
 const IDENTITY_PATHS = new Set(['/join', '/rotate', '/recovery', '/api/register'])
 
@@ -783,7 +791,7 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
         if (helperArgument !== undefined) {
           const message = node.arguments[helperArgument]
           if (message) {
-            const status = callName === 'err'
+            const status = callName === 'err' || callName === 'jsonError'
               ? exactStatus(node.arguments[1], source)
               : callName === 'failure'
                 ? exactStatus(node.arguments[0], source)

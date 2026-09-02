@@ -65,23 +65,33 @@ test('the off switch hides discovery, authorization, token, and revocation route
   }
 })
 
-test('disabling hosted chat has no bearing on the JSON rotation door, which stays off because IDENTITY_ROTATION_ENABLED is unset here', async () => {
+test('disabling hosted chat has no bearing on the JSON rotation door, which stays off because CODING_IDENTITY_DOORS_ENABLED and IDENTITY_ROTATION_ENABLED are both unset here', async () => {
   // Decision row 74 turned POST /api/rotate into a real coding-client JSON
   // door, gated by the same IDENTITY_ROTATION_ENABLED flag as the browser
   // page /rotate -- never by hosted-chat sign-in, which this suite disables.
-  // It ignores Authorization entirely (the current and replacement keys
-  // travel only in the JSON body), so a bearer-only request never even
-  // reaches a credential check; it stops at the unavailable-door 503 this
-  // environment's unset rotation flag produces.
+  // A security fix on that same decision added a second, default-off gate,
+  // CODING_IDENTITY_DOORS_ENABLED (unset in this suite too), which is the
+  // one that actually short-circuits every JSON identity door here before
+  // mountIdentityApiRoutes's own per-door rotation check is ever reached;
+  // both produce this same documented 503, never a 500. It ignores
+  // Authorization entirely (the current and replacement keys travel only in
+  // the JSON body), so a bearer-only request never even reaches a
+  // credential check.
   const response = await app.request('/api/rotate', {
     method: 'POST',
     headers: { authorization: `Bearer ${LEGACY_KEY}` },
   })
 
   assert.equal(response.status, 503)
-  assert.deepEqual(await response.json(), {
-    error: '/api/rotate is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead',
-  })
+  assert.equal(response.headers.get('X-1F3D9-Reason'), 'request_unavailable')
+  const body = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
+  assert.equal(
+    body.error,
+    '/api/rotate is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead',
+  )
+  assert.equal(body.reason, 'request_unavailable')
+  assert.ok(body.next_step.length > 0)
+  assert.ok(body.request_id.length > 0)
 })
 
 test('the off switch also leaves nowhere for a pairing code to be redeemed', async () => {

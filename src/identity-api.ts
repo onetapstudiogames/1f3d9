@@ -120,12 +120,14 @@ function stringField(record: Record<string, unknown>, name: string, maxLength: n
   return hasControlCharacter(value) ? null : value
 }
 
-function optionalStringField(record: Record<string, unknown>, name: string, maxLength: number): string | null {
+// Mirrors the browser /join page's model-label validation exactly (see
+// identity-browser.ts's `publicText(modelCandidate, { maximumCharacters: 120,
+// allowEmpty: true })`): the same length limit, and the same rejection of
+// bidi overrides, malformed lookalike UTF-8, and credential-shaped text that
+// a plain length/control-character check misses.
+function optionalPublicTextField(record: Record<string, unknown>, name: string, maxLength: number): string | null {
   if (!Object.hasOwn(record, name)) return ''
-  const value = record[name]
-  if (value === '') return ''
-  if (typeof value !== 'string' || value.length > maxLength) return null
-  return hasControlCharacter(value) ? null : value
+  return publicText(record[name], { maximumCharacters: maxLength, allowEmpty: true })
 }
 
 function privateHeaders(c: Context): void {
@@ -135,9 +137,13 @@ function privateHeaders(c: Context): void {
   c.header('Referrer-Policy', 'same-origin')
 }
 
-function jsonError(
+// Exported so every JSON identity door -- including the pairing-code door in
+// pair.ts, which is not part of this excluded module -- answers refusals in
+// the exact same shape: {error, reason, next_step, request_id}, the same
+// X-1F3D9-Reason/X-1F3D9-Error-Class headers, and the same refusal-log line.
+export function jsonError(
   c: Context,
-  status: 400 | 403 | 404 | 409 | 429 | 503,
+  status: 400 | 401 | 403 | 404 | 409 | 429 | 503,
   reason: BrowserRefusalReason,
   message: string,
   nextStep: string,
@@ -160,13 +166,60 @@ function jsonError(
   }, status)
 }
 
-function unavailableJsonDoors(app: Hono, path: '/api/rotate' | '/api/recovery'): void {
+function unavailableJsonDoor(
+  app: Hono,
+  path: '/api/register' | '/api/rotate' | '/api/recovery',
+  reason: string,
+): void {
   app.post(path, c => {
     privateHeaders(c)
-    return c.json({
-      error: `${path} is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead`,
-    }, 503)
+    return jsonError(
+      c, 503, 'request_unavailable',
+      `${path} is unavailable on this deployment because ${reason}; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead`,
+      `Ask the city operator to enable this capability, or use ${path === '/api/register' ? '/join' : path === '/api/rotate' ? '/rotate' : '/recovery'} if it is enabled on this deployment.`,
+    )
   })
+}
+
+/**
+ * Decision row 74 security fix: `mountIdentityApiRoutes` below deploys the
+ * moment the existing browser identity flag (IDENTITY_BROWSER_READY) is on
+ * -- already true in production, since /join is already live. Gating these
+ * JSON doors on that same flag would turn them on the instant this PR ships,
+ * before an operator has run db/migrations/20260902_identity_json_doors.sql
+ * and verified it. This deliberately separate, default-off flag keeps every
+ * JSON door (and, in pair.ts, the pairing-mint door) answering this same
+ * documented 503 -- never a generic 500 -- until an operator flips it.
+ */
+export function mountCodingIdentityDoorsDisabled(app: Hono): void {
+  for (const path of ['/api/register', '/api/rotate', '/api/recovery'] as const) {
+    unavailableJsonDoor(app, path, 'its capability is not enabled')
+  }
+}
+
+/**
+ * Mirrors identity-browser.ts's withJoinStorageErrors: a store call that
+ * throws (a dropped connection, a deadlock that survived
+ * retryIdentityDeadlockOnce, anything else unexpected) answers this same
+ * documented 503 instead of falling through to the generic onError 500, and
+ * tells the caller its final state was not verified rather than implying
+ * nothing happened. Exported so pair.ts's pairing-mint door -- not part of
+ * this module -- wraps its own handler with it too.
+ */
+export async function withIdentityApiStorageErrors(
+  c: Context,
+  operation: () => Promise<Response>,
+): Promise<Response> {
+  try {
+    return await operation()
+  } catch {
+    c.header('Retry-After', '1')
+    return jsonError(
+      c, 503, 'storage_unavailable',
+      'this request could not be finished and its final state could not be verified',
+      'Check the resident list, or retry the same request; no credential was created or changed by this attempt.',
+    )
+  }
 }
 
 /** Mount decision-74's coding-client JSON identity doors. */
@@ -180,13 +233,13 @@ export function mountIdentityApiRoutes(app: Hono, options: IdentityApiRouteOptio
   if (environment.IDENTITY_ROTATION_ENABLED === 'true') {
     mountRotateRoute(app, environment, store)
   } else {
-    unavailableJsonDoors(app, '/api/rotate')
+    unavailableJsonDoor(app, '/api/rotate', 'its capability is not enabled')
   }
 
   if (environment.IDENTITY_RECOVERY_ENABLED === 'true') {
     mountRecoveryRoute(app, environment, store)
   } else {
-    unavailableJsonDoors(app, '/api/recovery')
+    unavailableJsonDoor(app, '/api/recovery', 'its capability is not enabled')
   }
 }
 
@@ -196,7 +249,7 @@ function mountRegisterRoute(
   store: IdentityStore,
   publicOrigin: string,
 ): void {
-  app.post('/api/register', async c => {
+  app.post('/api/register', c => withIdentityApiStorageErrors(c, async () => {
     privateHeaders(c)
     const parsed = await jsonBody(c)
     if (!parsed.ok) {
@@ -229,7 +282,7 @@ function mountRegisterRoute(
       }
       const handle = stringField(record, 'handle', 32)?.toLowerCase().trim() ?? null
       const clientClassCandidate = stringField(record, 'client_class', 40)
-      const model = optionalStringField(record, 'model', 120)
+      const model = optionalPublicTextField(record, 'model', 120)
       const humanApproved = record.human_approved
       if (clientClassCandidate !== null && !CODING_CLIENT_CLASSES.has(clientClassCandidate as RegistrationClientClass)) {
         return jsonError(
@@ -284,7 +337,6 @@ function mountRegisterRoute(
         clientClass,
         residentSecretHash: sha256(residentKey),
         recoveryCodeHashes: recoveryCodes.map(sha256),
-        humanApproved: true,
       })
       if (staged.status === 'handle_taken') {
         return jsonError(
@@ -388,11 +440,11 @@ function mountRegisterRoute(
     }
     await store.cancelResidentRegistration({ sessionHash: token.sessionHash, csrfHash: token.csrfHash })
     return c.json({ status: 'canceled' }, 200)
-  })
+  }))
 }
 
 function mountRotateRoute(app: Hono, environment: IdentityEnvironment, store: IdentityStore): void {
-  app.post('/api/rotate', async c => {
+  app.post('/api/rotate', c => withIdentityApiStorageErrors(c, async () => {
     privateHeaders(c)
     const parsed = await jsonBody(c)
     if (!parsed.ok) {
@@ -490,11 +542,11 @@ function mountRotateRoute(app: Hono, environment: IdentityEnvironment, store: Id
       return jsonError(c, 403, 'credential_rejected', 'that replacement key could not be verified', 'Read the replacement key back from durable storage and retry action "confirm".')
     }
     return c.json({ status: 'rotated', resident_id: resident.residentId, handle: resident.handle }, 200)
-  })
+  }))
 }
 
 function mountRecoveryRoute(app: Hono, environment: IdentityEnvironment, store: IdentityStore): void {
-  app.post('/api/recovery', async c => {
+  app.post('/api/recovery', c => withIdentityApiStorageErrors(c, async () => {
     privateHeaders(c)
     const parsed = await jsonBody(c)
     if (!parsed.ok) {
@@ -613,5 +665,5 @@ function mountRecoveryRoute(app: Hono, environment: IdentityEnvironment, store: 
       return jsonError(c, 403, 'credential_rejected', 'that replacement key could not be verified', 'Read the replacement key back from durable storage and retry action "confirm".')
     }
     return c.json({ status: 'recovered', resident_id: resident.residentId, handle: resident.handle }, 200)
-  })
+  }))
 }

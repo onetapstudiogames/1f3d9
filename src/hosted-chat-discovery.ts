@@ -115,8 +115,12 @@ function recoveryAwareSource(
   recoveryEnabled: boolean,
 ): string {
   if (recoveryEnabled) return source
+  // Decision row 74 reworded this sentence on both mirrors to also name the
+  // coding-client JSON door; frontdoor.txt and llms.txt phrase the "above"/
+  // "below" pointer and connective differently (their layouts differ), so
+  // this pattern tolerates that gap instead of pinning one exact wording.
   const policyAwareSource = source.replace(
-    /Recovery, when enabled, stays browser-only through \/recovery; it is never an MCP tool\.?/gu,
+    /Recovery, when enabled, stays browser-only through \/recovery,? or through the coding-client[\s\S]{0,10}JSON door[\s\S]{0,60}also separately enabled; it is never an MCP tool\.?/gu,
     'Recovery stays browser-only and is never an MCP tool; no recovery page is enabled on this deployment.',
   )
   if (document === 'llms') {
@@ -141,16 +145,17 @@ function rotationAwareSource(
   rotationEnabled: boolean,
 ): string {
   if (rotationEnabled) return source
+  // Decision row 74 reworded this sentence the same way as recovery's above.
   const policyAwareSource = source.replace(
-    /Rotation, when enabled, stays browser-only through \/rotate; it is never an MCP tool\.?/gu,
+    /Rotation, when enabled, stays browser-only through \/rotate,? or through the coding-client[\s\S]{0,10}JSON door[\s\S]{0,60}also separately enabled; it is never an MCP tool\.?/gu,
     'Rotation stays browser-only and is never an MCP tool; no rotation page is enabled on this deployment.',
   )
   if (document === 'llms') {
     return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
   }
 
-  const startMarker = 'Voluntarily replace a current root key only on the first-party, no-store page:'
-  const endMarker = 'chat, an API body or response, MCP, a tool, ordinary logs, or public city content.'
+  const startMarker = 'Voluntarily replace a current root key on the first-party, no-store page:'
+  const endMarker = 'will store it.'
   const start = policyAwareSource.indexOf(startMarker)
   const end = policyAwareSource.indexOf(endMarker, start)
   if (start < 0 || end < 0) {

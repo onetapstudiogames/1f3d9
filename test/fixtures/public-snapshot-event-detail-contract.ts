@@ -1,5 +1,5 @@
 const omittedFieldsByKind = {
-  register: ['model'],
+  register: ['client_class', 'model'],
   place_created: ['fee_tx_hash', 'frontier', 'name'],
   place_edited: ['gazette_submission_room_opened', 'gazette_withdrawals_opened'],
   kind_invented: ['fee_tx_hash', 'name', 'revision'],
