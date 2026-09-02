@@ -275,10 +275,10 @@ test('a resident can walk from one continent to another only through their world
       home_place_id: 2,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id FROM places/.test(text)) return [
-      { id: 1, parent_id: null },
-      { id: 2, parent_id: 1 },
-      { id: 3, parent_id: 1 },
+    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
+      { id: 1, parent_id: null, retired_at: null },
+      { id: 2, parent_id: 1, retired_at: null },
+      { id: 3, parent_id: 1, retired_at: null },
     ]
     if (/UPDATE resident_presence SET current_place_id/.test(text)) {
       currentPlaceId = Number(values[0])
@@ -315,9 +315,9 @@ test('a null-location resident is seeded at world and cannot use first move to s
       home_place_id: null,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id FROM places/.test(text)) return [
-      { id: 1, parent_id: null },
-      { id: 4, parent_id: 2 },
+    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
+      { id: 1, parent_id: null, retired_at: null },
+      { id: 4, parent_id: 2, retired_at: null },
     ]
     if (/UPDATE resident_presence/.test(text)) return [{
       resident_id: 7,
@@ -350,7 +350,9 @@ test('an expand-only resident cannot move before a world or owned location exist
       home_place_id: null,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id FROM places/.test(text)) return [{ id: 4, parent_id: 2 }]
+    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) {
+      return [{ id: 4, parent_id: 2, retired_at: null }]
+    }
     return []
   })
 
@@ -359,7 +361,7 @@ test('an expand-only resident cannot move before a world or owned location exist
     && error.status === 409
     && error.message === 'resident has no current place'
   ))
-  assert.equal(calls.some(call => /SELECT id, parent_id FROM places/.test(call.text)), false)
+  assert.equal(calls.some(call => /SELECT id, parent_id, retired_at FROM places/.test(call.text)), false)
   assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 })
 

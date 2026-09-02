@@ -67,7 +67,7 @@ function makeSql(options: FakeOptions = {}): {
   const calls: Array<{ marker: string; query: string; values: unknown[] }> = []
   const rowsByMarker: Readonly<Record<string, readonly Row[]>> = {
     kind: options.kindRows ?? [{ id: 9, name: 'rope', current_revision: 3, recipe }],
-    place: options.placeRows ?? [{ id: 3, owner_id: 4, open_to_things: false }],
+    place: options.placeRows ?? [{ id: 3, owner_id: 4, open_to_things: false, retired_at: null }],
     'known-kinds': options.knownKindRows ?? [{ name: 'fiber' }, { name: 'wood' }],
     ingredients: options.ingredientRows ?? eligibleIngredients,
     commit: options.commitRows ?? [{
@@ -167,6 +167,19 @@ test('a place must be owned by the actor or open to things', async () => {
     ok: false, status: 409, error: 'target place does not accept things',
   })
   assert.equal(fake.calls.some(call => call.marker === 'commit'), false)
+})
+
+test('typed crafting refuses a retired place before consuming ingredients or quota', async () => {
+  const fake = makeSql({
+    placeRows: [{ id: 3, owner_id: 4, open_to_things: false, retired_at: '2026-09-01T00:00:00Z' }],
+  })
+
+  assert.deepEqual(await craftKindThing(fake.sql, input), {
+    ok: false,
+    status: 409,
+    error: 'place is retired; restore it before making things there',
+  })
+  assert.deepEqual(fake.calls.map(call => call.marker), ['kind', 'place'])
 })
 
 test('malformed stored recipes are wholly unavailable and never partially crafted', async () => {
@@ -285,6 +298,7 @@ test('crafting atomically withdraws ingredients, spends quota, writes history, a
   assert.match(commit.query, /FOR UPDATE OF kind/u)
   assert.match(commit.query, /FOR SHARE OF revision/u)
   assert.match(commit.query, /FOR UPDATE OF place/u)
+  assert.match(commit.query, /place\.retired_at IS NULL/u)
   assert.doesNotMatch(commit.query, /FOR KEY SHARE/u)
   assert.match(commit.query, /'thing_withdrawn'/u)
   assert.match(commit.query, /'thing_crafted'/u)
@@ -412,6 +426,8 @@ test('kindless thing creation and quota spend share the make action transaction'
   const kindless = making.slice(kindlessStart)
   assert.match(kindless, /primitiveHandledByCaller:\s*true/u)
   assert.match(kindless, /performPrimitive:\s*async\s+transaction\s*=>[\s\S]*await withPlacePermission\(transaction\)`[\s\S]*WITH permitted_place AS/u)
+  assert.match(kindless, /place\.retired_at IS NULL/u)
+  assert.match(kindless, /place is retired; restore it before making things there/u)
   assert.match(kindless, /INSERT INTO things \(place_id, name, body, owner_id, maker_id, open_to_use\)/u)
   assert.match(kindless, /SELECT permitted_place\.id,[\s\S]*quota_spend\.id[\s\S]*quota_spend\.id/u)
   assert.match(kindless, /'thing_created',\s*quota_spend\.handle/u)

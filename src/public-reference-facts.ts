@@ -69,10 +69,24 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       'Prepaid city fee credit is private, resident-bound, nontransferable, and cannot be sold or redeemed. ' +
       'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet.',
     claim_fee_usdc: CLAIM_FEE_USDC,
-    paid_actions: Object.freeze(['frontier_founding', 'kind_invention', 'kind_revision']),
+    paid_actions: Object.freeze([
+      'frontier_founding',
+      'kind_invention',
+      'kind_revision',
+      'place_rename',
+      'place_retire',
+      'place_restore',
+    ]),
     city_fee_credit: Object.freeze({
       unit_usdc: '1.000000',
-      eligible_actions: Object.freeze(['frontier_founding', 'kind_invention', 'kind_revision']),
+      eligible_actions: Object.freeze([
+        'frontier_founding',
+        'kind_invention',
+        'kind_revision',
+        'place_rename',
+        'place_retire',
+        'place_restore',
+      ]),
       selector_header: 'X-1F3D9-FEE-CREDIT',
       funding: 'founder issue, exact whole-dollar x402 purchase, or feature-gated hosted PayPal purchase; no rounding',
       gifts: 'a gift is pending until the named resident accepts; refusal and private purchaser redirect never expire',

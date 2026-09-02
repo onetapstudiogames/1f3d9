@@ -16,6 +16,7 @@ test('the live survey returns one body-free direct thing count per public place'
   assert.deepEqual(calls[0]?.params, [])
   assert.match(calls[0]?.text ?? '', /public:window-live-survey/u)
   assert.match(calls[0]?.text ?? '', /join\s+place_reading_totals/iu)
+  assert.match(calls[0]?.text ?? '', /place\.retired_at\s+IS\s+NULL/iu)
   assert.doesNotMatch(calls[0]?.text ?? '', /description|body|secret|owner/iu)
   assert.deepEqual(survey, [
     { id: 1, parent_id: null, things: 0 },

@@ -8,6 +8,7 @@ const LIVE_SURVEY_SQL = `
     totals.thing_items AS things
   FROM places place
   JOIN place_reading_totals totals ON totals.place_id = place.id
+  WHERE place.retired_at IS NULL
   ORDER BY place.id
 `
 

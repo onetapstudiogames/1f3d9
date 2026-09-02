@@ -696,7 +696,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       assert.equal(markerTriggers.rowCount, 1)
     })
 
-    await t.test('search exposes current public note and thing outlines with exact totals', async () => {
+    await t.test('search exposes aligned public note, thing, and place outlines with exact totals', async () => {
       const client = await postgres.client.connect()
       await client.query('BEGIN')
       const searchExecute: PublicQueryExecutor = async (text, values) => (
@@ -716,6 +716,12 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         VALUES ($1, 'Wave Five Archive Quartz', $2, 3, 3, '2026-08-21T18:00:01.123456Z')
         RETURNING id
       `, [city.targetPlaceId, thingBody])).rows[0]!
+      const place = (await client.query<{ id: number }>(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id, created_at)
+        VALUES ($1, 'place', 'Wave Five Archive Quartz Annex', '', 2,
+          '2026-08-21T18:00:02.123456Z')
+        RETURNING id
+      `, [city.targetPlaceId])).rows[0]!
 
       const result = await loadPublicSearchResults(
         searchExecute,
@@ -726,27 +732,50 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
           limit: ['200'],
         }),
       )
-      assert.equal(result.totalItems, 2)
+      assert.equal(result.totalItems, 3)
       assert.equal(
         result.totalBodyBytes,
         Buffer.byteLength(noteBody, 'utf8') + Buffer.byteLength(thingBody, 'utf8'),
       )
       assert.deepEqual(
         result.items.map(item => ({ type: item.type, id: item.id })),
-        [{ type: 'thing', id: thing.id }, { type: 'note', id: note.id }],
+        [
+          { type: 'place', id: place.id },
+          { type: 'thing', id: thing.id },
+          { type: 'note', id: note.id },
+        ],
       )
       for (const item of result.items) {
         assert.equal('body' in item, false)
         assert.equal('snippet' in item, false)
         assert.equal('rank' in item, false)
       }
+      const placeOutline = result.items.find(item => item.type === 'place')
+      assert.deepEqual(placeOutline, {
+        type: 'place',
+        id: place.id,
+        name: 'Wave Five Archive Quartz Annex',
+        founding_name: 'Wave Five Archive Quartz Annex',
+        name_history: [{
+          name: 'Wave Five Archive Quartz Annex',
+          started_at: '2026-08-21T18:00:02.123456Z',
+          ended_at: null,
+        }],
+        retired_at: null,
+        status: 'active',
+        created_at: '2026-08-21T18:00:02.123456Z',
+      })
       const wordResult = await loadPublicSearchResults(
         searchExecute,
         publicSearchQuery({ q: ['archive quartz'], mode: ['words'], type: ['all'] }),
       )
       assert.deepEqual(
         wordResult.items.map(item => ({ type: item.type, id: item.id })),
-        [{ type: 'thing', id: thing.id }, { type: 'note', id: note.id }],
+        [
+          { type: 'place', id: place.id },
+          { type: 'thing', id: thing.id },
+          { type: 'note', id: note.id },
+        ],
       )
 
       const moving = (await client.query<{ id: number }>(`

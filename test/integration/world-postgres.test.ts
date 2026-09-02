@@ -6,13 +6,27 @@ import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
 
-import { issueCityFeeCredit, type CityCreditDatabase } from '../../src/city-credit.ts'
+import {
+  beginCityCreditSpend,
+  issueCityFeeCredit,
+  returnCityCreditSpend,
+  type CityCreditDatabase,
+} from '../../src/city-credit.ts'
 import type { Resident } from '../../src/core.ts'
+import type { CraftSql } from '../../src/crafting.ts'
 import type { TaggedSql } from '../../src/engine.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'world_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const placeLifecycleMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260901_place_lifecycle.sql', import.meta.url),
+  'utf8',
+)
+const preLifecycleSnapshotMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260901_public_snapshot_event_details.sql', import.meta.url),
+  'utf8',
+)
 
 let database: Pool | null = null
 let afterAgreementSignPreflight: (() => Promise<void>) | null = null
@@ -188,6 +202,17 @@ function twoRequestBarrier(): () => Promise<void> {
   }
 }
 
+async function assertWaitingOnDatabaseLock(pid: number, label: string): Promise<void> {
+  for (let check = 0; check < 100; check += 1) {
+    const activity = await database!.query<{ wait_event_type: string | null }>(`
+      SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1
+    `, [pid])
+    if (activity.rows[0]?.wait_event_type === 'Lock') return
+    await delay(10)
+  }
+  assert.fail(`${label} did not wait on the retirement place lock`)
+}
+
 async function resetDatabase(): Promise<number> {
   assert.ok(database)
   await database.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
@@ -226,6 +251,19 @@ async function resetDatabase(): Promise<number> {
   return room.rows[0].place_id
 }
 
+async function insertProtectedGazetteRoom(parentId: number): Promise<void> {
+  await database!.query(`
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, purpose, owner_id,
+      open_to_building, open_to_things, open_to_notes
+    ) VALUES (
+      454, $1, 'place', 'the gazette submission room',
+      'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+      '', 1, FALSE, FALSE, FALSE
+    )
+  `, [parentId])
+}
+
 async function seedAgreement(options: { accessionOpen?: boolean } = {}): Promise<number> {
   assert.ok(database)
   const agreement = await database.query<{ id: number }>(`
@@ -251,8 +289,125 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
   const postgres = await startPostgres()
   database = postgres.client
   try {
+    const { craftKindThing } = await import('../../src/crafting.ts')
+    const { makeThingThroughEngine } = await import('../../src/thing-making.ts')
     const { replacePlaceLaws } = await import('../../src/laws.ts')
     const { withdrawThing } = await import('../../src/withdrawal.ts')
+
+    await t.test('the additive place lifecycle migration runs twice without losing history or snapshot access', async () => {
+      const roomId = await resetDatabase()
+      await database!.query(placeLifecycleMigrationDdl)
+      await database!.query(placeLifecycleMigrationDdl)
+      const installed = await database!.query<{
+        founding_name: string
+        history_rows: number
+        history_trigger: string | null
+        public_records: string | null
+        public_records_v2: string | null
+        export_can_read_v2: boolean
+      }>(`
+        SELECT place.founding_name,
+          (SELECT count(*)::integer FROM place_name_history history
+            WHERE history.place_id = place.id) AS history_rows,
+          (SELECT trigger.tgname FROM pg_trigger trigger
+            WHERE trigger.tgrelid = 'places'::regclass
+              AND trigger.tgname = 'places_record_founding_name_history'
+              AND NOT trigger.tgisinternal) AS history_trigger,
+          to_regclass('city_snapshot.public_records')::text AS public_records,
+          to_regclass('city_snapshot.public_records_v2')::text AS public_records_v2,
+          has_table_privilege(
+            'city_snapshot_export', 'city_snapshot.public_records_v2', 'SELECT'
+          ) AS export_can_read_v2
+        FROM places place WHERE place.id = $1
+      `, [roomId])
+      assert.deepEqual(installed.rows, [{
+        founding_name: 'test-room',
+        history_rows: 1,
+        history_trigger: 'places_record_founding_name_history',
+        public_records: 'city_snapshot.public_records',
+        public_records_v2: 'city_snapshot.public_records_v2',
+        export_can_read_v2: true,
+      }])
+
+      const candidate = await database!.connect()
+      try {
+        await candidate.query('BEGIN')
+        const inserted = (await candidate.query<{ id: number }>(`
+          INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+          SELECT parent_id, 'place', 'discarded-candidate', '', owner_id
+          FROM places WHERE id = $1
+          RETURNING id
+        `, [roomId])).rows[0]!
+        assert.equal((await candidate.query(
+          'SELECT 1 FROM place_name_history WHERE place_id = $1',
+          [inserted.id],
+        )).rowCount, 1)
+        await candidate.query('DELETE FROM places WHERE id = $1', [inserted.id])
+        await candidate.query('COMMIT')
+        assert.equal((await database!.query(
+          'SELECT 1 FROM place_name_history WHERE place_id = $1',
+          [inserted.id],
+        )).rowCount, 0)
+      } catch (error) {
+        await candidate.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        candidate.release()
+      }
+      await assert.rejects(
+        database!.query('DELETE FROM place_name_history WHERE place_id = $1', [roomId]),
+        error => postgresCode(error) === '55000',
+      )
+      assert.equal((await database!.query(
+        'SELECT 1 FROM place_name_history WHERE place_id = $1',
+        [roomId],
+      )).rowCount, 1)
+    })
+
+    await t.test('fresh and incrementally migrated databases expose the same deep snapshot', async () => {
+      const roomId = await resetDatabase()
+      const eventId = Number((await database!.query<{ id: number }>(`
+        INSERT INTO events (kind, actor, detail, at)
+        VALUES ('place_renamed', 'founder', jsonb_build_object(
+          'place_id', $1::integer,
+          'name', 'current-room-name',
+          'former_name', 'former-room-name'
+        ), clock_timestamp())
+        RETURNING id
+      `, [roomId])).rows[0]!.id)
+      const snapshotState = async () => ({
+        definition: (await database!.query<{ definition: string }>(`
+          SELECT pg_get_viewdef(
+            'city_snapshot.public_records_without_drawing_contract'::regclass,
+            true
+          ) AS definition
+        `)).rows[0]!.definition,
+        rows: (await database!.query(`
+          SELECT class_name, record_id, payload
+          FROM city_snapshot.public_records_without_drawing_contract
+          WHERE (class_name = 'events' AND record_id = $1::text)
+            OR (class_name = 'public_presence' AND record_id = '1')
+          ORDER BY class_name
+        `, [eventId])).rows,
+      })
+
+      const fresh = await snapshotState()
+      await database!.query(preLifecycleSnapshotMigrationDdl)
+      const stale = await snapshotState()
+      assert.notDeepEqual(stale, fresh, 'the fixture must represent the pre-lifecycle snapshot')
+
+      await database!.query(placeLifecycleMigrationDdl)
+      await database!.query(placeLifecycleMigrationDdl)
+      assert.deepEqual(await snapshotState(), fresh)
+      const presence = fresh.rows.find(row => row.class_name === 'public_presence')
+      const event = fresh.rows.find(row => row.class_name === 'events')
+      assert.equal(presence?.payload.asleep, false)
+      assert.deepEqual(event?.payload.detail, {
+        place_id: roomId,
+        name: 'current-room-name',
+        former_name: 'former-room-name',
+      })
+    })
 
     await t.test('law replacement keeps typed actor IDs and append-only history', async () => {
       const roomId = await resetDatabase()
@@ -306,7 +461,7 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     })
 
     const { Hono } = await import('hono')
-    const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+    const { moveResident, setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
     const { executeEffects } = await import('../../src/engine-effects.ts')
     const { mountDrawingRoutes } = await import('../../src/drawings.ts')
     const { mountSocietyRoutes } = await import('../../src/society.ts')
@@ -321,6 +476,786 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
         ).rows,
       },
       authenticate: async () => actor,
+    })
+
+    await t.test('protected place lifecycle refusals write no fee entry', async () => {
+      const roomId = await resetDatabase()
+      const parent = await database!.query<{ parent_id: number }>(
+        'SELECT parent_id FROM places WHERE id = $1',
+        [roomId],
+      )
+      await insertProtectedGazetteRoom(parent.rows[0]!.parent_id)
+      await issueCityFeeCredit({
+        query: async (text, params = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+      }, {
+        founderId: 1,
+        residentId: 1,
+        sourceKey: 'protected-place-lifecycle-credit',
+        reason: 'prove protected lifecycle refusal happens before debit',
+      })
+
+      const actions = [
+        { body: { name: 'Forbidden rename' }, request: 'rename' },
+        { body: { retired: true }, request: 'retire' },
+        { body: { retired: false }, request: 'restore' },
+      ] as const
+      for (const placeId of [
+        Number((await database!.query<{ id: number }>(
+          "SELECT id FROM places WHERE place_kind = 'world'",
+        )).rows[0]!.id),
+        454,
+      ]) {
+        for (const action of actions) {
+          const response = await app.request(`/api/place/${placeId}`, {
+            method: 'PATCH',
+            headers: {
+              ...bearer(founderSecret),
+              'content-type': 'application/json',
+              'X-1F3D9-FEE-CREDIT': `protected-${placeId}-${action.request}`,
+            },
+            body: JSON.stringify(action.body),
+          })
+          assert.equal(response.status, 409, await response.clone().text())
+          assert.deepEqual(await response.json(), {
+            error: 'place is protected and cannot be renamed, retired, or restored',
+          })
+        }
+      }
+
+      assert.deepEqual((await database!.query(`
+        SELECT account.balance_units::text AS balance_units,
+          (SELECT count(*)::integer FROM city_credit_entries entry
+            WHERE entry.resident_id = 1 AND entry.entry_kind IN ('spend', 'return')) AS fee_entries,
+          (SELECT count(*)::integer FROM payment_attempts attempt
+            WHERE attempt.actor_id = 1
+              AND attempt.operation IN ('place_rename', 'place_retire', 'place_restore')) AS attempts
+        FROM city_credit_accounts account WHERE account.resident_id = 1
+      `)).rows, [{ balance_units: '1000000', fee_entries: 0, attempts: 0 }])
+    })
+
+    await t.test('locked lifecycle completion refuses a protected Gazette debit without an effect', async () => {
+      const { completePlaceLifecycleOperation } = await import('../../src/place-lifecycle-operation.ts')
+      const roomId = await resetDatabase()
+      const parent = await database!.query<{ parent_id: number }>(
+        'SELECT parent_id FROM places WHERE id = $1',
+        [roomId],
+      )
+      await insertProtectedGazetteRoom(parent.rows[0]!.parent_id)
+      const creditDatabase = {
+        query: async (text: string, params: readonly unknown[] | unknown[] = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+        transaction: async <T>(work: (transaction: {
+          query: (text: string, params?: readonly unknown[] | unknown[]) => Promise<readonly Record<string, unknown>[]>
+        }) => Promise<T>): Promise<T> => {
+          const connection = await database!.connect()
+          try {
+            await connection.query('BEGIN')
+            const result = await work({
+              query: async (text, params = []) => (
+                await connection.query(text, [...params])
+              ).rows,
+            })
+            await connection.query('COMMIT')
+            return result
+          } catch (error) {
+            await connection.query('ROLLBACK')
+            throw error
+          } finally {
+            connection.release()
+          }
+        },
+      }
+      await issueCityFeeCredit(creditDatabase, {
+        founderId: 1,
+        residentId: 1,
+        sourceKey: 'protected-gazette-locked-credit',
+        reason: 'exercise the protected Gazette locked recheck',
+      })
+      const requestId = 'protected-gazette-locked-rename'
+      const spend = await beginCityCreditSpend(creditDatabase, {
+        actorId: 1,
+        operation: 'place_rename',
+        targetKey: `place:454:rename:${requestId}`,
+        request: { place_id: 454, name: 'Forbidden rename' },
+        requestId,
+        assetType: 'place',
+        assetId: 454,
+      })
+      assert.equal(spend.state, 'ready')
+      if (spend.state !== 'ready') assert.fail('protected Gazette spend was not parked for completion')
+
+      const completion = await completePlaceLifecycleOperation(creditDatabase, {
+        attemptId: spend.attempt_id,
+        leaseOwner: spend.lease_owner,
+      })
+      assert.deepEqual(completion, {
+        state: 'target_changed',
+        attemptId: spend.attempt_id,
+        reason: 'place is protected and cannot be renamed, retired, or restored',
+      })
+      await returnCityCreditSpend(creditDatabase, {
+        actorId: 1,
+        attemptId: spend.attempt_id,
+        leaseOwner: spend.lease_owner,
+        reason: completion.reason,
+        responseStatus: 409,
+        response: { error: completion.reason },
+      })
+
+      assert.deepEqual((await database!.query(`
+        SELECT place.name, place.retired_at,
+          account.balance_units::text AS balance_units,
+          (SELECT count(*)::integer FROM city_credit_entries entry
+            WHERE entry.resident_id = 1 AND entry.entry_kind = 'spend') AS spends,
+          (SELECT count(*)::integer FROM city_credit_entries entry
+            WHERE entry.resident_id = 1 AND entry.entry_kind = 'return') AS returns,
+          (SELECT count(*)::integer FROM events event
+            WHERE event.kind IN ('place_renamed', 'place_retired', 'place_restored')) AS lifecycle_events
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = 454
+      `)).rows, [{
+        name: 'the gazette submission room',
+        retired_at: null,
+        balance_units: '1000000',
+        spends: 1,
+        returns: 1,
+        lifecycle_events: 0,
+      }])
+    })
+
+    await t.test('rename, retire, and restore spend atomically while preserving place history', async () => {
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK')
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      try {
+        const roomId = await resetDatabase()
+      const creditDatabase: CityCreditDatabase = {
+        query: async (text, params = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+      }
+      for (let index = 0; index < 5; index += 1) {
+        await issueCityFeeCredit(creditDatabase, {
+          founderId: 1,
+          residentId: 1,
+          sourceKey: `place-lifecycle-credit-${index}`,
+          reason: `fund place lifecycle integration act ${index}`,
+        })
+      }
+      await database!.query(`
+        INSERT INTO notes (place_id, author_id, body)
+        VALUES ($1, 1, 'This note must remain readable at the tombstone.')
+      `, [roomId])
+
+      const rename = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-rename-integration-0001',
+        },
+        body: JSON.stringify({ name: 'The quiet porch' }),
+      })
+      assert.equal(rename.status, 200, await rename.clone().text())
+      assert.equal((await rename.json() as { place: { name: string } }).place.name, 'The quiet porch')
+
+      const refusedRetire = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-retire-not-empty-0001',
+        },
+        body: JSON.stringify({ retired: true }),
+      })
+      assert.equal(refusedRetire.status, 409, await refusedRetire.clone().text())
+      assert.match(await refusedRetire.text(), /place is not empty.*1 thing/iu)
+
+      const afterRefusal = await database!.query<{
+        name: string
+        retired_at: Date | null
+        balance_units: string
+        spends: number
+        returns: number
+      }>(`
+        SELECT place.name, place.retired_at,
+          account.balance_units::text AS balance_units,
+          (SELECT count(*)::integer FROM city_credit_entries
+            WHERE resident_id = 1 AND entry_kind = 'spend') AS spends,
+          (SELECT count(*)::integer FROM city_credit_entries
+            WHERE resident_id = 1 AND entry_kind = 'return') AS returns
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = $1
+      `, [roomId])
+      assert.deepEqual(afterRefusal.rows, [{
+        name: 'The quiet porch', retired_at: null, balance_units: '4000000', spends: 1, returns: 0,
+      }])
+
+      const withdrawn = await withdrawThing(actor, 1, 'withdrawn')
+      assert.equal('error' in withdrawn, false)
+      const retire = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-retire-integration-0001',
+        },
+        body: JSON.stringify({ retired: true }),
+      })
+      assert.equal(retire.status, 200, await retire.clone().text())
+
+      const tombstoneResponse = await app.request(`/api/place/${roomId}`)
+      assert.equal(tombstoneResponse.status, 200, await tombstoneResponse.clone().text())
+      const tombstone = await tombstoneResponse.json() as {
+        tombstone: { id: number; name: string; retired_at: string }
+        notes: Array<{ body: string }>
+      }
+      assert.equal(tombstone.tombstone.id, roomId)
+      assert.equal(tombstone.tombstone.name, 'The quiet porch')
+      assert.ok(Number.isFinite(Date.parse(tombstone.tombstone.retired_at)))
+      assert.deepEqual(tombstone.notes.map(note => note.body), [
+        'This note must remain readable at the tombstone.',
+      ])
+
+      const restore = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-restore-integration-0001',
+        },
+        body: JSON.stringify({ retired: false }),
+      })
+      assert.equal(restore.status, 200, await restore.clone().text())
+
+      const retiredChild = (await database!.query<{ id: number }>(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+        VALUES ($1, 'place', 'retired-child', '', 1)
+        RETURNING id
+      `, [roomId])).rows[0]!
+      await database!.query('UPDATE places SET retired_at = now() WHERE id = $1', [retiredChild.id])
+
+      const repeatRetire = await app.request(`/api/place/${roomId}`, {
+        // A retired child is a tombstone, not live occupancy.
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-retire-integration-0002',
+        },
+        body: JSON.stringify({ retired: true }),
+      })
+      assert.equal(repeatRetire.status, 200, await repeatRetire.clone().text())
+      assert.equal((await database!.query<{ retired: boolean }>(`
+        SELECT retired_at IS NOT NULL AS retired FROM places WHERE id = $1
+      `, [retiredChild.id])).rows[0]?.retired, true)
+      await assert.rejects(
+        database!.query('UPDATE places SET retired_at = NULL WHERE id = $1', [retiredChild.id]),
+        error => postgresCode(error) === '23514',
+      )
+      const refusedChildRestore = await app.request(`/api/place/${retiredChild.id}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-child-restore-refused-0001',
+        },
+        body: JSON.stringify({ retired: false }),
+      })
+      assert.equal(refusedChildRestore.status, 409, await refusedChildRestore.clone().text())
+      assert.deepEqual(await refusedChildRestore.json(), {
+        error: 'parent place is retired; restore it before restoring this place',
+      })
+      const repeatRestore = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-restore-integration-0002',
+        },
+        body: JSON.stringify({ retired: false }),
+      })
+      assert.equal(repeatRestore.status, 200, await repeatRestore.clone().text())
+
+      const durable = await database!.query(`
+        SELECT place.name, place.founding_name, place.retired_at,
+          (SELECT jsonb_agg(jsonb_build_object(
+            'name', history.name,
+            'started_at', history.started_at,
+            'ended_at', history.ended_at
+          ) ORDER BY history.id)
+          FROM place_name_spans history WHERE history.place_id = place.id) AS name_history,
+          (SELECT array_agg(event.kind ORDER BY event.id)
+          FROM events event
+          WHERE (event.detail->>'place_id')::integer = place.id
+            AND event.kind IN ('place_renamed', 'place_retired', 'place_restored')) AS lifecycle_events,
+          account.balance_units::text AS balance_units
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = $1
+      `, [roomId])
+      assert.equal(durable.rows[0]!.name, 'The quiet porch')
+      assert.equal(durable.rows[0]!.founding_name, 'test-room')
+      assert.equal(durable.rows[0]!.retired_at, null)
+      assert.deepEqual(
+        (durable.rows[0]!.name_history as Array<{ name: string; ended_at: string | null }>).map(
+          span => ({ name: span.name, ended: span.ended_at === null ? null : 'closed' }),
+        ),
+        [{ name: 'test-room', ended: 'closed' }, { name: 'The quiet porch', ended: null }],
+      )
+      assert.deepEqual(durable.rows[0]!.lifecycle_events, [
+        'place_renamed', 'place_retired', 'place_restored', 'place_retired', 'place_restored',
+      ])
+      assert.equal(durable.rows[0]!.balance_units, '0')
+
+      await database!.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('place', $1, 'remove', 1, 'place lifecycle snapshot regression')
+      `, [roomId])
+      const snapshotRows = await database!.query<{
+        class_name: string
+        payload: {
+          name?: string
+          founding_name?: string
+          name_history?: Array<{ name: string }>
+          detail?: { name?: string; former_name?: string }
+        }
+      }>(`
+        SELECT record.class_name, record.payload
+        FROM city_snapshot.public_records_v2 record
+        WHERE (record.class_name = 'places' AND record.record_id = $1::text)
+          OR (
+            record.class_name = 'events'
+            AND record.record_id = (
+              SELECT event.id::text FROM events event
+              WHERE event.kind = 'place_renamed'
+                AND (event.detail->>'place_id')::integer = $1::integer
+              ORDER BY event.id DESC LIMIT 1
+            )
+          )
+        ORDER BY record.class_name
+      `, [roomId])
+      const snapshotEvent = snapshotRows.rows.find(row => row.class_name === 'events')?.payload
+      const snapshotPlace = snapshotRows.rows.find(row => row.class_name === 'places')?.payload
+      assert.ok(snapshotPlace, JSON.stringify(snapshotRows.rows))
+      assert.ok(snapshotEvent, JSON.stringify(snapshotRows.rows))
+      assert.deepEqual(snapshotPlace, { id: roomId, status: 'maintainer_hidden' })
+      assert.deepEqual(snapshotEvent?.detail, {
+        place_id: roomId,
+        name: '[removed by maintainer]',
+        former_name: '[removed by maintainer]',
+      })
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
+    })
+
+    await t.test('retirement rechecks arrivals after its place lock before spending', async () => {
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK')
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      try {
+        for (const arrival of ['subplace', 'thing', 'resident'] as const) {
+          const roomId = await resetDatabase()
+          const withdrawn = await withdrawThing(actor, 1, 'withdrawn')
+          assert.equal('error' in withdrawn, false)
+          await issueCityFeeCredit({
+            query: async (text, params = []) => (
+              await database!.query(text, [...params])
+            ).rows,
+          }, {
+            founderId: 1,
+            residentId: 1,
+            sourceKey: `place-retire-race-credit-${arrival}`,
+            reason: `fund ${arrival} retirement race test`,
+          })
+
+          const arriving = await database!.connect()
+          try {
+            await arriving.query('BEGIN')
+            if (arrival === 'subplace') {
+              await arriving.query(`
+                INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+                VALUES ($1, 'place', 'arriving-room', 'arrived during retirement', 1)
+              `, [roomId])
+            } else if (arrival === 'thing') {
+              await arriving.query(`
+                INSERT INTO things (id, place_id, name, body, owner_id, maker_id)
+                VALUES (2, $1, 'arriving-thing', 'arrived during retirement', 1, 1)
+              `, [roomId])
+            } else {
+              await arriving.query(`
+                INSERT INTO resident_presence (resident_id, current_place_id)
+                VALUES (2, $1)
+              `, [roomId])
+            }
+
+            const responsePromise = app.request(`/api/place/${roomId}`, {
+              method: 'PATCH',
+              headers: {
+                ...bearer(founderSecret),
+                'content-type': 'application/json',
+                'X-1F3D9-FEE-CREDIT': `place-retire-race-${arrival}-0001`,
+              },
+              body: JSON.stringify({ retired: true }),
+            })
+            let pending = false
+            for (let check = 0; check < 100; check += 1) {
+              const attempt = await database!.query(`
+                SELECT 1 FROM payment_attempts
+                WHERE operation = 'place_retire' AND status = 'payment_pending'
+              `)
+              if (attempt.rowCount) {
+                pending = true
+                break
+              }
+              await delay(10)
+            }
+            assert.equal(pending, true, `${arrival} race reached paid completion`)
+            await arriving.query('COMMIT')
+            const response = await responsePromise
+            assert.equal(response.status, 409, await response.clone().text())
+            assert.match(await response.text(), /place is not empty/iu)
+          } catch (error) {
+            await arriving.query('ROLLBACK').catch(() => undefined)
+            throw error
+          } finally {
+            arriving.release()
+          }
+
+          const state = await database!.query(`
+            SELECT place.retired_at, account.balance_units::text AS balance_units,
+              (SELECT count(*)::integer FROM city_credit_entries
+                WHERE resident_id = 1 AND entry_kind = 'spend') AS spends,
+              (SELECT count(*)::integer FROM city_credit_entries
+                WHERE resident_id = 1 AND entry_kind = 'return') AS returns
+            FROM places place
+            JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+            WHERE place.id = $1
+          `, [roomId])
+          assert.deepEqual(state.rows, [{
+            retired_at: null,
+            balance_units: '1000000',
+            spends: 1,
+            returns: 1,
+          }])
+        }
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
+    })
+
+    await t.test('a move waits for retirement and then refuses the retired destination', async () => {
+      const roomId = await resetDatabase()
+      const originId = Number((await database!.query<{ parent_id: number }>(
+        'SELECT parent_id FROM places WHERE id = $1',
+        [roomId],
+      )).rows[0]!.parent_id)
+      await database!.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id)
+        VALUES (2, $1)
+      `, [originId])
+
+      const retiring = await database!.connect()
+      const moving = await database!.connect()
+      try {
+        await retiring.query('BEGIN')
+        await retiring.query(`
+          /* place-lifecycle:lock-before-recheck */
+          SELECT id FROM places WHERE id = $1 FOR UPDATE
+        `, [roomId])
+        await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+
+        await moving.query('BEGIN')
+        const movingPid = Number((await moving.query<{ pid: number }>(
+          'SELECT pg_backend_pid() AS pid',
+        )).rows[0]!.pid)
+        const move = moveResident(2, roomId, transactionSql(moving)).then(
+          value => Object.freeze({ ok: true as const, value, error: null }),
+          error => Object.freeze({ ok: false as const, value: null, error }),
+        )
+
+        await assertWaitingOnDatabaseLock(movingPid, 'resident movement')
+
+        await retiring.query('COMMIT')
+        const outcome = await move
+        assert.equal(outcome.ok, false)
+        assert.deepEqual(
+          outcome.error && typeof outcome.error === 'object'
+            ? {
+                status: 'status' in outcome.error ? outcome.error.status : null,
+                message: 'message' in outcome.error ? outcome.error.message : null,
+              }
+            : null,
+          {
+            status: 409,
+            message: 'destination place is retired; restore it before moving there',
+          },
+        )
+        await moving.query('ROLLBACK')
+      } catch (error) {
+        await retiring.query('ROLLBACK').catch(() => undefined)
+        await moving.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        retiring.release()
+        moving.release()
+      }
+
+      const presence = await database!.query<{ current_place_id: number }>(`
+        SELECT current_place_id FROM resident_presence WHERE resident_id = 2
+      `)
+      assert.equal(presence.rows[0]?.current_place_id, originId)
+    })
+
+    await t.test('thing movement and making wait for retirement and leave no partial writes', async t => {
+      await t.test('an effect-driven thing move waits and refuses', async () => {
+        const roomId = await resetDatabase()
+        const originId = Number((await database!.query<{ parent_id: number }>(
+          'SELECT parent_id FROM places WHERE id = $1',
+          [roomId],
+        )).rows[0]!.parent_id)
+        await database!.query('UPDATE things SET place_id = $1 WHERE id = 1', [originId])
+
+        const retiring = await database!.connect()
+        const moving = await database!.connect()
+        try {
+          await retiring.query('BEGIN')
+          await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
+          await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          await moving.query('BEGIN')
+          const movingPid = Number((await moving.query<{ pid: number }>(
+            'SELECT pg_backend_pid() AS pid',
+          )).rows[0]!.pid)
+          const move = executeEffects([{
+            effect: 'move', target: 'source', to: 'destination',
+          }], {
+            actionId: null,
+            actorId: 1,
+            actorHandle: 'founder',
+            placeId: originId,
+            sourceThingId: 1,
+            sharedSourceThingId: null,
+            target: null,
+            destinationPlaceId: roomId,
+            recipientId: null,
+            sourceTraitId: null,
+            lawAuthority: null,
+            parentEffectId: null,
+            generation: 0,
+            logicalAt: new Date(),
+          }, transactionSql(moving)).then(
+            value => Object.freeze({ ok: true as const, value, error: null }),
+            error => Object.freeze({ ok: false as const, value: null, error }),
+          )
+          await assertWaitingOnDatabaseLock(movingPid, 'effect-driven thing movement')
+          await retiring.query('COMMIT')
+          const outcome = await move
+          assert.equal(outcome.ok, false)
+          assert.match(String(outcome.error), /destination place is retired; restore it before moving a thing there/iu)
+          await moving.query('ROLLBACK')
+        } catch (error) {
+          await retiring.query('ROLLBACK').catch(() => undefined)
+          await moving.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          retiring.release()
+          moving.release()
+        }
+
+        const unchanged = await database!.query(`
+          SELECT thing.place_id,
+            (SELECT count(*)::integer FROM events WHERE kind = 'thing_moved') AS move_events
+          FROM things thing WHERE thing.id = 1
+        `)
+        assert.deepEqual(unchanged.rows, [{ place_id: originId, move_events: 0 }])
+      })
+
+      await t.test('typed crafting waits and refuses before quota or output changes', async () => {
+        const roomId = await resetDatabase()
+        const kindId = Number((await database!.query<{ id: number }>(`
+          INSERT INTO kinds (name, owner_id, current_revision)
+          VALUES ('retirement-race-kind', 1, 1)
+          RETURNING id
+        `)).rows[0]!.id)
+        await database!.query(`
+          INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
+          VALUES ($1, 1, '', '{}', '[]')
+        `, [kindId])
+
+        const retiring = await database!.connect()
+        const making = await database!.connect()
+        try {
+          await retiring.query('BEGIN')
+          await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
+          await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          await making.query('BEGIN')
+          const makingPid = Number((await making.query<{ pid: number }>(
+            'SELECT pg_backend_pid() AS pid',
+          )).rows[0]!.pid)
+          const crafted = craftKindThing(transactionSql(making) as unknown as CraftSql, {
+            actor,
+            kindId,
+            placeId: roomId,
+            name: 'must-not-be-crafted',
+            body: '',
+            openToUse: false,
+            ingredientIds: [],
+          })
+          await assertWaitingOnDatabaseLock(makingPid, 'typed crafting')
+          await retiring.query('COMMIT')
+          assert.deepEqual(await crafted, {
+            ok: false,
+            status: 409,
+            error: 'place is retired; restore it before making things there',
+          })
+          await making.query('ROLLBACK')
+        } catch (error) {
+          await retiring.query('ROLLBACK').catch(() => undefined)
+          await making.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          retiring.release()
+          making.release()
+        }
+
+        const unchanged = await database!.query(`
+          SELECT resident.things_today,
+            (SELECT count(*)::integer FROM things WHERE name = 'must-not-be-crafted') AS outputs
+          FROM residents resident WHERE resident.id = 1
+        `)
+        assert.deepEqual(unchanged.rows, [{ things_today: 0, outputs: 0 }])
+      })
+
+      await t.test('kindless making waits and refuses before quota or output changes', async () => {
+        const roomId = await resetDatabase()
+        await database!.query(`
+          INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+          VALUES (1, $1, $1)
+        `, [roomId])
+        const retiring = await database!.connect()
+        setEngineTransactionRunnerForTests(async (_db, work) => {
+          const connection = await database!.connect()
+          try {
+            await connection.query('BEGIN')
+            const result = await work(transactionSql(connection), true)
+            await connection.query('COMMIT')
+            return result
+          } catch (error) {
+            await connection.query('ROLLBACK').catch(() => undefined)
+            throw error
+          } finally {
+            connection.release()
+          }
+        })
+        try {
+          await retiring.query('BEGIN')
+          await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
+          await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          let settled = false
+          const making = makeThingThroughEngine({
+            actor,
+            placeId: roomId,
+            name: 'must-not-be-made',
+            body: '',
+            kindId: null,
+            ingredientIds: [],
+          }).then(result => {
+            settled = true
+            return result
+          })
+          await delay(100)
+          assert.equal(settled, false, 'kindless making did not wait for retirement')
+          await retiring.query('COMMIT')
+          assert.deepEqual(await making, {
+            ok: false,
+            status: 409,
+            error: 'place is retired; restore it before making things there',
+          })
+        } catch (error) {
+          await retiring.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          setEngineTransactionRunnerForTests(null)
+          retiring.release()
+        }
+
+        const unchanged = await database!.query(`
+          SELECT resident.things_today,
+            (SELECT count(*)::integer FROM things WHERE name = 'must-not-be-made') AS outputs
+          FROM residents resident WHERE resident.id = 1
+        `)
+        assert.deepEqual(unchanged.rows, [{ things_today: 0, outputs: 0 }])
+      })
+    })
+
+    await t.test('place lifecycle fails closed before spending when its migration is absent', async () => {
+      const roomId = await resetDatabase()
+      await issueCityFeeCredit({
+        query: async (text, params = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+      }, {
+        founderId: 1,
+        residentId: 1,
+        sourceKey: 'place-lifecycle-missing-schema-credit',
+        reason: 'prove lifecycle rollout fails before spending',
+      })
+      await database!.query('DROP TABLE place_name_history CASCADE')
+
+      const response = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-lifecycle-missing-schema-0001',
+        },
+        body: JSON.stringify({ name: 'must-not-change' }),
+      })
+      assert.equal(response.status, 503, await response.clone().text())
+      assert.deepEqual(await response.json(), {
+        error: 'place rename, retire, and restore are unavailable until the place lifecycle migration has run',
+      })
+      const unchanged = await database!.query<{
+        name: string
+        balance_units: string
+        spends: number
+      }>(`
+        SELECT place.name, account.balance_units::text,
+          (SELECT count(*)::integer FROM city_credit_entries
+            WHERE resident_id = 1 AND entry_kind = 'spend') AS spends
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = $1
+      `, [roomId])
+      assert.deepEqual(unchanged.rows, [{ name: 'test-room', balance_units: '1000000', spends: 0 }])
     })
 
     await t.test('fresh schema attributes the exact world drawing to the founder once', async () => {

@@ -253,7 +253,7 @@ test('the read-only live probe enforces the public kind drawing contract', () =>
   )].map(match => match[1])
   assert.deepEqual(contractAssertions, [
     'A kind revision publishes at most eight variants drawn and described by that exact revision owner.',
-    'it pays only for frontier founding, kind invention, and kind revision',
+    'frontier founding, kind invention, and kind revision accept either rail, while place rename, retirement, and restoration require exactly one prepaid city fee credit',
   ])
   for (const assertion of contractAssertions) {
     assert.ok(

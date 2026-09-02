@@ -8,6 +8,14 @@ export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>>
   readonly id: number
   readonly parent_id: number | null
   readonly name: string
+  readonly founding_name: string
+  readonly name_history: readonly Readonly<{
+    name: string
+    started_at: string
+    ended_at: string | null
+  }>[]
+  readonly retired_at: string | null
+  readonly status: 'active' | 'retired'
   readonly purpose: string
   readonly description_text_bytes: number
   readonly front_matter: readonly PublicFrontMatterHeading[]
@@ -70,9 +78,41 @@ function publicTimestamp(value: unknown): string {
   throw new Error('public map created_at is invalid')
 }
 
+function nullablePublicTimestamp(value: unknown, field: string): string | null {
+  if (value == null) return null
+  try {
+    return publicTimestamp(value)
+  } catch {
+    throw new Error(`public map ${field} is invalid`)
+  }
+}
+
+function nameHistory(value: unknown): PublicMapOutlinePlace['name_history'] {
+  if (!Array.isArray(value)) throw new Error('public map name history is invalid')
+  return Object.freeze(value.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error('public map name history is invalid')
+    }
+    const span = item as Record<string, unknown>
+    if (typeof span.name !== 'string') throw new Error('public map name history is invalid')
+    return Object.freeze({
+      name: span.name,
+      started_at: publicTimestamp(span.started_at),
+      ended_at: nullablePublicTimestamp(span.ended_at, 'name history ended_at'),
+    })
+  }))
+}
+
 function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlinePlace {
   const id = nullablePositiveId(row.id, 'place id')
-  if (id == null || typeof row.name !== 'string' || typeof row.purpose !== 'string') {
+  const foundingName = typeof row.founding_name === 'string' ? row.founding_name : row.name
+  const retiredAt = nullablePublicTimestamp(row.retired_at, 'retired_at')
+  const status = row.status ?? (retiredAt === null ? 'active' : 'retired')
+  if (
+    id == null || typeof row.name !== 'string' || typeof foundingName !== 'string'
+    || typeof row.purpose !== 'string'
+    || (status !== 'active' && status !== 'retired')
+  ) {
     throw new Error('public map place is invalid')
   }
   const parentId = nullablePositiveId(row.parent_id, 'parent id')
@@ -92,6 +132,14 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     id,
     parent_id: parentId,
     name: row.name,
+    founding_name: foundingName,
+    name_history: nameHistory(row.name_history ?? [{
+      name: row.name,
+      started_at: row.created_at,
+      ended_at: null,
+    }]),
+    retired_at: retiredAt,
+    status,
     purpose: row.purpose,
     description_text_bytes: descriptionTextBytes,
     front_matter: Object.freeze([]),
@@ -116,7 +164,10 @@ export async function readPublicMapOutline(
   const rawRows = await sql.query(
     `/* public:map-outline */
      WITH outline_parent AS MATERIALIZED (
-       SELECT p.id, p.parent_id, p.name, p.purpose,
+       SELECT p.id, p.parent_id, p.name, p.founding_name,
+         history.name_history, p.retired_at,
+         CASE WHEN p.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
+         p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
@@ -127,8 +178,26 @@ export async function readPublicMapOutline(
        FROM places p
        JOIN place_reading_totals totals ON totals.place_id = p.id
        LEFT JOIN residents owner ON owner.id = p.owner_id
+       LEFT JOIN LATERAL (
+         SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'name', span.name,
+           'started_at', to_char(span.started_at AT TIME ZONE 'UTC',
+             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+           'ended_at', CASE WHEN span.ended_at IS NULL THEN NULL ELSE to_char(
+             span.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END
+         ) ORDER BY span.started_at, span.id), '[]'::jsonb) AS name_history
+         FROM (
+           SELECT history.id, history.name, history.started_at,
+             lead(history.started_at) OVER (
+               PARTITION BY history.place_id ORDER BY history.started_at, history.id
+             ) AS ended_at
+           FROM place_name_history history
+           WHERE history.place_id = p.id
+         ) span
+       ) history ON TRUE
        WHERE ($1::integer IS NOT NULL AND p.id = $1::integer)
          OR ($1::integer IS NULL
+           AND p.retired_at IS NULL
            AND p.parent_id IS NULL
            AND p.owner_id IS NULL
            AND p.place_kind = 'world'
@@ -136,7 +205,8 @@ export async function readPublicMapOutline(
        ORDER BY p.id
        LIMIT 1
      ), subplace_page AS MATERIALIZED (
-       SELECT p.id, p.parent_id, p.name, p.purpose,
+       SELECT p.id, p.parent_id, p.name, p.founding_name,
+         history.name_history, p.retired_at, 'active'::text AS status, p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
@@ -147,7 +217,25 @@ export async function readPublicMapOutline(
        JOIN places p ON p.parent_id = parent.id
        JOIN place_reading_totals child_totals ON child_totals.place_id = p.id
        LEFT JOIN residents owner ON owner.id = p.owner_id
+       LEFT JOIN LATERAL (
+         SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'name', span.name,
+           'started_at', to_char(span.started_at AT TIME ZONE 'UTC',
+             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+           'ended_at', CASE WHEN span.ended_at IS NULL THEN NULL ELSE to_char(
+             span.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END
+         ) ORDER BY span.started_at, span.id), '[]'::jsonb) AS name_history
+         FROM (
+           SELECT history.id, history.name, history.started_at,
+             lead(history.started_at) OVER (
+               PARTITION BY history.place_id ORDER BY history.started_at, history.id
+             ) AS ended_at
+           FROM place_name_history history
+           WHERE history.place_id = p.id
+         ) span
+       ) history ON TRUE
        WHERE ($3::integer IS NULL OR p.id < $3::integer)
+         AND p.retired_at IS NULL
        ORDER BY p.id DESC
        LIMIT $4::integer
      )

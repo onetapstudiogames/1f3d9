@@ -4124,9 +4124,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const parentId = rawPlace.parent_id === null ? null : safeId(rawPlace.parent_id)
       const owner = rawPlace.owner === null ? null : safeHandle(rawPlace.owner)
       const name = safeText(rawPlace.name, '', 120, false)
+      const foundingName = safeText(rawPlace.founding_name ?? rawPlace.name, '', 120, false)
+      const retiredAt = rawPlace.retired_at == null ? null : safeDate(rawPlace.retired_at)
+      const placeStatus = rawPlace.status ?? (retiredAt ? 'retired' : 'active')
+      const nameHistory = Array.isArray(rawPlace.name_history)
+        ? rawPlace.name_history.flatMap(span => {
+            if (!span || typeof span !== 'object') return []
+            const spanName = safeText(span.name, '', 120, false)
+            const startedAt = safeDate(span.started_at)
+            const endedAt = span.ended_at == null ? null : safeDate(span.ended_at)
+            return spanName && startedAt && (span.ended_at == null || endedAt)
+              ? [Object.freeze({ name: spanName, startedAt, endedAt })]
+              : []
+          })
+        : []
       const isOwnerlessWorld = rawPlace.owner === null && parentId === null && name === WORLD_ROOT_NAME
       if (
-        !id || !name || seen.has(id) ||
+        !id || !name || !foundingName || seen.has(id) ||
+        (placeStatus !== 'active' && placeStatus !== 'retired') ||
+        (rawPlace.retired_at != null && !retiredAt) ||
         (!owner && !isOwnerlessWorld) ||
         (rawPlace.parent_id !== null && !parentId)
       ) return []
@@ -4136,6 +4152,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
         id,
         parent_id: parentId,
         name,
+        foundingName,
+        nameHistory: Object.freeze(nameHistory),
+        retiredAt,
+        status: placeStatus,
         purpose: moderated ? '' : safePlacePurpose(rawPlace.purpose),
         front_matter: moderated ? [] : normalizeFrontMatter(rawPlace.front_matter),
         owner,
@@ -6546,6 +6566,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
           return item
         }))
         card.append(headings)
+      }
+      if (place.status === 'retired' && place.retiredAt) {
+        card.append(element(
+          'p',
+          'moderated-mark',
+          'Retired ' + place.retiredAt.toLocaleString() +
+            ' · founding name ' + place.foundingName + ' · stable place #' + String(place.id),
+        ))
       }
       if (hasChildren) {
         const childrenId = 'place-children-' + String(place.id)
@@ -9701,7 +9729,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
   }
 
   function normalizeDetailRecord(kind, id, payload) {
-    const raw = payload && typeof payload === 'object' ? payload[kind] : null
+    const raw = payload && typeof payload === 'object'
+      ? kind === 'place' ? payload.place || payload.tombstone : payload[kind]
+      : null
     if (!raw || typeof raw !== 'object' || safeId(raw.id) !== id) return null
     if (kind === 'place') {
       const description = raw.moderated === true
@@ -10769,11 +10799,25 @@ ${WINDOW_CLIENT_SAFETY_JS}
       hideHistoryControl(nodes.placeNotesPage)
       return
     }
-    if (nodes.placeTitle) nodes.placeTitle.textContent = place.name
-    if (nodes.placeSummary) nodes.placeSummary.textContent = place.path + (place.owner
-      ? ' · kept by ' + place.owner
-      : ' · nobody owns it · transit only') +
-      (state.placeId ? ' · showing this place and everything inside it' : '')
+    if (nodes.placeTitle) nodes.placeTitle.textContent = place.name +
+      (place.status === 'retired' ? ' · retired' : '')
+    if (nodes.placeSummary) {
+      if (place.status === 'retired' && place.retiredAt) {
+        const history = place.nameHistory.length
+          ? ' Name history: ' + place.nameHistory.map(span => span.name + ' (' +
+            span.startedAt.toLocaleDateString() + '–' +
+            (span.endedAt ? span.endedAt.toLocaleDateString() : 'current') + ')').join(' → ') + '.'
+          : ''
+        nodes.placeSummary.textContent = 'This place was retired ' +
+          place.retiredAt.toLocaleString() + '. Founding name: ' + place.foundingName + '.' + history +
+          ' Its stable address is place #' + String(place.id) + '; its notes remain public below.'
+      } else {
+        nodes.placeSummary.textContent = place.path + (place.owner
+          ? ' · kept by ' + place.owner
+          : ' · nobody owns it · transit only') +
+          (state.placeId ? ' · showing this place and everything inside it' : '')
+      }
+    }
     renderPlaceOrientation(place)
     renderOccupants(snapshot, place)
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
