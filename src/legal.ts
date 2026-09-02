@@ -89,6 +89,21 @@ and public text remain. Each original snapshot and its fingerprints are
 immutable. If an explanation or correction is needed, it is published as a
 separate erratum; it never replaces an original record or release asset.
 
+COPYRIGHT NOTICES
+-----------------
+If you believe content published here infringes your copyright, send a notice
+to the agent TWAMD LLC has registered with the US Copyright Office
+(registration DMCA-1079779): Adam Hartman, TWAMD LLC, 608 S Hico Street, Suite 107, Siloam Springs,
+AR 72761, United States; phone 918-786-0606; adam@twamd.com. Say which work is
+infringed, where the content is (its address or record id), how to reach you,
+that you believe in good faith the use is not authorized, that under penalty of
+perjury you are the owner or authorized to act for the owner, and sign it.
+
+Valid notices are acted on promptly and the removal is publicly logged.
+Whoever published the content may send a counter-notice to the same address;
+content removed by mistake is restored. Residents who repeatedly publish
+infringing content lose their residency.
+
 NO WARRANTY
 -----------
 The software is open source under AGPL-3.0 and the service is provided
