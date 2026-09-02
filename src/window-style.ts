@@ -724,6 +724,7 @@ button { color: inherit; }
   background: var(--signal);
   box-shadow: 0 0 0 2px var(--line), 3px 3px 0 rgba(0, 0, 0, 0.46);
 }
+.live-resident-tag[data-live-follow-resident] { z-index: 3; }
 .live-resident-tag[data-live-intent="true"] { z-index: 4; }
 .live-resident-tag[data-live-raised="true"] {
   z-index: 6;
@@ -742,13 +743,6 @@ button { color: inherit; }
     linear-gradient(90deg, rgba(148, 199, 188, 0.08) 1px, transparent 1px);
   background-size: var(--live-world-tile, 3.5rem) var(--live-world-tile, 3.5rem);
   image-rendering: pixelated;
-}
-.live-world-ground > .drawing-grid {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  aspect-ratio: auto;
 }
 .live-plates {
   position: absolute;
@@ -912,8 +906,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .front-matter-title,
 .thing-index-title,
 .place-card-thing,
-.activity-thing-reference,
-.live-ledger-thing-reference {
+.activity-thing-reference {
   display: inline-flex;
   gap: 0.35rem;
   align-items: center;
@@ -1053,54 +1046,9 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-thing-name { overflow-wrap: anywhere; }
 .live-thing-specimen > .entity-portrait { width: 2.5rem; height: 2.5rem; }
 .live-trace-arrowhead { fill: var(--brick); }
-.live-footnote-mark, .live-action-mark {
-  position: absolute;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  min-width: 24px;
-  min-height: 24px;
-  padding: 0.12rem;
-  transform: translate(-50%, -50%);
-  color: var(--ink);
-  background: var(--signal);
-  border: 2px solid var(--line);
-  border-radius: 0;
-  pointer-events: auto;
-  font: 900 0.62rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
-}
-.live-footnote-mark { cursor: pointer; }
-.live-action-mark { color: #fff; background: var(--brick); }
 [data-live-key][data-highlighted="true"] { outline: 4px solid var(--signal); outline-offset: 2px; }
 .live-trail[data-highlighted="true"] { stroke: var(--signal); stroke-width: 2; }
 .live-pulse { animation: live-print-pulse 600ms steps(2, end) 1; }
-.live-ledger-panel {
-  padding: 1rem clamp(0.8rem, 2.5vw, 1.25rem) 1.25rem;
-  color: var(--paper-light);
-  background: var(--forest-deep);
-  border-top: 4px solid var(--line);
-}
-.live-ledger-panel h3 {
-  margin: 0.35rem 0 0.75rem;
-  font-family: "Arial Narrow", "Aptos Narrow", system-ui, sans-serif;
-  font-size: 1.45rem;
-  text-transform: uppercase;
-}
-.live-ledger { display: grid; gap: 0; padding: 0; margin: 0; list-style: none; }
-.live-ledger-row {
-  display: grid;
-  grid-template-columns: 2.3rem minmax(0, 1fr) auto;
-  gap: 0.65rem;
-  align-items: baseline;
-  min-height: 44px;
-  padding: 0.65rem 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.25);
-  cursor: default;
-}
-.live-ledger-number { color: var(--signal); font: 900 0.68rem ui-monospace, monospace; }
-.live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 0.72rem; line-height: 1.5; }
-.live-ledger-time { color: var(--sky); font: 0.58rem ui-monospace, monospace; white-space: nowrap; }
-.live-ledger-thing-reference { grid-column: 2; justify-self: start; color: var(--paper-light); }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
 .live-roster-list .resident-row { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: normal; align-items: center; }
 .live-roster-list .resident-row:has(> .entity-portrait) { grid-template-columns: 2rem minmax(0, 1fr); }
@@ -1214,25 +1162,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5);
 }
 .live-plot[data-undrawn="true"] { background: transparent; border-style: dashed; box-shadow: none; }
-.live-plot-terrain {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  display: block;
-  overflow: hidden;
-  background-color: #20423a;
-  image-rendering: pixelated;
-}
-.live-plot-terrain > .drawing-grid {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  aspect-ratio: auto;
-}
-.live-plot-terrain > canvas.drawing-grid { height: auto; }
-.live-plot-terrain .drawing-undrawn-label { display: none; }
-.live-plot-terrain > .drawing-grid .drawing-undrawn-label { display: block; }
 .drawing-detail-open {
   display: inline-flex;
   align-items: center;
@@ -1281,21 +1210,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-plot-name {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.live-plot-owner {
-  position: absolute;
-  z-index: 7;
-  inset: 1.1rem auto auto 0.45rem;
-  max-width: calc(100% - 0.9rem);
-  margin: 0;
-  padding: 0.1rem 0.28rem;
-  overflow: hidden;
-  color: var(--ink);
-  background: rgba(255, 249, 232, 0.88);
-  font: 800 0.5rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  pointer-events: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1397,9 +1311,12 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-replay-portrait {
   z-index: 18;
   will-change: transform;
-  animation-name: live-recorded-glide;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
+}
+.live-replay-portrait[data-live-movement] { animation-name: live-recorded-glide; }
+.live-replay-portrait[data-live-movement="detail"] {
+  will-change: offset-distance;
 }
 .live-root-walkers .live-resident-more { pointer-events: auto; }
 .live-root-walkers:has(.live-walker:hover),
@@ -1549,7 +1466,17 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   overflow: visible;
   pointer-events: none;
 }
+.live-footstep-layer {
+  position: absolute;
+  z-index: 11;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
 .live-trail {
+  fill: none;
   stroke: var(--brick);
   stroke-width: 2.5;
   stroke-dasharray: 7 6;
@@ -1558,6 +1485,14 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   pointer-events: stroke;
   cursor: pointer;
   transition: opacity 420ms linear;
+}
+.live-footstep {
+  fill: var(--brick);
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+.live-footstep-walking {
+  animation: live-footstep-fade 2s ease-out 1 both;
 }
 .live-trail-inking, .live-trail[data-replaying="true"] {
   animation: live-trail-ink var(--live-trail-duration, 3.2s) linear both;
@@ -1569,6 +1504,295 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   border: 0.32rem solid transparent;
   border-top-color: var(--line);
 }
+
+/* Live round 2: drawings are the objects. Sprite hit areas stay generous,
+   while every transparent pixel reveals the surveyed ground beneath it. */
+#live-panel .drawing-grid,
+#live-panel .drawing-authored-shell,
+#live-panel .drawing-refused,
+#live-panel .drawing-in_progress,
+#live-panel .drawing-blank,
+#live-panel .drawing-undrawn {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+#live-panel .live-neutral-marker {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  background: transparent;
+  opacity: 1;
+}
+#live-panel .live-neutral-marker::before {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 0.72rem;
+  height: 0.72rem;
+  transform: translate(-50%, -50%);
+  background: rgba(148, 199, 188, 0.26);
+  border: 2px solid var(--sky);
+  border-radius: 50%;
+}
+.live-portrait,
+.live-walker .live-portrait,
+.live-replay-portrait .live-portrait {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.live-portrait:focus-visible,
+.live-thing-specimen:focus-visible,
+.live-plot-open:focus-visible,
+.live-root-place-sprite:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.live-walker[data-live-focus-resident] .live-portrait,
+.live-replay-portrait[data-live-focus-resident] .live-portrait {
+  outline: 4px solid var(--signal);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+.live-resident-tag,
+.live-resident-tag[data-live-focus-resident],
+.live-resident-tag[data-live-raised="true"] {
+  padding: 0;
+  color: var(--paper-light);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-shadow: 0 1px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
+}
+.live-plot,
+.live-plot[data-live-detail="false"],
+.live-plot[data-place-kind="continent"],
+.live-plot[data-undrawn="true"] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.live-plot[data-live-detail="false"] {
+  width: 4.5rem !important;
+  height: 5.25rem !important;
+  min-width: 4.5rem;
+  min-height: 5.25rem;
+}
+.live-plot[data-live-detail="false"] > [data-live-notes-slot-id] { display: block; }
+.live-plot-open,
+.live-root-place-sprite {
+  position: absolute;
+  z-index: 8;
+  inset: 0 auto auto 50%;
+  display: grid;
+  grid-template-rows: 3.5rem auto;
+  justify-items: center;
+  width: 5.5rem;
+  min-width: 44px;
+  min-height: 44px;
+  gap: 0.22rem;
+  padding: 0;
+  transform: translateX(-50%);
+  overflow: visible;
+  color: var(--paper-light);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  cursor: pointer;
+  font: 900 0.58rem/1.15 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-align: center;
+  text-shadow: 0 1px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
+}
+.live-plot-open::after { content: none; }
+.live-plot-open:hover { background: transparent; }
+.live-plot-open > .drawing-grid,
+.live-root-place-sprite > .drawing-grid {
+  width: 3.5rem;
+  height: 3.5rem;
+  grid-row: 1;
+}
+.live-plot-name {
+  grid-row: 2;
+  max-width: 9rem;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.live-plot-number {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.live-root-place-item {
+  position: absolute;
+  z-index: 18;
+  inset: 1rem auto auto 1rem;
+  width: 7rem;
+  height: 7rem;
+  pointer-events: auto;
+}
+.live-root-place-sprite { inset-inline-start: 2.75rem; }
+.live-place-notes,
+.live-place-notes-pending,
+.live-place-notes-retry {
+  position: absolute;
+  z-index: 22;
+  inset: 0.35rem 0.35rem auto auto;
+  min-width: 44px;
+  min-height: 32px;
+  padding: 0.18rem 0.35rem;
+  color: var(--ink);
+  background: rgba(148, 199, 188, 0.92);
+  border: 2px solid var(--line);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.34);
+  cursor: pointer;
+  pointer-events: auto;
+  font: 900 0.52rem/1.15 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: nowrap;
+}
+.live-place-notes-pending {
+  opacity: 0.72;
+  cursor: wait;
+  pointer-events: none;
+}
+.live-place-notes-retry { cursor: pointer; }
+.live-root-notes { inset: auto auto 0 0; }
+.live-thing-specimen,
+.live-plot .live-thing-specimen,
+.live-root-thing-shelf > .live-thing-specimen {
+  display: grid;
+  grid-template-columns: 3rem;
+  grid-template-rows: 3rem auto;
+  justify-items: center;
+  width: 4.8rem;
+  min-width: 44px;
+  min-height: 44px;
+  gap: 0.18rem;
+  padding: 0;
+  overflow: visible;
+  color: var(--paper-light);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-align: center;
+  text-shadow: 0 1px 2px #000, 1px 0 1px #000, -1px 0 1px #000;
+}
+.live-thing-specimen > .drawing-grid { width: 3rem; height: 3rem; }
+.live-thing-name {
+  width: max-content;
+  max-width: 7.5rem;
+  overflow: visible;
+  font: 850 0.5rem/1.15 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+.live-thing-specimen:hover,
+.live-thing-specimen:focus-visible,
+.live-thing-specimen[data-live-raised="true"] {
+  min-width: 44px;
+  max-width: none;
+}
+.live-stage[data-live-label-mode="far"] .live-thing-name,
+.live-stage[data-live-label-mode="far"] .live-plot-name { visibility: hidden; }
+.live-stage[data-live-label-mode="far"] .live-thing-specimen:hover .live-thing-name,
+.live-stage[data-live-label-mode="far"] .live-thing-specimen:focus-visible .live-thing-name,
+.live-stage[data-live-label-mode="far"] [data-live-raised="true"] .live-thing-name,
+.live-stage[data-live-label-mode="far"] .live-plot-open:hover .live-plot-name,
+.live-stage[data-live-label-mode="far"] .live-plot-open:focus-visible .live-plot-name,
+.live-stage[data-live-label-mode="far"] [data-live-raised="true"] .live-plot-name {
+  visibility: visible;
+}
+.live-stage[data-live-label-mode="far"] .live-plot[data-live-detail="false"] > .live-plot-open:hover .live-plot-name,
+.live-stage[data-live-label-mode="far"] .live-plot[data-live-detail="false"] > .live-plot-open:focus-visible .live-plot-name,
+.live-stage[data-live-label-mode="far"] .live-plot[data-live-detail="false"][data-live-raised="true"] .live-plot-name {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+.live-stage[data-live-label-mode="readable"] .live-thing-name,
+.live-stage[data-live-label-mode="readable"] .live-plot-name { visibility: visible; }
+.live-stage[data-live-label-mode="readable"] .live-plot .live-thing-name {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.live-stage[data-live-label-mode="readable"]
+  .live-plot[data-live-detail="false"] .live-plot-name {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+.live-item-popover {
+  position: absolute;
+  z-index: 120;
+  max-height: min(22rem, calc(100% - 1.5rem));
+  padding: 0.55rem;
+  overflow: auto;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.48);
+  pointer-events: none;
+  font: 750 0.58rem/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.live-item-popover-title { margin: 0 0 0.4rem; font-size: 0.72rem; }
+.live-item-popover-kind { color: var(--brick); text-transform: uppercase; }
+.live-item-popover-facts { display: grid; gap: 0.25rem; margin: 0; }
+.live-item-popover-row { display: grid; grid-template-columns: minmax(5.5rem, 0.7fr) 1fr; gap: 0.4rem; }
+.live-item-popover-row dt { color: var(--muted); font-weight: 900; }
+.live-item-popover-row dd { margin: 0; overflow-wrap: anywhere; }
+.live-notes-panel {
+  margin-top: 0.7rem;
+  max-height: min(65vh, 38rem);
+  padding: 0.8rem;
+  overflow: auto;
+  color: var(--paper-light);
+  background: var(--forest-deep);
+  border: 3px solid var(--line);
+}
+.live-notes-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.live-notes-heading p, .live-notes-heading h3 { margin: 0; }
+.live-notes-heading h3 { font: 900 1.35rem "Arial Narrow", "Aptos Narrow", system-ui, sans-serif; text-transform: uppercase; }
+.live-notes-close, .live-notes-continue {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.3rem 0.55rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  cursor: pointer;
+  font: 900 0.62rem ui-monospace, monospace;
+}
+.live-notes-status { margin: 0.5rem 0; color: var(--sky); font: 750 0.62rem/1.4 ui-monospace, monospace; }
+.live-notes-selected { margin: 0 0 0.7rem; padding: 0.55rem; border: 2px solid var(--signal); }
+.live-notes-selected-title { margin: 0 0 0.4rem; color: var(--signal); font: 900 0.64rem ui-monospace, monospace; text-transform: uppercase; }
+.live-notes-selected-list { display: grid; gap: 0.55rem; padding: 0; margin: 0; list-style: none; }
+.live-notes-list { display: grid; gap: 0.55rem; padding: 0; margin: 0; list-style: none; }
+.live-note-row { padding: 0.55rem; color: var(--ink); background: var(--paper-light); border: 2px solid var(--line); }
+.live-note-row:focus { outline: 4px solid var(--focus); outline-offset: 2px; }
+.live-note-meta { margin: 0 0 0.32rem; color: var(--muted); font: 800 0.58rem ui-monospace, monospace; }
+.live-note-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-notes-page { display: flex; justify-content: center; margin-top: 0.7rem; }
+.live-notes-page[hidden] { display: none; }
+.live-speech-bubble { pointer-events: auto; cursor: pointer; }
+.live-speech-bubble[data-live-offscreen="true"],
+.live-footstep[data-live-offscreen="true"],
+.live-trail[data-live-offscreen="true"] { visibility: hidden; }
 
 @keyframes live-print-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--brick); }
@@ -1582,6 +1806,16 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
       calc(-100% + var(--live-replay-delta-y, 0px))
     );
   }
+}
+
+@keyframes live-recorded-route {
+  to { offset-distance: 100%; }
+}
+
+@keyframes live-footstep-fade {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 @keyframes live-overflow-absorb {
@@ -2340,8 +2574,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-stage-shell { padding: 0.38rem; }
   .live-viewport { height: min(64vh, 32rem); min-height: 22rem; }
   .live-stage-readout { padding-inline: 0.25rem; }
-  .live-ledger-row { grid-template-columns: 2rem minmax(0, 1fr); }
-  .live-ledger-time { grid-column: 2; }
   .conversation-mode { align-items: stretch; }
   .conversation-choices { width: 100%; }
   .conversation-mode-button { flex: 1 1 12rem; }
@@ -2390,11 +2622,13 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
-  .live-action-mark.live-pulse { display: none !important; animation: none !important; }
   .live-thing-specimen.live-pulse { animation: none !important; }
   .live-walker, .live-replay-portrait, .live-overflow-absorbing,
   .live-speech-bubble { animation: none !important; transition: none !important; }
-  .live-trail, .live-trail-inking { animation: none !important; transition: none !important; }
+  .live-trail, .live-trail-inking, .live-footstep {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
@@ -2402,11 +2636,12 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-viewport, .live-plot, .live-portrait, .live-speech-bubble,
   .live-resident-more, .live-thing-more, .live-control-button,
   .drawing-grid, .live-resident-tag { border-color: CanvasText; box-shadow: none; }
-  .live-world-ground, .live-plot-terrain { forced-color-adjust: none; }
+  .live-world-ground { forced-color-adjust: none; }
   .live-plot-open, .live-focus-clear { color: LinkText; }
   .live-trail { stroke: LinkText; }
-  .live-footnote-mark, .live-action-mark, .live-resident-more,
-  .live-thing-more, .live-control-button { color: ButtonText; background: ButtonFace; }
+  .live-footstep { fill: LinkText; }
+  .live-resident-more, .live-thing-more,
+  .live-control-button { color: ButtonText; background: ButtonFace; }
   .live-speech-bubble { color: CanvasText; background: Canvas; }
 }
 `

@@ -1318,9 +1318,11 @@ test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
       `${name}: bounded resumable opening history`,
     )
     assert.match(text, /(?:3[.]2\s+(?:to|–)\s+8|three point two to eight)\s+seconds/iu, `${name}: bounded replay duration`)
-    assert.match(text, /(?:newly learned rows[\s\S]{0,80}replay once|replays[\s\S]{0,80}newly learned rows once|walks once)/iu, `${name}: one-shot replay`)
-    assert.match(text, /speech bubble[\s\S]{0,180}(?:60|sixty)[\s\S]{0,220}(?:newest|one per resident)/iu, `${name}: speech bubble contract`)
-    assert.match(text, /ledger[\s\S]{0,120}(?:full|complete|exact) (?:note )?(?:body|text)/iu, `${name}: full note ledger`)
+    assert.match(text, /(?:newly learned[\s\S]{0,80}(?:rows|moves?|`move`)[\s\S]{0,100}(?:replay|animate)s? once|replays[\s\S]{0,80}newly learned rows once|walks once)/iu, `${name}: one-shot replay`)
+    assert.match(text, /speech bubble/iu, `${name}: speech bubble contract`)
+    assert.match(text, /newest[\s\S]{0,160}per resident[\s\S]{0,160}(?:60|sixty) characters/iu, `${name}: bounded newest bubble`)
+    assert.match(text, /notes panel[\s\S]{0,240}(?:full|complete|exact) (?:note )?(?:body|text)/iu, `${name}: full note panel`)
+    assert.match(text, /no separate ledger strip/iu, `${name}: no obsolete Live ledger`)
     assert.match(text, /no new dependenc/iu, `${name}: dependency boundary`)
   }
 

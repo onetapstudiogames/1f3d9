@@ -333,9 +333,15 @@ existing JSON readback.
 Normal map, room, window, directory, and census reads stay drawing-payload-free and
 history-free. Portraits are separate lazy image requests for visible named rows; no list
 row gains a drawing or revision field. Live uses thumbnails for resident and thing sprites,
-while selected-place terrain and drawing details keep the exact JSON readback. Only
-`Show drawing history` starts history. Dated public snapshots deliberately
-export the current presentations and immutable drawing revisions.
+while selected-place terrain and drawing details keep separate bounded current JSON
+readback. This is Live's narrow presentation exception: it selects those image or JSON
+reads only after the specimen is visible rather than adding drawing payloads to the window
+snapshot. It renders their pixels with real alpha and exposes state, maker, current owner,
+size, and latest action in one hover/keyboard-focus popover, not chips on the sprite. Each
+fact comes only from the bounded drawing, entity, room, or recent-row read that proves it;
+anything outside those reads is labelled unavailable rather than inferred. Only `Show
+drawing history` starts history. Dated public snapshots deliberately export the current
+presentations and immutable drawing revisions.
 
 The already published `20260827_drawings.sql` migration remains unchanged for preview
 compatibility. Baseline-inclusive `20260828_drawing_contract.sql` works both after that
@@ -348,34 +354,40 @@ No migration in this branch is run against production.
 Live is the canonical `/window/live` tab inside the existing `/window` observatory; Map
 remains unchanged. It
 uses the city-sign header, console strip, bordered cream frame, hard shadow, mono caption
-and ledger language, footer, and read-only contract. The subject is the verified recent
+and public-record language, footer, and read-only contract. The subject is the verified recent
 past. This is a cartographic plate, not a game viewport or simulated present.
 
-The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
-ground; an ordinary unset place uses the disclosed hatch, deliberately blank stays blank,
-and the immutable world uses its stored founder-authored drawing. After the lightweight
-directory is complete, direct children receive natural, non-grid rectangular plots in
+The selected focus place supplies one bounded surveyed ground. Resident, thing, and place
+drawings sit directly on it as sprites: there is no off-white backing tile or card, and
+transparent pixels reveal the plate. Names sit beneath sprites with a faint text shadow at
+readable zoom. An undrawn thing uses a small neutral marker plus its name and remains
+operable; deliberately blank art stays blank, and the immutable world keeps its stored
+founder-authored presentation. After the lightweight directory is complete, direct children
+receive natural, non-grid rectangular plots in
 creation-ID order. Allocation is append-stable: a later child takes open ground and never
 moves an existing plot. No coordinate is stored. Direct residents and named things use
 stable, naturally scattered positions across the available ground instead of a corner
-shelf; adding a later ID does not move an earlier mark. Residents walk above the ground and plots; one
-committed move visibly carries the walker between its fixed endpoints. Residents and things
-change position only when a recorded city event says they moved.
+shelf; adding a later ID does not move an earlier mark. Residents walk above the ground and
+plots; every newly learned visible committed move carries its walker from the old position,
+through fixed source and destination doorway presentation points, to the new position.
+Residents and things change position only when a recorded city event says they moved.
 
 Wheel zoom, two-pointer pinch zoom, one-pointer pan, visible `+`/`-` controls, and `Center`
 transform only this viewer's plate between a hard 0.8 furthest-out scale and 2.2. `Center`
 or `0` returns to scale 1 around the focused resident or raised item when one exists,
 otherwise around readable home ground for the current place; it never fits the whole
 survey. There is no Fit control or slider. Place clicks still drill through shareable tree
-breadcrumbs. Far zoom shows resident sprites without name tags. At a readable zoom,
-pointer hover or keyboard focus brings the complete item and its complete label above peers.
-On touch screens, the first tap brings an item forward and the second tap opens it. A shown
-tag contains the complete untruncated handle. The focused resident is always labelled and
-lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
-and their tooltip carries the complete place name. Detailed plots are drawn only in and just
+breadcrumbs. Far zoom shows portraits and neutral markers only. At the readable threshold,
+complete names appear beneath their sprites; the shareable Follow resident stays labelled
+at every scale. Pointer hover, keyboard focus, or a first touch temporarily reveals a
+covered name at any scale, raises the item, and opens its single metadata popover. On touch
+screens, the second tap opens it. Detailed plots are drawn only in and just
 beyond the visible camera; every farther plot remains a finger-sized reachable marker, and
 Live never enters an all-detailed mode. Camera budgeting changes no fixed coordinate,
-selection, exact count, or public record. An unoverflowed place shows up to six residents
+selection, exact count, or public record. Dirty rendering schedules one redraw only when
+visible state, camera, or timed evidence changes. A route owns no mounted animation before
+it enters the camera or after it leaves; hiding the document or leaving Live cancels every
+Live animation. An unoverflowed place shows up to six residents
 and six things. Overflow protects control ground, leaving four resident walker positions
 and five thing specimens, and reports every omission as an exact `+N more` control. Using
 that control reveals the omitted loaded residents or named things inline on the live ground,
@@ -394,6 +406,19 @@ location instead of adding them to that plate's occupancy, moving the ground, or
 the shared URL. Before named thing metadata arrives, the board uses
 `Thing #<id> · recorded in <place>`. Later movement does not erase that interaction;
 loaded metadata may name both the current and recorded places.
+
+No resident, thing, or place sprite carries Complete/In progress, provenance, founder, or
+abbreviated status chips. Its one shared popover carries presentation state, maker, current
+owner, drawing size, and latest recorded action. The public drawing read keeps exact state,
+provenance, and size. Bounded entity reads supply resident/thing maker and current-owner
+facts plus place ownership; recent bounded Live rows supply a place maker only when its
+creation is present and supply the latest action. Anything outside those reads is labelled
+unavailable instead of inferred. Every displayed place also carries one corner `notes · N`
+control, with the exact direct-note count from its bounded room read. The control opens an
+in-page panel over the whole direct room history, newest-first with 50 notes per page and an
+explicit `Continue`; it never auto-follows the note cursor. Sparse URL state is
+`/window/live?place=<id>&notes=open`. Hiding the document pauses its read, and Retry repeats
+only the failed page.
 
 The marker-covered outline carries `live_survey`: one body-free
 `{id,parent_id,things}` row for every public place, where `things` is the exact active-thing
@@ -418,28 +443,40 @@ remain; opening events stay static instead of replaying. Hidden tabs pause both 
 continuations.
 
 Every returned opening event carries its commit-safe `change_id`, so opening rows and
-later `/api/changes` rows share one deduplicated recorded order. Opening rows paint their
-settled residue without replay. After that baseline, each resident's newly learned rows
-replay once in ascending `change_id` order while the tab stays visible; the first
-successful catch-up after a hidden tab also settles directly without stale replay. An
-incomplete opening read stays static because an earlier step may be missing. Different
+later `/api/changes` rows share one deduplicated recorded order. Opening rows establish
+settled final positions only: no dashed trace, arrowhead, route, footstep, or bubble is
+painted, including for a move whose source is outside the plate. A quiet sprite fade-in is
+the most opening presentation may add. After that baseline, each resident's newly learned
+rows replay once in ascending `change_id` order while the tab stays visible; the first
+successful catch-up after a hidden tab also settles to final positions without evidence.
+An incomplete opening read never replays because an earlier step may be missing. Different
 residents may replay concurrently. Normal activity is distributed across the
-time before the next read; when a batch is too busy to finish in that budget, repeated small
-actions are shortened or grouped while each resident's recorded order remains intact.
-An applied `move` or `go_home` draws a dashed brick trail only when its record supplies
-`from_place_id` and `to_place_id`; its portrait walks along that exact straight trail for
-a distance-scaled 3.2 to 8 seconds, once. Presentation ink then fades for 4.5 seconds
-beginning when the walk completes; if reduced motion, a hidden tab, or a replay-scope
-change settles an active walk, its final trail receives a fresh 4.5-second fade. The plate
-keeps a capped live set of fading trails and removes each at fade end; that presentation
-cap changes no verified row, order, or 30-minute history. The separate recent ledger retains
-the verified record for its full 30-minute horizon. A note becomes a numbered yellow
-footnote mark and a square speech bubble whose first line is capped at 60 characters with
-an ellipsis; only the newest revealed note wins one bubble per resident for 10 minutes.
-The linked ledger's separate `GET /api/note/:id` read keeps the exact full note body. A newly
+time before the next read; timing may compress within its finite replay bounds, but no
+visible mover is grouped away, frozen, or teleported and each resident's recorded order
+remains intact.
+Every newly learned visible applied `move` or `go_home` animates once. Detail is budgeted
+per mover, not by freezing the crowd: the shareable Follow or browser-local Focus resident,
+hovered residents, and the six movers nearest the camera receive fixed doorway-path motion,
+footsteps, and eligible speech bubble. Every other mover keeps moving as a simple
+constant-rate endpoint glide without a trail or bubble. Selection is recalculated as
+attention and crowd size change, so detail returns when the crowd thins. Distance-scaled
+movement remains within the locked 3.2 to 8 seconds; busy work may compress within that
+range but cannot skip a resident. Ordinary detailed
+movement leaves only two or three footstep dots that fade after about two seconds; settled
+history adds no visual residue. Only the explicitly Followed resident receives the finite
+full accessible doorway polyline, whose arrival ink fades over 4.5 seconds. Recorded
+endpoints are fact; doorway points, dots, and interpolation are browser presentation, not a
+claim that the city recorded an exact route. These visual budgets change no verified row,
+order, or bounded history. A note observed while the watcher is present may show a brief
+bubble beside its speaker only when that resident has detail budget; the newest eligible
+note wins per resident and shows its first line capped at 60 characters. Opening and
+hidden-tab rows never create one. Clicking the bubble opens the matching place notes panel,
+scrolls to that note, and exposes its complete body through the bounded room read. There is
+no separate ledger strip or persistent footnote mark. A newly
 observed `make` gets one 600 ms place pulse. A newly observed `use` pulses only the exact
-displayed `source_thing_id` at its committed `place_id`; absent specimens receive no
-invented substitute. Give emits its typed `transfer` event, and consume emits its typed
+displayed `source_thing_id` at its committed `place_id` and places the using resident beside
+that specimen; absent or off-camera exact presentations receive no invented substitute.
+Give emits its typed `transfer` event, and consume emits its typed
 `thing_withdrawn` event. A newly recorded immediate gift or effect-driven transfer names
 its safely identified `resident_id` interaction partner and committed `place_id`; older
 rows without both references remain unlinked. The page never invents a route, thing, endpoint, note text, or
@@ -456,24 +493,28 @@ Before printing exact resident overflow, Live completes marker-safe public resid
 presence, including any viewer-requested continuation. Exact thing overflow uses only the
 validated marker-covered `live_survey`, not named-card page completeness. A failed names
 page leaves a named retry without clearing the plate or exact `+N`. Below the existing 54rem
-breakpoint, plate, ledger, and roster stack vertically;
+breakpoint, plate, notes panel, and roster stack vertically;
 viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, visible zoom controls, and
 `Center`/`0` remain between 0.8 and 2.2 on the bounded plate. Phone Live has a CSS full-screen
 mode with a visible exit; Escape or browser Back exits that mode before navigating away.
-`prefers-reduced-motion` removes replay and pulses and
-leaves final trails, note marks, and speech bubbles; `forced-colors` keeps borders, trails,
-marks, bubbles, hatches, focus, and labels distinct.
+`prefers-reduced-motion` removes replay and pulses and leaves bounded final footstep
+evidence, the finite Follow route, and eligible live speech bubbles; opening history remains
+positions-only. `forced-colors` keeps borders, routes, dots, bubbles, neutral markers, focus,
+labels, and popovers distinct.
 Empty rooms say “Nobody is here right now. The room keeps its things.”
 
 Vercel preview builds, and only preview builds, expose a visible repeatable proof-scene
-control. Its in-memory plate demonstrates concurrent recorded movement, speech, thing use,
-a crowded room, inline resident and thing Show more, a forced place-load failure, and a
-working Retry without waiting for live traffic. Re-running resets the same scene. Reduced
-motion renders its final static evidence without replay.
+control. Its in-memory plate contains 151 residents and 64 concurrent movers and visibly
+demonstrates a clean positions-only opening, detailed-versus-simple movement, doorway
+travel, fading footsteps, a transparent drawing on the ground, a chip-free sprite with its
+popover, the `notes · N` panel and `Continue`, a live bubble, zoom-dependent labels, exact
+thing use, inline resident and thing Show more, a forced place-load failure, and a working
+Retry without waiting for live traffic. Re-running resets the same scene. Reduced motion
+renders its final static evidence without replay.
 
 The cut list is absolute: no zoom slider; no infinite or full-viewport
 terrain; no idle animation; no looping sprite movement or interpolation beyond the one
-finite walk between a recorded move's endpoints; and no new dependency, map library,
+finite disclosed doorway presentation between a recorded move's endpoints; and no new dependency, map library,
 WebGL layer, or sprite engine.
 
 ## The world root and travel

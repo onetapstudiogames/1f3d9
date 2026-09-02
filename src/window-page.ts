@@ -118,7 +118,7 @@ export const WINDOW_HTML = `<!doctype html>
       <header class="panel-heading live-heading">
         <p class="eyebrow">Live plate</p>
         <h2>The recent city, drawn</h2>
-        <p>Marks on a map of the recent public record. Stillness is honest here: the city moves only when residents act.</p>
+        <p>Opening shows settled positions only. New movement, speech, and thing use appear only while you are watching. Stillness is honest here.</p>
         <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <div class="live-instrument-strip">
@@ -128,7 +128,6 @@ export const WINDOW_HTML = `<!doctype html>
           <button id="live-zoom-in" class="live-control-button" type="button" aria-label="Zoom in">+</button>
           <button id="live-center" class="live-control-button" type="button" aria-label="Center live view">Center</button>
           <button id="live-fullscreen" class="live-control-button" type="button" aria-label="Enter full-screen Live" aria-pressed="false">Full screen</button>
-          <button id="live-pause" class="live-control-button live-pause" type="button" aria-pressed="false">Pause walks</button>
           <button id="live-proof" class="live-control-button live-proof" type="button" aria-label="Run preview proof scene" data-preview-available="false" hidden>Run proof scene</button>
         </div>
         <p id="live-clock" class="live-clock">Reading the recent public record…</p>
@@ -152,17 +151,25 @@ export const WINDOW_HTML = `<!doctype html>
               </div>
             </div>
             <div id="live-label-layer" class="live-label-layer" aria-hidden="true"></div>
+            <aside id="live-item-popover" class="live-item-popover" role="tooltip" hidden></aside>
           </div>
           <div class="live-stage-readout">
-            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Center or 0 returns to a readable view around the current place or focused item; it never shrinks the whole place to fit. Distant places stay as reachable markers until they approach the camera. Hover or keyboard focus brings a complete item and label forward. On touch, tap once to bring a covered item forward and again to open it. Show more reveals people or things on the live ground without a window.</p>
+            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Names appear at readable zoom; a followed resident stays named. Hover, keyboard focus, or a first touch temporarily reveals a covered name at any zoom and opens one metadata popover; on touch, tap again to open the item. Transparent drawings sit directly on the ground without backing boxes. Each notes · N corner control opens that room's in-page notes panel; Continue reads one older bounded page without following a cursor automatically. A brief first-line speech bubble opens its exact note there. Shared room-note links use ?place=ID&amp;notes=open.</p>
             <p id="live-focus-status" class="live-focus-status" role="status" aria-live="polite">No resident focused. Choose a resident on the plate to keep them in view.</p>
           </div>
-          <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">
-            <p class="block-number">RECENT / MARKS</p>
-            <h3 id="live-ledger-title">Plate ledger</h3>
-            <ol id="live-ledger" class="live-ledger">
-              <li class="loading-row">Reading the append-only ledger…</li>
+          <aside id="live-notes-panel" class="live-notes-panel" role="region" aria-labelledby="live-notes-title" hidden>
+            <header class="live-notes-heading">
+              <div>
+                <p class="block-number">ROOM / NOTES</p>
+                <h3 id="live-notes-title">Room notes</h3>
+              </div>
+              <button id="live-notes-close" class="live-notes-close" type="button">Close notes</button>
+            </header>
+            <p id="live-notes-status" class="live-notes-status" role="status" aria-live="polite"></p>
+            <ol id="live-notes-list" class="live-notes-list">
+              <li class="loading-row">Choose a notes · N corner control to read this in-page panel.</li>
             </ol>
+            <div id="live-notes-page" class="live-notes-page" aria-live="polite" hidden></div>
           </aside>
         </div>
         <aside class="roster-board live-roster-board" aria-labelledby="live-roster-title">

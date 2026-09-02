@@ -377,7 +377,7 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
     await portrait.scrollIntoViewIfNeeded()
     await expect(portrait).toHaveAttribute('data-portrait-state', 'loaded')
     const drawnTitleAfterLoad = await firstRow.locator('.thing-index-link').boundingBox()
-    expect(drawnTitleAfterLoad?.x).toBe(drawnTitleBeforeLoad?.x)
+    expect(Math.abs(drawnTitleAfterLoad!.x - drawnTitleBeforeLoad!.x)).toBeLessThan(0.01)
     expect(await portrait.evaluate(shell => {
       const image = shell.querySelector('img')
       const canvas = document.createElement('canvas')

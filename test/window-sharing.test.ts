@@ -17,6 +17,7 @@ import {
 const BASE_STATE: WindowShareState = Object.freeze({
   view: 'map',
   placeId: null,
+  liveNotesOpen: false,
   resident: null,
   conversationContext: false,
   directorySearch: '',
@@ -78,6 +79,12 @@ test('window share paths are clean, stable, and preserve the reproducible public
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things' }), '/window/things')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things', placeId: 310 }),
     '/window/things?place=310')
+  assert.equal(windowSharePath({
+    ...BASE_STATE,
+    view: 'live',
+    placeId: 310,
+    liveNotesOpen: true,
+  }), '/window/live?place=310&notes=open')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'place', placeId: 310 }), '/window/place/310')
   assert.equal(windowSharePath({
     ...BASE_STATE,
@@ -211,6 +218,13 @@ test('window sharing refuses private-looking or invalid state instead of placing
   }), null)
   assert.equal(windowSharePath({ ...BASE_STATE, resident: 'Not A Handle' }), null)
   assert.equal(windowSharePath({ ...BASE_STATE, placeId: -1 }), null)
+  assert.equal(windowSharePath({ ...BASE_STATE, view: 'live', liveNotesOpen: true }), null)
+  assert.equal(windowSharePath({
+    ...BASE_STATE,
+    view: 'map',
+    placeId: 310,
+    liveNotesOpen: true,
+  }), null)
   assert.equal(windowSharePath({ ...BASE_STATE, directorySearch: 'quiet\nroom' }), null)
   assert.equal(windowSharePath({
     ...BASE_STATE,
@@ -287,6 +301,14 @@ test('server-visible share requests round-trip canonical paths and reject unknow
   assert.equal(live.canonicalPath, '/window/live?place=310')
   assert.equal(live.state.view, 'live')
   assert.equal(live.state.placeId, 310)
+  assert.equal(live.state.liveNotesOpen, false)
+
+  const liveNotes = parseWindowShareRequest('/window/live', '?place=310&notes=open')
+  assert.ok(liveNotes)
+  assert.equal(liveNotes.canonicalPath, '/window/live?place=310&notes=open')
+  assert.equal(liveNotes.state.view, 'live')
+  assert.equal(liveNotes.state.placeId, 310)
+  assert.equal(liveNotes.state.liveNotesOpen, true)
 
   const things = parseWindowShareRequest('/window/things', '?place=310')
   assert.ok(things)
@@ -323,6 +345,15 @@ test('server-visible share requests round-trip canonical paths and reject unknow
   assert.equal(parseWindowShareRequest('/window/map', '?place=1&place=2'), null)
   assert.equal(parseWindowShareRequest('/window/place/310', '?place=310'), null)
   assert.equal(parseWindowShareRequest('/window/place/310', '?drawing=current'), null)
+  for (const [pathname, search] of [
+    ['/window/live', '?notes=open'],
+    ['/window/live', '?place=310&notes=closed'],
+    ['/window/live', '?place=310&notes=open&notes=open'],
+    ['/window/map', '?place=310&notes=open'],
+    ['/window/place/310', '?notes=open'],
+  ] as const) {
+    assert.equal(parseWindowShareRequest(pathname, search), null, pathname + search)
+  }
   assert.equal(parseWindowShareRequest('/window/map', '?find=quiet%0Aroom'), null)
   assert.equal(
     parseWindowShareRequest(

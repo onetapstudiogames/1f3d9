@@ -320,11 +320,13 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_HTML, /id="live-tab"[\s\S]*?data-view="live"/u)
   assert.match(WINDOW_HTML, /id="live-panel"[\s\S]*?aria-labelledby="live-tab"/u)
   for (const id of [
-    'live-clock', 'live-breadcrumbs', 'live-plates', 'live-ledger',
+    'live-clock', 'live-breadcrumbs', 'live-plates', 'live-notes-panel',
+    'live-notes-title', 'live-notes-list', 'live-notes-page', 'live-notes-close',
     'live-roster', 'live-resident-page', 'live-viewport', 'live-stage',
     'live-zoom-in', 'live-zoom-out', 'live-center', 'live-fullscreen',
-    'live-proof', 'live-pause', 'live-focus-status',
+    'live-proof', 'live-focus-status',
   ]) assert.match(WINDOW_HTML, new RegExp(`id="${id}"`))
+  assert.doesNotMatch(`${WINDOW_HTML}\n${WINDOW_JS}`, /Pause walks|Resume walks|live-pause/u)
   assert.match(WINDOW_HTML, /id="live-alpha" class="alpha-chip" hidden>ALPHA<\/span>/u)
   assert.match(WINDOW_HTML, /id="live-alpha-note" class="alpha-note" hidden>/u)
   assert.equal((WINDOW_HTML.match(/>ALPHA</gu) ?? []).length, 1)
@@ -347,7 +349,13 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_JS, /localStorage\.setItem\(LIVE_FOCUS_STORAGE_KEY/u)
   assert.match(WINDOW_JS, /data-live-focus-resident/u)
   assert.match(WINDOW_JS, /live-overflow-absorbing/u)
-  assert.match(WINDOW_JS, /LIVE_TRAIL_LIFETIME_MS\s*=\s*[3-8]_?\d{3}/u)
+  assert.match(WINDOW_JS, /LIVE_FOOTSTEP_LIFETIME_MS\s*=\s*2_?000/u)
+  assert.match(WINDOW_JS, /LIVE_FOLLOW_TRAIL_LIFETIME_MS\s*=\s*4_?500/u)
+  assert.doesNotMatch(WINDOW_HTML, /id="live-ledger"|Plate ledger/u)
+  assert.match(WINDOW_HTML, /in-page notes panel/iu)
+  assert.match(WINDOW_HTML, /id="live-item-popover"/u)
+  assert.match(WINDOW_JS, /liveItemPopover/u)
+  assert.match(WINDOW_JS, /liveNotesPlaceId/u)
   assert.match(
     WINDOW_JS,
     /function renderLiveAging\(\)[\s\S]*?windowLivePruneTrailStarts\(\s*state\.live\.trailStarts/u,
@@ -368,13 +376,18 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
     /\.live-speech-bubble\s*\{[\s\S]*?background:\s*var\(--paper-light\)[\s\S]*?border:\s*2px solid var\(--line\)[\s\S]*?border-radius:\s*0/u,
   )
   assert.doesNotMatch(WINDOW_CSS, /live-speech-arrive/u)
-  assert.match(WINDOW_JS, /recorded endpoints[^\n]*drawn-in glide/u)
-  assert.match(WINDOW_JS, /pulse on a thing[^\n]*recorded use/u)
+  assert.match(WINDOW_JS, /liveMovement = movement\.detailed \? 'detail' : 'simple'/u)
+  assert.match(WINDOW_JS, /shell\.classList\.add\('live-use-replay'\)/u)
   assert.match(WINDOW_JS, /record\.detail\.status !== 'applied'/u)
-  assert.match(WINDOW_JS, /safeExactText\(payload\?\.note\?\.body/u)
+  assert.match(WINDOW_JS, /safeLiveNoteBody\(payload\?\.note\?\.body/u)
+  assert.match(
+    WINDOW_JS,
+    /function safeLiveNoteBody[\s\S]*?!containsMalformedPublicText\(value\)[\s\S]*?!hasUnsafeText\(value\)[\s\S]*?Array\.from\(value\)\.length <= 4000/u,
+  )
   assert.match(WINDOW_JS, /function liveDisplayedThings/u)
   assert.match(WINDOW_JS, /if \(!node\.dataset\.focusKey\) node\.dataset\.focusKey/u)
-  assert.match(WINDOW_JS, /state\.resident && actor !== state\.resident/u)
+  assert.match(WINDOW_JS, /function liveResidentsAt[\s\S]*?displayedResidents\(snapshot\)/u)
+  assert.doesNotMatch(WINDOW_JS, /state\.resident && actor !== state\.resident/u)
   assert.doesNotMatch(WINDOW_CSS, /position:\s*fixed[^}]*live-|100vw[^}]*live-/iu)
 })
 
@@ -392,17 +405,11 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   assert.match(WINDOW_JS, /\/api\/drawing\//u)
   assert.match(WINDOW_JS, /\/api\/note\//u)
   assert.match(WINDOW_CSS, /\.live-trail/u)
-  assert.match(WINDOW_CSS, /\.live-footnote-mark/u)
+  assert.doesNotMatch(WINDOW_JS, /live-footnote-mark|plate ledger/u)
   assert.match(WINDOW_CSS, /\.drawing-undrawn/u)
-  assert.match(
-    WINDOW_CSS,
-    /\.live-plot-terrain\s*>\s*\.drawing-grid\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
-  )
-  assert.match(
-    WINDOW_CSS,
-    /\.live-plot-owner\s*\{[^}]*pointer-events:\s*none/u,
-    'noninteractive plot chrome must not block the place opener',
-  )
+  assert.doesNotMatch(WINDOW_CSS, /\.live-plot-terrain|\.live-plot-owner/u)
+  assert.match(WINDOW_CSS, /#live-panel \.drawing-grid[\s\S]{0,300}background:\s*transparent/u)
+  assert.match(WINDOW_CSS, /#live-panel \.live-neutral-marker::before/u)
   assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
   assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
   assert.match(WINDOW_JS, /resident_edited[\s\S]{0,180}resident:/u)
@@ -412,6 +419,10 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   assert.match(
     WINDOW_JS,
     /function scheduleLiveClock\(\)[\s\S]*?renderLiveAging\(\)[\s\S]*?setTimeout\(scheduleLiveClock, 1000\)/u,
+  )
+  assert.match(
+    WINDOW_JS,
+    /function scheduleLiveClock\(\)[\s\S]*?document\.hidden[\s\S]*?!livePanelIsVisible\(\)/u,
   )
   assert.match(WINDOW_CSS, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.live-pulse/u)
   assert.match(
@@ -1273,10 +1284,8 @@ test('the THINGS tab is bounded, body-free, and reuses lazy transparent portrait
   assert.match(WINDOW_JS, /portraitNode\('thing', thing\.id, thing\.name/u)
   assert.match(WINDOW_JS, /archiveResultCard[\s\S]*?portraitNode\('thing'/u)
   assert.match(WINDOW_JS, /renderActivity[\s\S]*?portraitNode\('thing'/u)
-  assert.match(
-    WINDOW_JS,
-    /live-ledger-thing-reference[\s\S]{0,500}thing \? thing\.has_drawing === true : record\.thingHasDrawing/u,
-  )
+  assert.match(WINDOW_JS, /liveSpriteNode\('thing', thing\.id, thing\.name, thing\.has_drawing\)/u)
+  assert.doesNotMatch(WINDOW_JS, /live-ledger-thing-reference/u)
   assert.match(WINDOW_JS, /\|thing:' \+ String\(activityThingId\(event\)/u)
   assert.match(
     WINDOW_JS,

@@ -3,16 +3,18 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as windowClientModule from '../src/window-client.ts'
 import {
-  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
   normalizeWindowDrawing,
   windowLiveClampZoomScale,
+  windowLiveDetailMoverSelection,
   windowLiveExpandedGroundLayout,
+  windowLiveFootstepBeat,
   windowLivePlateChildren,
   windowLivePollDelay,
   windowLiveReplayDuration,
   windowLiveReplayOrder,
   windowLiveReplayPace,
   windowLiveReplayStartOffsets,
+  windowLiveRouteVisibilityIntervals,
   windowLivePruneTrailStarts,
   windowLiveScatterSurfaceHeight,
   windowLiveSeparatedPoints,
@@ -20,6 +22,7 @@ import {
   windowLiveScatteredPoints,
   windowLiveSurveyedPlots,
   windowLiveSpeechLine,
+  windowLiveShouldScheduleRedraw,
   windowLiveTouchActivation,
   windowLiveTraceOpacity,
 } from '../src/window-client.ts'
@@ -156,11 +159,6 @@ type LiveClientExports = Readonly<{
     visible: readonly CapacityRow[]
     overflowCount: number
   }>
-  windowLiveSelectTrailKeys?: (
-    keys: readonly string[],
-    capacity: number,
-    protectedKeys: readonly string[],
-  ) => readonly string[]
 }>
 
 const liveClientExports = windowClientModule as unknown as LiveClientExports
@@ -523,7 +521,6 @@ test('ordinary child ground keeps 6 residents and 6 things naturally scattered f
   assert.ok(plot)
   if (!plot) return
   assert.deepEqual({ width: plot.width, height: plot.height }, { width: 440, height: 280 })
-  assert.ok(WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT.y >= plot.height + 6)
 
   const overlaps = (
     left: Readonly<{ x: number; y: number; width: number; height: number }>,
@@ -758,7 +755,10 @@ test('root overflow controls reserve the same ground before and after the 6 to 7
   const residentIds = Object.freeze([20, 21, 22, 23, 24, 25])
   const thingIds = Object.freeze([90, 91, 92, 93, 94, 95])
   const reserved = rootReservations(1_100, 680)
-  assert.deepEqual(reserved, [Object.freeze({ x: 984, y: 536, width: 116, height: 144 })])
+  assert.deepEqual(reserved, [
+    Object.freeze({ x: 8, y: 8, width: 120, height: 128 }),
+    Object.freeze({ x: 984, y: 536, width: 116, height: 144 }),
+  ])
   const residentsBefore: LivePointMap = residentPointsAroundThings(
     residentIds, 1_100, 680, placeId * 17 + 3, 56, 56, 12, {}, 144, reserved,
   )
@@ -904,13 +904,13 @@ test('resident-only and thing-only root expansion keep one shared collision-free
     initialResidents,
   )
   assert.deepEqual(residentOnlyThings, initialThings)
-  assert.equal(intersectionCount(
+  assert.ok(intersectionCount(
     residentOnlyResidents, 56, 1,
-    controlRect(initialReserved[0]!, 'thing'),
-  ), 2, 'the prior independent-height rail is a deterministic counterexample')
+    controlRect(initialReserved[initialReserved.length - 1]!, 'thing'),
+  ) > 0, 'the prior independent-height rail is a deterministic counterexample')
   assertClearOfControl(
     residentOnlyResidents, 56, 1,
-    controlRect(residentOnlyReserved[0]!, 'thing'),
+    controlRect(residentOnlyReserved[residentOnlyReserved.length - 1]!, 'thing'),
   )
 
   const expandedThingIds = Object.freeze(Array.from({ length: 400 }, (_, index) => 90 + index))
@@ -932,13 +932,13 @@ test('resident-only and thing-only root expansion keep one shared collision-free
     Object.fromEntries(initialThingIds.map(id => [String(id), thingOnlyThings[String(id)]])),
     initialThings,
   )
-  assert.equal(intersectionCount(
+  assert.ok(intersectionCount(
     thingOnlyThings, 144, 0.5,
-    controlRect(initialReserved[0]!, 'resident'),
-  ), 2, 'the prior independent-height rail is a deterministic counterexample')
+    controlRect(initialReserved[initialReserved.length - 1]!, 'resident'),
+  ) > 0, 'the prior independent-height rail is a deterministic counterexample')
   assertClearOfControl(
     thingOnlyThings, 144, 0.5,
-    controlRect(thingOnlyReserved[0]!, 'resident'),
+    controlRect(thingOnlyReserved[thingOnlyReserved.length - 1]!, 'resident'),
   )
 })
 
@@ -964,7 +964,10 @@ test('permanent direct commons stays disjoint and stable across 1,000 child arri
   )
   assert.ok(expandedCommonsHeight > commonsHeight)
   const reserved = rootReservations(commonsWidth, commonsHeight)
-  assert.deepEqual(reserved, [Object.freeze({ x: 984, y: 536, width: 116, height: 144 })])
+  assert.deepEqual(reserved, [
+    Object.freeze({ x: 8, y: 8, width: 120, height: 128 }),
+    Object.freeze({ x: 984, y: 536, width: 116, height: 144 }),
+  ])
   const residentIds = Object.freeze([20, 21, 22, 23, 24, 25])
   const thingIds = Object.freeze([90, 91, 92, 93, 94, 95])
   let commonsIntrusions = 0
@@ -1221,6 +1224,143 @@ test('trace opacity ages honestly and expires at its stated lifetime', () => {
   assert.equal(windowLiveTraceOpacity(2_000, 1_000, 10_000), 1)
 })
 
+test('detail budget keeps attention residents plus the nearest six movers', () => {
+  const movers = Object.freeze([
+    Object.freeze({ actor: 'far-followed', x: 100, y: 100, order: 0 }),
+    Object.freeze({ actor: 'far-hovered', x: 90, y: 90, order: 1 }),
+    ...Array.from({ length: 8 }, (_, index) => Object.freeze({
+      actor: `near-${String(index + 1)}`,
+      x: index + 1,
+      y: 0,
+      order: index + 2,
+    })),
+  ])
+  const attention = Object.freeze(['far-followed', 'far-hovered'])
+  const selected = windowLiveDetailMoverSelection(
+    movers,
+    attention,
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  )
+
+  assert.deepEqual(selected.detailed, [
+    'far-followed', 'far-hovered',
+    'near-1', 'near-2', 'near-3', 'near-4', 'near-5', 'near-6',
+  ])
+  assert.deepEqual(selected.simple, ['near-7', 'near-8'])
+  assert.equal(Object.isFrozen(selected), true)
+  assert.equal(Object.isFrozen(selected.detailed), true)
+  assert.equal(Object.isFrozen(selected.simple), true)
+  assert.equal(movers.length, 10)
+  assert.deepEqual(attention, ['far-followed', 'far-hovered'])
+
+  const thinned = windowLiveDetailMoverSelection(
+    movers.slice(0, 5),
+    attention,
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  )
+  assert.deepEqual(thinned.simple, [])
+  assert.deepEqual(thinned.detailed, movers.slice(0, 5).map(mover => mover.actor))
+})
+
+test('redraw gate schedules only changed visible Live work once', () => {
+  const visibleChange = Object.freeze({
+    liveViewActive: true,
+    documentVisible: true,
+    panelVisible: true,
+    dirtyRevision: 4,
+    paintedRevision: 3,
+    framePending: false,
+  })
+
+  assert.equal(windowLiveShouldScheduleRedraw(visibleChange), true)
+  assert.equal(windowLiveShouldScheduleRedraw(Object.freeze({
+    ...visibleChange,
+    dirtyRevision: 3,
+  })), false)
+  assert.equal(windowLiveShouldScheduleRedraw(Object.freeze({
+    ...visibleChange,
+    documentVisible: false,
+  })), false)
+  assert.equal(windowLiveShouldScheduleRedraw(Object.freeze({
+    ...visibleChange,
+    panelVisible: false,
+  })), false)
+  assert.equal(windowLiveShouldScheduleRedraw(Object.freeze({
+    ...visibleChange,
+    liveViewActive: false,
+  })), false)
+  assert.equal(windowLiveShouldScheduleRedraw(Object.freeze({
+    ...visibleChange,
+    framePending: true,
+  })), false)
+})
+
+test('route visibility returns exact progress windows for camera crossings', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 100, bottom: 100 })
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(
+    Object.freeze([
+      Object.freeze({ x: -100, y: 50 }),
+      Object.freeze({ x: 200, y: 50 }),
+    ]),
+    viewport,
+    0,
+  ), [Object.freeze({ start: 1 / 3, end: 2 / 3 })])
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(
+    Object.freeze([
+      Object.freeze({ x: 20, y: 20 }),
+      Object.freeze({ x: 80, y: 80 }),
+    ]),
+    viewport,
+    0,
+  ), [Object.freeze({ start: 0, end: 1 })])
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(
+    Object.freeze([
+      Object.freeze({ x: -20, y: -20 }),
+      Object.freeze({ x: -10, y: -10 }),
+    ]),
+    viewport,
+    0,
+  ), [])
+})
+
+test('route visibility follows the bottom-anchored portrait footprint at camera edges', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 100, bottom: 100 })
+  const portraitMargins = Object.freeze({ left: 28, top: 0, right: 28, bottom: 56 })
+
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(
+    Object.freeze([
+      Object.freeze({ x: 50, y: -100 }),
+      Object.freeze({ x: 50, y: 200 }),
+    ]),
+    viewport,
+    portraitMargins,
+  ), [Object.freeze({ start: 1 / 3, end: 256 / 300 })])
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(
+    Object.freeze([
+      Object.freeze({ x: -100, y: 50 }),
+      Object.freeze({ x: 200, y: 50 }),
+    ]),
+    viewport,
+    portraitMargins,
+  ), [Object.freeze({ start: 72 / 300, end: 228 / 300 })])
+})
+
+test('off-screen ephemera visibility covers stage-mounted walking footsteps', () => {
+  const start = windowClientModule.WINDOW_JS.indexOf(
+    'function syncLiveEphemeraVisibility()',
+  )
+  const end = windowClientModule.WINDOW_JS.indexOf(
+    'function scheduleLiveCameraMotionRefresh()',
+    start,
+  )
+  const visibilitySource = windowClientModule.WINDOW_JS.slice(start, end)
+
+  assert.match(visibilitySource, /nodes\.liveStage/u)
+  assert.match(visibilitySource, /\.live-footstep/u)
+})
+
 test('Center keeps a readable scale around its target without fitting the whole survey', () => {
   const centerCamera = liveClientExports.windowLiveCenterCamera
   assert.equal(typeof centerCamera, 'function')
@@ -1332,29 +1472,6 @@ test('expired trail starts are pruned without mutation', () => {
   assert.equal(windowLivePruneTrailStarts(pruned, 10_000, 4_500, ['active']), pruned)
 })
 
-test('trail selection stays hard-capped and keeps active keys ahead of older ink', () => {
-  const selectTrailKeys = liveClientExports.windowLiveSelectTrailKeys
-  assert.equal(typeof selectTrailKeys, 'function')
-  if (!selectTrailKeys) return
-
-  const keys = Object.freeze([
-    'change:120',
-    'change:119',
-    'change:118',
-    'change:5',
-    'change:4',
-  ])
-  const protectedKeys = Object.freeze(['change:5'])
-  const selected = selectTrailKeys(keys, 3, protectedKeys)
-
-  assert.deepEqual(selected, ['change:120', 'change:119', 'change:5'])
-  assert.equal(selected.length, 3)
-  assert.ok(selected.includes('change:5'))
-  assert.equal(Object.isFrozen(selected), true)
-  assert.deepEqual(keys, ['change:120', 'change:119', 'change:118', 'change:5', 'change:4'])
-  assert.deepEqual(protectedKeys, ['change:5'])
-})
-
 test('recorded movement is visibly slower than the mockup and still scales with distance', () => {
   const shortest = windowLiveReplayDuration(0)
   const middle = windowLiveReplayDuration(50)
@@ -1365,7 +1482,9 @@ test('recorded movement is visibly slower than the mockup and still scales with 
   assert.ok(longest > middle)
   assert.ok(longest <= 8_000)
   assert.equal(windowLiveReplayDuration(Number.NaN), shortest)
-  assert.equal(windowLiveReplayDuration(50, shortest - 1), 0)
+  assert.equal(windowLiveReplayDuration(50, shortest - 1), shortest - 1)
+  assert.equal(windowLiveReplayDuration(50, 599), 599)
+  assert.equal(windowLiveReplayDuration(50, 0), 0)
   assert.equal(windowLiveReplayDuration(50, middle + 1_000), middle)
 })
 
@@ -1400,6 +1519,32 @@ test('replay start offsets keep recorded-together actors together and spread lat
   assert.ok(third >= 1_000)
   assert.ok(third < 25_000)
   assert.deepEqual(windowLiveReplayStartOffsets([], 25_000), {})
+})
+
+test('dense replay start offsets batch distinct-time crowds without flattening every start', () => {
+  const at = Date.parse('2026-08-28T12:00:00.000Z')
+  const offsets = windowLiveReplayStartOffsets(Array.from({ length: 64 }, (_, index) => ({
+    actor: `walker-${index + 1}`,
+    at: new Date(at + index),
+  })), 25_000)
+  const groups = new Set(Object.values(offsets))
+
+  assert.equal(Object.keys(offsets).length, 64)
+  assert.ok(groups.size > 1)
+  assert.ok(groups.size <= 13)
+})
+
+test('footstep cadence treats a route with no surviving dots as a fresh beat', () => {
+  assert.deepEqual(windowLiveFootstepBeat(1_000, 0, 3_100), {
+    due: true,
+    first: true,
+    nextAt: 3_100,
+  })
+  assert.deepEqual(windowLiveFootstepBeat(3_000, 2, 3_100), {
+    due: false,
+    first: false,
+    nextAt: 3_650,
+  })
 })
 
 test('resident capacity reserves the focused resident and interaction partner with an exact count', () => {

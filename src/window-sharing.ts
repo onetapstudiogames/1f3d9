@@ -26,6 +26,7 @@ export type WindowShareArchive = Readonly<{
 export type WindowShareState = Readonly<{
   view: WindowShareView
   placeId: number | null
+  liveNotesOpen: boolean
   resident: string | null
   conversationContext: boolean
   directorySearch: string
@@ -48,6 +49,7 @@ export function windowDetailShareState(state: WindowShareState): WindowShareStat
     ...state,
     view: 'place',
     placeId: state.detail.id,
+    liveNotesOpen: false,
     resident: null,
     conversationContext: false,
     directorySearch: '',
@@ -74,6 +76,7 @@ export type WindowShareMetadata = Readonly<{
 const DEFAULT_STATE: WindowShareState = Object.freeze({
   view: 'map',
   placeId: null,
+  liveNotesOpen: false,
   resident: null,
   conversationContext: false,
   directorySearch: '',
@@ -177,6 +180,8 @@ export function windowSharePath(state: WindowShareState): string | null {
 
   if (!state || typeof state !== 'object' || !views.has(state.view)) return null
   if (state.placeId !== null && !safeId(state.placeId)) return null
+  if (typeof state.liveNotesOpen !== 'boolean' ||
+      (state.liveNotesOpen && (state.view !== 'live' || state.placeId === null))) return null
   if (state.resident !== null && !safeHandle(state.resident)) return null
   const directorySearch = validateWindowDirectorySearch(state.directorySearch)
   if (!directorySearch.ok) return null
@@ -218,6 +223,7 @@ export function windowSharePath(state: WindowShareState): string | null {
   if (state.placeId !== null && !(state.view === 'place' && path.startsWith('/window/place/'))) {
     params.set('place', String(state.placeId))
   }
+  if (state.liveNotesOpen) params.set('notes', 'open')
   if (state.resident !== null) params.set('resident', state.resident)
   if (state.resident !== null && state.conversationContext) params.set('context', 'place')
   if (directorySearch.value) params.set('find', directorySearch.value)
@@ -319,13 +325,14 @@ export function parseWindowShareRequest(
     return null
   }
   const allowed = new Set([
-    'place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue',
+    'place', 'notes', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue',
   ])
   if ([...params.keys()].some(name => !allowed.has(name))) return null
   for (const name of allowed) if (params.getAll(name).length > 1) return null
   if (detail !== null && detail.kind !== 'place' && params.size > 0) return null
 
   const placeValue = singleValue(params, 'place')
+  const notesValue = singleValue(params, 'notes')
   const residentValue = singleValue(params, 'resident')
   const contextValue = singleValue(params, 'context')
   const findValue = singleValue(params, 'find')
@@ -334,7 +341,8 @@ export function parseWindowShareRequest(
   const modeValue = singleValue(params, 'mode')
   const typeValue = singleValue(params, 'type')
   const issueValue = singleValue(params, 'issue')
-  if (placeValue === undefined || residentValue === undefined || contextValue === undefined ||
+  if (placeValue === undefined || notesValue === undefined ||
+      residentValue === undefined || contextValue === undefined ||
       findValue === undefined || sleepersValue === undefined || queryValue === undefined ||
       modeValue === undefined || typeValue === undefined || issueValue === undefined) return null
   if (parts.length === 3 && segment === 'place' && placeValue !== null) return null
@@ -355,6 +363,9 @@ export function parseWindowShareRequest(
     placeId = positiveId(placeValue)
     if (placeId === null) return null
   }
+  const liveNotesOpen = notesValue === 'open'
+  if (notesValue !== null && !liveNotesOpen) return null
+  if (liveNotesOpen && (view !== 'live' || placeId === null)) return null
   const resident = residentValue === null
     ? null
     : /^[a-z0-9][a-z0-9-]{2,31}$/u.test(residentValue) ? residentValue : null
@@ -375,6 +386,7 @@ export function parseWindowShareRequest(
     ...DEFAULT_STATE,
     view,
     placeId,
+    liveNotesOpen,
     resident,
     conversationContext: contextValue === 'place',
     directorySearch: directorySearch.value,
