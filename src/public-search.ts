@@ -10,6 +10,7 @@ import {
 } from './public-pagination.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
 import { containsMalformedPublicText } from './input.ts'
+import { PUBLIC_THING_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'thing'
@@ -271,6 +272,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         NULL::integer AS current_owner_id, NULL::text AS current_owner,
         NULL::integer AS owner_id, NULL::text AS owner,
         NULL::boolean AS open_to_use,
+        NULL::boolean AS has_drawing,
         note.author_id, author.handle AS author,
         note.body,
         CASE WHEN note.body !~* $3::text THEN note.body ELSE '' END AS search_text,
@@ -295,6 +297,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         thing.owner_id AS current_owner_id, owner.handle AS current_owner,
         thing.owner_id, owner.handle AS owner,
         thing.open_to_use,
+        ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing,
         NULL::integer AS author_id, NULL::text AS author,
         thing.body,
         concat_ws(' ',
@@ -336,7 +339,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
     SELECT page.result_type, page.id, page.place_id,
       page.name, page.maker_id, page.made_by,
       page.current_owner_id, page.current_owner,
-      page.owner_id, page.owner, page.open_to_use,
+      page.owner_id, page.owner, page.open_to_use, page.has_drawing,
       page.author_id, page.author,
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
@@ -401,6 +404,7 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
     owner_id: safeCount(row.owner_id, 'search result owner id'),
     owner: row.owner,
     open_to_use: row.open_to_use === true,
+    has_drawing: row.has_drawing === true,
     body_text_bytes: bodyTextBytes,
     created_at: row.created_at,
   })

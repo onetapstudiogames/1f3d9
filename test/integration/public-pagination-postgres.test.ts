@@ -30,6 +30,10 @@ import {
   loadPublicSearchResults,
   parsePublicSearchQuery,
 } from '../../src/public-search.ts'
+import {
+  PUBLIC_RESIDENT_HAS_DRAWING_SQL,
+  PUBLIC_THING_HAS_DRAWING_SQL,
+} from '../../src/public-drawing-presence.ts'
 
 type WindowModule = typeof import('../../src/window.ts')
 
@@ -488,6 +492,59 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
 
   try {
     const city = await seedCity(postgres.client)
+
+    await t.test('drawing presence matches public moderation and inherited drawing rules', async () => {
+      const thingRows = (await postgres.client.query<{ id: number; has_drawing: boolean }>(`
+        WITH things (id, kind_id, drawing, drawing_state, current_revision, drawing_variant_name) AS (
+          VALUES
+            (1, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text),
+            (2, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text),
+            (3, 10, NULL::jsonb, 'refused', 1, NULL::text),
+            (4, 10, NULL::jsonb, 'complete', 1, NULL::text),
+            (5, 11, NULL::jsonb, 'complete', 1, 'lit'::text),
+            (6, 12, NULL::jsonb, 'complete', 1, NULL::text)
+        ),
+        moderation_actions (id, target_type, target_id, action, created_at) AS (
+          VALUES
+            (1, 'thing', 2, 'remove', now()),
+            (2, 'kind', 12, 'remove', now())
+        ),
+        kind_revisions (kind_id, revision, drawing, drawing_variants) AS (
+          VALUES
+            (10, 1, '{}'::jsonb, '[]'::jsonb),
+            (11, 1, NULL::jsonb, '[{"name":"lit","drawing":{}}]'::jsonb),
+            (12, 1, '{}'::jsonb, '[]'::jsonb)
+        )
+        SELECT thing.id, ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing
+        FROM things thing
+        ORDER BY thing.id
+      `)).rows
+      assert.deepEqual(thingRows, [
+        { id: 1, has_drawing: true },
+        { id: 2, has_drawing: false },
+        { id: 3, has_drawing: false },
+        { id: 4, has_drawing: true },
+        { id: 5, has_drawing: true },
+        { id: 6, has_drawing: false },
+      ])
+
+      const residentRows = (await postgres.client.query<{ id: number; has_drawing: boolean }>(`
+        WITH residents (id, drawing) AS (
+          VALUES (1, '{}'::jsonb), (2, '{}'::jsonb), (3, NULL::jsonb)
+        ),
+        moderation_actions (id, target_type, target_id, action, created_at) AS (
+          VALUES (1, 'resident', 2, 'remove', now())
+        )
+        SELECT resident.id, ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
+        FROM residents resident
+        ORDER BY resident.id
+      `)).rows
+      assert.deepEqual(residentRows, [
+        { id: 1, has_drawing: true },
+        { id: 2, has_drawing: false },
+        { id: 3, has_drawing: false },
+      ])
+    })
 
     await t.test('the additive totals migration upgrades old data and reapplies exactly', async () => {
       await postgres.client.query(`
@@ -2729,6 +2786,63 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
           rowIds(exactEvents), rowIds(insideEvents),
           rootEventId, nestedEventId, outsideEventId,
         )
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined)
+        client.release()
+      }
+    })
+
+    await t.test('thing heading lookup filters the latest moderation action before matching names', async () => {
+      const client = await postgres.client.connect()
+      try {
+        await client.query('BEGIN')
+        const storedCredentialName = `1f3d9_sk_${'ab'.repeat(24)}`
+        const thingId = (await client.query<{ id: number }>(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, $2, 'legacy stored credential fixture', 1, 1)
+          RETURNING id
+        `, [city.targetPlaceId, storedCredentialName])).rows[0]!.id
+        const ordinaryThingId = (await client.query<{ id: number }>(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'abababab public marker', 'ordinary fixture', 1, 1)
+          RETURNING id
+        `, [city.targetPlaceId])).rows[0]!.id
+        const bodyOnlyThingId = (await client.query<{ id: number }>(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'quiet fixture', 'abababab appears only in this body', 1, 1)
+          RETURNING id
+        `, [city.targetPlaceId])).rows[0]!.id
+        const windowModule: WindowModule = await import('../../src/window.ts')
+        const statement = () => windowModule.windowCollectionStatement({
+          collection: 'things', beforeId: null, limit: 20, placeId: null,
+          includeDescendants: false, resident: null, context: false,
+          presentation: 'headings', find: 'abababab',
+        })
+        const selectedIds = async () => {
+          const query = statement()
+          return (await client.query<{ id: number }>(query.text, [...query.values]))
+            .rows.map(row => row.id)
+        }
+
+        assert.ok(!(await selectedIds()).includes(thingId),
+          'a raw credential-like name must never act as a substring oracle')
+        assert.ok((await selectedIds()).includes(ordinaryThingId))
+        assert.ok(!(await selectedIds()).includes(bodyOnlyThingId),
+          'thing heading search must not match body-only text')
+        await client.query(`
+          INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+          VALUES ('thing', $1, 'remove', 1, 'integration removal')
+        `, [ordinaryThingId])
+        assert.ok(!(await selectedIds()).includes(thingId),
+          'a removed raw name must not act as a substring oracle')
+        assert.ok(!(await selectedIds()).includes(ordinaryThingId))
+        await client.query(`
+          INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+          VALUES ('thing', $1, 'restore', 1, 'integration restoration')
+        `, [ordinaryThingId])
+        assert.ok(!(await selectedIds()).includes(thingId),
+          'restoring a credential-like name must not make it searchable')
+        assert.ok((await selectedIds()).includes(ordinaryThingId))
       } finally {
         await client.query('ROLLBACK').catch(() => undefined)
         client.release()

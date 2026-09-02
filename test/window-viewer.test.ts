@@ -7,7 +7,10 @@ import * as windowClientModule from '../src/window-client.ts'
 import { WINDOW_JS, PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
-import { PUBLIC_CREDENTIAL_REDACTION } from '../src/credential-safety.ts'
+import {
+  PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+  PUBLIC_CREDENTIAL_REDACTION,
+} from '../src/credential-safety.ts'
 
 function hexRgb(value: string): [number, number, number] {
   const match = /^#([0-9a-f]{6})$/iu.exec(value)
@@ -44,7 +47,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
   assert.match(WINDOW_HTML, /role="tablist"/)
   assert.match(WINDOW_HTML, /<a href="\/tools">Tools<\/a>/u)
   for (const view of [
-    'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ]) {
     assert.match(WINDOW_HTML, new RegExp(`data-view="${view}"`))
     assert.match(WINDOW_HTML, new RegExp(`id="${view}-panel"`))
@@ -92,13 +95,13 @@ test('thing kind names keep their existing id and render a lazy kind portrait', 
   assert.match(WINDOW_JS, /kind_id: kindId/u)
   assert.match(
     WINDOW_JS,
-    /portraitNode\('kind', thing\.kind_id, thing\.kind, 'kind-portrait'\)/u,
+    /portraitNode\('kind', thing\.kind_id, thing\.kind, true, 'kind-portrait'\)/u,
   )
 })
 
 test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
   const views = [
-    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ]
   for (const view of views) {
     const panel = WINDOW_HTML.match(
@@ -127,6 +130,8 @@ test('public search controls state their accepted shape, limits, normalization, 
     WINDOW_HTML,
     /id="directory-search-help"[^>]*>[^<]*one plain line[^<]*NFC[^<]*100 characters[^<]*(?:resident key|recovery code)/iu,
   )
+  assert.match(WINDOW_HTML, /Search places, residents, and things/iu)
+  assert.match(WINDOW_HTML, /thing #id/iu)
   assert.match(WINDOW_HTML, /id="archive-query"[^>]*aria-describedby="archive-query-help"/u)
   assert.match(
     WINDOW_HTML,
@@ -760,7 +765,7 @@ test('the /api/window route carries honest bounded causes without exporting its 
     const eventRows = ${JSON.stringify(rows)}
     const query = async text => {
       const source = String(text)
-      if (/FROM events\\s+WHERE kind = ANY/u.test(source)) return eventRows
+      if (source.includes('/* public:window-events */') && source.includes('FROM events event')) return eventRows
       if (source.includes('AS conversations') && source.includes('AS events')) {
         return [{ places: 0, residents: 0, conversations: 0, things: 0,
           agreements: 0, events: eventRows.length }]
@@ -879,6 +884,24 @@ test('window history queries accept only one safe value for each supported filte
     collection: 'things', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
     context: false, includeDescendants: true,
   })
+  assert.deepEqual(parse({
+    collection: ['things'], presentation: ['headings'], within_place_id: ['7'],
+  }), {
+    collection: 'things', beforeId: null, limit: 10, placeId: 7, resident: null,
+    context: false, includeDescendants: true, presentation: 'headings', find: null,
+  })
+  assert.deepEqual(parse({
+    collection: ['things'], presentation: ['headings'], find: ['  Signal Lamp  '],
+  }), {
+    collection: 'things', beforeId: null, limit: 10, placeId: null, resident: null,
+    context: false, includeDescendants: false, presentation: 'headings', find: 'Signal Lamp',
+  })
+  assert.deepEqual(parse({
+    collection: ['things'], presentation: ['headings'], find: ['#401'],
+  }), {
+    collection: 'things', beforeId: null, limit: 10, placeId: null, resident: null,
+    context: false, includeDescendants: false, presentation: 'headings', find: '#401',
+  })
   assert.deepEqual(parse({ collection: ['agreements'], resident: ['tiny-lantern'] }), {
     collection: 'agreements', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
     context: false, includeDescendants: false,
@@ -930,6 +953,14 @@ test('window history queries accept only one safe value for each supported filte
     { collection: ['notes'], resident: ['tiny-lantern'], context: ['place', 'place'] },
     { collection: ['things'], resident: ['tiny-lantern'], context: ['place'] },
     { collection: ['agreements'], resident: ['tiny-lantern'], context: ['place'] },
+    { collection: ['notes'], presentation: ['headings'] },
+    { collection: ['things'], find: ['signal'] },
+    { collection: ['things'], presentation: ['full'] },
+    { collection: ['things'], presentation: ['headings'], find: ['line\nbreak'] },
+    { collection: ['things'], presentation: ['headings'], find: ['#2147483648'] },
+    { collection: ['things'], presentation: ['headings'], find: [
+      `1f3d9_sk_${'ab'.repeat(24)}`,
+    ] },
   ]) assert.equal(parse(unsafe), null)
 })
 
@@ -972,6 +1003,35 @@ test('window collection statements enforce limit plus one without client SQL ide
   assert.match(things.text, /current_owner\.handle = \$3::text/i)
   assert.match(things.text, /ORDER BY thing\.id DESC/i)
   assert.deepEqual(things.values, [null, null, null, 51])
+
+  const thingHeadings = statement({
+    collection: 'things', beforeId: null, limit: 25, placeId: 7, resident: null,
+    includeDescendants: true, presentation: 'headings', find: 'Signal Lamp',
+  })
+  assert.match(thingHeadings.text, /WITH RECURSIVE selected_places/i)
+  assert.match(thingHeadings.text, /octet_length\(thing\.body\)::integer AS body_text_bytes/i)
+  assert.doesNotMatch(thingHeadings.text, /thing\.body\s*(?:,|AS\s+body)/i)
+  assert.match(thingHeadings.text, /thing\.name ILIKE/iu)
+  const moderationPosition = thingHeadings.text.search(/FROM moderation_actions moderation/iu)
+  const nameMatchPosition = thingHeadings.text.search(/thing\.name ILIKE/iu)
+  assert.ok(moderationPosition >= 0 && moderationPosition < nameMatchPosition)
+  assert.match(thingHeadings.text, /coalesce\([\s\S]*?'restore'\) <> 'remove'/iu)
+  assert.match(thingHeadings.text,
+    /\(\$5::text IS NULL AND \$6::integer IS NULL\) OR coalesce/iu)
+  assert.doesNotMatch(thingHeadings.text, /thing\.name\s*\|\|[\s\S]*?thing\.body/iu)
+  assert.match(thingHeadings.text, /ORDER BY thing\.id DESC/i)
+  assert.deepEqual(thingHeadings.values, [
+    null, 7, null, 26, 'Signal Lamp', null, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+  ])
+
+  const thingById = statement({
+    collection: 'things', beforeId: null, limit: 20, placeId: null, resident: null,
+    presentation: 'headings', find: '#401',
+  })
+  assert.match(thingById.text, /thing\.id = \$6::integer/iu)
+  assert.deepEqual(thingById.values, [
+    null, null, null, 21, null, 401, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+  ])
 
   const agreements = statement({
     collection: 'agreements', beforeId: 61, limit: 50, placeId: null, resident: 'tiny-lantern',
@@ -1190,6 +1250,32 @@ test('thing cards and Archive results name maker and current owner separately', 
   assert.match(WINDOW_JS, /currently owned by /)
 })
 
+test('the THINGS tab is bounded, body-free, and reuses lazy transparent portraits', () => {
+  assert.match(WINDOW_HTML, /id="things-tab"[^>]*data-view="things"/u)
+  assert.match(WINDOW_HTML, /id="things-panel"[^>]*aria-labelledby="things-tab"/u)
+  assert.match(WINDOW_HTML, /id="things-summary"[^>]*aria-live="polite"/u)
+  assert.match(WINDOW_HTML, /id="things-list"/u)
+  assert.match(WINDOW_HTML, /id="things-page"/u)
+  assert.match(WINDOW_JS, /presentation', 'headings'/u)
+  assert.match(WINDOW_JS, /liveSurveyThingTotal/u)
+  assert.match(WINDOW_JS, /Continue(?: loading)? things/u)
+  assert.match(WINDOW_JS, /body_text_bytes/u)
+  assert.match(WINDOW_JS, /portraitNode\('thing', thing\.id, thing\.name/u)
+  assert.match(WINDOW_JS, /archiveResultCard[\s\S]*?portraitNode\('thing'/u)
+  assert.match(WINDOW_JS, /renderActivity[\s\S]*?portraitNode\('thing'/u)
+  assert.match(
+    WINDOW_JS,
+    /live-ledger-thing-reference[\s\S]{0,500}thing \? thing\.has_drawing === true : record\.thingHasDrawing/u,
+  )
+  assert.match(WINDOW_JS, /\|thing:' \+ String\(activityThingId\(event\)/u)
+  assert.match(
+    WINDOW_JS,
+    /detailTitle\.replaceChildren\([\s\S]*?portraitNode\('thing',[\s\S]{0,120}entry\?\.record\?\.has_drawing === true/u,
+  )
+  assert.doesNotMatch(WINDOW_JS, /noteCard[\s\S]{0,1200}portraitNode\('thing'/u)
+  assert.match(WINDOW_CSS, /\.entity-portrait\s*\{[^}]*background:\s*transparent[^}]*border:\s*0/u)
+})
+
 test('bounded map and window rooms carry a short purpose and ordered body-free front matter', () => {
   const purpose = 'p'.repeat(280)
   const frontMatter = [41, 42, 43, 44].map((id, index) => ({
@@ -1324,18 +1410,21 @@ test('snapshot row shapers reject malformed public data', () => {
     current_place_id: 2,
     joined_at: '2026-08-11T00:00:00.000Z',
     asleep: false,
+    has_drawing: false,
   }, {
     id: 9,
     handle: 'long-gone',
     current_place_id: 195,
     joined_at: '2026-07-01T00:00:00.000Z',
     asleep: true,
+    has_drawing: false,
   }, {
     id: 10,
     handle: 'odd-flag',
     current_place_id: 2,
     joined_at: '2026-08-11T00:00:00.000Z',
     asleep: false,
+    has_drawing: false,
   }])
 
   const notes = (exports.publicWindowNotes as (rows: unknown[]) => unknown[])([
@@ -1415,6 +1504,7 @@ test('snapshot row shapers reject malformed public data', () => {
     created_at: '2026-08-11T00:00:00.000Z',
     moderated: false,
     kind_moderated: false,
+    has_drawing: false,
   }])
 
   const agreements = (exports.publicWindowAgreements as (rows: unknown[]) => unknown[])([{

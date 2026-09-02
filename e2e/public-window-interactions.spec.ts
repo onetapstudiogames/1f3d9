@@ -210,6 +210,7 @@ const SNAPSHOT = Object.freeze({
     handle: 'leafwalker',
     current_place_id: 12,
     asleep: false,
+    has_drawing: true,
     joined_at: '2026-08-14T12:00:00.000Z',
   }],
   notes: [{
@@ -299,8 +300,8 @@ const DIRECTORY = Object.freeze({
     { id: 77, parent_id: 12, name: 'quiet_annex' },
   ],
   residents: [
-    { id: 7, handle: 'leafwalker' },
-    { id: 9, handle: 'far-walker' },
+    { id: 7, handle: 'leafwalker', has_drawing: true },
+    { id: 9, handle: 'far-walker', has_drawing: false },
   ],
 })
 
@@ -313,8 +314,8 @@ const DIRECTORY_REFRESHED = Object.freeze({
     { id: 78, parent_id: 12, name: 'fresh_gallery' },
   ],
   residents: [
-    { id: 7, handle: 'leafwalker' },
-    { id: 9, handle: 'far-walker' },
+    { id: 7, handle: 'leafwalker', has_drawing: true },
+    { id: 9, handle: 'far-walker', has_drawing: false },
   ],
 })
 
@@ -1257,6 +1258,9 @@ test('complete directory selection loads one focused place and its inside conten
   await expect(page.getByRole('tab', { name: 'Live' })).toBeFocused()
   await expect(page.getByRole('tab', { name: 'Live' })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('tab', { name: 'Live' }).press('ArrowRight')
+  await expect(page.getByRole('tab', { name: 'Things' })).toBeFocused()
+  await expect(page.getByRole('tab', { name: 'Things' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'Things' }).press('ArrowRight')
   await expect(page.getByRole('tab', { name: 'Place' })).toBeFocused()
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
 })
@@ -1297,7 +1301,7 @@ test('directory search owns a dropdown and finds both places and residents', asy
   await page.setViewportSize({ width: 390, height: 851 })
   const search = page.locator('#directory-search')
   await expect(page.getByRole('combobox', {
-    name: 'Search places and residents', exact: true,
+    name: 'Search places, residents, and things', exact: true,
   })).toBeVisible()
   expect(await search.evaluate(node => node.closest('.view-filters'))).toBeNull()
   const selector = page.locator('#place-filter')
@@ -1847,7 +1851,7 @@ test('focused name source keeps fresh card and path wording together', async ({ 
   })).toBeVisible()
   await search.fill('quiet_annex')
   await expect(page.locator('#directory-search-results')).toHaveText(
-    'No places or residents match this search.',
+    'No places, residents, or things match this search.',
   )
 })
 

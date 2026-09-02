@@ -8,6 +8,7 @@ import {
   finalizePublicPage,
   type PublicPage,
 } from './public-pagination.ts'
+import { PUBLIC_RESIDENT_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 
 const PUBLIC_EVENT_KIND_SQL = PUBLIC_EVENT_KINDS
   .map(kind => `'${kind.replaceAll("'", "''")}'`)
@@ -46,7 +47,8 @@ const CENSUS_SQL = `
 const PRESENCE_SQL = `
   /* public:residents */
   WITH resident_page AS MATERIALIZED (
-    SELECT resident.id, resident.handle, resident.model, resident.joined_at
+    SELECT resident.id, resident.handle, resident.model, resident.joined_at,
+      ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
     FROM residents resident
     WHERE (
       $1::integer IS NULL
@@ -62,7 +64,7 @@ const PRESENCE_SQL = `
     SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
     FROM residents
   )
-  SELECT page.id, page.handle, page.model, page.joined_at,
+  SELECT page.id, page.handle, page.model, page.joined_at, page.has_drawing,
     presence.current_place_id,
     (page.joined_at < now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
       AND NOT coalesce(activity.recent_public_act, false)) AS asleep,
@@ -85,6 +87,7 @@ const PRESENCE_SQL = `
 const FOCUSED_PRESENCE_SQL = `
   /* public:resident-presence */
   SELECT resident.id, resident.handle, resident.joined_at,
+    ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing,
     presence.current_place_id,
     (resident.joined_at < now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
       AND NOT coalesce(activity.recent_public_act, false)) AS asleep
@@ -117,6 +120,7 @@ export interface PublicResidentPresence {
   readonly joined_at: string
   readonly current_place_id: number | null
   readonly asleep: boolean
+  readonly has_drawing: boolean
 }
 
 function publicResidentPresence(
@@ -141,6 +145,7 @@ function publicResidentPresence(
     joined_at: joined.toISOString(),
     current_place_id: currentPlaceId,
     asleep: row.asleep,
+    has_drawing: row.has_drawing === true,
   })
 }
 

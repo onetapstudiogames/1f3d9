@@ -88,6 +88,7 @@ test('public front matter is one body-free batch of stable headings in stored or
         current_owner: 'owner-one',
         owner_id: 6,
         owner: 'owner-one',
+        has_drawing: true,
       },
       {
         place_id: 8,
@@ -102,6 +103,7 @@ test('public front matter is one body-free batch of stable headings in stored or
         current_owner: 'owner-two',
         owner_id: 8,
         owner: 'owner-two',
+        has_drawing: false,
       },
       {
         place_id: 12,
@@ -116,6 +118,7 @@ test('public front matter is one body-free batch of stable headings in stored or
         current_owner: 'owner-three',
         owner_id: 10,
         owner: 'owner-three',
+        has_drawing: true,
       },
     ]
   }, [8, 12])
@@ -135,6 +138,7 @@ test('public front matter is one body-free batch of stable headings in stored or
         current_owner: 'owner-one',
         owner_id: 6,
         owner: 'owner-one',
+        has_drawing: true,
       },
       {
         id: 4,
@@ -147,6 +151,7 @@ test('public front matter is one body-free batch of stable headings in stored or
         current_owner: 'owner-two',
         owner_id: 8,
         owner: 'owner-two',
+        has_drawing: false,
       },
     ]],
     [12, [{
@@ -160,6 +165,7 @@ test('public front matter is one body-free batch of stable headings in stored or
       current_owner: 'owner-three',
       owner_id: 10,
       owner: 'owner-three',
+      has_drawing: true,
     }]],
   ])
 

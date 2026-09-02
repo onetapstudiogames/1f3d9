@@ -381,6 +381,11 @@ button { color: inherit; }
   border-bottom: 3px solid var(--line);
 }
 .record-detail-heading h2 { margin: 0; font-size: clamp(1rem, 3vw, 1.35rem); }
+.record-detail-heading h2:has(.entity-portrait) {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+}
 .record-detail-kind { margin: 0 0 0.2rem; color: var(--signal); font-size: 0.66rem; font-weight: 850; }
 .record-detail-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; }
 .detail-close {
@@ -904,7 +909,11 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .entity-portrait-image { object-fit: contain; image-rendering: pixelated; }
 .resident-reference,
-.front-matter-title {
+.front-matter-title,
+.thing-index-title,
+.place-card-thing,
+.activity-thing-reference,
+.live-ledger-thing-reference {
   display: inline-flex;
   gap: 0.35rem;
   align-items: center;
@@ -1091,10 +1100,15 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-ledger-number { color: var(--signal); font: 900 0.68rem ui-monospace, monospace; }
 .live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 0.72rem; line-height: 1.5; }
 .live-ledger-time { color: var(--sky); font: 0.58rem ui-monospace, monospace; white-space: nowrap; }
+.live-ledger-thing-reference { grid-column: 2; justify-self: start; color: var(--paper-light); }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
-.live-roster-list .resident-row { display: grid; grid-template-columns: 2rem minmax(0, 1fr); justify-content: normal; align-items: center; }
-.live-roster-list .resident-number { grid-column: 2; }
-.live-roster-list .resident-drawing-detail { grid-column: 2; justify-self: start; }
+.live-roster-list .resident-row { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: normal; align-items: center; }
+.live-roster-list .resident-row:has(> .entity-portrait) { grid-template-columns: 2rem minmax(0, 1fr); }
+.live-roster-list .resident-number,
+.live-roster-list .resident-drawing-detail { grid-column: 1; }
+.live-roster-list .resident-row:has(> .entity-portrait) .resident-number,
+.live-roster-list .resident-row:has(> .entity-portrait) .resident-drawing-detail { grid-column: 2; }
+.live-roster-list .resident-drawing-detail { justify-self: start; }
 .live-focus-interactions {
   margin: 0 0 1rem;
   padding: 0.7rem;
@@ -1607,6 +1621,17 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .place-card > .place-portrait { grid-column: 1; grid-row: 1 / 3; }
 .place-card > .place-watch { grid-column: 2; grid-row: 1; }
 .place-card > .place-owner { grid-column: 2; grid-row: 2; }
+.place-card-things {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.9rem;
+  padding: 0.45rem 0 0;
+  margin: 0;
+  border-top: 1px solid var(--paper-line);
+  list-style: none;
+}
+.place-card-thing { min-width: 0; }
 .place-card[data-watched="true"] { border-color: var(--brick); box-shadow: 5px 5px 0 rgba(173, 63, 37, 0.23); }
 .place-name, .place-owner, .activity-copy, .note-body, .thing-body, .agreement-body {
   unicode-bidi: plaintext;
@@ -1742,13 +1767,21 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .roster-place { margin: 0 0 0.5rem; color: var(--sky); font-size: 0.72rem; font-weight: 850; }
 .resident-row {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  grid-template-columns: minmax(min-content, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0;
 }
-.resident-row .resident-follow { color: #fff; font-size: 0.78rem; }
-.resident-number { color: var(--signal); font: 0.63rem ui-monospace, monospace; }
+.resident-row:has(> .entity-portrait) {
+  grid-template-columns: 2rem minmax(min-content, max-content) minmax(0, 1fr);
+}
+.resident-row .resident-follow { max-width: 100%; color: #fff; font-size: 0.78rem; }
+.resident-number {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--signal);
+  font: 0.63rem ui-monospace, monospace;
+}
 
 .place-orientation {
   display: grid;
@@ -1793,10 +1826,14 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .person-card {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  grid-template-columns: minmax(min-content, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
 }
+.person-card:has(> .entity-portrait) {
+  grid-template-columns: 2rem minmax(min-content, max-content) minmax(0, 1fr);
+}
+.person-card > .resident-follow { max-width: 100%; }
 .person-card strong { color: var(--forest-deep); }
 .thing-card { display: grid; gap: 0.55rem; }
 .thing-card h4 { display: flex; gap: 0.5rem; align-items: center; margin: 0; font-size: 1rem; }
@@ -1918,6 +1955,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   white-space: nowrap;
 }
 .activity-context { grid-column: 1 / -1; color: var(--muted); font-size: 0.72rem; }
+.activity-thing-reference { grid-column: 1; justify-self: start; }
 .activity-time { color: var(--muted); font-size: 0.65rem; white-space: nowrap; }
 
 .agreement-list { display: grid; gap: 1rem; padding: clamp(0.8rem, 2.5vw, 1.4rem); }
@@ -1981,7 +2019,14 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   border: 2px solid var(--line);
   box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.13);
 }
-.archive-result-title { margin: 0; overflow-wrap: anywhere; font-size: 1rem; }
+.archive-result-title {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
 .archive-result-meta {
   grid-column: 1;
   margin: 0;
@@ -1994,6 +2039,43 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .archive-page { display: flex; align-items: center; gap: 0.75rem; padding: 0 clamp(0.8rem, 2.5vw, 1.4rem) 1.4rem; }
 .archive-page[hidden] { display: none; }
 .archive-page .loading-row, .archive-page .error-row { margin: 0; padding: 0; }
+
+.things-summary {
+  margin: 0;
+  padding: 0.9rem clamp(0.8rem, 2.5vw, 1.4rem);
+  color: var(--muted);
+  border-bottom: 2px solid var(--line);
+  font: 750 0.7rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.things-index { padding: clamp(0.8rem, 2.5vw, 1.4rem); }
+.thing-index-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.thing-index-row {
+  padding: 0.9rem;
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.13);
+}
+.thing-index-title { margin: 0; overflow-wrap: anywhere; font-size: 1rem; }
+.thing-index-meta {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
+  font: 0.65rem/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  unicode-bidi: plaintext;
+  overflow-wrap: anywhere;
+}
+.history-page {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0 clamp(0.8rem, 2.5vw, 1.4rem) 1.4rem;
+}
+.history-page[hidden] { display: none; }
+.history-page .history-load { min-height: 2.8rem; }
 
 .gazette-heading > p {
   position: relative;
@@ -2269,21 +2351,30 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .place-card > .place-watch { grid-column: 2; }
   .place-card > .place-owner { grid-column: 2; }
   .place-facts { grid-column: 1 / -1; grid-row: auto; text-align: start; }
+  .place-card-things { display: grid; grid-template-columns: 1fr; }
+  .thing-index-row { padding: 0.75rem; }
+  .thing-index-title { align-items: flex-start; }
   .roster-group .resident-row, .person-card {
-    grid-template-columns: 2rem minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
+  .roster-group .resident-row:has(> .entity-portrait),
+  .person-card:has(> .entity-portrait) { grid-template-columns: 2rem minmax(0, 1fr); }
   .roster-group .resident-row > .entity-portrait,
   .person-card > .entity-portrait { grid-column: 1; grid-row: 1 / span 2; }
   .roster-group .resident-row > .resident-follow,
-  .person-card > .resident-follow { grid-column: 2; grid-row: 1; max-width: 100%; }
+  .person-card > .resident-follow { grid-column: 1; grid-row: 1; max-width: 100%; }
+  .roster-group .resident-row:has(> .entity-portrait) > .resident-follow,
+  .person-card:has(> .entity-portrait) > .resident-follow { grid-column: 2; }
   .roster-group .resident-row > .resident-number,
   .person-card > .resident-number {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 2;
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  .roster-group .resident-row:has(> .entity-portrait) > .resident-number,
+  .person-card:has(> .entity-portrait) > .resident-number { grid-column: 2; }
   .archive-form { grid-template-columns: 1fr; }
   .archive-query-field { grid-column: auto; }
   .archive-card { grid-template-columns: 1fr; }

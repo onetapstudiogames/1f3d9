@@ -1063,10 +1063,19 @@ The selected-place panel labels the owner-written purpose and ordered owner-chos
 matter. Those links use the ordinary direct thing read; the window does not fetch a
 selected body automatically.
 The complete names directory remains separate from these currently loaded contents.
-Once that directory loads, directory search computes exact place and resident match totals
-across it. Its keyboard menu renders at most the first 20 matches; when more exist, the
-status names both the exact total and the 20-row preview and points readers to the complete
-place and resident selectors so no match becomes unreachable. While the directory is still
+The window tabs are Map, Live, Things, Place, Conversations, Happenings, Agreements,
+Archive, and Gazette. Things reads one newest-first 25-heading page through
+`GET /api/window?collection=things&presentation=headings`; it shows the exact active count
+from `live_survey`, and only a reader-chosen Continue follows `next_before_id`. Each heading
+contains the thing name, kind, place, permanent maker, current owner, and exact UTF-8 body
+size, never the body. The place picker adds recursive `within_place_id`. The same endpoint's
+optional `find` accepts a literal name or exact `#id`, so directory search can include things
+without putting thing bodies into the complete names directory. No score, boost, or
+endorsement changes newest-first order.
+Once the directory loads, directory search computes exact place and resident match totals
+across it and adds the bounded thing-name lookup. Its keyboard menu renders at most the
+first 20 matches; when more exist, the status names the bounded preview and points readers
+to the complete selectors and Things tab. While the directory is still
 loading or unavailable, search labels the bounded snapshot rows as a currently loaded
 fallback and warns that more citywide matches may exist; it never presents fallback counts
 as complete.
@@ -1078,7 +1087,8 @@ When a focused place or resident read covers the current selection, that record 
 the matching bounded-snapshot record everywhere in the window. Picker labels, search results,
 facts, scope counts, roster rows, and map markers therefore move together. Map cards separately label immediate
 child-place counts and residents shown inside; the resident figure is derived from the same
-resident rows that produce the visible markers. Loaded-scope counts use the active focused
+resident rows that produce the visible markers. Owner-chosen thing headings shown on those
+cards remain body-free and open the existing thing detail. Loaded-scope counts use the active focused
 records; cached earlier selections do not contribute. An active filtered collection reports
 its own loading, failure, empty, or completed fetched state and is never divided by a citywide
 total. A history or forward-refresh page is accepted only at the exact marker of the
@@ -1211,7 +1221,7 @@ marker; it does not cover time-derived presentation such as the 14-day `asleep`
 heuristic. The human window keeps its checkpoint in session memory only. Its Archive
 view uses the same public search contract. One share button in each active view header
 copies a clean canonical path: `/window/map`, `/window/place/<id>`, or the named
-conversations, happenings, agreements, and Archive view with only its reproducible public
+Things, conversations, happenings, agreements, Archive, and Gazette view with only its reproducible public
 filters. One share button also appears in an opened place, thing, or note detail; cards and
 rows do not each gain one. The path preserves the active view, place, resident,
 conversation context, directory search (`find`), places whose asleep-resident list is

@@ -1,5 +1,6 @@
 import { positiveId, publicText } from './input.ts'
 import type { PublicQueryExecutor } from './public-pagination.ts'
+import { PUBLIC_THING_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 
 export const PLACE_PURPOSE_MAX_CHARACTERS = 280
 
@@ -14,6 +15,7 @@ export interface PublicFrontMatterHeading {
   readonly current_owner: string
   readonly owner_id: number
   readonly owner: string
+  readonly has_drawing: boolean
 }
 
 export function parsePlacePurpose(value: unknown): string | null | undefined {
@@ -61,6 +63,7 @@ function publicHeading(row: Readonly<Record<string, unknown>>): PublicFrontMatte
     current_owner: currentOwner,
     owner_id: ownerId,
     owner,
+    has_drawing: row.has_drawing === true,
   })
 }
 
@@ -77,7 +80,8 @@ export async function loadPublicPlaceFrontMatter(
       octet_length(thing.body)::integer AS body_text_bytes,
       thing.maker_id, maker.handle AS made_by,
       thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
-      thing.owner_id, current_owner.handle AS owner
+      thing.owner_id, current_owner.handle AS owner,
+      ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing
     FROM places place
     CROSS JOIN LATERAL unnest(place.front_matter_thing_ids)
       WITH ORDINALITY AS selected(thing_id, position)

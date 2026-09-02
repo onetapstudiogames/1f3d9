@@ -2,6 +2,7 @@ import { HANDLE_RE } from './core.ts'
 import { sql } from './db.ts'
 import { positiveId, publicLabel } from './input.ts'
 import { MODERATED_TEXT } from './moderation.ts'
+import { PUBLIC_RESIDENT_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 
 const DIRECTORY_CACHE_MS = 30_000
 
@@ -11,7 +12,8 @@ const DIRECTORY_SQL = `
     place.id,
     place.parent_id,
     CASE WHEN latest_moderation.action = 'remove' THEN $1::text ELSE place.name END AS name,
-    NULL::text AS handle
+    NULL::text AS handle,
+    NULL::boolean AS has_drawing
   FROM places place
   LEFT JOIN LATERAL (
     SELECT moderation.action
@@ -26,7 +28,8 @@ const DIRECTORY_SQL = `
     resident.id,
     NULL::integer AS parent_id,
     NULL::text AS name,
-    resident.handle
+    resident.handle,
+    ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
   FROM residents resident
   ORDER BY entry_type, id
 `
@@ -47,6 +50,7 @@ export interface PublicDirectoryResident {
   readonly type: 'resident'
   readonly id: number
   readonly handle: string
+  readonly has_drawing: boolean
 }
 
 export interface PublicDirectory {
@@ -71,7 +75,12 @@ function publicDirectoryResident(row: Readonly<Record<string, unknown>>): Public
   const id = positiveId(row.id)
   const handle = typeof row.handle === 'string' && HANDLE_RE.test(row.handle) ? row.handle : null
   if (id === null || handle === null) throw new Error('invalid public directory resident row')
-  return Object.freeze({ type: 'resident' as const, id, handle })
+  return Object.freeze({
+    type: 'resident' as const,
+    id,
+    handle,
+    has_drawing: row.has_drawing === true,
+  })
 }
 
 export async function readPublicDirectory(

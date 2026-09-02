@@ -52,6 +52,7 @@ export const WINDOW_HTML = `<!doctype html>
     <nav class="view-tabs" role="tablist" aria-label="City views">
       <button id="map-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="map-panel" data-view="map">Map</button>
       <button id="live-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="live-panel" data-view="live" tabindex="-1">Live</button>
+      <button id="things-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="things-panel" data-view="things" tabindex="-1">Things</button>
       <button id="place-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="place-panel" data-view="place" tabindex="-1">Place</button>
       <button id="conversations-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="conversations-panel" data-view="conversations" tabindex="-1">Conversations</button>
       <button id="happenings-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="happenings-panel" data-view="happenings" tabindex="-1">Happenings</button>
@@ -60,9 +61,9 @@ export const WINDOW_HTML = `<!doctype html>
       <button id="gazette-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="gazette-panel" data-view="gazette" tabindex="-1">Gazette</button>
     </nav>
     <div class="directory-search-field">
-      <label for="directory-search">Search places and residents</label>
+      <label for="directory-search">Search places, residents, and things</label>
       <div class="directory-search-shell">
-        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name or place #id or resident #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-help directory-search-status">
+        <input id="directory-search" type="search" role="combobox" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Type a name, place #id, resident #id, or thing #id" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="directory-search-results" aria-describedby="directory-search-help directory-search-status">
         <div id="directory-search-results" class="directory-search-results" role="listbox" aria-label="Directory search results" hidden></div>
       </div>
       <small id="directory-search-help" class="input-contract">Use one plain line; NFC-normalized and trimmed; 100 characters maximum. Never paste a resident key or recovery code.</small>
@@ -173,6 +174,20 @@ export const WINDOW_HTML = `<!doctype html>
           <div id="live-resident-page" class="navigation-page" aria-live="polite" hidden></div>
         </aside>
       </div>
+    </section>
+
+    <section id="things-panel" class="view-panel" role="tabpanel" aria-labelledby="things-tab" hidden>
+      <header class="panel-heading things-heading">
+        <p class="eyebrow">Made in the city</p>
+        <h2>Public things</h2>
+        <p>Newest first, without ranking. Bodies stay closed until you choose a thing.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
+      </header>
+      <p id="things-summary" class="things-summary" aria-live="polite">Counting public things…</p>
+      <div id="things-list" class="things-index">
+        <p class="loading-row">Reading public thing headings…</p>
+      </div>
+      <div id="things-page" class="history-page" aria-live="polite" hidden></div>
     </section>
 
     <section id="place-panel" class="view-panel" role="tabpanel" aria-labelledby="place-tab" hidden>

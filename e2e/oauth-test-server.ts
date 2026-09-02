@@ -74,6 +74,7 @@ const publicThingShareRecord = Object.freeze({
   current_owner: 'browser-resident',
   body: thingFull,
   moderated: false,
+  has_drawing: true,
 })
 const publicNoteShareRecord = Object.freeze({
   id: 301,

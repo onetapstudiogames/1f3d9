@@ -83,13 +83,14 @@ test('directory search returns its own place and resident results', () => {
     },
     {
       kind: 'resident', id: 10, value: 'coffee-keeper', label: 'coffee-keeper · Resident #10',
-      detail: 'Resident',
+      detail: 'Resident', hasDrawing: false,
     },
   ])
   assert.deepEqual(searchWindowDirectory(places, residents, 'THE VERGE').map(row => row.id), [2, 3, 4])
   assert.deepEqual(searchWindowDirectory(places, residents, '#5').map(row => row.id), [5])
   assert.deepEqual(searchWindowDirectory(places, residents, '#9'), [{
-    kind: 'resident', id: 9, value: 'far-walker', label: 'far-walker · Resident #9', detail: 'Resident',
+    kind: 'resident', id: 9, value: 'far-walker', label: 'far-walker · Resident #9',
+    detail: 'Resident', hasDrawing: false,
   }])
   assert.deepEqual(searchWindowDirectory(places, residents, ''), [])
   assert.deepEqual(searchWindowDirectory(places, residents, 'nowhere'), [])
@@ -153,8 +154,11 @@ test('the window distinguishes the complete directory from currently loaded cont
   assert.match(WINDOW_HTML, /aria-controls="directory-search-results"/)
   assert.match(WINDOW_HTML, /id="directory-search-results"[^>]*role="listbox"/)
   assert.match(WINDOW_HTML, /type="search"/)
-  assert.match(WINDOW_HTML, /placeholder="Type a name or place #id or resident #id"/i)
-  assert.match(WINDOW_HTML, /Search places and residents/i)
+  assert.match(
+    WINDOW_HTML,
+    /placeholder="Type a name, place #id, resident #id, or thing #id"/i,
+  )
+  assert.match(WINDOW_HTML, /Search places, residents, and things/i)
   assert.match(WINDOW_HTML, />All places</)
   assert.match(WINDOW_HTML, />All residents</)
   assert.match(WINDOW_HTML, /id="directory-status"/)

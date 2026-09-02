@@ -999,6 +999,7 @@ export type WindowDirectoryPlaceOption = Readonly<{
 export type WindowDirectoryResident = Readonly<{
   id: number
   handle: string
+  has_drawing?: boolean
 }>
 
 export type WindowDirectorySearchResult = Readonly<{
@@ -1007,6 +1008,7 @@ export type WindowDirectorySearchResult = Readonly<{
   value: string
   label: string
   detail: string
+  hasDrawing?: boolean
 }>
 
 export type WindowDirectorySearchPage = Readonly<{
@@ -1199,6 +1201,7 @@ export function searchWindowDirectory(
           value: resident.handle,
           label: `${resident.handle} · Resident #${resident.id}`,
           detail: 'Resident',
+          hasDrawing: resident.has_drawing === true,
         }),
       }]
     }),
@@ -1335,7 +1338,7 @@ export const WINDOW_JS = `(() => {
   const MODERATED_TEXT = '[removed by maintainer]'
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
   const VIEWS = Object.freeze([
-    'map', 'live', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
   const SAFE_EVENT_DETAIL_IDS = Object.freeze(${PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON})
@@ -1424,6 +1427,9 @@ export const WINDOW_JS = `(() => {
     map: document.getElementById('place-map'),
     roster: document.getElementById('resident-roster'),
     residentPage: document.getElementById('resident-page'),
+    thingsSummary: document.getElementById('things-summary'),
+    thingsList: document.getElementById('things-list'),
+    thingsPage: document.getElementById('things-page'),
     directorySearch: document.getElementById('directory-search'),
     directorySearchResults: document.getElementById('directory-search-results'),
     directorySearchStatus: document.getElementById('directory-search-status'),
@@ -1482,6 +1488,10 @@ export const WINDOW_JS = `(() => {
   let navigationRevision = 0
   let authoredRevision = 0
   let archiveRequestRevision = 0
+  let thingLookupRequestRevision = 0
+  let thingLookupController = null
+  let thingLookupTimer = null
+  let scheduledThingLookupQuery = ''
   let gazetteListRequestRevision = 0
   let gazetteListRequestPromise = null
   let gazetteDetailRequestRevision = 0
@@ -1520,6 +1530,13 @@ export const WINDOW_JS = `(() => {
       query: '', mode: 'words', type: 'all', results: [], totalItems: 0,
       totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
       initialized: false, error: null,
+    },
+    thingIndex: {
+      scopeKey: '', rows: [], nextBeforeId: null, hasMore: false,
+      loading: false, initialized: false, error: false,
+    },
+    thingLookup: {
+      query: '', rows: [], hasMore: false, loading: false, error: false,
     },
     gazette: {
       firstPrintAt: null,
@@ -1675,7 +1692,8 @@ export const WINDOW_JS = `(() => {
     observedPortraitShells.clear()
   }
 
-  function portraitNode(type, id, label, className = '') {
+  function portraitNode(type, id, label, hasDrawing, className = '') {
+    if (!hasDrawing) return document.createDocumentFragment()
     const shell = element('span', 'entity-portrait' + (className ? ' ' + className : ''))
     shell.setAttribute('aria-hidden', 'true')
     shell.title = label + ' drawing'
@@ -1821,6 +1839,7 @@ export const WINDOW_JS = `(() => {
       current_place_id: workshopId,
       joined_at: new Date(now - 86_400_000 - index * 1_000).toISOString(),
       asleep: false,
+      has_drawing: index === 0,
     }))
     const things = Array.from({ length: 7 }, (_, index) => ({
       id: 9401 + index,
@@ -1839,6 +1858,7 @@ export const WINDOW_JS = `(() => {
       created_at: new Date(now - 120_000 - index * 1_000).toISOString(),
       moderated: false,
       kind_moderated: false,
+      has_drawing: index !== 5,
     }))
     const child = (id, name, thingCount) => ({
       id,
@@ -3084,6 +3104,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       current_owner: currentOwner,
       owner_id: ownerId,
       owner,
+      has_drawing: rawHeading.has_drawing === true,
     })
   }
 
@@ -3221,6 +3242,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       currentOwnerId,
       currentOwner,
       name,
+      hasDrawing: rawResult.has_drawing === true,
       textBytes: safeCount(rawResult.body_text_bytes ?? rawResult.text_bytes),
       href: '/window/' + type + '/' + String(id),
     })
@@ -3258,6 +3280,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const heading = element('h3', 'archive-result-title', result.type === 'thing' && result.name
       ? result.name
       : 'Public note #' + String(result.id))
+    if (result.type === 'thing' && result.name) {
+      heading.prepend(portraitNode('thing', result.id, result.name, result.hasDrawing))
+    }
     const recordLabel = result.type === 'thing'
       ? 'Thing #' + String(result.id)
       : 'Note #' + String(result.id)
@@ -4151,7 +4176,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const joinedAt = safeDate(raw.joined_at)
       const currentPlaceId = raw.current_place_id == null ? null : safeId(raw.current_place_id)
       return id && handle && joinedAt && (raw.current_place_id == null || currentPlaceId)
-        ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt, asleep: raw.asleep === true }]
+        ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt,
+          asleep: raw.asleep === true, has_drawing: raw.has_drawing === true }]
         : []
     })
   }
@@ -4177,7 +4203,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const id = safeId(raw.id)
         const handle = safeHandle(raw.handle)
         if (id && handle && !residentsByHandle.has(handle)) {
-          residentsByHandle.set(handle, Object.freeze({ id, handle }))
+          residentsByHandle.set(handle, Object.freeze({
+            id, handle, has_drawing: raw.has_drawing === true,
+          }))
         }
       }
     }
@@ -4235,7 +4263,39 @@ ${WINDOW_CLIENT_SAFETY_JS}
         current_owner_id: currentOwnerId, current_owner: currentOwner,
         owner, open_to_use: raw.open_to_use === true, kind_id: kindId, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
-        kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true }]
+        kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true,
+        has_drawing: raw.has_drawing === true }]
+    })
+  }
+
+  function normalizeThingHeadings(values) {
+    if (!Array.isArray(values)) return []
+    return values.slice(0, 200).flatMap(raw => {
+      if (!raw || typeof raw !== 'object') return []
+      const id = safeId(raw.id)
+      const placeId = safeId(raw.place_id)
+      const name = safeText(raw.name, '', 120, false)
+      const kindId = raw.kind_id == null ? null : safeId(raw.kind_id)
+      const kind = raw.kind == null ? null : safeWorldName(raw.kind)
+      const makerId = safeId(raw.maker_id)
+      const madeBy = safeHandle(raw.made_by)
+      const currentOwnerId = safeId(raw.current_owner_id)
+      const currentOwner = safeHandle(raw.current_owner)
+      const bodyTextBytes = Number(raw.body_text_bytes)
+      const createdAt = safeDate(raw.created_at)
+      if (
+        !id || !placeId || !name || !makerId || !madeBy || !currentOwnerId ||
+        !currentOwner || !createdAt ||
+        (raw.kind_id != null && !kindId) || (raw.kind != null && !kind) ||
+        !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 0
+      ) return []
+      return [Object.freeze({
+        id, place_id: placeId, name, kind_id: kindId, kind,
+        maker_id: makerId, made_by: madeBy,
+        current_owner_id: currentOwnerId, current_owner: currentOwner,
+        body_text_bytes: bodyTextBytes, created_at: createdAt,
+        has_drawing: raw.has_drawing === true,
+      })]
     })
   }
 
@@ -4312,7 +4372,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
       }
       return [{ id, ...(changeId ? { change_id: changeId } : {}),
-        actor, kind: raw.kind, verb, at, detail }]
+        actor, kind: raw.kind, verb, at, detail,
+        thingHasDrawing: raw.thing_has_drawing === true }]
     })
   }
 
@@ -5762,13 +5823,42 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  function thingLookupSearchResults(snapshot) {
+    return state.thingLookup.rows.map(thing => Object.freeze({
+      kind: 'thing',
+      id: thing.id,
+      value: String(thing.id),
+      label: thing.name + ' · Thing #' + String(thing.id),
+      detail: thingHeadingPath(snapshot, thing),
+      hasDrawing: thing.has_drawing === true,
+    }))
+  }
+
   function directorySearchPage(snapshot) {
     const sources = directorySearchSources(snapshot)
-    return pageWindowDirectorySearch(
+    const directoryPage = pageWindowDirectorySearch(
       sources.places,
       sources.residents,
       state.directorySearch,
     )
+    const thingResults = state.thingLookup.query === state.directorySearch.trim()
+      ? thingLookupSearchResults(snapshot)
+      : []
+    const reservedThingCount = Math.min(5, thingResults.length)
+    const directoryResults = directoryPage.results.slice(0, 20 - reservedThingCount)
+    const combined = [
+      ...directoryResults,
+      ...thingResults.slice(0, 20 - directoryResults.length),
+    ]
+    const total = directoryPage.total + thingResults.length
+    return Object.freeze({
+      ...directoryPage,
+      results: Object.freeze(combined.slice(0, 20)),
+      total,
+      thingCount: thingResults.length,
+      hasMore: total > combined.length || state.thingLookup.hasMore,
+      thingHasMore: state.thingLookup.hasMore,
+    })
   }
 
   function directorySearchRows(snapshot) {
@@ -5791,6 +5881,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (nodes.directorySearch) nodes.directorySearch.value = ''
     closeDirectorySearchResults()
     if (result.kind === 'place') choosePlace(result.id, false)
+    else if (result.kind === 'thing') navigate({ detail: Object.freeze({ kind: 'thing', id: result.id }) })
     else chooseResident(result.value)
   }
 
@@ -5801,11 +5892,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const sources = directorySearchSources(snapshot)
     const query = state.directorySearch.trim()
+    if (query && state.thingLookup.query !== query) scheduleThingLookup(query)
     const page = directorySearchPage(snapshot)
     const results = page.results
     const fallbackNotice = state.directory.error
       ? ' The complete city directory is unavailable, so more citywide matches may exist.'
       : ' The complete city directory is still loading, so more citywide matches may exist.'
+    const thingNotice = state.thingLookup.loading
+      ? ' Looking for matching public things…'
+      : state.thingLookup.error
+        ? ' Public thing lookup failed; places and residents remain available.'
+        : page.thingHasMore
+          ? ' Showing the newest matching things; narrow the name or use the Things tab to continue.'
+          : ''
     if (!query) {
       nodes.directorySearchStatus.textContent = (sources.complete ? '' : 'Currently loaded fallback: ') +
         String(sources.places.length) +
@@ -5825,11 +5924,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
           (page.placeCount === 1 ? ' place and ' : ' places and ') +
           String(page.residentCount) +
           (page.residentCount === 1 ? ' resident. ' : ' residents. ') +
-          'Narrow this search or use the complete selectors to reach every match.'
+          'Narrow this search or use the complete selectors and Things tab to reach more.'
         : String(page.total) + (page.total === 1 ? ' result: ' : ' results: ') +
           String(page.placeCount) + (page.placeCount === 1 ? ' place and ' : ' places and ') +
           String(page.residentCount) +
-          (page.residentCount === 1 ? ' resident.' : ' residents.')
+          (page.residentCount === 1 ? ' resident.' : ' residents.') +
+          (page.thingCount ? ' ' + String(page.thingCount) +
+            (page.thingCount === 1 ? ' matching thing.' : ' matching things.') : '') + thingNotice
       : (page.hasMore
           ? 'Showing the first ' + String(results.length) + ' of ' + String(page.total) +
             ' matches in the currently loaded fallback: '
@@ -5838,11 +5939,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
               : ' results in the currently loaded fallback: ')) +
         String(page.placeCount) + (page.placeCount === 1 ? ' place and ' : ' places and ') +
         String(page.residentCount) +
-        (page.residentCount === 1 ? ' resident.' : ' residents.') + fallbackNotice
+        (page.residentCount === 1 ? ' resident.' : ' residents.') + fallbackNotice + thingNotice
     if (!results.length) {
       const empty = element('div', 'directory-search-empty', sources.complete
-        ? 'No places or residents match this search.'
-        : 'No places or residents in the currently loaded fallback match this search.' + fallbackNotice)
+        ? 'No places, residents, or things match this search.' + thingNotice
+        : 'No places, residents, or things in the currently loaded fallback match this search.' +
+          fallbackNotice + thingNotice)
       empty.setAttribute('role', 'option')
       empty.setAttribute('aria-disabled', 'true')
       nodes.directorySearchResults.replaceChildren(empty)
@@ -5861,9 +5963,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const copy = element('span', 'directory-search-option-copy')
         copy.append(
           element('strong', '', result.label),
-          element('small', '', result.kind === 'place' ? 'Place · ' + result.detail : result.detail),
+          element('small', '', result.kind === 'place' ? 'Place · ' + result.detail :
+            result.kind === 'thing' ? 'Thing · ' + result.detail : result.detail),
         )
-        option.append(portraitNode(result.kind, result.id, result.label), copy)
+        option.append(portraitNode(
+          result.kind,
+          result.id,
+          result.label,
+          result.kind === 'place' || result.hasDrawing === true,
+        ), copy)
         option.addEventListener('mousedown', event => event.preventDefault())
         option.addEventListener('mouseenter', () => {
           if (state.directorySearchIndex === index) return
@@ -5881,6 +5989,94 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     nodes.directorySearchResults.hidden = !open
     nodes.directorySearch.setAttribute('aria-expanded', String(open))
+  }
+
+  async function loadThingLookup(rawQuery) {
+    const validated = validateWindowDirectorySearch(rawQuery)
+    const query = validated.ok ? validated.value : ''
+    const requestRevision = ++thingLookupRequestRevision
+    if (!query) {
+      state = {
+        ...state,
+        thingLookup: { query: '', rows: [], hasMore: false, loading: false, error: false },
+      }
+      if (state.snapshot) renderDirectorySearch(state.snapshot, false)
+      return
+    }
+    state = {
+      ...state,
+      thingLookup: { query, rows: [], hasMore: false, loading: true, error: false },
+    }
+    if (state.snapshot) renderDirectorySearch(state.snapshot, true)
+    const controller = new AbortController()
+    thingLookupController = controller
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/window', window.location.origin)
+      url.searchParams.set('collection', 'things')
+      url.searchParams.set('presentation', 'headings')
+      url.searchParams.set('find', query)
+      url.searchParams.set('limit', '20')
+      if (state.changeMarker) url.searchParams.set('after_change_marker', state.changeMarker)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('public thing lookup unavailable')
+      const payload = await response.json()
+      if (requestRevision !== thingLookupRequestRevision || state.directorySearch.trim() !== query) return
+      requireCurrentReadMarker(payload?.change_marker, state.changeMarker)
+      const rows = normalizeThingHeadings(payload.things)
+      const hasMore = payload.has_more === true
+      if (hasMore !== Boolean(safeId(payload.next_before_id))) {
+        throw new Error('invalid public thing lookup')
+      }
+      state = {
+        ...state,
+        thingLookup: { query, rows, hasMore, loading: false, error: false },
+      }
+    } catch {
+      if (requestRevision === thingLookupRequestRevision && state.directorySearch.trim() === query) {
+        state = {
+          ...state,
+          thingLookup: { query, rows: [], hasMore: false, loading: false, error: true },
+        }
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (thingLookupController === controller) thingLookupController = null
+      if (state.snapshot) renderDirectorySearch(state.snapshot, true)
+    }
+  }
+
+  function scheduleThingLookup(rawQuery, delay = 180) {
+    const validated = validateWindowDirectorySearch(rawQuery)
+    const query = validated.ok ? validated.value : ''
+    if (
+      query === scheduledThingLookupQuery &&
+      (thingLookupTimer !== null || state.thingLookup.query === query)
+    ) return
+    scheduledThingLookupQuery = query
+    if (thingLookupTimer !== null) window.clearTimeout(thingLookupTimer)
+    thingLookupTimer = null
+    if (thingLookupController) thingLookupController.abort()
+    thingLookupController = null
+    thingLookupRequestRevision += 1
+    if (!query) {
+      state = {
+        ...state,
+        thingLookup: { query: '', rows: [], hasMore: false, loading: false, error: false },
+      }
+      return
+    }
+    state = {
+      ...state,
+      thingLookup: { query, rows: [], hasMore: false, loading: true, error: false },
+    }
+    thingLookupTimer = window.setTimeout(() => {
+      thingLookupTimer = null
+      if (scheduledThingLookupQuery === query) void loadThingLookup(query)
+    }, delay)
   }
 
   function populateFilters(snapshot) {
@@ -6105,7 +6301,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (resident.asleep) chip.title = 'dimmed by a two-week public-activity display heuristic · not proof they are offline'
     chip.addEventListener('click', () => chooseResident(resident.handle))
     chip.append(
-      portraitNode('resident', resident.id, resident.handle, 'occupant-portrait'),
+      portraitNode('resident', resident.id, resident.handle, resident.has_drawing, 'occupant-portrait'),
       document.createTextNode(resident.handle),
     )
     return chip
@@ -6324,7 +6520,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         owner.textContent = 'unowned · transit only'
       }
       card.append(
-        portraitNode('place', place.id, place.name, 'place-portrait'),
+        portraitNode('place', place.id, place.name, true, 'place-portrait'),
         watch,
         owner,
         element('span', 'place-facts', String(place.places) +
@@ -6333,6 +6529,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
           (occupants.length === 1 ? ' resident shown inside · ' : ' residents shown inside · ') +
           String(place.things) + ' things · ' + String(place.notes) + ' notes'),
       )
+      if (place.front_matter.length) {
+        const headings = element('ul', 'place-card-things')
+        headings.setAttribute('aria-label', 'Owner-chosen thing headings')
+        headings.append(...place.front_matter.map(thing => {
+          const item = element('li', 'place-card-thing')
+          item.append(
+            portraitNode('thing', thing.id, thing.name, thing.has_drawing),
+            openDetailLink(
+              'thing', thing.id, thing.name, 'detail-link place-card-thing-link',
+            ),
+          )
+          return item
+        }))
+        card.append(headings)
+      }
       if (hasChildren) {
         const childrenId = 'place-children-' + String(place.id)
         const disclosure = element('button', 'place-disclosure', expanded ? 'Collapse inside' : 'Show inside')
@@ -6583,7 +6794,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
           'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
-        row.prepend(portraitNode('resident', resident.id, resident.handle))
+        row.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
         group.append(row)
       }
       fragment.append(group)
@@ -6623,6 +6834,184 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function liveExactThingTotal(snapshot, placeId, loadedCount, includeDescendants) {
     const surveyedTotal = liveSurveyThingTotal(snapshot, placeId, includeDescendants)
     return surveyedTotal !== null && surveyedTotal >= loadedCount ? surveyedTotal : null
+  }
+
+  function thingIndexScopeKey() {
+    return state.placeId ? 'inside:' + String(state.placeId) : 'city'
+  }
+
+  function exactThingIndexTotal(snapshot) {
+    if (!liveSurveyIsComplete(snapshot)) return null
+    if (state.placeId) return liveSurveyThingTotal(snapshot, state.placeId, true)
+    return snapshot.liveSurvey.reduce((total, place) => total + place.things, 0)
+  }
+
+  function thingHeadingPath(snapshot, thing) {
+    return windowPlaceLabel(thing.place_id, placeReference(snapshot, thing.place_id)) ||
+      'Place #' + String(thing.place_id)
+  }
+
+  function renderThingIndexPage() {
+    if (!nodes.thingsPage) return
+    const index = state.thingIndex
+    const parts = []
+    if (index.error && index.rows.length) {
+      const message = element('p', 'navigation-error', 'More thing headings could not be loaded.')
+      message.setAttribute('role', 'alert')
+      parts.push(message)
+    }
+    if (index.hasMore && index.nextBeforeId) {
+      const button = element('button', 'history-load', index.loading
+        ? 'Loading more things…'
+        : index.error ? 'Retry continuing things' : 'Continue things')
+      button.type = 'button'
+      button.disabled = index.loading
+      button.setAttribute('aria-busy', String(index.loading))
+      button.dataset.focusKey = 'things-continue'
+      button.dataset.focusFallbackId = 'things-list'
+      button.addEventListener('click', () => void loadThingIndex(false))
+      parts.push(button)
+    }
+    nodes.thingsPage.hidden = parts.length === 0
+    nodes.thingsPage.replaceChildren(...parts)
+  }
+
+  function renderThingIndex(snapshot) {
+    if (!nodes.thingsList || !nodes.thingsSummary) return
+    const expectedScopeKey = thingIndexScopeKey()
+    const index = state.thingIndex.scopeKey === expectedScopeKey
+      ? state.thingIndex
+      : { ...state.thingIndex, rows: [], initialized: false, loading: false, error: false }
+    if (!index.initialized && !index.loading) {
+      void loadThingIndex(true)
+      return
+    }
+    const exactTotal = exactThingIndexTotal(snapshot)
+    if (exactTotal === null) {
+      nodes.thingsSummary.textContent = 'The exact public thing count is unavailable. ' +
+        'The completed headings below remain newest first.'
+    } else {
+      nodes.thingsSummary.textContent = String(index.rows.length) + ' of ' + String(exactTotal) +
+        (exactTotal === 1 ? ' public thing shown. ' : ' public things shown. ') +
+        'Bodies stay closed until you choose one.'
+    }
+    if (index.loading && !index.rows.length) {
+      renderEmpty(nodes.thingsList, 'loading-row', 'Reading the newest public thing headings…')
+      renderThingIndexPage()
+      return
+    }
+    if (index.error && !index.rows.length) {
+      const retry = element('button', 'history-load', 'Retry loading things')
+      retry.type = 'button'
+      retry.addEventListener('click', () => void loadThingIndex(true))
+      nodes.thingsList.replaceChildren(
+        element('p', 'error-row', 'Public thing headings could not be loaded.'),
+        retry,
+      )
+      renderThingIndexPage()
+      return
+    }
+    if (!index.rows.length) {
+      renderEmpty(nodes.thingsList, 'empty-row', 'No public thing matches this place selection.')
+      renderThingIndexPage()
+      return
+    }
+    const list = element('ul', 'thing-index-list')
+    list.append(...index.rows.map(thing => {
+      const row = element('li', 'thing-index-row')
+      row.dataset.thingId = String(thing.id)
+      const title = element('h3', 'thing-index-title')
+      title.append(
+        portraitNode('thing', thing.id, thing.name, thing.has_drawing),
+        openDetailLink('thing', thing.id, thing.name, 'detail-link thing-index-link'),
+      )
+      const kind = thing.kind ? thing.kind : 'one of a kind'
+      const meta = element('p', 'thing-index-meta')
+      meta.append(
+        document.createTextNode('kind: ' + kind + ' · at ' + thingHeadingPath(snapshot, thing) +
+          ' · made by '),
+        residentNode(thing.made_by, 'thing-maker', 'things-maker:' + String(thing.id)),
+        document.createTextNode(' · currently owned by '),
+        residentNode(
+          thing.current_owner,
+          'thing-owner',
+          'things-owner:' + String(thing.id),
+        ),
+        document.createTextNode(' · ' + String(thing.body_text_bytes) + ' UTF-8 body bytes'),
+      )
+      row.append(title, meta)
+      return row
+    }))
+    nodes.thingsList.replaceChildren(list)
+    renderThingIndexPage()
+  }
+
+  async function loadThingIndex(reset) {
+    if (!state.snapshot) return
+    const scopeKey = thingIndexScopeKey()
+    if (state.thingIndex.loading && state.thingIndex.scopeKey === scopeKey) return
+    const previous = state.thingIndex.scopeKey === scopeKey
+      ? state.thingIndex
+      : { ...state.thingIndex, scopeKey, rows: [], nextBeforeId: null, hasMore: false,
+          initialized: false, error: false }
+    if (!reset && (!previous.hasMore || !previous.nextBeforeId)) return
+    const requestMarker = state.changeMarker
+    const requestAuthoredRevision = authoredRevision
+    state = {
+      ...state,
+      thingIndex: {
+        ...(reset ? { ...previous, rows: [], nextBeforeId: null, hasMore: false } : previous),
+        scopeKey, loading: true, initialized: true, error: false,
+      },
+    }
+    renderAll()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const url = new URL('/api/window', window.location.origin)
+      url.searchParams.set('collection', 'things')
+      url.searchParams.set('presentation', 'headings')
+      url.searchParams.set('limit', '25')
+      if (state.placeId) url.searchParams.set('within_place_id', String(state.placeId))
+      if (!reset && previous.nextBeforeId) {
+        url.searchParams.set('before_id', String(previous.nextBeforeId))
+      }
+      if (requestMarker) url.searchParams.set('after_change_marker', requestMarker)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
+        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
+      })
+      if (!response.ok) throw new Error('public things unavailable')
+      const payload = await response.json()
+      if (authoredRevision !== requestAuthoredRevision || thingIndexScopeKey() !== scopeKey) return
+      requireCurrentReadMarker(payload?.change_marker, requestMarker)
+      const rows = normalizeThingHeadings(payload.things)
+      const hasMore = payload.has_more === true
+      const nextBeforeId = safeId(payload.next_before_id)
+      if (hasMore !== Boolean(nextBeforeId)) throw new Error('invalid public thing page')
+      state = {
+        ...state,
+        thingIndex: {
+          scopeKey,
+          rows: reset ? rows : mergeWindowRows(previous.rows, rows),
+          nextBeforeId: hasMore ? nextBeforeId : null,
+          hasMore,
+          loading: false,
+          initialized: true,
+          error: false,
+        },
+      }
+    } catch {
+      if (authoredRevision === requestAuthoredRevision && thingIndexScopeKey() === scopeKey) {
+        state = {
+          ...state,
+          thingIndex: { ...state.thingIndex, loading: false, initialized: true, error: true },
+        }
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      renderAll()
+    }
   }
 
   function liveFocusPlace(snapshot) {
@@ -7196,7 +7585,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : 'Focus on ' + resident.handle
       portrait.setAttribute('aria-label', portrait.title)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
-      portrait.append(portraitNode('resident', resident.id, resident.handle, 'live-entity-portrait'))
+      portrait.append(portraitNode(
+        'resident', resident.id, resident.handle, resident.has_drawing, 'live-entity-portrait',
+      ))
       const shell = livePortraitShell(
         portrait,
         bubbles?.get(resident.handle),
@@ -7346,6 +7737,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         recorded_place_id: interactionPlaceId,
         name: thing?.name || null,
         loaded: Boolean(thing),
+        has_drawing: thing?.has_drawing === true,
       }))
     }
     const focusRecords = [...new Map([...records, ...liveInteractionRecords()]
@@ -7505,7 +7897,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         bindLiveHighlight(specimen, pulse.key, 'pulse')
       }
       specimen.append(
-        portraitNode('thing', thing.id, thing.name, 'live-entity-portrait'),
+        portraitNode('thing', thing.id, thing.name, thing.has_drawing, 'live-entity-portrait'),
         element('span', 'live-thing-name', thing.name),
       )
       bindLiveActivation(specimen, specimen, itemKey, null)
@@ -7762,7 +8154,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('span', 'live-focus-resident-card-location', 'Outside this plate · ' + location),
       )
       card.append(
-        portraitNode('resident', focused.id, focused.handle, 'live-entity-portrait'),
+        portraitNode(
+          'resident', focused.id, focused.handle, focused.has_drawing, 'live-entity-portrait',
+        ),
         copy,
         openDrawingDetailButton(
           'resident',
@@ -7804,6 +8198,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
         link.dataset.livePulseFor = pulse.key
         bindLiveHighlight(link, pulse.key, 'pulse')
       }
+      link.prepend(portraitNode(
+        'thing',
+        thing.id,
+        thing.loaded ? thing.name : 'Thing #' + String(thing.id),
+        thing.has_drawing,
+        'live-entity-portrait',
+      ))
       list.append(link)
     }
     panel.append(list)
@@ -7847,7 +8248,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         ? 'Place #' + String(resident.current_place_id)
         : 'Between places'
       row.append(
-        portraitNode('resident', resident.id, resident.handle, 'live-entity-portrait'),
+        portraitNode(
+          'resident', resident.id, resident.handle, resident.has_drawing, 'live-entity-portrait',
+        ),
         follow,
         element('span', 'resident-number', location + (resident.asleep ? ' · asleep' : '')),
         openDrawingDetailButton(
@@ -8315,7 +8718,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         shell.dataset.replayDuration = String(held.duration)
       }
       portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
-      portrait.append(portraitNode('resident', resident.id, actor, 'live-entity-portrait'))
+      portrait.append(portraitNode(
+        'resident', resident.id, actor, resident.has_drawing, 'live-entity-portrait',
+      ))
       layer.append(shell)
     }
   }
@@ -8563,6 +8968,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
       row.dataset.liveLifetime = String(liveRecordLifetime(record))
       row.style.opacity = String(Math.max(0.25, age))
       row.append(number, copy, timeNode(record.at, 'live-ledger-time'))
+      const thingId = activityThingId(record)
+      if (thingId) {
+        const thing = namedThingReference(snapshot, thingId)
+        const label = thing?.name || 'Thing #' + String(thingId)
+        const reference = openDetailLink(
+          'thing', thingId, label, 'detail-link live-ledger-thing-reference',
+        )
+        reference.prepend(portraitNode(
+          'thing', thingId, label,
+          thing ? thing.has_drawing === true : record.thingHasDrawing,
+          'live-entity-portrait',
+        ))
+        row.append(reference)
+      }
       row.tabIndex = 0
       bindLiveHighlight(row, key, 'ledger')
       return row
@@ -9218,7 +9637,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       item.append(follow, element('span', 'resident-number',
         'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '') +
         (location ? ' · at ' + location : '')))
-      item.prepend(portraitNode('resident', resident.id, resident.handle))
+      item.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
       return item
     }))
     target.replaceChildren(list)
@@ -9250,7 +9669,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     follow.title = 'Follow ' + handle
     follow.addEventListener('click', () => chooseResident(handle))
     const reference = element('span', 'resident-reference')
-    reference.append(portraitNode('resident', known.id, handle), follow)
+    reference.append(portraitNode('resident', known.id, handle, known.has_drawing), follow)
     return reference
   }
 
@@ -9301,6 +9720,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       moderated: raw.moderated === true,
+      has_drawing: raw.has_drawing === true,
     }) : null
   }
 
@@ -9808,9 +10228,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (nodes.detailKind) nodes.detailKind.textContent = target.kind === 'thing'
       ? 'Public thing · live current record'
       : 'Public note · live current record'
-    if (nodes.detailTitle) nodes.detailTitle.textContent = target.kind === 'thing'
-      ? entry?.record?.name || 'Thing #' + String(target.id)
-      : 'Public note #' + String(target.id)
+    if (nodes.detailTitle) {
+      if (target.kind === 'thing') {
+        const title = entry?.record?.name || 'Thing #' + String(target.id)
+        nodes.detailTitle.replaceChildren(
+          portraitNode('thing', target.id, title, entry?.record?.has_drawing === true),
+          document.createTextNode(title),
+        )
+      } else {
+        nodes.detailTitle.textContent = 'Public note #' + String(target.id)
+      }
+    }
     if (nodes.detailBody) {
       if (!entry || entry.loading) {
         nodes.detailBody.replaceChildren(element('p', 'loading-row', 'Reading the live public record…'))
@@ -10066,7 +10494,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (thing.kind) {
         thingMeta.append(document.createTextNode(' · kind: '))
         if (thing.kind_id) {
-          thingMeta.append(portraitNode('kind', thing.kind_id, thing.kind, 'kind-portrait'))
+          thingMeta.append(portraitNode('kind', thing.kind_id, thing.kind, true, 'kind-portrait'))
         }
         thingMeta.append(document.createTextNode(thing.kind))
       } else {
@@ -10086,7 +10514,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       const heading = element('h4', '')
       heading.append(
-        portraitNode('thing', thing.id, thing.name),
+        portraitNode('thing', thing.id, thing.name, thing.has_drawing),
         openDetailLink('thing', thing.id, thing.name, 'detail-link thing-detail-link'),
       )
       item.append(heading, thingMeta)
@@ -10256,7 +10684,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         document.createTextNode(' · ' + String(heading.body_text_bytes) + ' UTF-8 bytes'),
       )
       const title = element('span', 'front-matter-title')
-      title.append(portraitNode('thing', heading.id, heading.name), link)
+      title.append(portraitNode('thing', heading.id, heading.name, heading.has_drawing), link)
       item.append(title, meta)
       return item
     }))
@@ -10538,7 +10966,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return Object.freeze({
       description,
       location,
-      key: event.actor + '|' + description + '|' + String(location || ''),
+      key: event.actor + '|' + description + '|' + String(location || '') +
+        '|thing:' + String(activityThingId(event) || ''),
     })
   }
 
@@ -10561,6 +10990,24 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       return [...groups, Object.freeze({ event, semantics, count: 1 })]
     }, [])
+  }
+
+  function activityThingId(event) {
+    if (event.detail.asset_type === 'thing' && event.detail.asset_id) return event.detail.asset_id
+    return event.detail.thing_id || event.detail.source_thing_id || null
+  }
+
+  function namedThingReference(snapshot, id) {
+    if (!id) return null
+    const indexed = state.thingIndex.rows.find(thing => thing.id === id)
+    if (indexed) return indexed
+    const recent = snapshot.things.find(thing => thing.id === id)
+    if (recent) return recent
+    for (const place of snapshot.flatPlaces) {
+      const heading = place.front_matter.find(thing => thing.id === id)
+      if (heading) return heading
+    }
+    return null
   }
 
   function renderActivity(snapshot) {
@@ -10604,6 +11051,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
         description,
       )
       row.append(copy, timeNode(event.at, 'activity-time'))
+      const thingId = activityThingId(event)
+      if (thingId) {
+        const thing = namedThingReference(snapshot, thingId)
+        const label = thing?.name || 'Thing #' + String(thingId)
+        const reference = element('span', 'activity-thing-reference')
+        reference.append(
+          portraitNode('thing', thingId, label,
+            thing ? thing.has_drawing === true : event.thingHasDrawing),
+          openDetailLink('thing', thingId, label, 'detail-link activity-thing-link'),
+        )
+        row.append(reference)
+      }
       if (group.semantics.location) {
         row.append(element('span', 'activity-context',
           'Observed at ' + group.semantics.location))
@@ -10667,7 +11126,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const chip = element('span', 'signature-chip')
         const resident = residentReference(snapshot, party)
         if (resident) {
-          chip.append(portraitNode('resident', resident.id, party, 'signature-portrait'))
+          chip.append(portraitNode(
+            'resident', resident.id, party, resident.has_drawing, 'signature-portrait',
+          ))
         }
         chip.append(document.createTextNode((acceded ? '+ ' : signed ? '✓ ' : '○ ') + party))
         chip.dataset.signed = String(signed)
@@ -11010,6 +11471,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function activeFilteredScopeKeys(snapshot) {
     const keys = new Set()
+    if (state.view === 'things') keys.add('things')
     if (state.view === 'place' && selectedPlace(snapshot)) {
       keys.add('conversations')
       keys.add('things')
@@ -11208,6 +11670,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       renderRoster(snapshot)
     } else if (state.view === 'live') {
       renderLive(snapshot)
+    } else if (state.view === 'things') {
+      renderThingIndex(snapshot)
     } else if (state.view === 'place') {
       renderPlace(snapshot)
     } else if (state.view === 'conversations') {
@@ -11933,6 +12397,15 @@ ${WINDOW_CLIENT_SAFETY_JS}
         residentPaging: navigation.residentPaging,
         histories,
         archive,
+        thingIndex: replaceAuthored
+          ? {
+              scopeKey: '', rows: [], nextBeforeId: null, hasMore: false,
+              loading: false, initialized: false, error: false,
+            }
+          : state.thingIndex,
+        thingLookup: replaceAuthored
+          ? { query: '', rows: [], hasMore: false, loading: false, error: false }
+          : state.thingLookup,
         live: invalidateSnapshotCaches
           ? {
               ...state.live,
@@ -12054,6 +12527,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     writeLocation(false)
     if (state.snapshot) renderDirectorySearch(state.snapshot, true)
+    scheduleThingLookup(state.directorySearch)
   })
   nodes.directorySearch?.addEventListener('focus', () => {
     if (state.snapshot && state.directorySearch) renderDirectorySearch(state.snapshot, true)
@@ -12068,6 +12542,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       event.preventDefault()
       nodes.directorySearch.value = ''
       state = { ...state, directorySearch: '', directorySearchIndex: -1 }
+      scheduleThingLookup('', 0)
       writeLocation(false)
       if (state.snapshot) renderDirectorySearch(state.snapshot, false)
       return

@@ -2348,6 +2348,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     q.includes('from moderation_actions')
     && !q.includes('update places set')
     && !q.includes('/* public:window-directory */')
+    && !q.includes('as has_drawing')
   ) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
@@ -2510,6 +2511,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       asleep: null, secret_hash: 'must not escape',
     }, {
       entry_type: 'resident', id: 7, parent_id: null, name: null, handle: 'tiny-lantern',
+      has_drawing: true,
       description: 'must not escape', owner_id: null,
       joined_at: '2026-08-11T00:00:00.000Z', model: 'openai-codex',
       current_place_id: 2, asleep: false, secret_hash: 'must not escape',
@@ -2836,7 +2838,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   if (state.scenario === 'window outline' && q.includes('from notes note')) {
     return descendingPage(paginationNotes(), params[0], params.at(-1))
   }
-  if (state.scenario === 'window outline' && q.includes('from things thing')) {
+  if (state.scenario === 'window outline' && q.includes('from things thing')
+      && !q.includes('/* public:events */') && !q.includes('/* public:window-events */')) {
     return descendingPage(paginationThings(), params[0], params.at(-1))
   }
   if (state.scenario === 'window outline' && q.includes('from agreements agreement')) {
@@ -2844,6 +2847,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   }
   if (state.scenario === 'window outline' && (
     q.includes('select id, at, kind, actor, detail') || q.includes('/* public:events */')
+      || q.includes('/* public:window-events */')
   )) {
     const events = paginationEvents().map((event, index) => index === 0
       ? {
@@ -3065,7 +3069,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       total_text_bytes: Buffer.byteLength(String(row.description ?? ''), 'utf8'),
     }]
   }
-  if (q.includes('from kind_revisions') || q.includes('from kinds')) {
+  if ((q.includes('from kind_revisions') || q.includes('from kinds'))
+      && !q.includes('things thing')) {
     if (q.includes('insert into') || q.includes('update kinds')) return [{ ...kindRow(), revision: state.kindRevision + 1 }]
     return [kindRow()]
   }
@@ -3156,7 +3161,8 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
   // notes/things branches can swallow them.
   if (q.includes('select id, at, kind, actor, detail') ||
       q.includes('select at, kind, actor, detail') ||
-      q.includes('/* public:events */')) {
+      q.includes('/* public:events */') ||
+      q.includes('/* public:window-events */')) {
     const withEventTotals = (
       page: readonly Record<string, unknown>[],
       all: readonly Record<string, unknown>[],
@@ -4935,12 +4941,16 @@ test('the directory window is one cached, moderated, body-free statement with ex
     assert.equal(Object.hasOwn(directory, 'live_survey'), false)
     assert.equal(directory.view, 'directory')
     assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
-    assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), ['handle', 'id', 'type'])
+    assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), [
+      'handle', 'has_drawing', 'id', 'type',
+    ])
     assert.deepEqual(directory.places, [
       { type: 'place', id: 1, parent_id: null, name: 'the world' },
       { type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]' },
     ])
-    assert.deepEqual(directory.residents, [{ type: 'resident', id: 7, handle: 'tiny-lantern' }])
+    assert.deepEqual(directory.residents, [{
+      type: 'resident', id: 7, handle: 'tiny-lantern', has_drawing: false,
+    }])
 
     const directoryCalls = sqlCalls().filter(call =>
       /\/\* public:window-directory \*\//iu.test(call.query ?? ''))
@@ -8787,6 +8797,7 @@ test('search and changes succeed through their real Hono routes without returnin
         maker_id: 5, made_by: 'archive-smith',
         current_owner_id: 7, current_owner: 'tiny-lantern',
         owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
+        has_drawing: false,
         body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
         href: '/api/thing/41',
       }],
@@ -9433,7 +9444,7 @@ test('focused resident presence returns one exact public record or 404', async (
   }
   assert.deepEqual(Object.keys(body), ['resident'])
   assert.deepEqual(Object.keys(body.resident).sort(), [
-    'asleep', 'current_place_id', 'handle', 'id', 'joined_at',
+    'asleep', 'current_place_id', 'handle', 'has_drawing', 'id', 'joined_at',
   ])
   assert.deepEqual(body, {
     resident: {
@@ -9442,6 +9453,7 @@ test('focused resident presence returns one exact public record or 404', async (
       joined_at: '2026-08-11T00:00:00.000Z',
       current_place_id: 2,
       asleep: false,
+      has_drawing: false,
     },
   })
   const reads = sqlCalls().filter(call =>

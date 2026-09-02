@@ -40,7 +40,38 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
       thing.owner_id AS current_owner_id, owner.handle AS current_owner,
       thing.owner_id, owner.handle AS owner, thing.open_to_use,
       thing.kind_id, kind.name AS kind,
-      thing.birth_revision, thing.current_revision, thing.created_at
+      thing.birth_revision, thing.current_revision,
+      CASE
+        WHEN coalesce((
+          SELECT moderation.action FROM moderation_actions moderation
+          WHERE moderation.target_type = 'thing' AND moderation.target_id = thing.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+        ), 'restore') = 'remove' THEN false
+        WHEN thing.kind_id IS NULL THEN thing.drawing IS NOT NULL
+        WHEN thing.drawing_state = 'refused' THEN false
+        WHEN coalesce((
+          SELECT moderation.action FROM moderation_actions moderation
+          WHERE moderation.target_type = 'kind' AND moderation.target_id = thing.kind_id
+          ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+        ), 'restore') = 'remove' THEN false
+        ELSE coalesce((
+          SELECT variant.value -> 'drawing' IS NOT NULL
+          FROM kind_revisions drawing_revision
+          CROSS JOIN LATERAL jsonb_array_elements(
+            coalesce(drawing_revision.drawing_variants, '[]'::jsonb)
+          ) variant(value)
+          WHERE drawing_revision.kind_id = thing.kind_id
+            AND drawing_revision.revision = thing.current_revision
+            AND variant.value ->> 'name' = thing.drawing_variant_name
+          LIMIT 1
+        ), (
+          SELECT drawing_revision.drawing IS NOT NULL
+          FROM kind_revisions drawing_revision
+          WHERE drawing_revision.kind_id = thing.kind_id
+            AND drawing_revision.revision = thing.current_revision
+        ), false)
+      END AS has_drawing,
+      thing.created_at
     FROM things thing
     JOIN residents maker ON maker.id = thing.maker_id
     JOIN residents owner ON owner.id = thing.owner_id

@@ -228,6 +228,10 @@ Normal map, room, bounded-window, directory, and census reads stay
 drawing-payload-free and history-free. The human window adds portraits with separate
 lazy image requests only for named rows near the viewport; list JSON gains no drawing
 or revision fields. Live uses the same thumbnails for small resident and thing sprites.
+Every named thing reference in the window uses that thing thumbnail: place contents,
+owner-chosen map-card headings, Things rows, Live specimens and interaction references,
+Happenings references, and Archive thing results. Resident references keep the same rule.
+Notes never receive portraits because they are speech rather than made objects.
 Portrait shells and their empty states have no background or border, so transparent
 pixels and Complete Blank drawings show the page ground instead of a box. Gazette issue
 pages use same-origin `<object>` elements so a missing portrait has an empty no-JS

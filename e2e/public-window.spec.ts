@@ -74,6 +74,17 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
     'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
     'base64',
   )
+  const eventOnlyAt = new Date().toISOString()
+  const eventOnlyReferences = [
+    {
+      id: 9_401, at: eventOnlyAt, kind: 'thing_created', actor: 'browser-resident',
+      detail: { thing_id: 9_401, place_id: 11 }, thing_has_drawing: true,
+    },
+    {
+      id: 9_402, at: eventOnlyAt, kind: 'thing_created', actor: 'browser-resident',
+      detail: { thing_id: 9_402, place_id: 11 }, thing_has_drawing: false,
+    },
+  ]
   await page.route('**/api/drawing/*/*/thumb.png*', async route => {
     const url = new URL(route.request().url())
     thumbnailPaths.push(url.pathname + url.search)
@@ -83,6 +94,38 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
       headers: { 'cache-control': 'public, max-age=31536000, immutable' },
       body: transparentPng,
     })
+  })
+  await page.route('**/api/events**', async route => {
+    const response = await route.fetch()
+    const body = await response.json() as Record<string, unknown>
+    const events = Array.isArray(body.events) ? body.events : []
+    await route.fulfill({ response, json: {
+      ...body,
+      events: [
+        ...eventOnlyReferences,
+        ...events,
+      ],
+    } })
+  })
+  await page.route('**/api/window**', async route => {
+    const response = await route.fetch()
+    const body = await response.json() as Record<string, unknown>
+    const markResidents = (value: unknown) => Array.isArray(value)
+      ? value.map(resident => resident && typeof resident === 'object'
+        ? { ...resident, has_drawing: Number((resident as { id?: unknown }).id) === 49 }
+        : resident)
+      : value
+    const markThings = (value: unknown) => Array.isArray(value)
+      ? value.map(thing => thing && typeof thing === 'object'
+        ? { ...thing, has_drawing: Number((thing as { id?: unknown }).id) === 401 }
+        : thing)
+      : value
+    await route.fulfill({ response, json: {
+      ...body,
+      residents: markResidents(body.residents),
+      things: markThings(body.things),
+      events: [...eventOnlyReferences, ...(Array.isArray(body.events) ? body.events : [])],
+    } })
   })
 
   await page.goto('/window/map')
@@ -139,12 +182,301 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
     'src',
     /\/api\/drawing\/kind\/77\/thumb\.png\?rev=9$/u,
   )
+  await expect(page.locator(
+    '#place-notes .note-card .entity-portrait[data-portrait-type="note"]',
+  )).toHaveCount(0)
+
+  const happeningsResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('within_place_id') === '11' &&
+      !url.searchParams.has('before_id') && response.status() === 200
+  })
+  await page.getByRole('tab', { name: 'Happenings', exact: true }).click()
+  await happeningsResponse
+  const madeThing = page.locator('#activity-list .activity-row').filter({ hasText: 'field_lantern' })
+  await expect(madeThing).toBeVisible()
+  const madeThingPortrait = madeThing.locator(
+    '.entity-portrait[data-portrait-type="thing"]',
+  )
+  await expect(madeThingPortrait).toHaveCount(1)
+  await madeThingPortrait.scrollIntoViewIfNeeded()
+  const madeThingPortraitImage = madeThingPortrait.locator('img')
+  await expect(madeThingPortraitImage).toHaveCount(1)
+  await expect(madeThingPortraitImage).toHaveAttribute(
+    'src',
+    /\/api\/drawing\/thing\/401\/thumb\.png\?rev=9$/u,
+  )
+  const eventOnlyDrawn = page.locator('#activity-list .activity-thing-reference')
+    .filter({ hasText: 'Thing #9401' })
+  const eventOnlyUndrawn = page.locator('#activity-list .activity-thing-reference')
+    .filter({ hasText: 'Thing #9402' })
+  await expect(eventOnlyDrawn.locator('.entity-portrait[data-portrait-type="thing"]')).toHaveCount(1)
+  await expect(eventOnlyUndrawn.locator('.entity-portrait[data-portrait-type="thing"]')).toHaveCount(0)
+
   expect(thumbnailPaths).toContain('/api/drawing/resident/49/thumb.png?rev=9')
   expect(thumbnailPaths).toContain('/api/drawing/thing/401/thumb.png?rev=9')
   expect(thumbnailPaths).toContain('/api/drawing/kind/77/thumb.png?rev=9')
 })
 
-test('phone roster rows keep wrapping location text below names', async ({ page }) => {
+test('THINGS stays bounded by choice and transparent at desktop and phone widths', async ({ page }) => {
+  const mostlyTransparentPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAALklEQVR4nO3OMQ0AMAgAQQzVBiLw74M6YCMdepf8/nGyeiq2GTBg4PkAAADwvQtDNHMBnss7igAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const headings = Array.from({ length: 27 }, (_, index) => {
+    const id = 427 - index
+    return {
+      id,
+      place_id: id % 2 === 0 ? 12 : 11,
+      name: id === 427 ? 'transparent-beacon' : `Public thing ${id}`,
+      kind_id: 77,
+      kind: 'artifact',
+      maker_id: 49,
+      made_by: 'browser-resident',
+      current_owner_id: 49,
+      current_owner: 'browser-resident',
+      has_drawing: id === 427,
+      body_text_bytes: id === 427 ? 37 : id,
+      created_at: `2026-08-13T19:${String(59 - index).padStart(2, '0')}:00.000Z`,
+    }
+  })
+  const frontMatter = [{
+    type: 'thing', id: 427, name: 'transparent-beacon', body_text_bytes: 37,
+    maker_id: 49, made_by: 'browser-resident', current_owner_id: 49,
+    current_owner: 'browser-resident', owner_id: 49, owner: 'browser-resident',
+    has_drawing: true,
+  }]
+  let indexRequests = 0
+  let holdNextCitywidePage = false
+  let releaseHeldCitywidePage = () => {}
+  let markHeldCitywideStarted = () => {}
+  const heldCitywidePage = new Promise<void>(resolve => { releaseHeldCitywidePage = resolve })
+  const heldCitywideStarted = new Promise<void>(resolve => { markHeldCitywideStarted = resolve })
+  await page.route('**/api/drawing/thing/427/thumb.png*', route => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: mostlyTransparentPng,
+  }))
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('view') === 'directory') {
+      await route.fulfill({ json: {
+        view: 'directory',
+        places: [
+          { id: 11, parent_id: null, name: 'test_square' },
+          { id: 12, parent_id: 11, name: 'side_room' },
+        ],
+        residents: [
+          { id: 49, handle: 'browser-resident', has_drawing: true },
+          { id: 48, handle: 'oldwalker', has_drawing: false },
+          ...Array.from({ length: 20 }, (_, index) => ({
+            id: 100 + index,
+            handle: `transparent-beacon-${index + 1}`,
+          })),
+        ],
+      } })
+      return
+    }
+    if (url.searchParams.get('collection') === 'things' &&
+        url.searchParams.get('presentation') === 'headings') {
+      const find = url.searchParams.get('find')
+      const withinPlaceId = url.searchParams.get('within_place_id')
+      if (
+        holdNextCitywidePage && !find && !withinPlaceId &&
+        !url.searchParams.has('before_id')
+      ) {
+        holdNextCitywidePage = false
+        markHeldCitywideStarted()
+        await heldCitywidePage
+      }
+      const scopedHeadings = withinPlaceId === '12'
+        ? headings.filter(thing => thing.place_id === 12)
+        : headings
+      const rows = find
+        ? headings.filter(thing => find.startsWith('#')
+          ? `#${thing.id}` === find
+          : thing.name.toLocaleLowerCase().includes(find.toLocaleLowerCase()))
+        : url.searchParams.has('before_id')
+          ? scopedHeadings.slice(25)
+          : scopedHeadings.slice(0, 25)
+      if (!find) indexRequests += 1
+      const hasMore = !find && !url.searchParams.has('before_id') && scopedHeadings.length > 25
+      await route.fulfill({ json: {
+        change_marker: '9',
+        things: rows,
+        has_more: hasMore,
+        next_before_id: hasMore ? 403 : null,
+      } })
+      return
+    }
+    const response = await route.fetch()
+    const snapshot = await response.json()
+    const [square, sideRoom] = snapshot.places
+    const residents = [
+      ...snapshot.residents.filter((resident: { id: number }) => ![48, 49].includes(resident.id)),
+      {
+        id: 49, handle: 'browser-resident', current_place_id: 11,
+        joined_at: '2026-08-13T20:00:00.000Z', asleep: false, has_drawing: true,
+      },
+      {
+        id: 48, handle: 'oldwalker', current_place_id: 11,
+        joined_at: '2026-08-12T20:00:00.000Z', asleep: false, has_drawing: false,
+      },
+    ]
+    await route.fulfill({ response, json: {
+      ...snapshot,
+      residents,
+      totals: { ...snapshot.totals, things: 27 },
+      places: [{
+        ...square,
+        places: 1,
+        things: 14,
+        front_matter: frontMatter,
+        children: [{ ...sideRoom, parent_id: 11, things: 13, children: [] }],
+      }],
+      live_survey: [
+        { id: 11, parent_id: null, things: 14 },
+        { id: 12, parent_id: 11, things: 13 },
+      ],
+    } })
+  })
+
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    indexRequests = 0
+    await page.setViewportSize(viewport)
+    await page.goto('/window/things')
+    await expect(page.locator('#window-status')).toContainText('Watching')
+    await expect(page.locator('#things-summary')).toHaveText(
+      '25 of 27 public things shown. Bodies stay closed until you choose one.',
+    )
+    await expect(page.locator('#things-list .thing-index-row')).toHaveCount(25)
+    await expect(page.getByRole('button', { name: 'Continue things' })).toBeVisible()
+    expect(indexRequests).toBe(1)
+    await page.waitForTimeout(150)
+    expect(indexRequests).toBe(1)
+
+    const firstRow = page.locator('#things-list .thing-index-row').first()
+    const undrawnRow = page.locator('#things-list .thing-index-row').nth(1)
+    await expect(firstRow).toContainText('transparent-beacon')
+    await expect(firstRow).toContainText('37 UTF-8 body bytes')
+    await expect(firstRow).not.toContainText('must not cross')
+    const portrait = firstRow.locator('.entity-portrait[data-portrait-type="thing"]')
+    await expect(portrait).toHaveCount(1)
+    await expect(undrawnRow.locator('.entity-portrait[data-portrait-type="thing"]')).toHaveCount(0)
+    const drawnTitleBeforeLoad = await firstRow.locator('.thing-index-link').boundingBox()
+    const undrawnTitle = await undrawnRow.locator('.thing-index-link').boundingBox()
+    const drawnRow = await firstRow.boundingBox()
+    const undrawnRowBox = await undrawnRow.boundingBox()
+    expect(drawnTitleBeforeLoad).not.toBeNull()
+    expect(undrawnTitle).not.toBeNull()
+    expect(drawnRow).not.toBeNull()
+    expect(undrawnRowBox).not.toBeNull()
+    expect(undrawnTitle!.x - undrawnRowBox!.x).toBeLessThan(
+      drawnTitleBeforeLoad!.x - drawnRow!.x,
+    )
+    await portrait.scrollIntoViewIfNeeded()
+    await expect(portrait).toHaveAttribute('data-portrait-state', 'loaded')
+    const drawnTitleAfterLoad = await firstRow.locator('.thing-index-link').boundingBox()
+    expect(drawnTitleAfterLoad?.x).toBe(drawnTitleBeforeLoad?.x)
+    expect(await portrait.evaluate(shell => {
+      const image = shell.querySelector('img')
+      const canvas = document.createElement('canvas')
+      canvas.width = 32
+      canvas.height = 32
+      const context = canvas.getContext('2d')
+      if (!image || !context) return null
+      context.drawImage(image, 0, 0, 32, 32)
+      return {
+        inkAlpha: context.getImageData(2, 2, 1, 1).data[3],
+        centerAlpha: context.getImageData(16, 16, 1, 1).data[3],
+        shellBackground: getComputedStyle(shell).backgroundColor,
+        rowBackground: getComputedStyle(shell.closest('.thing-index-row')!).backgroundColor,
+      }
+    })).toEqual({
+      inkAlpha: 255,
+      centerAlpha: 0,
+      shellBackground: 'rgba(0, 0, 0, 0)',
+      rowBackground: 'rgb(255, 249, 232)',
+    })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+    await page.getByRole('button', { name: 'Continue things' }).click()
+    await expect(page.locator('#things-summary')).toHaveText(
+      '27 of 27 public things shown. Bodies stay closed until you choose one.',
+    )
+    await expect(page.locator('#things-list .thing-index-row')).toHaveCount(27)
+    expect(indexRequests).toBe(2)
+
+    await page.getByRole('tab', { name: 'Map', exact: true }).click()
+    const drawnResident = page.locator('#resident-roster .resident-row')
+      .filter({ hasText: 'browser-resident' })
+    const undrawnResident = page.locator('#resident-roster .resident-row')
+      .filter({ hasText: 'oldwalker' })
+    await expect(drawnResident.locator('.entity-portrait')).toHaveCount(1)
+    await expect(undrawnResident.locator('.entity-portrait')).toHaveCount(0)
+    const [drawnHandle, undrawnHandle, drawnResidentBox, undrawnResidentBox] = await Promise.all([
+      drawnResident.locator('.resident-follow').boundingBox(),
+      undrawnResident.locator('.resident-follow').boundingBox(),
+      drawnResident.boundingBox(),
+      undrawnResident.boundingBox(),
+    ])
+    expect(drawnHandle).not.toBeNull()
+    expect(undrawnHandle).not.toBeNull()
+    expect(drawnResidentBox).not.toBeNull()
+    expect(undrawnResidentBox).not.toBeNull()
+    expect(undrawnHandle!.x - undrawnResidentBox!.x).toBeLessThan(
+      drawnHandle!.x - drawnResidentBox!.x,
+    )
+    if (viewport.width <= 390) {
+      const [drawnMeta, undrawnMeta] = await Promise.all([
+        drawnResident.locator('.resident-number').boundingBox(),
+        undrawnResident.locator('.resident-number').boundingBox(),
+      ])
+      expect(drawnMeta).not.toBeNull()
+      expect(undrawnMeta).not.toBeNull()
+      expect(boxesIntersect(drawnHandle!, drawnMeta!)).toBe(false)
+      expect(boxesIntersect(undrawnHandle!, undrawnMeta!)).toBe(false)
+    }
+  }
+
+  await page.goto('/window/map')
+  const mapHeading = page.locator('#place-map .place-card-thing')
+    .filter({ hasText: 'transparent-beacon' })
+  await mapHeading.scrollIntoViewIfNeeded()
+  await expect(mapHeading.locator(
+    '.entity-portrait[data-portrait-type="thing"] img',
+  )).toHaveAttribute(
+    'src',
+    /\/api\/drawing\/thing\/427\/thumb\.png\?rev=9$/u,
+  )
+
+  const search = page.getByRole('combobox', { name: 'Search places, residents, and things' })
+  await search.fill('transparent-beacon')
+  await expect(page.getByRole('option', { name: /transparent-beacon · Thing #427/u })).toBeVisible()
+  await expect(page.locator('#directory-search-status')).toContainText(
+    'Showing the first 20 of 21 exact matches',
+  )
+  await search.fill('#427')
+  await expect(page.getByRole('option', { name: /transparent-beacon · Thing #427/u })).toBeVisible()
+
+  await page.goto('/window/things?place=11')
+  await expect(page.locator('#things-list .thing-index-row')).toHaveCount(25)
+  holdNextCitywidePage = true
+  await page.locator('#place-filter').selectOption('')
+  await heldCitywideStarted
+  await page.locator('#place-filter').selectOption('12')
+  await expect(page).toHaveURL(/\/window\/things\?place=12$/u)
+  await expect(page.locator('#things-summary')).toHaveText(
+    '13 of 13 public things shown. Bodies stay closed until you choose one.',
+  )
+  releaseHeldCitywidePage()
+  await page.waitForTimeout(100)
+  await expect(page.locator('#things-summary')).toHaveText(
+    '13 of 13 public things shown. Bodies stay closed until you choose one.',
+  )
+})
+
+test('presence rows keep handles and long locations separate at phone and desktop widths', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.route('**/api/window*', async route => {
     const response = await route.fetch()
@@ -156,10 +488,32 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
       await route.fulfill({ response })
       return
     }
+    const residents = Array.isArray(body.residents)
+      ? body.residents.map(resident => resident && typeof resident === 'object'
+        ? {
+            ...resident,
+            handle: Number((resident as { id?: unknown }).id) === 49
+              ? 'fable-lyrebird'
+              : Number((resident as { id?: unknown }).id) === 48
+                ? 'off-by-one'
+                : (resident as { handle?: unknown }).handle,
+            current_place_id: Number((resident as { id?: unknown }).id) === 48
+              ? 11
+              : (resident as { current_place_id?: unknown }).current_place_id,
+            has_drawing: Number((resident as { id?: unknown }).id) === 49,
+          }
+        : resident)
+      : []
     await route.fulfill({
       response,
       json: {
         ...body,
+        residents,
+        things: Array.isArray(body.things)
+          ? body.things.map(thing => thing && typeof thing === 'object'
+            ? { ...thing, has_drawing: Number((thing as { id?: unknown }).id) === 401 }
+            : thing)
+          : body.things,
         places: body.places.map(place => place.id === 11 ? {
           ...place,
           name: 'frontier valley / the corrigenda room / the long lantern gallery',
@@ -172,7 +526,7 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
   await expect(page.locator('#window-status')).toContainText('Watching')
 
   const placeRow = page.locator('#place-occupants .person-card')
-    .filter({ hasText: 'browser-resident' })
+    .filter({ hasText: 'fable-lyrebird' })
   const placeHandle = placeRow.locator('.resident-follow')
   const placeMeta = placeRow.locator('.resident-number')
   await expect(placeRow).toBeVisible()
@@ -197,6 +551,42 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
   expect(placePortraitBox!.y).toBeLessThan(placeHandleBox!.y + placeHandleBox!.height)
   expect(placePortraitBox!.y + placePortraitBox!.height).toBeGreaterThan(placeHandleBox!.y)
 
+  const undrawnPlaceRow = page.locator('#place-occupants .person-card')
+    .filter({ hasText: 'off-by-one' })
+  await expect(undrawnPlaceRow).toHaveCount(1)
+  await expect(undrawnPlaceRow.locator('.entity-portrait')).toHaveCount(0)
+  const [phoneUndrawnHandleBox, phoneUndrawnMetaBox] = await Promise.all([
+    undrawnPlaceRow.locator('.resident-follow').boundingBox(),
+    undrawnPlaceRow.locator('.resident-number').boundingBox(),
+  ])
+  expect(phoneUndrawnHandleBox).not.toBeNull()
+  expect(phoneUndrawnMetaBox).not.toBeNull()
+  expect(boxesIntersect(phoneUndrawnHandleBox!, phoneUndrawnMetaBox!)).toBe(false)
+  expect(phoneUndrawnMetaBox!.y).toBeGreaterThanOrEqual(
+    phoneUndrawnHandleBox!.y + phoneUndrawnHandleBox!.height - 0.5,
+  )
+  expect(phoneUndrawnHandleBox!.x).toBeLessThan(placeHandleBox!.x)
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  for (const row of [placeRow, undrawnPlaceRow]) {
+    const [handleBox, metaBox] = await Promise.all([
+      row.locator('.resident-follow').boundingBox(),
+      row.locator('.resident-number').boundingBox(),
+    ])
+    expect(handleBox).not.toBeNull()
+    expect(metaBox).not.toBeNull()
+    expect(boxesIntersect(handleBox!, metaBox!)).toBe(false)
+  }
+  const [desktopDrawnHandleBox, desktopUndrawnHandleBox] = await Promise.all([
+    placeRow.locator('.resident-follow').boundingBox(),
+    undrawnPlaceRow.locator('.resident-follow').boundingBox(),
+  ])
+  expect(desktopDrawnHandleBox).not.toBeNull()
+  expect(desktopUndrawnHandleBox).not.toBeNull()
+  expect(desktopUndrawnHandleBox!.x).toBeLessThan(desktopDrawnHandleBox!.x)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+
   const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
   const [thingNameBox, thingMetaBox] = await Promise.all([
     thing.locator('h4').boundingBox(),
@@ -209,7 +599,7 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
 
   await page.getByRole('tab', { name: 'Map', exact: true }).click()
   const rosterRow = page.locator('#resident-roster .resident-row')
-    .filter({ hasText: 'browser-resident' })
+    .filter({ hasText: 'fable-lyrebird' })
   await expect(rosterRow).toBeVisible()
   const rosterMeta = rosterRow.locator('.resident-number')
   await rosterMeta.evaluate(element => {
@@ -231,6 +621,15 @@ test('phone roster rows keep wrapping location text below names', async ({ page 
     range.selectNodeContents(element)
     return range.getClientRects().length
   })).toBeGreaterThanOrEqual(2)
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const [desktopRosterHandleBox, desktopRosterMetaBox] = await Promise.all([
+    rosterRow.locator('.resident-follow').boundingBox(),
+    rosterMeta.boundingBox(),
+  ])
+  expect(desktopRosterHandleBox).not.toBeNull()
+  expect(desktopRosterMetaBox).not.toBeNull()
+  expect(boxesIntersect(desktopRosterHandleBox!, desktopRosterMetaBox!)).toBe(false)
 })
 
 test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {
@@ -240,6 +639,7 @@ test('each visible view has one share button that copies its absolute clean URL'
 
   const views = [
     { tab: 'Map', path: '/window/map' },
+    { tab: 'Things', path: '/window/things' },
     { tab: 'Place', path: '/window/place/11' },
     { tab: 'Conversations', path: '/window/conversations?place=11' },
     { tab: 'Happenings', path: '/window/happenings?place=11' },
@@ -395,6 +795,9 @@ test('place, thing, and note details each copy one absolute clean live-record UR
   await expect(detail).toBeVisible()
   await expect(detail.locator('[data-share-scope="detail"]')).toHaveCount(1)
   await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+  await expect(detail.locator(
+    '#record-detail-title .entity-portrait[data-portrait-type="thing"] img',
+  )).toHaveAttribute('src', /\/api\/drawing\/thing\/401\/thumb\.png/u)
   await detail.locator('[data-share-scope="detail"]').click()
   expectedLinks.push(`${origin}/window/thing/401`)
   await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
@@ -411,6 +814,7 @@ test('place, thing, and note details each copy one absolute clean live-record UR
   await expect(detail).toBeVisible()
   await expect(detail.locator('[data-share-scope="detail"]')).toHaveCount(1)
   await expect(detail.locator('#record-detail-body')).toContainText(NOTE_FULL)
+  await expect(detail.locator('[data-portrait-type="note"]')).toHaveCount(0)
   await detail.locator('[data-share-scope="detail"]').click()
   expectedLinks.push(`${origin}/window/note/301`)
   await expect.poll(() => copiedShareLinks(page)).toEqual(expectedLinks)
