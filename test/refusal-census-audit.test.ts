@@ -173,7 +173,7 @@ test('the source scan includes place lifecycle helper refusals added on main', (
 
 test('the refusal census covers every non-identity HTTP and MCP boundary', () => {
   const http = discoverHttpBoundaries(projectRoot)
-  assert.equal(http.registrations.length, 117)
+  assert.equal(http.registrations.length, 119)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

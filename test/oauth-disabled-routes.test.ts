@@ -65,14 +65,32 @@ test('the off switch hides discovery, authorization, token, and revocation route
   }
 })
 
-test('disabling hosted chat never reopens transcript-visible root-key rotation', async () => {
+test('disabling hosted chat has no bearing on the JSON rotation door, which stays off because IDENTITY_ROTATION_ENABLED is unset here', async () => {
+  // Decision row 74 turned POST /api/rotate into a real coding-client JSON
+  // door, gated by the same IDENTITY_ROTATION_ENABLED flag as the browser
+  // page /rotate -- never by hosted-chat sign-in, which this suite disables.
+  // It ignores Authorization entirely (the current and replacement keys
+  // travel only in the JSON body), so a bearer-only request never even
+  // reaches a credential check; it stops at the unavailable-door 503 this
+  // environment's unset rotation flag produces.
   const response = await app.request('/api/rotate', {
     method: 'POST',
     headers: { authorization: `Bearer ${LEGACY_KEY}` },
   })
 
-  assert.equal(response.status, 410)
+  assert.equal(response.status, 503)
   assert.deepEqual(await response.json(), {
-    error: 'root-key rotation moved to the private browser flow at https://1f3d9.com/rotate',
+    error: '/api/rotate is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead',
+  })
+})
+
+test('the off switch also leaves nowhere for a pairing code to be redeemed', async () => {
+  // Decision row 74's POST /api/pair only mounts once hosted-chat sign-in is
+  // ready, since a minted code has no /oauth/authorize page to be entered on
+  // otherwise.
+  const response = await app.request('/api/pair', { method: 'POST' })
+  assert.equal(response.status, 503)
+  assert.deepEqual(await response.json(), {
+    error: 'hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed',
   })
 })

@@ -16,6 +16,7 @@ import type {
   AuthorizationRequestRecord,
   OAuthRateLimitResult,
 } from '../src/oauth-store.ts'
+import { PAIRING_CODE_PREFIX } from '../src/pair.ts'
 
 type OAuthStore = typeof import('../src/oauth-store.ts').postgresOAuthStore
 type TestOAuthStore = OAuthStore & {
@@ -111,6 +112,12 @@ const existingResident = (): Resident => ({
   agreement_actions_today: 0,
 })
 
+interface MemoryPairingCode {
+  residentId: number
+  expiresAt: number
+  usedAt: number | null
+}
+
 class MemoryOAuthStore {
   private readonly requests = new Map<string, MemoryAuthorizationRequest>()
   private readonly codes = new Map<string, MemoryAuthorizationCode>()
@@ -119,6 +126,7 @@ class MemoryOAuthStore {
   private readonly residents = new Map<number, Resident>([[49, existingResident()]])
   private readonly residentSecretHashes = new Map<string, number>([[sha256(EXISTING_KEY), 49]])
   private readonly recoveryCodes = new Map<number, string[]>()
+  private readonly pairingCodes = new Map<string, MemoryPairingCode>()
   private readonly events: { kind: string; actor: string; residentId: number }[] = []
   private nextRequestId = 1
   private nextResidentId = 50
@@ -432,7 +440,59 @@ class MemoryOAuthStore {
     consumeOAuthRateLimit: async (
       _input: Parameters<OAuthStore['consumeOAuthRateLimit']>[0],
     ): Promise<OAuthRateLimitResult> => rateLimitResult(true),
+
+    mintPairingCode: async (
+      input: Parameters<OAuthStore['mintPairingCode']>[0],
+    ) => {
+      const expiresAt = Date.now() + 10 * 60_000
+      this.pairingCodes.set(input.codeHash, {
+        residentId: input.residentId,
+        expiresAt,
+        usedAt: null,
+      })
+      return { expiresAt: new Date(expiresAt).toISOString() }
+    },
+
+    approveExistingResidentByPairingCodeAndIssueAuthorizationCode: async (
+      input: Parameters<OAuthStore['approveExistingResidentByPairingCodeAndIssueAuthorizationCode']>[0],
+    ) => {
+      const request = this.validRequest(input.sessionHash)
+      const pairing = this.pairingCodes.get(input.pairingCodeHash)
+      const codeValid = pairing && pairing.usedAt === null && pairing.expiresAt > Date.now()
+      if (
+        !request || request.csrfHash !== input.csrfHash || request.intent !== null ||
+        request.resident_id !== null || !codeValid
+      ) {
+        if (!request || request.csrfHash !== input.csrfHash || request.used) {
+          return { status: 'request_unavailable' as const }
+        }
+        return { status: 'pairing_code_rejected' as const }
+      }
+      const resident = this.residents.get(pairing.residentId)
+      if (!resident) return { status: 'pairing_code_rejected' as const }
+      pairing.usedAt = Date.now()
+      request.intent = 'existing'
+      request.resident_id = resident.id
+      request.used = true
+      this.codes.set(input.authorizationCodeHash, {
+        codeHash: input.authorizationCodeHash,
+        residentId: resident.id,
+        clientId: request.client_id,
+        redirectUri: request.redirect_uri,
+        resource: request.resource,
+        scope: request.scope,
+        codeChallenge: request.code_challenge,
+        expiresAt: Date.now() + 5 * 60_000,
+        used: false,
+      })
+      return { status: 'approved' as const, redirectUri: request.redirect_uri, state: request.state }
+    },
   } satisfies TestOAuthStore
+
+  expirePairingCode(codeHash: string): void {
+    const pairing = this.pairingCodes.get(codeHash)
+    if (pairing) pairing.expiresAt = Date.now() - 1
+  }
 
   expireBrowserSession(rawSession: string): void {
     const request = this.requests.get(sha256(rawSession))
@@ -2479,4 +2539,83 @@ test('expired browser sessions and authorization codes cannot be used', async ()
 test('PKCE fixture is the RFC S256 vector used by the browser-flow tests', () => {
   const derived = createHash('sha256').update(VERIFIER, 'ascii').digest('base64url')
   assert.equal(derived, CHALLENGE)
+})
+
+// Decision row 74: a signed-in coding client mints a pairing code with
+// POST /api/pair (test/pair.test.ts covers that door); the human enters it
+// here in place of the resident key. These tests exercise the /oauth/authorize
+// side of that contract using the same fixture and helpers as the resident-key
+// "link" flow above.
+async function mintedPairingCode(memory: MemoryOAuthStore, residentId = 49): Promise<string> {
+  const rawCode = PAIRING_CODE_PREFIX + '11'.repeat(32)
+  await memory.api.mintPairingCode({ residentId, codeHash: sha256(rawCode) })
+  return rawCode
+}
+
+test('the consent page offers a pairing-code fieldset that never asks for the resident key', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  assert.match(session.html, /Have a pairing code instead/iu)
+  assert.match(session.html, /name="pairing_code"[^>]*type="password"/iu)
+  assert.match(session.html, new RegExp(`name="action" value="pair"`, 'u'))
+  assert.match(session.html, /POST \/api\/pair/u)
+  assert.match(session.html, /never reveals the resident key/iu)
+})
+
+test('a valid pairing code approves the resident and issues a code, never revealing a resident key', async () => {
+  const { app, memory } = fixture()
+  const pairingCode = await mintedPairingCode(memory)
+  const session = await begin(app)
+  const response = await browserPost(app, session, {
+    action: 'pair', csrf: session.csrf, pairing_code: pairingCode,
+  })
+  const responseBody = await response.clone().text()
+  const responseSurface = `${responseBody}\n${[...response.headers].flat().join('\n')}`
+  assert.doesNotMatch(responseSurface, /1f3d9_sk_/i)
+  const code = authorizationCode(response)
+  const pair = await readTokenPair(await exchangeCode(app, code))
+  assert.ok(pair.access_token)
+})
+
+test('an unrecognized pairing code is refused as pairing_code_rejected with a retry form', async () => {
+  const { app } = fixture()
+  const session = await begin(app)
+  const response = await browserPost(app, session, {
+    action: 'pair', csrf: session.csrf, pairing_code: PAIRING_CODE_PREFIX + '22'.repeat(32),
+  })
+  assert.equal(response.status, 403)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+  const body = await response.text()
+  assert.match(body, /pairing code could not be verified/iu)
+  assert.match(body, /name="action" value="pair"/u)
+  assert.match(body, /name="pairing_code"[^>]*type="password"/iu)
+})
+
+test('an expired pairing code is refused the same as an unknown one', async () => {
+  const { app, memory } = fixture()
+  const pairingCode = await mintedPairingCode(memory)
+  memory.expirePairingCode(sha256(pairingCode))
+  const session = await begin(app)
+  const response = await browserPost(app, session, {
+    action: 'pair', csrf: session.csrf, pairing_code: pairingCode,
+  })
+  assert.equal(response.status, 403)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+})
+
+test('a pairing code works exactly once', async () => {
+  const { app, memory } = fixture()
+  const pairingCode = await mintedPairingCode(memory)
+  const firstSession = await begin(app)
+  const first = await browserPost(app, firstSession, {
+    action: 'pair', csrf: firstSession.csrf, pairing_code: pairingCode,
+  })
+  authorizationCode(first)
+
+  const secondSession = await begin(app)
+  const second = await browserPost(app, secondSession, {
+    action: 'pair', csrf: secondSession.csrf, pairing_code: pairingCode,
+  })
+  assert.equal(second.status, 403)
+  assert.equal(second.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
 })
