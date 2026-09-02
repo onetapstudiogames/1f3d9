@@ -36,6 +36,7 @@ test('public search parses one bounded GET query with explicit defaults', () => 
   assert.equal(validSearch({ q: ['moss'], mode: ['phrase'] }).mode, 'phrase')
   assert.equal(validSearch({ q: ['moss'], type: ['note'] }).type, 'note')
   assert.equal(validSearch({ q: ['moss'], type: ['thing'] }).type, 'thing')
+  assert.equal(validSearch({ q: ['moss'], type: ['place'] }).type, 'place')
   assert.equal(validSearch({ q: ['moss'], maker: ['first-maker'] }).maker, 'first-maker')
 
   for (const query of [
@@ -44,7 +45,7 @@ test('public search parses one bounded GET query with explicit defaults', () => 
     { q: [''] },
     { q: ['moss', 'fern'] },
     { q: ['moss'], mode: ['ranked'] },
-    { q: ['moss'], type: ['place'] },
+    { q: ['moss'], maker: ['first-maker'], type: ['place'] },
     { q: ['moss'], maker: ['First-Maker'] },
     { q: ['moss'], maker: ['first-maker', 'second-maker'] },
     { q: ['moss'], maker: ['first-maker'], type: ['note'] },
@@ -55,6 +56,39 @@ test('public search parses one bounded GET query with explicit defaults', () => 
   ] satisfies SearchQueryValues[]) {
     assert.match(invalidSearch(query), /q|mode|type|maker|limit|unsupported/i)
   }
+})
+
+test('place search matches current or former names and returns stable lifecycle facts', async () => {
+  const parsed = validSearch({ q: ['old porch'], type: ['place'] })
+  let searchSql = ''
+  const result = await loadPublicSearchResults(async text => {
+    searchSql = text
+    return [{
+      result_type: 'place', id: 42, place_id: 42, name: 'Quiet porch',
+      founding_name: 'test porch',
+      name_history: [
+        { name: 'test porch', started_at: '2026-08-01T00:00:00.000000Z', ended_at: '2026-08-02T00:00:00.000000Z' },
+        { name: 'old porch', started_at: '2026-08-02T00:00:00.000000Z', ended_at: '2026-08-03T00:00:00.000000Z' },
+        { name: 'Quiet porch', started_at: '2026-08-03T00:00:00.000000Z', ended_at: null },
+      ],
+      retired_at: '2026-09-01T00:00:00.000000Z', status: 'retired',
+      body_text_bytes: 0, created_at: '2026-08-01T00:00:00.000000Z',
+      total_items: 1, total_body_bytes: '0', change_marker: '12',
+    }]
+  }, parsed)
+
+  assert.match(searchSql, /FROM\s+place_name_history/iu)
+  assert.match(searchSql, /lead\s*\(\s*history\.started_at/iu)
+  assert.deepEqual(result.items, [{
+    type: 'place', id: 42, name: 'Quiet porch', founding_name: 'test porch',
+    name_history: [
+      { name: 'test porch', started_at: '2026-08-01T00:00:00.000000Z', ended_at: '2026-08-02T00:00:00.000000Z' },
+      { name: 'old porch', started_at: '2026-08-02T00:00:00.000000Z', ended_at: '2026-08-03T00:00:00.000000Z' },
+      { name: 'Quiet porch', started_at: '2026-08-03T00:00:00.000000Z', ended_at: null },
+    ],
+    retired_at: '2026-09-01T00:00:00.000000Z', status: 'retired',
+    created_at: '2026-08-01T00:00:00.000000Z',
+  }])
 })
 
 test('public search rejects unsafe, credential-bearing, oversized, and over-tokenized q values', () => {

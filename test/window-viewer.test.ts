@@ -12,6 +12,14 @@ import {
   PUBLIC_CREDENTIAL_REDACTION,
 } from '../src/credential-safety.ts'
 
+test('the window preserves and plainly prints a focused retired-place tombstone', () => {
+  assert.match(WINDOW_JS, /status:\s*placeStatus/iu)
+  assert.match(WINDOW_JS, /retiredAt[,}]/iu)
+  assert.match(WINDOW_JS, /payload\.place\s*\|\|\s*payload\.tombstone/iu)
+  assert.match(WINDOW_JS, /This place was retired/iu)
+  assert.match(WINDOW_JS, /Founding name:/iu)
+})
+
 function hexRgb(value: string): [number, number, number] {
   const match = /^#([0-9a-f]{6})$/iu.exec(value)
   assert.ok(match, `expected a six-digit hex color, received ${value}`)
@@ -641,6 +649,7 @@ test('the window covers the whole public life of the city', () => {
   // world_* kinds are the market bridge — their absence hid every market sale.
   assert.deepEqual(PUBLIC_EVENT_KINDS, [
     'register', 'rotate', 'resident_edited', 'home_set', 'place_created', 'place_edited',
+    'place_renamed', 'place_retired', 'place_restored',
     'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
     'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',
     'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'note', 'gazette_printed',

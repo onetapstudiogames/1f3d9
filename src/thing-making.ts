@@ -101,6 +101,7 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
           SELECT place.id
           FROM places place
           WHERE place.id = ${input.placeId}
+            AND place.retired_at IS NULL
             AND ${placePermission('place', 'open_to_things', input.actor.id)}
             AND place.owner_id IS NOT NULL
           FOR UPDATE

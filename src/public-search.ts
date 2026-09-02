@@ -13,8 +13,8 @@ import { containsMalformedPublicText } from './input.ts'
 import { PUBLIC_THING_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
-export type PublicSearchType = 'all' | 'note' | 'thing'
-export type PublicSearchItemType = 'note' | 'thing'
+export type PublicSearchType = 'all' | 'note' | 'place' | 'thing'
+export type PublicSearchItemType = 'note' | 'place' | 'thing'
 
 const PUBLIC_SEARCH_DEFAULT_LIMIT = 10
 export const PUBLIC_SEARCH_MAX_LIMIT = 200
@@ -135,10 +135,10 @@ export function decodePublicSearchCursor(value: string): PublicSearchCursorRecor
     if (
       typeof q !== 'string' || normalizeQuery(q) !== q ||
       !['words', 'phrase'].includes(String(mode)) ||
-      !['all', 'note', 'thing'].includes(String(type)) ||
+      !['all', 'note', 'place', 'thing'].includes(String(type)) ||
       (maker !== null && (typeof maker !== 'string' || !HANDLE_RE.test(maker))) ||
       typeof createdAt !== 'string' || !safeTimestamp(createdAt) ||
-      !['note', 'thing'].includes(String(itemType)) ||
+      !['note', 'place', 'thing'].includes(String(itemType)) ||
       !Number.isSafeInteger(id) || Number(id) < 1 || Number(id) > POSTGRES_INTEGER_MAX ||
       parsePublicChangeMarker(changeMarker) === null
     ) return null
@@ -188,8 +188,8 @@ export function parsePublicSearchQuery(
   const typeValue = singlePublicQueryValue(query, 'type')
   if (!typeValue.ok) return typeValue
   const type = typeValue.value ?? 'all'
-  if (type !== 'all' && type !== 'note' && type !== 'thing') {
-    return { ok: false, error: 'type must be all, note, or thing' }
+  if (type !== 'all' && type !== 'note' && type !== 'place' && type !== 'thing') {
+    return { ok: false, error: 'type must be all, note, place, or thing' }
   }
 
   const makerValue = singlePublicQueryValue(query, 'maker')
@@ -198,7 +198,7 @@ export function parsePublicSearchQuery(
   if (maker !== null && !HANDLE_RE.test(maker)) {
     return { ok: false, error: 'maker must be one valid resident handle' }
   }
-  if (maker !== null && type === 'note') {
+  if (maker !== null && (type === 'note' || type === 'place')) {
     return { ok: false, error: 'maker filters active things; type must be all or thing' }
   }
 
@@ -274,6 +274,8 @@ function publicSearchSql(mode: PublicSearchMode): string {
         NULL::boolean AS open_to_use,
         NULL::boolean AS has_drawing,
         note.author_id, author.handle AS author,
+        NULL::text AS founding_name, NULL::jsonb AS name_history,
+        NULL::timestamptz AS retired_at, NULL::text AS status,
         note.body,
         CASE WHEN note.body !~* $3::text THEN note.body ELSE '' END AS search_text,
         note.created_at
@@ -299,6 +301,8 @@ function publicSearchSql(mode: PublicSearchMode): string {
         thing.open_to_use,
         ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing,
         NULL::integer AS author_id, NULL::text AS author,
+        NULL::text AS founding_name, NULL::jsonb AS name_history,
+        NULL::timestamptz AS retired_at, NULL::text AS status,
         thing.body,
         concat_ws(' ',
           CASE WHEN thing.name !~* $3::text THEN thing.name ELSE '' END,
@@ -319,10 +323,58 @@ function publicSearchSql(mode: PublicSearchMode): string {
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
+    ), place_history_spans AS MATERIALIZED (
+      SELECT span.place_id,
+        jsonb_agg(jsonb_build_object(
+          'name', span.name,
+          'started_at', to_char(span.started_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+          'ended_at', CASE WHEN span.ended_at IS NULL THEN NULL ELSE to_char(
+            span.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END
+        ) ORDER BY span.started_at, span.id) AS name_history,
+        string_agg(span.name, ' ' ORDER BY span.started_at, span.id) AS search_names
+      FROM (
+        SELECT history.id, history.place_id, history.name, history.started_at,
+          lead(history.started_at) OVER (
+            PARTITION BY history.place_id ORDER BY history.started_at, history.id
+          ) AS ended_at
+        FROM place_name_history history
+      ) span
+      GROUP BY span.place_id
+    ), place_candidates AS MATERIALIZED (
+      SELECT 'place'::text AS result_type,
+        place.id, place.id AS place_id,
+        place.name,
+        NULL::integer AS maker_id, NULL::text AS made_by,
+        NULL::integer AS current_owner_id, NULL::text AS current_owner,
+        NULL::integer AS owner_id, NULL::text AS owner,
+        NULL::boolean AS open_to_use,
+        NULL::integer AS author_id, NULL::text AS author,
+        place.founding_name,
+        coalesce(history.name_history, '[]'::jsonb) AS name_history,
+        place.retired_at,
+        CASE WHEN place.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
+        ''::text AS body,
+        concat_ws(' ', place.name, history.search_names) AS search_text,
+        place.created_at
+      FROM places place
+      LEFT JOIN place_history_spans history ON history.place_id = place.id
+      WHERE $2::text IN ('all', 'place')
+        AND $9::text IS NULL
+        AND ${indexedMatchExpression(mode, "place.name || ' ' || coalesce(history.search_names, '')")}
+        AND coalesce((
+          SELECT moderation.action
+          FROM moderation_actions moderation
+          WHERE moderation.target_type = 'place' AND moderation.target_id = place.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC
+          LIMIT 1
+        ), 'restore') <> 'remove'
     ), candidate AS MATERIALIZED (
       SELECT * FROM note_candidates
       UNION ALL
       SELECT * FROM thing_candidates
+      UNION ALL
+      SELECT * FROM place_candidates
     ), matched AS MATERIALIZED (
       SELECT candidate.*
       FROM candidate
@@ -341,6 +393,9 @@ function publicSearchSql(mode: PublicSearchMode): string {
       page.current_owner_id, page.current_owner,
       page.owner_id, page.owner, page.open_to_use, page.has_drawing,
       page.author_id, page.author,
+      page.founding_name, page.name_history,
+      to_char(page.retired_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS retired_at,
+      page.status,
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
       totals.total_items, totals.total_body_bytes, checkpoint.change_marker
@@ -374,13 +429,13 @@ function safeCount(value: unknown, name: string): number {
 }
 
 function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
-  if (row.result_type !== 'note' && row.result_type !== 'thing') return null
+  if (row.result_type !== 'note' && row.result_type !== 'place' && row.result_type !== 'thing') return null
   const common = {
     type: row.result_type,
     id: safeCount(row.id, 'search result id'),
-    place_id: safeCount(row.place_id, 'search result place id'),
   }
-  if (common.id < 1 || common.place_id < 1) throw new Error('search result identifiers are invalid')
+  const placeId = safeCount(row.place_id, 'search result place id')
+  if (common.id < 1 || placeId < 1) throw new Error('search result identifiers are invalid')
   const bodyTextBytes = safeCount(row.body_text_bytes, 'search result body size')
   if (typeof row.created_at !== 'string' || !safeTimestamp(row.created_at)) {
     throw new Error('search result timestamp is invalid')
@@ -388,14 +443,37 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
   if (row.result_type === 'note') {
     return Object.freeze({
       ...common,
+      place_id: placeId,
       author_id: safeCount(row.author_id, 'search result author id'),
       author: row.author,
       body_text_bytes: bodyTextBytes,
       created_at: row.created_at,
     })
   }
+  if (row.result_type === 'place') {
+    if (
+      typeof row.name !== 'string' || typeof row.founding_name !== 'string'
+      || !Array.isArray(row.name_history)
+      || (row.retired_at !== null && (
+        typeof row.retired_at !== 'string' || !safeTimestamp(row.retired_at)
+      ))
+      || (row.status !== 'active' && row.status !== 'retired')
+    ) throw new Error('search place lifecycle is invalid')
+    return Object.freeze({
+      ...common,
+      name: row.name,
+      founding_name: row.founding_name,
+      name_history: Object.freeze(row.name_history.map(span => Object.freeze({
+        ...(span as Record<string, unknown>),
+      }))),
+      retired_at: row.retired_at,
+      status: row.status,
+      created_at: row.created_at,
+    })
+  }
   return Object.freeze({
     ...common,
+    place_id: placeId,
     name: row.name,
     maker_id: safeCount(row.maker_id, 'search result maker id'),
     made_by: row.made_by,

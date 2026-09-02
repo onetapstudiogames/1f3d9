@@ -62,6 +62,7 @@ interface TalkNoteCreationRow {
   readonly created_at?: string
   readonly place_exists?: boolean
   readonly place_permits_notes?: boolean
+  readonly active_place?: boolean
   readonly gazette_activated?: boolean
   readonly note_quota_spent?: boolean
 }
@@ -372,6 +373,7 @@ async function createTalkNote(
     WITH place_state AS (
       SELECT place.id,
         place.owner_id IS NOT NULL AS ordinary_place,
+        place.retired_at IS NULL AS active_place,
         ${placePermission('place', 'open_to_notes', input.residentId)} AS permits_notes,
         CASE
           WHEN place.id <> ${GAZETTE_ROOM_ID} THEN TRUE
@@ -382,7 +384,8 @@ async function createTalkNote(
     ), permitted_place AS (
       SELECT state.id
       FROM place_state state
-      WHERE state.ordinary_place AND state.permits_notes AND state.gazette_activated
+      WHERE state.ordinary_place AND state.active_place
+        AND state.permits_notes AND state.gazette_activated
     ), spent_quota AS (
       UPDATE residents SET notes_today = notes_today + 1
       WHERE id = ${input.residentId} AND notes_today < ${QUOTAS.notes}
@@ -403,6 +406,7 @@ async function createTalkNote(
       EXISTS (SELECT 1 FROM place_state) AS place_exists,
       coalesce((SELECT state.ordinary_place AND state.permits_notes FROM place_state state), FALSE)
         AS place_permits_notes,
+      coalesce((SELECT state.active_place FROM place_state state), FALSE) AS active_place,
       coalesce((SELECT state.gazette_activated FROM place_state state), FALSE)
         AS gazette_activated,
       EXISTS (SELECT 1 FROM spent_quota) AS note_quota_spent
@@ -425,6 +429,12 @@ async function createTalkNote(
   }
   if (input.placeId === GAZETTE_ROOM_ID && outcome.gazette_activated === false) {
     throw new EngineError(409, GAZETTE_SUBMISSIONS_CLOSED_ERROR)
+  }
+  if (outcome.active_place === false) {
+    throw new EngineError(
+      409,
+      `place_id ${input.placeId} is retired; restore it before leaving notes there`,
+    )
   }
   if (outcome.place_permits_notes === false) {
     throw new EngineError(

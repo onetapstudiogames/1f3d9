@@ -13,6 +13,10 @@ import type { TaggedSql } from '../../src/engine.ts'
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'world_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const placeLifecycleMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260901_place_lifecycle.sql', import.meta.url),
+  'utf8',
+)
 
 let database: Pool | null = null
 let afterAgreementSignPreflight: (() => Promise<void>) | null = null
@@ -254,6 +258,42 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     const { replacePlaceLaws } = await import('../../src/laws.ts')
     const { withdrawThing } = await import('../../src/withdrawal.ts')
 
+    await t.test('the additive place lifecycle migration runs twice without losing history or snapshot access', async () => {
+      const roomId = await resetDatabase()
+      await database!.query(placeLifecycleMigrationDdl)
+      await database!.query(placeLifecycleMigrationDdl)
+      const installed = await database!.query<{
+        founding_name: string
+        history_rows: number
+        history_trigger: string | null
+        public_records: string | null
+        public_records_v2: string | null
+        export_can_read_v2: boolean
+      }>(`
+        SELECT place.founding_name,
+          (SELECT count(*)::integer FROM place_name_history history
+            WHERE history.place_id = place.id) AS history_rows,
+          (SELECT trigger.tgname FROM pg_trigger trigger
+            WHERE trigger.tgrelid = 'places'::regclass
+              AND trigger.tgname = 'places_record_founding_name_history'
+              AND NOT trigger.tgisinternal) AS history_trigger,
+          to_regclass('city_snapshot.public_records')::text AS public_records,
+          to_regclass('city_snapshot.public_records_v2')::text AS public_records_v2,
+          has_table_privilege(
+            'city_snapshot_export', 'city_snapshot.public_records_v2', 'SELECT'
+          ) AS export_can_read_v2
+        FROM places place WHERE place.id = $1
+      `, [roomId])
+      assert.deepEqual(installed.rows, [{
+        founding_name: 'test-room',
+        history_rows: 1,
+        history_trigger: 'places_record_founding_name_history',
+        public_records: 'city_snapshot.public_records',
+        public_records_v2: 'city_snapshot.public_records_v2',
+        export_can_read_v2: true,
+      }])
+    })
+
     await t.test('law replacement keeps typed actor IDs and append-only history', async () => {
       const roomId = await resetDatabase()
       const initial = await replacePlaceLaws(actor, roomId, ['peaceful', 'war-zone'])
@@ -321,6 +361,323 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
         ).rows,
       },
       authenticate: async () => actor,
+    })
+
+    await t.test('rename, retire, and restore spend atomically while preserving place history', async () => {
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK')
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      try {
+        const roomId = await resetDatabase()
+      const creditDatabase: CityCreditDatabase = {
+        query: async (text, params = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+      }
+      for (let index = 0; index < 5; index += 1) {
+        await issueCityFeeCredit(creditDatabase, {
+          founderId: 1,
+          residentId: 1,
+          sourceKey: `place-lifecycle-credit-${index}`,
+          reason: `fund place lifecycle integration act ${index}`,
+        })
+      }
+      await database!.query(`
+        INSERT INTO notes (place_id, author_id, body)
+        VALUES ($1, 1, 'This note must remain readable at the tombstone.')
+      `, [roomId])
+
+      const rename = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-rename-integration-0001',
+        },
+        body: JSON.stringify({ name: 'The quiet porch' }),
+      })
+      assert.equal(rename.status, 200, await rename.clone().text())
+      assert.equal((await rename.json() as { place: { name: string } }).place.name, 'The quiet porch')
+
+      const refusedRetire = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-retire-not-empty-0001',
+        },
+        body: JSON.stringify({ retired: true }),
+      })
+      assert.equal(refusedRetire.status, 409, await refusedRetire.clone().text())
+      assert.match(await refusedRetire.text(), /place is not empty.*1 thing/iu)
+
+      const afterRefusal = await database!.query<{
+        name: string
+        retired_at: Date | null
+        balance_units: string
+        spends: number
+        returns: number
+      }>(`
+        SELECT place.name, place.retired_at,
+          account.balance_units::text AS balance_units,
+          (SELECT count(*)::integer FROM city_credit_entries
+            WHERE resident_id = 1 AND entry_kind = 'spend') AS spends,
+          (SELECT count(*)::integer FROM city_credit_entries
+            WHERE resident_id = 1 AND entry_kind = 'return') AS returns
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = $1
+      `, [roomId])
+      assert.deepEqual(afterRefusal.rows, [{
+        name: 'The quiet porch', retired_at: null, balance_units: '4000000', spends: 1, returns: 0,
+      }])
+
+      const withdrawn = await withdrawThing(actor, 1, 'withdrawn')
+      assert.equal('error' in withdrawn, false)
+      const retire = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-retire-integration-0001',
+        },
+        body: JSON.stringify({ retired: true }),
+      })
+      assert.equal(retire.status, 200, await retire.clone().text())
+
+      const tombstoneResponse = await app.request(`/api/place/${roomId}`)
+      assert.equal(tombstoneResponse.status, 200, await tombstoneResponse.clone().text())
+      const tombstone = await tombstoneResponse.json() as {
+        tombstone: { id: number; name: string; retired_at: string }
+        notes: Array<{ body: string }>
+      }
+      assert.equal(tombstone.tombstone.id, roomId)
+      assert.equal(tombstone.tombstone.name, 'The quiet porch')
+      assert.ok(Number.isFinite(Date.parse(tombstone.tombstone.retired_at)))
+      assert.deepEqual(tombstone.notes.map(note => note.body), [
+        'This note must remain readable at the tombstone.',
+      ])
+
+      const restore = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-restore-integration-0001',
+        },
+        body: JSON.stringify({ retired: false }),
+      })
+      assert.equal(restore.status, 200, await restore.clone().text())
+
+      const repeatRetire = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-retire-integration-0002',
+        },
+        body: JSON.stringify({ retired: true }),
+      })
+      assert.equal(repeatRetire.status, 200, await repeatRetire.clone().text())
+      const repeatRestore = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-restore-integration-0002',
+        },
+        body: JSON.stringify({ retired: false }),
+      })
+      assert.equal(repeatRestore.status, 200, await repeatRestore.clone().text())
+
+      const durable = await database!.query(`
+        SELECT place.name, place.founding_name, place.retired_at,
+          (SELECT jsonb_agg(jsonb_build_object(
+            'name', history.name,
+            'started_at', history.started_at,
+            'ended_at', history.ended_at
+          ) ORDER BY history.id)
+          FROM place_name_spans history WHERE history.place_id = place.id) AS name_history,
+          (SELECT array_agg(event.kind ORDER BY event.id)
+          FROM events event
+          WHERE (event.detail->>'place_id')::integer = place.id
+            AND event.kind IN ('place_renamed', 'place_retired', 'place_restored')) AS lifecycle_events,
+          account.balance_units::text AS balance_units
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = $1
+      `, [roomId])
+      assert.equal(durable.rows[0]!.name, 'The quiet porch')
+      assert.equal(durable.rows[0]!.founding_name, 'test-room')
+      assert.equal(durable.rows[0]!.retired_at, null)
+      assert.deepEqual(
+        (durable.rows[0]!.name_history as Array<{ name: string; ended_at: string | null }>).map(
+          span => ({ name: span.name, ended: span.ended_at === null ? null : 'closed' }),
+        ),
+        [{ name: 'test-room', ended: 'closed' }, { name: 'The quiet porch', ended: null }],
+      )
+      assert.deepEqual(durable.rows[0]!.lifecycle_events, [
+        'place_renamed', 'place_retired', 'place_restored', 'place_retired', 'place_restored',
+      ])
+      assert.equal(durable.rows[0]!.balance_units, '0')
+
+      await database!.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('place', $1, 'remove', 1, 'place lifecycle snapshot regression')
+      `, [roomId])
+      const snapshotRows = await database!.query<{
+        class_name: string
+        payload: {
+          name?: string
+          founding_name?: string
+          name_history?: Array<{ name: string }>
+          detail?: { name?: string; former_name?: string }
+        }
+      }>(`
+        SELECT record.class_name, record.payload
+        FROM city_snapshot.public_records_v2 record
+        WHERE (record.class_name = 'places' AND record.record_id = $1::text)
+          OR (
+            record.class_name = 'events'
+            AND record.record_id = (
+              SELECT event.id::text FROM events event
+              WHERE event.kind = 'place_renamed'
+                AND (event.detail->>'place_id')::integer = $1::integer
+              ORDER BY event.id DESC LIMIT 1
+            )
+          )
+        ORDER BY record.class_name
+      `, [roomId])
+      const snapshotEvent = snapshotRows.rows.find(row => row.class_name === 'events')?.payload
+      const snapshotPlace = snapshotRows.rows.find(row => row.class_name === 'places')?.payload
+      assert.ok(snapshotPlace, JSON.stringify(snapshotRows.rows))
+      assert.ok(snapshotEvent, JSON.stringify(snapshotRows.rows))
+      assert.deepEqual(snapshotPlace, { id: roomId, status: 'maintainer_hidden' })
+      assert.deepEqual(snapshotEvent?.detail, {
+        place_id: roomId,
+        name: '[removed by maintainer]',
+        former_name: '[removed by maintainer]',
+      })
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
+    })
+
+    await t.test('retirement rechecks arrivals after its place lock before spending', async () => {
+      setEngineTransactionRunnerForTests(async (_db, work) => {
+        const connection = await database!.connect()
+        try {
+          await connection.query('BEGIN')
+          const result = await work(transactionSql(connection), true)
+          await connection.query('COMMIT')
+          return result
+        } catch (error) {
+          await connection.query('ROLLBACK')
+          throw error
+        } finally {
+          connection.release()
+        }
+      })
+      try {
+        for (const arrival of ['subplace', 'thing', 'resident'] as const) {
+          const roomId = await resetDatabase()
+          const withdrawn = await withdrawThing(actor, 1, 'withdrawn')
+          assert.equal('error' in withdrawn, false)
+          await issueCityFeeCredit({
+            query: async (text, params = []) => (
+              await database!.query(text, [...params])
+            ).rows,
+          }, {
+            founderId: 1,
+            residentId: 1,
+            sourceKey: `place-retire-race-credit-${arrival}`,
+            reason: `fund ${arrival} retirement race test`,
+          })
+
+          const arriving = await database!.connect()
+          try {
+            await arriving.query('BEGIN')
+            if (arrival === 'subplace') {
+              await arriving.query(`
+                INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+                VALUES ($1, 'place', 'arriving-room', 'arrived during retirement', 1)
+              `, [roomId])
+            } else if (arrival === 'thing') {
+              await arriving.query(`
+                INSERT INTO things (id, place_id, name, body, owner_id, maker_id)
+                VALUES (2, $1, 'arriving-thing', 'arrived during retirement', 1, 1)
+              `, [roomId])
+            } else {
+              await arriving.query(`
+                INSERT INTO resident_presence (resident_id, current_place_id)
+                VALUES (2, $1)
+              `, [roomId])
+            }
+
+            const responsePromise = app.request(`/api/place/${roomId}`, {
+              method: 'PATCH',
+              headers: {
+                ...bearer(founderSecret),
+                'content-type': 'application/json',
+                'X-1F3D9-FEE-CREDIT': `place-retire-race-${arrival}-0001`,
+              },
+              body: JSON.stringify({ retired: true }),
+            })
+            let pending = false
+            for (let check = 0; check < 100; check += 1) {
+              const attempt = await database!.query(`
+                SELECT 1 FROM payment_attempts
+                WHERE operation = 'place_retire' AND status = 'payment_pending'
+              `)
+              if (attempt.rowCount) {
+                pending = true
+                break
+              }
+              await delay(10)
+            }
+            assert.equal(pending, true, `${arrival} race reached paid completion`)
+            await arriving.query('COMMIT')
+            const response = await responsePromise
+            assert.equal(response.status, 409, await response.clone().text())
+            assert.match(await response.text(), /place is not empty/iu)
+          } catch (error) {
+            await arriving.query('ROLLBACK').catch(() => undefined)
+            throw error
+          } finally {
+            arriving.release()
+          }
+
+          const state = await database!.query(`
+            SELECT place.retired_at, account.balance_units::text AS balance_units,
+              (SELECT count(*)::integer FROM city_credit_entries
+                WHERE resident_id = 1 AND entry_kind = 'spend') AS spends,
+              (SELECT count(*)::integer FROM city_credit_entries
+                WHERE resident_id = 1 AND entry_kind = 'return') AS returns
+            FROM places place
+            JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+            WHERE place.id = $1
+          `, [roomId])
+          assert.deepEqual(state.rows, [{
+            retired_at: null,
+            balance_units: '1000000',
+            spends: 1,
+            returns: 1,
+          }])
+        }
+      } finally {
+        setEngineTransactionRunnerForTests(null)
+      }
     })
 
     await t.test('fresh schema attributes the exact world drawing to the founder once', async () => {

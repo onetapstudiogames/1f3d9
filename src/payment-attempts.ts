@@ -15,6 +15,7 @@ export const MAX_RECOVERABLE_PAYMENT_ATTEMPTS = 100
 
 const PAYMENT_ATTEMPT_OPERATIONS = [
   'frontier', 'kind_invention', 'kind_revision', 'credit_purchase',
+  'place_rename', 'place_retire', 'place_restore',
   'direct_sale', 'world_sale', 'legacy',
 ] as const
 const PAYMENT_ATTEMPT_ASSET_TYPES = ['place', 'thing', 'kind'] as const
@@ -40,6 +41,7 @@ export interface PaymentAttemptRecord {
   actorId: number
   counterpartyId: number | null
   operation: 'frontier' | 'kind_invention' | 'kind_revision' | 'credit_purchase'
+    | 'place_rename' | 'place_retire' | 'place_restore'
     | 'direct_sale' | 'world_sale' | 'legacy'
   targetKey: string | null
   offerId: number | null
@@ -1338,6 +1340,9 @@ const SAFE_REQUEST_KEYS: Readonly<Record<PaymentAttemptRecord['operation'], read
     'kind_id', 'description', 'traits', 'recipe',
     'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
   ],
+  place_rename: ['place_id', 'name'],
+  place_retire: ['place_id'],
+  place_restore: ['place_id'],
   credit_purchase: ['request_id', 'amount_dollars'],
   direct_sale: [
     'offer_id', 'buyer_wallet', 'seller_wallet', 'price_usdc', 'asset_type', 'asset_id',

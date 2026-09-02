@@ -876,7 +876,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Send place_id plus at least one changed field: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends an immutable public revision; an exact no-op appends nothing. A place with an open sale offer cannot be edited. Repeating the same non-drawing edit is safe and creates no duplicate change event.`,
+      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no subplaces, no things, and no residents standing there; notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, and its current name still available. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -884,6 +884,9 @@ const TOOLS: readonly ToolDefinition[] = [
       allOf: DRAWING_WRITE_CONDITIONS,
       properties: {
         place_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
+        name: { type: 'string', minLength: 1, maxLength: 120 },
+        retired: { type: 'boolean' },
+        city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
         description: { type: 'string', maxLength: 4000 },
         purpose: { type: 'string', maxLength: 280 },
         front_matter_thing_ids: {
@@ -904,10 +907,13 @@ const TOOLS: readonly ToolDefinition[] = [
       method: 'PATCH',
       path: `/api/place/${Number(args.place_id)}`,
       body: picked(args, [
-        'description', 'purpose', 'front_matter_thing_ids',
+        'name', 'retired', 'description', 'purpose', 'front_matter_thing_ids',
         'open_to_building', 'open_to_things', 'open_to_notes',
         'drawing', 'drawing_state', 'drawing_description',
       ]),
+      ...(own(args, 'city_credit_request_id')
+        ? { headers: { 'x-1f3d9-fee-credit': String(args.city_credit_request_id) } }
+        : {}),
     }),
   },
   {
@@ -1941,7 +1947,7 @@ function invalidPublicReadArgument(
       return 'Payment attempt attempt_id is invalid.'
     }
   }
-  if (['found', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
+  if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     try {
       parseCityCreditRequestId(args.city_credit_request_id)
     } catch {
@@ -2152,7 +2158,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
     ? rawArguments as Record<string, unknown>
     : {}
-  if (['found', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
+  if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     c.header('Cache-Control', 'no-store')
     c.header('Pragma', 'no-cache')
     c.header('Vary', 'Authorization')

@@ -501,7 +501,8 @@ export async function ensurePresence(
   const actorId = positiveId(residentId, 'resident id')
   const rows = await queryRows<Record<string, unknown>>(db`
     WITH first_owned AS (
-      SELECT place.id FROM places place WHERE place.owner_id = ${actorId}
+      SELECT place.id FROM places place
+      WHERE place.owner_id = ${actorId} AND place.retired_at IS NULL
       ORDER BY place.created_at ASC, place.id ASC LIMIT 1
     ), world_root AS (
       SELECT place.id FROM places place
@@ -565,6 +566,7 @@ export async function setHome(
       JOIN resident_presence presence ON presence.current_place_id = owned.id
       WHERE owned.id = ${homeId}
         AND owned.owner_id = ${actorId}
+        AND owned.retired_at IS NULL
         AND presence.resident_id = ${actorId}
       FOR UPDATE OF owned, presence
     )
@@ -593,7 +595,8 @@ export async function moveResident(
   }
   const requested = [current.currentPlaceId, destinationId]
   const places = await queryRows<{ id?: unknown; parent_id?: unknown }>(db`
-    SELECT id, parent_id FROM places WHERE id = ANY (${requested}::int[])
+    SELECT id, parent_id FROM places
+    WHERE id = ANY (${requested}::int[]) AND retired_at IS NULL
   `)
   const destination = places.find(row => integer(row.id) === destinationId)
   if (!destination) throw new EngineError(404, 'destination place not found')
@@ -626,6 +629,7 @@ export async function goHome(residentId: number, db: TaggedSql = engineSql): Pro
     FROM places home
     WHERE presence.resident_id = ${actorId} AND home.id = presence.home_place_id
       AND home.owner_id = ${actorId}
+      AND home.retired_at IS NULL
     RETURNING presence.resident_id, presence.current_place_id,
       presence.home_place_id, presence.updated_at
   `)

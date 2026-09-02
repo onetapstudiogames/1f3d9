@@ -40,6 +40,7 @@ import {
   engineSql,
   residentPresence,
   resolveDueEffects,
+  withEngineTransaction,
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
 import { positiveId, publicText } from './input.ts'
@@ -220,6 +221,14 @@ const executeLaterHolderQuery: LaterHolderQueryExecutor = async (text, params) =
 const runtimeDatabase = {
   query: async (text: string, params: readonly unknown[] = []) =>
     await sql.query(text, [...params]) as Record<string, unknown>[],
+  transaction: async <T>(work: (database: {
+    query(text: string, params?: readonly unknown[]): Promise<readonly Record<string, unknown>[]>
+  }) => Promise<T>) => withEngineTransaction(engineSql, async transaction => work({
+    query: async (text, params = []) => {
+      if (!transaction.query) throw new Error('runtime transaction query is unavailable')
+      return await transaction.query(text, params) as readonly Record<string, unknown>[]
+    },
+  })),
 }
 
 const executeCommunityToolQuery = async (text: string, params: readonly unknown[]) =>
