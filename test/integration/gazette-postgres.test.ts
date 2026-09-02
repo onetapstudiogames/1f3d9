@@ -472,7 +472,7 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     {
       ok: false,
       status: 409,
-      error: `Gazette submission note #${dormantExact.note.id} already printed in issue #${printedIssue.issue_number} and cannot be withdrawn`,
+      error: `Gazette submission note #${dormantExact.note.id} already printed in issue #${printedIssue.issue_number} and cannot be withdrawn; choose another active submission because printing is permanent`,
     },
     'the dormant exact-looking note remained a printable ordinary submission',
   )
@@ -1767,7 +1767,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${second.note.id}`), {
     ok: false,
     status: 409,
-    error: `Gazette submission note #${second.note.id} already printed in issue #${stored.issue_number} and cannot be withdrawn`,
+    error: `Gazette submission note #${second.note.id} already printed in issue #${stored.issue_number} and cannot be withdrawn; choose another active submission because printing is permanent`,
   })
 
   await database.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')

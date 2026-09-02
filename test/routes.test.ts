@@ -260,6 +260,7 @@ interface FakeState {
   pendingResolved: boolean
   noteRemoved: boolean
   notePinned: boolean
+  moderatedPlaceIds: number[]
   moderatedKindIds: number[]
   moderatedKindNames: string[]
   moderatedTraitIds: number[]
@@ -361,6 +362,7 @@ const initialState = (): FakeState => ({
   pendingResolved: false,
   noteRemoved: false,
   notePinned: false,
+  moderatedPlaceIds: [],
   moderatedKindIds: [],
   moderatedKindNames: [],
   moderatedTraitIds: [],
@@ -791,6 +793,24 @@ function roomPurposeIn(params: readonly unknown[]): string | null {
 
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (state.scenario === 'protected place lifecycle') {
+    if (q.includes("to_regclass('public.place_name_history')")) return [{ installed: true }]
+    if (q.includes('as protected_city_service') && q.includes('as name_taken')) {
+      const id = Number(params.at(-1))
+      return [{
+        id,
+        name: id === 454 ? 'the gazette submission room' : 'the world',
+        owner_id: id === 454 ? 1 : null,
+        retired_at: null,
+        parent_retired_at: null,
+        subplace_count: 0,
+        thing_count: 0,
+        resident_count: 0,
+        name_taken: false,
+        protected_city_service: true,
+      }]
+    }
+  }
   if (state.scenario === 'protected Gazette dependencies') {
     const constraint = q.includes('insert into place_law_changes')
       ? 'gazette_submission_room_laws'
@@ -2091,6 +2111,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       updated_at: '2026-08-11T00:00:00.000Z',
     }]
   }
+  if (q.includes('with usable_home as materialized')) {
+    state = { ...state, currentPlaceId: state.homePlaceId }
+    return [{
+      resident_id: state.actorId,
+      current_place_id: state.currentPlaceId,
+      home_place_id: state.homePlaceId,
+      updated_at: '2026-08-11T00:05:00.000Z',
+    }]
+  }
   if (q.includes('from resident_presence')) return [{
     resident_id: state.actorId,
     current_place_id: state.currentPlaceId,
@@ -2204,8 +2233,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       selectedPlacePermission(placeRow(3, 2), q),
     ]
   }
-  if (q.includes('select id, parent_id from places') && q.includes('any')) {
-    return [placeRow(2, 1), placeRow(3, 2)]
+  if (q.includes('select id, parent_id, retired_at from places') && q.includes('any')) {
+    return [
+      { ...placeRow(2, 1), retired_at: null },
+      { ...placeRow(3, 2), retired_at: null },
+    ]
   }
   if (q.includes('from labels')) {
     const targetType = String(params[0] ?? '')
@@ -2354,8 +2386,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
         || value === 'note' || value === 'agreement'
     )) ?? '')
-    const removedIds = targetType === 'kind'
-      ? state.moderatedKindIds
+    const removedIds = targetType === 'place'
+      ? state.moderatedPlaceIds
+      : targetType === 'kind' ? state.moderatedKindIds
       : targetType === 'trait' ? state.moderatedTraitIds : []
     const removedNames = targetType === 'kind'
       ? state.moderatedKindNames
@@ -3233,6 +3266,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       {
         id: 80, at: '2026-08-11T00:06:00.000Z', kind: 'laws_changed',
         actor: 'tiny-lantern', detail: { place_id: 2, traits: ['quiet-hours', 'safe-trait'] },
+      },
+      {
+        id: 83, at: '2026-08-11T00:09:00.000Z', kind: 'place_renamed',
+        actor: 'tiny-lantern', detail: {
+          place_id: 2, name: 'new unsafe name', former_name: 'old unsafe name',
+        },
       },
       {
         id: 81, at: '2026-08-11T00:07:00.000Z', kind: 'kind_invented',
@@ -5178,6 +5217,7 @@ test('single-record APIs expose the shared loaders\' exact moderated public trut
   reset({
     scenario: 'public details',
     moderatedKindIds: [3],
+    moderatedPlaceIds: [2],
     noteRemoved: true,
   })
 
@@ -7761,7 +7801,10 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
     pending_gifts_count: 0,
     can_confirm: true,
     observed_at: '2026-08-26T23:30:00.000Z',
-    applies_to: ['frontier', 'kind_invention', 'kind_revision'],
+    applies_to: [
+      'frontier', 'kind_invention', 'kind_revision',
+      'place_rename', 'place_retire', 'place_restore',
+    ],
     freshness: 'read_only_snapshot',
     next_action: 'Show fee_cost, balance_before, and balance_after before confirming one eligible fee action. The later debit is atomic and may refuse if another spend wins first.',
   })
@@ -7774,6 +7817,68 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
   assert.equal(invalid.status, 400)
   const denied = await app.request('/api/city-credit/preflight')
   assert.equal(denied.status, 401)
+})
+
+test('HTTP and MCP refuse protected place lifecycle acts before writing any fee credit', async () => {
+  const refusal = 'place is protected and cannot be renamed, retired, or restored'
+  const actions = [
+    { body: { name: 'Forbidden rename' }, tool: { name: 'Forbidden rename' } },
+    { body: { retired: true }, tool: { retired: true } },
+    { body: { retired: false }, tool: { retired: false } },
+  ] as const
+  reset({
+    scenario: 'protected place lifecycle',
+    actorId: 1,
+    actorHandle: 'founder',
+    placeOwnerId: 1,
+    cityCreditBalances: new Map([[1, 3_000_000n]]),
+  })
+
+  for (const placeId of [1, 454]) {
+    for (const [index, action] of actions.entries()) {
+      const response = await app.request(`/api/place/${placeId}`, {
+        method: 'PATCH',
+        headers: {
+          ...authHeaders(),
+          'X-1F3D9-FEE-CREDIT': `protected-http-${placeId}-${index}`,
+        },
+        body: JSON.stringify(action.body),
+      })
+      assert.equal(response.status, 409, await response.clone().text())
+      assert.deepEqual(await response.json(), { error: refusal })
+    }
+  }
+
+  for (const placeId of [1, 454]) {
+    for (const [index, action] of actions.entries()) {
+      const response = await app.request('/mcp', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: `${placeId}-${index}`, method: 'tools/call',
+          params: {
+            name: 'place_edit',
+            arguments: {
+              place_id: placeId,
+              ...action.tool,
+              city_credit_request_id: `protected-mcp-${placeId}-${index}`,
+            },
+          },
+        }),
+      })
+      assert.equal(response.status, 200)
+      const payload = await response.json() as {
+        result: { isError: boolean; content: Array<{ text: string }> }
+      }
+      assert.equal(payload.result.isError, true)
+      const toolError = JSON.parse(payload.result.content[0]!.text) as { error: string }
+      assert.equal(toolError.error, refusal)
+    }
+  }
+
+  assert.equal(state.cityCreditEntries.length, 0)
+  assert.equal(state.paymentAttempts.size, 0)
+  assert.equal(state.cityCreditBalances.get(1), 3_000_000n)
 })
 
 test('/api/help is anonymous, queryless, and leaves auth, timers, quota, and SQL untouched', async () => {
@@ -11341,6 +11446,7 @@ test('event history narrows by actor and by observed place', async () => {
 test('removed authored names are tombstoned inside append-only event details', async () => {
   reset({
     scenario: 'nested moderation events',
+    moderatedPlaceIds: [2],
     moderatedKindIds: [3],
     moderatedKindNames: ['banned-material'],
     moderatedTraitNames: ['glowing', 'quiet-hours'],
@@ -11348,22 +11454,28 @@ test('removed authored names are tombstoned inside append-only event details', a
   const response = await app.request('/api/events')
   assert.equal(response.status, 200)
   const body = await response.json() as { events: Array<Record<string, unknown>> }
-  assert.deepEqual(body.events.map(event => event.id), [80, 81, 82])
+  assert.deepEqual(body.events.map(event => event.id), [80, 83, 81, 82])
   assert.deepEqual(body.events.map(event => event.at), [
-    '2026-08-11T00:06:00.000Z', '2026-08-11T00:07:00.000Z', '2026-08-11T00:08:00.000Z',
+    '2026-08-11T00:06:00.000Z', '2026-08-11T00:09:00.000Z',
+    '2026-08-11T00:07:00.000Z', '2026-08-11T00:08:00.000Z',
   ])
   const details = body.events.map(event => event.detail) as Array<Record<string, unknown>>
   assert.deepEqual(details[0]?.traits, ['[removed by maintainer]', 'safe-trait'])
   assert.equal(details[1]?.name, '[removed by maintainer]')
-  assert.deepEqual(details[1]?.traits, [])
-  assert.equal(details[1]?.recipe, null)
-  assert.deepEqual(details[2]?.traits, ['[removed by maintainer]', 'safe-trait'])
-  assert.deepEqual(details[2]?.recipe, [
+  assert.equal(details[1]?.former_name, '[removed by maintainer]')
+  assert.equal(details[2]?.name, '[removed by maintainer]')
+  assert.deepEqual(details[2]?.traits, [])
+  assert.equal(details[2]?.recipe, null)
+  assert.deepEqual(details[3]?.traits, ['[removed by maintainer]', 'safe-trait'])
+  assert.deepEqual(details[3]?.recipe, [
     { kind: '[removed by maintainer]', quantity: 1 },
     { kind: 'safe-material', quantity: 2 },
   ])
   const encodedDetails = JSON.stringify(details)
-  for (const removed of ['lantern', 'quiet-hours', 'glowing', 'banned-material']) {
+  for (const removed of [
+    'lantern', 'quiet-hours', 'glowing', 'banned-material',
+    'new unsafe name', 'old unsafe name',
+  ]) {
     assert.equal(encodedDetails.includes(removed), false, `${removed} leaked through event detail`)
   }
   assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
@@ -11378,13 +11490,14 @@ test('anonymous window batches event moderation without advancing timers', async
       scenario: 'nested moderation events',
       scheduledLabelAt: realNow - 1,
       moderatedKindIds: [3],
+      moderatedPlaceIds: [2],
       moderatedKindNames: ['banned-material'],
       moderatedTraitNames: ['glowing', 'quiet-hours'],
     })
     const response = await app.request('/api/window')
     assert.equal(response.status, 200)
     const body = await response.json() as { events: Array<Record<string, unknown>> }
-    assert.deepEqual(body.events.map(event => event.id), [80, 81, 82])
+    assert.deepEqual(body.events.map(event => event.id), [80, 83, 81, 82])
     const queries = sqlCalls().map(call => call.query ?? '')
     assert.ok(queries.some(query => /from moderation_actions[\s\S]*join traits named/i.test(query)))
     assert.ok(queries.some(query => /from moderation_actions[\s\S]*join kinds named/i.test(query)))

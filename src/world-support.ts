@@ -67,6 +67,7 @@ export type FeePayment = X402FeePayment | CityCreditFeePayment
 
 interface TreasuryFeeOperation {
   operation: 'frontier' | 'kind_invention' | 'kind_revision'
+    | 'place_rename' | 'place_retire' | 'place_restore'
   targetKey: string
   assetType?: PaymentAttemptRecord['assetType']
   assetId?: number | null
@@ -153,7 +154,7 @@ export function hasOnly(body: JsonObject, fields: readonly string[]): boolean {
 
 export async function requireResident(c: Context): Promise<Resident | Response> {
   const resident = await auth(c)
-  return resident ?? err(c, 401, 'resident sign-in required — use the private browser flow at /join')
+  return resident ?? err(c, 401, 'resident sign-in required; use the private browser flow at /join')
 }
 
 export function isResponse(value: Resident | Response): value is Response {
@@ -191,6 +192,7 @@ function safeTreasuryCompletionText(error: unknown): string | null {
 export function reportTreasuryCompletionFailure(
   input: Readonly<{
     operation: 'frontier' | 'kind_invention' | 'kind_revision'
+      | 'place_rename' | 'place_retire' | 'place_restore'
     rail: FeePayment['rail']
     attemptId: string
     status: number

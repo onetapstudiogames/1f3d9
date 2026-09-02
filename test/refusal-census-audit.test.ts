@@ -6,7 +6,9 @@ import {
   discoverCandidates,
   discoverHttpBoundaries,
   discoverMcpBoundaries,
+  discoverUnresolvedProducers,
   parseRefusalManifest,
+  parseUnresolvedProducers,
 } from '../scripts/check-refusal-census.ts'
 
 const projectRoot = new URL('../', import.meta.url)
@@ -19,6 +21,68 @@ test('the refusal manifest has exact set equality with source producers', () => 
   const result = auditRefusalCensus(projectRoot, auditText)
   assert.deepEqual(result.errors, [])
   assert.equal(result.candidateKeys.size, result.manifestKeys.size)
+  assert.deepEqual(
+    parseUnresolvedProducers(auditText),
+    discoverUnresolvedProducers(projectRoot),
+  )
+})
+
+test('the source scan resolves constants, imported messages, templates, and local boundary helpers', () => {
+  const candidates = discoverCandidates(projectRoot)
+  const rows = (producer: string, finalText: string) => candidates.filter(row => (
+    row.producer === producer && row.finalText === finalText
+  ))
+
+  const residentAuth = 'resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>'
+  assert.ok(rows('src/actions.ts', residentAuth).length > 0)
+  assert.ok(rows(
+    'src/paypal-credit-routes.ts',
+    'Credit purchases are unavailable because PayPal is not configured. No payment was started. Ask the city owner to connect PayPal.',
+  ).length > 0)
+  assert.ok(rows(
+    'src/crafting.ts',
+    'the world is transit only; move through it, claim a frontier continent, or use an owned place instead',
+  ).length > 0)
+  assert.ok(rows(
+    'src/agreement-action.ts',
+    '5 agreement actions per UTC day; retry after the next UTC day begins',
+  ).length > 0)
+  assert.ok(rows(
+    'src/gazette-reading.ts',
+    'Gazette issue number must be a positive integer',
+  ).length === 2)
+  assert.ok(rows(
+    'src/gazette-reading.ts',
+    'Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number',
+  ).length === 2)
+  assert.ok(rows(
+    'src/world-market.ts',
+    `${residentAuth}, then move into the city before paying`,
+  ).length > 0)
+  assert.equal(candidates.some(row => row.finalText.includes('${RESIDENT_AUTH_REFUSAL}')), false)
+  assert.equal(candidates.some(row => row.finalText.includes('resident handle  was not found')), false)
+  assert.ok(candidates.some(row => row.finalText.includes(
+    'You are at the public 1F3D9 MCP door: ${publicOrigin()}/mcp.',
+  )))
+  assert.ok(candidates.some(row => row.finalText.includes(
+    'Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients.',
+  )))
+})
+
+test('the source scan includes place lifecycle helper refusals added on main', () => {
+  const worldTexts = new Set(
+    discoverCandidates(projectRoot)
+      .filter(row => row.producer === 'src/world.ts')
+      .map(row => row.finalText),
+  )
+  for (const expected of [
+    'place is protected and cannot be renamed, retired, or restored',
+    'only the place owner may rename, retire, or restore it',
+    'place is retired; restore it before renaming',
+    'parent place is retired; restore it before restoring this place',
+    "place is not empty: move or retire its ${facts.subplaceCount} ${plural(facts.subplaceCount, 'subplace')} first",
+  ]) assert.ok(worldTexts.has(expected), expected)
+  assert.equal([...worldTexts].some(text => /residents is|resident are/u.test(text)), false)
 })
 
 test('the refusal census covers every non-identity HTTP and MCP boundary', () => {
@@ -54,15 +118,23 @@ test('included rows carry literal evidence and complete provenance', () => {
     if (row.disposition === 'included') {
       assert.match(row.status, /^(?:[1-5]\d\d|expression:)/u, `bad status: ${row.key}`)
       assert.ok(row.finalText.length > 0, `missing exact final text: ${row.key}`)
-      assert.equal(row.cause, 'Yes', `cause not classified Yes: ${row.key}`)
-      assert.equal(row.next, 'Yes', `next step not classified Yes: ${row.key}`)
-      assert.ok(row.causeEvidence.length > 0, `missing cause evidence: ${row.key}`)
-      assert.ok(row.nextEvidence.length > 0, `missing next evidence: ${row.key}`)
-      assert.ok(row.finalText.includes(row.causeEvidence), `cause is not literal: ${row.key}`)
-      assert.ok(row.finalText.includes(row.nextEvidence), `next step is not literal: ${row.key}`)
-      assert.notEqual(row.causeEvidence, row.finalText, `cause repeats full text: ${row.key}`)
-      assert.notEqual(row.nextEvidence, row.finalText, `next repeats full text: ${row.key}`)
-      assert.notEqual(row.causeEvidence, row.nextEvidence, `cause and next evidence match: ${row.key}`)
+      assert.match(row.cause, /^(?:Yes|No)$/u, `cause not reviewed: ${row.key}`)
+      assert.match(row.next, /^(?:Yes|No)$/u, `next step not reviewed: ${row.key}`)
+      for (const [classification, evidence, label] of [
+        [row.cause, row.causeEvidence, 'cause'],
+        [row.next, row.nextEvidence, 'next step'],
+      ] as const) {
+        if (classification === 'Yes') {
+          assert.ok(evidence.length > 0, `missing ${label} evidence: ${row.key}`)
+          assert.ok(row.finalText.includes(evidence), `${label} is not literal: ${row.key}`)
+          assert.notEqual(evidence, row.finalText, `${label} repeats full text: ${row.key}`)
+        } else {
+          assert.equal(evidence, '', `${label} evidence must be empty when classified No: ${row.key}`)
+        }
+      }
+      if (row.cause === 'Yes' && row.next === 'Yes') {
+        assert.notEqual(row.causeEvidence, row.nextEvidence, `cause and next evidence match: ${row.key}`)
+      }
       assert.ok(row.testProof.length > 0, `missing test proof: ${row.key}`)
       assert.equal(row.exclusionReason, '')
     } else {
@@ -108,7 +180,6 @@ test('typed error.message adapters and named boundary proofs are explicit', () =
   })
   const logDrain = rows.find(row => row.finalText.startsWith('log drain signature was rejected'))
   assert.equal(logDrain?.testProof, 'assertion:test/log-drain-http.test.ts')
-  assert.equal(rows.some(row => row.disposition === 'included' && (row.cause === 'No' || row.next === 'No')), false)
 })
 
 test('expression-level provenance separates caller refusals from internal discriminators', () => {

@@ -91,12 +91,16 @@ test('the explicit credit selector branches before x402 without changing the hea
   assert.match(worldSupportSource, /runDurableX402/iu)
   assert.match(worldSupportSource, /replayTreasuryFee/iu)
 
-  // The city has exactly three treasury-fee actions. Peer sales and free actions
-  // must not silently become credit-eligible when the central helper is extended.
-  assert.equal((worldSource.match(/\btreasuryFee\s*\(/gu) ?? []).length, 3)
+  // Four reviewed call sites cover the three existing fee actions plus the
+  // one lifecycle branch. Peer sales and free actions remain ineligible.
+  assert.equal((worldSource.match(/\btreasuryFee\s*\(/gu) ?? []).length, 4)
   for (const operation of ['frontier', 'kind_invention', 'kind_revision']) {
     assert.match(worldSource, new RegExp(`operation:\\s*'${operation}'`, 'u'))
   }
+  assert.match(
+    worldSource,
+    /lifecycle\.action\s*===\s*'rename'\s*\?\s*'place_rename'[\s\S]{0,180}'place_retire'[\s\S]{0,180}'place_restore'/u,
+  )
   assert.doesNotMatch(indexSource, /(?:direct_sale|world_sale)[\s\S]{0,500}treasuryFee\s*\(/iu)
 })
 

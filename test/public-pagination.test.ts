@@ -140,5 +140,6 @@ for (const scenario of cases) {
     assert.match(statement, /t\.owner_id AS current_owner_id, owner\.handle AS current_owner/i)
     assert.match(statement, /t\.owner_id, owner\.handle AS owner/i)
     assert.match(statement, /JOIN residents maker ON maker\.id = t\.maker_id/i)
+    assert.match(statement, /p\.retired_at IS NULL/i)
   })
 }

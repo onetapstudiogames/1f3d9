@@ -10,8 +10,21 @@ import {
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
 import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
+import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
+import {
+  parsePlaceLifecycleRequest,
+  placeLifecycleRefusal,
+  type PlaceLifecycleAction,
+  type PlaceLifecycleFacts,
+} from './place-lifecycle.ts'
 import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
-import { effectiveLaws, residentPresence, resolveDueEffects } from './engine.ts'
+import {
+  effectiveLaws,
+  engineSql,
+  residentPresence,
+  resolveDueEffects,
+  withEngineTransaction,
+} from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
@@ -231,19 +244,20 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
         ARRAY[p.id] AS path
       FROM places p
-      WHERE p.parent_id IS NULL
+      WHERE p.parent_id IS NULL AND p.retired_at IS NULL
       UNION ALL
       SELECT child.id, child.parent_id, child.name, child.description, child.purpose, child.owner_id,
         child.open_to_building, child.open_to_things, child.open_to_notes, child.created_at,
         parent.path || child.id
       FROM places child
       JOIN place_tree parent ON parent.id = child.parent_id
-      WHERE NOT child.id = ANY(parent.path)
+      WHERE child.retired_at IS NULL AND NOT child.id = ANY(parent.path)
     )
     SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.purpose, tree.owner_id,
       owner.handle AS owner, tree.open_to_building, tree.open_to_things,
       tree.open_to_notes, tree.created_at,
-      (SELECT count(*)::int FROM places child WHERE child.parent_id = tree.id) AS places,
+      (SELECT count(*)::int FROM places child
+        WHERE child.parent_id = tree.id AND child.retired_at IS NULL) AS places,
       (SELECT count(*)::int FROM things thing
         WHERE thing.place_id = tree.id AND thing.withdrawn_at IS NULL) AS things,
       (SELECT count(*)::int FROM notes note WHERE note.place_id = tree.id) AS notes
@@ -424,6 +438,52 @@ export function mountWorldRoutes(app: Hono): void {
     const publicPlace = await loadPublicPlaceRecord(id)
     if (!publicPlace) return err(c, 404, `place_id ${id} was not found; use GET /api/map?view=outline and send a current place_id`)
 
+    if (publicPlace.status === 'retired') {
+      const collections = await loadPublicPlaceCollectionRows(executePublicQuery, id, {
+        subplaces: subplaceRequest,
+        things: thingRequest,
+        notes: noteRequest,
+      }, view === 'full', effectiveTextLimits)
+      const notesPage = collections.pages == null
+        ? {
+            ...finalizePublicPage(
+              collections.notes as Array<Record<string, unknown> & { id: number }>,
+              noteRequest.limit,
+            ),
+            returnedTextBytes: view === 'full'
+              ? utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'body')
+              : 0,
+            stoppedForTextLimit: false,
+            nextItemId: null,
+            nextItemTextBytes: null,
+          }
+        : {
+            items: collections.notes as Array<Record<string, unknown> & { id: number }>,
+            ...collections.pages.notes,
+          }
+      const publicNotes = await moderatePublicRows('note', notesPage.items)
+      return publicJson(c, {
+        ...(requestedView == null ? {} : { view }),
+        tombstone: publicPlace,
+        notes: publicNotes,
+        notes_page: {
+          total_items: collections.totals.notes.items,
+          total_text_bytes: collections.totals.notes.textBytes,
+          returned_items: publicNotes.length,
+          returned_text_bytes: notesPage.returnedTextBytes,
+          has_more: notesPage.hasMore,
+          next_before_note_id: notesPage.nextCursor,
+          ...(effectiveTextLimits.notes == null ? {} : {
+            text_limit_bytes: effectiveTextLimits.notes,
+            stopped_for_text_limit: notesPage.stoppedForTextLimit,
+            next_item_id: notesPage.nextItemId,
+            next_item_text_bytes: notesPage.nextItemTextBytes,
+            ...(noteTextLimit.value == null ? { server_text_limit_applied: true } : {}),
+          }),
+        },
+      })
+    }
+
     const [collections, labels, laws, frontMatterByPlace] = await Promise.all([
       loadPublicPlaceCollectionRows(executePublicQuery, id, {
         subplaces: subplaceRequest,
@@ -603,6 +663,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (parentId != null) {
       const parents = (await withPlacePermission(sql)`
         SELECT parent.id, parent.parent_id, parent.place_kind, parent.owner_id,
+          parent.retired_at,
           parent.open_to_building,
           ${placePermission('parent', 'open_to_building', resident.id)} AS place_permits_building
         FROM places parent WHERE parent.id = ${parentId}
@@ -613,9 +674,11 @@ export function mountWorldRoutes(app: Hono): void {
         owner_id: number | null
         open_to_building: boolean
         place_permits_building: boolean
+        retired_at?: string | null
       }>
       const parent = parents[0]
       if (!parent) return err(c, 404, `parent place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`)
+      if (parent.retired_at != null) return err(c, 409, 'parent place is retired; restore it before building there')
       if (isWorldRootRow(parent)) {
         // An explicit world parent is the same paid frontier operation as the
         // long-standing parent_id:null request. It is never a free build.
@@ -629,6 +692,7 @@ export function mountWorldRoutes(app: Hono): void {
             SELECT parent.id
             FROM places parent
             WHERE parent.id = ${parentId}
+              AND parent.retired_at IS NULL
               AND ${placePermission('parent', 'open_to_building', resident.id)}
             FOR UPDATE
           ), new_place AS (
@@ -743,6 +807,160 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     const body = decoded.body
+    const lifecycle = parsePlaceLifecycleRequest(
+      body,
+      c.req.header('x-1f3d9-fee-credit') ?? null,
+      c.req.header('x-payment') ?? null,
+    )
+    if (lifecycle && 'error' in lifecycle) return err(c, 400, lifecycle.error)
+    if (lifecycle) {
+      if (!hasOnly(body, lifecycle.action === 'rename' ? ['name'] : ['retired'])) {
+        return err(c, 400, 'rename, retire, or restore one place at a time; do not mix paid acts')
+      }
+      const lifecycleSchema = await sql`
+        SELECT to_regclass('public.place_name_history') IS NOT NULL AS installed
+      ` as Array<{ installed: boolean }>
+      if (lifecycleSchema[0]?.installed !== true) {
+        return err(c, 503, 'place rename, retire, and restore are unavailable until the place lifecycle migration has run')
+      }
+      const factRows = await sql`
+        SELECT place.id, place.name, place.owner_id, place.retired_at,
+          (place.place_kind = 'world' OR place.id = 454) AS protected_city_service,
+          (SELECT parent.retired_at FROM places parent
+            WHERE parent.id = place.parent_id) AS parent_retired_at,
+          (SELECT count(*)::integer FROM places child
+            WHERE child.parent_id = place.id AND child.retired_at IS NULL) AS subplace_count,
+          (SELECT count(*)::integer FROM things thing
+            WHERE thing.place_id = place.id AND thing.withdrawn_at IS NULL) AS thing_count,
+          (SELECT count(*)::integer FROM resident_presence presence
+            WHERE presence.current_place_id = place.id) AS resident_count,
+          EXISTS (
+            SELECT 1 FROM places sibling
+            WHERE sibling.parent_id = place.parent_id
+              AND sibling.id <> place.id
+              AND sibling.retired_at IS NULL
+              AND lower(sibling.name) = lower(coalesce(
+                ${lifecycle.action === 'rename' ? lifecycle.name : null},
+                place.name
+              ))
+          ) AS name_taken
+        FROM places place
+        WHERE place.id = ${id}
+      ` as Array<{
+        id: number
+        name: string
+        owner_id: number | null
+        retired_at: string | null
+        parent_retired_at: string | null
+        subplace_count: number
+        thing_count: number
+        resident_count: number
+        name_taken: boolean
+        protected_city_service: boolean
+      }>
+      const row = factRows[0]
+      const facts: PlaceLifecycleFacts = row
+        ? {
+            exists: true,
+            ownerId: row.owner_id,
+            actorId: resident.id,
+            currentName: row.name,
+            retiredAt: row.retired_at,
+            parentRetiredAt: row.parent_retired_at,
+            subplaceCount: Number(row.subplace_count),
+            thingCount: Number(row.thing_count),
+            residentCount: Number(row.resident_count),
+            nameTaken: row.name_taken === true,
+            protectedCityService: row.protected_city_service === true,
+          }
+        : {
+            exists: false,
+            ownerId: null,
+            actorId: resident.id,
+            currentName: null,
+            retiredAt: null,
+            parentRetiredAt: null,
+            subplaceCount: 0,
+            thingCount: 0,
+            residentCount: 0,
+            nameTaken: false,
+            protectedCityService: false,
+          }
+      const action: PlaceLifecycleAction = lifecycle.action === 'rename'
+        ? { action: 'rename', name: lifecycle.name }
+        : { action: lifecycle.action }
+      const refusal = placeLifecycleRefusal(facts, action)
+      if (refusal) {
+        const status = refusal === 'place not found' ? 404
+          : refusal.startsWith('only the place owner') ? 403
+            : 409
+        return err(c, status, refusal)
+      }
+
+      const operation = lifecycle.action === 'rename' ? 'place_rename'
+        : lifecycle.action === 'retire' ? 'place_retire'
+          : 'place_restore'
+      const request = lifecycle.action === 'rename'
+        ? { place_id: id, name: lifecycle.name }
+        : { place_id: id }
+      const targetKey = lifecycle.action === 'rename'
+        ? `place:${id}:rename:${lifecycle.requestId}`
+        : `place:${id}:${lifecycle.action}:${lifecycle.requestId}`
+      const fee = await treasuryFee(
+        c,
+        `${DOMAIN}/api/place/${id}`,
+        `1F3D9 place ${lifecycle.action} fee`,
+        resident.id,
+        {
+          operation,
+          targetKey,
+          assetType: 'place',
+          assetId: id,
+          request,
+        },
+      )
+      if (fee instanceof Response) return fee
+      try {
+        const completion = await completePlaceLifecycleOperation(
+          {
+            query: async (text, params = []) => sql.query(text, [...params]),
+            transaction: work => withEngineTransaction(engineSql, async transaction => work({
+              query: async (text, params = []) => {
+                if (!transaction.query) throw new Error('place lifecycle transaction is unavailable')
+                return await transaction.query(text, params) as readonly Record<string, unknown>[]
+              },
+            })),
+          },
+          { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner },
+        )
+        if (completion.state !== 'completed') {
+          return await returnFailedTreasuryFee(
+            fee,
+            resident.id,
+            completion.reason,
+            409,
+          ) as Response
+        }
+        return completedTreasuryFeeResponse(completion.responseBody, completion.responseStatus, null)
+      } catch (error) {
+        const nameConflict = postgresErrorCode(error) === '23505'
+        const response = await returnFailedTreasuryFee(
+          fee,
+          resident.id,
+          nameConflict
+            ? 'that place name is already taken inside its parent'
+            : 'place lifecycle act failed before completion',
+          nameConflict ? 409 : 503,
+        ) as Response
+        reportTreasuryCompletionFailure({
+          operation,
+          rail: fee.rail,
+          attemptId: fee.attemptId,
+          status: response.status,
+        }, error)
+        return response
+      }
+    }
     const fields = [
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes',
@@ -768,7 +986,7 @@ export function mountWorldRoutes(app: Hono): void {
     }
 
     const existingRows = (await sql`
-      SELECT p.id, p.owner_id, p.active_offer_id,
+      SELECT p.id, p.owner_id, p.active_offer_id, p.retired_at,
         (offer.id IS NOT NULL) AS has_open_offer
       FROM places p
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
@@ -779,11 +997,13 @@ export function mountWorldRoutes(app: Hono): void {
       owner_id: number | null
       active_offer_id: number | null
       has_open_offer?: boolean
+      retired_at?: string | null
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, `place_id ${id} was not found; use GET /api/map?view=outline and send a current place_id`)
     if (existing.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the place owner may edit it')
+    if (existing.retired_at != null) return err(c, 409, 'place is retired; restore it before editing')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'place cannot be edited while it has an open sale offer; close that offer before editing the place')
     }
@@ -848,6 +1068,7 @@ export function mountWorldRoutes(app: Hono): void {
           LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
             AND offer.asset_id = p.id AND offer.status = 'open'
           WHERE p.id = ${id} AND p.owner_id = ${resident.id}
+            AND p.retired_at IS NULL
             AND p.active_offer_id IS NULL AND offer.id IS NULL
             AND selection.eligible
           FOR UPDATE OF p
@@ -1425,7 +1646,8 @@ export function mountWorldRoutes(app: Hono): void {
     }
 
     const placeRows = (await withPlacePermission(sql)`
-      SELECT place.id, place.parent_id, place.place_kind, place.owner_id, place.open_to_things,
+      SELECT place.id, place.parent_id, place.place_kind, place.owner_id,
+        place.retired_at, place.open_to_things,
         ${placePermission('place', 'open_to_things', resident.id)} AS place_permits_things
       FROM places place WHERE place.id = ${placeId}
     `) as Array<{
@@ -1435,9 +1657,11 @@ export function mountWorldRoutes(app: Hono): void {
       owner_id: number | null
       open_to_things: boolean
       place_permits_things: boolean
+      retired_at: string | null
     }>
     const place = placeRows[0]
     if (!place) return err(c, 404, `place_id ${placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
+    if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before making things there')
     if (isWorldRootRow(place)) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (place.place_permits_things !== true) {
       return err(c, 403, 'this place does not permit visitors to make things; its owner can enable open_to_things, or you can choose your own or another open place')

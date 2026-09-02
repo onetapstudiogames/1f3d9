@@ -28,12 +28,13 @@ export async function replacePlaceLaws(
   names: readonly string[],
 ): Promise<readonly PublicLaw[] | LawFailure> {
   const placeRows = await sql`
-    SELECT id, parent_id, place_kind, owner_id FROM places WHERE id = ${placeId}
+    SELECT id, parent_id, place_kind, owner_id, retired_at FROM places WHERE id = ${placeId}
   ` as Array<{
     id: number
     parent_id: number | null
     place_kind: string
     owner_id: number | null
+    retired_at: string | null
   }>
   const place = placeRows[0]
   if (!place) {
@@ -50,6 +51,9 @@ export async function replacePlaceLaws(
   }
   if (place.owner_id !== actor.id) {
     return Object.freeze({ error: 'only the place owner may change its laws', status: 403 })
+  }
+  if (place.retired_at != null) {
+    return Object.freeze({ error: 'place is retired; restore it before changing its laws', status: 409 })
   }
 
   const traits = names.length === 0 ? [] : await sql`
@@ -75,6 +79,7 @@ export async function replacePlaceLaws(
     WITH locked_place AS MATERIALIZED (
       SELECT id FROM places
       WHERE id = ${placeId} AND owner_id = ${actor.id}
+        AND retired_at IS NULL
       FOR UPDATE
     ), requested AS MATERIALIZED (
       SELECT (entry->>'id')::integer AS trait_id,

@@ -3,13 +3,14 @@ export const PUBLIC_SEARCH_INDEX_NAMES = Object.freeze([
   'notes_public_search_phrase',
   'things_public_search_words_active',
   'things_public_search_phrase_active',
+  'place_name_history_name_search',
 ] as const)
 
 type PublicSearchIndexName = typeof PUBLIC_SEARCH_INDEX_NAMES[number]
 
 type ReviewedPublicSearchIndex = Readonly<{
   name: PublicSearchIndexName
-  table: 'notes' | 'things'
+  table: 'notes' | 'things' | 'place_name_history'
   expression: string
   operatorClass: 'tsvector_ops' | 'gin_trgm_ops'
   predicate: string | null
@@ -43,6 +44,13 @@ const REVIEWED_PUBLIC_SEARCH_INDEXES: readonly ReviewedPublicSearchIndex[] = Obj
     expression: "lower((name||' '::text)||body)",
     operatorClass: 'gin_trgm_ops',
     predicate: 'withdrawn_atisnull',
+  }),
+  Object.freeze({
+    name: 'place_name_history_name_search',
+    table: 'place_name_history',
+    expression: 'lower(name)',
+    operatorClass: 'gin_trgm_ops',
+    predicate: null,
   }),
 ])
 

@@ -33,6 +33,8 @@ interface Candidate {
 
 const MANIFEST_OPEN = '<!-- refusal-manifest:begin -->'
 const MANIFEST_CLOSE = '<!-- refusal-manifest:end -->'
+const UNRESOLVED_OPEN = '<!-- refusal-unresolved:begin -->'
+const UNRESOLVED_CLOSE = '<!-- refusal-unresolved:end -->'
 const IDENTITY_MODULES = new Set([
   'identity-browser.ts',
   'identity-store.ts',
@@ -58,6 +60,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/community-tool-submissions.ts:TypeError',
   'src/core.ts:Error',
   'src/drawing-thumbnail.ts:Error',
+  'src/db.ts:Error',
   'src/gazette-reading.ts:Error',
   'src/gazette-store.ts:Error',
   'src/gazette.ts:RangeError',
@@ -143,6 +146,18 @@ const INTERNAL_EXPRESSION_REASONS = new Map<string, string>([
     'Read, preflight, or invariant failure; the global onError boundary replaces it with the generic 500 refusal.',
   ] as const),
   ['src/engine-effects.ts::invalid stored effect payload', 'Internal effect-resolution record, not a caller response.'],
+  ...[
+    'place lifecycle completion returned an invalid state',
+    'place lifecycle completion returned an invalid status',
+    'place lifecycle completion returned no response body',
+  ].map(text => [
+    `src/place-lifecycle-operation.ts::${text}`,
+    'Internal lifecycle completion invariant; the world route replaces it with the caller-safe lifecycle failure.',
+  ] as const),
+  [
+    'src/world.ts::place lifecycle transaction is unavailable',
+    'Internal lifecycle transaction failure; the world route replaces it with the caller-safe lifecycle failure.',
+  ],
   ['src/index.ts::identity browser routes are unavailable', 'Out-of-scope identity-browser fallback; identity routes are excluded from this census.'],
   ...[
     'payment sale attempt is unavailable',
@@ -222,11 +237,218 @@ function normalizedExpression(node: ts.Expression, source: ts.SourceFile): strin
   return raw
 }
 
-function literalMessage(node: ts.Node | undefined): node is ts.StringLiteralLike {
-  return Boolean(node && (
-    ts.isStringLiteralLike(node)
-    || ts.isNoSubstitutionTemplateLiteral(node)
-    || ts.isTemplateExpression(node)
+type Substitutions = ReadonlyMap<string, ts.Expression>
+
+function symbolDeclaration(node: ts.Node, checker: ts.TypeChecker): ts.Declaration | undefined {
+  let symbol = checker.getSymbolAtLocation(node)
+  if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
+  return symbol?.declarations?.[0]
+}
+
+function isConstDeclaration(node: ts.VariableDeclaration): boolean {
+  return ts.isVariableDeclarationList(node.parent)
+    && (node.parent.flags & ts.NodeFlags.Const) !== 0
+}
+
+type StaticFunctionDeclaration = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration
+
+function returnExpressions(node: StaticFunctionDeclaration): ts.Expression[] {
+  if (!node.body) return []
+  if (!ts.isBlock(node.body)) return [node.body]
+  const expressions: ts.Expression[] = []
+  const visit = (child: ts.Node): void => {
+    if (child !== node.body && ts.isFunctionLike(child)) return
+    if (ts.isReturnStatement(child) && child.expression) expressions.push(child.expression)
+    else ts.forEachChild(child, visit)
+  }
+  visit(node.body)
+  return expressions
+}
+
+function resolveStaticTexts(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  substitutions: Substitutions = new Map(),
+  seen: ReadonlySet<string> = new Set(),
+): string[] {
+  const source = node.getSourceFile()
+  const seenKey = `${source.fileName}:${node.pos}:${node.end}`
+  if (seen.has(seenKey)) return []
+  const nextSeen = new Set(seen).add(seenKey)
+  const unique = (values: string[]): string[] => [...new Set(values)]
+
+  if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text]
+  if (ts.isNumericLiteral(node)) return [node.text]
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    return resolveStaticTexts(node.expression, checker, substitutions, nextSeen)
+  }
+  if (ts.isIdentifier(node)) {
+    const substituted = substitutions.get(node.text)
+    if (substituted) return resolveStaticTexts(substituted, checker, substitutions, nextSeen)
+    const declaration = symbolDeclaration(node, checker)
+    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer && isConstDeclaration(declaration)) {
+      return resolveStaticTexts(declaration.initializer, checker, substitutions, nextSeen)
+    }
+    if (declaration && ts.isPropertyAssignment(declaration)) {
+      return resolveStaticTexts(declaration.initializer, checker, substitutions, nextSeen)
+    }
+    return []
+  }
+  if (ts.isPropertyAccessExpression(node)) {
+    const declaration = symbolDeclaration(node.name, checker)
+    if (declaration && ts.isPropertyAssignment(declaration)) {
+      return resolveStaticTexts(declaration.initializer, checker, substitutions, nextSeen)
+    }
+    return []
+  }
+  if (ts.isConditionalExpression(node)) {
+    const whenTrue = resolveStaticTexts(node.whenTrue, checker, substitutions, nextSeen)
+    const whenFalse = resolveStaticTexts(node.whenFalse, checker, substitutions, nextSeen)
+    if (node.whenTrue.kind === ts.SyntaxKind.NullKeyword || node.whenTrue.kind === ts.SyntaxKind.UndefinedKeyword) return whenFalse
+    if (node.whenFalse.kind === ts.SyntaxKind.NullKeyword || node.whenFalse.kind === ts.SyntaxKind.UndefinedKeyword) return whenTrue
+    return whenTrue.length > 0 && whenFalse.length > 0 ? unique([...whenTrue, ...whenFalse]) : []
+  }
+  if (ts.isBinaryExpression(node)) {
+    const left = resolveStaticTexts(node.left, checker, substitutions, nextSeen)
+    const right = resolveStaticTexts(node.right, checker, substitutions, nextSeen)
+    const operator = node.operatorToken.kind
+    if (operator === ts.SyntaxKind.PlusToken) {
+      const numeric = (checker.getTypeAtLocation(node).flags & ts.TypeFlags.NumberLike) !== 0
+      if (numeric && (left.length === 0 || right.length === 0)) return []
+      const leftValues = left.length === 1
+        ? left
+        : [`\${${normalizedExpression(node.left, node.left.getSourceFile())}}`]
+      const rightValues = right.length === 1
+        ? right
+        : [`\${${normalizedExpression(node.right, node.right.getSourceFile())}}`]
+      return unique(leftValues.flatMap(prefix => rightValues.map(suffix => (
+        numeric ? String(Number(prefix) + Number(suffix)) : `${prefix}${suffix}`
+      ))))
+    }
+    const operation = operator === ts.SyntaxKind.AsteriskToken
+      ? (a: number, b: number) => a * b
+      : operator === ts.SyntaxKind.SlashToken
+        ? (a: number, b: number) => a / b
+        : operator === ts.SyntaxKind.MinusToken
+          ? (a: number, b: number) => a - b
+          : null
+    if (operation) {
+      return unique(left.flatMap(a => right.map(b => String(operation(Number(a), Number(b))))))
+    }
+    return []
+  }
+  if (ts.isTemplateExpression(node)) {
+    let rendered = [node.head.text]
+    for (const span of node.templateSpans) {
+      const resolved = resolveStaticTexts(span.expression, checker, substitutions, nextSeen)
+      const values = resolved.length === 1
+        ? resolved
+        : [`\${${normalizedExpression(span.expression, span.expression.getSourceFile())}}`]
+      rendered = rendered.flatMap(prefix => values.map(value => `${prefix}${value}${span.literal.text}`))
+    }
+    return unique(rendered)
+  }
+  if (ts.isCallExpression(node)) {
+    const replacePattern = node.arguments[0]
+    const replaceValue = node.arguments[1]
+    if (
+      ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'replace'
+      && replacePattern
+      && replaceValue
+      && ts.isRegularExpressionLiteral(replacePattern)
+      && ts.isStringLiteralLike(replaceValue)
+    ) {
+      const match = /^\/(.*)\/([a-z]*)$/u.exec(replacePattern.text)
+      const patternSource = match?.[1]
+      const patternFlags = match?.[2]
+      if (patternSource !== undefined && patternFlags !== undefined) {
+        const pattern = new RegExp(patternSource, patternFlags)
+        return resolveStaticTexts(node.expression.expression, checker, substitutions, nextSeen)
+          .map(value => value.replace(pattern, replaceValue.text))
+      }
+    }
+    const declaration = symbolDeclaration(node.expression, checker)
+    const callable = declaration && ts.isVariableDeclaration(declaration)
+      && declaration.initializer && isConstDeclaration(declaration)
+      && (ts.isFunctionExpression(declaration.initializer) || ts.isArrowFunction(declaration.initializer))
+      ? declaration.initializer
+      : declaration && (
+          ts.isFunctionDeclaration(declaration)
+          || ts.isFunctionExpression(declaration)
+          || ts.isArrowFunction(declaration)
+          || ts.isMethodDeclaration(declaration)
+        )
+        ? declaration
+        : null
+    if (callable) {
+      const callSubstitutions = new Map(substitutions)
+      callable.parameters.forEach((parameter, index) => {
+        if (ts.isIdentifier(parameter.name) && node.arguments[index]) {
+          callSubstitutions.set(parameter.name.text, node.arguments[index])
+        } else if (ts.isIdentifier(parameter.name) && parameter.initializer) {
+          callSubstitutions.set(parameter.name.text, parameter.initializer)
+        }
+      })
+      const rendered: string[] = []
+      for (const expression of returnExpressions(callable)) {
+        if (expression.kind === ts.SyntaxKind.NullKeyword || expression.kind === ts.SyntaxKind.UndefinedKeyword) continue
+        const values = resolveStaticTexts(expression, checker, callSubstitutions, nextSeen)
+        if (values.length === 0) return []
+        rendered.push(...values)
+      }
+      return unique(rendered)
+    }
+  }
+  return []
+}
+
+interface LocalBoundaryHelper {
+  messageArgument: number
+  statusArgument: number
+}
+
+function localBoundaryHelpers(source: ts.SourceFile): Map<string, LocalBoundaryHelper> {
+  const helpers = new Map<string, LocalBoundaryHelper>()
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      const parameters = node.parameters.map(parameter => (
+        ts.isIdentifier(parameter.name) ? parameter.name.text : ''
+      ))
+      const inspect = (child: ts.Node): void => {
+        const message = ts.isCallExpression(child) ? child.arguments[0] : undefined
+        const status = ts.isCallExpression(child) ? child.arguments[1] : undefined
+        if (
+          ts.isCallExpression(child)
+          && ts.isPropertyAccessExpression(child.expression)
+          && child.expression.name.text === 'text'
+          && message
+          && status
+          && ts.isIdentifier(message)
+          && ts.isIdentifier(status)
+        ) {
+          const messageArgument = parameters.indexOf(message.text)
+          const statusArgument = parameters.indexOf(status.text)
+          if (messageArgument >= 0 && statusArgument >= 0) {
+            helpers.set(node.name!.text, { messageArgument, statusArgument })
+          }
+        }
+        if (child !== node.body && ts.isFunctionLike(child)) return
+        ts.forEachChild(child, inspect)
+      }
+      inspect(node.body)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return helpers
+}
+
+function mayResolveToString(node: ts.Expression, checker: ts.TypeChecker): boolean {
+  const type = checker.getTypeAtLocation(node)
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.StringLike)) !== 0) return true
+  return type.isUnion() && type.types.some(member => (
+    (member.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.StringLike)) !== 0
   ))
 }
 
@@ -297,12 +519,27 @@ function proofIndex(projectRoot: URL): Array<{ file: string; calls: string[] }> 
   return indexed
 }
 
-export function discoverCandidates(projectRoot: URL): Candidate[] {
+function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved: string[] } {
   const provisional: Omit<Candidate, 'key'>[] = []
-  for (const file of sourceFiles(projectRoot)) {
-    const text = readFileSync(file, 'utf8')
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+  const unresolvedExpressions: string[] = []
+  const files = sourceFiles(projectRoot)
+  const program = ts.createProgram({
+    rootNames: files,
+    options: {
+      allowImportingTsExtensions: true,
+      module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      noEmit: true,
+      skipLibCheck: true,
+      target: ts.ScriptTarget.ESNext,
+    },
+  })
+  const checker = program.getTypeChecker()
+  for (const file of files) {
+    const source = program.getSourceFile(file)
+    if (!source) throw new Error(`refusal census could not parse ${file}`)
     const relativeFile = relative(fileURLToPath(projectRoot), file).replaceAll('\\', '/')
+    const localHelpers = localBoundaryHelpers(source)
 
     const add = (
       message: ts.Expression,
@@ -312,21 +549,25 @@ export function discoverCandidates(projectRoot: URL): Candidate[] {
       finalBoundary = 'HTTP JSON; MCP forwarded tool result',
       exclusionReason = '',
     ) => {
-      if (!literalMessage(message)) return
-      const finalText = normalizedExpression(message, source)
-      const expressionOverrideKey = `${relativeFile}::${finalText}`
-      const internalReason = INTERNAL_EXPRESSION_REASONS.get(expressionOverrideKey)
-      const callerOverride = CALLER_EXPRESSION_ADAPTERS.get(expressionOverrideKey)
-      provisional.push({
-        expressionKey: finalText,
-        finalText,
-        producer: relativeFile,
-        adapter: callerOverride?.adapter ?? (internalReason ? 'internal control-flow/storage adapter' : adapter),
-        status: callerOverride?.status ?? (internalReason ? 'n/a' : status),
-        finalBoundary: callerOverride?.boundary ?? (internalReason ? 'not returned at a caller boundary' : finalBoundary),
-        disposition: callerOverride ? 'included' : internalReason ? 'excluded' : disposition,
-        exclusionReason: callerOverride ? '' : internalReason ?? exclusionReason,
-      })
+      const resolvedTexts = resolveStaticTexts(message, checker)
+      if (resolvedTexts.length === 0 && mayResolveToString(message, checker)) {
+        unresolvedExpressions.push(`${relativeFile}::${normalizedExpression(message, source)}`)
+      }
+      for (const finalText of resolvedTexts) {
+        const expressionOverrideKey = `${relativeFile}::${finalText}`
+        const internalReason = INTERNAL_EXPRESSION_REASONS.get(expressionOverrideKey)
+        const callerOverride = CALLER_EXPRESSION_ADAPTERS.get(expressionOverrideKey)
+        provisional.push({
+          expressionKey: finalText,
+          finalText,
+          producer: relativeFile,
+          adapter: callerOverride?.adapter ?? (internalReason ? 'internal control-flow/storage adapter' : adapter),
+          status: callerOverride?.status ?? (internalReason ? 'n/a' : status),
+          finalBoundary: callerOverride?.boundary ?? (internalReason ? 'not returned at a caller boundary' : finalBoundary),
+          disposition: callerOverride ? 'included' : internalReason ? 'excluded' : disposition,
+          exclusionReason: callerOverride ? '' : internalReason ?? exclusionReason,
+        })
+      }
     }
 
     const visit = (node: ts.Node): void => {
@@ -392,6 +633,20 @@ export function discoverCandidates(projectRoot: URL): Candidate[] {
             add(message, `${callName} helper adapter`, status, 'included', boundary)
           }
         }
+        const localHelper = localHelpers.get(callName)
+        if (localHelper) {
+          const message = node.arguments[localHelper.messageArgument]
+          const statusNode = node.arguments[localHelper.statusArgument]
+          if (message) {
+            add(
+              message,
+              `${callName} local HTTP text adapter`,
+              exactStatus(statusNode, source),
+              'included',
+              'HTTP text',
+            )
+          }
+        }
         if (callName === 'text' && node.arguments[1]) {
           const status = exactStatus(node.arguments[1], source)
           const message = node.arguments[0]
@@ -406,12 +661,27 @@ export function discoverCandidates(projectRoot: URL): Candidate[] {
   }
 
   const seen = new Map<string, number>()
-  return provisional.map(candidate => {
+  const candidates = provisional.map(candidate => {
     const expressionKey = `${candidate.producer}::${candidate.expressionKey}`
     const ordinal = (seen.get(expressionKey) ?? 0) + 1
     seen.set(expressionKey, ordinal)
     return { ...candidate, key: `${expressionKey}::${ordinal}` }
   })
+  const unresolvedSeen = new Map<string, number>()
+  const unresolved = unresolvedExpressions.map(expression => {
+    const ordinal = (unresolvedSeen.get(expression) ?? 0) + 1
+    unresolvedSeen.set(expression, ordinal)
+    return `${expression}::${ordinal}`
+  })
+  return { candidates, unresolved }
+}
+
+export function discoverCandidates(projectRoot: URL): Candidate[] {
+  return scanCandidates(projectRoot).candidates
+}
+
+export function discoverUnresolvedProducers(projectRoot: URL): string[] {
+  return scanCandidates(projectRoot).unresolved
 }
 
 export function discoverHttpBoundaries(projectRoot: URL): {
@@ -498,12 +768,24 @@ export function parseRefusalManifest(auditText: string): RefusalManifestRow[] {
     .map(line => JSON.parse(line) as RefusalManifestRow)
 }
 
+export function parseUnresolvedProducers(auditText: string): string[] {
+  const start = auditText.indexOf(UNRESOLVED_OPEN)
+  const end = auditText.indexOf(UNRESOLVED_CLOSE)
+  if (start < 0 || end < start) return []
+  return auditText
+    .slice(start + UNRESOLVED_OPEN.length, end)
+    .split(/\r?\n/u)
+    .map(line => /^- `(.+)`$/u.exec(line.trim())?.[1])
+    .filter((value): value is string => value !== undefined)
+}
+
 export function auditRefusalCensus(projectRoot: URL, auditText: string): {
   errors: string[]
   candidateKeys: Set<string>
   manifestKeys: Set<string>
 } {
-  const candidates = discoverCandidates(projectRoot)
+  const scan = scanCandidates(projectRoot)
+  const candidates = scan.candidates
   const manifest = parseRefusalManifest(auditText)
   const candidateKeys = new Set(candidates.map(row => row.key))
   const manifestKeys = new Set(manifest.map(row => row.key))
@@ -512,6 +794,16 @@ export function auditRefusalCensus(projectRoot: URL, auditText: string): {
   for (const key of candidateKeys) if (!manifestKeys.has(key)) errors.push(`missing manifest row: ${key}`)
   for (const key of manifestKeys) if (!candidateKeys.has(key)) errors.push(`stale manifest row: ${key}`)
   if (manifestKeys.size !== manifest.length) errors.push('duplicate manifest key')
+  const documentedUnresolved = parseUnresolvedProducers(auditText)
+  const actualUnresolvedKeys = new Set(scan.unresolved)
+  const documentedUnresolvedKeys = new Set(documentedUnresolved)
+  for (const key of actualUnresolvedKeys) {
+    if (!documentedUnresolvedKeys.has(key)) errors.push(`missing unresolved producer: ${key}`)
+  }
+  for (const key of documentedUnresolvedKeys) {
+    if (!actualUnresolvedKeys.has(key)) errors.push(`stale unresolved producer: ${key}`)
+  }
+  if (documentedUnresolvedKeys.size !== documentedUnresolved.length) errors.push('duplicate unresolved producer')
   const proofFiles = new Map(proofIndex(projectRoot).map(entry => [
     relative(fileURLToPath(projectRoot), entry.file).replaceAll('\\', '/'),
     entry.calls,
@@ -540,10 +832,16 @@ export function auditRefusalCensus(projectRoot: URL, auditText: string): {
         ['cause', row.causeEvidence],
         ['next', row.nextEvidence],
       ] as const) {
-        if (!evidence || !row.finalText.includes(evidence)) errors.push(`${row.key}: ${name} evidence is not literal`)
-        if (evidence === row.finalText) errors.push(`${row.key}: ${name} evidence repeats the full text`)
+        if (row[name] === 'Yes') {
+          if (!evidence || !row.finalText.includes(evidence)) errors.push(`${row.key}: ${name} evidence is not literal`)
+          if (evidence === row.finalText) errors.push(`${row.key}: ${name} evidence repeats the full text`)
+        } else if (evidence !== '') {
+          errors.push(`${row.key}: ${name} evidence must be empty when classified No`)
+        }
       }
-      if (row.causeEvidence === row.nextEvidence) errors.push(`${row.key}: cause and next evidence are identical`)
+      if (row.cause === 'Yes' && row.next === 'Yes' && row.causeEvidence === row.nextEvidence) {
+        errors.push(`${row.key}: cause and next evidence are identical`)
+      }
       if (row.testProof.startsWith('assertion:')) {
         const testFile = row.testProof.slice('assertion:'.length)
         const calls = proofFiles.get(testFile)

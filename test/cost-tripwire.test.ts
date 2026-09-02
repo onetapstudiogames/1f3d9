@@ -26,6 +26,22 @@ const configuredThresholds = JSON.parse(readFileSync(
   'utf8',
 )) as unknown
 
+const REAL_FEED_PROJECT_NAMES = [
+  '1f3d9',
+  '1f3ea',
+  'eo-web',
+  'snapshot',
+  'soti',
+  'soti-w3-debug-35d07e2fc1a1',
+  'sweetpspeech',
+] as const
+
+function fixtureProjectNames(): string[] {
+  return [...new Set(parseFocusBillingJsonl(realShapeFixture).flatMap(row => (
+    typeof row.Tags?.ProjectName === 'string' ? [row.Tags.ProjectName] : []
+  )))].sort()
+}
+
 const thresholds: CostThresholds = Object.freeze({
   schemaVersion: 1,
   vercel: Object.freeze({
@@ -45,18 +61,25 @@ test('real-shape FOCUS fixture includes team spend and only tagged project usage
   const original = structuredClone(rows)
 
   const summary = summarizeFocusBilling(rows)
+  const projectNames = fixtureProjectNames()
 
   assert.equal(rows.length, 73)
   assert.deepEqual(rows, original)
+  assert.deepEqual(projectNames, [...REAL_FEED_PROJECT_NAMES].sort())
   assert.deepEqual(summary.projectDays, [
     {
       date: '2026-08-30', project: '1f3d9',
       edgeRequests: 1, functionInvocations: 1, effectiveCostUsd: 8,
     },
     {
-      date: '2026-08-30', project: 'other-project',
-      edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 2,
+      date: '2026-08-30', project: '1f3ea',
+      edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 1,
     },
+    { date: '2026-08-30', project: 'eo-web', edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 1 },
+    { date: '2026-08-30', project: 'snapshot', edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 0 },
+    { date: '2026-08-30', project: 'soti', edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 0 },
+    { date: '2026-08-30', project: 'soti-w3-debug-35d07e2fc1a1', edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 0 },
+    { date: '2026-08-30', project: 'sweetpspeech', edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 0 },
   ])
   assert.deepEqual(summary.teamSpendByDay, [
     { date: '2026-08-30', effectiveCostUsd: 14 },
@@ -99,31 +122,25 @@ test('comparison accepts healthy values at the exact caps', () => {
 
 test('explicitly unmonitored feed projects are configured and make the run complete', () => {
   const configured = validateCostThresholds(configuredThresholds)
-  assert.deepEqual(Object.keys(configured.vercel.projects).sort(), [
-    '1f3d9',
-    '1f3ea',
-    'eo-web',
-    'snapshot',
-    'soti',
-    'soti-w3-debug',
-    'sweetpspeech',
-  ])
+  assert.deepEqual(Object.keys(configured.vercel.projects).sort(), [...REAL_FEED_PROJECT_NAMES].sort())
 
-  const result = compareCostMetrics({
-    summary: {
-      projectDays: Object.keys(configured.vercel.projects).map(project => ({
-        date: '2026-09-01', project,
-        edgeRequests: project === '1f3d9' ? 60_000 : 10_000_000,
-        functionInvocations: project === '1f3d9' ? 60_000 : 10_000_000,
-        effectiveCostUsd: 0,
-      })),
-      teamSpendByDay: [{ date: '2026-09-01', effectiveCostUsd: 0 }],
-    },
-    thresholds: configured,
-  })
+  for (const projectNames of [fixtureProjectNames(), [...REAL_FEED_PROJECT_NAMES]]) {
+    const result = compareCostMetrics({
+      summary: {
+        projectDays: projectNames.map(project => ({
+          date: '2026-09-01', project,
+          edgeRequests: project === '1f3d9' ? 60_000 : 10_000_000,
+          functionInvocations: project === '1f3d9' ? 60_000 : 10_000_000,
+          effectiveCostUsd: 0,
+        })),
+        teamSpendByDay: [{ date: '2026-09-01', effectiveCostUsd: 0 }],
+      },
+      thresholds: configured,
+    })
 
-  assert.deepEqual(result.violations, [])
-  assert.deepEqual(result.unconfiguredProjects, [])
+    assert.deepEqual(result.violations, [])
+    assert.deepEqual(result.unconfiguredProjects, [])
+  }
 })
 
 test('threshold validation refuses missing, zero, negative, and unknown values', () => {

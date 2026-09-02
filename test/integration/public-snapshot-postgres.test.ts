@@ -122,6 +122,35 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     FROM places WHERE place_kind = 'world'
     RETURNING id
   `)).rows[0]!
+  const moderatedPlace = (await administrator.query<{ id: number }>(`
+    INSERT INTO places (parent_id, place_kind, name, description, purpose, owner_id)
+    VALUES ($1, 'place', 'unsafe founding place', 'removed place text', '', 1)
+    RETURNING id
+  `, [room.id])).rows[0]!
+  await administrator.query('UPDATE places SET name = $1 WHERE id = $2', [
+    'unsafe renamed place', moderatedPlace.id,
+  ])
+  const moderatedRenameEvent = (await administrator.query<{ id: number }>(`
+    INSERT INTO events (kind, actor, detail, at)
+    VALUES (
+      'place_renamed', 'snapshot-keeper',
+      jsonb_build_object(
+        'place_id', $1::integer,
+        'name', 'unsafe renamed place',
+        'former_name', 'unsafe founding place'
+      ),
+      '2026-08-20T00:00:30Z'
+    )
+    RETURNING id
+  `, [moderatedPlace.id])).rows[0]!
+  await administrator.query(`
+    INSERT INTO place_name_history (place_id, name, started_at, event_id)
+    VALUES ($1, 'unsafe renamed place', '2026-08-20T00:00:30Z', $2)
+  `, [moderatedPlace.id, moderatedRenameEvent.id])
+  await administrator.query(`
+    INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+    VALUES ('place', $1, 'remove', 1, 'fixture historical-name removal')
+  `, [moderatedPlace.id])
   const exactBody = 'e\u0301 stays decomposed\r\nsecond line\nthird line'
   const visibleNote = (await administrator.query<{ id: number }>(`
     INSERT INTO notes (place_id, author_id, body, created_at)
@@ -473,6 +502,12 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     due_at: '2026-08-20T00:03:31.000Z',
     generation: 3,
   })
+  const moderatedRenameDetail = eventLines.find(
+    line => line.record.id === moderatedRenameEvent.id,
+  )?.record.detail
+  assert.deepEqual(moderatedRenameDetail, {
+    place_id: moderatedPlace.id,
+  })
   const gazetteDetail = eventLines.find(
     line => line.record.detail?.issue_number === 1,
   )?.record.detail
@@ -520,12 +555,23 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   const residentText = await readFile(join(outputDirectory, 'residents.ndjson'), 'utf8')
   assert.match(residentText, /"id":4,"reason":"permanent_resident_landmark","status":"reserved"/u)
   assert.doesNotMatch(residentText, /1f3d9_sk_|secret_hash/iu)
+  const placeLines = (await readFile(join(outputDirectory, 'places.ndjson'), 'utf8'))
+    .trimEnd().split('\n').map(line => JSON.parse(line) as {
+      record: Readonly<Record<string, unknown>>
+    })
+  const moderatedPlaceRecord = placeLines.find(
+    line => line.record.id === moderatedPlace.id,
+  )?.record
+  assert.deepEqual(moderatedPlaceRecord, {
+    id: moderatedPlace.id,
+    status: 'maintainer_hidden',
+  })
   const allPublicBytes = (await Promise.all(bundle.files.map(file =>
     readFile(join(outputDirectory, file.path), 'utf8'),
   ))).join('')
   assert.doesNotMatch(
     allPublicBytes,
-    /private_runtime_probe|private report body|internal secret-like action failure|internal scheduled-effect error|withdrawn body|hidden market body|Hidden market fixture|1{64}|2{64}|5{64}|6{64}/iu,
+    /private_runtime_probe|private report body|internal secret-like action failure|internal scheduled-effect error|withdrawn body|hidden market body|Hidden market fixture|unsafe founding place|unsafe renamed place|1{64}|2{64}|5{64}|6{64}/iu,
   )
 
   const deniedReader = await connect({ connectionString: snapshotUrl, ssl: false })

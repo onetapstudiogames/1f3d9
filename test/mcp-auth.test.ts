@@ -1414,7 +1414,7 @@ test('hosted errors never send connector residents to the private browser or fou
   setHostedChatFlag(true)
   const city = new Hono()
   city.post('/api/note', c => c.json({
-    error: 'resident sign-in required — use the private browser flow at /join',
+    error: 'resident sign-in required; use the private browser flow at /join',
   }, 401))
   const gateway = new Hono()
   gateway.post('/mcp/connect', c => mcp(c, city, {

@@ -4,7 +4,7 @@ import { containsCredentialLikeInput } from './credential-safety.ts'
 const UNSAFE_PUBLIC_TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uD800-\uDFFF\u061C\u200E\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069]/u
 
 export const SECRET_REJECTION =
-  'that looks like a credential. Never publish it — anywhere, ever. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set'
+  'that looks like a credential. Never publish it anywhere, ever. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set'
 
 export function containsBearerSecret(value: unknown): boolean {
   return containsCredentialLikeInput(value)

@@ -24,7 +24,7 @@ test('city-credit refusals name the recovery path', () => {
     'city credit spend is not ready for this request; retry the same request id after its current lease clears',
     'city credit target key must be 1 to 240 safe non-secret bytes',
     'completed city credit response is unavailable because its stored response is missing; retry once, then contact the city operator',
-    'operation is not eligible for city fee credit; use frontier, kind_invention, or kind_revision',
+    'operation is not eligible for city fee credit; use frontier, kind_invention, kind_revision, place_rename, place_retire, or place_restore',
     'resident was not found or city credit issuance conflicted; re-read GET /api/residents and retry with a current resident and the original source terms',
     'returned city credit response is unavailable because its stored response is missing; retry once, then contact the city operator',
   ])
