@@ -183,10 +183,13 @@ function vaultTarget(origin, handleOrLabel) {
   return `1f3d9:${origin}:${handleOrLabel}`
 }
 
-function credentialsFilePath(origin, handleOrLabel) {
+// homeDir is injectable (defaults to the real home directory) so tests can
+// round-trip storeSecret/readSecret against a temp directory instead of the
+// caller's real ~/.1f3d9/credentials.
+function credentialsFilePath(origin, handleOrLabel, homeDir = homedir()) {
   const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
   const safeLabel = handleOrLabel.replace(/[^a-z0-9._-]/giu, '_')
-  return join(homedir(), '.1f3d9', 'credentials', `${safeOrigin}__${safeLabel}.json`)
+  return join(homeDir, '.1f3d9', 'credentials', `${safeOrigin}__${safeLabel}.json`)
 }
 
 /** The staging label a replacement credential is written under before it is confirmed. */
@@ -309,7 +312,7 @@ function storeSecret(origin, label, payload, deps = {}) {
     writeMacKeychainCredential(execImpl, service, label, encoded)
     return `macOS Keychain (service "${service}", account "${label}")`
   }
-  const filePath = credentialsFilePath(origin, label)
+  const filePath = credentialsFilePath(origin, label, deps.homeDir)
   mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
   writeFileSync(filePath, `${serialized}\n`, { mode: 0o600 })
   try {
@@ -321,14 +324,33 @@ function storeSecret(origin, label, payload, deps = {}) {
 }
 
 /**
- * The counterpart to storeSecret: reads back the JSON bundle this script
- * wrote for `label`, or null if nothing is stored there (or it cannot be
- * read). Used by rotate/recoverBegin below to carry forward fields --
- * recovery codes, client_class -- that the replacement key alone does not
- * carry, so promoting a rotated key never silently drops them.
+ * Raised by readSecret when the vault reports a target/service/file exists
+ * but its content could not be decoded back into the JSON bundle storeSecret
+ * writes. Kept distinct from "nothing is stored there" (readSecret returns
+ * `{ found: false }` for that case) so a caller can tell "there was never a
+ * prior entry" -- fine, nothing to carry forward -- apart from "a prior
+ * entry exists but this read cannot recover it" -- never safe to silently
+ * treat as empty, because doing so is exactly how rotation and recovery used
+ * to overwrite a live vault entry and drop the recovery codes and
+ * client_class it carried.
  */
-function readSecret(origin, label) {
-  const os = platform()
+class SecretReadFailure extends Error {}
+
+/**
+ * The counterpart to storeSecret: reads back the JSON bundle this script
+ * wrote for `label`. Returns `{ found: false, value: null }` when nothing is
+ * stored there. Returns `{ found: true, value }` when the stored entry was
+ * read and decoded successfully -- a write followed by a read must return
+ * exactly what was written, on every supported platform. Throws
+ * SecretReadFailure when the vault reports an entry exists but this read
+ * could not decode it, so a caller can refuse to promote over it rather than
+ * silently treating "could not read" the same as "nothing there". Used by
+ * rotate/recoverBegin below to carry forward fields -- recovery codes,
+ * client_class -- that the replacement key alone does not carry.
+ */
+function readSecret(origin, label, deps = {}) {
+  const execImpl = deps.execFileSync ?? execFileSync
+  const os = deps.platform ?? platform()
   if (os === 'win32') {
     const target = vaultTarget(origin, label)
     const escapedTarget = target.replaceAll("'", "''")
@@ -362,57 +384,131 @@ $cred = [System.Runtime.InteropServices.Marshal]::PtrToStructure($ptr, [type][Cr
 $bytes = New-Object byte[] $cred.CredentialBlobSize
 [System.Runtime.InteropServices.Marshal]::Copy($cred.CredentialBlob, $bytes, 0, $cred.CredentialBlobSize)
 [Cred1F3D9]::CredFree($ptr)
-[Console]::Out.Write([System.Text.Encoding]::Unicode.GetString($bytes))
+# writeWindowsCredential above stores the exact raw bytes CredWrite was given
+# (the UTF-8 bytes of the JSON payload, decoded from the base64 wire form
+# sent over stdin) -- never UTF-16. Re-encode those same raw bytes back to
+# base64 here so the Node side's Buffer.from(encoded, 'base64') below
+# recovers the exact original bytes, with no text-encoding step in between
+# that could corrupt them. (A prior version of this script decoded the
+# CredentialBlob as UTF-16LE here, which does not match how it was written
+# and made every read return null after a successful write.)
+[Console]::Out.Write([Convert]::ToBase64String($bytes))
 `
+    // A non-zero exit here means CredRead found nothing at this target (the
+    // `if (-not $ok) { exit 1 }` above) -- that is "not found", not a read
+    // failure, so it maps to { found: false }, not a thrown error.
     let encoded
     try {
-      encoded = execFileSync(
+      encoded = execImpl(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', script],
         { encoding: 'utf8' },
       )
     } catch {
-      return null
+      return { found: false, value: null }
     }
-    if (!encoded) return null
+    if (!encoded) return { found: false, value: null }
+    // Past this point CredRead reported an entry and returned bytes: any
+    // decode failure here is a corrupt or unrecoverable entry, not a missing
+    // one, so it throws instead of returning { found: false }.
     try {
-      return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
+      return { found: true, value: JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) }
     } catch {
-      return null
+      throw new SecretReadFailure(
+        `the Windows Credential Manager entry for "${label}" exists but could not be decoded back into ` +
+        'the expected JSON bundle',
+      )
     }
   }
   if (os === 'darwin') {
     const service = vaultTarget(origin, label)
+    // A non-zero exit here means `security` found no matching keychain item
+    // -- "not found", not a read failure.
     let serialized
     try {
-      serialized = execFileSync(
+      serialized = execImpl(
         'security',
         ['find-generic-password', '-a', label, '-s', service, '-w'],
         { encoding: 'utf8' },
       )
     } catch {
-      return null
+      return { found: false, value: null }
     }
+    // writeMacKeychainCredential above stores the base64-encoded JSON
+    // payload as the keychain password (`-w base64Blob`), matching what it
+    // sends -- so this must decode that same base64 back before parsing.
+    // (A prior version of this script parsed the raw retrieved text as JSON
+    // directly, without ever base64-decoding it, so it never matched what
+    // was actually stored and every read failed.)
     try {
-      return JSON.parse(serialized.trim())
+      return { found: true, value: JSON.parse(Buffer.from(serialized.trim(), 'base64').toString('utf8')) }
     } catch {
-      return null
+      throw new SecretReadFailure(
+        `the macOS Keychain entry for "${label}" exists but could not be decoded back into the expected ` +
+        'JSON bundle',
+      )
     }
   }
-  const filePath = credentialsFilePath(origin, label)
+  const filePath = credentialsFilePath(origin, label, deps.homeDir)
+  let raw
   try {
-    return JSON.parse(readFileSync(filePath, 'utf8'))
+    raw = (deps.readFileSync ?? readFileSync)(filePath, 'utf8')
   } catch {
-    return null
+    return { found: false, value: null }
+  }
+  try {
+    return { found: true, value: JSON.parse(raw) }
+  } catch {
+    throw new SecretReadFailure(`the credentials file "${filePath}" exists but could not be parsed as JSON`)
   }
 }
 
+/**
+ * Shared by rotate()/recoverBegin() after their server-side confirm has
+ * already succeeded (so the replacement resident_key is already the live
+ * one on the server -- only where it lives in the local vault is still being
+ * settled here). Reads back the live entry to carry forward fields the
+ * replacement key alone does not carry (via `mergeFields`), then overwrites
+ * that live entry and deletes the staging copy.
+ *
+ * If the read-back reports the live entry exists but cannot be decoded
+ * (SecretReadFailure), this refuses to promote: the live entry is left
+ * completely untouched, and -- critically -- the staging copy is also left
+ * in place rather than deleted, because it is the only place the already-
+ * confirmed replacement key currently lives. The caller sees exactly where
+ * to recover it and what to fix before retrying.
+ */
+function promoteReplacementKey(origin, handle, stagingLabel, residentKey, mergeFields, deps = {}) {
+  let previous
+  try {
+    previous = readSecret(origin, handle, deps)
+  } catch (error) {
+    throw new Error(
+      `refusing to overwrite the existing vault entry for "${handle}": ${error.message}. ` +
+      'The already-confirmed replacement key was NOT lost -- it is still stored under the ' +
+      `staging label "${stagingLabel}". Resolve the unreadable entry, read the replacement key back ` +
+      `from "${stagingLabel}", then store it under "${handle}" yourself.`,
+    )
+  }
+  const location = storeSecret(origin, handle, {
+    kind: 'resident',
+    handle,
+    ...mergeFields(previous.found ? previous.value : null),
+    resident_key: residentKey,
+    origin,
+    stored_at: new Date().toISOString(),
+  }, deps)
+  deleteSecret(origin, stagingLabel, deps)
+  return location
+}
+
 /** Removes a stored secret bundle. Best effort: a missing entry is not an error. */
-function deleteSecret(origin, label) {
-  const os = platform()
+function deleteSecret(origin, label, deps = {}) {
+  const execImpl = deps.execFileSync ?? execFileSync
+  const os = deps.platform ?? platform()
   if (os === 'win32') {
     try {
-      execFileSync('cmdkey', [`/delete:${vaultTarget(origin, label)}`], { stdio: 'ignore' })
+      execImpl('cmdkey', [`/delete:${vaultTarget(origin, label)}`], { stdio: 'ignore' })
     } catch {
       // Best effort: nothing to delete, or cmdkey already reports failure loudly enough elsewhere.
     }
@@ -420,7 +516,7 @@ function deleteSecret(origin, label) {
   }
   if (os === 'darwin') {
     try {
-      execFileSync(
+      execImpl(
         'security',
         ['delete-generic-password', '-a', label, '-s', vaultTarget(origin, label)],
         { stdio: 'ignore' },
@@ -431,7 +527,7 @@ function deleteSecret(origin, label) {
     return
   }
   try {
-    rmSync(credentialsFilePath(origin, label), { force: true })
+    rmSync(credentialsFilePath(origin, label, deps.homeDir), { force: true })
   } catch {
     // Best effort, same as above.
   }
@@ -574,18 +670,14 @@ async function rotate(flags) {
   // Promote: merge the now-confirmed replacement key with whatever the live
   // entry already held (recovery codes, client_class), so rotation never
   // silently drops fields that only the pre-rotation entry carried. Only
-  // now does the live entry change; the staging copy is then deleted.
-  const previous = readSecret(origin, staged.handle)
-  const location = storeSecret(origin, staged.handle, {
-    kind: 'resident',
-    handle: staged.handle,
+  // now does the live entry change; the staging copy is then deleted --
+  // unless the read-back of the live entry fails, in which case
+  // promoteReplacementKey refuses to overwrite it and leaves the staging
+  // copy in place. See promoteReplacementKey's own doc comment above.
+  const location = promoteReplacementKey(origin, staged.handle, stagingLabel, staged.resident_key, previous => ({
     ...(previous?.client_class ? { client_class: previous.client_class } : {}),
-    resident_key: staged.resident_key,
     ...(previous?.recovery_codes ? { recovery_codes: previous.recovery_codes } : {}),
-    origin,
-    stored_at: new Date().toISOString(),
-  })
-  deleteSecret(origin, stagingLabel)
+  }))
 
   revealOrHide(flags, 'Replacement resident key', [staged.resident_key])
   console.log(`handle: ${confirmed.handle}`)
@@ -647,16 +739,11 @@ async function recoverBegin(flags) {
     throw error
   }
 
-  const previous = readSecret(origin, staged.handle)
-  const location = storeSecret(origin, staged.handle, {
-    kind: 'resident',
-    handle: staged.handle,
+  // Same promote-or-refuse discipline as rotate() above -- see
+  // promoteReplacementKey's doc comment.
+  const location = promoteReplacementKey(origin, staged.handle, stagingLabel, staged.resident_key, previous => ({
     ...(previous?.client_class ? { client_class: previous.client_class } : {}),
-    resident_key: staged.resident_key,
-    origin,
-    stored_at: new Date().toISOString(),
-  })
-  deleteSecret(origin, stagingLabel)
+  }))
 
   revealOrHide(flags, 'Replacement resident key', [staged.resident_key])
   console.log(`handle: ${confirmed.handle}`)
@@ -707,4 +794,4 @@ if (isMainModule) {
 
 // Exported for test/identity-client.test.ts only; the CLI above never uses
 // this import path, so importing this module for tests never runs main().
-export { storeSecret }
+export { storeSecret, readSecret, promoteReplacementKey, SecretReadFailure }

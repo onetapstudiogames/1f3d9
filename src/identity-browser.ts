@@ -704,6 +704,10 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       clientClass,
       residentSecretHash: sha256(residentKey),
       recoveryCodeHashes: recoveryCodes.map(sha256),
+      // The browser join page never asks for or records human approval of
+      // the handle the way the coding-client JSON door does -- see
+      // RegistrationStageInput's own doc comment in identity-store.ts.
+      humanApproved: false,
     })
     if (staged.status === 'request_unavailable') {
       const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })

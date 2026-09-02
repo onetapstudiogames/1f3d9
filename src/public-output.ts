@@ -4,9 +4,17 @@ import {
   safeguardPublicPayload,
   sanitizePublicValue,
 } from './credential-safety.ts'
+import { IDENTITY_JSON_DOOR_PATHS } from './identity-api.ts'
+import { PAIR_DOOR_PATH } from './pair.ts'
 
 const PRIVATE_API_READS = new Set(['/api/me'])
-const IDENTITY_DELIVERY_WRITES = new Set(['/api/register', '/api/rotate', '/api/pair'])
+// Derived from the same constants identity-api.ts and pair.ts mount their
+// one-time-reveal JSON doors at (register, rotate, recovery, pair), so a new
+// door added there is never silently missing from this allow-list -- a gap
+// here previously let the response-safety middleware redact /api/recovery's
+// one-time reveal out of every successful response after the store had
+// already committed the replacement credential.
+const IDENTITY_DELIVERY_WRITES = new Set<string>([...IDENTITY_JSON_DOOR_PATHS, PAIR_DOOR_PATH])
 
 function shouldSafeguard(c: Context): boolean {
   const path = c.req.path

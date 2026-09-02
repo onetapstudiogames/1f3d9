@@ -38,6 +38,17 @@ const CODING_CLIENT_CLASSES = new Set<RegistrationClientClass>([
   'coding_persistent', 'coding_ephemeral',
 ])
 
+/**
+ * The one-time-reveal JSON identity doors this module mounts (register,
+ * rotate, recovery). Exported so public-output.ts's response-safety
+ * middleware derives its delivery allow-list from this same list instead of
+ * duplicating it -- see the door.ts comment above pair.ts's own path for why
+ * that duplication is a security defect once, and would be again. When this
+ * module gains another one-time-reveal door, add its path here and the
+ * middleware allow-list follows automatically.
+ */
+export const IDENTITY_JSON_DOOR_PATHS = ['/api/register', '/api/rotate', '/api/recovery'] as const
+
 type IdentityEnvironment = Readonly<Record<string, string | undefined>>
 
 export interface IdentityApiRouteOptions {
@@ -168,7 +179,7 @@ export function jsonError(
 
 function unavailableJsonDoor(
   app: Hono,
-  path: '/api/register' | '/api/rotate' | '/api/recovery',
+  path: typeof IDENTITY_JSON_DOOR_PATHS[number],
   reason: string,
 ): void {
   app.post(path, c => {
@@ -192,7 +203,7 @@ function unavailableJsonDoor(
  * documented 503 -- never a generic 500 -- until an operator flips it.
  */
 export function mountCodingIdentityDoorsDisabled(app: Hono): void {
-  for (const path of ['/api/register', '/api/rotate', '/api/recovery'] as const) {
+  for (const path of IDENTITY_JSON_DOOR_PATHS) {
     unavailableJsonDoor(app, path, 'its capability is not enabled')
   }
 }
@@ -337,6 +348,11 @@ function mountRegisterRoute(
         clientClass,
         residentSecretHash: sha256(residentKey),
         recoveryCodeHashes: recoveryCodes.map(sha256),
+        // Guaranteed true here: the humanApproved !== true check above
+        // already refused the request otherwise. This JSON door is the only
+        // caller that ever passes true -- see RegistrationStageInput's own
+        // doc comment.
+        humanApproved: true,
       })
       if (staged.status === 'handle_taken') {
         return jsonError(

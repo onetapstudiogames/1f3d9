@@ -122,6 +122,7 @@ function registration(label: string, handle = 'new-resident') {
       { length: 8 },
       (_, index) => sha256(`${label}:recovery:${index}`),
     ),
+    humanApproved: true,
   }
 }
 

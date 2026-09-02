@@ -107,6 +107,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'frontier',
     'gazette_submission_room_opened',
     'gazette_withdrawals_opened',
+    'human_approved',
     'ingredient_ids',
     'market_checkout_id',
     'market_draft_id',

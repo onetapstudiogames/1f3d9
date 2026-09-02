@@ -13,6 +13,15 @@ import { type OAuthAttemptKind, postgresOAuthStore } from './oauth-store.ts'
 export const PAIRING_CODE_PREFIX = '1f3d9_pc_'
 export const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
 
+/**
+ * The path this module mounts its one-time-reveal pairing-code door at.
+ * Exported so public-output.ts's response-safety middleware derives its
+ * delivery allow-list from this same constant instead of a second literal
+ * that could drift -- see identity-api.ts's IDENTITY_JSON_DOOR_PATHS for the
+ * matching register/rotate/recovery paths.
+ */
+export const PAIR_DOOR_PATH = '/api/pair'
+
 const PAIR_MINTS_PER_RESIDENT_PER_HOUR = 20
 const MAX_PAIR_JSON_BYTES = 4_096
 
@@ -77,7 +86,7 @@ async function rejectNonEmptyBody(c: Context): Promise<Response | null> {
 export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
   const store = options.store ?? postgresOAuthStore
 
-  app.post('/api/pair', c => withIdentityApiStorageErrors(c, async () => {
+  app.post(PAIR_DOOR_PATH, c => withIdentityApiStorageErrors(c, async () => {
     privateHeaders(c)
     if (Object.keys(c.req.queries()).length > 0) {
       return jsonError(
@@ -128,7 +137,7 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
  * JSON identity door, never a generic 500, through the same jsonError path.
  */
 export function mountPairDisabledRoute(app: Hono): void {
-  app.post('/api/pair', c => {
+  app.post(PAIR_DOOR_PATH, c => {
     privateHeaders(c)
     return jsonError(
       c, 503, 'request_unavailable',

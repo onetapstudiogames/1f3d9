@@ -113,6 +113,7 @@ test('the HTTP boundary redacts public API output but preserves private identity
   app.get('/api/history', c => c.json({ id: 7, body: `historical ${credential}` }))
   app.post('/api/register', c => c.json({ secret: credential }, 201))
   app.post('/api/rotate', c => c.json({ secret: credential }))
+  app.post('/api/recovery', c => c.json({ secret: credential }))
   app.post('/api/pair', c => c.json({ pairing_code: credentials[5] }))
   app.get('/api/me', c => c.json({ private_note: `owner view ${credential}` }))
   app.post('/oauth/token', c => c.json({ access_token: credentials[1] }))
@@ -129,6 +130,11 @@ test('the HTTP boundary redacts public API output but preserves private identity
     secret: string
   }
   assert.equal(rotated.secret, credential)
+
+  const recovered = await (await app.request('/api/recovery', { method: 'POST' })).json() as {
+    secret: string
+  }
+  assert.equal(recovered.secret, credential)
 
   const paired = await (await app.request('/api/pair', { method: 'POST' })).json() as {
     pairing_code: string

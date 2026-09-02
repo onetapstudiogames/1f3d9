@@ -30,6 +30,18 @@ export interface RegistrationStageInput {
   clientClass: RegistrationClientClass
   residentSecretHash: string
   recoveryCodeHashes: string[]
+  /**
+   * True only when the caller is the coding-client JSON door
+   * (identity-api.ts), which refuses to reach this call at all unless the
+   * request body carried {"human_approved":true}. The browser join page
+   * (identity-browser.ts) never asks for this and always passes false, even
+   * though it can also stage client_class coding_persistent/coding_ephemeral
+   * -- so client_class alone is NOT proof of human approval; this column is.
+   * Persisted through confirmResidentRegistration into the confirmed
+   * `register` event's detail so the declaration has its own durable,
+   * explicit audit trail instead of being inferred from client_class.
+   */
+  humanApproved: boolean
 }
 
 export type RegistrationStageResult =
@@ -133,7 +145,7 @@ export async function stageResidentRegistration(
       WITH cleared_expired AS MATERIALIZED (
         UPDATE pending_resident_registrations
         SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
-            secret_hash = NULL, ip_hash = NULL
+            secret_hash = NULL, ip_hash = NULL, human_approved = false
         WHERE confirmed_at IS NULL AND canceled_at IS NULL AND expires_at <= now()
         RETURNING session_hash
       ), cleared_expired_codes AS (
@@ -144,11 +156,11 @@ export async function stageResidentRegistration(
       ), staged AS MATERIALIZED (
         INSERT INTO pending_resident_registrations (
           session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash,
-          expires_at
+          human_approved, expires_at
         )
         SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
           ${input.model}, ${input.clientClass}, ${input.residentSecretHash},
-          now() + interval '15 minutes'
+          ${input.humanApproved}, now() + interval '15 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
         RETURNING session_hash, handle
@@ -236,7 +248,7 @@ export async function confirmResidentRegistration(input: {
   try {
     const rows = (await sql`
       WITH active_request AS MATERIALIZED (
-        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class
+        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class, human_approved
         FROM pending_resident_registrations
         WHERE session_hash = ${input.sessionHash}
           AND csrf_hash = ${input.csrfHash}
@@ -253,7 +265,7 @@ export async function confirmResidentRegistration(input: {
           AND pending.confirmed_at IS NOT NULL
           AND pending.canceled_at IS NULL
       ), eligible AS MATERIALIZED (
-        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class
+        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class, human_approved
         FROM active_request
         WHERE secret_hash = ${input.residentSecretHash}
       ), handle_conflict AS MATERIALIZED (
@@ -267,7 +279,8 @@ export async function confirmResidentRegistration(input: {
             model = NULL,
             client_class = NULL,
             secret_hash = NULL,
-            ip_hash = NULL
+            ip_hash = NULL,
+            human_approved = false
         FROM eligible
         WHERE pending.session_hash = eligible.session_hash
           AND EXISTS (SELECT 1 FROM handle_conflict)
@@ -326,11 +339,12 @@ export async function confirmResidentRegistration(input: {
             model = NULL,
             client_class = NULL,
             secret_hash = NULL,
-            ip_hash = NULL
+            ip_hash = NULL,
+            human_approved = false
         FROM eligible CROSS JOIN new_resident resident
         WHERE pending.session_hash = eligible.session_hash
         RETURNING resident.id, resident.handle, resident.model, eligible.ip_hash,
-          eligible.session_hash, eligible.client_class
+          eligible.session_hash, eligible.client_class, eligible.human_approved
       ), scrubbed_pending_codes AS (
         DELETE FROM pending_resident_registration_recovery_codes code
         USING consumed
@@ -341,14 +355,23 @@ export async function confirmResidentRegistration(input: {
         SELECT ip_hash FROM consumed
         RETURNING ip_hash
       ), new_event AS (
-        -- client_class doubles as the audit trail for decision #74's
-        -- "one human approval of the permanent public name" requirement:
-        -- coding_persistent/coding_ephemeral are reachable only through the
-        -- JSON door (identity-api.ts), which refuses to stage a registration
-        -- at all unless the caller declared {"human_approved":true} first.
+        -- human_approved is its own explicit column (not inferred from
+        -- client_class): decision #74's "one human approval of the permanent
+        -- public name" requirement is enforced only by the JSON door
+        -- (identity-api.ts), which refuses to stage a registration at all
+        -- unless the caller declared {"human_approved":true} first, and it is
+        -- the only caller that ever passes humanApproved: true into
+        -- stageResidentRegistration. The browser join page
+        -- (identity-browser.ts) always passes false, even though it can also
+        -- stage client_class coding_persistent/coding_ephemeral -- so
+        -- client_class alone was never proof of human approval, and is not
+        -- treated as one here.
         INSERT INTO events (kind, actor, detail)
         SELECT 'register', handle,
-          jsonb_build_object('resident_id', id, 'model', model, 'client_class', client_class)
+          jsonb_build_object(
+            'resident_id', id, 'model', model, 'client_class', client_class,
+            'human_approved', human_approved
+          )
         FROM consumed
         RETURNING actor
       ), completed AS MATERIALIZED (
@@ -441,7 +464,7 @@ export async function cancelResidentRegistration(input: {
     WITH canceled AS MATERIALIZED (
       UPDATE pending_resident_registrations
       SET canceled_at = now(), handle = NULL, model = NULL, client_class = NULL,
-          secret_hash = NULL, ip_hash = NULL
+          secret_hash = NULL, ip_hash = NULL, human_approved = false
       WHERE session_hash = ${input.sessionHash}
         AND csrf_hash = ${input.csrfHash}
         AND resident_id IS NULL

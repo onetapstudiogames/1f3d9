@@ -4,21 +4,26 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
 -- Decision row 74: coding clients get a script-shaped identity door. This
--- migration is purely additive: one new table for short-lived pairing codes
--- and one closed-enum extension so pairing-code minting can share the
--- existing OAuth rate-limit machinery. Nothing here alters an existing row,
+-- migration is purely additive: one new table for short-lived pairing codes,
+-- one closed-enum extension so pairing-code minting can share the existing
+-- OAuth rate-limit machinery, and one new boolean column recording the JSON
+-- door's human-approval declaration. Nothing here alters an existing row,
 -- and it is never run against any database by this change -- the doors it
 -- unblocks stay behind CODING_IDENTITY_DOORS_ENABLED (default off, see
 -- index.ts) until an operator runs this migration, verifies it, and flips
 -- that flag.
 --
 -- human_approved is enforced entirely in-process at identity-api.ts before a
--- registration is ever staged; it needs no column here. The declaration is
--- captured for audit in the confirmed registration's `register` event detail
--- (client_class, which is coding_persistent or coding_ephemeral only when the
--- JSON door required and received {"human_approved":true}) instead of a
--- schema change, so this shared live path never needs a pre-deploy migration
--- just to keep working.
+-- registration is ever staged. The declaration itself is captured for audit
+-- in a dedicated pending_resident_registrations.human_approved column, set
+-- only by that JSON door -- client_class is NOT proof of it: the browser
+-- join page (identity-browser.ts) can also stage client_class
+-- coding_persistent or coding_ephemeral, and never asks for or records human
+-- approval when it does. The confirmed registration's `register` event
+-- detail carries human_approved explicitly alongside client_class so the two
+-- facts are never conflated again.
+ALTER TABLE pending_resident_registrations
+  ADD COLUMN IF NOT EXISTS human_approved BOOLEAN NOT NULL DEFAULT false;
 
 -- A signed-in coding client mints a pairing code bound to its own resident,
 -- at the secret hash the resident held at that moment. The hosted OAuth

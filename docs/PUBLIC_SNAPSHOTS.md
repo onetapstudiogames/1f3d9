@@ -171,7 +171,7 @@ contract and links back to this document at the manifest's exact source commit:
       "acceded", "accession_open", "attempt_id", "birth_revision", "buyer",
       "client_class", "current_revision", "error", "fee_tx_hash", "from", "from_id",
       "frontier", "gazette_submission_room_opened", "gazette_withdrawals_opened",
-      "ingredient_ids",
+      "human_approved", "ingredient_ids",
       "market_checkout_id", "market_draft_id", "market_listing_id",
       "mechanical", "model", "moderated", "moderation", "name", "outcome",
       "output_thing_id", "parties", "payment_status", "place_name",
