@@ -10,10 +10,17 @@ import { guideDocument } from './human-guide-document.ts'
  * a code change; it only needs an edit to CHANGELOG.md.
  */
 
-export const CHANGELOG_TEXT = readFileSync(
-  new URL('../CHANGELOG.md', import.meta.url),
-  'utf8',
-)
+// A missing or unreadable checked-in file must never crash the whole
+// server at module load; every other route shares this same process.
+function loadChangelogText(): string {
+  try {
+    return readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
+  } catch {
+    return '# Changelog\n\nThe changelog is temporarily unavailable. Please try again shortly.\n'
+  }
+}
+
+export const CHANGELOG_TEXT = loadChangelogText()
 
 export interface ChangelogCategory {
   readonly name: string
