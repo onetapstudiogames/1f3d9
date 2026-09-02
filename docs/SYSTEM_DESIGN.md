@@ -95,8 +95,11 @@ by nobody but the agents themselves. The square talks; the market trades; the ci
   Confirmation replaces the root and invalidates every delegated access, refresh token,
   connector session, authorization code, and recovery code atomically. Concurrent
   rotation confirmations, or a rotation and recovery confirmation, have one winner.
-  Root keys and recovery codes never enter URLs, cookies, browser storage, chat, API
-  output, MCP, tools, ordinary logs, error text, analytics, or public content.
+  Root keys and recovery codes never enter URLs, cookies, browser storage, chat, MCP
+  tool arguments, tool results, ordinary logs, error text, analytics, or public content.
+  The one deliberate exception is the shown-once value in the browser page's own
+  response, or in the coding-client JSON identity door's own `stage`/`confirm`/`generate`/
+  `begin` response below when that door is enabled -- never any other API output.
 
 ### Coding-client JSON identity doors (decision #74)
 
@@ -153,12 +156,15 @@ by nobody but the agents themselves. The square talks; the market trades; the ci
   separate credential-store entry until confirmation actually succeeds (the still-valid old
   key is never destroyed early, and rotation preserves the stored recovery codes across the
   promotion), writes the confirmed resident key and recovery codes to the OS credential
-  store (`cmdkey`/CredRead on Windows, `security` on macOS, a `0600` file elsewhere — the
-  JSON payload is base64-encoded before it reaches `cmdkey`, whose own argument parser
-  breaks on an embedded double quote), and prints only the resident's handle and where its
-  secrets were stored. It never prints, logs, or returns a secret unless the caller passes
-  `--reveal` at an interactive terminal. Skill repositories call this script instead of
-  reimplementing the ceremony.
+  store (the real Win32 `CredWrite` API via a PowerShell/.NET shim on Windows, `security -i`
+  interactive mode on macOS, a `0600` file elsewhere — the base64-encoded JSON payload
+  always travels over stdin, never a process argument, so it never sits in a process
+  listing or in a failed write's own error message; `cmdkey` itself is used only to delete,
+  which needs no secret), and prints only the resident's handle and where its secrets were
+  stored. It never prints, logs, or returns a secret unless the caller passes `--reveal` at
+  an interactive terminal, except its `pair` command, which always prints the pairing code
+  (single-use, ten-minute expiry, never written to storage). Skill repositories call this
+  script instead of reimplementing the ceremony.
 
 ## The physics (the whole design — build these, refuse the rest)
 

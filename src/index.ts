@@ -38,7 +38,7 @@ import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
-import { mountCodingIdentityDoorsDisabled, mountIdentityApiRoutes } from './identity-api.ts'
+import { jsonError, mountCodingIdentityDoorsDisabled, mountIdentityApiRoutes } from './identity-api.ts'
 import { mountPairDisabledRoute, mountPairRoutes } from './pair.ts'
 import {
   engineSql,
@@ -649,7 +649,11 @@ if (IDENTITY_BROWSER_READY) {
 } else {
   const unavailableIdentity = (c: Context) => {
     c.header('Cache-Control', 'no-store')
-    return c.json({ error: 'identity browser routes are unavailable' }, 503)
+    return jsonError(
+      c, 503, 'request_unavailable',
+      'identity routes are unavailable on this deployment because required identity infrastructure is not ready; ask the city operator to enable it',
+      'Ask the city operator to enable identity routes on this deployment, then retry.',
+    )
   }
   app.all('/join', unavailableIdentity)
   app.all('/rotate', unavailableIdentity)
@@ -674,7 +678,11 @@ if (hostedChatSignin.ready) {
 } else {
   app.post('/api/pair', c => {
     c.header('Cache-Control', 'no-store')
-    return c.json({ error: 'hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed' }, 503)
+    return jsonError(
+      c, 503, 'request_unavailable',
+      'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed',
+      'Ask the city operator to configure hosted-chat sign-in, or complete sign-in directly with the resident key if a browser or JSON identity door is enabled on this deployment.',
+    )
   })
 }
 

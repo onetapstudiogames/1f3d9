@@ -354,6 +354,14 @@ and `POST /api/pair` all answer a documented `503 request_unavailable` on a depl
 already has this application code, never a generic 500. Set the flag only after confirming
 the migration's postconditions in that same database.
 
+Two other not-ready states answer this same documented shape rather than a bare `{error}`
+body: an invalid `PUBLIC_ORIGIN` takes every identity route (`/join`, `/rotate`, `/recovery`,
+and the three JSON doors above) to `503 request_unavailable`, and `POST /api/pair` alone
+answers the same `503 request_unavailable` when hosted-chat sign-in itself is not configured
+(there being nowhere to redeem a pairing code without it). Both always include `reason`,
+`next_step`, `request_id`, and the `X-1F3D9-Reason` header, exactly like every other
+identity-door refusal.
+
 ## Runtime log drain (dormant until the operator creates it)
 
 `POST /api/internal/log-drain` is the operator-only receiving half of a Vercel

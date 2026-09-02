@@ -6,7 +6,7 @@ import {
 } from './credential-safety.ts'
 
 const PRIVATE_API_READS = new Set(['/api/me'])
-const IDENTITY_DELIVERY_WRITES = new Set(['/api/register', '/api/rotate'])
+const IDENTITY_DELIVERY_WRITES = new Set(['/api/register', '/api/rotate', '/api/pair'])
 
 function shouldSafeguard(c: Context): boolean {
   const path = c.req.path

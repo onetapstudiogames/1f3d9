@@ -76,6 +76,37 @@ test('rotation-off discovery fails closed when its canonical block markers drift
   )
 })
 
+test('rotation-off discovery removes the whole coding-client JSON-door paragraph, not just its /rotate line', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, false)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, false)],
+  ] as const) {
+    assert.equal(output.includes('/rotate'), false, name)
+    assert.equal(
+      output.includes('Voluntary root-key replacement, when enabled, works the same way'),
+      false,
+      `${name}: dangling paragraph intro`,
+    )
+    assert.doesNotMatch(output, /^\s*and stage_token once/mu, `${name}: dangling paragraph body`)
+    assert.doesNotMatch(output, /^\s*old key\.\s*$/mu, `${name}: dangling paragraph close`)
+  }
+})
+
+test('recovery-off discovery removes the whole coding-client JSON-door paragraph, not just its /recovery line', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, true)],
+  ] as const) {
+    assert.equal(output.includes('/recovery'), false, name)
+    assert.equal(
+      output.includes('Lost-key recovery, when enabled, works the same way'),
+      false,
+      `${name}: dangling paragraph intro`,
+    )
+    assert.doesNotMatch(output, /^\s*activates it;.*keeps the old key and code\./mu, `${name}: dangling paragraph close`)
+  }
+})
+
 test('recovery and rotation discovery gates are independent', () => {
   for (const document of ['frontdoor', 'llms'] as const) {
     const source = document === 'frontdoor' ? FRONTDOOR : LLMS

@@ -4,11 +4,19 @@
 // JSON identity doors (POST /api/register, POST /api/rotate,
 // POST /api/recovery). It writes the resident key and recovery codes to the
 // operating system's secure credential store -- Windows Credential Manager
-// via `cmdkey`/CredRead, macOS Keychain via `security`, and a 0600 file
-// under the user's home everywhere else -- then prints only the resident's
-// handle and where its secrets were stored. A secret value reaches the
-// terminal only when the caller passes --reveal at an interactive TTY; by
-// default this script never prints, logs, or returns one.
+// via the Win32 CredWrite/CredRead API (reached through a small PowerShell
+// shim; `cmdkey` itself is used only to delete, which needs no secret),
+// macOS Keychain via `security -i` interactive mode, and a 0600 file under
+// the user's home everywhere else -- then prints only the resident's handle
+// and where its secrets were stored. Every secret bundle reaches these tools
+// over stdin, never as a process argument, so it never sits in a process
+// listing (`ps`, Task Manager) or in a failed command's own error message. A
+// secret value reaches the terminal only when the caller passes --reveal at
+// an interactive TTY; by default this script never prints, logs, or returns
+// one. The one deliberate exception is the pairing code from `pair`: it is
+// single-use, expires in ten minutes, is never written to storage, and
+// printing it once is the entire point of that command, so it is not gated
+// behind --reveal.
 //
 // Usage:
 //   node identity-client.mjs register --origin https://1f3d9.com \
@@ -41,6 +49,7 @@ import { createInterface } from 'node:readline'
 import { mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const ROOT_KEY_RE = /^1f3d9_sk_[0-9a-f]{48}$/u
 const RECOVERY_CODE_RE = /^1f3d9_rc_[0-9a-f]{64}$/u
@@ -186,34 +195,118 @@ function pendingLabel(handle, kind) {
 }
 
 /**
+ * The PowerShell/.NET shim that writes one credential through the real
+ * Win32 CredWrite API. The secret bundle travels to this process over
+ * stdin, as base64-encoded JSON -- never as a command-line argument, so it
+ * is never visible in a process listing (`ps`, Task Manager) and never
+ * appears in this command's own failure message. Mirrors the CredRead shim
+ * in readSecret below.
+ */
+const WINDOWS_CRED_WRITE_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class CredW1F3D9 {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct CREDENTIAL {
+    public int Flags; public int Type; public IntPtr TargetName; public IntPtr Comment;
+    public long LastWritten; public int CredentialBlobSize; public IntPtr CredentialBlob;
+    public int Persist; public int AttributeCount; public IntPtr Attributes;
+    public IntPtr TargetAlias; public IntPtr UserName;
+  }
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool CredWrite(ref CREDENTIAL credential, int flags);
+}
+'@
+$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$blobBytes = [Convert]::FromBase64String($payload.blob)
+$targetPtr = [Runtime.InteropServices.Marshal]::StringToHGlobalUni($payload.target)
+$userPtr = [Runtime.InteropServices.Marshal]::StringToHGlobalUni($payload.username)
+$blobPtr = [Runtime.InteropServices.Marshal]::AllocHGlobal([Math]::Max($blobBytes.Length, 1))
+if ($blobBytes.Length -gt 0) {
+  [Runtime.InteropServices.Marshal]::Copy($blobBytes, 0, $blobPtr, $blobBytes.Length)
+}
+$cred = New-Object CredW1F3D9+CREDENTIAL
+$cred.Flags = 0
+$cred.Type = 1
+$cred.TargetName = $targetPtr
+$cred.Comment = [IntPtr]::Zero
+$cred.CredentialBlobSize = $blobBytes.Length
+$cred.CredentialBlob = $blobPtr
+$cred.Persist = 2
+$cred.AttributeCount = 0
+$cred.Attributes = [IntPtr]::Zero
+$cred.TargetAlias = [IntPtr]::Zero
+$cred.UserName = $userPtr
+$ok = [CredW1F3D9]::CredWrite([ref]$cred, 0)
+[Runtime.InteropServices.Marshal]::FreeHGlobal($targetPtr)
+[Runtime.InteropServices.Marshal]::FreeHGlobal($userPtr)
+[Runtime.InteropServices.Marshal]::FreeHGlobal($blobPtr)
+if (-not $ok) { exit 1 }
+`
+
+/** Never include the caught error's own message/output: it may echo stdin back. */
+function secretFreeStorageError(where, target) {
+  return new Error(`could not write to ${where} (target "${target}"); no secret was included in this error`)
+}
+
+function writeWindowsCredential(execImpl, target, username, base64Blob) {
+  const payload = JSON.stringify({ target, username, blob: base64Blob })
+  try {
+    execImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_CRED_WRITE_SCRIPT], {
+      input: payload,
+      stdio: ['pipe', 'ignore', 'pipe'],
+    })
+  } catch {
+    throw secretFreeStorageError('Windows Credential Manager', target)
+  }
+}
+
+function shellQuoteForSecurityInteractive(value) {
+  return `'${String(value).replace(/'/gu, "'\\''")}'`
+}
+
+function writeMacKeychainCredential(execImpl, service, account, base64Blob) {
+  const script = [
+    `add-generic-password -a ${shellQuoteForSecurityInteractive(account)}`,
+    `-s ${shellQuoteForSecurityInteractive(service)}`,
+    `-w ${shellQuoteForSecurityInteractive(base64Blob)} -U`,
+    'quit',
+    '',
+  ].join('\n')
+  try {
+    // Interactive mode (`-i`) reads its subcommands from stdin, so the
+    // password never becomes a `security` process argument the way a direct
+    // `add-generic-password -w <value>` invocation would.
+    execImpl('security', ['-i'], { input: script, stdio: ['pipe', 'ignore', 'pipe'] })
+  } catch {
+    throw secretFreeStorageError('macOS Keychain', service)
+  }
+}
+
+/**
  * Writes one secret bundle to the OS credential store and returns a
  * human-readable, secret-free description of where it went. Store one JSON
  * blob per identity (key + recovery codes together) so a caller resuming
- * later reads them back from the same place with the same tool.
+ * later reads them back from the same place with the same tool. The secret
+ * bundle is always base64-encoded JSON delivered over stdin to whichever
+ * tool writes it, never a process argument -- see writeWindowsCredential and
+ * writeMacKeychainCredential above.
  */
-function storeSecret(origin, label, payload) {
+function storeSecret(origin, label, payload, deps = {}) {
+  const execImpl = deps.execFileSync ?? execFileSync
+  const os = deps.platform ?? platform()
   const serialized = JSON.stringify(payload)
-  const os = platform()
+  const encoded = Buffer.from(serialized, 'utf8').toString('base64')
   if (os === 'win32') {
     const target = vaultTarget(origin, label)
-    // cmdkey's own argument parser breaks on a /pass: value containing a
-    // double quote, which JSON always has. Base64 avoids that entirely; a
-    // reader on this host decodes it before parsing as JSON.
-    const encoded = Buffer.from(serialized, 'utf8').toString('base64')
-    execFileSync('cmdkey', [`/generic:${target}`, `/user:${label}`, `/pass:${encoded}`], {
-      stdio: 'ignore',
-    })
+    writeWindowsCredential(execImpl, target, label, encoded)
     return `Windows Credential Manager (target "${target}", value base64-encoded JSON)`
   }
   if (os === 'darwin') {
     const service = vaultTarget(origin, label)
-    execFileSync('security', [
-      'add-generic-password',
-      '-a', label,
-      '-s', service,
-      '-w', serialized,
-      '-U',
-    ], { stdio: 'ignore' })
+    writeMacKeychainCredential(execImpl, service, label, encoded)
     return `macOS Keychain (service "${service}", account "${label}")`
   }
   const filePath = credentialsFilePath(origin, label)
@@ -603,6 +696,15 @@ async function main() {
   throw new Error('usage: identity-client.mjs <register|rotate|recover generate|recover begin|pair> [--flags]')
 }
 
-main().catch(error => {
-  fail(error instanceof Error ? error.message : String(error))
-})
+const isMainModule = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (isMainModule) {
+  main().catch(error => {
+    fail(error instanceof Error ? error.message : String(error))
+  })
+}
+
+// Exported for test/identity-client.test.ts only; the CLI above never uses
+// this import path, so importing this module for tests never runs main().
+export { storeSecret }

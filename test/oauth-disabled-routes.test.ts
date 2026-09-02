@@ -100,7 +100,13 @@ test('the off switch also leaves nowhere for a pairing code to be redeemed', asy
   // otherwise.
   const response = await app.request('/api/pair', { method: 'POST' })
   assert.equal(response.status, 503)
-  assert.deepEqual(await response.json(), {
-    error: 'hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed',
-  })
+  assert.equal(response.headers.get('X-1F3D9-Reason'), 'request_unavailable')
+  const body = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
+  assert.equal(
+    body.error,
+    'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed',
+  )
+  assert.equal(body.reason, 'request_unavailable')
+  assert.ok(body.next_step.length > 0)
+  assert.ok(body.request_id.length > 0)
 })

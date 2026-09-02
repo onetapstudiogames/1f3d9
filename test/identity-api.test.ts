@@ -570,7 +570,9 @@ test('a store throw answers 503 storage_unavailable with Retry-After, not a gene
     const parsedBody = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
     assert.match(parsedBody.error, /final state could not be verified/iu, attempt.path)
     assert.equal(parsedBody.reason, 'storage_unavailable', attempt.path)
-    assert.ok(parsedBody.next_step.length > 0, attempt.path)
+    assert.match(parsedBody.next_step, /GET \/api\/residents/u, attempt.path)
+    assert.match(parsedBody.next_step, /old key.*replacement key/iu, attempt.path)
+    assert.doesNotMatch(parsedBody.next_step, /no credential was created or changed/iu, attempt.path)
     assert.ok(parsedBody.request_id.length > 0, attempt.path)
   }
 })

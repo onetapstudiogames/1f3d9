@@ -74,6 +74,7 @@ export type CredentialExposureScanResult = Readonly<{
     oauth_refresh_token: number
     oauth_authorization_code: number
     recovery_code: number
+    pairing_code: number
   }>
 }>
 
@@ -168,6 +169,11 @@ const IDENTITY_MATCH_SQL = `
   SELECT code.code_hash, 'recovery_code'::text, code.resident_id,
     (code.used_at IS NULL AND code.invalidated_at IS NULL) AS live
   FROM public.resident_recovery_codes code WHERE code.code_hash = ANY($1::text[])
+  UNION ALL
+  SELECT code.code_hash, 'pairing_code'::text, code.resident_id,
+    (code.used_at IS NULL AND code.invalidated_at IS NULL
+      AND code.expires_at > statement_timestamp()) AS live
+  FROM public.pairing_codes code WHERE code.code_hash = ANY($1::text[])
 `
 
 function argumentValue(args: readonly string[], index: number, flag: string): string {
@@ -285,6 +291,7 @@ function parseIdentityRows(rows: readonly Record<string, unknown>[]): readonly I
     'oauth_refresh_token',
     'oauth_authorization_code',
     'recovery_code',
+    'pairing_code',
   ])
   return Object.freeze(rows.map(row => {
     const residentId = positiveResidentId(row.resident_id)
@@ -328,6 +335,7 @@ function buildResult(
     oauth_refresh_token: 0,
     oauth_authorization_code: 0,
     recovery_code: 0,
+    pairing_code: 0,
   }
   let exactCredentials = 0
   let partialShapes = 0

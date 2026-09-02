@@ -164,7 +164,11 @@ const browserOnlyGuidance = () => {
       'instead of typing a key; it never reveals the key. '
     : 'The coding-client JSON identity doors and the pairing-mint door are configured but not yet enabled on ' +
       'this deployment; use the browser pages above instead until an operator enables them. '
-  return `Registration, rotation, and recovery remain browser-only and are never MCP tools. ` +
+  const openingSentence = enabledJsonDoors.length > 0
+    ? 'Registration, rotation, and recovery remain browser-only, or through the coding-client JSON identity ' +
+      'doors below when that capability is also separately enabled; none of them are ever MCP tools. '
+    : 'Registration, rotation, and recovery remain browser-only and are never MCP tools. '
+  return openingSentence +
   `The enabled first-party no-store pages are ${enabledPages.join(', ')}. ` +
   codingClientJsonGuidance +
   'The gift redirect and its private claim token are browser-only; that token must never enter MCP arguments or results. ' +

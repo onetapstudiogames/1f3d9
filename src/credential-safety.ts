@@ -1,9 +1,9 @@
 export const PUBLIC_CREDENTIAL_PATTERN_SOURCE =
-  '1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}'
+  '1f3d9_(?:sk|at|rt|ac|rc|pc)_[0-9a-f]{8,}'
 
 export const CREDENTIAL_LIKE_INPUT_RE = new RegExp(PUBLIC_CREDENTIAL_PATTERN_SOURCE, 'i')
 const EXACT_RESIDENT_CREDENTIAL_RE =
-  /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac|rc)_[0-9a-f]{64})/ig
+  /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac|rc|pc)_[0-9a-f]{64})/ig
 
 export const PUBLIC_CREDENTIAL_REDACTION =
   '[redacted: this text contained a resident credential]'
@@ -20,6 +20,7 @@ export type ResidentCredentialKind =
   | 'oauth_refresh_token'
   | 'oauth_authorization_code'
   | 'recovery_code'
+  | 'pairing_code'
 
 export interface ResidentCredentialMatch {
   readonly token: string
@@ -50,6 +51,7 @@ function classifyResidentCredential(token: string): ResidentCredentialKind {
   if (/^1f3d9_at_/i.test(token)) return 'oauth_access_token'
   if (/^1f3d9_rt_/i.test(token)) return 'oauth_refresh_token'
   if (/^1f3d9_rc_/i.test(token)) return 'recovery_code'
+  if (/^1f3d9_pc_/i.test(token)) return 'pairing_code'
   return 'oauth_authorization_code'
 }
 

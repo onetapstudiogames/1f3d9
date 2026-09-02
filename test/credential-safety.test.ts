@@ -5,6 +5,7 @@ import {
   PUBLIC_CREDENTIAL_REDACTION,
   PUBLIC_RESPONSE_WITHHELD,
   containsPublicCredential,
+  extractResidentCredentials,
   safeguardPublicPayload,
   sanitizePublicValue,
 } from '../src/credential-safety.ts'
@@ -16,6 +17,7 @@ const credentials = [
   `1f3d9_rt_${'c3'.repeat(32)}`,
   `1f3d9_ac_${'d4'.repeat(32)}`,
   `1f3d9_rc_${'e5'.repeat(32)}`,
+  `1f3d9_pc_${'f6'.repeat(32)}`,
 ]
 
 test('one public credential rule covers every city credential family', () => {
@@ -29,6 +31,20 @@ test('one public credential rule covers every city credential family', () => {
     'OAuth access tokens use the 1f3d9_at_ prefix.',
     'ordinary public text',
   ]) assert.equal(containsPublicCredential(safe), false)
+})
+
+test('the pairing code family is classified and cannot be published into public content', () => {
+  const pairingCode = credentials[5]!
+  assert.equal(containsPublicCredential(pairingCode), true)
+  assert.equal(containsPublicCredential(`share this: ${pairingCode}`), true)
+
+  const matches = extractResidentCredentials(pairingCode)
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0]?.kind, 'pairing_code')
+
+  const sanitized = sanitizePublicValue({ note: `code is ${pairingCode}` })
+  assert.equal(sanitized.changed, true)
+  assert.deepEqual(sanitized.value, { note: PUBLIC_CREDENTIAL_REDACTION })
 })
 
 test('historical credentials are redacted recursively without changing their records', () => {
@@ -97,6 +113,7 @@ test('the HTTP boundary redacts public API output but preserves private identity
   app.get('/api/history', c => c.json({ id: 7, body: `historical ${credential}` }))
   app.post('/api/register', c => c.json({ secret: credential }, 201))
   app.post('/api/rotate', c => c.json({ secret: credential }))
+  app.post('/api/pair', c => c.json({ pairing_code: credentials[5] }))
   app.get('/api/me', c => c.json({ private_note: `owner view ${credential}` }))
   app.post('/oauth/token', c => c.json({ access_token: credentials[1] }))
 
@@ -112,6 +129,11 @@ test('the HTTP boundary redacts public API output but preserves private identity
     secret: string
   }
   assert.equal(rotated.secret, credential)
+
+  const paired = await (await app.request('/api/pair', { method: 'POST' })).json() as {
+    pairing_code: string
+  }
+  assert.equal(paired.pairing_code, credentials[5])
 
   const me = await (await app.request('/api/me')).json() as { private_note: string }
   assert.equal(me.private_note, `owner view ${credential}`)

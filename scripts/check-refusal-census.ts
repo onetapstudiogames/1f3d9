@@ -166,7 +166,6 @@ const INTERNAL_EXPRESSION_REASONS = new Map<string, string>([
     'src/world.ts::place lifecycle transaction is unavailable',
     'Internal lifecycle transaction failure; the world route replaces it with the caller-safe lifecycle failure.',
   ],
-  ['src/index.ts::identity browser routes are unavailable', 'Out-of-scope identity-browser fallback; identity routes are excluded from this census.'],
   ...[
     'payment sale attempt is unavailable',
     'payment sale attempt has the wrong operation',

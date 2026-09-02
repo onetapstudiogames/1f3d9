@@ -109,6 +109,23 @@ function llmsCopy(origin: string): string {
 `
 }
 
+/**
+ * Removes one whole paragraph, from startMarker through endMarker
+ * inclusive, collapsing the surrounding blank lines. Used instead of a
+ * blanket "strip any line naming this path" regex, which only deletes the
+ * one line inside a multi-line paragraph that happens to contain the path
+ * -- leaving that paragraph's intro and closing lines dangling around a
+ * hole. Returns source unchanged if either marker is not found.
+ */
+function removeMarkedParagraph(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start)
+  if (start < 0 || end < 0) return source
+  const prefix = source.slice(0, start).trimEnd()
+  const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
+  return `${prefix}\n\n${suffix}`
+}
+
 function recoveryAwareSource(
   source: string,
   document: 'frontdoor' | 'llms',
@@ -127,16 +144,25 @@ function recoveryAwareSource(
     return policyAwareSource.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
   }
 
-  const startMarker = 'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:'
-  const endMarker = 'connector sessions, and all superseded codes stop together.'
-  const start = policyAwareSource.indexOf(startMarker)
-  const end = policyAwareSource.indexOf(endMarker, start)
-  if (start < 0 || end < 0) return policyAwareSource
-  const prefix = policyAwareSource.slice(0, start)
-    .replace('Permanent keys and recovery codes never', 'Permanent resident keys never')
-    .trimEnd()
-  const suffix = policyAwareSource.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
-  return `${prefix}\n\n${suffix}`.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
+  // Two separate paragraphs name /recovery in frontdoor.txt: the browser
+  // page's own paragraph, and decision row 74's coding-client JSON-door
+  // paragraph. Each gets removed by its own start/end markers so neither
+  // leaves orphaned intro/closing lines behind. The trailing blanket strip
+  // is a fail-closed net only: if either paragraph's markers ever drift, it
+  // still removes a bare stray line naming the disabled path rather than
+  // silently leaving it live.
+  const withoutBrowserParagraph = removeMarkedParagraph(
+    policyAwareSource
+      .replace('Permanent keys and recovery codes never', 'Permanent resident keys never'),
+    'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:',
+    'connector sessions, and all superseded codes stop together.',
+  )
+  const withoutJsonDoorParagraph = removeMarkedParagraph(
+    withoutBrowserParagraph,
+    'Lost-key recovery, when enabled, works the same way as its browser page:',
+    'keeps the old key and code.',
+  )
+  return withoutJsonDoorParagraph.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
 }
 
 function rotationAwareSource(
@@ -154,16 +180,20 @@ function rotationAwareSource(
     return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
   }
 
-  const startMarker = 'Voluntarily replace a current root key on the first-party, no-store page:'
-  const endMarker = 'will store it.'
-  const start = policyAwareSource.indexOf(startMarker)
-  const end = policyAwareSource.indexOf(endMarker, start)
-  if (start < 0 || end < 0) {
-    return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
-  }
-  const prefix = policyAwareSource.slice(0, start).trimEnd()
-  const suffix = policyAwareSource.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
-  return `${prefix}\n\n${suffix}`.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+  // Same two-paragraph situation as recovery above: the browser page's own
+  // paragraph, and decision row 74's coding-client JSON-door paragraph. The
+  // trailing blanket strip is the same fail-closed net described there.
+  const withoutBrowserParagraph = removeMarkedParagraph(
+    policyAwareSource,
+    'Voluntarily replace a current root key on the first-party, no-store page:',
+    'will store it.',
+  )
+  const withoutJsonDoorParagraph = removeMarkedParagraph(
+    withoutBrowserParagraph,
+    'Voluntary root-key replacement, when enabled, works the same way as its browser page:',
+    'keeps the\n  old key.',
+  )
+  return withoutJsonDoorParagraph.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
 }
 
 function purchaseAwareSource(source: string, purchasesReady: boolean): string {

@@ -470,8 +470,10 @@ until confirmation actually succeeds so the still-valid old key is never destroy
 the confirmed key and recovery codes to the operating system's credential store (Windows
 Credential Manager, macOS Keychain, or a 0600 file elsewhere), and prints only the resident's
 handle and where its secrets were stored -- never a secret itself, unless the caller passes
---reveal at an interactive terminal. Skill repositories call this script instead of
-reimplementing the ceremony.
+--reveal at an interactive terminal. The one deliberate exception is its pair command: a
+pairing code is single-use, expires in ten minutes, is never written to storage, and printing
+it once is the entire point of that command, so it always prints regardless of --reveal.
+Skill repositories call this script instead of reimplementing the ceremony.
 
 LOOK AND BUILD
 --------------
