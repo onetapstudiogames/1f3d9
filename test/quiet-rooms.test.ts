@@ -83,6 +83,44 @@ test('place_edit accepts the free quiet switch and states its contract before us
   )
 })
 
+// Third review pass on row 75: the small-reader directory shape sentence
+// (door.ts, llms.txt, and their generated mirrors) still claimed a place
+// row carries only type, id, parent_id, and name — stale the moment quiet
+// was added to every directory place row. Every mirror must agree.
+test('the directory shape sentence discloses quiet, everywhere it is stated', () => {
+  const frontdoorSource = source('src/frontdoor.txt')
+  assert.match(
+    frontdoorSource,
+    /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
+  )
+  const llms = source('src/llms.txt')
+  assert.match(
+    llms,
+    /each place has only `type: "place"`, stable `id`, `parent_id`, `name`, and `quiet`/u,
+  )
+  const door = source('src/door.ts')
+  assert.match(
+    door,
+    /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
+  )
+  // src/door.ts embeds llms.txt through embed-door.mjs's escapeTemplate,
+  // which backslash-escapes every backtick, so the source backticks above
+  // survive here as \` rather than plain `.
+  assert.match(
+    door,
+    /each place has only \\?`type: "place"\\?`, stable \\?`id\\?`, \\?`parent_id\\?`, \\?`name\\?`, and \\?`quiet\\?`/u,
+  )
+  const frontdoorDocument = source('docs/published/FRONTDOOR.md')
+  assert.match(
+    frontdoorDocument,
+    /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
+  )
+  // The public directory response itself actually carries the field this
+  // sentence now promises.
+  const publicDirectory = source('src/public-directory.ts')
+  assert.match(publicDirectory, /readonly quiet: boolean/u)
+})
+
 test('the window client honours quiet with the exact sentence in every content tab', () => {
   // The shared notice: exact honest sentence plus an expansion naming the
   // unchanged public record, reused by every tab below.
@@ -206,6 +244,37 @@ test('every path that lists a resident, thing, or note resolves quiet through is
     {
       name: 'liveLedgerQuietPlace: a recorded action pointing at a quiet place (move, note, make, use)',
       pattern: /function liveLedgerQuietPlace\(snapshot, record\) \{[\s\S]{0,700}return isQuietPlace\(place\) \? place : null/u,
+    },
+    // Third review pass: mountLivePlaceDetail checked isQuietPlace(place)
+    // only for the exact plotted place — a quiet place nested two or more
+    // levels below it (the plot's grandchild or deeper) still leaked
+    // because residentsAt and liveThingShelf recurse through the whole
+    // subtree with no per-row check. liveVisibleResidentsAt and
+    // liveDisplayedThings are the fix: every row they return is resolved at
+    // its own place, never at the plotted place, before a caller can render it.
+    {
+      name: 'liveVisibleResidentsAt: the one path a detailed Live plot may use to list residents',
+      pattern: /function liveVisibleResidentsAt\(snapshot, placeId\) \{\s*\n\s*return residentsAt\(snapshot, placeId\)\.filter\(resident =>\s*\n\s*!isQuietPlace\(placeReference\(snapshot, resident\.current_place_id\)\)\)/u,
+    },
+    {
+      name: 'mountLivePlaceDetail uses liveVisibleResidentsAt, not raw residentsAt, past its own quiet guard',
+      pattern: /const residents = liveVisibleResidentsAt\(snapshot, place\.id\)/u,
+    },
+    {
+      name: 'liveDisplayedThings: every Live thing list, direct or recursive, filters its own row',
+      pattern: /function liveDisplayedThings\(snapshot, placeId, focusId, includeDescendants = false\) \{[\s\S]{0,400}!isQuietPlace\(placeReference\(snapshot, thing\.place_id\)\)/u,
+    },
+    // Third review pass: liveFocusInteractionsPanel printed the exact
+    // current place name for a resident standing outside the drilled plate,
+    // and the exact current/recorded place name for every interaction
+    // thing, with no quiet check at all.
+    {
+      name: "liveFocusInteractionsPanel's outside-plate resident card withholds a quiet location",
+      pattern: /const quiet = isQuietPlace\(currentPlace\)[\s\S]{0,1500}if \(quiet\) card\.append\(quietRoomNotice\(currentPlace\)\)/u,
+    },
+    {
+      name: "liveFocusInteractionsPanel's thing list collapses a thing pointing at a quiet place",
+      pattern: /const quietPlace = isQuietPlace\(place\) \? place : isQuietPlace\(recordedPlace\) \? recordedPlace : null\s*\n\s*if \(quietPlace\) \{/u,
     },
   ]
   for (const path of paths) {

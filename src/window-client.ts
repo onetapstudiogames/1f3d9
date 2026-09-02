@@ -6311,6 +6311,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
       (!state.resident || resident.handle === state.resident))
   }
 
+  // Decision #75, third review pass: residentsAt stays raw and
+  // quiet-inclusive on purpose — occupantLine (the Map tab's place cards)
+  // needs the un-filtered list to notice a hidden descendant and render its
+  // own quietRoomNotice. Every OTHER recursive Live consumer that renders a
+  // resident by name (a detailed ancestor plot's portrait grid, the direct
+  // ground's expanded height) must never receive a resident whose own
+  // place — resolved at that resident's row, never at whatever place the
+  // card being built happens to be — is quiet, no matter how many levels
+  // below the plotted place that quiet place sits. Route every such
+  // consumer through here instead of calling residentsAt directly.
+  function liveVisibleResidentsAt(snapshot, placeId) {
+    return residentsAt(snapshot, placeId).filter(resident =>
+      !isQuietPlace(placeReference(snapshot, resident.current_place_id)))
+  }
+
   function selectionIssue(snapshot, includeCurrentPlace) {
     const resident = selectedResident(snapshot)
     if (state.resident && !resident) {
@@ -7772,10 +7787,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return Object.freeze({ placeId: focusId, resident: null })
   }
 
+  // Decision #75, third review pass: unlike residentsAt, nothing downstream
+  // of this collector needs the quiet-inclusive raw list — the Live thing
+  // shelf has no equivalent to occupantLine's hidden-descendant notice, so
+  // filtering here is the whole fix, not just the "includeDescendants=true"
+  // half of it. A thing whose own place — resolved at the thing's own row,
+  // never at whatever place is being rendered — is quiet must never reach a
+  // caller, no matter how many levels below the requested place it sits.
   function liveDisplayedThings(snapshot, placeId, focusId, includeDescendants = false) {
     const placeIds = includeDescendants ? placeScopeSet(placeId, snapshot) : new Set([placeId])
     return historyEntry('things', liveThingFilters(focusId)).rows
-      .filter(thing => placeIds.has(thing.place_id))
+      .filter(thing => placeIds.has(thing.place_id) &&
+        !isQuietPlace(placeReference(snapshot, thing.place_id)))
   }
 
   function liveThingSelection(things, pinnedIds, exactTotal, placeId) {
@@ -8110,7 +8133,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
       card.dataset.liveDetailMounted = 'true'
       return
     }
-    const residents = residentsAt(snapshot, place.id)
+    // Third review pass: place itself is clear, but residentsAt/liveThingShelf
+    // below still recurse through every descendant of place — a quiet place
+    // nested two or more levels down (this plot's grandchild or deeper) must
+    // not leak by name just because this exact plot is not the quiet one.
+    const residents = liveVisibleResidentsAt(snapshot, place.id)
     if (residents.length) {
       card.append(livePortraitGrid(
         residents,
@@ -8188,7 +8215,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           ? Math.max(320, windowLiveScatterSurfaceHeight(
               0,
               480,
-              residentsAt(state.snapshot, plot.id).length + Math.min(
+              liveVisibleResidentsAt(state.snapshot, plot.id).length + Math.min(
                 LIVE_PORTRAIT_LIMIT,
                 Object.keys(liveResidentPointsByPlaceId[String(plot.id)] || {}).length,
               ),
@@ -8263,18 +8290,30 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const currentPlace = focused.current_place_id
         ? placeReference(snapshot, focused.current_place_id)
         : null
-      const location = currentPlace
-        ? currentPlace.name
-        : focused.current_place_id ? 'Place #' + String(focused.current_place_id) : 'Between places'
+      // Third review pass: the focused resident is already an identified,
+      // viewer-chosen handle, so the card may still name them here — but
+      // their location text must not name a quiet place just because this
+      // panel resolves it directly instead of going through a roster row
+      // that already knows to check.
+      const quiet = isQuietPlace(currentPlace)
+      const location = quiet
+        ? null
+        : currentPlace
+          ? currentPlace.name
+          : focused.current_place_id ? 'Place #' + String(focused.current_place_id) : 'Between places'
       const card = element('div', 'live-focus-resident-card')
       card.dataset.liveFocusResident = focused.handle
       card.dataset.liveResidentHandle = focused.handle
       card.dataset.liveResidentScope = 'outside'
-      card.setAttribute('aria-label', focused.handle + ' is outside this plate at ' + location)
+      card.setAttribute('aria-label', focused.handle + (quiet
+        ? ' is outside this plate, in a room its owner keeps private.'
+        : ' is outside this plate at ' + location))
       const copy = element('span', 'live-focus-resident-card-copy')
       copy.append(
         element('strong', 'live-focus-resident-card-name', focused.handle),
-        element('span', 'live-focus-resident-card-location', 'Outside this plate · ' + location),
+        element('span', 'live-focus-resident-card-location', quiet
+          ? 'Outside this plate'
+          : 'Outside this plate · ' + location),
       )
       card.append(
         portraitNode(
@@ -8288,6 +8327,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
           'resident-drawing-detail drawing-detail-open',
         ),
       )
+      if (quiet) card.append(quietRoomNotice(currentPlace))
       panel.append(card)
     }
     if (!things.length) {
@@ -8298,6 +8338,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     for (const thing of things) {
       const place = placeReference(snapshot, thing.place_id)
       const recordedPlace = placeReference(snapshot, thing.recorded_place_id)
+      // Third review pass: a thing currently sitting in a quiet place, or
+      // whose interaction was recorded in one, must collapse the same way
+      // liveLedgerQuietPlace collapses a ledger row — never print the thing's
+      // name or either place's name once either resolved place is quiet.
+      const quietPlace = isQuietPlace(place) ? place : isQuietPlace(recordedPlace) ? recordedPlace : null
+      if (quietPlace) {
+        const quietCard = element('div', 'live-focus-thing-card live-focus-thing-card-quiet')
+        quietCard.append(quietRoomNotice(quietPlace))
+        list.append(quietCard)
+        continue
+      }
       const location = place ? place.name : 'place #' + String(thing.place_id)
       const recordedLocation = recordedPlace
         ? recordedPlace.name

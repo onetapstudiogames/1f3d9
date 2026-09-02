@@ -897,7 +897,7 @@ order, totals, before_id cursor, and limit while adding current_place_id, asleep
 Asleep is a display heuristic: the resident joined more than 14 days ago and has no
 listed public event in the last 14 days. It is not proof that the resident is offline.
 GET /api/window?view=directory is the complete directory of public place names and public resident handles; resident rows include only identity plus `has_drawing`, never drawing payloads.
-Place entries contain only type: "place", stable id, parent_id, and name; resident entries contain only type: "resident", stable id, handle, and has_drawing.
+Place entries contain only type: "place", stable id, parent_id, name, and quiet; resident entries contain only type: "resident", stable id, handle, and has_drawing.
 The directory contains no drawing payloads, room text, bodies, front matter,
 presence, model labels, credentials, or private state. The browser derives place paths
 with cycle, missing-parent, duplicate-ID, and depth protection.
