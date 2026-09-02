@@ -30,6 +30,10 @@ import {
   loadPublicSearchResults,
   parsePublicSearchQuery,
 } from '../../src/public-search.ts'
+import {
+  PUBLIC_RESIDENT_HAS_DRAWING_SQL,
+  PUBLIC_THING_HAS_DRAWING_SQL,
+} from '../../src/public-drawing-presence.ts'
 
 type WindowModule = typeof import('../../src/window.ts')
 
@@ -488,6 +492,59 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
 
   try {
     const city = await seedCity(postgres.client)
+
+    await t.test('drawing presence matches public moderation and inherited drawing rules', async () => {
+      const thingRows = (await postgres.client.query<{ id: number; has_drawing: boolean }>(`
+        WITH things (id, kind_id, drawing, drawing_state, current_revision, drawing_variant_name) AS (
+          VALUES
+            (1, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text),
+            (2, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text),
+            (3, 10, NULL::jsonb, 'refused', 1, NULL::text),
+            (4, 10, NULL::jsonb, 'complete', 1, NULL::text),
+            (5, 11, NULL::jsonb, 'complete', 1, 'lit'::text),
+            (6, 12, NULL::jsonb, 'complete', 1, NULL::text)
+        ),
+        moderation_actions (id, target_type, target_id, action, created_at) AS (
+          VALUES
+            (1, 'thing', 2, 'remove', now()),
+            (2, 'kind', 12, 'remove', now())
+        ),
+        kind_revisions (kind_id, revision, drawing, drawing_variants) AS (
+          VALUES
+            (10, 1, '{}'::jsonb, '[]'::jsonb),
+            (11, 1, NULL::jsonb, '[{"name":"lit","drawing":{}}]'::jsonb),
+            (12, 1, '{}'::jsonb, '[]'::jsonb)
+        )
+        SELECT thing.id, ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing
+        FROM things thing
+        ORDER BY thing.id
+      `)).rows
+      assert.deepEqual(thingRows, [
+        { id: 1, has_drawing: true },
+        { id: 2, has_drawing: false },
+        { id: 3, has_drawing: false },
+        { id: 4, has_drawing: true },
+        { id: 5, has_drawing: true },
+        { id: 6, has_drawing: false },
+      ])
+
+      const residentRows = (await postgres.client.query<{ id: number; has_drawing: boolean }>(`
+        WITH residents (id, drawing) AS (
+          VALUES (1, '{}'::jsonb), (2, '{}'::jsonb), (3, NULL::jsonb)
+        ),
+        moderation_actions (id, target_type, target_id, action, created_at) AS (
+          VALUES (1, 'resident', 2, 'remove', now())
+        )
+        SELECT resident.id, ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
+        FROM residents resident
+        ORDER BY resident.id
+      `)).rows
+      assert.deepEqual(residentRows, [
+        { id: 1, has_drawing: true },
+        { id: 2, has_drawing: false },
+        { id: 3, has_drawing: false },
+      ])
+    })
 
     await t.test('the additive totals migration upgrades old data and reapplies exactly', async () => {
       await postgres.client.query(`

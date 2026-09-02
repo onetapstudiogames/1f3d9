@@ -53,6 +53,10 @@ import {
   type PublicFrontMatterHeading,
 } from './room-orientation.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
+import {
+  PUBLIC_THING_HAS_DRAWING_SQL,
+  PUBLIC_EVENT_THING_DRAWING_JOIN_SQL,
+} from './public-drawing-presence.ts'
 import { readPublicLiveSurvey } from './public-live-survey.ts'
 import {
   loadPublicNoteRecord,
@@ -176,6 +180,7 @@ interface PublicResident {
   current_place_id: number | null
   joined_at: string
   asleep: boolean
+  has_drawing: boolean
 }
 
 /** A resident with no public act for this long renders dimmed on the window. */
@@ -208,6 +213,7 @@ interface PublicThing {
   created_at: string
   moderated: boolean
   kind_moderated: boolean
+  has_drawing: boolean
   truncated?: true
 }
 
@@ -223,6 +229,7 @@ export interface PublicThingHeading {
   current_owner: string
   body_text_bytes: number
   created_at: string
+  has_drawing: boolean
 }
 
 interface PublicAgreement {
@@ -363,6 +370,7 @@ function safeFrontMatterHeading(value: unknown): PublicFrontMatterHeading | null
     current_owner: currentOwner,
     owner_id: ownerId,
     owner,
+    has_drawing: row.has_drawing === true,
   })
 }
 
@@ -452,6 +460,7 @@ export function publicWindowResidents(values: unknown[]): PublicResident[] {
       current_place_id: currentPlaceId,
       joined_at: joinedAt,
       asleep: row.asleep === true,
+      has_drawing: row.has_drawing === true,
     }]
   })
 }
@@ -524,6 +533,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       created_at: createdAt,
       moderated: row.moderated === true,
       kind_moderated: row.kind_moderated === true,
+      has_drawing: row.has_drawing === true,
       ...(body.truncated ? { truncated: true as const } : {}),
     }]
   }).slice(0, PUBLIC_PAGE_MAX)
@@ -565,6 +575,7 @@ export function publicWindowThingHeadings(values: unknown[]): PublicThingHeading
       current_owner: currentOwner,
       body_text_bytes: bodyTextBytes,
       created_at: createdAt,
+      has_drawing: row.has_drawing === true,
     })]
   }).slice(0, PUBLIC_PAGE_MAX)
 }
@@ -669,7 +680,12 @@ function publicWindowEvent(value: unknown) {
       detail.error = WINDOW_UNSAFE_EVENT_ERROR
     }
   }
-  return { id, at, kind, actor, detail }
+  return {
+    id, at, kind, actor, detail,
+    ...(typeof row.thing_has_drawing === 'boolean'
+      ? { thing_has_drawing: row.thing_has_drawing }
+      : {}),
+  }
 }
 
 function kindRevisionKey(value: Readonly<Record<string, unknown>>): string | null {
@@ -925,6 +941,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
             thing.maker_id, maker.handle AS made_by,
             thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
             octet_length(thing.body)::integer AS body_text_bytes,
+            ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing,
             thing.created_at
           FROM things thing
           JOIN residents maker ON maker.id = thing.maker_id
@@ -965,7 +982,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           current_owner.handle AS owner,
           thing.open_to_use,
           thing.kind_id, thing.current_revision, kind.name AS kind,
-          coalesce(revision.traits, '{}'::text[]) AS traits, thing.created_at
+          coalesce(revision.traits, '{}'::text[]) AS traits,
+          ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing, thing.created_at
         FROM things thing
         JOIN residents maker ON maker.id = thing.maker_id
         JOIN residents current_owner ON current_owner.id = thing.owner_id
@@ -1127,8 +1145,11 @@ async function readWindowEventPage(
     fetchLimit: PUBLIC_PAGE_DEFAULT + 1,
   })
   const rows = await query(
-    `SELECT id, at, kind, actor, detail
-     FROM events
+    `/* public:window-events */
+     SELECT event.id, event.at, event.kind, event.actor, event.detail,
+       event_thing.has_drawing AS thing_has_drawing
+     FROM events event
+     ${PUBLIC_EVENT_THING_DRAWING_JOIN_SQL}
      WHERE kind = ANY($1::text[])
      ORDER BY id DESC
      LIMIT $2::integer`,
@@ -1193,6 +1214,11 @@ async function readFullWindowSnapshot() {
     `),
     sql`
       SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at,
+        resident.drawing IS NOT NULL AND coalesce((
+          SELECT latest.action FROM moderation_actions latest
+          WHERE latest.target_type = 'resident' AND latest.target_id = resident.id
+          ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+        ), 'restore') <> 'remove' AS has_drawing,
         (resident.joined_at < now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')
           AND NOT coalesce(activity.recent_public_act, false)) AS asleep
       FROM residents resident

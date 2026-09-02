@@ -210,6 +210,7 @@ const SNAPSHOT = Object.freeze({
     handle: 'leafwalker',
     current_place_id: 12,
     asleep: false,
+    has_drawing: true,
     joined_at: '2026-08-14T12:00:00.000Z',
   }],
   notes: [{
@@ -299,8 +300,8 @@ const DIRECTORY = Object.freeze({
     { id: 77, parent_id: 12, name: 'quiet_annex' },
   ],
   residents: [
-    { id: 7, handle: 'leafwalker' },
-    { id: 9, handle: 'far-walker' },
+    { id: 7, handle: 'leafwalker', has_drawing: true },
+    { id: 9, handle: 'far-walker', has_drawing: false },
   ],
 })
 
@@ -313,8 +314,8 @@ const DIRECTORY_REFRESHED = Object.freeze({
     { id: 78, parent_id: 12, name: 'fresh_gallery' },
   ],
   residents: [
-    { id: 7, handle: 'leafwalker' },
-    { id: 9, handle: 'far-walker' },
+    { id: 7, handle: 'leafwalker', has_drawing: true },
+    { id: 9, handle: 'far-walker', has_drawing: false },
   ],
 })
 

@@ -346,7 +346,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     )
     assert.deepEqual(
       Object.keys(directory.residents.find(resident => resident.handle === 'small-reader') ?? {}).sort(),
-      ['handle', 'id', 'type'],
+      ['handle', 'has_drawing', 'id', 'type'],
     )
 
     const focusedPresence = await readBudgetedJson<{
@@ -356,6 +356,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
         joined_at: string
         current_place_id: number | null
         asleep: boolean
+        has_drawing: boolean
       }
     }>(
       await cityApp.request('http://city.test/api/residents?view=presence&handle=small-reader'),
@@ -364,7 +365,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     assert.equal(focusedPresence.resident.handle, 'small-reader')
     assert.equal(focusedPresence.resident.current_place_id, fixture.roomId)
     assert.deepEqual(Object.keys(focusedPresence.resident).sort(), [
-      'asleep', 'current_place_id', 'handle', 'id', 'joined_at',
+      'asleep', 'current_place_id', 'handle', 'has_drawing', 'id', 'joined_at',
     ])
 
     const outline = await readBudgetedJson<{

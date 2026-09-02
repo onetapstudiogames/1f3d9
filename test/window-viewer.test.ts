@@ -95,7 +95,7 @@ test('thing kind names keep their existing id and render a lazy kind portrait', 
   assert.match(WINDOW_JS, /kind_id: kindId/u)
   assert.match(
     WINDOW_JS,
-    /portraitNode\('kind', thing\.kind_id, thing\.kind, 'kind-portrait'\)/u,
+    /portraitNode\('kind', thing\.kind_id, thing\.kind, true, 'kind-portrait'\)/u,
   )
 })
 
@@ -765,7 +765,7 @@ test('the /api/window route carries honest bounded causes without exporting its 
     const eventRows = ${JSON.stringify(rows)}
     const query = async text => {
       const source = String(text)
-      if (/FROM events\\s+WHERE kind = ANY/u.test(source)) return eventRows
+      if (source.includes('/* public:window-events */') && source.includes('FROM events event')) return eventRows
       if (source.includes('AS conversations') && source.includes('AS events')) {
         return [{ places: 0, residents: 0, conversations: 0, things: 0,
           agreements: 0, events: eventRows.length }]
@@ -1263,8 +1263,15 @@ test('the THINGS tab is bounded, body-free, and reuses lazy transparent portrait
   assert.match(WINDOW_JS, /portraitNode\('thing', thing\.id, thing\.name/u)
   assert.match(WINDOW_JS, /archiveResultCard[\s\S]*?portraitNode\('thing'/u)
   assert.match(WINDOW_JS, /renderActivity[\s\S]*?portraitNode\('thing'/u)
+  assert.match(
+    WINDOW_JS,
+    /live-ledger-thing-reference[\s\S]{0,500}thing \? thing\.has_drawing === true : record\.thingHasDrawing/u,
+  )
   assert.match(WINDOW_JS, /\|thing:' \+ String\(activityThingId\(event\)/u)
-  assert.match(WINDOW_JS, /detailTitle\.replaceChildren\([\s\S]*?portraitNode\('thing'/u)
+  assert.match(
+    WINDOW_JS,
+    /detailTitle\.replaceChildren\([\s\S]*?portraitNode\('thing',[\s\S]{0,120}entry\?\.record\?\.has_drawing === true/u,
+  )
   assert.doesNotMatch(WINDOW_JS, /noteCard[\s\S]{0,1200}portraitNode\('thing'/u)
   assert.match(WINDOW_CSS, /\.entity-portrait\s*\{[^}]*background:\s*transparent[^}]*border:\s*0/u)
 })
@@ -1403,18 +1410,21 @@ test('snapshot row shapers reject malformed public data', () => {
     current_place_id: 2,
     joined_at: '2026-08-11T00:00:00.000Z',
     asleep: false,
+    has_drawing: false,
   }, {
     id: 9,
     handle: 'long-gone',
     current_place_id: 195,
     joined_at: '2026-07-01T00:00:00.000Z',
     asleep: true,
+    has_drawing: false,
   }, {
     id: 10,
     handle: 'odd-flag',
     current_place_id: 2,
     joined_at: '2026-08-11T00:00:00.000Z',
     asleep: false,
+    has_drawing: false,
   }])
 
   const notes = (exports.publicWindowNotes as (rows: unknown[]) => unknown[])([
@@ -1494,6 +1504,7 @@ test('snapshot row shapers reject malformed public data', () => {
     created_at: '2026-08-11T00:00:00.000Z',
     moderated: false,
     kind_moderated: false,
+    has_drawing: false,
   }])
 
   const agreements = (exports.publicWindowAgreements as (rows: unknown[]) => unknown[])([{

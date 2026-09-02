@@ -383,12 +383,13 @@ function replayPlaceScopeIds(rootId: number) {
 
 function replayResidentRows(now: number, placeId: number) {
   return [{ id: 5, handle: 'map-walker', current_place_id: placeId,
-    joined_at: new Date(now - 86_400_000).toISOString(), asleep: false },
+    joined_at: new Date(now - 86_400_000).toISOString(), asleep: false, has_drawing: true },
   ...replayCrowd.map((resident, index) => ({
     ...resident,
     current_place_id: 3,
     joined_at: new Date(now - 86_400_000 - index).toISOString(),
     asleep: false,
+    has_drawing: true,
   }))]
 }
 
@@ -399,6 +400,7 @@ function replayThingRows(now: number, placeId: number) {
     current_owner: 'map-walker', owner: 'map-walker', open_to_use: true,
     kind: 'lantern', traits: [], created_at: new Date(now - 120_000).toISOString(),
     moderated: false, kind_moderated: false,
+    has_drawing: true,
   }))
 }
 
@@ -541,6 +543,7 @@ async function installReplayRoutes(
             current_place_id: 3,
             joined_at: new Date(now - 86_400_000 - index).toISOString(),
             asleep: false,
+            has_drawing: true,
           })),
         ]
     return [
@@ -561,6 +564,7 @@ async function installReplayRoutes(
         current_place_id: 3,
         joined_at: new Date(now - 172_800_000 - index).toISOString(),
         asleep: false,
+        has_drawing: true,
       })),
     ]
   }
@@ -603,7 +607,7 @@ async function installReplayRoutes(
       await route.fulfill({ json: {
         view: 'directory', places: directoryPlaces,
         residents: controlledResidentRows(currentMarker()).map(resident => ({
-          id: resident.id, handle: resident.handle,
+          id: resident.id, handle: resident.handle, has_drawing: resident.has_drawing,
         })),
       } })
       return
@@ -970,6 +974,7 @@ async function installReplayRoutes(
             id, handle: `paged-${id}`, current_place_id: 2,
             joined_at: new Date(now - 172_800_000 - residentPageRequests * 1_000).toISOString(),
             asleep: false,
+            has_drawing: true,
           }],
           total: 2_000, has_more: true, next_before_id: id,
         } })

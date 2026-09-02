@@ -15,6 +15,7 @@ test('thing headings expose only passive identity, provenance, location, and exa
     current_owner: 'night-reader',
     body_text_bytes: 37,
     created_at: '2026-09-01T01:02:03.000Z',
+    has_drawing: true,
     body: 'must not cross the passive list boundary',
     traits: ['bright'],
     drawing: { palette: ['#fff'] },
@@ -32,10 +33,11 @@ test('thing headings expose only passive identity, provenance, location, and exa
     current_owner: 'night-reader',
     body_text_bytes: 37,
     created_at: '2026-09-01T01:02:03.000Z',
+    has_drawing: true,
   }])
   assert.deepEqual(Object.keys(headings[0] ?? {}), [
     'id', 'place_id', 'name', 'kind_id', 'kind', 'maker_id', 'made_by',
-    'current_owner_id', 'current_owner', 'body_text_bytes', 'created_at',
+    'current_owner_id', 'current_owner', 'body_text_bytes', 'created_at', 'has_drawing',
   ])
 })
 

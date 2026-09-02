@@ -1,5 +1,7 @@
 export const PUBLIC_PAGE_DEFAULT = 10
 export const PUBLIC_PAGE_MAX = 200
+import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.ts'
+
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
 export const PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES =
@@ -279,12 +281,15 @@ export async function loadPublicEventCollectionRows(
        WHERE ${eventFilter}
      )
      SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
+       page.thing_has_drawing,
        totals.total_items, totals.total_text_bytes
      FROM totals
      LEFT JOIN LATERAL (
        SELECT event.id, change.change_id::text AS change_id,
-         event.at, event.kind, event.actor, event.detail
+         event.at, event.kind, event.actor, event.detail,
+         event_thing.has_drawing AS thing_has_drawing
        FROM events event
+       ${PUBLIC_EVENT_THING_DRAWING_JOIN_SQL}
        JOIN public_change_log change ON change.event_id = event.id
        WHERE ${eventFilter}
          AND ($4::integer IS NULL OR event.id < $4::integer)

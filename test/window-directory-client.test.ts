@@ -83,13 +83,14 @@ test('directory search returns its own place and resident results', () => {
     },
     {
       kind: 'resident', id: 10, value: 'coffee-keeper', label: 'coffee-keeper · Resident #10',
-      detail: 'Resident',
+      detail: 'Resident', hasDrawing: false,
     },
   ])
   assert.deepEqual(searchWindowDirectory(places, residents, 'THE VERGE').map(row => row.id), [2, 3, 4])
   assert.deepEqual(searchWindowDirectory(places, residents, '#5').map(row => row.id), [5])
   assert.deepEqual(searchWindowDirectory(places, residents, '#9'), [{
-    kind: 'resident', id: 9, value: 'far-walker', label: 'far-walker · Resident #9', detail: 'Resident',
+    kind: 'resident', id: 9, value: 'far-walker', label: 'far-walker · Resident #9',
+    detail: 'Resident', hasDrawing: false,
   }])
   assert.deepEqual(searchWindowDirectory(places, residents, ''), [])
   assert.deepEqual(searchWindowDirectory(places, residents, 'nowhere'), [])

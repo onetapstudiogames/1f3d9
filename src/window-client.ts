@@ -999,6 +999,7 @@ export type WindowDirectoryPlaceOption = Readonly<{
 export type WindowDirectoryResident = Readonly<{
   id: number
   handle: string
+  has_drawing?: boolean
 }>
 
 export type WindowDirectorySearchResult = Readonly<{
@@ -1007,6 +1008,7 @@ export type WindowDirectorySearchResult = Readonly<{
   value: string
   label: string
   detail: string
+  hasDrawing?: boolean
 }>
 
 export type WindowDirectorySearchPage = Readonly<{
@@ -1199,6 +1201,7 @@ export function searchWindowDirectory(
           value: resident.handle,
           label: `${resident.handle} · Resident #${resident.id}`,
           detail: 'Resident',
+          hasDrawing: resident.has_drawing === true,
         }),
       }]
     }),
@@ -1689,7 +1692,8 @@ export const WINDOW_JS = `(() => {
     observedPortraitShells.clear()
   }
 
-  function portraitNode(type, id, label, className = '') {
+  function portraitNode(type, id, label, hasDrawing, className = '') {
+    if (!hasDrawing) return document.createDocumentFragment()
     const shell = element('span', 'entity-portrait' + (className ? ' ' + className : ''))
     shell.setAttribute('aria-hidden', 'true')
     shell.title = label + ' drawing'
@@ -1835,6 +1839,7 @@ export const WINDOW_JS = `(() => {
       current_place_id: workshopId,
       joined_at: new Date(now - 86_400_000 - index * 1_000).toISOString(),
       asleep: false,
+      has_drawing: index === 0,
     }))
     const things = Array.from({ length: 7 }, (_, index) => ({
       id: 9401 + index,
@@ -1853,6 +1858,7 @@ export const WINDOW_JS = `(() => {
       created_at: new Date(now - 120_000 - index * 1_000).toISOString(),
       moderated: false,
       kind_moderated: false,
+      has_drawing: index !== 5,
     }))
     const child = (id, name, thingCount) => ({
       id,
@@ -3098,6 +3104,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       current_owner: currentOwner,
       owner_id: ownerId,
       owner,
+      has_drawing: rawHeading.has_drawing === true,
     })
   }
 
@@ -3235,6 +3242,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       currentOwnerId,
       currentOwner,
       name,
+      hasDrawing: rawResult.has_drawing === true,
       textBytes: safeCount(rawResult.body_text_bytes ?? rawResult.text_bytes),
       href: '/window/' + type + '/' + String(id),
     })
@@ -3273,7 +3281,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ? result.name
       : 'Public note #' + String(result.id))
     if (result.type === 'thing' && result.name) {
-      heading.prepend(portraitNode('thing', result.id, result.name))
+      heading.prepend(portraitNode('thing', result.id, result.name, result.hasDrawing))
     }
     const recordLabel = result.type === 'thing'
       ? 'Thing #' + String(result.id)
@@ -4168,7 +4176,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const joinedAt = safeDate(raw.joined_at)
       const currentPlaceId = raw.current_place_id == null ? null : safeId(raw.current_place_id)
       return id && handle && joinedAt && (raw.current_place_id == null || currentPlaceId)
-        ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt, asleep: raw.asleep === true }]
+        ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt,
+          asleep: raw.asleep === true, has_drawing: raw.has_drawing === true }]
         : []
     })
   }
@@ -4194,7 +4203,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const id = safeId(raw.id)
         const handle = safeHandle(raw.handle)
         if (id && handle && !residentsByHandle.has(handle)) {
-          residentsByHandle.set(handle, Object.freeze({ id, handle }))
+          residentsByHandle.set(handle, Object.freeze({
+            id, handle, has_drawing: raw.has_drawing === true,
+          }))
         }
       }
     }
@@ -4252,7 +4263,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         current_owner_id: currentOwnerId, current_owner: currentOwner,
         owner, open_to_use: raw.open_to_use === true, kind_id: kindId, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
-        kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true }]
+        kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true,
+        has_drawing: raw.has_drawing === true }]
     })
   }
 
@@ -4282,6 +4294,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         maker_id: makerId, made_by: madeBy,
         current_owner_id: currentOwnerId, current_owner: currentOwner,
         body_text_bytes: bodyTextBytes, created_at: createdAt,
+        has_drawing: raw.has_drawing === true,
       })]
     })
   }
@@ -4359,7 +4372,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         }
       }
       return [{ id, ...(changeId ? { change_id: changeId } : {}),
-        actor, kind: raw.kind, verb, at, detail }]
+        actor, kind: raw.kind, verb, at, detail,
+        thingHasDrawing: raw.thing_has_drawing === true }]
     })
   }
 
@@ -5816,6 +5830,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       value: String(thing.id),
       label: thing.name + ' · Thing #' + String(thing.id),
       detail: thingHeadingPath(snapshot, thing),
+      hasDrawing: thing.has_drawing === true,
     }))
   }
 
@@ -5951,7 +5966,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
           element('small', '', result.kind === 'place' ? 'Place · ' + result.detail :
             result.kind === 'thing' ? 'Thing · ' + result.detail : result.detail),
         )
-        option.append(portraitNode(result.kind, result.id, result.label), copy)
+        option.append(portraitNode(
+          result.kind,
+          result.id,
+          result.label,
+          result.kind === 'place' || result.hasDrawing === true,
+        ), copy)
         option.addEventListener('mousedown', event => event.preventDefault())
         option.addEventListener('mouseenter', () => {
           if (state.directorySearchIndex === index) return
@@ -6281,7 +6301,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (resident.asleep) chip.title = 'dimmed by a two-week public-activity display heuristic · not proof they are offline'
     chip.addEventListener('click', () => chooseResident(resident.handle))
     chip.append(
-      portraitNode('resident', resident.id, resident.handle, 'occupant-portrait'),
+      portraitNode('resident', resident.id, resident.handle, resident.has_drawing, 'occupant-portrait'),
       document.createTextNode(resident.handle),
     )
     return chip
@@ -6500,7 +6520,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         owner.textContent = 'unowned · transit only'
       }
       card.append(
-        portraitNode('place', place.id, place.name, 'place-portrait'),
+        portraitNode('place', place.id, place.name, true, 'place-portrait'),
         watch,
         owner,
         element('span', 'place-facts', String(place.places) +
@@ -6515,7 +6535,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         headings.append(...place.front_matter.map(thing => {
           const item = element('li', 'place-card-thing')
           item.append(
-            portraitNode('thing', thing.id, thing.name),
+            portraitNode('thing', thing.id, thing.name, thing.has_drawing),
             openDetailLink(
               'thing', thing.id, thing.name, 'detail-link place-card-thing-link',
             ),
@@ -6774,7 +6794,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
           'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
-        row.prepend(portraitNode('resident', resident.id, resident.handle))
+        row.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
         group.append(row)
       }
       fragment.append(group)
@@ -6902,7 +6922,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       row.dataset.thingId = String(thing.id)
       const title = element('h3', 'thing-index-title')
       title.append(
-        portraitNode('thing', thing.id, thing.name),
+        portraitNode('thing', thing.id, thing.name, thing.has_drawing),
         openDetailLink('thing', thing.id, thing.name, 'detail-link thing-index-link'),
       )
       const kind = thing.kind ? thing.kind : 'one of a kind'
@@ -7565,7 +7585,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : 'Focus on ' + resident.handle
       portrait.setAttribute('aria-label', portrait.title)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
-      portrait.append(portraitNode('resident', resident.id, resident.handle, 'live-entity-portrait'))
+      portrait.append(portraitNode(
+        'resident', resident.id, resident.handle, resident.has_drawing, 'live-entity-portrait',
+      ))
       const shell = livePortraitShell(
         portrait,
         bubbles?.get(resident.handle),
@@ -7715,6 +7737,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         recorded_place_id: interactionPlaceId,
         name: thing?.name || null,
         loaded: Boolean(thing),
+        has_drawing: thing?.has_drawing === true,
       }))
     }
     const focusRecords = [...new Map([...records, ...liveInteractionRecords()]
@@ -7874,7 +7897,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         bindLiveHighlight(specimen, pulse.key, 'pulse')
       }
       specimen.append(
-        portraitNode('thing', thing.id, thing.name, 'live-entity-portrait'),
+        portraitNode('thing', thing.id, thing.name, thing.has_drawing, 'live-entity-portrait'),
         element('span', 'live-thing-name', thing.name),
       )
       bindLiveActivation(specimen, specimen, itemKey, null)
@@ -8131,7 +8154,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('span', 'live-focus-resident-card-location', 'Outside this plate · ' + location),
       )
       card.append(
-        portraitNode('resident', focused.id, focused.handle, 'live-entity-portrait'),
+        portraitNode(
+          'resident', focused.id, focused.handle, focused.has_drawing, 'live-entity-portrait',
+        ),
         copy,
         openDrawingDetailButton(
           'resident',
@@ -8177,6 +8202,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         'thing',
         thing.id,
         thing.loaded ? thing.name : 'Thing #' + String(thing.id),
+        thing.has_drawing,
         'live-entity-portrait',
       ))
       list.append(link)
@@ -8222,7 +8248,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         ? 'Place #' + String(resident.current_place_id)
         : 'Between places'
       row.append(
-        portraitNode('resident', resident.id, resident.handle, 'live-entity-portrait'),
+        portraitNode(
+          'resident', resident.id, resident.handle, resident.has_drawing, 'live-entity-portrait',
+        ),
         follow,
         element('span', 'resident-number', location + (resident.asleep ? ' · asleep' : '')),
         openDrawingDetailButton(
@@ -8690,7 +8718,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         shell.dataset.replayDuration = String(held.duration)
       }
       portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
-      portrait.append(portraitNode('resident', resident.id, actor, 'live-entity-portrait'))
+      portrait.append(portraitNode(
+        'resident', resident.id, actor, resident.has_drawing, 'live-entity-portrait',
+      ))
       layer.append(shell)
     }
   }
@@ -8945,7 +8975,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const reference = openDetailLink(
           'thing', thingId, label, 'detail-link live-ledger-thing-reference',
         )
-        reference.prepend(portraitNode('thing', thingId, label, 'live-entity-portrait'))
+        reference.prepend(portraitNode(
+          'thing', thingId, label,
+          thing ? thing.has_drawing === true : record.thingHasDrawing,
+          'live-entity-portrait',
+        ))
         row.append(reference)
       }
       row.tabIndex = 0
@@ -9603,7 +9637,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       item.append(follow, element('span', 'resident-number',
         'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '') +
         (location ? ' · at ' + location : '')))
-      item.prepend(portraitNode('resident', resident.id, resident.handle))
+      item.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
       return item
     }))
     target.replaceChildren(list)
@@ -9635,7 +9669,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     follow.title = 'Follow ' + handle
     follow.addEventListener('click', () => chooseResident(handle))
     const reference = element('span', 'resident-reference')
-    reference.append(portraitNode('resident', known.id, handle), follow)
+    reference.append(portraitNode('resident', known.id, handle, known.has_drawing), follow)
     return reference
   }
 
@@ -9686,6 +9720,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       moderated: raw.moderated === true,
+      has_drawing: raw.has_drawing === true,
     }) : null
   }
 
@@ -10197,7 +10232,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (target.kind === 'thing') {
         const title = entry?.record?.name || 'Thing #' + String(target.id)
         nodes.detailTitle.replaceChildren(
-          portraitNode('thing', target.id, title),
+          portraitNode('thing', target.id, title, entry?.record?.has_drawing === true),
           document.createTextNode(title),
         )
       } else {
@@ -10459,7 +10494,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (thing.kind) {
         thingMeta.append(document.createTextNode(' · kind: '))
         if (thing.kind_id) {
-          thingMeta.append(portraitNode('kind', thing.kind_id, thing.kind, 'kind-portrait'))
+          thingMeta.append(portraitNode('kind', thing.kind_id, thing.kind, true, 'kind-portrait'))
         }
         thingMeta.append(document.createTextNode(thing.kind))
       } else {
@@ -10479,7 +10514,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       const heading = element('h4', '')
       heading.append(
-        portraitNode('thing', thing.id, thing.name),
+        portraitNode('thing', thing.id, thing.name, thing.has_drawing),
         openDetailLink('thing', thing.id, thing.name, 'detail-link thing-detail-link'),
       )
       item.append(heading, thingMeta)
@@ -10649,7 +10684,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         document.createTextNode(' · ' + String(heading.body_text_bytes) + ' UTF-8 bytes'),
       )
       const title = element('span', 'front-matter-title')
-      title.append(portraitNode('thing', heading.id, heading.name), link)
+      title.append(portraitNode('thing', heading.id, heading.name, heading.has_drawing), link)
       item.append(title, meta)
       return item
     }))
@@ -11022,7 +11057,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const label = thing?.name || 'Thing #' + String(thingId)
         const reference = element('span', 'activity-thing-reference')
         reference.append(
-          portraitNode('thing', thingId, label),
+          portraitNode('thing', thingId, label,
+            thing ? thing.has_drawing === true : event.thingHasDrawing),
           openDetailLink('thing', thingId, label, 'detail-link activity-thing-link'),
         )
         row.append(reference)
@@ -11090,7 +11126,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const chip = element('span', 'signature-chip')
         const resident = residentReference(snapshot, party)
         if (resident) {
-          chip.append(portraitNode('resident', resident.id, party, 'signature-portrait'))
+          chip.append(portraitNode(
+            'resident', resident.id, party, resident.has_drawing, 'signature-portrait',
+          ))
         }
         chip.append(document.createTextNode((acceded ? '+ ' : signed ? '✓ ' : '○ ') + party))
         chip.dataset.signed = String(signed)
