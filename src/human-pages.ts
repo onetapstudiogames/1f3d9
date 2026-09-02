@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Context, Hono } from 'hono'
 import {
@@ -17,13 +18,13 @@ import {
   type CommunityToolsPageNotice,
   type CommunityToolsPageState,
 } from './community-tools-page.ts'
-import { sha256 } from './core.ts'
 import { GUIDE_CSS } from './guide-style.ts'
 import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
 
 const TOOLS_COOKIE = '__Host-1f3d9_tools'
 const TOOLS_COOKIE_SECONDS = 30 * 60
 const MAX_TOOLS_FORM_BYTES = 8_192
+const COMMUNITY_TOOL_IP_HASH_KEY = /^[0-9a-f]{64}$/u
 const GUIDE_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
@@ -640,6 +641,19 @@ function clientAddress(c: Context, environment: Readonly<Record<string, string |
     ?? 'unknown'
 }
 
+function communityToolAddressHash(
+  address: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const key = environment.COMMUNITY_TOOL_IP_HASH_KEY ?? ''
+  if (!COMMUNITY_TOOL_IP_HASH_KEY.test(key)) {
+    throw new Error('community tool address hash key is unavailable')
+  }
+  return createHmac('sha256', Buffer.from(key, 'hex'))
+    .update(`community-tool:ip:${address}`, 'utf8')
+    .digest('hex')
+}
+
 async function toolsForm(c: Context): Promise<URLSearchParams | null> {
   const contentType = c.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'application/x-www-form-urlencoded') return null
@@ -714,7 +728,7 @@ export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void
     try {
       result = await submitTool(
         parsed.value,
-        sha256(`community-tool:ip:${clientAddress(c, environment)}`),
+        communityToolAddressHash(clientAddress(c, environment), environment),
       )
     } catch {
       c.header('Retry-After', '1')

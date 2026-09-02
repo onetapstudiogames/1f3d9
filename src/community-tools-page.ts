@@ -102,6 +102,7 @@ export function renderCommunityToolsBody(
       <input id="tool-description" name="description" required maxlength="200">
       <label for="tool-resident">Resident attribution (optional)</label>
       <select id="tool-resident" name="resident_id"><option value="">No resident attribution</option>${residentOptions(state)}</select>
+      <p class="field-note">A chosen resident is a self-reported claim that the maintainer checks before listing.</p>
       <label for="tool-category">Category</label>
       <select id="tool-category" name="category" required><option value="">Choose one</option>${categoryOptions()}</select>
       <label for="tool-tags">Tags</label>

@@ -1,3 +1,4 @@
+import { isIP } from 'node:net'
 import { positiveId, publicText } from './input.ts'
 
 export const COMMUNITY_TOOL_CATEGORIES = Object.freeze([
@@ -48,7 +49,7 @@ export type QueuedCommunityToolSubmission = Readonly<{
   resident: Readonly<{ id: number; handle: string }> | null
   category: CommunityToolCategory
   tags: readonly string[]
-  submittedAt: string
+  submitted_at: string
 }>
 
 export type CommunityToolQueue = Readonly<{
@@ -78,6 +79,18 @@ const FORM_FIELDS = Object.freeze([
 const CATEGORY_SET: ReadonlySet<string> = new Set(COMMUNITY_TOOL_CATEGORIES)
 const IP_HASH = /^[0-9a-f]{64}$/u
 const TAG = /^[a-z0-9][a-z0-9 -]{0,23}$/u
+const INTERNAL_HOST_SUFFIXES = Object.freeze([
+  '.corp',
+  '.home',
+  '.home.arpa',
+  '.internal',
+  '.intranet',
+  '.lan',
+  '.local',
+  '.localdomain',
+  '.localhost',
+  '.private',
+])
 
 function refusal(message: string, reason: CommunityToolSubmissionRefusal = 'invalid_form'):
   CommunityToolSubmissionParseResult {
@@ -99,12 +112,42 @@ function trimmedPublicText(value: string | null, maximumCharacters: number): str
   return publicText(trimmed, { maximumCharacters })
 }
 
+function singleLinePublicText(value: string | null, maximumCharacters: number): string | null {
+  const text = trimmedPublicText(value, maximumCharacters)
+  return text && !/[\t\r\n]/u.test(text) ? text : null
+}
+
+function publicHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.$/u, '')
+  const literal = normalized.startsWith('[') && normalized.endsWith(']')
+    ? normalized.slice(1, -1)
+    : normalized
+  const labels = normalized.split('.')
+  const embedsIp = labels.some((_, index) => (
+    index + 3 < labels.length
+    && isIP(labels.slice(index, index + 4).join('.')) === 4
+  )) || labels.some(label => isIP(label.replaceAll('-', '.')) === 4)
+  return isIP(literal) === 0
+    && normalized !== 'localhost'
+    && !INTERNAL_HOST_SUFFIXES.some(suffix => (
+      normalized === suffix.slice(1) || normalized.endsWith(suffix)
+    ))
+    && !embedsIp
+    && normalized.includes('.')
+}
+
 function httpsUrl(value: string | null): `https://${string}` | null {
   const candidate = value?.trim() ?? ''
   if (candidate.length > 2_048 || !candidate.startsWith('https://')) return null
   try {
     const parsed = new URL(candidate)
-    if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) return null
+    if (
+      parsed.protocol !== 'https:'
+      || !parsed.hostname
+      || parsed.username
+      || parsed.password
+      || !publicHostname(parsed.hostname)
+    ) return null
     return parsed.href as `https://${string}`
   } catch {
     return null
@@ -138,14 +181,14 @@ export function parseCommunityToolSubmission(
       'honeypot',
     )
   }
-  const title = trimmedPublicText(params.get('title'), 80)
-  if (!title) return refusal('Add a title of 80 characters or fewer, then try again.')
+  const title = singleLinePublicText(params.get('title'), 80)
+  if (!title) return refusal('Add a title in one line of 80 characters or fewer, then try again.')
   const url = httpsUrl(params.get('url'))
-  if (!url) return refusal('Use one public https link for the tool, then try again.')
-  const operator = trimmedPublicText(params.get('operator'), 100)
-  if (!operator) return refusal('Say who runs the tool in 100 characters or fewer, then try again.')
-  const description = trimmedPublicText(params.get('description'), 200)
-  if (!description || /[\r\n]/u.test(description)) {
+  if (!url) return refusal('Use one public https link with a public host name, then try again.')
+  const operator = singleLinePublicText(params.get('operator'), 100)
+  if (!operator) return refusal('Say who runs the tool in one line of 100 characters or fewer, then try again.')
+  const description = singleLinePublicText(params.get('description'), 200)
+  if (!description) {
     return refusal('Describe the tool in one line of 200 characters or fewer, then try again.')
   }
   const residentValue = params.get('resident_id')?.trim() ?? ''
@@ -178,21 +221,20 @@ export function parseCommunityToolSubmission(
 
 const SUBMIT_SQL = `
   /* community-tools:submit */
-  WITH requested_resident AS MATERIALIZED (
-    SELECT $7::integer AS resident_id
-    WHERE $7::integer IS NULL
-      OR EXISTS (SELECT 1 FROM residents WHERE id = $7::integer)
-  ), expired AS (
+  WITH expired AS (
     DELETE FROM community_tool_submission_limits old
     WHERE old.day < (now() AT TIME ZONE 'UTC')::date - 30
   ), admitted AS (
     INSERT INTO community_tool_submission_limits (ip_hash, day, used)
-    SELECT $1::text, (now() AT TIME ZONE 'UTC')::date, 1
-    FROM requested_resident
+    VALUES ($1::text, (now() AT TIME ZONE 'UTC')::date, 1)
     ON CONFLICT (ip_hash, day) DO UPDATE
       SET used = community_tool_submission_limits.used + 1
       WHERE community_tool_submission_limits.used < $2::integer
     RETURNING used
+  ), requested_resident AS MATERIALIZED (
+    SELECT $7::integer AS resident_id
+    WHERE $7::integer IS NULL
+      OR EXISTS (SELECT 1 FROM residents WHERE id = $7::integer)
   ), queued AS (
     INSERT INTO community_tool_submissions (
       title, url, operator_name, description, resident_id, category, tags, submitter_ip_hash
@@ -203,6 +245,7 @@ const SUBMIT_SQL = `
     RETURNING id
   )
   SELECT CASE
+    WHEN NOT EXISTS (SELECT 1 FROM admitted) THEN 'rate_limited'
     WHEN NOT EXISTS (SELECT 1 FROM requested_resident) THEN 'resident_not_found'
     WHEN EXISTS (SELECT 1 FROM queued) THEN 'queued'
     ELSE 'rate_limited'
@@ -285,7 +328,7 @@ function queuedSubmission(row: Readonly<Record<string, unknown>>): QueuedCommuni
       : Object.freeze({ id: residentId, handle: residentHandle! }),
     category: row.category as CommunityToolCategory,
     tags: rowTags,
-    submittedAt,
+    submitted_at: submittedAt,
   })
 }
 
@@ -329,7 +372,7 @@ export async function reviewCommunityToolSubmission(
     WITH reviewed AS (
       UPDATE community_tool_submissions
       SET reviewed_at = clock_timestamp(), reviewed_by = $2::integer,
-        review_outcome = $3::text
+        review_outcome = $3::text, submitter_ip_hash = NULL
       WHERE id = $1::bigint AND reviewed_at IS NULL
       RETURNING review_outcome
     )

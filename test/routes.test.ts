@@ -179,6 +179,22 @@ interface FakeFounderPayPalDisputeEvent {
     action: 'credit_dispute_seller_favour' | 'credit_dispute_buyer_favour'
   }>
 }
+interface FakeCommunityToolSubmission {
+  id: number
+  title: string
+  url: string
+  operator_name: string
+  description: string
+  resident_id: number | null
+  resident_handle: string | null
+  category: 'Browse' | 'Create' | 'Connect' | 'Learn'
+  tags: string[]
+  submitter_ip_hash: string | null
+  created_at: string
+  reviewed_at: string | null
+  reviewed_by: number | null
+  review_outcome: 'listed' | 'declined' | null
+}
 interface FakePaidCompletionFailure {
   message: string
   code?: string
@@ -260,6 +276,7 @@ interface FakeState {
   founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
+  communityToolSubmissions: FakeCommunityToolSubmission[]
   paypalCreditRateSlotsUsed: number
   paymentReplaySchemaReady: boolean
   facilitatorVerify: boolean
@@ -360,6 +377,22 @@ const initialState = (): FakeState => ({
   founderPayPalDisputes: new Map(),
   founderPayPalDisputeEvents: [],
   nextFounderPayPalDisputeEventId: 1,
+  communityToolSubmissions: [{
+    id: 9,
+    title: 'Pocket city atlas',
+    url: 'https://tools.example/atlas',
+    operator_name: 'Lantern Workshop',
+    description: 'Finds public places by their street names.',
+    resident_id: 7,
+    resident_handle: 'tiny-lantern',
+    category: 'Browse',
+    tags: ['maps', 'streets'],
+    submitter_ip_hash: 'b'.repeat(64),
+    created_at: '2026-09-01T20:00:00.000Z',
+    reviewed_at: null,
+    reviewed_by: null,
+    review_outcome: null,
+  }],
   paypalCreditRateSlotsUsed: 0,
   paymentReplaySchemaReady: true,
   facilitatorVerify: false,
@@ -859,6 +892,54 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
     const handle = String(params[0])
     const residentId = handle === 'founder' ? 1 : handle === 'tiny-lantern' ? 7 : handle === 'neighbor' ? 8 : null
     return residentId === null ? [] : [{ id: residentId }]
+  }
+  if (q.includes('/* community-tools:waiting-count */')) {
+    return [{
+      count: state.communityToolSubmissions.filter(submission => submission.reviewed_at === null).length,
+    }]
+  }
+  if (q.includes('/* community-tools:operator-queue */')) {
+    return state.communityToolSubmissions
+      .filter(submission => submission.reviewed_at === null)
+      .sort((left, right) => right.id - left.id)
+      .map(submission => ({
+        id: submission.id,
+        title: submission.title,
+        url: submission.url,
+        operator_name: submission.operator_name,
+        description: submission.description,
+        resident_id: submission.resident_id,
+        resident_handle: submission.resident_handle,
+        category: submission.category,
+        tags: [...submission.tags],
+        created_at: submission.created_at,
+      }))
+  }
+  if (q.includes('/* community-tools:review */')) {
+    const id = Number(params[0])
+    const reviewer = Number(params[1])
+    const requestedOutcome = params[2]
+    const existing = state.communityToolSubmissions.find(submission => submission.id === id)
+    if (!existing) return []
+    if (existing.reviewed_at !== null) {
+      return [{ outcome: 'already_reviewed', review_outcome: existing.review_outcome }]
+    }
+    if (requestedOutcome !== 'listed' && requestedOutcome !== 'declined') {
+      throw new Error('community tool review fake received an invalid outcome')
+    }
+    const reviewed: FakeCommunityToolSubmission = {
+      ...existing,
+      submitter_ip_hash: null,
+      reviewed_at: '2026-09-01T20:05:00.000Z',
+      reviewed_by: reviewer,
+      review_outcome: requestedOutcome,
+    }
+    state = {
+      ...state,
+      communityToolSubmissions: state.communityToolSubmissions.map(submission =>
+        submission.id === id ? reviewed : submission),
+    }
+    return [{ outcome: 'reviewed', review_outcome: requestedOutcome }]
   }
   if (q.includes('/* city-credit:issue */')) {
     const founderId = Number(params[0])
@@ -7215,6 +7296,132 @@ test('only founder resident one issues one private city fee credit and exact ret
   const officialText = await (await app.request('/api/official')).text()
   const treasuryText = await (await app.request('/treasury')).text()
   assert.doesNotMatch(officialText + treasuryText, /wave4-grant-0001|1000000/u)
+})
+
+const COMMUNITY_TOOL_QUEUE_PATH = '/api/founder/community-tool-submissions'
+const COMMUNITY_TOOL_REVIEW_PATH = `${COMMUNITY_TOOL_QUEUE_PATH}/9/review`
+const COMMUNITY_TOOL_LIST_BODY = JSON.stringify({ outcome: 'listed' })
+
+test('community tool founder queue is private, queryless, no-store, and snake_case', async () => {
+  reset()
+
+  const missingKey = await app.request(COMMUNITY_TOOL_QUEUE_PATH)
+  assert.equal(missingKey.status, 401)
+  assert.match(missingKey.headers.get('cache-control') ?? '', /no-store/iu)
+
+  const nonFounder = await app.request(COMMUNITY_TOOL_QUEUE_PATH, { headers: authHeaders() })
+  assert.equal(nonFounder.status, 403)
+  assert.match(nonFounder.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.equal(sqlCalls().some(call => call.query?.includes('/* community-tools:operator-queue */')), false)
+
+  setActor(1, 'founder')
+  const withQuery = await app.request(`${COMMUNITY_TOOL_QUEUE_PATH}?limit=1`, {
+    headers: authHeaders(),
+  })
+  assert.equal(withQuery.status, 400, await withQuery.clone().text())
+  assert.match(withQuery.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.equal(sqlCalls().some(call => call.query?.includes('/* community-tools:operator-queue */')), false)
+
+  const response = await app.request(COMMUNITY_TOOL_QUEUE_PATH, { headers: authHeaders() })
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+  const body = await response.json()
+  assert.deepEqual(body, {
+    waiting_count: 1,
+    submissions: [{
+      id: 9,
+      title: 'Pocket city atlas',
+      url: 'https://tools.example/atlas',
+      operator: 'Lantern Workshop',
+      description: 'Finds public places by their street names.',
+      resident: { id: 7, handle: 'tiny-lantern' },
+      category: 'Browse',
+      tags: ['maps', 'streets'],
+      submitted_at: '2026-09-01T20:00:00.000Z',
+    }],
+  })
+  assert.doesNotMatch(JSON.stringify(body), /submittedAt|submitter_ip_hash|[0-9a-f]{64}/u)
+})
+
+test('community tool founder review enforces its HTTP boundary and is retry-safe', async () => {
+  reset()
+
+  const missingKey = await app.request(COMMUNITY_TOOL_REVIEW_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: COMMUNITY_TOOL_LIST_BODY,
+  })
+  assert.equal(missingKey.status, 401)
+  assert.match(missingKey.headers.get('cache-control') ?? '', /no-store/iu)
+
+  const nonFounder = await app.request(COMMUNITY_TOOL_REVIEW_PATH, {
+    method: 'POST', headers: authHeaders(), body: COMMUNITY_TOOL_LIST_BODY,
+  })
+  assert.equal(nonFounder.status, 403)
+  assert.match(nonFounder.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.equal(sqlCalls().some(call => call.query?.includes('/* community-tools:review */')), false)
+
+  setActor(1, 'founder')
+  const invalidRequests: ReadonlyArray<Readonly<{
+    path?: string
+    headers?: Readonly<Record<string, string>>
+    body: string
+    error: RegExp
+  }>> = [
+    {
+      path: `${COMMUNITY_TOOL_REVIEW_PATH}?force=true`,
+      body: COMMUNITY_TOOL_LIST_BODY,
+      error: /query|option/iu,
+    },
+    { body: '{', error: /valid JSON/iu },
+    {
+      headers: { ...authHeaders(), 'Content-Length': '257' },
+      body: COMMUNITY_TOOL_LIST_BODY,
+      error: /Content-Length|byte/iu,
+    },
+    {
+      body: JSON.stringify({ outcome: 'listed', padding: 'x'.repeat(256) }),
+      error: /1 to 256 bytes/iu,
+    },
+  ]
+  for (const invalid of invalidRequests) {
+    const response = await app.request(invalid.path ?? COMMUNITY_TOOL_REVIEW_PATH, {
+      method: 'POST',
+      headers: invalid.headers ?? authHeaders(),
+      body: invalid.body,
+    })
+    assert.equal(response.status, 400, await response.clone().text())
+    assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+    assert.match(await response.text(), invalid.error)
+  }
+  assert.equal(sqlCalls().some(call => call.query?.includes('/* community-tools:review */')), false)
+
+  const reviewed = await app.request(COMMUNITY_TOOL_REVIEW_PATH, {
+    method: 'POST', headers: authHeaders(), body: COMMUNITY_TOOL_LIST_BODY,
+  })
+  assert.equal(reviewed.status, 200, await reviewed.clone().text())
+  assert.match(reviewed.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.deepEqual(await reviewed.json(), {
+    submission_id: 9,
+    outcome: 'listed',
+    disposition: 'reviewed',
+  })
+
+  const retried = await app.request(COMMUNITY_TOOL_REVIEW_PATH, {
+    method: 'POST', headers: authHeaders(), body: COMMUNITY_TOOL_LIST_BODY,
+  })
+  assert.equal(retried.status, 200, await retried.clone().text())
+  assert.deepEqual(await retried.json(), {
+    submission_id: 9,
+    outcome: 'listed',
+    disposition: 'already_reviewed',
+  })
+
+  const missing = await app.request(`${COMMUNITY_TOOL_QUEUE_PATH}/404/review`, {
+    method: 'POST', headers: authHeaders(), body: COMMUNITY_TOOL_LIST_BODY,
+  })
+  assert.equal(missing.status, 404, await missing.clone().text())
+  assert.match(missing.headers.get('cache-control') ?? '', /no-store/iu)
 })
 
 const FOUNDER_DISPUTE_PATH =

@@ -44,6 +44,8 @@ const gazetteWithdrawalActivationMigrationFile =
   'db/migrations/20260901_gazette_withdrawal_activation.sql' as const
 const communityToolSubmissionsMigrationFile =
   'db/migrations/20260901_community_tool_submissions.sql' as const
+const communityToolSubmissionPrivacyMigrationFile =
+  'db/migrations/20260901_community_tool_submission_privacy.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -75,6 +77,29 @@ test('community tool queue migration is additive and uses the guarded remote cer
   assert.match(ddl, /CREATE TABLE IF NOT EXISTS community_tool_submissions/iu)
   assert.match(ddl, /CREATE TABLE IF NOT EXISTS community_tool_submission_limits/iu)
 
+  const privacyRun = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'community-tool-submission-privacy'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(privacyRun.migrationFile, communityToolSubmissionPrivacyMigrationFile)
+  assert.equal(privacyRun.executionMode, 'transactional')
+  const privacyDdl = migrationDdl(communityToolSubmissionPrivacyMigrationFile)
+  assert.match(privacyDdl, /ALTER TABLE community_tool_submissions/iu)
+  assert.match(privacyDdl, /submitter_ip_hash[\s\S]*DROP NOT NULL/iu)
+  assert.match(privacyDdl, /UPDATE community_tool_submissions[\s\S]*submitter_ip_hash\s*=\s*NULL/iu)
+  assert.match(privacyDdl, /title[\s\S]*operator_name[\s\S]*description/iu)
+  assert.match(
+    privacyDdl,
+    /community_tool_submissions_pending_hash[\s\S]*community_tool_submissions[\s\S]*community_tool_submission_limits[\s\S]*RAISE EXCEPTION/iu,
+  )
+
   const packageJson = JSON.parse(
     readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
   ) as { scripts?: Record<string, string> }
@@ -82,6 +107,10 @@ test('community tool queue migration is additive and uses the guarded remote cer
     assert.match(
       packageJson.scripts?.[`migrate:${target}:community-tool-submissions`] ?? '',
       new RegExp(`--target ${target} --migration community-tool-submissions$`, 'u'),
+    )
+    assert.match(
+      packageJson.scripts?.[`migrate:${target}:community-tool-submission-privacy`] ?? '',
+      new RegExp(`--target ${target} --migration community-tool-submission-privacy$`, 'u'),
     )
   }
 })

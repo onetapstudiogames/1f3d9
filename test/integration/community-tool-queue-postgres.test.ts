@@ -18,6 +18,7 @@ import {
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const MIGRATION_URL = new URL('../../db/migrations/20260901_community_tool_submissions.sql', import.meta.url)
+const PRIVACY_MIGRATION_URL = new URL('../../db/migrations/20260901_community_tool_submission_privacy.sql', import.meta.url)
 
 function docker(args: readonly string[]): string {
   const result = spawnSync('docker', [...args], { encoding: 'utf8' })
@@ -64,7 +65,9 @@ test('PostgreSQL keeps submissions private, bounded, attributable, and operator-
   timeout: 120_000,
 }, async () => {
   assert.equal(existsSync(MIGRATION_URL), true, 'add the queue migration before this gate')
+  assert.equal(existsSync(PRIVACY_MIGRATION_URL), true, 'add the queue privacy migration before this gate')
   const ddl = await readFile(MIGRATION_URL, 'utf8')
+  const privacyDdl = await readFile(PRIVACY_MIGRATION_URL, 'utf8')
   const server = await postgres()
   const query: CommunityToolSubmissionQuery = async (text, params) =>
     (await server.pool.query(text, [...params])).rows as Record<string, unknown>[]
@@ -73,13 +76,30 @@ test('PostgreSQL keeps submissions private, bounded, attributable, and operator-
     await server.pool.query(`INSERT INTO residents (id, handle) VALUES (1, 'founder'), (46, 'solward')`)
     await server.pool.query(ddl)
     await server.pool.query(ddl)
+    await server.pool.query(`
+      INSERT INTO community_tool_submission_limits (ip_hash, day, used)
+      VALUES ($1, (now() AT TIME ZONE 'UTC')::date, 1)
+    `, ['f'.repeat(64)])
+    const migrationClient = await server.pool.connect()
+    try {
+      await assert.rejects(migrationClient.query(privacyDdl), /legacy address hashes/iu)
+      await migrationClient.query('ROLLBACK')
+    } finally {
+      migrationClient.release()
+    }
+    await server.pool.query(`DELETE FROM community_tool_submission_limits`)
+    await server.pool.query(privacyDdl)
+    await server.pool.query(privacyDdl)
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       assert.deepEqual(await submitCommunityTool(query, submission(46), 'a'.repeat(64)), { outcome: 'queued' })
     }
     assert.deepEqual(await submitCommunityTool(query, submission(46), 'a'.repeat(64)), { outcome: 'rate_limited' })
-    assert.deepEqual(await submitCommunityTool(query, submission(999), 'b'.repeat(64)), { outcome: 'resident_not_found' })
-    assert.deepEqual(await submitCommunityTool(query, submission(null), 'b'.repeat(64)), { outcome: 'queued' })
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      assert.deepEqual(await submitCommunityTool(query, submission(999), 'b'.repeat(64)), { outcome: 'resident_not_found' })
+    }
+    assert.deepEqual(await submitCommunityTool(query, submission(null), 'b'.repeat(64)), { outcome: 'rate_limited' })
+    assert.deepEqual(await submitCommunityTool(query, submission(null), 'c'.repeat(64)), { outcome: 'queued' })
 
     assert.equal(await readCommunityToolWaitingCount(query), 4)
     const queue = await readCommunityToolQueue(query)
@@ -94,16 +114,23 @@ test('PostgreSQL keeps submissions private, bounded, attributable, and operator-
       resident: null,
       category: COMMUNITY_TOOL_CATEGORIES[0],
       tags: ['maps', 'streets'],
-      submittedAt: queue.submissions[0]!.submittedAt,
+      submitted_at: queue.submissions[0]!.submitted_at,
     })
-    assert.match(queue.submissions[0]!.submittedAt, /^\d{4}-\d{2}-\d{2}T/u)
+    assert.match(queue.submissions[0]!.submitted_at, /^\d{4}-\d{2}-\d{2}T/u)
     assert.equal(JSON.stringify(queue).includes('submitter_ip_hash'), false)
     assert.equal(JSON.stringify(queue).includes('a'.repeat(64)), false)
+
+    assert.deepEqual((await server.pool.query(
+      `SELECT submitter_ip_hash FROM community_tool_submissions WHERE id = 4`,
+    )).rows, [{ submitter_ip_hash: 'c'.repeat(64) }])
 
     assert.deepEqual(await reviewCommunityToolSubmission(query, 4, 1, 'listed'), {
       outcome: 'reviewed',
       reviewOutcome: 'listed',
     })
+    assert.deepEqual((await server.pool.query(
+      `SELECT submitter_ip_hash FROM community_tool_submissions WHERE id = 4`,
+    )).rows, [{ submitter_ip_hash: null }])
     assert.deepEqual(await reviewCommunityToolSubmission(query, 4, 1, 'listed'), {
       outcome: 'already_reviewed',
       reviewOutcome: 'listed',

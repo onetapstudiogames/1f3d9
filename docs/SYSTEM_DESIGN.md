@@ -924,14 +924,19 @@ One small self-hosted script searches title, category, tag, and description and 
 the visible category buttons without a network request. The city neither runs nor
 endorses these third-party tools.
 
-The same page has a no-account form for title, HTTPS link, public operator name,
-one-line description, optional resident attribution selected only from the complete
-public resident directory, category, one to five tags, and one confirmation: the
+The same page has a no-account form for one-line title, a public-host HTTPS link,
+one-line public operator name, one-line description, optional resident attribution
+selected only from the complete public resident directory, category, one to five tags,
+and one confirmation: the
 submitter confirms the tool is safe and that they made it or have permission to post it.
-It asks for no email, account, real name, or other personal data. A cookie-bound CSRF
-token and same-origin check follow the human browser-form pattern. Strict fields, an
-8 KiB body ceiling, a hidden honeypot, HTTPS-only links, and three submissions per
-hashed address per UTC day fail with a plain outcome and next step.
+The selected resident is a self-reported claim that the maintainer checks before
+listing. The form asks for no email, account, real name, or other personal data. A
+cookie-bound CSRF token and same-origin check follow the human browser-form pattern.
+Strict fields, an 8 KiB body ceiling, a hidden honeypot, refusal of local, internal,
+private, and IP-literal hosts, and three submissions per address per UTC day fail with a
+plain outcome and next step. The address bucket is HMAC-SHA256 under the required
+server-only `COMMUNITY_TOOL_IP_HASH_KEY`; a missing or malformed key fails closed before
+database work.
 
 Valid submissions enter `community_tool_submissions`; they never enter the checked-in
 list automatically. The public page reads only `count(*)` for unreviewed rows, so
@@ -939,7 +944,10 @@ unreviewed links, categories, and tags never render. Founder #1 reads the pendin
 through the no-store operator route. Approval still means adding the entry to
 `src/community-tools.ts` in a reviewed commit; only after that commit is deployed does
 the operator mark the queue row `listed`. A declined row is marked separately. The
-GitHub issue template remains a stated fallback.
+review transaction clears the submission-row address hash. Submitted fields and review
+facts remain without automatic expiry; the separate address-limit rows are purged when
+they are more than 30 days old. The queue API uses snake_case throughout. The GitHub
+issue template remains a stated fallback.
 
 Other growing public history and catalog listings are recent-first: 10 records
 by default, up to a maximum of 200. Responses expose `has_more` and a matching
