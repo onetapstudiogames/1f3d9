@@ -558,7 +558,7 @@ test('the live window distinguishes its current bounded view from dated public s
   }
 
   const routeSource = windowModule.windowSnapshot.toString()
-  assert.match(routeSource, /invalid public window query/iu)
+  assert.match(routeSource, /public window query was rejected because its fields or values are not supported/iu)
   assert.doesNotMatch(routeSource, /invalid public window snapshot query/iu)
 })
 

@@ -472,7 +472,7 @@ test('an old open Gazette upgrades through dormant withdrawal installation and a
     {
       ok: false,
       status: 409,
-      error: `Gazette submission note #${dormantExact.note.id} already printed in issue #${printedIssue.issue_number} and cannot be withdrawn`,
+      error: `Gazette submission note #${dormantExact.note.id} already printed in issue #${printedIssue.issue_number} and cannot be withdrawn; choose another active submission because printing is permanent`,
     },
     'the dormant exact-looking note remained a printable ordinary submission',
   )
@@ -1552,7 +1552,10 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
       await database.query(text, [...params])
     ).rows,
   })
-  setEngineTransactionRunnerForTests(async (_ignored, work) => {
+  const transactionRunner = async (
+    _ignored: TaggedSql,
+    work: (transaction: TaggedSql, atomic: boolean) => Promise<unknown>,
+  ): Promise<unknown> => {
     const client = await database.connect()
     try {
       await client.query('BEGIN')
@@ -1565,7 +1568,8 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
     } finally {
       client.release()
     }
-  })
+  }
+  setEngineTransactionRunnerForTests(transactionRunner)
   const submit = (residentId: number, residentHandle: string, text: string) => (
     runTalkNoteAction({ placeId: 454, residentId, residentHandle, text }, sql)
   )
@@ -1586,7 +1590,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', selfTargetBody), {
     ok: false,
     status: 404,
-    error: `Gazette submission note #${selfTargetId} was not found in room #454`,
+    error: `Gazette submission note #${selfTargetId} was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454`,
   })
   assert.deepEqual((await database.query(`
     SELECT
@@ -1608,7 +1612,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', 'WITHDRAW #2147483647'), {
     ok: false,
     status: 404,
-    error: 'Gazette submission note #2147483647 was not found in room #454',
+    error: 'Gazette submission note #2147483647 was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454',
   })
   assert.deepEqual(await submit(1, 'gazette-founder', `WITHDRAW #${targetId}`), {
     ok: false,
@@ -1637,19 +1641,30 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
     await submit(2, 'gazette-author', `WITHDRAW #${targetId}`),
     { ...withdrawn, replayed: true },
   )
-  await assert.rejects(
-    database.query(`
+  let alreadyWithdrawnError: unknown
+  try {
+    await database.query(`
       INSERT INTO notes (place_id, author_id, body)
       VALUES (454, 2, $1)
-    `, [`WITHDRAW #${targetId}`]),
-    (error: unknown) => {
-      assert.equal(
-        (error as { constraint?: string }).constraint,
-        'gazette_withdrawal_already_withdrawn',
-      )
-      return true
-    },
-  )
+    `, [`WITHDRAW #${targetId}`])
+    assert.fail('a second withdrawal must be refused')
+  } catch (error) {
+    assert.equal(
+      (error as { constraint?: string }).constraint,
+      'gazette_withdrawal_already_withdrawn',
+    )
+    alreadyWithdrawnError = error
+  }
+  setEngineTransactionRunnerForTests(async () => { throw alreadyWithdrawnError })
+  try {
+    assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${targetId}`), {
+      ok: false,
+      status: 409,
+      error: `Gazette submission note #${targetId} was already withdrawn by its author; choose another active submission because withdrawal is permanent`,
+    })
+  } finally {
+    setEngineTransactionRunnerForTests(transactionRunner)
+  }
 
   const second = await submit(2, 'gazette-author', 'Second kept submission.')
   const third = await submit(2, 'gazette-author', 'Third kept submission.')
@@ -1767,7 +1782,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${second.note.id}`), {
     ok: false,
     status: 409,
-    error: `Gazette submission note #${second.note.id} already printed in issue #${stored.issue_number} and cannot be withdrawn`,
+    error: `Gazette submission note #${second.note.id} already printed in issue #${stored.issue_number} and cannot be withdrawn; choose another active submission because printing is permanent`,
   })
 
   await database.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')
@@ -1784,7 +1799,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${passedTickTargetId}`), {
     ok: false,
     status: 409,
-    error: `Gazette submission note #${passedTickTargetId} can be withdrawn only strictly before ${cycle.startsAt}; that print tick has passed`,
+    error: `Gazette submission note #${passedTickTargetId} can be withdrawn only strictly before ${cycle.startsAt}; that print tick has passed, so choose another active submission`,
   })
 })
 

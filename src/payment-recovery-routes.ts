@@ -3,6 +3,7 @@ import {
   COLLISION_CONFLICT_MESSAGE,
   err,
   isRetryableCollision,
+  RESIDENT_AUTH_REFUSAL,
 } from './core.ts'
 import {
   PaymentAttemptConflictError,
@@ -19,6 +20,7 @@ import { paymentRecoveryErrorFields } from './payment-recovery.ts'
 const PAYMENT_ATTEMPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/u
 const MAX_EMPTY_BODY_BYTES = 1_024
 const RECOVERY_BATCH_LIMIT = 10
+const PAYMENT_ATTEMPT_ID_REFUSAL = 'payment attempt id was rejected because it does not match a city payment attempt id; retry with the id returned by the original payment request'
 const RECHECK_UNAVAILABLE = 'payment attempt recheck is temporarily unavailable; retry this same attempt without paying again'
 const RECHECK_COLLISION = `${COLLISION_CONFLICT_MESSAGE.replace(/; retry$/u, '')}; retry this payment attempt without paying again`
 const RECHECK_EVIDENCE_CONFLICT = 'payment evidence conflicts with this attempt\'s preserved record; inspect this attempt and do not pay again'
@@ -136,11 +138,11 @@ export function mountPaymentRecoveryRoutes<Attempt>(
     privateHeaders(c)
     if (!noQueryOptions(c)) return err(c, 400, 'payment attempt inspection accepts no query options')
     const publicId = safeAttemptId(c.req.param('id'))
-    if (!publicId) return err(c, 400, 'invalid payment attempt id')
+    if (!publicId) return err(c, 400, PAYMENT_ATTEMPT_ID_REFUSAL)
     const resident = await deps.authenticate(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const attempt = await deps.getOwnedAttempt(publicId, resident.id)
-    if (!attempt) return err(c, 404, 'payment attempt not found')
+    if (!attempt) return err(c, 404, `payment attempt ${publicId} was not found; use the id from the original payment response and do not pay again`)
     return c.json({ payment_attempt: deps.privateView(attempt) })
   })
 
@@ -148,16 +150,16 @@ export function mountPaymentRecoveryRoutes<Attempt>(
     privateHeaders(c)
     if (!noQueryOptions(c)) return err(c, 400, 'payment attempt recheck accepts no query options')
     const publicId = safeAttemptId(c.req.param('id'))
-    if (!publicId) return err(c, 400, 'invalid payment attempt id')
+    if (!publicId) return err(c, 400, PAYMENT_ATTEMPT_ID_REFUSAL)
     let resident: AuthenticatedResident | null = null
     try {
       resident = await deps.authenticate(c)
-      if (!resident) return err(c, 401, 'bad or missing bearer secret')
+      if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
       if (!await hasEmptyObjectBody(c)) {
         return err(c, 400, 'payment attempt recheck accepts only an empty JSON object')
       }
       const attempt = await deps.getOwnedAttempt(publicId, resident.id)
-      if (!attempt) return err(c, 404, 'payment attempt not found')
+      if (!attempt) return err(c, 404, `payment attempt ${publicId} was not found; use the id from the original payment response and do not pay again`)
       const recovered = await deps.recheck(attempt)
       if (recovered.state === 'unavailable') {
         const error = new Error('payment recovery reported temporarily unavailable')
@@ -165,7 +167,7 @@ export function mountPaymentRecoveryRoutes<Attempt>(
         return recheckUnavailable(c)
       }
       const latest = await deps.getOwnedAttempt(publicId, resident.id)
-      if (!latest) return err(c, 404, 'payment attempt not found')
+      if (!latest) return err(c, 404, `payment attempt ${publicId} was not found after recheck; inspect the original payment response and do not pay again`)
       return c.json({ payment_attempt: deps.privateView(latest) }, recheckStatus(recovered))
     } catch (error) {
       return recheckFailure(c, deps, { publicId, actorId: resident?.id ?? null }, error)
@@ -179,9 +181,9 @@ export function mountPaymentRecoveryRoutes<Attempt>(
       deps.environment,
       c.req.header('authorization'),
     )
-    if (authorization === 'unavailable') return err(c, 503, 'payment recovery is unavailable')
+    if (authorization === 'unavailable') return err(c, 503, 'payment recovery is unavailable because CRON_SECRET is not configured; the city owner must configure it before retrying recovery')
     if (authorization !== 'authorized') {
-      return err(c, 401, 'payment recovery authorization failed')
+      return err(c, 401, 'payment recovery authorization was rejected because the cron bearer token is missing or incorrect; retry with Authorization: Bearer <CRON_SECRET>')
     }
     const result = await deps.runBatch(RECOVERY_BATCH_LIMIT)
     try {

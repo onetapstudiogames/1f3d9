@@ -80,7 +80,7 @@ test('an ordinary failure stays a generic internal error without database detail
     assert.equal(status, 500)
     assert.match(requestId ?? '', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
     assert.deepEqual(JSON.parse(body), {
-      error: 'internal',
+      error: 'the city could not complete the request because of an unexpected internal failure; retry once, then give request_id to the city operator if it fails again',
       error_class: 'city_fault',
       request_id: requestId,
     })
@@ -111,7 +111,7 @@ test('a coded failure outside the collision list is not softened into a conflict
     assert.equal(status, 500)
     assert.match(requestId ?? '', /^[0-9a-f-]{36}$/u)
     assert.deepEqual(JSON.parse(body), {
-      error: 'internal',
+      error: 'the city could not complete the request because of an unexpected internal failure; retry once, then give request_id to the city operator if it fails again',
       error_class: 'city_fault',
       request_id: requestId,
     })

@@ -314,7 +314,7 @@ export async function readBoundedJsonObject(
   try {
     bytes = new Uint8Array(await request.arrayBuffer())
   } catch {
-    return Object.freeze({ ok: false, error: 'body could not be read' })
+    return Object.freeze({ ok: false, error: 'request body could not be read; resend the documented drawing body' })
   }
   if (bytes.byteLength > maximumBytes) {
     return Object.freeze({

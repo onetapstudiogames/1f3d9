@@ -452,7 +452,7 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
       await assert.rejects(firstMove, (error: unknown) => (
         error instanceof EngineError
         && error.status === 409
-        && error.message === 'thing or destination changed before the move'
+        && error.message === 'thing or destination changed before the move; re-read both and retry'
       ))
       await firstMoveClient.query('ROLLBACK')
 

@@ -34,6 +34,13 @@ and Neon-managed cleanup notices deleted Git branches on later preview activity.
 exact-name PR-close workflow now provides immediate cleanup; the weekly count is its
 backstop. See Neon's [official cleanup behavior](https://neon.com/docs/guides/vercel-branch-cleanup).
 
+The follow-up billing feed named `1f3d9`, `1f3ea`, `eo-web`, `snapshot`, `soti`,
+`soti-w3-debug-35d07e2fc1a1`, and `sweetpspeech`. This incident records a normal-week request and
+invocation baseline only for `1f3d9`: about 60,000 of each per day. The other six are
+explicitly unmonitored in the project config because this record does not establish
+their normal levels. Their presence still satisfies project completeness, and their
+cost remains inside the team daily-spend cap.
+
 ## When the tripwire opens or updates
 
 1. Preserve the issue's UTC dates, project names, quantities, costs, branch count, and

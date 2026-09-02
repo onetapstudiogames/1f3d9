@@ -26,6 +26,8 @@ function appFor(input: {
   vercel?: boolean
   giftStatus?: 'pending' | 'accepted' | 'refused' | 'frozen' | 'revoked'
   disputeBlocked?: boolean
+  missingGiftAction?: boolean
+  missingRedirect?: boolean
 } = {}) {
   const calls: Array<{ text: string; params: readonly unknown[] }> = []
   const app = new Hono()
@@ -46,6 +48,7 @@ function appFor(input: {
           return input.targetMatches === false ? [] : [{ id: 8, handle: 'resident-eight' }]
         }
         if (text.includes('prepaid-credit:gift-accept')) {
+          if (input.missingGiftAction) return []
           return [{
             gift_id: GIFT_ID,
             status: input.giftStatus ?? 'accepted',
@@ -54,6 +57,7 @@ function appFor(input: {
           }]
         }
         if (text.includes('prepaid-credit:gift-refuse')) {
+          if (input.missingGiftAction) return []
           return [{
             gift_id: GIFT_ID,
             status: input.giftStatus === 'frozen' ? 'refused' : input.giftStatus ?? 'refused',
@@ -64,6 +68,7 @@ function appFor(input: {
           }]
         }
         if (text.includes('prepaid-credit:gift-redirect')) {
+          if (input.missingRedirect) return []
           return [{
             gift_id: GIFT_ID,
             status: input.giftStatus ?? 'pending',
@@ -122,6 +127,18 @@ test('gift accept and refuse require the recipient key and accept an empty actio
   assert.equal((await refused.json() as { status: string }).status, 'refused')
 })
 
+test('gift action conflicts name the current pending-gift recovery', async () => {
+  const missing = appFor({ authenticated: true, missingGiftAction: true })
+  const response = await missing.app.request(`/api/city-credit/gifts/${GIFT_ID}/accept`, {
+    method: 'POST',
+  })
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'gift is not pending for this recipient or was not found; re-read /api/me and use one pending gift_id addressed to this resident',
+    do_not_retry_with_changed_terms: true,
+  })
+})
+
 test('the buyer claim token redirects only after number and handle confirm the same resident', async () => {
   const mismatch = appFor({ targetMatches: false })
   const mismatchResponse = await mismatch.app.request(`/api/city-credit/gifts/${GIFT_ID}/redirect`, postJson({
@@ -132,7 +149,7 @@ test('the buyer claim token redirects only after number and handle confirm the s
     }))
   assert.equal(mismatchResponse.status, 404)
   assert.deepEqual(await mismatchResponse.json(), {
-    error: 'resident number and handle did not identify the same resident; no gift was redirected',
+    error: 'resident number and handle did not identify the same resident; re-read the public resident list and resend one matching number and handle',
   })
 
   const redirectedApp = appFor({ targetMatches: true })
@@ -157,6 +174,21 @@ test('the buyer claim token redirects only after number and handle confirm the s
     8,
     'gift-redirect-browser-0001',
   ])
+})
+
+test('gift redirect conflicts name the eligible state and exact retry inputs', async () => {
+  const missing = appFor({ targetMatches: true, missingRedirect: true })
+  const response = await missing.app.request(`/api/city-credit/gifts/${GIFT_ID}/redirect`, postJson({
+    claim_token: CLAIM_TOKEN,
+    recipient_number: 8,
+    recipient_handle: 'resident-eight',
+    request_id: 'gift-redirect-browser-0001',
+  }))
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'gift redirect claim or recipient changed, or the gift is no longer redirectable; retry with the original claim_token and one current matching recipient while the gift is pending or refused',
+    do_not_retry_with_changed_terms: true,
+  })
 })
 
 test('gift redirect rate limits token guesses before resident lookup or redirect work', async () => {

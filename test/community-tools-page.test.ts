@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { COMMUNITY_TOOL_CATEGORIES, type CommunityToolQueueResult } from '../src/community-tool-submissions.ts'
@@ -71,6 +72,74 @@ test('/tools is only the searchable community list and its private queue form', 
   assert.match(html, /hidden spam check/iu)
   assert.match(html, /asks me, the maintainer, to list a tool[\s\S]*?not a city act/iu)
   assert.match(html, /humans still watch through the glass/iu)
+})
+
+test('the review route documents both community-tool migrations as pre-deploy prerequisites', () => {
+  const runbook = readFileSync(new URL('../docs/runbooks/ENVIRONMENT.md', import.meta.url), 'utf8')
+  assert.match(runbook, /both `db\/migrations\/20260901_community_tool_submissions\.sql` and/iu)
+  assert.match(runbook, /`db\/migrations\/20260901_community_tool_submission_privacy\.sql` are pre-deploy\s+prerequisites/iu)
+  assert.match(runbook, /founder review route at\s+`\/api\/founder\/community-tool-submissions`/iu)
+})
+
+test('GET /tools disables submissions and explains a missing or malformed address-hash key', async () => {
+  for (const [name, key] of [['missing', undefined], ['malformed', '1'.repeat(63)]] as const) {
+    const app = new Hono()
+    mountHumanPages(app, {
+      environment: { VERCEL: '1', COMMUNITY_TOOL_IP_HASH_KEY: key },
+      readCommunityToolsPageState: async () => pageState,
+    })
+
+    const response = await app.request('/tools')
+    const html = await response.text()
+    assert.equal(response.status, 200, name)
+    assert.match(html, /<button type="submit" disabled>Send for review<\/button>/u, name)
+    assert.match(html, /submission form is unavailable because its private address-limit key is not configured correctly/iu, name)
+    assert.match(html, /public GitHub issue fallback/iu, name)
+    assert.match(html, /Solward&#39;s Visual Wiki/u, name)
+  }
+})
+
+test('GET /tools keeps the checked-in list available when the private queue is unreachable', async () => {
+  const app = new Hono()
+  mountHumanPages(app, {
+    environment: { COMMUNITY_TOOL_IP_HASH_KEY },
+    readCommunityToolsPageState: async () => {
+      throw new Error('test queue outage')
+    },
+  })
+
+  const response = await app.request('/tools')
+  const html = await response.text()
+  assert.equal(response.status, 200)
+  assert.match(html, /Solward&#39;s Visual Wiki/u)
+  assert.match(html, /review queue is unavailable[\s\S]*checked-in tools below are still available/iu)
+  assert.match(html, /<button type="submit" disabled>Send for review<\/button>/u)
+})
+
+test('POST /tools stays fail-closed when the private queue is unreachable', async () => {
+  const app = new Hono()
+  mountHumanPages(app, {
+    publicOrigin: 'https://1f3d9.com',
+    environment: { COMMUNITY_TOOL_IP_HASH_KEY },
+    readCommunityToolsPageState: async () => pageState,
+    submitCommunityTool: async () => {
+      throw new Error('test queue outage')
+    },
+  })
+  const session = await formSession(app)
+
+  const response = await app.request('/tools', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'https://1f3d9.com',
+      cookie: session.cookie,
+    },
+    body: validForm(session.csrf).toString(),
+  })
+
+  assert.equal(response.status, 503)
+  assert.match(await response.text(), /could not save this submission.*not in the queue/iu)
 })
 
 test('a trusted, cookie-bound form queues once and prints the new exact waiting count', async () => {

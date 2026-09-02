@@ -139,7 +139,7 @@ async function readBoundedBody(c: Context, maximumBytes: number): Promise<Buffer
   }
   if (body.byteLength > maximumBytes) {
     throw new RouteFailure(400,
-      `The PayPal request body is larger than ${maximumBytes} bytes. No payment was started.`)
+      `The PayPal request body is larger than ${maximumBytes} bytes. Send one smaller JSON body; no payment was started.`)
   }
   return body
 }
@@ -147,14 +147,14 @@ async function readBoundedBody(c: Context, maximumBytes: number): Promise<Buffer
 async function readJsonBody(c: Context): Promise<JsonRecord> {
   const mediaType = (c.req.header('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
   if (mediaType !== 'application/json') {
-    throw new RouteFailure(400, 'Send one application/json body. No payment was started.')
+    throw new RouteFailure(400, 'The PayPal request Content-Type is not application/json. Send one application/json body. No payment was started.')
   }
   const raw = await readBoundedBody(c, MAX_JSON_BODY_BYTES)
   let parsed: unknown
   try {
     parsed = JSON.parse(raw.toString('utf8')) as unknown
   } catch {
-    throw new RouteFailure(400, 'The PayPal request JSON is invalid. No payment was started.')
+    throw new RouteFailure(400, 'The PayPal request JSON is invalid. Send one valid JSON object. No payment was started.')
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new RouteFailure(400, 'The PayPal request JSON must be one object. No payment was started.')
@@ -224,7 +224,7 @@ function exactAmount(value: unknown): Readonly<{ amountUnits: bigint; wholeDolla
 
 function remoteIdentifier(value: unknown, label: string): string {
   if (typeof value !== 'string' || !REMOTE_ID.test(value)) {
-    throw new RouteFailure(400, `${label} is invalid. No new payment was started.`)
+    throw new RouteFailure(400, `${label} does not match a PayPal identifier; resend the exact identifier returned by PayPal. No new payment was started.`)
   }
   return value
 }
@@ -242,7 +242,7 @@ async function confirmRecipient(
   expectedHandle: string,
 ) {
   const recipient = await findPayPalCreditRecipient(dependencies.database, number)
-  if (!recipient) throw new RouteFailure(404, 'That resident number was not found. No payment was started.')
+  if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Use a current number from GET /api/residents. No payment was started.')
   if (recipient.residentHandle !== expectedHandle) {
     throw new RouteFailure(409,
       'That resident number now has a different handle. Confirm the shown handle before paying.', {
@@ -313,7 +313,7 @@ function configuredOrigin(value: string): URL {
   try {
     origin = new URL(value)
   } catch {
-    throw new RouteFailure(503, 'PayPal callbacks are unavailable. No payment was started.')
+    throw new RouteFailure(503, 'PayPal callbacks are unavailable. Retry later with the same request_id. No payment was started.')
   }
   if (
     origin.protocol !== 'https:'
@@ -322,7 +322,7 @@ function configuredOrigin(value: string): URL {
     || origin.hash
     || origin.search
     || (origin.pathname !== '/' && origin.pathname !== '')
-  ) throw new RouteFailure(503, 'PayPal callbacks are unavailable. No payment was started.')
+  ) throw new RouteFailure(503, 'PayPal callbacks are unavailable. Retry later with the same request_id. No payment was started.')
   return origin
 }
 
@@ -332,14 +332,14 @@ function callbackUrl(
   state: 'return' | 'cancel' | 'allowance-return' | 'allowance-cancel',
 ): string {
   if (!PUBLIC_PURCHASE_ID.test(purchaseId)) {
-    throw new RouteFailure(400, 'PayPal purchase id is invalid. No payment was started.')
+    throw new RouteFailure(400, 'PayPal purchase id is invalid. Use the purchase_id from the original city response. No payment was started.')
   }
   const origin = configuredOrigin(dependencies.publicOrigin)
   const callback = new URL('/buy', origin)
   callback.searchParams.set('paypal', state)
   callback.searchParams.set('purchase_id', purchaseId)
   if (callback.origin !== origin.origin) {
-    throw new RouteFailure(503, 'PayPal callbacks are unavailable. No payment was started.')
+    throw new RouteFailure(503, 'PayPal callbacks are unavailable. Retry later with the same request_id. No payment was started.')
   }
   return callback.href
 }
@@ -379,7 +379,7 @@ async function ensureAllowancePlan(
     })
   }
   if (!current.planId) {
-    throw new RouteFailure(503, 'PayPal allowance setup is temporarily unavailable. No payment was started.')
+    throw new RouteFailure(503, 'PayPal allowance setup is temporarily unavailable. Retry later with the same request_id. No payment was started.')
   }
   return current.planId
 }
@@ -599,7 +599,7 @@ async function createAllowance(
   })
   if (intent.status === 'active') {
     throw new RouteFailure(409,
-      'This weekly allowance is already active. Do not create another subscription.', {
+      'This weekly allowance is already active. Use the existing active allowance; do not create another subscription.', {
         purchase_id: intent.purchaseId,
       })
   }
@@ -683,7 +683,7 @@ async function captureOrder(
   queryless(c)
   const purchaseId = c.req.param('purchaseId') ?? ''
   if (!PUBLIC_PURCHASE_ID.test(purchaseId)) {
-    throw new RouteFailure(400, 'PayPal purchase id is invalid. No new payment was started.')
+    throw new RouteFailure(400, 'PayPal purchase id is invalid. Use the purchase_id from the original city response. No new payment was started.')
   }
   const body = await readJsonBody(c)
   if (!hasOnly(body, ['paypal_order_id'])) {
@@ -694,11 +694,11 @@ async function captureOrder(
   await requireRateSlot(c, dependencies, null, 'capture')
   const intent = await readPayPalCreditIntent(dependencies.database, purchaseId)
   if (!intent || intent.intentKind !== 'order' || !intent.remoteOrderId) {
-    throw new RouteFailure(404, 'That PayPal purchase was not found. Do not start another payment.')
+    throw new RouteFailure(404, 'That PayPal purchase was not found. Inspect the original city response and resend its purchase_id; do not start another payment.')
   }
   if (intent.remoteOrderId !== paypalOrderId) {
     throw new RouteFailure(409,
-      'The PayPal order does not match this purchase. Do not start another payment.')
+      'The PayPal order does not match this purchase. Reload the return page with the matching purchase_id and paypal_order_id; do not start another payment.')
   }
   if (intent.paypalEnvironment !== ready.environment) {
     throw new RouteFailure(409,
@@ -775,7 +775,7 @@ export function mountPayPalCreditRoutes(
       await requireRateSlot(c, dependencies, null, 'prepare')
       const number = residentNumber(c.req.param('number'))
       const recipient = await findPayPalCreditRecipient(dependencies.database, number)
-      if (!recipient) throw new RouteFailure(404, 'That resident number was not found. No payment was started.')
+      if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Use a current number from GET /api/residents. No payment was started.')
       return c.json({
         resident_number: recipient.residentNumber,
         resident_handle: recipient.residentHandle,

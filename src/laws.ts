@@ -1,6 +1,7 @@
 import type { Resident } from './core.ts'
 import { sql } from './db.ts'
 import { stringList } from './input.ts'
+import { missingRecordRefusal } from './refusal-text.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 
 export interface PublicLaw {
@@ -36,7 +37,15 @@ export async function replacePlaceLaws(
     retired_at: string | null
   }>
   const place = placeRows[0]
-  if (!place) return Object.freeze({ error: 'place not found', status: 404 })
+  if (!place) {
+    return Object.freeze({
+      error: missingRecordRefusal(
+        `place_id ${placeId}`,
+        'use GET /api/map?view=outline and send a current place_id',
+      ),
+      status: 404,
+    })
+  }
   if (isWorldRootRow(place)) {
     return Object.freeze({ error: WORLD_TRANSIT_ONLY_ERROR, status: 403 })
   }
@@ -53,7 +62,13 @@ export async function replacePlaceLaws(
   if (traits.length !== names.length) {
     const found = new Set(traits.map(trait => trait.name))
     const missing = names.filter(name => !found.has(name))
-    return Object.freeze({ error: `unknown trait: ${missing.join(', ')}`, status: 404 })
+    return Object.freeze({
+      error: missingRecordRefusal(
+        `trait name ${missing.join(', ')}`,
+        'use GET /api/traits and send only current trait names',
+      ),
+      status: 404,
+    })
   }
 
   const ordered = names.map((name, position) => {

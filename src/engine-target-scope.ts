@@ -2,14 +2,14 @@ import { EngineError, type RuntimeTarget, type TaggedSql } from './engine.ts'
 
 async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
   const value = await promise
-  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
+  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result; retry once, then contact the city operator')
   return value as T[]
 }
 
 function positiveInteger(value: unknown, field: string): number {
   const parsed = typeof value === 'string' && /^\d+$/u.test(value) ? Number(value) : value
   if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new EngineError(500, `database returned an invalid ${field}`)
+    throw new EngineError(500, `database returned an invalid ${field}; retry once, then contact the city operator`)
   }
   return parsed
 }
@@ -23,10 +23,10 @@ export async function requireResidentAtActionPlace(
     SELECT current_place_id FROM resident_presence
     WHERE resident_id = ${residentId} FOR UPDATE
   `)
-  if (!rows[0]) throw new EngineError(404, 'resident presence not found')
+  if (!rows[0]) throw new EngineError(404, 'resident presence was not found; reconnect with the current resident key and retry')
   const currentPlaceId = rows[0].current_place_id
   if (actionPlaceId === null) {
-    throw new EngineError(403, 'target resident cannot be used because place_id is unset')
+    throw new EngineError(403, 'target resident cannot be used because place_id is unset; send place_id and retry')
   }
   if (currentPlaceId == null) {
     throw new EngineError(
@@ -57,7 +57,7 @@ export async function requireCallerTargetScope(
     if (actionPlaceId === null) {
       throw new EngineError(
         403,
-        `target place_id ${target.id} cannot be used because place_id is unset`,
+        `target place_id ${target.id} cannot be used because place_id is unset; send place_id and retry`,
       )
     }
     if (actionPlaceId !== target.id) {
@@ -71,9 +71,9 @@ export async function requireCallerTargetScope(
       WHERE id = ${target.id} FOR UPDATE
     `)
     const thing = rows[0]
-    if (!thing || thing.withdrawn_at != null) throw new EngineError(404, 'thing target not found')
+    if (!thing || thing.withdrawn_at != null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
     if (actionPlaceId === null) {
-      throw new EngineError(403, 'target thing cannot be used because place_id is unset')
+      throw new EngineError(403, 'target thing cannot be used because place_id is unset; send place_id and retry')
     }
     const targetPlaceId = positiveInteger(thing.place_id, 'thing place id')
     if (targetPlaceId !== actionPlaceId) {
@@ -88,8 +88,8 @@ export async function requireCallerTargetScope(
   const rows = await queryRows<Record<string, unknown>>(db`
     SELECT owner_id FROM kinds WHERE id = ${target.id} FOR UPDATE
   `)
-  if (!rows[0]) throw new EngineError(404, 'kind target not found')
+  if (!rows[0]) throw new EngineError(404, 'kind target was not found; choose a current kind_id from GET /api/kinds')
   if (positiveInteger(rows[0].owner_id, 'kind owner id') !== actorId) {
-    throw new EngineError(403, 'target kind is not owned by you')
+    throw new EngineError(403, 'target kind is not owned by you; choose a kind you own')
   }
 }

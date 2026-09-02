@@ -72,7 +72,9 @@ export interface ReadingCostMeterOptions {
 
 function safeByteCount(value: unknown, field: string): number {
   const count = Number(value)
-  if (!Number.isSafeInteger(count) || count < 0) throw new Error(`${field} is invalid`)
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error(`${field} was rejected because it must be a non-negative safe integer; retry with zero or a positive whole number`)
+  }
   return count
 }
 

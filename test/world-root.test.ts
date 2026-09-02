@@ -12,6 +12,14 @@ import {
 } from '../src/engine.ts'
 import { publicPlaceTree } from '../src/window.ts'
 import { buildPlaceTree, type PlaceRow } from '../src/world-support.ts'
+import { WORLD_TRANSIT_ONLY_ERROR } from '../src/world-root.ts'
+
+test('the shared world refusal names the usable next choices', () => {
+  assert.equal(
+    WORLD_TRANSIT_ONLY_ERROR,
+    'the world is transit only; move through it, claim a frontier continent, or use an owned place instead',
+  )
+})
 
 interface Call {
   text: string
@@ -295,7 +303,7 @@ test('a resident can walk from one continent to another only through their world
   await assert.rejects(moveResident(7, 3, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'move must cross one parent-child edge'
+    && error.message === 'place_id 3 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time'
   ))
   assert.equal((await moveResident(7, 1, db)).currentPlaceId, 1)
   assert.equal((await moveResident(7, 3, db)).currentPlaceId, 3)
@@ -331,7 +339,7 @@ test('a null-location resident is seeded at world and cannot use first move to s
   await assert.rejects(moveResident(7, 4, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'move must cross one parent-child edge'
+    && error.message === 'place_id 4 exists, but entry is closed from your current place_id 1; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time'
   ))
   assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 })
@@ -359,7 +367,7 @@ test('an expand-only resident cannot move before a world or owned location exist
   await assert.rejects(moveResident(7, 4, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 409
-    && error.message === 'resident has no current place'
+    && error.message === 'resident has no current place; reconnect with the current resident key and retry, then contact the city operator'
   ))
   assert.equal(calls.some(call => /SELECT id, parent_id, retired_at FROM places/.test(call.text)), false)
   assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), false)

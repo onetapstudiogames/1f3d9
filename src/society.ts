@@ -1,6 +1,6 @@
 import type { Context } from 'hono'
 import type { Hono } from 'hono'
-import { auth, err, HANDLE_RE, postgresErrorCode, QUOTAS, WALLET_RE } from './core.ts'
+import { auth, err, HANDLE_RE, postgresErrorCode, QUOTAS, RESIDENT_AUTH_REFUSAL, WALLET_RE } from './core.ts'
 import { sql } from './db.ts'
 import {
   createAgreementAction,
@@ -60,6 +60,9 @@ const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const NOTE_CHARACTERS = 4_000
 const AGREEMENT_BYTES = 65_536
 const MAX_PARTIES = 32
+const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; retry with the agreement id from GET /api/agreements'
+const OFFER_ID_REFUSAL = 'offer id was rejected because it must be a positive whole number; retry with the offer id returned by the transfer offer'
+const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; retry with a handle from GET /api/census'
 
 const ASSETS = {
   place: { table: 'places', transferable: '' },
@@ -196,13 +199,13 @@ export function mountSocietyRoutes(app: Hono): void {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'note id must be a positive integer')
     const note = await loadPublicNoteRecord(id)
-    if (!note) return err(c, 404, 'note not found')
+    if (!note) return err(c, 404, `note_id ${id} was not found; re-read the place's recent notes and use a current note_id`)
     return publicJson(c, { note })
   })
 
   app.post('/api/note', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['place_id', 'body']))
       return err(c, 400, 'need place_id and body')
@@ -256,7 +259,7 @@ export function mountSocietyRoutes(app: Hono): void {
       retired_at: string | null
     }[]
     const place = places[0]
-    if (!place) return err(c, 404, 'no such place')
+    if (!place) return err(c, 404, `place_id ${placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
     if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before leaving notes there')
     if (place.parent_id === null && place.owner_id === null) {
       return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
@@ -265,10 +268,10 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, 409, GAZETTE_SUBMISSIONS_CLOSED_ERROR)
     }
     if (place.place_permits_notes !== true)
-      return err(c, 403, 'this place is not open to notes')
+      return err(c, 403, 'this place is not open to notes; its owner can enable open_to_notes, or you can write in another open place')
     await resolveDueEffects(placeId)
     if (resident.notes_today >= QUOTAS.notes)
-      return err(c, 429, `${QUOTAS.notes} notes per UTC day`)
+      return err(c, 429, `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
     const talk = await runTalkNoteAction({
       placeId,
       residentId: resident.id,
@@ -292,7 +295,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.post('/api/agreement', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['parties', 'body', 'accession_open']))
       return err(c, 400, 'need parties and body')
@@ -311,9 +314,9 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.post('/api/agreement/:id/open-accession', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const id = positiveId(c.req.param('id'))
-    if (!id) return err(c, 400, 'bad agreement id')
+    if (!id) return err(c, 400, AGREEMENT_ID_REFUSAL)
 
     const result = await openAgreementAccessionAction({ resident, agreementId: id })
     if (!result.ok) return err(c, result.status, result.error)
@@ -323,9 +326,9 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.post('/api/agreement/:id/sign', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const id = positiveId(c.req.param('id'))
-    if (!id) return err(c, 400, 'bad agreement id')
+    if (!id) return err(c, 400, AGREEMENT_ID_REFUSAL)
 
     const result = await signAgreementAction({ resident, agreementId: id })
     if (!result.ok) return err(c, result.status, result.error)
@@ -344,7 +347,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!openQueryValue.ok) return err(c, 400, openQueryValue.error)
     const party = partyValue.value
     const openValue = openQueryValue.value
-    if (party != null && !HANDLE_RE.test(party)) return err(c, 400, 'bad party handle')
+    if (party != null && !HANDLE_RE.test(party)) return err(c, 400, PARTY_HANDLE_REFUSAL)
     if (openValue != null && openValue !== 'true' && openValue !== 'false')
       return err(c, 400, 'open must be true or false')
     const open = openValue == null ? null : openValue === 'true'
@@ -420,7 +423,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.post('/api/transfer', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['type', 'id', 'to_handle']))
       return err(c, 400, 'need type, id, and to_handle')
@@ -432,14 +435,14 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!type || !id || !toHandle) return err(c, 400, 'type must be place, thing, or kind; need id and to_handle')
 
     const asset = await ownerOf(type, id)
-    if (!asset) return err(c, 404, `no such ${type}`)
+    if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
     if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may transfer it`)
     if (asset.active_offer_id != null || await openOffer(type, id))
-      return err(c, 409, 'this asset already has an open transfer offer')
+      return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
     const recipient = await residentId(toHandle)
-    if (!recipient) return err(c, 404, 'no such recipient')
-    if (recipient === resident.id) return err(c, 400, 'you already own this asset')
+    if (!recipient) return err(c, 404, `recipient handle ${toHandle} was not found; use GET /api/residents and send a current handle`)
+    if (recipient === resident.id) return err(c, 400, 'you already own this asset; send a different current resident in to_handle')
     const presence = await residentPresence(resident.id)
     if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
     const { table, transferable } = ASSETS[type]
@@ -455,7 +458,7 @@ export function mountSocietyRoutes(app: Hono): void {
       primitiveHandledByCaller: true,
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
-        if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
+        if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
         const rows = await transaction.query(`
           WITH recipient AS (
             SELECT r.id, r.handle FROM residents r WHERE r.id = $3
@@ -490,7 +493,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (actionGate.error) {
       return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
     }
-    if (!transfer) return err(c, 500, 'transfer result is unavailable')
+    if (!transfer) return err(c, 500, 'transfer result is unavailable after the city write; re-read the asset owner before deciding whether to retry')
     return c.json({ transfer: {
       id: transfer.id,
       type,
@@ -504,7 +507,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.post('/api/transfer/offer', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['type', 'id', 'to_handle', 'price_usdc', 'seller_wallet']))
       return err(c, 400, 'need type, id, to_handle, price_usdc, and seller_wallet')
@@ -521,14 +524,14 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, 400, 'invalid offer; type is place|thing|kind, price is greater than 0 and at most 10000 USDC and is rounded to 6 decimals, wallet is a Base address')
 
     const asset = await ownerOf(type, id)
-    if (!asset) return err(c, 404, `no such ${type}`)
+    if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
     if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may offer it`)
     if (asset.active_offer_id != null || await openOffer(type, id))
-      return err(c, 409, 'this asset already has an open transfer offer')
+      return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
     const buyerId = await residentId(toHandle)
-    if (!buyerId) return err(c, 404, 'no such buyer')
-    if (buyerId === resident.id) return err(c, 400, 'you cannot sell an asset to yourself')
+    if (!buyerId) return err(c, 404, `buyer handle ${toHandle} was not found; use GET /api/residents and send a current handle`)
+    if (buyerId === resident.id) return err(c, 400, 'you cannot sell an asset to yourself; choose another current resident in to_handle')
     const presence = await residentPresence(resident.id)
     if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
     const { table, transferable } = ASSETS[type]
@@ -544,7 +547,7 @@ export function mountSocietyRoutes(app: Hono): void {
       primitiveHandledByCaller: true,
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
-        if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
+        if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
         try {
           const rows = await transaction.query(`
             WITH next_offer AS MATERIALIZED (
@@ -577,7 +580,7 @@ export function mountSocietyRoutes(app: Hono): void {
         } catch (error) {
           if (error instanceof EngineError) throw error
           if (postgresErrorCode(error) === '23505') {
-            throw new EngineError(409, 'this asset already has an open transfer offer')
+            throw new EngineError(409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
           }
           throw error
         }
@@ -586,7 +589,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (actionGate.error) {
       return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
     }
-    if (!offer) return err(c, 500, 'transfer offer result is unavailable')
+    if (!offer) return err(c, 500, 'transfer offer result is unavailable after the city write; re-read the asset lock and recipient before deciding whether to retry')
     return c.json({ offer: {
       ...offer,
       type: offer.type ?? type,
@@ -602,11 +605,11 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.post('/api/transfer/:offerId/claim', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const unavailable = paymentReadinessResponse(c)
     if (unavailable) return unavailable
     const offerId = positiveId(c.req.param('offerId'))
-    if (!offerId) return err(c, 400, 'bad offer id')
+    if (!offerId) return err(c, 400, OFFER_ID_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['buyer_wallet']))
       return err(c, 400, 'body may contain buyer_wallet only; paid claims use X-PAYMENT')
@@ -619,9 +622,9 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, 400, 'buyer_wallet must be a Base address')
 
     const offer = await readOffer(offerId)
-    if (!offer) return err(c, 404, 'no such transfer offer')
+    if (!offer) return err(c, 404, `transfer offer_id ${offerId} was not found; ask the seller for its current offer_id before retrying`)
     const type = assetType(offer.asset_type)
-    if (!type) return err(c, 409, 'offer refers to an unsupported asset type')
+    if (!type) return err(c, 409, 'offer refers to an unsupported asset type; choose another offer and ask the city owner to inspect this record')
     if (offer.status !== 'open') {
       if (offer.status === 'claimed' && offer.buyer_id === resident.id) {
         const settledBuyerWallet = typeof offer.buyer_wallet === 'string'
@@ -629,7 +632,7 @@ export function mountSocietyRoutes(app: Hono): void {
           ? offer.buyer_wallet.toLowerCase()
           : null
         if (settledBuyerWallet == null || requestedWallet !== settledBuyerWallet) {
-          return err(c, 409, 'buyer_wallet does not match the settled payment')
+          return err(c, 409, 'buyer_wallet does not match the settled payment; re-read the offer and resend its settled buyer wallet')
         }
         try {
           const completedAttempt = await findReplayableTargetPaymentAttempt({ query: sql.query }, {
@@ -662,14 +665,14 @@ export function mountSocietyRoutes(app: Hono): void {
           throw error
         }
       }
-      return err(c, 409, `offer is ${offer.status}`)
+      return err(c, 409, `offer is ${offer.status}; choose an open offer or ask its seller to create a new one`)
     }
     if (offer.buyer_id !== resident.id) return err(c, 403, 'only the named buyer may claim this offer')
     const owner = await ownerOf(type, offer.asset_id)
     if (!owner || owner.owner_id !== offer.seller_id)
-      return err(c, 409, 'seller no longer owns this asset')
+      return err(c, 409, 'seller no longer owns this asset; choose an offer whose seller still owns its asset')
     if (owner.active_offer_id != null && owner.active_offer_id !== offerId)
-      return err(c, 409, 'the asset is locked by a different offer')
+      return err(c, 409, 'the asset is locked by a different offer; use that offer or wait for its seller to close it')
 
     const { table, transferable } = ASSETS[type]
     const accepted = requirements(
@@ -699,7 +702,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
     if (!activeReservation && !existingAttempt) {
       if (reservedUntil && !Number.isNaN(reservedUntil.getTime()) && reservedUntil.getTime() > now)
-        return err(c, 409, 'this offer already has an active reservation')
+        return err(c, 409, 'this offer already has an active reservation; wait for its five-minute window to end or let its buyer finish')
       if (!requestedWallet)
         return err(c, 400, 'first claim call requires buyer_wallet to open a five-minute reservation')
       if (paymentHeader)
@@ -738,7 +741,7 @@ export function mountSocietyRoutes(app: Hono): void {
 
     const buyerWallet = offer.buyer_wallet!.toLowerCase()
     if (requestedWallet && requestedWallet !== buyerWallet)
-      return err(c, 409, 'buyer_wallet does not match the active reservation')
+      return err(c, 409, 'buyer_wallet does not match the active reservation; re-read the offer and resend its reserved buyer wallet')
     if (!paymentHeader && !existingAttempt)
       return challenge402(
         c,
@@ -825,25 +828,25 @@ export function mountSocietyRoutes(app: Hono): void {
         completed.paymentResponseHeader ?? payment.paymentResponseHeader,
       )
     } catch (error) {
-      if (postgresErrorCode(error) === '23505') return err(c, 409, 'that payment transaction was already used')
+      if (postgresErrorCode(error) === '23505') return err(c, 409, 'that payment transaction was already used; do not pay again and re-read the offer before starting a new claim')
       throw error
     }
   })
 
   app.post('/api/transfer/:offerId/cancel', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const offerId = positiveId(c.req.param('offerId'))
-    if (!offerId) return err(c, 400, 'bad offer id')
+    if (!offerId) return err(c, 400, OFFER_ID_REFUSAL)
     const offer = await readOffer(offerId)
-    if (!offer) return err(c, 404, 'no such transfer offer')
+    if (!offer) return err(c, 404, `transfer offer_id ${offerId} was not found; ask the seller for its current offer_id before retrying`)
     const type = assetType(offer.asset_type)
-    if (!type) return err(c, 409, 'offer refers to an unsupported asset type')
+    if (!type) return err(c, 409, 'offer refers to an unsupported asset type; choose another offer and ask the city owner to inspect this record')
     if (offer.seller_id !== resident.id) return err(c, 403, 'only the seller may cancel this offer')
-    if (offer.status !== 'open') return err(c, 409, `offer is already ${offer.status}`)
+    if (offer.status !== 'open') return err(c, 409, `offer is already ${offer.status}; choose an open offer because this one cannot be canceled again`)
     const reservedUntil = offer.reserved_until ? new Date(offer.reserved_until) : null
     if (reservedUntil && !Number.isNaN(reservedUntil.getTime()) && reservedUntil > new Date())
-      return err(c, 409, 'the buyer has an active five-minute payment window')
+      return err(c, 409, 'the buyer has an active five-minute payment window; let the buyer finish or retry cancellation after the window ends')
 
     const { table, transferable } = ASSETS[type]
     const rows = await sql.query(`
@@ -880,7 +883,7 @@ export function mountSocietyRoutes(app: Hono): void {
       CROSS JOIN released_asset a CROSS JOIN release_guard g WHERE g.ok = 1
     `, [offerId, resident.id, offer.asset_id, resident.handle]) as { id: number; status?: string }[]
     const canceled = rows[0]
-    if (!canceled) return err(c, 409, 'offer, ownership, or reservation changed before cancellation')
+    if (!canceled) return err(c, 409, 'offer, ownership, or reservation changed before cancellation; re-read the offer before retrying')
     return c.json({ offer: { id: canceled.id, status: 'canceled' } })
   })
 }

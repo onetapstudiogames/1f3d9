@@ -1,4 +1,5 @@
 import type { Resident } from './core.ts'
+import { missingRecordRefusal } from './refusal-text.ts'
 import { sql } from './db.ts'
 
 export type WithdrawalFailure = Readonly<{
@@ -34,13 +35,29 @@ export async function withdrawThing(
     WHERE thing.id = ${thingId}
   ` as ThingState[]
   const thing = states[0]
-  if (!thing) return Object.freeze({ error: 'thing not found', status: 404 })
+  if (!thing) {
+    return Object.freeze({
+      error: missingRecordRefusal(
+        `thing_id ${thingId}`,
+        'use GET /api/things and send an active thing_id you own',
+      ),
+      status: 404,
+    })
+  }
   if (thing.owner_id !== actor.id) {
     return Object.freeze({ error: 'only the thing owner may withdraw it', status: 403 })
   }
-  if (thing.withdrawn_at) return Object.freeze({ error: 'thing is already withdrawn', status: 409 })
+  if (thing.withdrawn_at) {
+    return Object.freeze({
+      error: `thing_id ${thingId} is already withdrawn; choose another active thing because withdrawal is permanent`,
+      status: 409,
+    })
+  }
   if (thing.active_offer_id != null || thing.has_open_offer) {
-    return Object.freeze({ error: 'thing cannot be withdrawn while it has an open sale offer', status: 409 })
+    return Object.freeze({
+      error: 'thing cannot be withdrawn while it has an open sale offer; close that offer before withdrawing the thing',
+      status: 409,
+    })
   }
 
   const rows = await sql`

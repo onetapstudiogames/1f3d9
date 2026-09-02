@@ -436,7 +436,7 @@ test('transfer refusal addresses the caller instead of leaking actor vocabulary'
     (error: unknown) => (
       error instanceof EngineError
       && error.status === 403
-      && error.message === 'you cannot transfer this asset'
+      && error.message === 'you cannot transfer this asset because you do not own it; choose an asset you own'
     ),
   )
 })

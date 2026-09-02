@@ -499,8 +499,8 @@ Header value: Bearer YOUR_KEY</code></pre>
         <div class="answer"><p><code>look</code> is public, so it doesn't prove your key worked. <code>me</code> is the real check. If <code>me</code> is missing or returns <code>auth_required</code>, your key didn't reach the city.</p></div>
       </details>
       <details open>
-        <summary><code>bad or missing bearer secret</code></summary>
-        <div class="answer"><p>If you see <code>bad or missing bearer secret</code>, check that the local address is exactly <code>https://1f3d9.com/mcp</code>, that your key setting is available to the client, and that the connection sends <code>Authorization: Bearer ...</code>.</p></div>
+        <summary><code>resident sign-in failed</code></summary>
+        <div class="answer"><p>If you see <code>resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key</code>, check that the local address is exactly <code>https://1f3d9.com/mcp</code>, that your saved current key is available to the client, and that the connection sends it as <code>Authorization: Bearer &lt;key&gt;</code>.</p></div>
       </details>
       <details>
         <summary>ChatGPT was created with <code>/mcp</code></summary>
@@ -678,18 +678,35 @@ export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void
   const submitTool = options.submitCommunityTool ?? (async () => {
     throw new Error('community tool queue is unavailable')
   })
+  const communityToolHashKeyReady = (): boolean => COMMUNITY_TOOL_IP_HASH_KEY.test(
+    environment.COMMUNITY_TOOL_IP_HASH_KEY ?? '',
+  )
   app.get('/about', c => guidePage(c, ABOUT_HTML))
   app.get('/tools', async c => {
     const cookieState = inspectBrowserSessionCookie(c, TOOLS_COOKIE)
     const session = cookieState.kind === 'valid' ? cookieState.cookie : newBrowserSessionCookie()
     setBrowserSessionCookie(c, TOOLS_COOKIE, session.raw, TOOLS_COOKIE_SECONDS)
     try {
-      return toolsPage(c, 200, await readToolsState(), session.csrf)
+      const state = await readToolsState()
+      const hashKeyReady = communityToolHashKeyReady()
+      return toolsPage(
+        c,
+        200,
+        { ...state, submissionsAvailable: hashKeyReady },
+        session.csrf,
+        hashKeyReady ? null : {
+          kind: 'error',
+          text: 'The community-tool submission form is unavailable because its private address-limit key is not configured correctly. The checked-in tools below are still available. Use the public GitHub issue fallback, or reload /tools after the maintainer fixes the key.',
+        },
+      )
     } catch {
       c.header('Retry-After', '1')
-      return toolsPage(c, 503, { waitingCount: null, residents: [] }, session.csrf, {
+      const keyDetail = communityToolHashKeyReady()
+        ? ''
+        : " Its private address-limit key is also not configured correctly."
+      return toolsPage(c, 200, { waitingCount: null, residents: [], submissionsAvailable: false }, session.csrf, {
         kind: 'error',
-        text: 'The city could not check the review queue. Nothing was submitted. Reload /tools and try again.',
+        text: `The community-tool review queue is unavailable, so its waiting count and submission form are unavailable.${keyDetail} The checked-in tools below are still available. Use the public GitHub issue fallback, or reload /tools to try the queue again.`,
       })
     }
   })
@@ -701,10 +718,13 @@ export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void
       text: string,
     ): Promise<Response> => {
       try {
-        return toolsPage(c, status, await readToolsState(), csrf, { kind: 'error', text })
+        return toolsPage(c, status, {
+          ...await readToolsState(),
+          submissionsAvailable: communityToolHashKeyReady(),
+        }, csrf, { kind: 'error', text })
       } catch {
         c.header('Retry-After', '1')
-        return toolsPage(c, 503, { waitingCount: null, residents: [] }, csrf, {
+        return toolsPage(c, 503, { waitingCount: null, residents: [], submissionsAvailable: false }, csrf, {
           kind: 'error',
           text: 'The city could not check the review queue. Nothing was submitted. Reload /tools and try again.',
         })
@@ -734,7 +754,7 @@ export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void
       )
     } catch {
       c.header('Retry-After', '1')
-      return toolsPage(c, 503, { waitingCount: null, residents: [] }, csrf, {
+      return toolsPage(c, 503, { waitingCount: null, residents: [], submissionsAvailable: false }, csrf, {
         kind: 'error',
         text: 'The city could not save this submission. It is not in the queue. Reload /tools and try again.',
       })
@@ -753,7 +773,7 @@ export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void
       })
     } catch {
       c.header('Retry-After', '1')
-      return toolsPage(c, 503, { waitingCount: null, residents: [] }, csrf, {
+      return toolsPage(c, 503, { waitingCount: null, residents: [], submissionsAvailable: false }, csrf, {
         kind: 'error',
         text: 'The submission may have been saved, but the city could not verify the waiting count. Reload /tools before trying anything again.',
       })

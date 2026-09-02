@@ -140,7 +140,11 @@ test('invalid actor, output, kind, and place fields fail without a database quer
   for (const candidate of invalidInputs) {
     const fake = makeSql()
     const result = await craftKindThing(fake.sql, candidate)
-    assert.deepEqual(result, { ok: false, status: 400, error: 'invalid crafting request' })
+    assert.deepEqual(result, {
+      ok: false,
+      status: 400,
+      error: 'crafting request was rejected because its resident, kind, place, body, or open_to_use value is invalid; retry with the documented craft fields and limits',
+    })
     assert.equal(fake.calls.length, 0)
   }
 })
@@ -148,13 +152,13 @@ test('invalid actor, output, kind, and place fields fail without a database quer
 test('missing kinds and places return 404 without attempting the atomic commit', async () => {
   const missingKind = makeSql({ kindRows: [] })
   assert.deepEqual(await craftKindThing(missingKind.sql, input), {
-    ok: false, status: 404, error: 'kind not found',
+    ok: false, status: 404, error: 'kind_id 9 was not found; use GET /api/kinds and send a current kind_id',
   })
   assert.deepEqual(missingKind.calls.map(call => call.marker), ['kind'])
 
   const missingPlace = makeSql({ placeRows: [] })
   assert.deepEqual(await craftKindThing(missingPlace.sql, input), {
-    ok: false, status: 404, error: 'place not found',
+    ok: false, status: 404, error: 'place_id 3 was not found; use GET /api/map?view=outline and send a current place_id',
   })
   assert.deepEqual(missingPlace.calls.map(call => call.marker), ['kind', 'place'])
 })
@@ -164,7 +168,9 @@ test('a place must be owned by the actor or open to things', async () => {
   const result = await craftKindThing(fake.sql, input)
 
   assert.deepEqual(result, {
-    ok: false, status: 409, error: 'target place does not accept things',
+    ok: false,
+    status: 409,
+    error: 'target place does not accept things; its owner can enable open_to_things, or you can craft in your own or another open place',
   })
   assert.equal(fake.calls.some(call => call.marker === 'commit'), false)
 })
@@ -194,7 +200,7 @@ test('malformed stored recipes are wholly unavailable and never partially crafte
   const result = await craftKindThing(fake.sql, input)
 
   assert.deepEqual(result, {
-    ok: false, status: 409, error: 'kind recipe is invalid; crafting is unavailable',
+    ok: false, status: 409, error: 'kind recipe is invalid; its owner must revise it before anyone can craft this kind',
   })
   assert.deepEqual(fake.calls.map(call => call.marker), ['kind', 'place'])
 })
@@ -206,7 +212,7 @@ test('future kind references remain valid definitions but make crafting unavaila
   assert.deepEqual(result, {
     ok: false,
     status: 409,
-    error: 'kind recipe references kinds that do not exist yet',
+    error: 'kind recipe references kinds that do not exist yet; coin every named kind before retrying this recipe',
   })
   assert.deepEqual(fake.calls.map(call => call.marker), ['kind', 'place', 'known-kinds'])
 })
@@ -229,7 +235,9 @@ test('ingredients must match exact quantities with no missing or extra things', 
     const fake = makeSql({ ingredientRows })
     const result = await craftKindThing(fake.sql, input)
     assert.deepEqual(result, {
-      ok: false, status: 409, error: 'ingredients do not exactly match the current recipe',
+      ok: false,
+      status: 409,
+      error: 'ingredients do not exactly match the current recipe; re-read the kind and retry with every required ingredient in its exact quantity',
     })
     assert.equal(fake.calls.some(call => call.marker === 'commit'), false)
   }
@@ -363,7 +371,7 @@ test('an empty recipe requires no ingredients and still creates exactly one outp
 test('an empty atomic result distinguishes quota exhaustion from a concurrent conflict', async () => {
   const exhausted = makeSql({ commitRows: [], quotaRows: [{ available: false }] })
   assert.deepEqual(await craftKindThing(exhausted.sql, input), {
-    ok: false, status: 429, error: 'daily thing limit reached (20)',
+    ok: false, status: 429, error: 'daily thing limit reached (20); retry after the UTC day resets',
   })
 
   const changed = makeSql({ commitRows: [], quotaRows: [{ available: true }] })
@@ -373,7 +381,7 @@ test('an empty atomic result distinguishes quota exhaustion from a concurrent co
 
   const missingActor = makeSql({ commitRows: [], quotaRows: [] })
   assert.deepEqual(await craftKindThing(missingActor.sql, input), {
-    ok: false, status: 404, error: 'resident not found',
+    ok: false, status: 404, error: 'resident record for maker-bot was not found; reconnect with the current resident key and retry',
   })
 })
 

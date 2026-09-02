@@ -174,7 +174,7 @@ function safeTargetKey(value: unknown): string {
     || Buffer.byteLength(value, 'utf8') > 240
     || /[\u0000-\u001f\u007f]/u.test(value)
     || containsCredentialLikeInput(value)
-  ) throw new TypeError('city credit target key is invalid')
+  ) throw new TypeError('city credit target key must be 1 to 240 safe non-secret bytes')
   return value
 }
 
@@ -183,7 +183,7 @@ function eligibleOperation(value: unknown): CityFeeCreditOperation {
     'frontier', 'kind_invention', 'kind_revision',
     'place_rename', 'place_retire', 'place_restore',
   ].includes(String(value))) {
-    throw new TypeError('operation is not eligible for city fee credit')
+    throw new TypeError('operation is not eligible for city fee credit; use frontier, kind_invention, kind_revision, place_rename, place_retire, or place_restore')
   }
   return value as CityFeeCreditOperation
 }
@@ -284,7 +284,7 @@ export async function issueCityFeeCredit(
     `, [sourceKey])
     row = replayRows[0]
   }
-  if (!row) throw new CityCreditConflictError('resident was not found or city credit issuance conflicted')
+  if (!row) throw new CityCreditConflictError('resident was not found or city credit issuance conflicted; re-read GET /api/residents and retry with a current resident and the original source terms')
   if (
     String(row.entry_kind) !== 'founder_issue'
     || integerValue(row.resident_id, 'credit resident') !== residentId
@@ -292,7 +292,7 @@ export async function issueCityFeeCredit(
     || bigintString(row.amount_units, 'credit amount') !== CITY_FEE_CREDIT_UNITS.toString()
     || String(row.source_key) !== sourceKey
     || String(row.reason) !== reason
-  ) throw new CityCreditConflictError('city credit source key is already bound to changed resident or reason terms')
+  ) throw new CityCreditConflictError('city credit source key is already bound to different resident or reason terms; retry with the original terms or use a new source key')
 
   // The balance projection is maintained by an AFTER INSERT trigger. PostgreSQL
   // intentionally does not expose that trigger write to the outer query in the
@@ -304,7 +304,7 @@ export async function issueCityFeeCredit(
     WHERE resident_id = $1::integer
   `, [residentId])
   const balanceRow = balanceRows[0]
-  if (!balanceRow) throw new CityCreditConflictError('city credit balance projection was not created')
+  if (!balanceRow) throw new CityCreditConflictError('city credit balance projection was not created because the balance record is missing; retry once, then contact the city operator')
 
   const amountUnits = bigintString(row.amount_units, 'credit amount')
   const balanceUnits = bigintString(balanceRow.balance_units, 'credit balance')
@@ -387,7 +387,7 @@ function verifySpendTerms(
     || storedAssetType !== (input.assetType ?? null)
     || storedAssetId !== (input.assetId ?? null)
     || (row.method != null && String(row.method) !== 'credit')
-  ) throw new CityCreditConflictError('city credit request conflicts with changed immutable credit terms')
+  ) throw new CityCreditConflictError('city credit request conflicts with changed immutable credit terms; use the original terms with this request id, or use a new request id')
 }
 
 async function executeBeginSpend(
@@ -550,7 +550,7 @@ export async function beginCityCreditSpend(
       throw new CityCreditConflictError('city credit deadline return is busy; retry the same request id')
     }
     if (deadlineReturn.state === 'not_due') {
-      throw new CityCreditConflictError('city credit deadline return is not yet available')
+      throw new CityCreditConflictError('city credit deadline return is not yet available; wait until the payment deadline, then retry the same request id')
     }
     rows = await executeBeginSpend(database, normalized, requestId, request)
     row = rows[0]
@@ -559,10 +559,10 @@ export async function beginCityCreditSpend(
   verifySpendTerms(row, normalized, requestId, request)
   const state = String(row.state)
   const attemptId = String(row.attempt_id)
-  if (!attemptId) throw new TypeError('city credit attempt is unavailable')
+  if (!attemptId) throw new TypeError('city credit attempt is unavailable because its stored attempt id is missing; retry once, then contact the city operator')
   if (state === 'completed') {
     const response = optionalJsonObject(row.response_json, 'credit response')
-    if (!response) throw new CityCreditConflictError('completed city credit response is unavailable')
+    if (!response) throw new CityCreditConflictError('completed city credit response is unavailable because its stored response is missing; retry once, then contact the city operator')
     return {
       state: 'completed' as const,
       attempt_id: attemptId,
@@ -575,7 +575,7 @@ export async function beginCityCreditSpend(
   if (state === 'returned') {
     const response = optionalJsonObject(row.response_json, 'credit return response')
     if (!response || row.return_entry_id == null) {
-      throw new CityCreditConflictError('returned city credit response is unavailable')
+      throw new CityCreditConflictError('returned city credit response is unavailable because its stored response is missing; retry once, then contact the city operator')
     }
     return {
       state: 'returned' as const,
@@ -587,7 +587,7 @@ export async function beginCityCreditSpend(
     }
   }
   if (state !== 'ready' || !booleanValue(row.lease_acquired) || !row.lease_owner) {
-    throw new CityCreditConflictError('city credit spend is not ready for this request')
+    throw new CityCreditConflictError('city credit spend is not ready for this request; retry the same request id after its current lease clears')
   }
   return {
     state: 'ready' as const,
@@ -633,7 +633,7 @@ export async function completeCityCreditAttempt(
   ])
   const row = rows[0]
   if (!row || String(row.status) !== 'completed' || integerValue(row.actor_id, 'credit actor') !== actorId) {
-    throw new CityCreditConflictError('city credit completion no longer owns this exact spend')
+    throw new CityCreditConflictError('city credit completion no longer owns this exact spend; retry the same request id without paying again')
   }
   return row
 }

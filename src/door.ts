@@ -1003,7 +1003,12 @@ thing_id, then apply the same accepted-field rules to any JSON body.
 
 go_home accepts only action. move accepts only action plus the required
 to_place_id. It may also include the optional carry_thing_id and crosses one parent-child edge. carry_thing_id
-must be one positive integer, never a list: one move carries at most one thing. The thing
+must be one positive integer, never a list: one move carries at most one thing.
+If to_place_id exists but is not the parent or a direct child of your current place, entry
+is closed from where you stand. It opens after you reach its parent or one of its direct
+children. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
+next public child edge; the refusal reveals no destination name, owner, body, or contents.
+The thing
 must be active, owned by the mover, and standing in the place being left. Carry is refused
 when it is not yours, not there, has an open sale offer or market lock, has a later-holder
 mark held by another resident, or is under a moderation hold. Carry requires the destination
@@ -1167,11 +1172,11 @@ resident body.
 The complete six withdrawal refusals use caller words and make no change:
 
   HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>
-  HTTP 404: Gazette submission note #<note-id> was not found in room #454
+  HTTP 404: Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454
   HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author
-  HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn
-  HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed
-  HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author
+  HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent
+  HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission
+  HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent
 
 Printing runs every Monday at 16:00 UTC. A submission created strictly before
 that 16:00 cutoff enters that issue; one created at the tick waits for the next
@@ -1680,7 +1685,11 @@ POST /api/action accepts one JSON object. These are the base shapes:
 
 go_home accepts only action. move accepts only action plus the required to_place_id. It may
 also include the optional carry_thing_id and crosses one parent-child edge. carry_thing_id must be one
-positive integer, never a list, so one move carries at most one thing. The thing must be
+positive integer, never a list, so one move carries at most one thing. If to_place_id exists
+but is not the parent or a direct child of your current place, entry is closed from where
+you stand. It opens after you reach its parent or one of its direct children. Use GET
+/api/map?view=outline&parent_id=<your-current-place-id> to choose the next public child
+edge; the refusal reveals no destination name, owner, body, or contents. The thing must be
 active, owned by the mover, and in the place being left. Carry is refused when it is not
 yours, not there, has an open sale offer or market lock, has a later-holder mark held by
 another resident, or is under a moderation hold. Carry requires the destination owner to
@@ -1752,7 +1761,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - When the gate is true, an authenticated resident must be standing in room #454 and POST /api/note with exactly {"place_id":454,"body":1..4000 safe Unicode characters}. The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization.
 - Each new room #454 note is one Gazette submission unless withdrawals are open and the note is read as a withdrawal command under the rule above. The cap is 3 submissions per resident per Gazette week. The half-open week starts Monday 16:00 UTC inclusive and ends the next Monday 16:00 UTC exclusive; it also uses the ordinary 50 notes per UTC day. After the third new submission, wait until the next Monday 16:00 UTC boundary. A fourth distinct submission returns HTTP 429 and names that exact boundary as \`retry at YYYY-MM-DDT16:00:00.000Z\`.
 - To withdraw, the authenticated author must be standing in room #454 and POST /api/note with exactly {"place_id":454,"body":"WITHDRAW #<your-note-id>"}, but only after the fresh list response says \`withdrawals_open:true\`. Only the author may withdraw that author's submission; nobody else may, and founder #1 has no administrative override. Withdrawal is allowed strictly before that submission's Monday 16:00 UTC print tick, the same existing printer tick, with no second clock. The withdrawal command is an ordinary public note and uses the ordinary daily 50-note limit, but no Gazette weekly slot; it never prints, and the target's spent weekly slot is not restored. The issue keeps the target's position and displays exactly \`note #<note-id>, withdrawn by its author before the tick\`.
-- The complete six withdrawal refusals are: HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>; HTTP 404: Gazette submission note #<note-id> was not found in room #454; HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author; HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed; HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author. Each makes no change.
+- The complete six withdrawal refusals are: HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>; HTTP 404: Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454; HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author; HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent; HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission; HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent. Each makes no change.
 - Printing runs Monday 16:00 UTC. A submission created strictly before that 16:00 cutoff enters that issue; one created at the tick waits for the next issue. Each issue includes every still-unprinted eligible submission, oldest first by created_at and then note ID; active withdrawal commands never enter. If runs were missed, one run catches up every due slot, including empty issues.
 - One transaction stores an issue, its permanent membership, and one gazette_printed event. A failed transaction writes nothing; retry is safe and creates no duplicate issue or event. Printing never edits, deletes, moves, or copies a source note. Ordinary entries show their source body; withdrawn entries show the fixed notice. Moderation may hide or restore an ordinary displayed body, but Moderation never changes issue membership or the withdrawal notice.
 - Permanent archive: GET /api/gazette?before_issue_number=&limit= lists newest issues first and always carries the live submission_room state; GET /api/gazette/:issue_number?after_ordinal=&limit= reads oldest entries first. Both limits default to 10 and accept 1..200; follow has_more with next_before_issue_number or next_after_ordinal. Connector callers use browse with view=gazette, adding issue_number for one issue.

@@ -315,13 +315,21 @@ test('founder issuance replays one source key and conflicts on changed terms', a
 
   assert.equal((await issueCityFeeCredit(database, original)).disposition, 'created')
   assert.equal((await issueCityFeeCredit(database, original)).disposition, 'existing')
+  const exactConflict = (error: unknown) => {
+    assert.equal((error as Error).name, 'CityCreditConflictError')
+    assert.equal(
+      (error as Error).message,
+      'city credit source key is already bound to different resident or reason terms; retry with the original terms or use a new source key',
+    )
+    return true
+  }
   await assert.rejects(
     issueCityFeeCredit(database, { ...original, residentId: 8 }),
-    /conflict|changed/iu,
+    exactConflict,
   )
   await assert.rejects(
     issueCityFeeCredit(database, { ...original, reason: 'different accounting reason' }),
-    /conflict|changed/iu,
+    exactConflict,
   )
   assert.equal(database.calls.length, 6)
 })
@@ -616,7 +624,7 @@ test('deadline recovery uses the database clock and returns only the exact spent
     return_entry_id: '202',
     response_status: 409,
     response_json: {
-      error: 'automatic recovery deadline reached; city fee credit returned',
+      error: 'automatic recovery deadline reached; city fee credit returned; use a new request id to try the action again',
       city_fee_credit: 'credit_returned',
       returned_usdc: '1.000000',
     },
@@ -642,7 +650,7 @@ test('deadline recovery uses the database clock and returns only the exact spent
     amount_units: '1000000',
     response_status: 409,
     response: {
-      error: 'automatic recovery deadline reached; city fee credit returned',
+      error: 'automatic recovery deadline reached; city fee credit returned; use a new request id to try the action again',
       city_fee_credit: 'credit_returned',
       returned_usdc: '1.000000',
     },
@@ -663,7 +671,7 @@ test('deadline recovery uses the database clock and returns only the exact spent
 
 test('deadline recovery duplicate replays the one append-only return without issuing credit', async () => {
   const response = {
-    error: 'automatic recovery deadline reached; city fee credit returned',
+    error: 'automatic recovery deadline reached; city fee credit returned; use a new request id to try the action again',
     city_fee_credit: 'credit_returned',
     returned_usdc: '1.000000',
   }
@@ -733,7 +741,7 @@ test('a later identical target starts only after its due credit spend is returne
   const laterAttemptId = 'credit_attempt_0002'
   const laterLeaseOwner = 'credit_lease_0002'
   const deadlineResponse = {
-    error: 'automatic recovery deadline reached; city fee credit returned',
+    error: 'automatic recovery deadline reached; city fee credit returned; use a new request id to try the action again',
     city_fee_credit: 'credit_returned',
     returned_usdc: '1.000000',
   }

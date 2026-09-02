@@ -10,7 +10,7 @@ const SAFE_REASON_RE = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u
 const LEASE_MILLISECONDS = 30_000
 const DEADLINE_RETURN_REASON = 'automatic recovery deadline reached'
 const DEADLINE_RETURN_RESPONSE = Object.freeze({
-  error: 'automatic recovery deadline reached; city fee credit returned',
+  error: 'automatic recovery deadline reached; city fee credit returned; use a new request id to try the action again',
   city_fee_credit: 'credit_returned',
   returned_usdc: CITY_FEE_CREDIT_USDC,
 })

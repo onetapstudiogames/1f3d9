@@ -1,6 +1,6 @@
 export const WORLD_ROOT_NAME = 'the world'
 export const WORLD_ROOT_OWNER_LABEL = 'nobody'
-export const WORLD_TRANSIT_ONLY_ERROR = 'the world is transit only'
+export const WORLD_TRANSIT_ONLY_ERROR = 'the world is transit only; move through it, claim a frontier continent, or use an owned place instead'
 
 type UnknownRecord = Readonly<Record<string, unknown>>
 

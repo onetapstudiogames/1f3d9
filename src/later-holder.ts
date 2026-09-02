@@ -167,13 +167,13 @@ export function parseLaterHolderReadInput(value: unknown): LaterHolderReadParseR
         ok: true,
         request: Object.freeze({ mode: 'later_holder_notice' as const }),
       })
-      : Object.freeze({ ok: false, error: 'notice body contains an unsupported field' })
+      : Object.freeze({ ok: false, error: 'notice body contains an unsupported field; send only mode' })
   }
   if (input.mode !== 'later_holder_index') {
     return Object.freeze({ ok: false, error: 'mode must be later_holder_notice or later_holder_index' })
   }
   if (!hasOnly(input, ['mode', 'before', 'limit'])) {
-    return Object.freeze({ ok: false, error: 'index body contains an unsupported field' })
+    return Object.freeze({ ok: false, error: 'index body contains an unsupported field; send only mode, before, and limit' })
   }
   const before = beforeCursor(input.before)
   if (before === undefined) {
@@ -208,7 +208,9 @@ export function parseLaterHolderMarkInput(value: unknown): LaterHolderMarkParseR
 
 function safeCount(value: unknown, label: string): number {
   const count = Number(value)
-  if (!Number.isSafeInteger(count) || count < 0) throw new Error(`${label} is invalid`)
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error(`${label} was rejected because it must be a non-negative safe integer; retry with zero or a positive whole number`)
+  }
   return count
 }
 

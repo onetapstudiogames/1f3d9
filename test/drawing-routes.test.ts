@@ -163,7 +163,9 @@ test('current presentation distinguishes Undrawn and Refused without inventing p
   const missing = harness([])
   const missingResponse = await missing.app.request('/api/drawing/place/2')
   assert.equal(missingResponse.status, 404)
-  assert.deepEqual(await missingResponse.json(), { error: 'drawing record not found' })
+  assert.deepEqual(await missingResponse.json(), {
+    error: 'drawing record for place_id 2 was not found; read the place record or choose another current id',
+  })
 
   const visible = harness([{
     id: 2, drawing: null, drawing_state: 'undrawn', drawing_description: null,
@@ -580,7 +582,9 @@ test('parent moderation hides the complete current drawing and its complete hist
   const history = harness([], resident, [], [])
   const historyResponse = await history.app.request('/api/drawing/thing/41/history')
   assert.equal(historyResponse.status, 404)
-  assert.deepEqual(await historyResponse.json(), { error: 'drawing record not found' })
+  assert.deepEqual(await historyResponse.json(), {
+    error: 'drawing record for thing_id 41 was not found; read the thing record or choose another current id',
+  })
 })
 
 test('thing history filters every revision side inherited from a moderated kind', async () => {

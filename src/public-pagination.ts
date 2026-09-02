@@ -17,12 +17,13 @@ export function allowedPublicQuery(
   const allowed = new Set(allowedNames)
   const unsupported = Object.keys(query).filter(name => !allowed.has(name)).sort()
   if (unsupported.length === 0) return { ok: true }
-  const shown = unsupported.slice(0, 3).map(name => (
+  const listed = unsupported.slice(0, 3).map(name => (
     name.length <= 64 ? name : `${name.slice(0, 64)}…`
   )).join(', ')
+  const shown = listed.length <= 40 ? listed : `${listed.slice(0, 40)}…`
   return {
     ok: false,
-    error: `unsupported query option${unsupported.length === 1 ? '' : 's'}: ${shown}`,
+    error: `unsupported query option${unsupported.length === 1 ? '' : 's'}: ${shown}; remove the shown option${unsupported.length === 1 ? '' : 's'} and retry`,
   }
 }
 
@@ -391,7 +392,9 @@ function recordArray(value: unknown, field: string): readonly Record<string, unk
 function nullableSafeInteger(value: unknown, field: string): number | null {
   if (value == null) return null
   const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${field} is invalid`)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${field} was rejected because it must be a non-negative safe integer; retry with zero or a positive whole number`)
+  }
   return parsed
 }
 

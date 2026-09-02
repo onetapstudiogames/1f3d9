@@ -315,40 +315,42 @@ export function mountLogDrainRoutes(app: Hono, deps: LogDrainRouteDependencies):
   app.post('/api/internal/log-drain', async c => {
     privateHeaders(c)
     const queryVerification = verificationQuery(c)
-    if (!queryVerification.valid) return err(c, 400, 'log drain verification query is invalid')
+    if (!queryVerification.valid) {
+      return err(c, 400, 'log drain verification query was rejected because only one verification value is accepted; retry with no query or ?verification=<Vercel challenge>')
+    }
 
     const secret = configuredSecret(deps.environment)
-    if (!secret) return err(c, 503, 'log drain is unavailable')
+    if (!secret) return err(c, 503, 'log drain is unavailable because LOG_DRAIN_SECRET is missing or invalid; configure the secret before retrying delivery')
 
     const headerVerification = c.req.header('x-vercel-verify')
     const signature = c.req.header('x-vercel-signature')
     if (headerVerification !== undefined && !validChallenge(headerVerification)) {
-      return err(c, 403, 'log drain verification challenge is invalid')
+      return err(c, 403, 'log drain verification challenge was rejected because X-Vercel-Verify is not a valid Vercel challenge; retry with the exact challenge sent by Vercel')
     }
     if (
       headerVerification !== undefined
       && queryVerification.challenge !== null
       && headerVerification !== queryVerification.challenge
     ) {
-      return err(c, 403, 'log drain verification challenge does not match')
+      return err(c, 403, 'log drain verification challenge does not match; retry with the same challenge in the verification query and X-Vercel-Verify header')
     }
 
     const rawBody = await readBoundedBody(c)
-    if (!rawBody) return c.json({ error: 'log drain batch is too large' }, 413)
+    if (!rawBody) return c.json({ error: 'log drain batch is too large; retry with a batch within the documented byte limit' }, 413)
     const verification = headerVerification ?? queryVerification.challenge
     if (signature === undefined && verification !== null && verification !== undefined) {
       c.header('X-Vercel-Verify', verification)
       return c.json({ ok: true, verification: true })
     }
     if (!validSignature(rawBody, signature, secret)) {
-      return err(c, 403, 'log drain signature verification failed')
+      return err(c, 403, `log drain signature was rejected because X-Vercel-Signature is missing or does not match the request body; retry with Vercel's HMAC-SHA1 signature`)
     }
     const contentEncoding = c.req.header('content-encoding')
     if (
       contentEncoding !== undefined
       && contentEncoding.trim().toLowerCase() !== 'identity'
     ) {
-      return c.json({ error: 'log drain content encoding is unsupported' }, 415)
+      return c.json({ error: 'log drain content encoding is unsupported; retry with identity encoding' }, 415)
     }
     if (headerVerification !== undefined) {
       c.header('X-Vercel-Verify', headerVerification)
@@ -360,7 +362,7 @@ export function mountLogDrainRoutes(app: Hono, deps: LogDrainRouteDependencies):
 
     const delivery = parseDelivery(rawBody, secret)
     if (delivery.tooManyLines) {
-      return c.json({ error: 'log drain batch has too many lines' }, 413)
+      return c.json({ error: 'log drain batch has too many lines; split it into batches within the documented line limit' }, 413)
     }
     try {
       for (let offset = 0; offset < delivery.records.length; offset += LOG_DRAIN_LIMITS.insertRows) {
@@ -368,7 +370,7 @@ export function mountLogDrainRoutes(app: Hono, deps: LogDrainRouteDependencies):
       }
     } catch {
       c.header('Retry-After', '1')
-      return err(c, 503, 'log drain storage is temporarily unavailable')
+      return err(c, 503, 'log drain storage is temporarily unavailable; Vercel should retry this same signed batch later')
     }
     return c.json({
       ok: true,

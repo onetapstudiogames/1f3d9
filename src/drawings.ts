@@ -503,7 +503,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       drawingHistorySql(recordType),
       [id, before, parsedLimit + 1],
     )
-    if (rows.length === 0) return err(c, 404, 'drawing record not found')
+    if (rows.length === 0) return err(c, 404, `drawing record for ${recordType}_id ${id} was not found; read the ${recordType} record or choose another current id`)
     const revisionRows = rows.filter(row => row.revision_id != null)
     const hasMore = revisionRows.length > parsedLimit
     const pageRows = revisionRows.slice(0, parsedLimit)
@@ -512,7 +512,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       const previous = historySnapshot(row, 'prior')
       const current = historySnapshot(row, 'current')
       if (previous === 'invalid' || current === 'invalid') {
-        return err(c, 500, 'stored drawing revision is invalid')
+        return err(c, 500, 'saved drawing cannot be read because its stored record is invalid; the record owner should save a valid drawing again or contact the city operator')
       }
       revisions.push({
         id: Number(row.revision_id),
@@ -554,9 +554,11 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
 
     const rows = await dependencies.database.query(DRAWING_READ_SQL[recordType], [id])
     const row = rows[0] as StoredDrawingRow | undefined
-    if (!row) return err(c, 404, 'drawing record not found')
+    if (!row) return err(c, 404, `drawing record for ${recordType}_id ${id} was not found; read the ${recordType} record or choose another current id`)
     const drawing = publicStoredDrawing(row)
-    if (drawing === 'invalid') return err(c, 500, 'stored drawing is invalid')
+    if (drawing === 'invalid') {
+      return err(c, 500, 'saved drawing cannot be read because its stored record is invalid; the record owner should save a valid drawing again or contact the city operator')
+    }
 
     return c.json({ type: recordType, id, ...drawing })
   })
@@ -679,7 +681,9 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       revision: null,
       variant_name: null,
     })
-    if (publicDrawing === 'invalid') return err(c, 500, 'stored drawing is invalid')
+    if (publicDrawing === 'invalid') {
+      return err(c, 500, 'saved drawing cannot be read because its stored record is invalid; the record owner should save a valid drawing again or contact the city operator')
+    }
     return c.json({
       resident: {
         id: Number(row.id),

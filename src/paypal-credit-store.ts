@@ -115,7 +115,7 @@ function publicId(value: unknown): string {
 
 function remoteId(value: unknown, label: string): string {
   if (typeof value !== 'string' || !REMOTE_ID.test(value)) {
-    throw new TypeError(`${label} is invalid`)
+    throw new TypeError(`${label} was rejected because it does not match the stored PayPal identifier format; retry with the exact identifier returned by PayPal`)
   }
   return value
 }
@@ -126,7 +126,7 @@ function nullableRemoteId(value: unknown, label: string): string | null {
 
 function paypalResourceId(value: unknown, label: string): string {
   if (typeof value !== 'string' || !REMOTE_RESOURCE_ID.test(value)) {
-    throw new TypeError(`${label} is invalid`)
+    throw new TypeError(`${label} was rejected because it does not match the stored PayPal identifier format; retry with the exact identifier returned by PayPal`)
   }
   return value
 }
@@ -171,7 +171,7 @@ function bool(value: unknown): boolean {
 function rowId(value: unknown, label: string): string {
   const text = String(value ?? '')
   if (!/^[1-9][0-9]{0,18}$/u.test(text) || BigInt(text) > MAX_BIGINT_ID) {
-    throw new TypeError(`${label} is invalid`)
+    throw new TypeError(`${label} was rejected because it must be a positive stored record id; retry with the id returned by the matching city record`)
   }
   return text
 }

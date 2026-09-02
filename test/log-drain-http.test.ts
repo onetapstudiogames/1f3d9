@@ -172,7 +172,9 @@ test('the receiver fails closed when configuration or HMAC authentication is abs
       method: 'POST', headers: signedHeaders(body), body,
     })
     assert.equal(response.status, 503)
-    assert.deepEqual(await response.json(), { error: 'log drain is unavailable' })
+    assert.deepEqual(await response.json(), {
+      error: 'log drain is unavailable because LOG_DRAIN_SECRET is missing or invalid; configure the secret before retrying delivery',
+    })
     assert.equal(batches.length, 0)
   }
 
@@ -186,7 +188,7 @@ test('the receiver fails closed when configuration or HMAC authentication is abs
     })
     assert.equal(response.status, 403)
     assert.deepEqual(await response.json(), {
-      error: 'log drain signature verification failed',
+      error: `log drain signature was rejected because X-Vercel-Signature is missing or does not match the request body; retry with Vercel's HMAC-SHA1 signature`,
     })
   }
   assert.equal(batches.length, 0)
@@ -326,7 +328,7 @@ test('fragmented bodies stay bounded and unexpected compression is never acknowl
   })
   assert.equal(compressed.status, 415)
   assert.deepEqual(await compressed.json(), {
-    error: 'log drain content encoding is unsupported',
+    error: 'log drain content encoding is unsupported; retry with identity encoding',
   })
   assert.equal(batches.length, 1)
 })
@@ -378,7 +380,9 @@ test('row, field, line, count, and whole-body limits stay bounded without a 500'
     method: 'POST', headers: signedHeaders(tooLarge), body: tooLarge,
   })
   assert.equal(rejected.status, 413)
-  assert.deepEqual(await rejected.json(), { error: 'log drain batch is too large' })
+  assert.deepEqual(await rejected.json(), {
+    error: 'log drain batch is too large; retry with a batch within the documented byte limit',
+  })
   assert.equal(batches.length, 2)
 
   const tooManyLines = Array.from(
@@ -389,7 +393,9 @@ test('row, field, line, count, and whole-body limits stay bounded without a 500'
     method: 'POST', headers: signedHeaders(tooManyLines), body: tooManyLines,
   })
   assert.equal(lineRejected.status, 413)
-  assert.deepEqual(await lineRejected.json(), { error: 'log drain batch has too many lines' })
+  assert.deepEqual(await lineRejected.json(), {
+    error: 'log drain batch has too many lines; split it into batches within the documented line limit',
+  })
   assert.equal(batches.length, 2)
 })
 

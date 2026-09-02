@@ -357,8 +357,11 @@ export function mountWorldRoutes(app: Hono): void {
       }
       if (!outline) {
         return changeMarker === null
-          ? err(c, 404, 'place not found')
-          : c.json({ error: 'place not found', change_marker: changeMarker }, 404)
+          ? err(c, 404, `place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`)
+          : c.json({
+              error: `place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`,
+              change_marker: changeMarker,
+            }, 404)
       }
       c.header(
         'Cache-Control',
@@ -433,7 +436,7 @@ export function mountWorldRoutes(app: Hono): void {
         })
       : textLimits
     const publicPlace = await loadPublicPlaceRecord(id)
-    if (!publicPlace) return err(c, 404, 'place not found')
+    if (!publicPlace) return err(c, 404, `place_id ${id} was not found; use GET /api/map?view=outline and send a current place_id`)
 
     if (publicPlace.status === 'retired') {
       const collections = await loadPublicPlaceCollectionRows(executePublicQuery, id, {
@@ -613,7 +616,7 @@ export function mountWorldRoutes(app: Hono): void {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const thing = await loadPublicThingRecord(id)
-    if (!thing) return err(c, 404, 'thing not found')
+    if (!thing) return err(c, 404, `thing_id ${id} was not found; use GET /api/things and send a current active thing_id`)
     return publicJson(c, { thing })
   })
 
@@ -632,7 +635,7 @@ export function mountWorldRoutes(app: Hono): void {
       'open_to_things',
       'open_to_notes',
     ])) {
-      return err(c, 400, 'place body contains an unsupported field')
+      return err(c, 400, 'place body contains an unsupported field; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes')
     }
 
     const parentId = body.parent_id === null ? null : positiveId(body.parent_id)
@@ -674,7 +677,7 @@ export function mountWorldRoutes(app: Hono): void {
         retired_at?: string | null
       }>
       const parent = parents[0]
-      if (!parent) return err(c, 404, 'parent place not found')
+      if (!parent) return err(c, 404, `parent place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`)
       if (parent.retired_at != null) return err(c, 409, 'parent place is retired; restore it before building there')
       if (isWorldRootRow(parent)) {
         // An explicit world parent is the same paid frontier operation as the
@@ -682,7 +685,7 @@ export function mountWorldRoutes(app: Hono): void {
       } else if (c.req.header('x-1f3d9-fee-credit')) {
         return err(c, 400, 'city fee credit is only supported for the paid frontier, kind invention, or kind revision fee')
       } else if (parent.place_permits_building !== true) {
-        return err(c, 403, 'this place does not permit visitors to build')
+        return err(c, 403, 'this place does not permit visitors to build; its owner can enable open_to_building, or you can choose your own or another open place')
       } else try {
         const rows = (await withPlacePermission(sql)`
           WITH permitted_parent AS (
@@ -964,7 +967,7 @@ export function mountWorldRoutes(app: Hono): void {
       'drawing', 'drawing_state', 'drawing_description',
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
-      return err(c, 400, 'edit description, purpose, front matter, drawing, or a permission switch')
+      return err(c, 400, 'place edit body is empty or contains an unsupported field; edit description, purpose, front matter, drawing, or a permission switch')
     }
 
     const description = body.description === undefined
@@ -979,7 +982,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     if (description === null || purpose === null || frontMatterThingIds === null
         || openToBuilding === null || openToThings === null || openToNotes === null) {
-      return err(c, 400, 'place text, front matter, or permissions are invalid')
+      return err(c, 400, 'place edit was rejected because its text, front_matter_thing_ids, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean permission switches')
     }
 
     const existingRows = (await sql`
@@ -997,12 +1000,12 @@ export function mountWorldRoutes(app: Hono): void {
       retired_at?: string | null
     }>
     const existing = existingRows[0]
-    if (!existing) return err(c, 404, 'place not found')
+    if (!existing) return err(c, 404, `place_id ${id} was not found; use GET /api/map?view=outline and send a current place_id`)
     if (existing.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the place owner may edit it')
     if (existing.retired_at != null) return err(c, 409, 'place is retired; restore it before editing')
     if (existing.active_offer_id != null || openOffer(existing)) {
-      return err(c, 409, 'place cannot be edited while it has an open sale offer')
+      return err(c, 409, 'place cannot be edited while it has an open sale offer; close that offer before editing the place')
     }
 
     if (frontMatterThingIds !== undefined && frontMatterThingIds.length > 0) {
@@ -1253,7 +1256,7 @@ export function mountWorldRoutes(app: Hono): void {
       'name', 'description', 'traits', 'recipe',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
     ])) {
-      return err(c, 400, 'kind body contains an unsupported field')
+      return err(c, 400, 'kind body contains an unsupported field; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants')
     }
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
@@ -1324,7 +1327,9 @@ export function mountWorldRoutes(app: Hono): void {
         const response = await returnFailedTreasuryFee(
           fee,
           resident.id,
-          unknownTrait ? `kind ${unknownTrait}` : message ?? 'kind invention failed before completion',
+          unknownTrait
+            ? 'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait'
+            : message ?? 'kind invention failed before completion',
           unknownTrait ? 400 : message ? 409 : 503,
         ) as Response
         reportTreasuryCompletionFailure({
@@ -1342,7 +1347,7 @@ export function mountWorldRoutes(app: Hono): void {
           attemptId: fee.attemptId,
           status: 400,
         }, error)
-        return err(c, 400, `kind ${unknownTrait}`)
+        return err(c, 400, 'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait')
       }
       if (message) {
         const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
@@ -1376,7 +1381,7 @@ export function mountWorldRoutes(app: Hono): void {
       'description', 'traits', 'recipe',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
     ])) {
-      return err(c, 400, 'kind revision contains an unsupported field')
+      return err(c, 400, 'kind revision contains an unsupported field; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants')
     }
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
@@ -1403,10 +1408,10 @@ export function mountWorldRoutes(app: Hono): void {
       WHERE k.id = ${id}
     `) as Array<KindRow & { active_offer_id: number | null; has_open_offer?: boolean }>
     const current = currentRows[0]
-    if (!current) return err(c, 404, 'kind not found')
+    if (!current) return err(c, 404, `kind_id ${id} was not found; use GET /api/kinds and send a current kind_id`)
     if (current.owner_id !== resident.id) return err(c, 403, 'only the kind owner may revise it')
     if (current.active_offer_id != null || openOffer(current)) {
-      return err(c, 409, 'kind cannot be revised while it has an open sale offer')
+      return err(c, 409, 'kind cannot be revised while it has an open sale offer; close that offer before revising the kind')
     }
 
     const description = body.description === undefined
@@ -1415,9 +1420,13 @@ export function mountWorldRoutes(app: Hono): void {
     const traits = suppliedTraits ?? current.traits
     const recipe = parseKindRecipe(body.recipe === undefined ? current.recipe : body.recipe)
     const currentDrawing = storedDrawingValue(current)
-    if (currentDrawing === null) return err(c, 500, 'stored kind drawing is invalid')
+    if (currentDrawing === null) {
+      return err(c, 500, 'saved kind drawing cannot be read because its stored record is invalid; the kind owner should save a valid drawing again or contact the city operator')
+    }
     const currentVariants = storedDrawingVariants(current.drawing_variants ?? [])
-    if (currentVariants === null) return err(c, 500, 'stored kind drawing variants are invalid')
+    if (currentVariants === null) {
+      return err(c, 500, 'saved kind drawing cannot be read because its stored record is invalid; the kind owner should save a valid drawing again or contact the city operator')
+    }
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
     if (recipe == null) {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
@@ -1482,7 +1491,7 @@ export function mountWorldRoutes(app: Hono): void {
           fee,
           resident.id,
           unknownTrait
-            ? `kind revision ${unknownTrait}`
+            ? 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait'
             : message ?? 'kind revision failed before completion',
           unknownTrait ? 400 : message ? 409 : 503,
         ) as Response
@@ -1501,7 +1510,7 @@ export function mountWorldRoutes(app: Hono): void {
           attemptId: fee.attemptId,
           status: 400,
         }, error)
-        return err(c, 400, `kind revision ${unknownTrait}`)
+        return err(c, 400, 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait')
       }
       if (message) {
         const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
@@ -1570,7 +1579,7 @@ export function mountWorldRoutes(app: Hono): void {
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     if (!hasOnly(body, ['name', 'description', 'recipe'])) {
-      return err(c, 400, 'trait accepts name, description, and an optional inert recipe')
+      return err(c, 400, 'trait body contains an unsupported field; send only name, description, and an optional inert recipe')
     }
     const name = worldName(body.name)
     const description = publicText(body.description ?? '', {
@@ -1616,7 +1625,7 @@ export function mountWorldRoutes(app: Hono): void {
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     if (!hasOnly(body, ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids'])) {
-      return err(c, 400, 'thing accepts place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids')
+      return err(c, 400, 'thing body contains an unsupported field; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids')
     }
     const placeId = positiveId(body.place_id)
     const name = publicLabel(body.name)
@@ -1651,11 +1660,11 @@ export function mountWorldRoutes(app: Hono): void {
       retired_at: string | null
     }>
     const place = placeRows[0]
-    if (!place) return err(c, 404, 'place not found')
+    if (!place) return err(c, 404, `place_id ${placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
     if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before making things there')
     if (isWorldRootRow(place)) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (place.place_permits_things !== true) {
-      return err(c, 403, 'this place does not permit visitors to make things')
+      return err(c, 403, 'this place does not permit visitors to make things; its owner can enable open_to_things, or you can choose your own or another open place')
     }
     await resolveDueEffects(placeId)
 
@@ -1736,17 +1745,17 @@ export function mountWorldRoutes(app: Hono): void {
       has_open_offer?: boolean
     }>
     const existing = existingRows[0]
-    if (!existing) return err(c, 404, 'thing not found')
+    if (!existing) return err(c, 404, `thing_id ${id} was not found; use GET /api/things and send a current active thing_id`)
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may edit it')
     if (existing.active_offer_id != null || openOffer(existing)) {
-      return err(c, 409, 'thing cannot be edited while it has an open sale offer')
+      return err(c, 409, 'thing cannot be edited while it has an open sale offer; close that offer before editing the thing')
     }
     if (existing.kind_id !== null && requestedDrawing.supplied
         && (requestedDrawing.value.state === 'in_progress' || requestedDrawing.value.state === 'complete')) {
       return err(c, 400, 'typed things inherit their pinned kind base or named variant; arbitrary instance pixel drawings are not allowed')
     }
     if (existing.kind_id === null && requestedVariant !== undefined) {
-      return err(c, 409, 'an untyped thing has no kind base or drawing variant')
+      return err(c, 409, 'an untyped thing has no kind base or drawing variant; omit drawing_variant_name and save an instance drawing instead')
     }
     const resultingDrawingState = requestedDrawing.supplied
       ? requestedDrawing.value.state
@@ -1757,7 +1766,9 @@ export function mountWorldRoutes(app: Hono): void {
     const availableVariants = existing.kind_id === null
       ? []
       : storedDrawingVariants(existing.drawing_variants ?? [])
-    if (availableVariants === null) return err(c, 500, 'stored kind drawing variants are invalid')
+    if (availableVariants === null) {
+      return err(c, 500, 'saved kind drawing cannot be read because its stored record is invalid; the kind owner should save a valid drawing again or contact the city operator')
+    }
     if (typeof requestedVariant === 'string'
         && !availableVariants.some(variant => variant.name === requestedVariant)) {
       const choices = availableVariants.map(variant => variant.name)
@@ -1967,7 +1978,7 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     if (!hasOnly(decoded.body, ['drawing_variant_name'])) {
-      return err(c, 400, 'thing upgrade accepts only optional drawing_variant_name')
+      return err(c, 400, 'thing upgrade body contains an unsupported field; send only optional drawing_variant_name')
     }
     const requestedVariant = Object.hasOwn(decoded.body, 'drawing_variant_name')
       ? drawingVariantName(decoded.body.drawing_variant_name)
@@ -2000,11 +2011,11 @@ export function mountWorldRoutes(app: Hono): void {
       has_open_offer?: boolean
     }>
     const existing = existingRows[0]
-    if (!existing) return err(c, 404, 'thing not found')
+    if (!existing) return err(c, 404, `thing_id ${id} was not found; use GET /api/things and send a current active thing_id`)
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may upgrade it')
-    if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade')
+    if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade; edit its instance fields instead of calling upgrade')
     if (existing.active_offer_id != null || openOffer(existing)) {
-      return err(c, 409, 'thing cannot be upgraded while it has an open sale offer')
+      return err(c, 409, 'thing cannot be upgraded while it has an open sale offer; close that offer before upgrading the thing')
     }
     if (requestedVariant !== undefined && existing.drawing_state === 'refused') {
       return err(c, 409, 'clear the thing refusal before choosing a base or variant during upgrade')
@@ -2013,7 +2024,7 @@ export function mountWorldRoutes(app: Hono): void {
     const targetVariants = storedDrawingVariants(
       existing.latest_drawing_variants ?? existing.drawing_variants ?? [],
     )
-    if (targetVariants === null) return err(c, 500, 'stored target kind drawing variants are invalid')
+    if (targetVariants === null) return err(c, 500, 'stored target kind drawing variants are invalid; the kind owner should save valid variants or contact the city operator')
     const upgradeVariant = requestedVariant === undefined ? currentVariant : requestedVariant
     if (typeof upgradeVariant === 'string'
         && !targetVariants.some(variant => variant.name === upgradeVariant)) {

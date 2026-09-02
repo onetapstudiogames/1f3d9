@@ -1,11 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   parseNeonPreviewCleanupArguments,
   runNeonPreviewCleanup,
   selectPreviewBranchForClosedPullRequest,
 } from '../scripts/neon-preview-cleanup.ts'
 import { safeErrorDetail } from '../scripts/safe-error-detail.ts'
+
+const cleanupSource = readFileSync(
+  new URL('../scripts/neon-preview-cleanup.ts', import.meta.url),
+  'utf8',
+)
 
 const branches = Object.freeze([
   Object.freeze({ id: 'br-main', name: 'main', primary: true }),
@@ -18,6 +24,12 @@ test('cleanup selects only the exact non-primary branch for the closed PR', () =
     selectPreviewBranchForClosedPullRequest('feature/cost-safe', branches),
     { id: 'br-feature', name: 'preview/feature/cost-safe' },
   )
+})
+
+test('cleanup relies on reachable primary and shared-preview guards only', () => {
+  assert.doesNotMatch(cleanupSource, /match\.name\s*===\s*['"]main['"]/u)
+  assert.match(cleanupSource, /match\.primary/u)
+  assert.match(cleanupSource, /match\.name\s*===\s*SHARED_BRANCH/u)
 })
 
 test('cleanup refuses protected, near-match, duplicate, and malformed targets', () => {

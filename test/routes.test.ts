@@ -3881,6 +3881,9 @@ test('malformed auth and oversized thing text fail before any world write', asyn
     body: JSON.stringify({ place_id: 2, body: 'hello' }),
   })
   assert.equal(unauthenticated.status, 401)
+  assert.deepEqual(await unauthenticated.json(), {
+    error: 'resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>',
+  })
   assert.equal(inserted('notes'), 0)
 
   const oversized = await app.request('/api/thing', {
@@ -6321,7 +6324,9 @@ test('note and agreement quotas fail atomically without a partial public record'
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ place_id: 2, body: 'too many' }),
   })
   assert.equal(note.status, 429)
-  assert.deepEqual(await note.json(), { error: '50 notes per UTC day' })
+  assert.deepEqual(await note.json(), {
+    error: '50 notes per UTC day; retry after the next UTC day begins',
+  })
   assert.equal(inserted('notes'), 0)
 
   const agreement = await app.request('/api/agreement', {
@@ -6329,7 +6334,9 @@ test('note and agreement quotas fail atomically without a partial public record'
     body: JSON.stringify({ parties: ['tiny-lantern', 'neighbor'], body: 'we keep the square open' }),
   })
   assert.equal(agreement.status, 429)
-  assert.deepEqual(await agreement.json(), { error: '5 agreement actions per UTC day' })
+  assert.deepEqual(await agreement.json(), {
+    error: '5 agreement actions per UTC day; retry after the next UTC day begins',
+  })
   assert.equal(inserted('agreements'), 0)
 })
 
@@ -6391,7 +6398,9 @@ test('a later arrival cannot accede until the author explicitly opens the agreem
 
   const blocked = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
   assert.equal(blocked.status, 403)
-  assert.deepEqual(await blocked.json(), { error: 'this agreement is closed to later signers' })
+  assert.deepEqual(await blocked.json(), {
+    error: 'this agreement is closed to later signers; its original author can POST /api/agreement/61/open-accession before this signer retries',
+  })
   assert.equal(inserted('agreement_parties'), 0)
   assert.equal(inserted('agreement_signatures'), 0)
 })
@@ -6489,14 +6498,18 @@ test('opening accession distinguishes missing agreements and exhausted quota', a
     method: 'POST', headers: authHeaders(),
   })
   assert.equal(missing.status, 404)
-  assert.deepEqual(await missing.json(), { error: 'no such agreement' })
+  assert.deepEqual(await missing.json(), {
+    error: 'agreement_id 61 was not found; re-read GET /api/agreements and use a current agreement_id',
+  })
 
   reset({ scenario: 'agreements', quota: { things: true, notes: true, agreements: false } })
   const capped = await app.request('/api/agreement/61/open-accession', {
     method: 'POST', headers: authHeaders(),
   })
   assert.equal(capped.status, 429)
-  assert.deepEqual(await capped.json(), { error: '5 agreement actions per UTC day' })
+  assert.deepEqual(await capped.json(), {
+    error: '5 agreement actions per UTC day; retry after the next UTC day begins',
+  })
   assert.equal(inserted('agreement_accession_openings'), 0)
 })
 
@@ -6547,7 +6560,7 @@ test('a gift moves immediately, while an open sale offer locks the asset', async
   })
   assert.equal(lockedGift.status, 409)
   assert.deepEqual(await lockedGift.json(), {
-    error: 'this asset already has an open transfer offer',
+    error: 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset',
   })
 })
 
@@ -6558,7 +6571,9 @@ test('a withdrawn thing cannot be gifted or offered for sale', async () => {
     body: JSON.stringify({ type: 'thing', id: 41, to_handle: 'neighbor' }),
   })
   assert.equal(gift.status, 404)
-  assert.deepEqual(await gift.json(), { error: 'no such thing' })
+  assert.deepEqual(await gift.json(), {
+    error: 'thing_id 41 was not found; re-read the public thing record and send a current id',
+  })
 
   const offer = await app.request('/api/transfer/offer', {
     method: 'POST', headers: authHeaders(),
@@ -6567,7 +6582,9 @@ test('a withdrawn thing cannot be gifted or offered for sale', async () => {
     }),
   })
   assert.equal(offer.status, 404)
-  assert.deepEqual(await offer.json(), { error: 'no such thing' })
+  assert.deepEqual(await offer.json(), {
+    error: 'thing_id 41 was not found; re-read the public thing record and send a current id',
+  })
   assert.equal(inserted('transfers'), 0)
   assert.equal(inserted('transfer_offers'), 0)
 })
@@ -9175,7 +9192,9 @@ test('passive index fails closed when its cursor key is missing while notice sta
       body: JSON.stringify({ mode: 'later_holder_index' }),
     })
     assert.equal(index.status, 503)
-    assert.deepEqual(await index.json(), { error: 'later-holder index is unavailable' })
+    assert.deepEqual(await index.json(), {
+      error: 'later-holder index is unavailable because its private cursor key is not configured; ask the city owner to configure it before retrying',
+    })
     assert.equal(index.headers.get('cache-control'), 'no-store')
     assert.equal(
       sqlCalls().some(call => /private:later-holder-index/iu.test(call.query ?? '')),
@@ -9262,7 +9281,7 @@ test('passive discovery leaves timers asleep while ordinary GET /api/me still wa
 test('public read options reject unknown names and text sizes count UTF-8 bytes', () => {
   assert.deepEqual(allowedPublicQuery({ limit: ['2'], q: ['pretend-search'] }, ['limit']), {
     ok: false,
-    error: 'unsupported query option: q',
+    error: 'unsupported query option: q; remove the shown option and retry',
   })
   assert.deepEqual(allowedPublicQuery({ limit: ['2'] }, ['limit']), { ok: true })
   const oversizedName = 'x'.repeat(10_000)
@@ -9571,7 +9590,9 @@ test('focused resident presence returns one exact public record or 404', async (
   reset({ scenario: 'focused resident presence' })
   const missing = await app.request('/api/residents?view=presence&handle=not-here')
   assert.equal(missing.status, 404)
-  assert.deepEqual(await missing.json(), { error: 'resident not found' })
+  assert.deepEqual(await missing.json(), {
+    error: 'resident handle not-here was not found; use GET /api/residents and send a current handle',
+  })
 })
 
 test('focused resident presence rejects pagination, mixed, duplicate, invalid, and unknown options before PostgreSQL', async () => {
@@ -9867,6 +9888,9 @@ test('anonymous flags are rate-limited without publishing the report text', asyn
       body,
     })
     assert.equal(limited.status, 429)
+    assert.deepEqual(await limited.json(), {
+      error: '5 anonymous flag limit reached per IP per UTC hour; retry after the next UTC hour begins',
+    })
     assert.equal(inserted('flags'), 5)
     const flagWrite = sqlCalls().find(call => /insert\s+into\s+flags\b/i.test(call.query ?? ''))
     assert.ok(flagWrite)
@@ -9966,7 +9990,9 @@ test('resident flags are bounded in their own hourly bucket', async () => {
     method: 'POST', headers: authHeaders(), body,
   })
   assert.equal(limited.status, 429)
-  assert.match(JSON.stringify(await limited.json()), /20 resident flags per UTC hour/)
+  assert.deepEqual(await limited.json(), {
+    error: '20 resident flag limit reached per UTC hour; retry after the next UTC hour begins',
+  })
   assert.equal(inserted('flags'), 20)
 
   // The resident's exhausted bucket leaves anonymous reporting untouched.
@@ -10551,7 +10577,9 @@ test('only resident one can remove or restore public content and every use is lo
   reset({ scenario: 'maintainer moderation' })
   const unauthenticated = await app.request('/api/moderation', { method: 'POST' })
   assert.equal(unauthenticated.status, 401)
-  assert.deepEqual(await unauthenticated.json(), { error: 'founder root key required' })
+  assert.deepEqual(await unauthenticated.json(), {
+    error: "founder sign-in failed because Authorization: Bearer is missing or is not founder #1's current root key; founder #1 should retry with the saved current root key",
+  })
 
   const denied = await app.request('/api/moderation', {
     method: 'POST', headers: authHeaders(),
@@ -10957,7 +10985,10 @@ test('a visitor may use an open thing but not consume it', async () => {
     error: string
     action: { status: string; effects_applied: number; error?: string }
   }
-  assert.equal(consumedBody.error, 'thing_id is not yours')
+  assert.equal(
+    consumedBody.error,
+    'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+  )
   assert.equal(consumedBody.action.status, 'failed')
   assert.equal(consumedBody.action.effects_applied, 0)
   assert.equal(consumedBody.action.error, consumedBody.error)
@@ -10993,10 +11024,13 @@ for (const [thingId, placeId] of [
         error?: string
       }
     }
-    assert.equal(body.error, 'thing_id is not yours')
+    assert.equal(
+      body.error,
+      'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+    )
     assert.equal(body.action.status, 'failed')
     assert.equal(body.action.effects_applied, 0)
-    assert.equal(body.action.error, 'thing_id is not yours')
+    assert.equal(body.action.error, body.error)
   })
 }
 

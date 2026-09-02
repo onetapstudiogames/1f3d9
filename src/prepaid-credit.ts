@@ -33,7 +33,7 @@ function positiveResidentId(value: unknown): number {
 
 function giftId(value: unknown): string {
   const text = String(value ?? '')
-  if (!GIFT_PUBLIC_ID_RE.test(text)) throw new TypeError('gift id is invalid')
+  if (!GIFT_PUBLIC_ID_RE.test(text)) throw new TypeError('gift id is invalid; use one pending gift_id from GET /api/me')
   return text
 }
 
@@ -53,7 +53,7 @@ function exactCreditUnits(value: unknown): bigint {
 
 function resultStatus(value: unknown): 'pending' | 'accepted' | 'refused' | 'frozen' | 'revoked' {
   if (!['pending', 'accepted', 'refused', 'frozen', 'revoked'].includes(String(value))) {
-    throw new TypeError('gift status is invalid')
+    throw new TypeError('gift status is invalid; re-read /api/me and use a pending or refused gift as allowed by this action')
   }
   return value as ReturnType<typeof resultStatus>
 }
@@ -64,18 +64,18 @@ function disputeBlockedGift(
 ): never {
   if (status === 'frozen') {
     throw new PrepaidCreditConflictError(
-      `This gift cannot be ${action} because a payment dispute is open on the purchase that funded it, or PayPal resolved it ambiguously and founder review is pending.`,
+      `This gift cannot be ${action} because a payment dispute is open on the purchase that funded it, or PayPal resolved it ambiguously and founder review is pending. Wait until PayPal or founder review closes the dispute before retrying.`,
     )
   }
   throw new PrepaidCreditConflictError(
-    `This gift cannot be ${action} because either PayPal resolved the funding dispute against the city seller, or founder resident #1 chose buyer favour after PayPal returned an ambiguous outcome. The gift was permanently revoked and can never add credit.`,
+    `This gift cannot be ${action} because either PayPal resolved the funding dispute against the city seller, or founder resident #1 chose buyer favour after PayPal returned an ambiguous outcome. The gift was permanently revoked and can never add credit; use another valid gift instead.`,
   )
 }
 
 function rowId(value: unknown, label: string): string {
   const text = String(value ?? '')
   if (!/^[1-9][0-9]{0,18}$/u.test(text) || BigInt(text) > 9_223_372_036_854_775_807n) {
-    throw new TypeError(`${label} is invalid`)
+    throw new TypeError(`${label} was rejected because it must be a positive stored record id; retry with the id returned by the matching city gift record`)
   }
   return text
 }
@@ -104,7 +104,7 @@ export function parseGiftClaimToken(value: unknown): string {
     typeof value !== 'string'
     || !GIFT_TOKEN_RE.test(value)
     || containsCredentialLikeInput(value)
-  ) throw new TypeError('gift claim token is invalid')
+  ) throw new TypeError('gift claim token is invalid; use the exact one-time claim_token from the original gift response')
   return value
 }
 
@@ -197,7 +197,11 @@ async function giftAction(
     FROM selected
   `, [id, residentId, terminalStatus, entryKind]) as readonly QueryRow[]
   const row = rows[0]
-  if (!row) throw new PrepaidCreditConflictError(`gift is not pending for this recipient or was not found`)
+  if (!row) {
+    throw new PrepaidCreditConflictError(
+      'gift is not pending for this recipient or was not found; re-read /api/me and use one pending gift_id addressed to this resident',
+    )
+  }
   const storedStatus = resultStatus(row.status)
   if (storedStatus === 'revoked'
     || (action === 'accept' && (storedStatus === 'frozen' || row.frozen_at != null))) {
@@ -309,7 +313,9 @@ export async function redirectCreditGift(
   `, [id, claimHash, targetResidentId, requestId]) as readonly QueryRow[]
   const row = rows[0]
   if (!row) {
-    throw new PrepaidCreditConflictError('gift redirect claim or recipient changed, or the gift is no longer redirectable')
+    throw new PrepaidCreditConflictError(
+      'gift redirect claim or recipient changed, or the gift is no longer redirectable; retry with the original claim_token and one current matching recipient while the gift is pending or refused',
+    )
   }
   const storedStatus = resultStatus(row.status)
   if (storedStatus === 'revoked' || storedStatus === 'frozen' || row.frozen_at != null) {

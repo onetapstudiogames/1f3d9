@@ -225,7 +225,7 @@ export async function craftKindThing(
   const input = validateRequest(request)
   const dailyThingLimit = options.dailyThingLimit ?? QUOTAS.things
   if (!input || !Number.isSafeInteger(dailyThingLimit) || dailyThingLimit < 1) {
-    return failure(400, 'invalid crafting request')
+    return failure(400, 'crafting request was rejected because its resident, kind, place, body, or open_to_use value is invalid; retry with the documented craft fields and limits')
   }
 
   const kindRows = await sql`
@@ -237,7 +237,7 @@ export async function craftKindThing(
     WHERE kind.id = ${input.kindId}
   `
   const kind = kindRows[0] as KindRow | undefined
-  if (!kind) return failure(404, 'kind not found')
+  if (!kind) return failure(404, `kind_id ${input.kindId} was not found; use GET /api/kinds and send a current kind_id`)
 
   const placeRows = await withPlacePermission(sql)`
     /* crafting:place */
@@ -248,18 +248,18 @@ export async function craftKindThing(
     WHERE place.id = ${input.placeId}
   `
   const place = placeRows[0] as PlaceRow | undefined
-  if (!place) return failure(404, 'place not found')
+  if (!place) return failure(404, `place_id ${input.placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
   if (isWorldRootRow(place)) return failure(403, WORLD_TRANSIT_ONLY_ERROR)
   if (place.retired_at != null) {
     return failure(409, 'place is retired; restore it before making things there')
   }
   if (place.place_permits_things !== true) {
-    return failure(409, 'target place does not accept things')
+    return failure(409, 'target place does not accept things; its owner can enable open_to_things, or you can craft in your own or another open place')
   }
 
   const recipe = parseKindRecipe(kind.recipe)
   if (!recipe) {
-    return failure(409, 'kind recipe is invalid; crafting is unavailable')
+    return failure(409, 'kind recipe is invalid; its owner must revise it before anyone can craft this kind')
   }
 
   if (recipe.length > 0) {
@@ -272,7 +272,7 @@ export async function craftKindThing(
     `
     const knownNames = new Set(knownRows.map(row => String(row.name).toLowerCase()))
     if (requiredNames.some(name => !knownNames.has(name))) {
-      return failure(409, 'kind recipe references kinds that do not exist yet')
+      return failure(409, 'kind recipe references kinds that do not exist yet; coin every named kind before retrying this recipe')
     }
   }
 
@@ -302,7 +302,7 @@ export async function craftKindThing(
     )
   }
   if (ingredients.length !== input.ingredientIds.length || !exactRecipeMatch(recipe, ingredients)) {
-    return failure(409, 'ingredients do not exactly match the current recipe')
+    return failure(409, 'ingredients do not exactly match the current recipe; re-read the kind and retry with every required ingredient in its exact quantity')
   }
 
   const recipeJson = JSON.stringify(recipe)
@@ -445,9 +445,9 @@ export async function craftKindThing(
       WHERE id = ${input.actorId}
     `
     if (quotaRows[0]?.available === false) {
-      return failure(429, `daily thing limit reached (${dailyThingLimit})`)
+      return failure(429, `daily thing limit reached (${dailyThingLimit}); retry after the UTC day resets`)
     }
-    if (!quotaRows[0]) return failure(404, 'resident not found')
+    if (!quotaRows[0]) return failure(404, `resident record for ${input.actorHandle} was not found; reconnect with the current resident key and retry`)
     return failure(409, 'kind, place, or ingredients changed; retry')
   }
 

@@ -160,7 +160,7 @@ test('bound PayPal ids reconstruct only the environment allowlisted hosted appro
   )
   assert.throws(
     () => paypalHostedApprovalUrl('sandbox', 'order', 'https://attacker.example'),
-    /PayPal remote id is invalid/u,
+    /PayPal remote id was rejected because it does not match the required PayPal value; retry with the exact value returned by PayPal/u,
   )
   assert.throws(
     () => paypalHostedApprovalUrl('production' as never, 'order', ORDER_ID),
@@ -482,7 +482,7 @@ test('webhook verification rejects certificate URLs outside the configured PayPa
           'paypal-transmission-time': '2026-08-26T20:00:00Z',
         }),
       }, fetcher),
-      /PayPal certificate URL is invalid/u,
+      /PayPal certificate URL was rejected because it is not PayPal's signed certificate URL; retry with the exact header value sent by PayPal/u,
     )
   }
   assert.equal(calls.length, 0)

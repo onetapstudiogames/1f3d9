@@ -143,7 +143,7 @@ test('verification accepts the optional payer field but rejects a present mismat
 
   assert.deepEqual(mismatched, {
     state: 'invalid',
-    error: 'facilitator rejected the payment',
+    error: 'facilitator rejected the payment; re-read the current 402 terms and send a matching authorization',
   })
 })
 
@@ -178,6 +178,6 @@ test('facilitator response bodies are bounded and failures never become a safe f
 
   assert.deepEqual(oversized, {
     state: 'unavailable',
-    error: 'facilitator verification response was too large',
+    error: 'facilitator verification response exceeded 65536 bytes; retry this same request later and do not pay again',
   })
 })

@@ -136,7 +136,7 @@ test('ordinary resident movement only crosses one parent-child edge', async () =
   await assert.rejects(moveResident(7, 9, denied.db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'move must cross one parent-child edge'
+    && error.message === 'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time'
   ))
   assert.equal(denied.calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 
@@ -171,6 +171,21 @@ test('ordinary movement refuses a retired destination in caller words before mov
     && error.message === 'destination place is retired; restore it before moving there'
   ))
   assert.equal(retired.calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
+})
+
+test('a missing movement destination points back to the current public outline', async () => {
+  const missing = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/FROM places/.test(text)) return [{ id: 2, parent_id: 1 }]
+    return []
+  })
+  await assert.rejects(moveResident(7, 9, missing.db), (error: unknown) => (
+    error instanceof EngineError
+    && error.status === 404
+    && error.message === 'destination place_id 9 was not found; use GET /api/map?view=outline&parent_id=2 to choose a public adjacent destination'
+  ))
 })
 
 test('symbolic targets never accept recipe-authored database ids', () => {
@@ -340,10 +355,14 @@ test('go_home failure names the missing usable home', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 409)
-  assert.equal(result.error, 'home is unset or no longer owned')
+  const expectedError = 'home is unset or no longer owned; move normally or claim an owned home before using go_home'
+  assert.equal(result.error, expectedError)
   const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
   assert.ok(resolution)
-  assert.match(String(resolution.values.at(-2)), /home is unset or no longer owned/u)
+  assert.equal(
+    (JSON.parse(String(resolution.values.at(-2))) as { error?: string }).error,
+    expectedError,
+  )
 })
 
 test('label and check_label bricks compose in order', async () => {
@@ -691,7 +710,7 @@ test('an owned destroy race is reported as conflict, not a false law denial', as
   }, db)
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 409)
-  assert.equal(result.error, 'thing changed before it could be destroyed')
+  assert.equal(result.error, 'thing changed before it could be destroyed; re-read the thing before retrying')
 })
 
 test('law-authorized damage is rechecked at execution time and stays local', async () => {
@@ -1454,7 +1473,10 @@ test('wait refuses a place queue already at its unresolved cap', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 429)
-  assert.equal(result.error, 'pending effect limit reached for place')
+  assert.equal(
+    result.error,
+    'pending effect limit reached for place; wait for a pending effect to finish or choose another place',
+  )
   assert.equal(calls.some(call => /INSERT INTO pending_effects/.test(call.text)), false)
   const countIndex = calls.findIndex(call => /AS place_pending/.test(call.text))
   const lockIndexes = calls.flatMap((call, index) => (
@@ -1496,7 +1518,10 @@ test('wait refuses an actor queue already at its unresolved cap', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 429)
-  assert.equal(result.error, 'you have reached the pending effect limit')
+  assert.equal(
+    result.error,
+    'you have reached the pending effect limit; wait for a pending effect to finish before retrying',
+  )
   assert.equal(calls.some(call => /INSERT INTO pending_effects/.test(call.text)), false)
 })
 
@@ -1733,7 +1758,7 @@ test('a thing move that loses its original-place race returns the existing colli
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 409)
-  assert.equal(result.error, 'thing or destination changed before the move')
+  assert.equal(result.error, 'thing or destination changed before the move; re-read both and retry')
   const racedMove = calls.find(call => /UPDATE things moving SET place_id/.test(call.text))
   assert.equal(racedMove?.values[2], 2)
   assert.equal(racedMove?.values[5], racedMove?.values[2])
@@ -1814,7 +1839,10 @@ test('a resident move effect cannot bypass the one-edge movement rule', async ()
   }, db)
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 403)
-  assert.equal(result.error, 'move must cross one parent-child edge')
+  assert.equal(
+    result.error,
+    'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time',
+  )
   assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 })
 
@@ -2015,7 +2043,10 @@ test('a move refuses to carry a thing with an open sale offer or market lock', a
     await t.test(JSON.stringify(fixture), async () => {
       const { result, calls } = await carryAction(fixture)
       assert.equal(result.httpStatus, 409)
-      assert.equal(result.error, 'carry_thing_id has an open sale offer or market lock')
+      assert.equal(
+        result.error,
+        'carry_thing_id has an open sale offer or market lock; cancel the offer, wait for the lock to clear, or carry another owned thing',
+      )
       assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
     })
   }
@@ -2024,14 +2055,20 @@ test('a move refuses to carry a thing with an open sale offer or market lock', a
 test('a move refuses to carry a thing marked for a later holder by another resident', async () => {
   const { result, calls } = await carryAction({ marked_by_other: true })
   assert.equal(result.httpStatus, 409)
-  assert.equal(result.error, 'carry_thing_id is marked for a later holder by another resident')
+  assert.equal(
+    result.error,
+    'carry_thing_id is marked for a later holder by another resident; wait for that mark to clear or carry another owned thing',
+  )
   assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
 })
 
 test('a move refuses to carry a thing under a moderation hold', async () => {
   const { result, calls } = await carryAction({ moderation_action: 'remove' })
   assert.equal(result.httpStatus, 409)
-  assert.equal(result.error, 'carry_thing_id is under a moderation hold')
+  assert.equal(
+    result.error,
+    'carry_thing_id is under a moderation hold; wait for the hold to clear or carry another owned thing',
+  )
   assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
 })
 
@@ -2228,7 +2265,8 @@ test('a recognized internal engine failure is generic in the public record', asy
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  assert.equal(result.error, 'the city could not complete this action')
+  const expectedError = 'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying'
+  assert.equal(result.error, expectedError)
   assert.equal(logged.length, 1)
   assert.deepEqual(logged[0]?.[1], {
     action_id: 112,
@@ -2241,7 +2279,7 @@ test('a recognized internal engine failure is generic in the public record', asy
     action_id: 112,
     action: 'make',
     status: 'failed',
-    error: 'the city could not complete this action',
+    error: expectedError,
   })
 })
 
@@ -2281,7 +2319,8 @@ test('an unknown action failure is generic in the public record but useful in se
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  assert.equal(result.error, 'the city could not complete this action')
+  const expectedError = 'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying'
+  assert.equal(result.error, expectedError)
   assert.equal(logged.length, 1)
   assert.equal(logged[0]?.[0], 'unrecognized action execution failure')
   assert.deepEqual(logged[0]?.[1], {
@@ -2297,7 +2336,7 @@ test('an unknown action failure is generic in the public record but useful in se
     action_id: 33530,
     action: 'make',
     status: 'failed',
-    error: 'the city could not complete this action',
+    error: expectedError,
   })
   assert.doesNotMatch(
     String(resolution.values.at(-2)),

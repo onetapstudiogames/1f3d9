@@ -77,7 +77,7 @@ export class PaymentSaleConflictError extends Error {
 
 function inputId(value: string, pattern: RegExp, label: string): string {
   if (typeof value !== 'string' || !pattern.test(value)) {
-    throw new TypeError(`${label} is invalid`)
+    throw new TypeError(`${label} was rejected because it does not match the required payment identifier format; retry with the identifier returned by the original payment request`)
   }
   return value
 }

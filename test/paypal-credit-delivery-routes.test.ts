@@ -174,7 +174,7 @@ test('an unsigned dispute webhook is rejected as unverified before network or ci
 
   assert.equal(response.status, 401, await response.clone().text())
   assert.deepEqual(await response.json(), {
-    error: 'PayPal webhook signature was not verified.',
+    error: 'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.',
   })
   assert.equal(paypal.calls.length, 0, 'unsigned evidence must not reach PayPal')
   assert.equal(database.purchases.size, 0)
@@ -211,7 +211,7 @@ test('malformed PayPal signature headers are rejected before network or city wri
 
       assert.equal(response.status, 401, await response.clone().text())
       assert.deepEqual(await response.json(), {
-        error: 'PayPal webhook signature was not verified.',
+        error: 'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.',
       })
       assert.equal(paypal.calls.length, 0, 'malformed evidence must not reach PayPal')
       assert.equal(database.purchases.size, 0)
