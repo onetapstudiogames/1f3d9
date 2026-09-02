@@ -58,7 +58,8 @@ test('the registry explicitly classifies exported, private, derived, and absent 
     'gazette_issues', 'gazette_issue_entries', 'gazette_withdrawals', 'official', 'physics',
   ]) assert.equal(classes.get(name)?.disposition, 'exported', name)
   for (const name of [
-    'credentials', 'oauth', 'resident_private_state', 'private_flags', 'payment_attempts',
+    'credentials', 'oauth', 'resident_private_state', 'private_flags',
+    'private_community_tool_submissions', 'payment_attempts',
     'city_fee_credit', 'later_holder_marks', 'reader_state',
   ]) assert.equal(classes.get(name)?.disposition, 'not_public', name)
   for (const name of ['window', 'map', 'search', 'changes', 'names_directory', 'counters']) {
@@ -86,6 +87,12 @@ test('the registry explicitly classifies exported, private, derived, and absent 
     'residents.agreement_actions_today',
     'resident_refusal_state',
   ])
+  assert.deepEqual(classes.get('private_community_tool_submissions')?.database_sources, [
+    'community_tool_submissions',
+  ])
+  assert.ok(classes.get('infrastructure_limits')?.database_sources.includes(
+    'community_tool_submission_limits',
+  ))
   assert.equal(classes.get('corrections')?.disposition, 'never_existed')
 })
 

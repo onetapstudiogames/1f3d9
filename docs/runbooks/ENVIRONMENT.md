@@ -104,6 +104,7 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 | `CRON_SECRET` | Bearer secret protecting the five-minute `/api/internal/payment-recovery` cron and Monday 16:00 UTC `/api/internal/gazette-print` cron. 32–512 printable characters. |
 | `LOG_DRAIN_SECRET` | HMAC secret protecting `POST /api/internal/log-drain`. It must exactly match the Vercel drain delivery secret and be 64 lowercase hexadecimal characters (32 random bytes). Until this is set and the drain is created, the receiver is dormant. |
 | `LATER_HOLDER_CURSOR_KEY` | Server-only 64-hex key deriving per-resident later-holder cursor tokens. Absent or malformed, that index answers 503. Rotation invalidates outstanding cursors; readers restart from the first page. Preview and production may differ; keep each stable. |
+| `COMMUNITY_TOOL_IP_HASH_KEY` | Server-only 64-lowercase-hex key for HMAC-SHA256 community-tool address limits. Generate 32 random bytes in the approved secret store; never expose the key to browsers, logs, source, prompts, or command lines. Missing or malformed, form submission fails closed with 503 before database work. Preview and production may differ; keep each stable because rotation starts fresh address buckets while old keyed hashes age out. |
 | `HOSTED_CHAT_SIGNIN_ENABLED` | Staged rollout gate for hosted-chat sign-in. |
 | `IDENTITY_ROTATION_ENABLED` | Staged rollout gate for the rotation door. |
 | `IDENTITY_RECOVERY_ENABLED` | Staged rollout gate for the recovery door. |
@@ -198,6 +199,71 @@ Provider references: [REST authentication](https://developer.paypal.com/api/rest
 [sandbox-to-production switch](https://developer.paypal.com/api/rest/production/),
 [webhook registration and Webhook ID](https://developer.paypal.com/api/rest/webhooks/rest/),
 and [event names](https://developer.paypal.com/api/rest/webhooks/event-names/).
+
+## Community tool review queue
+
+The queue is additive database state. Do not run its migrations from an ordinary
+development lane. The operator applies `db/migrations/20260901_community_tool_submissions.sql`
+and then `db/migrations/20260901_community_tool_submission_privacy.sql` through the same
+guarded Preview-then-Production ceremony used by other additive migrations:
+
+```sh
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:community-tool-submissions
+
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:community-tool-submission-privacy
+
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+PRODUCTION_SNAPSHOT_NAME=<verified-snapshot-name> \
+npm run migrate:production:community-tool-submissions
+
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+PRODUCTION_SNAPSHOT_NAME=<verified-snapshot-name> \
+npm run migrate:production:community-tool-submission-privacy
+```
+
+All four commands also require the matching direct database URL, Neon project key, project
+ID, and branch IDs from the operator variables below. The migrator proves those targets;
+never substitute a pooled URL or omit the verified Production snapshot.
+On its first run, the privacy migration refuses any existing submission or limit row so
+an old reversible address hash cannot survive. The form is not live yet, so both tables
+must be empty. If that guard fires, stop and investigate; do not delete rows to force it.
+
+Founder resident #1 reads the pending queue through the no-store operator route. Keep
+the root key in the approved secret store and inject it only into the operator shell:
+
+```sh
+curl --fail-with-body --no-progress-meter \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  https://1f3d9.com/api/founder/community-tool-submissions
+```
+
+For approval, copy the reviewed fields into `src/community-tools.ts`, open and merge the
+ordinary logged code change, and verify that exact entry is deployed. A chosen resident
+is a self-reported claim that the maintainer checks before listing. Only then mark the
+queue row listed. A rejection uses `declined` instead:
+
+```sh
+curl --fail-with-body --no-progress-meter -X POST \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"outcome":"listed"}' \
+  https://1f3d9.com/api/founder/community-tool-submissions/QUEUE_ID/review
+```
+
+The public `/tools` page reads only the unreviewed count. A pending submission keeps its
+submitted fields and keyed address hash until review. Recording either review outcome
+clears that submission-row hash in the same transaction; the submitted fields, resident
+claim, creation and review timestamps, reviewer, and outcome remain as the maintainer's
+review record with no automatic expiry. The separate limits table keeps only the keyed
+hash, UTC day, and count; a later submission deletes limit rows more than 30 days old.
+Never paste the operator JSON, pending links, address hashes, or founder key into an
+issue, commit, prompt, or chat.
+
+The form's public-host check is storage admission, not permission for a future server
+fetch. Any future fetcher must resolve and pin only globally routable addresses, repeat
+that check for every redirect, and refuse DNS changes before reading response bytes.
 
 ## Runtime log drain (dormant until the operator creates it)
 

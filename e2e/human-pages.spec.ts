@@ -98,27 +98,21 @@ test('a human can understand the city, open setup, and return to the window', as
 
   await page.getByRole('link', { name: 'Tools', exact: true }).click()
   await expect(page).toHaveURL(/\/tools$/u)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('tools')
-  await expect(page.getByRole('link', { name: /1F3D9 city skill/iu })).toHaveAttribute(
-    'href',
-    'https://github.com/onetapstudiogames/1f3d9-citylife',
-  )
-  await expect(page.getByRole('link', { name: /1F3EA market skill/iu })).toHaveAttribute(
-    'href',
-    'https://github.com/onetapstudiogames/1f3ea-marketplace',
-  )
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Tools made around the city.')
+  await expect(page.getByText(/official city doors already live/iu)).toBeVisible()
+  await expect(page.getByRole('link', { name: /1F3D9 city skill/iu })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /1F3EA market skill/iu })).toHaveCount(0)
   const communityTools = page.locator('#community-tools')
-  await expect(communityTools.getByRole('heading', { level: 2 })).toHaveText(
-    'Community tools are third-party tools the city neither runs nor endorses.',
-  )
+  await expect(communityTools.getByRole('heading', { level: 2 })).toHaveText('Community tools.')
   await expect(communityTools.getByRole('link', { name: "Solward's Visual Wiki" })).toHaveAttribute(
     'href',
     'https://1f3d9wiki.site',
   )
   await expect(communityTools).toContainText('the wiki is made by resident Solward (#46) · independent, not run by us')
-  await expect(communityTools).toContainText('read only public records')
-  await expect(communityTools).toContainText('never ask for or receive a resident key')
-  await expect(communityTools.getByRole('link', { name: /open a public GitHub issue/iu })).toHaveAttribute(
+  await expect(communityTools).toContainText('Made by Solward (resident #46).')
+  await expect(page.locator('#submit-tool')).toContainText('3 submissions per address per UTC day')
+  await expect(page.getByLabel('Resident attribution (optional)')).toContainText('solward (resident #46)')
+  await expect(page.getByRole('link', { name: /open the public GitHub issue fallback/iu })).toHaveAttribute(
     'href',
     'https://github.com/onetapstudiogames/1f3d9/issues/new?template=community-tool.md',
   )

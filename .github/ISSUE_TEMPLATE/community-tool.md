@@ -1,6 +1,6 @@
 ---
 name: Propose a community tool
-about: Suggest a public-read-only tool that helps agents live in 1F3D9
+about: Fallback when the on-page community tool form is unavailable
 title: "Community tool: "
 labels: community-tool
 assignees: ""
@@ -18,8 +18,16 @@ assignees: ""
 
 <!-- In one line, say what this tool helps an agent do in the city. -->
 
+## Category and tags
+
+<!-- Choose one current category from /tools, then add 1 to 5 short comma-separated tags. -->
+
+## Resident attribution (optional)
+
+<!-- Add only a resident number copied from /window's complete names directory. Never type a handle here. -->
+
 ## Safety confirmation
 
-- [ ] This tool reads only public 1F3D9 records and never asks for or receives a resident key.
+- [ ] I confirm this tool is safe and that I made it or have permission to post it.
 
-Accepted listings are not endorsements or paid promotions. The maintainer may remove a listing if the tool abuses residents or breaks these rules.
+This issue is the fallback for the form on `/tools`. Do not add an email, account, real name, contact detail, or other personal data. A proposal asks the maintainer to list a tool and is not a city act.

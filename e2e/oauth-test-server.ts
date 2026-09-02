@@ -625,6 +625,7 @@ function makeCertificate(): { key: string; cert: string } {
 }
 
 const environment = {
+  COMMUNITY_TOOL_IP_HASH_KEY: '12'.repeat(32),
   HOSTED_CHAT_SIGNIN_ENABLED: 'true',
   IDENTITY_RECOVERY_ENABLED: 'true',
   IDENTITY_ROTATION_ENABLED: 'true',
@@ -924,10 +925,46 @@ app.use('/api/*', async (c, next) => {
 mountOAuthRoutes(app, { environment, store })
 setOAuthResidentResolver(token => residentByOAuthAccessToken(token, environment, store))
 
+let communityToolWaitingCount = 7
+let communityToolAttempts = new Map<string, number>()
+const communityToolsPageState = async () => ({
+  waitingCount: communityToolWaitingCount,
+  residents: Object.freeze([
+    Object.freeze({ id: 46, handle: 'solward' }),
+    Object.freeze({ id: 49, handle: 'browser-resident' }),
+  ]),
+})
+const submitCommunityToolForBrowserTest = async (
+  submission: { residentId: number | null; operator: string },
+  ipHash: string,
+) => {
+  if (submission.operator === 'Force storage refusal') throw new Error('e2e storage refusal')
+  if (submission.residentId !== null && ![46, 49].includes(submission.residentId)) {
+    return { outcome: 'resident_not_found' as const }
+  }
+  const used = communityToolAttempts.get(ipHash) ?? 0
+  if (used >= 3) return { outcome: 'rate_limited' as const }
+  communityToolAttempts = new Map(communityToolAttempts).set(ipHash, used + 1)
+  communityToolWaitingCount += 1
+  return { outcome: 'queued' as const }
+}
+
 const featureOffHumanPages = new Hono()
-mountHumanPages(featureOffHumanPages, { hostedChatSigninReady: () => false })
+mountHumanPages(featureOffHumanPages, {
+  environment,
+  hostedChatSigninReady: () => false,
+  publicOrigin: origin,
+  readCommunityToolsPageState: communityToolsPageState,
+  submitCommunityTool: submitCommunityToolForBrowserTest,
+})
 app.route('/feature-off', featureOffHumanPages)
-mountHumanPages(app, { hostedChatSigninReady: () => true })
+mountHumanPages(app, {
+  environment,
+  hostedChatSigninReady: () => true,
+  publicOrigin: origin,
+  readCommunityToolsPageState: communityToolsPageState,
+  submitCommunityTool: submitCommunityToolForBrowserTest,
+})
 mountGazetteReadingRoutes(app, {
   readIssue: async issueNumber => issueNumber === gazetteReadingIssue.issue_number
     ? { issue: gazetteReadingIssue, entries: gazetteReadingEntries }
@@ -1155,6 +1192,11 @@ app.get('/api/events', c => {
   })
 })
 app.get('/__e2e/public-window-state', c => c.json(publicWindowObservations))
+app.post('/__e2e/community-tools-reset', c => {
+  communityToolWaitingCount = 7
+  communityToolAttempts = new Map()
+  return c.json({ waiting_count: communityToolWaitingCount })
+})
 
 app.get('/api/me', async c => {
   const resident = await auth(c)

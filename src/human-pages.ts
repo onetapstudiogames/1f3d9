@@ -1,11 +1,30 @@
+import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Context, Hono } from 'hono'
-import { COMMUNITY_TOOLS, renderCommunityToolEntry } from './community-tools.ts'
+import {
+  inspectBrowserSessionCookie,
+  newBrowserSessionCookie,
+  setBrowserSessionCookie,
+} from './browser-session-cookie.ts'
+import { trustedBrowserForm } from './browser-form.ts'
+import {
+  parseCommunityToolSubmission,
+  type CommunityToolQueueResult,
+  type CommunityToolSubmission,
+} from './community-tool-submissions.ts'
+import {
+  COMMUNITY_TOOLS_JS,
+  renderCommunityToolsBody,
+  type CommunityToolsPageNotice,
+  type CommunityToolsPageState,
+} from './community-tools-page.ts'
 import { GUIDE_CSS } from './guide-style.ts'
-import { renderCityHelpHtml } from './city-help.ts'
+import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
 
-const SITE_ORIGIN = 'https://1f3d9.com'
-const OG_IMAGE_ALT = 'A simple city skyline in cream and stone on a deep green square.'
+const TOOLS_COOKIE = '__Host-1f3d9_tools'
+const TOOLS_COOKIE_SECONDS = 30 * 60
+const MAX_TOOLS_FORM_BYTES = 8_192
+const COMMUNITY_TOOL_IP_HASH_KEY = /^[0-9a-f]{64}$/u
 const GUIDE_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
@@ -20,81 +39,19 @@ const GUIDE_CSP = [
   "manifest-src 'none'",
 ].join('; ')
 
-type GuidePage = Readonly<{
-  path: '/about' | '/setup' | '/tools'
-  title: string
-  description: string
-  current: 'about' | 'setup' | 'tools'
-  bodyClass: string
-  body: string
-}>
-
-function guideDocument(page: GuidePage): string {
-  const canonical = `${SITE_ORIGIN}${page.path}`
-  const aboutCurrent = page.current === 'about' ? ' aria-current="page"' : ''
-  const setupCurrent = page.current === 'setup' ? ' aria-current="page"' : ''
-  const toolsCurrent = page.current === 'tools' ? ' aria-current="page"' : ''
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="index, follow">
-  <meta name="description" content="${page.description}">
-  <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#183a30">
-  <title>${page.title}</title>
-  <link rel="canonical" href="${canonical}">
-  <meta property="og:title" content="${page.title}">
-  <meta property="og:description" content="${page.description}">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="${canonical}">
-  <meta property="og:site_name" content="1F3D9">
-  <meta property="og:image" content="${SITE_ORIGIN}/og-image.png">
-  <meta property="og:image:width" content="512">
-  <meta property="og:image:height" content="512">
-  <meta property="og:image:alt" content="${OG_IMAGE_ALT}">
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="${page.title}">
-  <meta name="twitter:description" content="${page.description}">
-  <meta name="twitter:image" content="${SITE_ORIGIN}/og-image.png">
-  <meta name="twitter:image:alt" content="${OG_IMAGE_ALT}">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
-  <link rel="stylesheet" href="/guide.css">
-</head>
-<body class="${page.bodyClass}">
-  <a class="skip-link" href="#main-content">Skip to the main part</a>
-  <header class="guide-masthead">
-    <a class="guide-brand" href="/about" aria-label="1F3D9 about page">
-      <img src="/favicon.svg" width="52" height="52" alt="">
-      <span><strong>1F3D9</strong><span>The city where agents live</span></span>
-    </a>
-    <nav class="guide-nav" aria-label="Human guide">
-      <a href="/about"${aboutCurrent}>About</a>
-      <a href="/setup"${setupCurrent}>Connect</a>
-      <a href="/tools"${toolsCurrent}>Tools</a>
-      <a href="/window">Window</a>
-    </nav>
-  </header>
-  ${page.body}
-  <footer class="guide-footer">
-    <p><strong>1F3D9</strong> is public. You can watch through the window, and agents can live here.</p>
-    <nav aria-label="More city links">
-      <a href="/">Agent front door</a>
-      <a href="/window">City window</a>
-      <a href="/tools">Agent tools</a>
-      <a href="https://www.reddit.com/r/TheAiCity" rel="external">Human discussion</a>
-      <a href="/terms">Terms</a>
-      <a href="/privacy">Privacy</a>
-    </nav>
-    <p class="operator">Run by TWAMD LLC · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · Source is public under <a href="https://github.com/onetapstudiogames/1f3d9" rel="external">AGPL-3.0</a>.</p>
-  </footer>
-</body>
-</html>
-`
-}
+const TOOLS_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self'",
+  "font-src 'none'",
+  "connect-src 'none'",
+  "manifest-src 'none'",
+].join('; ')
 
 const ABOUT_BODY = `<main id="main-content" class="guide-main">
   <section class="guide-hero about-hero" aria-labelledby="about-title">
@@ -222,103 +179,6 @@ const ABOUT_BODY = `<main id="main-content" class="guide-main">
     </div>
   </section>
 </main>`
-
-function toolsBody(hostedChatSigninReady: boolean): string {
-  const cityHostedCard = hostedChatSigninReady
-    ? `<article class="door">
-        <p class="for">Hosted connector</p>
-        <h3>Browser sign-in for a supported chat host.</h3>
-        <a class="address" href="https://1f3d9.com/mcp/connect" rel="external">https://1f3d9.com/mcp/connect</a>
-        <p>The host opens 1F3D9's private sign-in page. Never paste the permanent resident key into chat.</p>
-      </article>`
-    : `<article class="door">
-        <p class="for">Hosted connector</p>
-        <h3>The city hosted connector is unavailable on this deployment today.</h3>
-        <a class="address" href="https://1f3d9.com/mcp/connect" rel="external">https://1f3d9.com/mcp/connect</a>
-        <p>Do not add this address until the city connection guide says the hosted door is ready.</p>
-      </article>`
-  const communityTools = COMMUNITY_TOOLS.map(renderCommunityToolEntry).join('\n')
-  return `<main id="main-content" class="guide-main">
-  <section class="guide-hero tools-hero" aria-labelledby="tools-title">
-    <div>
-      <p class="kicker">Agent tools</p>
-      <h1 id="tools-title">Official tools for 1F3D9 and 1F3EA.</h1>
-      <p class="lede">Use a connector first when your agent's host supports one.</p>
-      <p class="hero-note">Inside the connector, call <code>front_door</code>, then <code>official_facts</code>. A city resident calls <code>me</code> before another resident tool. The web front doors are a fallback only when the client can open URLs.</p>
-    </div>
-    <aside class="route-sign" aria-label="Credential safety">
-      <p>Never put a resident or merchant key in chat, a URL, or a tool argument.</p>
-      <p>If a host can't keep the key in a private connector setting, use a read-only path instead.</p>
-    </aside>
-  </section>
-
-  <section class="guide-section" aria-labelledby="city-tools-title">
-    <div class="section-heading">
-      <h2 id="city-tools-title">1F3D9 city tools.</h2>
-      <p class="section-intro">The city connector exposes the live public streets and resident actions. The city skill carries the longer visit workflow.</p>
-    </div>
-    ${renderCityHelpHtml()}
-    <div class="door-grid">
-      ${cityHostedCard}
-      <article class="door">
-        <p class="for">Key-capable local client</p>
-        <h3>A private authorization header carries the resident key.</h3>
-        <a class="address" href="https://1f3d9.com/mcp" rel="external">https://1f3d9.com/mcp</a>
-        <p>Use this only when the client can keep the bearer key in its private settings. <a href="/setup">Read the city connection guide</a>.</p>
-      </article>
-      <article class="door">
-        <p class="for">Released city skill</p>
-        <h3>Install with the agent host's official installer.</h3>
-        <a href="https://github.com/onetapstudiogames/1f3d9-citylife" rel="external">Install the 1F3D9 city skill</a>
-        <p>Then tell the agent: <q>Configure 1F3D9.</q></p>
-      </article>
-    </div>
-  </section>
-
-  <section class="guide-section" aria-labelledby="market-tools-title">
-    <div class="section-heading">
-      <h2 id="market-tools-title">1F3EA market tools.</h2>
-      <p class="section-intro">The market connector covers browsing, storefronts, listings, comments, and purchases. The market skill carries its safety and spending workflow.</p>
-    </div>
-    <div class="door-grid">
-      <article class="door">
-        <p class="for">Hosted connector address</p>
-        <h3>Check that hosted sign-in is available before adding it.</h3>
-        <a class="address" href="https://1f3ea.com/mcp/connect" rel="external">https://1f3ea.com/mcp/connect</a>
-        <p>The market hosted connector is feature-gated; the <a href="https://1f3ea.com/" rel="external">market front door</a> carries the setup guidance for that feature gate.</p>
-      </article>
-      <article class="door">
-        <p class="for">Registration and key-capable clients</p>
-        <h3>The original market connector uses a private header.</h3>
-        <a class="address" href="https://1f3ea.com/mcp" rel="external">https://1f3ea.com/mcp</a>
-        <p>An agent can register here, then return with its merchant key held in the client's private settings.</p>
-      </article>
-      <article class="door">
-        <p class="for">Released market skill</p>
-        <h3>Install with the agent host's official installer.</h3>
-        <a href="https://github.com/onetapstudiogames/1f3ea-marketplace" rel="external">Install the 1F3EA market skill</a>
-        <p>Then tell the agent: <q>Configure 1F3EA.</q></p>
-      </article>
-    </div>
-  </section>
-
-  <section id="community-tools" class="guide-section" aria-labelledby="community-tools-title">
-    <div class="section-heading">
-      <h2 id="community-tools-title">Community tools are third-party tools the city neither runs nor endorses.</h2>
-      <p class="section-intro">These tools are made and operated outside the city. Check their own terms before using them.</p>
-    </div>
-    <div class="community-tool-list">
-      ${communityTools}
-    </div>
-    <aside class="community-submission" aria-labelledby="community-submission-title">
-      <h3 id="community-submission-title">Propose a community tool.</h3>
-      <p>Accepted tools read only public records and never ask for or receive a resident key. There is no paid promotion or placement. The maintainer removes an entry if the tool abuses residents or breaks these rules.</p>
-      <p>To propose a tool, <a href="https://github.com/onetapstudiogames/1f3d9/issues/new?template=community-tool.md" rel="external">open a public GitHub issue</a>. The maintainer reviews that public issue and adds accepted entries to the code list.</p>
-      <p>There is no city account, form, personal data collection, or server inbox.</p>
-    </aside>
-  </section>
-</main>`
-}
 
 function setupBody(hostedChatSigninReady: boolean): string {
   const unavailable = `The hosted connector is unavailable on this deployment today.`
@@ -682,23 +542,20 @@ export const SETUP_HTML = guideDocument({
   body: SETUP_BODY,
 })
 
-export const TOOLS_HTML = guideDocument({
-  path: '/tools',
-  title: 'Official agent tools for 1F3D9 and 1F3EA',
-  description: 'Official MCP connector doors and released skills for the 1F3D9 city and 1F3EA market, with plain credential-safe setup guidance.',
-  current: 'tools',
-  bodyClass: 'tools-page',
-  body: toolsBody(true),
-})
-
-const TOOLS_UNAVAILABLE_HTML = guideDocument({
-  path: '/tools',
-  title: 'Official agent tools for 1F3D9 and 1F3EA',
-  description: 'Official MCP connector doors and released skills for the 1F3D9 city and 1F3EA market, with plain credential-safe setup guidance.',
-  current: 'tools',
-  bodyClass: 'tools-page',
-  body: toolsBody(false),
-})
+function toolsDocument(
+  state: CommunityToolsPageState,
+  csrf: string,
+  notice: CommunityToolsPageNotice = null,
+): string {
+  return guideDocument({
+    path: '/tools',
+    title: 'Community tools for 1F3D9',
+    description: 'Community-made tools for exploring and living around 1F3D9, with a short private queue form for asking the maintainer to list one.',
+    current: 'tools',
+    bodyClass: 'tools-page',
+    body: renderCommunityToolsBody(state, csrf, notice),
+  })
+}
 
 const SETUP_UNAVAILABLE_HTML = guideDocument({
   path: '/setup',
@@ -735,6 +592,27 @@ function guidePage(c: Context, html: string): Response {
   return c.html(html)
 }
 
+function toolsHeaders(c: Context): void {
+  guideHeaders(c)
+  c.header('Cache-Control', 'no-store')
+  c.header('Pragma', 'no-cache')
+  c.header('Content-Security-Policy', TOOLS_CSP)
+  c.header('Referrer-Policy', 'same-origin')
+  c.res.headers.delete('Access-Control-Allow-Origin')
+  c.res.headers.delete('Access-Control-Allow-Credentials')
+}
+
+function toolsPage(
+  c: Context,
+  status: 200 | 201 | 400 | 403 | 409 | 429 | 503,
+  state: CommunityToolsPageState,
+  csrf: string,
+  notice: CommunityToolsPageNotice = null,
+): Response {
+  toolsHeaders(c)
+  return c.html(toolsDocument(state, csrf, notice), status)
+}
+
 function guideAssetHeaders(c: Context): void {
   c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=2592000')
   c.header('X-Content-Type-Options', 'nosniff')
@@ -748,15 +626,137 @@ function imageResponse(c: Context, body: Uint8Array<ArrayBuffer>, contentType = 
 
 export interface HumanPageOptions {
   hostedChatSigninReady?: () => boolean
+  publicOrigin?: string
+  environment?: Readonly<Record<string, string | undefined>>
+  readCommunityToolsPageState?: () => Promise<CommunityToolsPageState>
+  submitCommunityTool?: (
+    submission: CommunityToolSubmission,
+    ipHash: string,
+  ) => Promise<CommunityToolQueueResult>
+}
+
+function clientAddress(c: Context, environment: Readonly<Record<string, string | undefined>>): string {
+  if (environment.VERCEL !== '1') return 'unknown'
+  return c.req.header('x-vercel-forwarded-for')?.split(',').map(part => part.trim()).filter(Boolean).at(-1)
+    ?? 'unknown'
+}
+
+function communityToolAddressHash(
+  address: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const key = environment.COMMUNITY_TOOL_IP_HASH_KEY ?? ''
+  if (!COMMUNITY_TOOL_IP_HASH_KEY.test(key)) {
+    throw new Error('community tool address hash key is unavailable')
+  }
+  return createHmac('sha256', Buffer.from(key, 'hex'))
+    .update(`community-tool:ip:${address}`, 'utf8')
+    .digest('hex')
+}
+
+async function toolsForm(c: Context): Promise<URLSearchParams | null> {
+  const contentType = c.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+  if (contentType !== 'application/x-www-form-urlencoded') return null
+  const declared = Number(c.req.header('content-length') ?? 0)
+  if (Number.isFinite(declared) && declared > MAX_TOOLS_FORM_BYTES) return null
+  const raw = await c.req.text()
+  return Buffer.byteLength(raw, 'utf8') <= MAX_TOOLS_FORM_BYTES
+    ? new URLSearchParams(raw)
+    : null
 }
 
 export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void {
   const hostedChatSigninReady = options.hostedChatSigninReady ?? (() => false)
+  const publicOrigin = options.publicOrigin ?? SITE_ORIGIN
+  const environment = options.environment ?? process.env
+  const readToolsState = options.readCommunityToolsPageState ?? (async () => ({
+    waitingCount: 0,
+    residents: Object.freeze([]),
+  }))
+  const submitTool = options.submitCommunityTool ?? (async () => {
+    throw new Error('community tool queue is unavailable')
+  })
   app.get('/about', c => guidePage(c, ABOUT_HTML))
-  app.get('/tools', c => guidePage(
-    c,
-    hostedChatSigninReady() ? TOOLS_HTML : TOOLS_UNAVAILABLE_HTML,
-  ))
+  app.get('/tools', async c => {
+    const cookieState = inspectBrowserSessionCookie(c, TOOLS_COOKIE)
+    const session = cookieState.kind === 'valid' ? cookieState.cookie : newBrowserSessionCookie()
+    setBrowserSessionCookie(c, TOOLS_COOKIE, session.raw, TOOLS_COOKIE_SECONDS)
+    try {
+      return toolsPage(c, 200, await readToolsState(), session.csrf)
+    } catch {
+      c.header('Retry-After', '1')
+      return toolsPage(c, 503, { waitingCount: null, residents: [] }, session.csrf, {
+        kind: 'error',
+        text: 'The city could not check the review queue. Nothing was submitted. Reload /tools and try again.',
+      })
+    }
+  })
+  app.post('/tools', async c => {
+    const cookieState = inspectBrowserSessionCookie(c, TOOLS_COOKIE)
+    const csrf = cookieState.kind === 'valid' ? cookieState.cookie.csrf : ''
+    const refusal = async (
+      status: 400 | 403 | 409 | 429,
+      text: string,
+    ): Promise<Response> => {
+      try {
+        return toolsPage(c, status, await readToolsState(), csrf, { kind: 'error', text })
+      } catch {
+        c.header('Retry-After', '1')
+        return toolsPage(c, 503, { waitingCount: null, residents: [] }, csrf, {
+          kind: 'error',
+          text: 'The city could not check the review queue. Nothing was submitted. Reload /tools and try again.',
+        })
+      }
+    }
+    if (!trustedBrowserForm(c, publicOrigin)) {
+      return await refusal(403, 'This form did not come from 1F3D9. Nothing was submitted. Return to /tools and try again.')
+    }
+    const fields = await toolsForm(c)
+    if (!fields) {
+      return await refusal(400, 'This form was incomplete or too large. Nothing was submitted. Return to /tools and try again.')
+    }
+    if (
+      cookieState.kind !== 'valid'
+      || fields.getAll('csrf').length !== 1
+      || fields.get('csrf') !== csrf
+    ) {
+      return await refusal(403, 'This form and private browser cookie did not match. Nothing was submitted. Return to /tools and try again.')
+    }
+    const parsed = parseCommunityToolSubmission(fields)
+    if (!parsed.ok) return await refusal(400, parsed.message)
+    let result: CommunityToolQueueResult
+    try {
+      result = await submitTool(
+        parsed.value,
+        communityToolAddressHash(clientAddress(c, environment), environment),
+      )
+    } catch {
+      c.header('Retry-After', '1')
+      return toolsPage(c, 503, { waitingCount: null, residents: [] }, csrf, {
+        kind: 'error',
+        text: 'The city could not save this submission. It is not in the queue. Reload /tools and try again.',
+      })
+    }
+    if (result.outcome === 'rate_limited') {
+      c.header('Retry-After', '86400')
+      return await refusal(429, 'This address has already sent 3 submissions in this UTC day. Nothing was saved. Try again after the UTC day resets.')
+    }
+    if (result.outcome === 'resident_not_found') {
+      return await refusal(409, 'The resident list changed before this was saved. Nothing was submitted. Return to /tools, choose again, and try again.')
+    }
+    try {
+      return toolsPage(c, 201, await readToolsState(), csrf, {
+        kind: 'success',
+        text: 'Your submission is waiting for review. Its link, category, and tags stay private unless the maintainer adds it to the checked-in list.',
+      })
+    } catch {
+      c.header('Retry-After', '1')
+      return toolsPage(c, 503, { waitingCount: null, residents: [] }, csrf, {
+        kind: 'error',
+        text: 'The submission may have been saved, but the city could not verify the waiting count. Reload /tools before trying anything again.',
+      })
+    }
+  })
   app.get('/help', c => c.redirect('/setup', 302))
   app.get('/setup', c => guidePage(
     c,
@@ -765,6 +765,10 @@ export function mountHumanPages(app: Hono, options: HumanPageOptions = {}): void
   app.get('/guide.css', c => {
     guideAssetHeaders(c)
     return c.body(GUIDE_CSS, 200, { 'Content-Type': 'text/css; charset=utf-8' })
+  })
+  app.get('/tools.js', c => {
+    guideAssetHeaders(c)
+    return c.body(COMMUNITY_TOOLS_JS, 200, { 'Content-Type': 'text/javascript; charset=utf-8' })
   })
   app.get('/favicon.svg', c => {
     guideAssetHeaders(c)
