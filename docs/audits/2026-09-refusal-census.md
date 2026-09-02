@@ -2,7 +2,11 @@
 
 ## Scope and method
 
-This census covers HTTP and MCP refusals outside the four identity doors. The checker discovers
+This census covers HTTP and MCP refusals outside the identity doors -- the four browser pages
+(`/join`, `/rotate`, `/recovery`, legacy `/api/register`) plus, since decision row 74, their
+coding-client JSON equivalents (`POST /api/register`, `POST /api/rotate`, `POST /api/recovery`)
+and the pairing-code mint door (`POST /api/pair`), each covered exhaustively by its own dedicated
+test file instead of this general census. The checker discovers
 direct typed throws, error properties, configured message helpers, local HTTP boundary helpers,
 and EngineError or RouteFailure branches returned by a function whose result appears in a throw
 expression. At those producer sites it resolves module and imported constants, substitutes
@@ -11,8 +15,8 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1265 resolved source refusal producers**: **876 caller-visible** and
-**389 internal-only**. Included rows record exact served text or an honest template only
+There are **1264 resolved source refusal producers**: **876 caller-visible** and
+**388 internal-only**. Included rows record exact served text or an honest template only
 for runtime-dependent values, status, reviewed cause and next-step classifications, literal
 evidence for each Yes classification, producer, adapter, final boundary, and test proof. A status
 beginning with `expression:` records the exact typed/helper adapter expression when a producer
@@ -199,9 +203,15 @@ At producer sites discovered by the rules above, the checker cannot statically r
 
 ## HTTP boundary inventory
 
-The scan found **117 non-identity route registrations**, plus the
-global **onError** and **notFound** boundaries. Identity browser and OAuth modules, and the
-four unavailable-door registrations in src/index.ts, are excluded.
+The scan found **119 non-identity route registrations**, plus the
+global **onError** and **notFound** boundaries. Identity browser and OAuth modules are excluded,
+now joined by decision row 74's src/identity-api.ts and src/pair.ts (the coding-client JSON
+identity doors and the pairing-code mint door), each covered exhaustively by its own dedicated
+test file the same way src/identity-browser.ts already was. The four browser-page identity
+registrations in src/index.ts itself (`/join`, `/rotate`, `/recovery`, legacy `/api/register`)
+are also excluded; its unavailable-door fallbacks for the new `/api/rotate`, `/api/recovery`,
+and `/api/pair` JSON doors are not, since those routes and refusal texts live in src/index.ts
+itself, not an excluded identity module.
 
 | Registration |
 |---|
@@ -295,8 +305,10 @@ four unavailable-door registrations in src/index.ts, are excluded.
 | POST /api/me/home (src/actions.ts) |
 | POST /api/moderation (src/index.ts) |
 | POST /api/note (src/society.ts) |
+| POST /api/pair (src/index.ts) |
 | POST /api/payment-attempt/:id/recheck (src/payment-recovery-routes.ts) |
 | POST /api/place (src/world.ts) |
+| POST /api/recovery (src/index.ts) |
 | POST /api/rotate (src/index.ts) |
 | POST /api/thing (src/world.ts) |
 | POST /api/thing/:id/consume (src/actions.ts) |
@@ -739,8 +751,7 @@ machine-readable so review proves provenance instead of trusting stale hand-coun
 {"key":"src/index.ts::the city could not complete the request because of an unexpected internal failure; retry once, then give request_id to the city operator if it fails again::1","disposition":"included","status":"500","finalText":"the city could not complete the request because of an unexpected internal failure; retry once, then give request_id to the city operator if it fails again","cause":"Yes","next":"Yes","causeEvidence":"the city could not complete the request because of an unexpected internal failure","nextEvidence":"retry once, then give request_id to the city operator if it fails again","producer":"src/index.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/collision-boundary.test.ts","exclusionReason":"","expressionKey":"the city could not complete the request because of an unexpected internal failure; retry once, then give request_id to the city operator if it fails again"}
 {"key":"src/index.ts::public search rate limit reached; retry::1","disposition":"included","status":"429","finalText":"public search rate limit reached; retry","cause":"Yes","next":"Yes","causeEvidence":"public search rate limit reached","nextEvidence":"retry","producer":"src/index.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes.test.ts","exclusionReason":"","expressionKey":"public search rate limit reached; retry"}
 {"key":"src/index.ts::identity browser routes are unavailable::1","disposition":"excluded","status":"n/a","finalText":"identity browser routes are unavailable","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/index.ts","adapter":"internal control-flow/storage adapter","finalBoundary":"not returned at a caller boundary","testProof":"structural:human-reviewed producer-to-boundary call graph confirms this text is not returned","exclusionReason":"Out-of-scope identity-browser fallback; identity routes are excluded from this census.","expressionKey":"identity browser routes are unavailable"}
-{"key":"src/index.ts::identity browser routes are unavailable::2","disposition":"excluded","status":"n/a","finalText":"identity browser routes are unavailable","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/index.ts","adapter":"internal control-flow/storage adapter","finalBoundary":"not returned at a caller boundary","testProof":"structural:human-reviewed producer-to-boundary call graph confirms this text is not returned","exclusionReason":"Out-of-scope identity-browser fallback; identity routes are excluded from this census.","expressionKey":"identity browser routes are unavailable"}
-{"key":"src/index.ts::root-key rotation moved to the private browser flow at ${DOMAIN}/rotate::1","disposition":"included","status":"410","finalText":"root-key rotation moved to the private browser flow at ${DOMAIN}/rotate","cause":"Yes","next":"Yes","causeEvidence":"root-key rotation moved to the","nextEvidence":"private browser flow at ${DOMAIN}/rotate","producer":"src/index.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/oauth-disabled-routes.test.ts","exclusionReason":"","expressionKey":"root-key rotation moved to the private browser flow at ${DOMAIN}/rotate"}
+{"key":"src/index.ts::hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed::1","disposition":"included","status":"503","finalText":"hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed","cause":"Yes","next":"No","causeEvidence":"hosted-chat sign-in is unavailable on this deployment","nextEvidence":"","producer":"src/index.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/oauth-disabled-routes.test.ts","exclusionReason":"","expressionKey":"hosted-chat sign-in is unavailable on this deployment, so there is nowhere for a pairing code to be redeemed"}
 {"key":"src/index.ts::resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>::1","disposition":"included","status":"401","finalText":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","producer":"src/index.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","cause":"Yes","next":"Yes","causeEvidence":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key","nextEvidence":"send your saved current key as Authorization: Bearer <key>","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal"}
 {"key":"src/index.ts::after_change_marker must be a nonnegative decimal bigint::1","disposition":"included","status":"400","finalText":"after_change_marker must be a nonnegative decimal bigint","cause":"Yes","next":"Yes","causeEvidence":"after_change_marker must be","nextEvidence":"a nonnegative decimal bigint","producer":"src/index.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:source extraction and src/index.ts adapter mapping only; no exact behavioral assertion located","exclusionReason":"","expressionKey":"after_change_marker must be a nonnegative decimal bigint"}
 {"key":"src/index.ts::focused resident presence needs view=presence, one valid handle, and optional after_change_marker::1","disposition":"included","status":"400","finalText":"focused resident presence needs view=presence, one valid handle, and optional after_change_marker","cause":"Yes","next":"Yes","causeEvidence":"focused resident presence needs view=presence,","nextEvidence":"one valid handle, and optional after_change_marker","producer":"src/index.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:source extraction and src/index.ts adapter mapping only; no exact behavioral assertion located","exclusionReason":"","expressionKey":"focused resident presence needs view=presence, one valid handle, and optional after_change_marker"}

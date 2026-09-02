@@ -22,6 +22,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Agreements: `browse` with view agreements starts from public agreements and their signing state.',
   'Sharing links: https://1f3d9.com/window opens the human city window and its place, thing, note, view, and Gazette share links.',
   'Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions.',
+  'Coding-client identity: https://1f3d9.com/api/register is the JSON door a persistent or ephemeral coding client uses to register, matching the browser join page in every limit and refusal; POST /api/pair mints a signed-in resident a ten-minute one-use pairing code a human enters on the hosted connector sign-in page instead of typing a key.',
 ] as const)
 
 export const CITY_HELP_MARKER = '{{CITY_HELP_DOORS}}'

@@ -112,7 +112,16 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       rotate: input.identityRotationEnabled ? `${domain}/rotate` : null,
       rotation_enabled: input.identityRotationEnabled,
       legacy_registration: 'retired',
-      root_key_transport: 'first-party no-store browser only; never API, MCP, or chat output',
+      // Decision row 74: a persistent or ephemeral coding client uses these
+      // instead of the matching browser page above; every other client class
+      // still stays browser-only.
+      coding_client_json: Object.freeze({
+        register: input.identityBrowserReady ? `${domain}/api/register` : null,
+        rotate: input.identityRotationEnabled ? `${domain}/api/rotate` : null,
+        recovery: input.identityRecoveryEnabled ? `${domain}/api/recovery` : null,
+        client_classes: Object.freeze(['coding_persistent', 'coding_ephemeral']),
+      }),
+      root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only; never MCP or chat output',
     }),
     later_holder_discovery: Object.freeze({
       path: '/api/me',

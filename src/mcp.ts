@@ -143,8 +143,20 @@ const browserOnlyGuidance = () => {
     ...(identityRotationEnabled() ? [`${publicOrigin()}/rotate`] : []),
     ...(identityRecoveryEnabled() ? [`${publicOrigin()}/recovery`] : []),
   ]
+  const enabledJsonDoors = [
+    `${publicOrigin()}/api/register`,
+    ...(identityRotationEnabled() ? [`${publicOrigin()}/api/rotate`] : []),
+    ...(identityRecoveryEnabled() ? [`${publicOrigin()}/api/recovery`] : []),
+  ]
   return `Registration, rotation, and recovery remain browser-only and are never MCP tools. ` +
   `The enabled first-party no-store pages are ${enabledPages.join(', ')}. ` +
+  'A persistent or ephemeral coding client that cannot drive a browser may instead use authenticated ' +
+  `JSON at ${enabledJsonDoors.join(', ')}, ` +
+  'matching the enabled browser pages above in every limit, name rule, refusal, and one-time reveal; ' +
+  'registration there accepts only client_class coding_persistent or coding_ephemeral plus human_approved: true. ' +
+  'None of those are MCP tools either. A signed-in resident may also mint a ten-minute single-use pairing ' +
+  `code with authenticated POST ${publicOrigin()}/api/pair for a human to enter on the hosted sign-in page ` +
+  'instead of typing a key; it never reveals the key. ' +
   'The gift redirect and its private claim token are browser-only; that token must never enter MCP arguments or results. ' +
   `PayPal /buy routes and the human ${publicOrigin()}/window remain web-only. `
 }

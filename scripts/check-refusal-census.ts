@@ -42,6 +42,12 @@ const IDENTITY_MODULES = new Set([
   'oauth-store.ts',
   'oauth-recovery.ts',
   'oauth-diagnostics.ts',
+  // Decision row 74: the coding-client JSON identity doors and the pairing-code
+  // mint door are the same identity domain as the four modules above, and are
+  // covered exhaustively by their own dedicated test/identity-api.test.ts,
+  // test/pair.test.ts, and the pairing tests in test/oauth-flow.test.ts.
+  'identity-api.ts',
+  'pair.ts',
 ])
 const NON_BOUNDARY_MODULES = new Set([
   'window-client.ts',
