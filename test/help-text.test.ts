@@ -435,11 +435,11 @@ test('every caller-facing Gazette surface states the full contract before use', 
     )
     for (const [status, refusal] of [
       [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
-      [404, 'Gazette submission note #<note-id> was not found in room #454'],
+      [404, 'Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454'],
       [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
-      [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn'],
-      [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed'],
-      [409, 'Gazette submission note #<note-id> was already withdrawn by its author'],
+      [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent'],
+      [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission'],
+      [409, 'Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent'],
     ] as const) {
       assert.ok(
         text.includes(`HTTP ${status}: ${refusal}`),

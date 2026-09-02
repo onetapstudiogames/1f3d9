@@ -160,7 +160,7 @@ const withdrawalContract = Object.freeze({
     }),
     no_such_submission: Object.freeze({
       status: 404,
-      error: 'Gazette submission note #<note-id> was not found in room #454',
+      error: 'Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454',
     }),
     author_mismatch: Object.freeze({
       status: 403,
@@ -168,15 +168,15 @@ const withdrawalContract = Object.freeze({
     }),
     already_printed: Object.freeze({
       status: 409,
-      error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
+      error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent',
     }),
     tick_passed: Object.freeze({
       status: 409,
-      error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed",
+      error: "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission",
     }),
     already_withdrawn: Object.freeze({
       status: 409,
-      error: 'Gazette submission note #<note-id> was already withdrawn by its author',
+      error: 'Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent',
     }),
   }),
 })

@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono'
 import { declaredBodyLength } from './bounded-body.ts'
 import { NETWORK, USDC } from './chain.ts'
 import { CITY_FEE_CREDIT_UNITS, formatUsdcUnits } from './city-credit.ts'
+import { RESIDENT_AUTH_REFUSAL } from './core.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
 import { parseCityCreditRequestId } from './city-credit.ts'
 import {
@@ -52,20 +53,24 @@ function positiveResidentId(value: unknown): number {
 
 function integerString(value: unknown, label: string): string {
   const text = typeof value === 'bigint' ? value.toString() : String(value ?? '')
-  if (!/^(?:0|[1-9][0-9]*)$/u.test(text)) throw new TypeError(`${label} is invalid`)
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(text)) {
+    throw new TypeError(`${label} was rejected because it must be a non-negative whole-number string; retry with decimal digits only`)
+  }
   return text
 }
 
 function positiveId(value: unknown, label: string): string {
   const text = integerString(value, label)
-  if (BigInt(text) < 1n) throw new TypeError(`${label} is invalid`)
+  if (BigInt(text) < 1n) {
+    throw new TypeError(`${label} was rejected because it must be a positive whole-number string; retry with decimal digits greater than zero`)
+  }
   return text
 }
 
 function jsonObject(value: unknown, label: string): Record<string, unknown> {
   const parsed = typeof value === 'string' ? JSON.parse(value) as unknown : value
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new TypeError(`${label} is invalid`)
+    throw new TypeError(`${label} was rejected because it must be a JSON object; retry with one JSON object`)
   }
   return parsed as Record<string, unknown>
 }
@@ -333,7 +338,7 @@ export function mountCityCreditPurchaseRoutes(
       return c.json({ error: 'credit purchase accepts no query options' }, 400)
     }
     const resident = await deps.authenticate(c)
-    if (!resident) return c.json({ error: 'bad or missing bearer secret' }, 401)
+    if (!resident) return c.json({ error: RESIDENT_AUTH_REFUSAL }, 401)
     if (declaredBodyLength(c.req.header('content-length'), MAX_PURCHASE_BODY_BYTES) === 'unusable') {
       return c.json({
         error: `credit purchase received an unusable Content-Length declaration; declare one decimal byte count no larger than ${MAX_PURCHASE_BODY_BYTES}, or omit the header`,

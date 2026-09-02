@@ -26,6 +26,9 @@ export type CostThresholds = Readonly<{
     projects: Readonly<Record<string, Readonly<{
       edgeRequestsPerDay: number
       functionInvocationsPerDay: number
+    }> | Readonly<{
+      unmonitored: true
+      reason: string
     }>>>
   }>
   neon: Readonly<{ maxPreviewBranches: number }>
@@ -89,6 +92,13 @@ export function validateCostThresholds(value: unknown): CostThresholds {
 
   const projects = Object.fromEntries(Object.entries(value.vercel.projects).map(([name, limits]) => {
     if (!name.trim() || !isPlainObject(limits)) throw new Error('Each Vercel project needs thresholds')
+    if (limits.unmonitored === true) {
+      exactKeys(limits, ['unmonitored', 'reason'], `Thresholds for ${name}`)
+      if (typeof limits.reason !== 'string' || !limits.reason.trim()) {
+        throw new Error(`${name} unmonitored threshold reason must be a non-empty string`)
+      }
+      return [name, Object.freeze({ unmonitored: true as const, reason: limits.reason })]
+    }
     exactKeys(limits, ['edgeRequestsPerDay', 'functionInvocationsPerDay'], `Thresholds for ${name}`)
     return [name, Object.freeze({
       edgeRequestsPerDay: positiveFinite(limits.edgeRequestsPerDay, `${name} Edge Requests`),
@@ -195,6 +205,7 @@ export function compareCostMetrics(input: Readonly<{
   for (const day of input.summary?.projectDays ?? []) {
     const baseline = input.thresholds.vercel.projects[day.project]
     if (!baseline) { unconfigured.add(day.project); continue }
+    if ('unmonitored' in baseline) continue
     const edgeLimit = baseline.edgeRequestsPerDay * ALERT_MULTIPLIER
     if (day.edgeRequests > edgeLimit) violations.push({
       metric: 'edge_requests', label: `${day.project} ${day.date}`, actual: day.edgeRequests, limit: edgeLimit,

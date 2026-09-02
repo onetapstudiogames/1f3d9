@@ -24,14 +24,14 @@ export interface PendingEffectInsert {
 
 async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
   const value = await promise
-  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
+  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result; retry once, then contact the city operator')
   return value as T[]
 }
 
 function queueCount(value: unknown, field: string): number {
   const parsed = typeof value === 'number' ? value : Number(value)
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new EngineError(500, `database returned an invalid ${field}`)
+    throw new EngineError(500, `database returned an invalid ${field}; retry once, then contact the city operator`)
   }
   return parsed
 }
@@ -56,12 +56,12 @@ async function enforcePendingLimits(input: PendingEffectInsert, db: TaggedSql): 
          WHERE resolution.pending_effect_id = pending.id
        )) AS actor_pending
   `)
-  if (!rows[0]) throw new EngineError(500, 'pending effect counts are unavailable')
+  if (!rows[0]) throw new EngineError(500, 'pending effect counts are unavailable because the city could not read the queues; retry once, then contact the city operator')
   if (queueCount(rows[0].place_pending, 'place pending count') >= MAX_PENDING_EFFECTS_PER_PLACE) {
-    throw new EngineError(429, 'pending effect limit reached for place')
+    throw new EngineError(429, 'pending effect limit reached for place; wait for a pending effect to finish or choose another place')
   }
   if (queueCount(rows[0].actor_pending, 'actor pending count') >= MAX_PENDING_EFFECTS_PER_ACTOR) {
-    throw new EngineError(429, 'you have reached the pending effect limit')
+    throw new EngineError(429, 'you have reached the pending effect limit; wait for a pending effect to finish before retrying')
   }
 }
 
@@ -88,5 +88,5 @@ export async function insertPendingEffect(input: PendingEffectInsert, db: Tagged
       FROM scheduled JOIN residents resident ON resident.id = ${input.actorId}
     ) SELECT id FROM scheduled
   `)
-  if (!rows[0]) throw new EngineError(500, 'wait effect could not be scheduled')
+  if (!rows[0]) throw new EngineError(500, 'wait effect could not be scheduled because the city write returned no record; retry once, then contact the city operator')
 }

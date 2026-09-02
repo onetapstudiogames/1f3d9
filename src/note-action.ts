@@ -113,7 +113,7 @@ function databaseInstant(value: unknown, field: string): string {
       ? Date.parse(value)
       : Number.NaN
   if (!Number.isFinite(milliseconds)) {
-    throw new EngineError(500, `database returned an invalid ${field}`)
+    throw new EngineError(500, `database returned an invalid ${field}; retry once, then contact the city operator`)
   }
   return new Date(milliseconds).toISOString()
 }
@@ -175,7 +175,7 @@ function gazetteConstraintEngineError(error: unknown): EngineError | null {
     return new EngineError(
       409,
       printed
-        ? `Gazette submission note #${printed[1]} already printed in issue #${printed[2]} and cannot be withdrawn`
+        ? `Gazette submission note #${printed[1]} already printed in issue #${printed[2]} and cannot be withdrawn; choose another active submission because printing is permanent`
         : 'Gazette submission already printed and cannot be withdrawn',
     )
   }
@@ -184,7 +184,7 @@ function gazetteConstraintEngineError(error: unknown): EngineError | null {
     return new EngineError(
       409,
       passed
-        ? `Gazette submission note #${passed[1]} can be withdrawn only strictly before ${databaseInstant(passed[2], 'Gazette print tick')}; that print tick has passed`
+        ? `Gazette submission note #${passed[1]} can be withdrawn only strictly before ${databaseInstant(passed[2], 'Gazette print tick')}; that print tick has passed, so choose another active submission`
         : 'Gazette submission reached its Monday 16:00 UTC print tick and can no longer be withdrawn',
     )
   }
@@ -219,14 +219,14 @@ function gazetteWithdrawalOpeningReserved(
 
 async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
   const value = await promise
-  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
+  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result; retry once, then contact the city operator')
   return value as T[]
 }
 
 function databasePositiveInteger(value: unknown, field: string): number {
   const parsed = Number(value)
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 2_147_483_647) {
-    throw new EngineError(500, `database returned an invalid ${field}`)
+    throw new EngineError(500, `database returned an invalid ${field}; retry once, then contact the city operator`)
   }
   return parsed
 }
@@ -247,7 +247,7 @@ export async function readGazetteWithdrawalForNote(
   `)
   if (found.length === 0) return undefined
   if (found.length !== 1) {
-    throw new EngineError(500, 'database returned ambiguous Gazette withdrawal facts')
+    throw new EngineError(500, 'database returned ambiguous Gazette withdrawal facts; re-read the submission, then contact the city operator if the records remain ambiguous')
   }
   const row = found[0]!
   const storedTargetNoteId = databasePositiveInteger(
@@ -259,7 +259,7 @@ export async function readGazetteWithdrawalForNote(
     'Gazette withdrawal command note ID',
   )
   if (storedTargetNoteId !== targetNoteId || storedCommandNoteId !== commandNoteId) {
-    throw new EngineError(500, 'database returned mismatched Gazette withdrawal facts')
+    throw new EngineError(500, 'database returned mismatched Gazette withdrawal facts; re-read the submission, then contact the city operator if the records still disagree')
   }
   return Object.freeze({
     target_note_id: storedTargetNoteId,
@@ -288,7 +288,7 @@ async function findRecentDuplicate(
   database: TaggedSql,
   input: TalkNoteActionInput,
 ): Promise<TalkNote | null> {
-  if (!database.query) throw new EngineError(500, 'transaction query support is unavailable')
+  if (!database.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
   const gazetteReplayRule = input.placeId === GAZETTE_ROOM_ID
     ? `AND (
         NOT gazette_withdrawals_are_open()
@@ -357,7 +357,7 @@ async function gazetteWithdrawalCommandIsReserved(
       AND gazette_withdrawal_command_reserved(${input.text}) AS command_reserved
   `)
   if (rows.length !== 1 || typeof rows[0]?.command_reserved !== 'boolean') {
-    throw new EngineError(500, 'database returned an invalid Gazette command state')
+    throw new EngineError(500, 'database returned an invalid Gazette command state; re-read the Gazette submission, then contact the city operator')
   }
   return rows[0].command_reserved
 }
@@ -366,7 +366,7 @@ async function createTalkNote(
   transaction: TaggedSql,
   input: TalkNoteActionInput,
 ): Promise<TalkNote> {
-  if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable')
+  if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
   const rows = await withPlacePermission(transaction)`
     /* note-action:create */
     WITH place_state AS (
@@ -410,7 +410,12 @@ async function createTalkNote(
     LEFT JOIN new_note n ON TRUE
   ` as TalkNoteCreationRow[]
   const outcome = rows[0]
-  if (!outcome) throw new EngineError(500, 'note result is unavailable')
+  if (!outcome) {
+    throw new EngineError(
+      500,
+      'note result is unavailable after the city write; re-read recent notes in this place before deciding whether to retry',
+    )
+  }
   if (outcome.id !== null && outcome.id !== undefined) {
     return {
       id: outcome.id,
@@ -433,9 +438,12 @@ async function createTalkNote(
     )
   }
   if (outcome.note_quota_spent === false) {
-    throw new EngineError(429, `${QUOTAS.notes} notes per UTC day`)
+    throw new EngineError(429, `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
   }
-  throw new EngineError(500, 'note result is unavailable')
+  throw new EngineError(
+    500,
+    'note result is unavailable after the city write; re-read recent notes in this place before deciding whether to retry',
+  )
 }
 
 async function createTalkNoteForAction(
@@ -494,7 +502,7 @@ async function attemptTalkNoteAction(
       && !gazetteWithdrawal
       && await gazetteWithdrawalCommandIsReserved(transaction, input)
     ) {
-      throw new EngineError(500, 'database did not record the Gazette withdrawal')
+      throw new EngineError(500, 'database did not record the Gazette withdrawal; re-read the submission before deciding whether to retry')
     }
     return note
       ? {
@@ -503,7 +511,11 @@ async function attemptTalkNoteAction(
           replayed: false,
           ...(gazetteWithdrawal ? { gazetteWithdrawal } : {}),
         }
-      : { ok: false, status: 500, error: 'note result is unavailable' }
+      : {
+          ok: false,
+          status: 500,
+          error: 'note result is unavailable after the city write; re-read recent notes in this place before deciding whether to retry',
+        }
   })
 }
 

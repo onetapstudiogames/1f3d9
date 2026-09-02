@@ -278,7 +278,7 @@ function storedState(value: unknown): AppliedPayPalDispute['state'] {
 function count(value: unknown, label: string): number {
   const parsed = typeof value === 'number' ? value : Number(String(value))
   if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000) {
-    throw new TypeError(`stored PayPal dispute ${label} is invalid`)
+    throw new TypeError(`stored PayPal dispute ${label} is invalid; re-read the dispute, then ask the city operator to repair its stored record`)
   }
   return parsed
 }
@@ -389,7 +389,7 @@ export async function resolveFounderPayPalCreditDispute(
   if (status === 'not_found') {
     throw new FounderPayPalDisputeResolutionError(
       'not_found',
-      'This PayPal dispute was not found. Nothing changed.',
+      'This PayPal dispute was not found. Re-read the current dispute list before retrying.',
     )
   }
   if (status === 'not_reviewable') {
@@ -401,7 +401,7 @@ export async function resolveFounderPayPalCreditDispute(
   if (status === 'decision_conflict') {
     throw new FounderPayPalDisputeResolutionError(
       'decision_conflict',
-      'This PayPal dispute already has the opposite founder decision. Nothing changed.',
+      'This PayPal dispute already has the opposite founder decision. Re-read the dispute and use its current decision; nothing changed.',
     )
   }
   const expectedState = input.decision === 'seller_favour'

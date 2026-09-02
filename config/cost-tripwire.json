@@ -6,6 +6,30 @@
       "1f3d9": {
         "edgeRequestsPerDay": 60000,
         "functionInvocationsPerDay": 60000
+      },
+      "1f3ea": {
+        "unmonitored": true,
+        "reason": "No reviewed seven-day normal week is recorded for this project."
+      },
+      "eo-web": {
+        "unmonitored": true,
+        "reason": "No reviewed seven-day normal week is recorded for this project."
+      },
+      "snapshot": {
+        "unmonitored": true,
+        "reason": "No reviewed seven-day normal week is recorded for this project."
+      },
+      "soti": {
+        "unmonitored": true,
+        "reason": "No reviewed seven-day normal week is recorded for this project."
+      },
+      "soti-w3-debug": {
+        "unmonitored": true,
+        "reason": "No reviewed seven-day normal week is recorded for this project."
+      },
+      "sweetpspeech": {
+        "unmonitored": true,
+        "reason": "No reviewed seven-day normal week is recorded for this project."
       }
     }
   },

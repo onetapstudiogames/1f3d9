@@ -221,7 +221,7 @@ export function parsePublicSearchQuery(
       || (cursor.maker ?? null) !== maker
     )
   ) {
-    return { ok: false, error: 'before cursor does not belong to this search query' }
+    return { ok: false, error: 'before cursor does not belong to this search query; omit before or use the next_before cursor returned by this exact query' }
   }
 
   return Object.freeze({

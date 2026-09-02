@@ -50,7 +50,7 @@ export function renderCityHelpHtml(): string {
 export function mountCityHelpRoute(app: Hono): void {
   app.get('/api/help', c => {
     if (Object.keys(c.req.queries()).length > 0) {
-      return c.json({ error: 'unknown query parameter' }, 400)
+      return c.json({ error: 'unknown query parameter; omit query options from this route' }, 400)
     }
     c.header('Cache-Control', 'public, max-age=300')
     return c.json({ doors: CITY_HELP_DOORS })

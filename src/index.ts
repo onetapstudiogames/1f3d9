@@ -9,11 +9,13 @@ import {
   authRootKey,
   COLLISION_CONFLICT_MESSAGE,
   err,
+  FOUNDER_AUTH_REFUSAL,
   HANDLE_RE,
   isHostedConnectorRequest,
   isRetryableCollision,
   postgresErrorCode,
   QUOTAS,
+  RESIDENT_AUTH_REFUSAL,
   sha256,
 } from './core.ts'
 import { NETWORK, USDC, usdcBalance } from './chain.ts'
@@ -451,7 +453,7 @@ app.onError((error, c) => {
     error_fingerprint: errorFingerprint,
   }))
   return c.json({
-    error: 'internal',
+    error: 'the city could not complete the request because of an unexpected internal failure; retry once, then give request_id to the city operator if it fails again',
     error_class: errorClass,
     request_id: requestId,
   }, 500)
@@ -640,7 +642,7 @@ mountDrawingRoutes(app, { database: runtimeDatabase, authenticate: auth })
 app.get('/api/city-credit/preflight', async c => {
   privateResidentHeaders(c)
   const resident = await authPassive(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const preflight = await readCityCreditPreflight(runtimeDatabase, resident.id)
@@ -751,8 +753,11 @@ app.get('/api/residents', async c => {
     if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
     if (!resident) {
       return changeMarker === null
-        ? err(c, 404, 'resident not found')
-        : c.json({ error: 'resident not found', change_marker: changeMarker }, 404)
+        ? err(c, 404, `resident handle ${handleValue.value} was not found; use GET /api/residents and send a current handle`)
+        : c.json({
+            error: `resident handle ${handleValue.value} was not found; use GET /api/residents and send a current handle`,
+            change_marker: changeMarker,
+          }, 404)
     }
     return c.json({ resident, ...(changeMarker === null ? {} : { change_marker: changeMarker }) })
   }
@@ -816,7 +821,7 @@ app.get('/api/residents', async c => {
 app.post('/api/me', async c => {
   privateResidentHeaders(c)
   const resident = await authPassive(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parseLaterHolderReadInput(await c.req.json().catch(() => null))
@@ -831,7 +836,7 @@ app.post('/api/me', async c => {
       resident.id,
     )
   } catch {
-    return err(c, 503, 'later-holder index is unavailable')
+    return err(c, 503, 'later-holder index is unavailable because its private cursor key is not configured; ask the city owner to configure it before retrying')
   }
   try {
     return c.json(await readLaterHolderIndex(
@@ -849,7 +854,7 @@ app.post('/api/me', async c => {
 app.get('/api/me', async c => {
   privateResidentHeaders(c)
   const resident = await auth(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
   const query = c.req.queries()
   const allowed = allowedPublicQuery(query, [
     'before_place_id', 'place_limit',
@@ -1035,7 +1040,7 @@ app.get('/api/me', async c => {
 app.post('/api/thing/:id/mark', async c => {
   privateResidentHeaders(c)
   const resident = await authPassive(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const thingId = positiveId(c.req.param('id'))
@@ -1063,7 +1068,7 @@ app.post('/api/thing/:id/mark', async c => {
 app.post('/api/founder/city-credit', async c => {
   privateResidentHeaders(c)
   const founder = await authRootKey(c)
-  if (!founder) return err(c, 401, 'founder root key required')
+  if (!founder) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (founder.id !== 1) return err(c, 403, 'only founder resident #1 may issue city fee credit')
   const body = await c.req.json().catch(() => null) as unknown
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -1073,14 +1078,14 @@ app.post('/api/founder/city-credit', async c => {
   if (
     !Object.keys(input).every(key => ['resident_handle', 'source_key', 'reason'].includes(key))
     || Object.keys(input).length !== 3
-  ) return err(c, 400, 'city credit body contains an unsupported field')
+  ) return err(c, 400, 'city credit body contains an unsupported field; send only source_key, resident_handle, reason, and amount')
   const residentHandle = typeof input.resident_handle === 'string' ? input.resident_handle : ''
   if (!HANDLE_RE.test(residentHandle)) return err(c, 400, 'resident_handle must be a resident handle')
   const residents = await sql`
     SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
   ` as Array<{ id: number }>
   const target = residents[0]
-  if (!target) return err(c, 404, 'resident not found')
+  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; use GET /api/residents and send a current handle`)
   try {
     const issued = await issueCityFeeCredit({ query: sql.query }, {
       founderId: founder.id,
@@ -1100,7 +1105,7 @@ app.post('/api/founder/city-credit', async c => {
 app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
   privateResidentHeaders(c)
   const founder = await authRootKey(c)
-  if (!founder) return err(c, 401, 'founder root key required')
+  if (!founder) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (founder.id !== 1) {
     return err(c, 403,
       'only founder resident #1 may resolve an ambiguous PayPal credit dispute')
@@ -1132,10 +1137,10 @@ app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
   const mediaType = (c.req.header('content-type') ?? '')
     .split(';', 1)[0]?.trim().toLowerCase()
   if (mediaType !== 'application/json') {
-    return err(c, 400, 'send one application/json founder PayPal dispute body')
+    return err(c, 400, 'founder PayPal dispute Content-Type must be application/json; send one application/json body')
   }
   if (bodyRead.state === 'empty') {
-    return err(c, 400, 'founder PayPal dispute body is empty; nothing changed')
+    return err(c, 400, 'founder PayPal dispute body is empty; send one JSON object containing decision')
   }
   if (bodyRead.state === 'oversized') {
     return err(c, 400,
@@ -1145,7 +1150,7 @@ app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
   try {
     body = JSON.parse(bodyRead.bytes.toString('utf8')) as unknown
   } catch {
-    return err(c, 400, 'founder PayPal dispute body must be valid JSON; nothing changed')
+    return err(c, 400, 'founder PayPal dispute body is not valid JSON; send one valid JSON object containing decision')
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return err(c, 400, 'founder PayPal dispute body must be one JSON object')
@@ -1180,13 +1185,13 @@ app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
       if (error.kind === 'not_found') return err(c, 404, error.message)
       if (error.kind === 'not_reviewable') {
         return err(c, 409,
-          'This PayPal dispute is not in resolution_review and is not awaiting founder review. Nothing changed.')
+          'This PayPal dispute is not in resolution_review and is not awaiting founder review. Choose a dispute whose state is resolution_review and founder_review_required is true.')
       }
       return err(c, 409, error.message)
     }
     if (error instanceof PayPalCreditStoreConflictError) {
       return err(c, 409,
-        'Durable PayPal dispute history rejected this founder decision. Nothing changed.')
+        'Durable PayPal dispute history rejected this founder decision. Nothing changed. Re-read the dispute, then retry only with its current review state.')
     }
     if (error instanceof TypeError) return err(c, 400, error.message)
     throw error
@@ -1196,7 +1201,7 @@ app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
 app.get('/api/founder/city-credit/:handle', async c => {
   privateResidentHeaders(c)
   const founder = await authRootKey(c)
-  if (!founder) return err(c, 401, 'founder root key required')
+  if (!founder) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (!(founder.id === 1)) return err(c, 403, 'only founder resident #1 may inspect city fee credit')
   const query = c.req.queries()
   const allowed = allowedPublicQuery(query, ['before_credit_id', 'credit_limit'])
@@ -1209,7 +1214,7 @@ app.get('/api/founder/city-credit/:handle', async c => {
     SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
   ` as Array<{ id: number }>
   const target = residents[0]
-  if (!target) return err(c, 404, 'resident not found')
+  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; use GET /api/residents and send a current handle`)
   const [account, paypalDisputes] = await Promise.all([
     readCityCreditAccount({ query: sql.query }, target.id, {
       beforeId: creditRequest.beforeId,
@@ -1227,7 +1232,7 @@ app.get('/api/founder/city-credit/:handle', async c => {
 app.get('/api/founder/community-tool-submissions', async c => {
   privateResidentHeaders(c)
   const founder = await authRootKey(c)
-  if (!founder) return err(c, 401, 'founder root key required')
+  if (!founder) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (founder.id !== 1) {
     return err(c, 403, 'only founder resident #1 may read community tool submissions')
   }
@@ -1244,7 +1249,7 @@ app.get('/api/founder/community-tool-submissions', async c => {
 app.post('/api/founder/community-tool-submissions/:id/review', async c => {
   privateResidentHeaders(c)
   const founder = await authRootKey(c)
-  if (!founder) return err(c, 401, 'founder root key required')
+  if (!founder) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (founder.id !== 1) {
     return err(c, 403, 'only founder resident #1 may finish community tool review')
   }
@@ -1261,7 +1266,7 @@ app.post('/api/founder/community-tool-submissions/:id/review', async c => {
   }
   const mediaType = (c.req.header('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
   if (mediaType !== 'application/json') {
-    return err(c, 400, 'send one application/json community tool review body')
+    return err(c, 400, 'community tool review Content-Type must be application/json; send one application/json body')
   }
   const bodyBytes = Buffer.from(await c.req.arrayBuffer())
   if (bodyBytes.byteLength === 0 || bodyBytes.byteLength > COMMUNITY_TOOL_REVIEW_BODY_BYTES) {
@@ -1289,7 +1294,9 @@ app.post('/api/founder/community-tool-submissions/:id/review', async c => {
     founder.id,
     input.outcome,
   )
-  if (result.outcome === 'not_found') return err(c, 404, 'community tool submission not found')
+  if (result.outcome === 'not_found') {
+    return err(c, 404, `community tool submission_id ${submissionId} was not found; re-read the founder queue and send a current submission_id`)
+  }
   return c.json({
     submission_id: submissionId,
     outcome: result.reviewOutcome,
@@ -1428,7 +1435,7 @@ app.get('/api/events', async c => {
 app.post('/api/flag', async c => {
   const resident = await auth(c)
   if ((c.req.header('authorization') || isHostedConnectorRequest(c.req.raw)) && !resident) {
-    return err(c, 401, 'bad or missing bearer secret')
+    return err(c, 401, RESIDENT_AUTH_REFUSAL)
   }
   const body = await c.req.json().catch(() => null)
   const targetType = String(body?.target_type ?? '')
@@ -1442,10 +1449,10 @@ app.post('/api/flag', async c => {
   const reason = reasonText.trim()
   if (resident) {
     if (!(await takeFlagSlot(sha256(`flag:resident:${resident.id}`), RESIDENT_FLAGS_PER_HOUR))) {
-      return err(c, 429, `${RESIDENT_FLAGS_PER_HOUR} resident flags per UTC hour`)
+      return err(c, 429, `${RESIDENT_FLAGS_PER_HOUR} resident flag limit reached per UTC hour; retry after the next UTC hour begins`)
     }
   } else if (!(await takeFlagSlot(sha256(`flag:ip:${clientAddress(c)}`), ANONYMOUS_FLAGS_PER_IP_HOUR))) {
-    return err(c, 429, `${ANONYMOUS_FLAGS_PER_IP_HOUR} anonymous flags per IP per UTC hour`)
+    return err(c, 429, `${ANONYMOUS_FLAGS_PER_IP_HOUR} anonymous flag limit reached per IP per UTC hour; retry after the next UTC hour begins`)
   }
   const actor = resident?.handle ?? 'anonymous'
   await sql`
@@ -1469,7 +1476,7 @@ app.post('/api/flag', async c => {
 
 app.post('/api/moderation', async c => {
   const resident = await authRootKey(c)
-  if (!resident) return err(c, 401, 'founder root key required')
+  if (!resident) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (resident.id !== 1) {
     return err(c, 403, 'only founder resident #1 may remove or restore illegal public content')
   }
@@ -1478,7 +1485,9 @@ app.post('/api/moderation', async c => {
     return err(c, 400, 'need exactly action (remove|restore), target_type, target_id, and a safe reason')
   }
   const recorded = await recordModeration(resident, input)
-  if (!recorded) return err(c, 404, `${input.target_type} not found`)
+  if (!recorded) {
+    return err(c, 404, `${input.target_type} target_id ${input.target_id} was not found; re-read the public record and send a current target_id`)
+  }
   return c.json({ moderation: recorded }, 201)
 })
 
@@ -1575,9 +1584,9 @@ app.post('/mcp/connect', async c => {
   }
   return response
 })
-app.get('/mcp', c => c.text('MCP endpoint. POST JSON-RPC 2.0 messages here.', 405))
+app.get('/mcp', c => c.text('GET is not accepted by the MCP endpoint. POST JSON-RPC 2.0 messages here.', 405))
 app.get('/mcp/connect', c => hostedChatSignin.ready
-  ? c.text('Hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.', 405)
+  ? c.text('GET is not accepted by the hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.', 405)
   : c.json(missingStreet(), 404))
 
 app.notFound(c => c.json(missingStreet(), 404))

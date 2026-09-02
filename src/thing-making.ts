@@ -53,7 +53,7 @@ async function actionBoundary(
 }
 
 async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult> {
-  if (input.kindId === null) throw new EngineError(500, 'typed thing needs a kind')
+  if (input.kindId === null) throw new EngineError(500, 'typed thing needs a kind; send one current kind_id')
   const completed = Promise.withResolvers<MakeSuccess>()
   const boundary = await actionBoundary(() => runAction({
     actorId: input.actor.id,
@@ -140,7 +140,7 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
           FROM residents WHERE id = ${input.actor.id}
         `) as Array<{ available: boolean }>
         if (quotaRows[0]?.available === false) {
-          throw new EngineError(429, `daily thing limit reached (${QUOTAS.things})`)
+          throw new EngineError(429, `daily thing limit reached (${QUOTAS.things}); retry after the UTC day resets`)
         }
         throw new EngineError(409, 'place changed before the thing could be made; retry')
       }

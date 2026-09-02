@@ -281,7 +281,7 @@ function json(value: unknown): string {
     throw new EngineError(400, 'payload must be valid JSON')
   }
   if (Buffer.byteLength(encoded, 'utf8') > MAX_JSON_BYTES) {
-    throw new EngineError(400, 'payload is too large')
+    throw new EngineError(400, `payload exceeds ${MAX_JSON_BYTES} UTF-8 bytes; send a smaller payload`)
   }
   return encoded
 }
@@ -309,7 +309,7 @@ function targetType(value: unknown): TargetType | null {
 
 function normalizeTarget(value: RuntimeTarget | null | undefined): RuntimeTarget | null {
   if (value == null) return null
-  if (!targetType(value.type)) throw new EngineError(400, 'target type is invalid')
+  if (!targetType(value.type)) throw new EngineError(400, 'target type is invalid; use resident, place, thing, or kind')
   return { type: value.type, id: positiveId(value.id, 'target id') }
 }
 
@@ -380,7 +380,7 @@ async function activeActionBlock(
   db: TaggedSql = engineSql,
 ): Promise<ActiveActionBlock | null> {
   const actorId = positiveId(residentId, 'resident id')
-  if (!isBasicAction(action)) throw new EngineError(400, 'action is invalid')
+  if (!isBasicAction(action)) throw new EngineError(400, 'action is invalid; use talk, move, use, give, consume, make, or go_home')
   if (action === 'go_home') return null
   const rows = await queryRows<Record<string, unknown>>(db`
     SELECT block.id IS NOT NULL AS blocked, block.source_trait_id,
@@ -531,7 +531,12 @@ export async function ensurePresence(
       RETURNING resident_id, current_place_id, home_place_id, updated_at
     ) SELECT resident_id, current_place_id, home_place_id, updated_at FROM seeded
   `)
-  if (!rows[0]) throw new EngineError(404, 'resident not found')
+  if (!rows[0]) {
+    throw new EngineError(
+      404,
+      `resident_id ${actorId} was not found; reconnect with the current resident key and retry`,
+    )
+  }
   return presenceFromRow(rows[0], actorId)
 }
 
@@ -550,7 +555,7 @@ async function lockPresence(residentId: number, db: TaggedSql): Promise<Presence
     SELECT resident_id, current_place_id, home_place_id, updated_at
     FROM resident_presence WHERE resident_id = ${residentId} FOR UPDATE
   `)
-  if (!rows[0]) throw new EngineError(404, 'resident presence not found')
+  if (!rows[0]) throw new EngineError(404, 'resident presence was not found; reconnect with the current resident key and retry')
   return presenceFromRow(rows[0], residentId)
 }
 
@@ -592,20 +597,28 @@ export async function moveResident(
   const stored = await readPresence(actorId, db)
   const current = stored.currentPlaceId === null ? await ensurePresence(actorId, db) : stored
   if (current.currentPlaceId === null) {
-    throw new EngineError(409, 'resident has no current place')
+    throw new EngineError(409, 'resident has no current place; reconnect with the current resident key and retry, then contact the city operator')
   }
   const requested = [current.currentPlaceId, destinationId]
   const places = await queryRows<{ id?: unknown; parent_id?: unknown }>(db`
     SELECT id, parent_id FROM places WHERE id = ANY (${requested}::int[])
   `)
   const destination = places.find(row => integer(row.id) === destinationId)
-  if (!destination) throw new EngineError(404, 'destination place not found')
+  if (!destination) {
+    throw new EngineError(
+      404,
+      `destination place_id ${destinationId} was not found; use GET /api/map?view=outline&parent_id=${current.currentPlaceId} to choose a public adjacent destination`,
+    )
+  }
   if (current.currentPlaceId === destinationId) return current
   const oldPlace = places.find(row => integer(row.id) === current.currentPlaceId)
   const destinationParent = nullableRowId(destination.parent_id, 'destination parent id')
   const oldParent = oldPlace ? nullableRowId(oldPlace.parent_id, 'current parent id') : null
   if (destinationParent !== current.currentPlaceId && oldParent !== destinationId) {
-    throw new EngineError(403, 'move must cross one parent-child edge')
+    throw new EngineError(
+      403,
+      `place_id ${destinationId} exists, but entry is closed from your current place_id ${current.currentPlaceId}; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time`,
+    )
   }
   return writeResidentLocation(actorId, destinationId, db)
 }
@@ -616,7 +629,7 @@ async function writeResidentLocation(residentId: number, destinationId: number, 
     WHERE resident_id = ${residentId}
     RETURNING resident_id, current_place_id, home_place_id, updated_at
   `)
-  if (!rows[0]) throw new EngineError(404, 'resident presence not found')
+  if (!rows[0]) throw new EngineError(404, 'resident presence was not found; reconnect with the current resident key and retry')
   return presenceFromRow(rows[0], residentId)
 }
 
@@ -632,7 +645,7 @@ export async function goHome(residentId: number, db: TaggedSql = engineSql): Pro
     RETURNING presence.resident_id, presence.current_place_id,
       presence.home_place_id, presence.updated_at
   `)
-  if (!rows[0]) throw new EngineError(409, 'home is unset or no longer owned')
+  if (!rows[0]) throw new EngineError(409, 'home is unset or no longer owned; move normally or claim an owned home before using go_home')
   return presenceFromRow(rows[0], actorId)
 }
 
@@ -676,9 +689,9 @@ export async function thingProgramsForAction(
 
 function normalizeActionInput(input: ActionInput): RequiredActionInput {
   const actorId = positiveId(input.actorId, 'actor id')
-  if (!isBasicAction(input.action)) throw new EngineError(400, 'action is invalid')
+  if (!isBasicAction(input.action)) throw new EngineError(400, 'action is invalid; use talk, move, use, give, consume, make, or go_home')
   if (typeof input.actorHandle !== 'string' || input.actorHandle.length > 120) {
-    throw new EngineError(400, 'actor handle is invalid')
+    throw new EngineError(400, 'actor handle is invalid; reconnect with the current resident key and retry')
   }
   const payload = input.payload ?? {}
   if (!objectRecord(payload)) throw new EngineError(400, 'payload must be an object')
@@ -719,7 +732,7 @@ async function recordAction(input: RequiredActionInput, db: TaggedSql): Promise<
       ${input.destinationPlaceId}, ${input.recipientId}, ${json(input.payload)}::jsonb
     ) RETURNING id
   `)
-  if (!rows[0]) throw new EngineError(500, 'action could not be recorded')
+  if (!rows[0]) throw new EngineError(500, 'action could not be recorded because the city write returned no record; retry once, then contact the city operator')
   return rowId(rows[0].id, 'action id')
 }
 
@@ -868,7 +881,7 @@ function failureFromError(error: unknown, actionId: number): EngineError {
   if (gazetteRoomError) return new EngineError(409, gazetteRoomError)
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   logUnrecognizedExecutionFailure('action', actionId, error)
-  return new EngineError(500, 'the city could not complete this action')
+  return new EngineError(500, 'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying')
 }
 
 async function recordFailedExecution(
@@ -932,12 +945,17 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (input.sourceThingId === null) return null
   const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
   if (!thing || thing.withdrawnAt !== null) {
-    throw new EngineError(404, 'thing_id was not found or is withdrawn')
+    throw new EngineError(404, 'thing_id was not found or is withdrawn; use a current active thing_id from GET /api/things')
   }
   const sharedUse = input.action === 'use' && thing.ownerId !== input.actorId && thing.openToUse === true
-  if (thing.ownerId !== input.actorId && !sharedUse) throw new EngineError(403, 'thing_id is not yours')
+  if (thing.ownerId !== input.actorId && !sharedUse) {
+    throw new EngineError(
+      403,
+      'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+    )
+  }
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
-    throw new EngineError(409, 'thing_id has an open sale offer')
+    throw new EngineError(409, 'thing_id has an open sale offer; cancel the offer or use another active thing')
   }
   if (sharedUse && input.placeId === null) {
     throw new EngineError(
@@ -1020,7 +1038,7 @@ async function moveResidentWithCarry(
     return
   }
   if (input.placeId === null) {
-    throw new EngineError(409, 'you cannot carry a thing because your current place is unset')
+    throw new EngineError(409, 'you cannot carry a thing because your current place is unset; reconnect with the current resident key and retry')
   }
   if (input.destinationPlaceId === input.placeId) {
     throw new EngineError(400, 'carry_thing_id requires a move to a different adjacent place')
@@ -1048,7 +1066,7 @@ async function moveResidentWithCarry(
   `)
   const thing = rows[0]
   if (!thing || thing.withdrawn_at !== null) {
-    throw new EngineError(404, 'carry_thing_id was not found or is withdrawn')
+    throw new EngineError(404, 'carry_thing_id was not found or is withdrawn; choose a current active thing you own')
   }
   const ownerId = rowId(thing.owner_id, 'carry thing owner id')
   const placeId = rowId(thing.place_id, 'carry thing place id')
@@ -1060,13 +1078,13 @@ async function moveResidentWithCarry(
     )
   }
   if (thing.active_offer_id !== null || thing.has_open_offer === true) {
-    throw new EngineError(409, 'carry_thing_id has an open sale offer or market lock')
+    throw new EngineError(409, 'carry_thing_id has an open sale offer or market lock; cancel the offer, wait for the lock to clear, or carry another owned thing')
   }
   if (thing.marked_by_other === true) {
-    throw new EngineError(409, 'carry_thing_id is marked for a later holder by another resident')
+    throw new EngineError(409, 'carry_thing_id is marked for a later holder by another resident; wait for that mark to clear or carry another owned thing')
   }
   if (thing.moderation_action === 'remove') {
-    throw new EngineError(409, 'carry_thing_id is under a moderation hold')
+    throw new EngineError(409, 'carry_thing_id is under a moderation hold; wait for the hold to clear or carry another owned thing')
   }
 
   const destinations = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
@@ -1318,14 +1336,14 @@ export async function runAction(
           }
           if (input.primitiveHandledByCaller) {
             if (!input.performPrimitive) {
-              throw new EngineError(500, 'caller primitive callback is missing')
+              throw new EngineError(500, 'caller primitive callback is missing, so the action cannot run; retry once, then contact the city operator')
             }
             await input.performPrimitive(transaction)
             emittedTypedPublicEvent ||= input.primitiveEmitsTypedEvent
           }
           if (!input.primitiveHandledByCaller && input.action === 'consume') {
             if (input.sourceThingId === null) {
-              throw new EngineError(400, 'consume needs a source thing')
+              throw new EngineError(400, 'consume needs a source thing; send thing_id for one active thing')
             }
             await withdrawOwnedThing(
               input.sourceThingId,

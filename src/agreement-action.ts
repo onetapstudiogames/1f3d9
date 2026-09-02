@@ -1,5 +1,6 @@
 import { postgresErrorCode, QUOTAS } from './core.ts'
 import { engineSql, type TaggedSql } from './engine.ts'
+import { missingRecordRefusal } from './refusal-text.ts'
 
 interface AgreementActor {
   readonly id: number
@@ -20,7 +21,7 @@ interface AgreementSignature {
   readonly signed_at?: string
 }
 
-const AGREEMENT_QUOTA_ERROR = `${QUOTAS.agreements} agreement actions per UTC day`
+const AGREEMENT_QUOTA_ERROR = `${QUOTAS.agreements} agreement actions per UTC day; retry after the next UTC day begins`
 
 function failure(status: AgreementActionFailure['status'], error: string): AgreementActionFailure {
   return Object.freeze({ ok: false, status, error })
@@ -60,7 +61,15 @@ export async function createAgreementAction(input: Readonly<{
   ` as { id: number; handle: string }[]
   const known = new Set(knownRows.map(row => row.handle))
   const missing = input.parties.find(handle => !known.has(handle))
-  if (missing) return failure(404, `unknown agreement party: ${missing}`)
+  if (missing) {
+    return failure(
+      404,
+      missingRecordRefusal(
+        `agreement party handle ${missing}`,
+        'use GET /api/residents and send a current resident handle',
+      ),
+    )
+  }
 
   const quota = agreementQuotaPrecheck(input.resident)
   if (quota) return quota
@@ -140,7 +149,15 @@ export async function openAgreementAccessionAction(input: Readonly<{
     WHERE a.id = ${input.agreementId}
   ` as { id: number; created_by_id: number; opened_at?: string | null }[]
   const existing = existingRows[0]
-  if (!existing) return failure(404, 'no such agreement')
+  if (!existing) {
+    return failure(
+      404,
+      missingRecordRefusal(
+        `agreement_id ${input.agreementId}`,
+        're-read GET /api/agreements and use a current agreement_id',
+      ),
+    )
+  }
   if (existing.created_by_id !== input.resident.id) {
     return failure(403, 'only the original author may open this agreement to later signers')
   }
@@ -268,10 +285,21 @@ export async function signAgreementAction(input: Readonly<{
     signature_acceded?: boolean
   }[]
   const existing = existingRows[0]
-  if (!existing) return failure(404, 'no such agreement')
+  if (!existing) {
+    return failure(
+      404,
+      missingRecordRefusal(
+        `agreement_id ${input.agreementId}`,
+        're-read GET /api/agreements and use a current agreement_id',
+      ),
+    )
+  }
   const acceding = !existing.parties?.includes(input.resident.handle)
   if (acceding && !existing.accession_open) {
-    return failure(403, 'this agreement is closed to later signers')
+    return failure(
+      403,
+      `this agreement is closed to later signers; its original author can POST /api/agreement/${input.agreementId}/open-accession before this signer retries`,
+    )
   }
 
   const findExistingSignature = async () => {

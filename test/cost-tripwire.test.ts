@@ -21,6 +21,11 @@ const realShapeFixture = readFileSync(
   'utf8',
 )
 
+const configuredThresholds = JSON.parse(readFileSync(
+  new URL('../config/cost-tripwire.json', import.meta.url),
+  'utf8',
+)) as unknown
+
 const thresholds: CostThresholds = Object.freeze({
   schemaVersion: 1,
   vercel: Object.freeze({
@@ -92,6 +97,35 @@ test('comparison accepts healthy values at the exact caps', () => {
   assert.deepEqual(result.violations, [])
 })
 
+test('explicitly unmonitored feed projects are configured and make the run complete', () => {
+  const configured = validateCostThresholds(configuredThresholds)
+  assert.deepEqual(Object.keys(configured.vercel.projects).sort(), [
+    '1f3d9',
+    '1f3ea',
+    'eo-web',
+    'snapshot',
+    'soti',
+    'soti-w3-debug',
+    'sweetpspeech',
+  ])
+
+  const result = compareCostMetrics({
+    summary: {
+      projectDays: Object.keys(configured.vercel.projects).map(project => ({
+        date: '2026-09-01', project,
+        edgeRequests: project === '1f3d9' ? 60_000 : 10_000_000,
+        functionInvocations: project === '1f3d9' ? 60_000 : 10_000_000,
+        effectiveCostUsd: 0,
+      })),
+      teamSpendByDay: [{ date: '2026-09-01', effectiveCostUsd: 0 }],
+    },
+    thresholds: configured,
+  })
+
+  assert.deepEqual(result.violations, [])
+  assert.deepEqual(result.unconfiguredProjects, [])
+})
+
 test('threshold validation refuses missing, zero, negative, and unknown values', () => {
   assert.deepEqual(validateCostThresholds(structuredClone(thresholds)), thresholds)
 
@@ -105,6 +139,13 @@ test('threshold validation refuses missing, zero, negative, and unknown values',
       vercel: {
         ...thresholds.vercel,
         projects: { '1f3d9': { edgeRequestsPerDay: 0, functionInvocationsPerDay: 1 } },
+      },
+    },
+    {
+      ...thresholds,
+      vercel: {
+        ...thresholds.vercel,
+        projects: { '1f3ea': { unmonitored: true, reason: '' } },
       },
     },
   ]) assert.throws(() => validateCostThresholds(invalid), /threshold|schema|unknown|positive/i)

@@ -150,13 +150,15 @@ function requiredConfiguration(environment: PayPalEnvironment): PayPalConfigurat
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} is invalid`)
+    throw new Error(`${label} was rejected because it does not match the required PayPal value; retry with the exact value returned by PayPal`)
   }
   return value as Record<string, unknown>
 }
 
 function array(value: unknown, label: string): unknown[] {
-  if (!Array.isArray(value)) throw new Error(`${label} is invalid`)
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} was rejected because it must be a JSON array; retry with the array returned by PayPal`)
+  }
   return value
 }
 
@@ -166,19 +168,23 @@ function text(value: unknown, label: string, maximum = 4_096): string {
     || value.length === 0
     || Buffer.byteLength(value, 'utf8') > maximum
     || /[\u0000-\u001f\u007f]/u.test(value)
-  ) throw new Error(`${label} is invalid`)
+  ) throw new Error(`${label} was rejected because it must be non-empty safe text within ${maximum} UTF-8 bytes; retry with the exact text returned by PayPal`)
   return value
 }
 
 function identifier(value: unknown, label: string): string {
   const parsed = text(value, label, 128)
-  if (!IDENTIFIER.test(parsed)) throw new Error(`${label} is invalid`)
+  if (!IDENTIFIER.test(parsed)) {
+    throw new Error(`${label} was rejected because it does not match the required PayPal value; retry with the exact value returned by PayPal`)
+  }
   return parsed
 }
 
 function resourceIdentifier(value: unknown, label: string): string {
   const parsed = text(value, label, 255)
-  if (!RESOURCE_IDENTIFIER.test(parsed)) throw new Error(`${label} is invalid`)
+  if (!RESOURCE_IDENTIFIER.test(parsed)) {
+    throw new Error(`${label} was rejected because it does not match the required PayPal value; retry with the exact value returned by PayPal`)
+  }
   return parsed
 }
 
@@ -218,14 +224,14 @@ function exactHttpsUrl(value: unknown, label: string): string {
   try {
     parsed = new URL(parsedText)
   } catch {
-    throw new Error(`${label} is invalid`)
+    throw new Error(`${label} was rejected because it must be an absolute HTTPS URL; retry with the exact HTTPS URL returned by PayPal`)
   }
   if (
     parsed.protocol !== 'https:'
     || parsed.username
     || parsed.password
     || parsed.hash
-  ) throw new Error(`${label} is invalid`)
+  ) throw new Error(`${label} was rejected because it must be an absolute HTTPS URL without credentials or a fragment; retry with the exact HTTPS URL returned by PayPal`)
   return parsed.href
 }
 
@@ -238,13 +244,13 @@ function paypalCertificateUrl(
   try {
     parsedText = text(value, label, 500)
   } catch {
-    throw new PayPalWebhookSignatureError(`${label} is invalid`)
+    throw new PayPalWebhookSignatureError(`${label} was rejected because it is not PayPal's signed certificate URL; retry with the exact header value sent by PayPal`)
   }
   let parsed: URL
   try {
     parsed = new URL(parsedText)
   } catch {
-    throw new PayPalWebhookSignatureError(`${label} is invalid`)
+    throw new PayPalWebhookSignatureError(`${label} was rejected because it is not PayPal's signed certificate URL; retry with the exact header value sent by PayPal`)
   }
   const expectedHost = paypalEnvironment === 'sandbox'
     ? 'api.sandbox.paypal.com'
@@ -262,7 +268,7 @@ function paypalCertificateUrl(
     || parsed.search
     || parsed.hash
     || !PAYPAL_CERTIFICATE_ID.test(certificateId)
-  ) throw new PayPalWebhookSignatureError(`${label} is invalid`)
+  ) throw new PayPalWebhookSignatureError(`${label} was rejected because it is not PayPal's signed certificate URL; retry with the exact header value sent by PayPal`)
   return parsed.href
 }
 
@@ -312,7 +318,7 @@ async function send(
       signal: AbortSignal.timeout(PAYPAL_TIMEOUT_MS),
     })
   } catch {
-    throw new Error(`${label} is unavailable`)
+    throw new Error(`${label} is unavailable; retry this same PayPal request later and do not approve or pay again`)
   }
 }
 
@@ -515,7 +521,7 @@ export async function capturePayPalCreditOrder(
 }
 
 function invalidWebhookSignatureField(label: string): never {
-  throw new PayPalWebhookSignatureError(`${label} is invalid`)
+  throw new PayPalWebhookSignatureError(`${label} was rejected because it does not match a required PayPal signature header; retry with the exact header value sent by PayPal`)
 }
 
 function webhookHeader(

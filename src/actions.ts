@@ -1,5 +1,5 @@
 import type { Context, Hono } from 'hono'
-import { auth, err, HANDLE_RE, type Resident } from './core.ts'
+import { auth, err, HANDLE_RE, RESIDENT_AUTH_REFUSAL, type Resident } from './core.ts'
 import { sql } from './db.ts'
 import {
   EngineError,
@@ -150,7 +150,7 @@ async function runResidentAction(
       ? 'talk uses its dedicated endpoint: POST /api/note'
       : 'make uses its dedicated endpoint: POST /api/thing')
   }
-  if (!actionFieldsAllowed(action, body)) return err(c, 400, `unsupported field for ${action}`)
+  if (!actionFieldsAllowed(action, body)) return err(c, 400, `unsupported field for ${action}; send only the fields documented for that action`)
 
   const thingId = body.thing_id == null ? null : positiveId(body.thing_id)
   if (body.thing_id != null && !thingId) return err(c, 400, 'thing_id must be a positive integer')
@@ -172,7 +172,9 @@ async function runResidentAction(
     return err(c, 400, 'carry_thing_id must be one positive integer')
   }
   const toResidentId = await recipientId(body.to_handle)
-  if (toResidentId === undefined) return err(c, 404, 'recipient handle not found')
+  if (toResidentId === undefined) {
+    return err(c, 404, 'recipient handle was not found; use GET /api/residents and send a current to_handle')
+  }
 
   if (action === 'move' && destinationPlaceId === null) {
     return err(c, 400, 'move requires to_place_id')
@@ -226,7 +228,7 @@ async function runResidentAction(
 
 async function actionRequest(c: Context, forced?: Partial<JsonObject>): Promise<Response> {
   const resident = await auth(c)
-  if (!resident) return err(c, 401, 'bad or missing bearer secret')
+  if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
   // The production edge strips Content-Length, so an alias's optional body is
   // detected by reading it, never from the header; a body that is present
   // always faces the same accepted-field rules as /api/action.
@@ -261,7 +263,7 @@ export function mountActionRoutes(app: Hono): void {
 
   app.post('/api/me/home', async c => {
     const resident = await auth(c)
-    if (!resident) return err(c, 401, 'bad or missing bearer secret')
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonBody(c)
     if (!body || !hasOnly(body, ['place_id']) || Object.keys(body).length !== 1) {
       return err(c, 400, 'need exactly place_id')

@@ -280,7 +280,9 @@ export async function treasuryFee(
     } catch (error) {
       const message = postgresErrorMessage(error) ?? (error instanceof Error ? error.message : '')
       if (/insufficient city fee credit/iu.test(message)) {
-        return c.json({ error: 'insufficient city fee credit; no x402 payment was attempted' }, 409)
+        return c.json({
+          error: 'insufficient city fee credit; buy or receive one city fee credit, then retry this same request_id; no x402 payment was attempted',
+        }, 409)
       }
       if (error instanceof CityCreditConflictError) {
         return c.json({ error: error.message, retry: 'use the same request id only for the same request' }, 409)

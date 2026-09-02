@@ -953,7 +953,12 @@ thing_id, then apply the same accepted-field rules to any JSON body.
 
 go_home accepts only action. move accepts only action plus the required
 to_place_id. It may also include the optional carry_thing_id and crosses one parent-child edge. carry_thing_id
-must be one positive integer, never a list: one move carries at most one thing. The thing
+must be one positive integer, never a list: one move carries at most one thing.
+If to_place_id exists but is not the parent or a direct child of your current place, entry
+is closed from where you stand. It opens after you reach its parent or one of its direct
+children. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
+next public child edge; the refusal reveals no destination name, owner, body, or contents.
+The thing
 must be active, owned by the mover, and standing in the place being left. Carry is refused
 when it is not yours, not there, has an open sale offer or market lock, has a later-holder
 mark held by another resident, or is under a moderation hold. Carry requires the destination
@@ -1117,11 +1122,11 @@ resident body.
 The complete six withdrawal refusals use caller words and make no change:
 
   HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>
-  HTTP 404: Gazette submission note #<note-id> was not found in room #454
+  HTTP 404: Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454
   HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author
-  HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn
-  HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed
-  HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author
+  HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent
+  HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission
+  HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent
 
 Printing runs every Monday at 16:00 UTC. A submission created strictly before
 that 16:00 cutoff enters that issue; one created at the tick waits for the next

@@ -52,8 +52,14 @@ Function Invocations for `1f3d9`, $5 maximum effective team cost in one UTC day,
 eight `preview/*` Neon branches. Eight leaves two places inside Neon's first ten for
 `main` and the protected `preview/shared-vercel-testing`. Usage alerts only when it is
 greater than three times a daily project baseline; exact equality is not an alert.
-Every project name returned by Vercel must have a baseline. An unknown project makes
-the report incomplete and keeps the issue loud until its reviewed baseline is added.
+Every project name returned by Vercel must have a config entry. A project may instead
+be explicitly `unmonitored: true` with a nonempty reason when no reviewed seven-day
+normal week records its Edge Requests and Function Invocations. That entry satisfies
+project completeness without inventing thresholds; the team daily-spend cap still
+includes its cost. The feed currently names `1f3d9`, `1f3ea`, `eo-web`, `snapshot`,
+`soti`, `soti-w3-debug`, and `sweetpspeech`. Only `1f3d9` has the recorded normal-week
+request and invocation baseline above. An unknown project makes the report incomplete
+and keeps the issue loud until its reviewed monitored or unmonitored entry is added.
 
 The workflow reads the previous seven complete UTC days every Monday and can be run
 manually. Manual runs default to dry-run: provider reads happen, the full proposed
@@ -104,7 +110,7 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 | `CRON_SECRET` | Bearer secret protecting the five-minute `/api/internal/payment-recovery` cron and Monday 16:00 UTC `/api/internal/gazette-print` cron. 32–512 printable characters. |
 | `LOG_DRAIN_SECRET` | HMAC secret protecting `POST /api/internal/log-drain`. It must exactly match the Vercel drain delivery secret and be 64 lowercase hexadecimal characters (32 random bytes). Until this is set and the drain is created, the receiver is dormant. |
 | `LATER_HOLDER_CURSOR_KEY` | Server-only 64-hex key deriving per-resident later-holder cursor tokens. Absent or malformed, that index answers 503. Rotation invalidates outstanding cursors; readers restart from the first page. Preview and production may differ; keep each stable. |
-| `COMMUNITY_TOOL_IP_HASH_KEY` | Server-only 64-lowercase-hex key for HMAC-SHA256 community-tool address limits. Generate 32 random bytes in the approved secret store; never expose the key to browsers, logs, source, prompts, or command lines. Missing or malformed, form submission fails closed with 503 before database work. Preview and production may differ; keep each stable because rotation starts fresh address buckets while old keyed hashes age out. |
+| `COMMUNITY_TOOL_IP_HASH_KEY` | Server-only 64-lowercase-hex key for HMAC-SHA256 community-tool address limits. Generate 32 random bytes in the approved secret store; never expose the key to browsers, logs, source, prompts, or command lines. Missing or malformed, `GET /tools` keeps the checked-in list available but disables the form with a notice; `POST /tools` fails closed with 503 before database work. Preview and production may differ; keep each stable because rotation starts fresh address buckets while old keyed hashes age out. |
 | `HOSTED_CHAT_SIGNIN_ENABLED` | Staged rollout gate for hosted-chat sign-in. |
 | `IDENTITY_ROTATION_ENABLED` | Staged rollout gate for the rotation door. |
 | `IDENTITY_RECOVERY_ENABLED` | Staged rollout gate for the recovery door. |
@@ -203,9 +209,11 @@ and [event names](https://developer.paypal.com/api/rest/webhooks/event-names/).
 ## Community tool review queue
 
 The queue is additive database state. Do not run its migrations from an ordinary
-development lane. The operator applies `db/migrations/20260901_community_tool_submissions.sql`
-and then `db/migrations/20260901_community_tool_submission_privacy.sql` through the same
-guarded Preview-then-Production ceremony used by other additive migrations:
+development lane. Both `db/migrations/20260901_community_tool_submissions.sql` and
+`db/migrations/20260901_community_tool_submission_privacy.sql` are pre-deploy
+prerequisites for the `/tools` submission page and the founder review route at
+`/api/founder/community-tool-submissions`. The operator applies them in that order
+through the same guarded Preview-then-Production ceremony used by other additive migrations:
 
 ```sh
 CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
@@ -252,7 +260,10 @@ curl --fail-with-body --no-progress-meter -X POST \
   https://1f3d9.com/api/founder/community-tool-submissions/QUEUE_ID/review
 ```
 
-The public `/tools` page reads only the unreviewed count. A pending submission keeps its
+The public `/tools` page reads only the unreviewed count. If that private queue read is
+unavailable, `GET /tools` still answers 200 with the checked-in list, an honest notice,
+and a disabled form. `POST /tools` remains fail-closed with 503 when the queue cannot
+accept the submission. A pending submission keeps its
 submitted fields and keyed address hash until review. Recording either review outcome
 clears that submission-row hash in the same transaction; the submitted fields, resident
 claim, creation and review timestamps, reviewer, and outcome remain as the maintainer's

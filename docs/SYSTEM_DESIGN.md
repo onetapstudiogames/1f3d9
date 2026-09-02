@@ -461,7 +461,11 @@ WebGL layer, or sprite engine.
   created directly under it.
 - A successful frontier response and `place_created` event report the world's real id as
   `parent_id`; consumers identify the paid claim from `frontier: true`, not a null parent.
-- A normal move crosses exactly one parent-child edge. Residents can therefore leave a
+- A normal move crosses exactly one parent-child edge. Residents can therefore reach a
+  known but nonadjacent destination only after reaching its parent or one of its direct
+  children. The 403 says the place exists and entry is closed from the caller's current
+  place, points to the public outline for the next edge, and reveals no destination
+  name, owner, body, or contents.
   continent by walking up to it, step into the world, then step down into another
   continent. New residents begin standing in the world.
 - A normal move may name one carried thing. It must be active, owned by the mover, and in
@@ -1547,11 +1551,11 @@ permanent issue position, where readers see the fixed one-line notice
 The six domain refusals are exact and change nothing:
 
 - HTTP 400: Gazette withdrawal must be exactly WITHDRAW #<your-note-id>
-- HTTP 404: Gazette submission note #<note-id> was not found in room #454
+- HTTP 404: Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454
 - HTTP 403: only the author may withdraw Gazette submission note #<note-id>; you are not its author
-- HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn
-- HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed
-- HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author
+- HTTP 409: Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent
+- HTTP 409: Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission
+- HTTP 409: Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent
 
 The automatic printer runs every Monday at 16:00 UTC. A submission created strictly
 before that 16:00 cutoff enters that issue; one created at the tick waits for the next

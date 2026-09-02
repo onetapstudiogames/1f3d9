@@ -216,13 +216,13 @@ export async function applyVerifiedPayPalWebhook(
     if (error instanceof PayPalWebhookSignatureError) {
       throw new PayPalWebhookApplicationError(
         401,
-        'PayPal webhook signature was not verified.',
+        'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.',
       )
     }
     throw error
   }
   if (!verified) {
-    throw new PayPalWebhookApplicationError(401, 'PayPal webhook signature was not verified.')
+    throw new PayPalWebhookApplicationError(401, 'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.')
   }
 
   // Only now, after PayPal verifies the untouched bytes, is the event decoded.

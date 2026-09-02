@@ -894,7 +894,7 @@ test('listing distinguishes a missing market draft from market failure and inval
       name: 'invalid public record',
       fetcher: async () => Response.json({ nope: true }),
       status: 502,
-      error: 'the market returned an invalid public draft',
+      error: 'the market returned an invalid public draft; retry after 1F3EA returns the current draft',
     },
   ]
 
@@ -913,6 +913,65 @@ test('listing distinguishes a missing market draft from market failure and inval
     assert.deepEqual(await response.json(), { error: entry.error }, entry.name)
     assert.equal(harness.getState().thingLocked, false, entry.name)
   }
+})
+
+test('listing and claim refusals name the state change that lets the caller continue', async () => {
+  const locked = makeHarness({ offer: openOffer(), thingLocked: true })
+  const lockedResponse = await locked.app.request('/api/world/listing', {
+    method: 'POST',
+    headers: jsonHeaders(SELLER_SECRET),
+    body: JSON.stringify({ thing_id: 41, market_draft_id: 71 }),
+  })
+  assert.equal(lockedResponse.status, 409)
+  assert.deepEqual(await lockedResponse.json(), {
+    error: 'this thing is already locked by an offer; close its current offer before listing it again',
+  })
+
+  const claimed = makeHarness({
+    offer: openOffer({
+      status: 'claimed',
+      buyer_id: 9,
+      buyer: 'someone-else',
+      claimed_at: NOW.toISOString(),
+      locked: false,
+    }),
+    thingLocked: false,
+  })
+  const claimedResponse = await claimed.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: '{}',
+  })
+  assert.equal(claimedResponse.status, 403)
+  assert.deepEqual(await claimedResponse.json(), {
+    error: 'this world offer was claimed by another resident; choose another active offer because this claim cannot change buyers',
+  })
+
+  const pendingOffer = openOffer({
+    buyer_id: 8,
+    buyer: 'neighbor',
+    reserved_by: 8,
+    buyer_wallet: BUYER_WALLET,
+    market_listing_id: 91,
+    market_checkout_id: 81,
+    pending_x402_tx_hash: TX,
+    pending_x402_payer: BUYER_WALLET,
+    pending_x402_at: NOW.toISOString(),
+    x402_evidence_state: 'pending',
+    reserved_at: NOW.toISOString(),
+    reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+  })
+  const pending = makeHarness({ offer: pendingOffer, thingLocked: true })
+  pending.setState(current => ({ ...current, paymentAttempt: null }))
+  const pendingResponse = await pending.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(pendingResponse.status, 503)
+  assert.deepEqual(await pendingResponse.json(), {
+    error: 'the pending payment custody record is unavailable; retry this same offer later and do not pay again',
+  })
 })
 
 test('claim and cancel name missing market records without reporting an outage', async () => {
@@ -1572,6 +1631,18 @@ test('conclusive invalid x402 receipt becomes durable payment_invalid and still 
 })
 
 test('cancellation follows the market first, fails closed, and is idempotent', async () => {
+  const claimedHarness = makeHarness({
+    offer: openOffer({ status: 'claimed', claimed_at: NOW.toISOString(), locked: false }),
+    thingLocked: false,
+  })
+  const claimedResponse = await claimedHarness.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(claimedResponse.status, 409)
+  assert.deepEqual(await claimedResponse.json(), {
+    error: 'claimed world offer cannot be canceled; the completed sale is permanent, so list another owned thing instead',
+  })
+
   for (const [patch, expected] of [
     [{ draft: draft({ status: 'active', listing_id: 91, listing_state: 'active' }) }, 409],
     [{ draft: draft({ status: 'active', listing_id: 91, listing_state: 'withdrawn' }) }, 409],

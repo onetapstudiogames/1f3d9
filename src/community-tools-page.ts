@@ -7,6 +7,7 @@ import { COMMUNITY_TOOLS, renderCommunityToolEntry, renderCommunityToolText } fr
 export type CommunityToolsPageState = Readonly<{
   waitingCount: number | null
   residents: readonly Readonly<{ id: number; handle: string }>[]
+  submissionsAvailable?: boolean
 }>
 
 export type CommunityToolsPageNotice = Readonly<{
@@ -49,7 +50,7 @@ export function renderCommunityToolsBody(
   const noticeHtml = notice
     ? `<p class="tools-notice ${notice.kind}" role="${notice.kind === 'error' ? 'alert' : 'status'}">${renderCommunityToolText(notice.text)}</p>`
     : ''
-  const formUnavailable = state.waitingCount === null
+  const formUnavailable = state.waitingCount === null || state.submissionsAvailable === false
   return `<main id="main-content" class="guide-main">
   <section class="guide-hero tools-hero" aria-labelledby="tools-title">
     <div>

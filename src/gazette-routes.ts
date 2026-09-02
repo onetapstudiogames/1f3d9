@@ -127,7 +127,7 @@ const GAZETTE_WITHDRAWAL_CONTRACT = Object.freeze({
     }),
     no_such_submission: Object.freeze({
       status: 404,
-      error: 'Gazette submission note #<note-id> was not found in room #454',
+      error: 'Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454',
     }),
     author_mismatch: Object.freeze({
       status: 403,
@@ -135,15 +135,15 @@ const GAZETTE_WITHDRAWAL_CONTRACT = Object.freeze({
     }),
     already_printed: Object.freeze({
       status: 409,
-      error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn',
+      error: 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent',
     }),
     tick_passed: Object.freeze({
       status: 409,
-      error: 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed',
+      error: 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission',
     }),
     already_withdrawn: Object.freeze({
       status: 409,
-      error: 'Gazette submission note #<note-id> was already withdrawn by its author',
+      error: 'Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent',
     }),
   }),
 })
@@ -204,7 +204,7 @@ export function mountGazetteRoutes<Database>(
       afterOrdinal: page.cursor,
       limit: page.limit,
     })
-    if (!result) return err(c, 404, 'Gazette issue not found')
+    if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number`)
     return c.json({
       issue: issueDetail(result.issue),
       entries: result.entries.map(issueEntry),
@@ -222,8 +222,10 @@ export function mountGazetteRoutes<Database>(
       dependencies.environment,
       c.req.header('authorization'),
     )
-    if (authorization === 'unavailable') return err(c, 503, 'Gazette print is unavailable')
-    if (authorization !== 'authorized') return err(c, 401, 'Gazette print authorization failed')
+    if (authorization === 'unavailable') return err(c, 503, 'Gazette print is unavailable because CRON_SECRET is not configured; the city owner must configure it before retrying the print')
+    if (authorization !== 'authorized') {
+      return err(c, 401, 'Gazette print authorization was rejected because the cron bearer token is missing or incorrect; retry with Authorization: Bearer <CRON_SECRET>')
+    }
 
     await dependencies.printGazetteIssuesDue(dependencies.database)
     return c.json({ ok: true })

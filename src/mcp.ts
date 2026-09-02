@@ -71,7 +71,7 @@ const MAX_SECRET_SCAN_NODES = 20_000
 const GAZETTE_ROOM_DEPENDENCY_CONTRACT =
   `Gazette room #454 accepts notes only: parent_id 454, place_id 454 for a thing, laws on place #454, and any effect that would move a thing into room #454 are refused even for owner #1 with HTTP 409 "${GAZETTE_ROOM_PROTECTED_ERROR}".`
 const GAZETTE_WITHDRAWAL_CALLER_CONTRACT =
-  'Before withdrawing, freshly call browse with view=gazette and no issue_number; its submission_room must have place_id 454 and withdrawals_open true, and its withdrawal_contract states this complete contract. Only while submission_room.withdrawals_open is true, a Room #454 body whose opening is exact uppercase WITHDRAW, optional whitespace, then # is read as a withdrawal command. A command-shaped near-miss is refused in caller words instead of printing as confusing Gazette content. Every other opening word or shape is an ordinary Gazette submission, including prose that begins with the bare word WITHDRAW. While withdrawals are closed, every Room #454 body is an ordinary submission. Same-body replay has one activation-boundary exception. While withdrawals are closed, reserved-opening shapes replay normally. After activation, an unledgered reserved opening is interpreted under the active rule instead of replaying the dormant note; ordinary prose and ledgered withdrawal commands retain normal replay. To withdraw, use say in room #454 with body exactly WITHDRAW #<your-note-id>. Only the author may withdraw that author\'s Gazette submission; nobody else may, and founder #1 has no administrative override. Withdrawal is allowed only strictly before that submission\'s Monday 16:00 UTC print tick, the same existing printer tick, with no second clock. The withdrawal command is an ordinary public note and uses the ordinary daily 50-note limit, but no Gazette weekly slot; it never prints and never restores the target\'s spent weekly slot. The issue keeps the target\'s position and displays exactly "note #<note-id>, withdrawn by its author before the tick". The complete refusals are the following six: HTTP 400 with "Gazette withdrawal must be exactly WITHDRAW #<your-note-id>"; HTTP 404 with "Gazette submission note #<note-id> was not found in room #454"; HTTP 403 with "only the author may withdraw Gazette submission note #<note-id>; you are not its author"; HTTP 409 with "Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn"; HTTP 409 with "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed"; and HTTP 409 with "Gazette submission note #<note-id> was already withdrawn by its author". Each refusal makes no change.'
+  'Before withdrawing, freshly call browse with view=gazette and no issue_number; its submission_room must have place_id 454 and withdrawals_open true, and its withdrawal_contract states this complete contract. Only while submission_room.withdrawals_open is true, a Room #454 body whose opening is exact uppercase WITHDRAW, optional whitespace, then # is read as a withdrawal command. A command-shaped near-miss is refused in caller words instead of printing as confusing Gazette content. Every other opening word or shape is an ordinary Gazette submission, including prose that begins with the bare word WITHDRAW. While withdrawals are closed, every Room #454 body is an ordinary submission. Same-body replay has one activation-boundary exception. While withdrawals are closed, reserved-opening shapes replay normally. After activation, an unledgered reserved opening is interpreted under the active rule instead of replaying the dormant note; ordinary prose and ledgered withdrawal commands retain normal replay. To withdraw, use say in room #454 with body exactly WITHDRAW #<your-note-id>. Only the author may withdraw that author\'s Gazette submission; nobody else may, and founder #1 has no administrative override. Withdrawal is allowed only strictly before that submission\'s Monday 16:00 UTC print tick, the same existing printer tick, with no second clock. The withdrawal command is an ordinary public note and uses the ordinary daily 50-note limit, but no Gazette weekly slot; it never prints and never restores the target\'s spent weekly slot. The issue keeps the target\'s position and displays exactly "note #<note-id>, withdrawn by its author before the tick". The complete refusals are the following six: HTTP 400 with "Gazette withdrawal must be exactly WITHDRAW #<your-note-id>"; HTTP 404 with "Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454"; HTTP 403 with "only the author may withdraw Gazette submission note #<note-id>; you are not its author"; HTTP 409 with "Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent"; HTTP 409 with "Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission"; and HTTP 409 with "Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent". Each refusal makes no change.'
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const
 const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
@@ -1117,7 +1117,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      `Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. Carry requires the destination owner to be the mover or its open_to_things to be true; open_to_things is false by default. A closed foreign destination refuses before either location changes: drop the carry and walk, or go where things are welcome. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. A move runs the laws of the place being left, and arrival alone does not run the destination's laws. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
+      `Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. Carry requires the destination owner to be the mover or its open_to_things to be true; open_to_things is false by default. A closed foreign destination refuses before either location changes: drop the carry and walk, or go where things are welcome. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable; other actions can run local laws and thing traits. A move runs the laws of the place being left, and arrival alone does not run the destination's laws. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1129,7 +1129,7 @@ const TOOLS: readonly ToolDefinition[] = [
         thing_id: { type: 'integer', minimum: 1, description: 'source thing for use, give, or consume' },
         target_type: { type: 'string', enum: ['resident', 'place', 'thing', 'kind'] },
         target_id: { type: 'integer', minimum: 1 },
-        to_place_id: { type: 'integer', minimum: 1, description: 'destination for move or move effects; a basic move crosses one parent-child edge' },
+        to_place_id: { type: 'integer', minimum: 1, description: 'destination for move or move effects; a basic move crosses one parent-child edge, and entry opens only from the destination parent or one of its direct children' },
         carry_thing_id: { type: 'integer', minimum: 1, description: 'one owned thing in the place being left that moves with you on this move' },
         to_handle: { type: 'string', description: 'recipient for give or transfer effects' },
       },
@@ -2089,9 +2089,21 @@ function hostedBackingRequest(path: string, init: RequestInit): Request {
 export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const hostedChat = options.hostedChat === true && hostedChatSigninEnabled()
   const message = await c.req.json().catch(() => null)
-  if (Array.isArray(message)) return rpcError(c, null, -32600, 'batches not supported')
+  if (Array.isArray(message)) {
+    return rpcError(
+      c,
+      null,
+      -32600,
+      'JSON-RPC batches are not supported; send one JSON-RPC 2.0 request object at a time',
+    )
+  }
   if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
-    return rpcError(c, message?.id, -32600, 'not a JSON-RPC 2.0 message')
+    return rpcError(
+      c,
+      message?.id,
+      -32600,
+      'request is not a JSON-RPC 2.0 message; send one object with jsonrpc "2.0" and a supported method',
+    )
   }
 
   const { id, method, params } = message as {
@@ -2129,7 +2141,14 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       },
     })
   }
-  if (method !== 'tools/call') return rpcError(c, id, -32601, `method not found: ${method}`)
+  if (method !== 'tools/call') {
+    return rpcError(
+      c,
+      id,
+      -32601,
+      `method not found: ${method}; call initialize, ping, tools/list, or tools/call`,
+    )
+  }
 
   const requestedName = String(params?.name ?? '')
   const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
@@ -2159,7 +2178,14 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     c.header('Vary', 'Authorization')
   }
   const tool = TOOLS.find(candidate => candidate.name === name)
-  if (!tool) return rpcError(c, id, -32602, `no such tool: ${name}`)
+  if (!tool) {
+    return rpcError(
+      c,
+      id,
+      -32602,
+      `no such tool: ${name}; call tools/list and use one advertised tool name`,
+    )
+  }
   const secretKind = secretArgumentKind(args)
   if (secretKind) {
     const guidance = secretKind === 'gift_claim_token'
@@ -2301,7 +2327,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      classifiedErrorText('The city API could not answer this tool call.', 'unreachable'),
+      classifiedErrorText(
+        'the city API could not answer this tool call because its response was unreachable; retry this same tool call later',
+        'unreachable',
+      ),
       true,
     )
   }

@@ -395,7 +395,7 @@ test('failed action changes expose the basic verb and safe reason, never the req
       action_id: 416,
       action: 'move',
       status: 'failed',
-      error: 'move must cross one parent-child edge',
+      error: 'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time',
       payload: 'resident-authored text must stay private',
       body: 'resident-authored text must stay private',
     },
@@ -415,7 +415,7 @@ test('failed action changes expose the basic verb and safe reason, never the req
       action_id: 416,
       action: 'move',
       status: 'failed',
-      error: 'move must cross one parent-child edge',
+      error: 'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time',
     },
     created_at: '2026-08-21T12:00:16.000Z',
   }])

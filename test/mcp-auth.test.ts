@@ -580,7 +580,11 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       }
     }
     assert.equal(unknownMethod.error.code, -32601, `${path}: unknown method`)
-    assert.match(unknownMethod.error.message, /method not found/iu, `${path}: unknown method`)
+    assert.equal(
+      unknownMethod.error.message,
+      'method not found: city/unknown; call initialize, ping, tools/list, or tools/call',
+      `${path}: unknown method`,
+    )
     assert.equal(
       unknownMethod.error.data?.front_door,
       'https://1f3d9.com/',
@@ -606,7 +610,11 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       }
     }
     assert.equal(unknownTool.error.code, -32602, `${path}: unknown tool`)
-    assert.match(unknownTool.error.message, /no such tool/iu, `${path}: unknown tool`)
+    assert.equal(
+      unknownTool.error.message,
+      'no such tool: unknown_city_tool; call tools/list and use one advertised tool name',
+      `${path}: unknown tool`,
+    )
     assert.equal(
       unknownTool.error.data?.front_door,
       'https://1f3d9.com/',
@@ -618,6 +626,35 @@ test('every authenticated MCP surface carries one quiet front-door pointer', asy
       `${path}: unknown tool front-door tool`,
     )
   }
+})
+
+test('JSON-RPC shape refusals say how to form the next request', async () => {
+  const { gateway } = createHarness()
+  const headers = { 'Content-Type': 'application/json' }
+
+  const batchResponse = await gateway.request('/mcp/connect', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify([]),
+  })
+  assert.equal(batchResponse.status, 200)
+  const batch = await batchResponse.json() as { error: { message: string } }
+  assert.equal(
+    batch.error.message,
+    'JSON-RPC batches are not supported; send one JSON-RPC 2.0 request object at a time',
+  )
+
+  const malformedResponse = await gateway.request('/mcp/connect', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ id: 1, method: 'ping' }),
+  })
+  assert.equal(malformedResponse.status, 200)
+  const malformed = await malformedResponse.json() as { error: { message: string } }
+  assert.equal(
+    malformed.error.message,
+    'request is not a JSON-RPC 2.0 message; send one object with jsonrpc "2.0" and a supported method',
+  )
 })
 
 test('successful me results preserve connector and URL front-door pointers on both MCP doors', async () => {
@@ -829,11 +866,11 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
     assert.match(say.description, /note #<note-id>, withdrawn by its author before the tick/u, path)
     for (const [status, refusal] of [
       [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
-      [404, 'Gazette submission note #<note-id> was not found in room #454'],
+      [404, 'Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454'],
       [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
-      [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn'],
-      [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed'],
-      [409, 'Gazette submission note #<note-id> was already withdrawn by its author'],
+      [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent'],
+      [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission'],
+      [409, 'Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent'],
     ] as const) {
       assert.ok(say.description.includes(`HTTP ${status} with "${refusal}"`), `${path}: ${refusal}`)
     }
@@ -1945,14 +1982,14 @@ test('failed tool calls carry a stable machine-readable error class on both door
 
 test('a failed city action keeps its caller-facing cause through both MCP doors', async () => {
   const cityFailure = {
-    error: 'thing_id is not yours',
+    error: 'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
     action: {
       id: 45555,
       action: 'use',
       status: 'failed',
       place_id: 303,
       effects_applied: 0,
-      error: 'thing_id is not yours',
+      error: 'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
     },
   }
 
@@ -2019,6 +2056,11 @@ test('successes stay unwrapped, transport failure is unreachable, pre-flight rej
     assert.equal(
       (JSON.parse(failed.result.content[0]?.text ?? '{}') as { error_class?: string }).error_class,
       'unreachable',
+      path,
+    )
+    assert.equal(
+      (JSON.parse(failed.result.content[0]?.text ?? '{}') as { error?: string }).error,
+      'the city API could not answer this tool call because its response was unreachable; retry this same tool call later',
       path,
     )
 

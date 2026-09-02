@@ -20,7 +20,7 @@ export function selectPreviewBranchForClosedPullRequest(
   if (matches.length > 1) throw new Error('Multiple Neon branches match the closed pull request')
   const match = matches[0]
   if (!match) return null
-  if (match.primary || match.name === 'main' || match.name === SHARED_BRANCH) {
+  if (match.primary || match.name === SHARED_BRANCH) {
     throw new Error('Refusing to delete a primary or protected Neon branch')
   }
   return Object.freeze({ id: match.id, name: match.name })

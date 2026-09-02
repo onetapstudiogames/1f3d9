@@ -42,7 +42,7 @@ test('agreement creation checks parties before one shared quota gate', async () 
   }, missing.database), {
     ok: false,
     status: 404,
-    error: 'unknown agreement party: absent',
+    error: 'agreement party handle absent was not found; use GET /api/residents and send a current resident handle',
   })
   assert.equal(missing.calls.some(call => call.text.includes('UPDATE residents SET agreement_actions_today')), false)
 
@@ -57,7 +57,7 @@ test('agreement creation checks parties before one shared quota gate', async () 
   }, exhausted.database), {
     ok: false,
     status: 429,
-    error: '5 agreement actions per UTC day',
+    error: '5 agreement actions per UTC day; retry after the next UTC day begins',
   })
   assert.equal(exhausted.calls.some(call => call.text.includes('UPDATE residents SET agreement_actions_today')), false)
 })
@@ -129,7 +129,7 @@ test('signing preserves closed-accession denial and signature replay before quot
   assert.deepEqual(await signAgreementAction({ resident, agreementId: 61 }, closed.database), {
     ok: false,
     status: 403,
-    error: 'this agreement is closed to later signers',
+    error: 'this agreement is closed to later signers; its original author can POST /api/agreement/61/open-accession before this signer retries',
   })
 
   const replay = fakeSql(({ text }) => text.includes('FROM agreements a WHERE a.id')

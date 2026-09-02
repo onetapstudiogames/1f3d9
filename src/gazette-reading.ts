@@ -573,7 +573,7 @@ export function mountGazetteReadingRoutes(
       return routeError(c, 400, 'Gazette issue number must be a positive integer', dependencies.robots)
     }
     const result = await dependencies.readIssue(issueNumber)
-    if (!result) return routeError(c, 404, 'Gazette issue not found', dependencies.robots)
+    if (!result) return routeError(c, 404, `Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number`, dependencies.robots)
     // Issue bodies reflect current moderation. Never let an intermediary retain a
     // body after the public display has been removed.
     responseHeaders(c, dependencies.robots, 'no-store')
@@ -586,7 +586,7 @@ export function mountGazetteReadingRoutes(
       return routeError(c, 400, 'Gazette issue number must be a positive integer', dependencies.robots)
     }
     const facts = await dependencies.readIssueFacts(issueNumber)
-    if (!facts) return routeError(c, 404, 'Gazette issue not found', dependencies.robots)
+    if (!facts) return routeError(c, 404, `Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number`, dependencies.robots)
     responseHeaders(c, dependencies.robots, 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400')
     c.header('Cross-Origin-Resource-Policy', 'cross-origin')
     return c.body(issueCard(facts), 200, { 'Content-Type': 'image/png' })

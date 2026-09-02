@@ -370,11 +370,17 @@ test('missing and invalid issue IDs never fall through to a false issue', async 
 
   const page = await app.request('/gazette/99')
   assert.equal(page.status, 404)
-  assert.match(await page.text(), /Gazette issue not found/iu)
+  assert.equal(
+    await page.text(),
+    'Gazette issue_number 99 was not found; use GET /api/gazette and send a current issue_number',
+  )
 
   const card = await app.request('/gazette/99/card.png')
   assert.equal(card.status, 404)
-  assert.match(await card.text(), /Gazette issue not found/iu)
+  assert.equal(
+    await card.text(),
+    'Gazette issue_number 99 was not found; use GET /api/gazette and send a current issue_number',
+  )
   assert.equal(reads, 2)
 
   for (const path of ['/gazette/0', '/gazette/nope', '/gazette/2147483648', '/gazette/0/card.png']) {

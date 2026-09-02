@@ -1464,6 +1464,8 @@ async function cachedOutlineWindowSnapshot(minimumMarker: string | null = null) 
 }
 
 export async function windowSnapshot(c: Context) {
+  const invalidWindowQuery = 'public window query was rejected because its fields or values are not supported; retry with view=full, view=directory, view=outline&after_change_marker=<marker>, or view=history'
+  const invalidHistoryQuery = 'public window history query was rejected because its fields or values are not supported; retry with the documented history filters and an optional after_change_marker'
   const hasCredentials = [
     'authorization',
     'proxy-authorization',
@@ -1478,15 +1480,15 @@ export async function windowSnapshot(c: Context) {
   }
   const viewValue = singlePublicQueryValue(queries, 'view')
   if (!viewValue.ok) {
-    return c.json({ error: 'invalid public window query' }, 400)
+    return c.json({ error: invalidWindowQuery }, 400)
   }
   const afterMarkerValue = singlePublicQueryValue(queries, 'after_change_marker')
   if (!afterMarkerValue.ok) {
-    return c.json({ error: 'invalid public window query' }, 400)
+    return c.json({ error: invalidWindowQuery }, 400)
   }
   if (viewValue.value === 'directory') {
     if (Object.keys(queries).length !== 1) {
-      return c.json({ error: 'invalid public window query' }, 400)
+      return c.json({ error: invalidWindowQuery }, 400)
     }
     const directory = await cachedPublicDirectory()
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
@@ -1498,14 +1500,14 @@ export async function windowSnapshot(c: Context) {
       !['full', 'outline'].includes(viewValue.value)
       || Object.keys(queries).length !== (viewValue.value === 'outline' ? outlineKeys : 1)
     ) {
-      return c.json({ error: 'invalid public window query' }, 400)
+      return c.json({ error: invalidWindowQuery }, 400)
     }
     if (viewValue.value === 'outline') {
       const minimumMarker = afterMarkerValue.value === null
         ? null
         : parsePublicChangeMarker(afterMarkerValue.value)
       if (afterMarkerValue.value !== null && minimumMarker === null) {
-        return c.json({ error: 'invalid public window query' }, 400)
+        return c.json({ error: invalidWindowQuery }, 400)
       }
       let snapshot: OutlineWindowSnapshot
       try {
@@ -1534,7 +1536,7 @@ export async function windowSnapshot(c: Context) {
     )
     const request = parseWindowHistoryQuery(historyQueries)
     if (!request) {
-      return c.json({ error: 'invalid public window history query' }, 400)
+      return c.json({ error: invalidHistoryQuery }, 400)
     }
     if (request.find !== null && request.find !== undefined) {
       const forwarded = process.env.VERCEL === '1'
@@ -1552,7 +1554,7 @@ export async function windowSnapshot(c: Context) {
       ? null
       : parsePublicChangeMarker(afterMarkerValue.value)
     if (afterMarkerValue.value !== null && minimumMarker === null) {
-      return c.json({ error: 'invalid public window history query' }, 400)
+      return c.json({ error: invalidHistoryQuery }, 400)
     }
     let page: WindowCollectionPage
     let changeMarker: string | null = null
@@ -1636,7 +1638,9 @@ export async function windowPage(
   c.header('Cache-Control', 'no-store')
   const requestUrl = new URL(c.req.url)
   const shareRequest = parseWindowShareRequest(c.req.path, requestUrl.search)
-  if (shareRequest === null) return c.text('that public city window link is not available', 404)
+  if (shareRequest === null) {
+    return c.text('that public city window link is not available; return to /window and create a new Share link', 404)
+  }
 
   let record: unknown = null
   const metadataDetail = shareRequest.state.detail || (

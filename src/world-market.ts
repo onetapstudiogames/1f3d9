@@ -1,5 +1,5 @@
 import type { Context, Hono } from 'hono'
-import { auth, err, HANDLE_RE, postgresErrorCode, WALLET_RE } from './core.ts'
+import { auth, err, HANDLE_RE, postgresErrorCode, RESIDENT_AUTH_REFUSAL, WALLET_RE } from './core.ts'
 import { sql } from './db.ts'
 import { positiveId, publicLabel, publicText } from './input.ts'
 import {
@@ -30,6 +30,7 @@ const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
 const MARKET_RESPONSE_BYTES = 256 * 1024
 const MARKET_TIMEOUT_MS = 4_000
+const WORLD_OFFER_ID_REFUSAL = 'world offer id was rejected because it must be a positive whole number; retry with an offer_id from GET /api/world-market'
 
 type JsonObject = Record<string, unknown>
 type QueryRow = Record<string, unknown>
@@ -615,23 +616,25 @@ export function mountWorldMarketRoutes(
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const handle = c.req.param('handle')
-    if (!HANDLE_RE.test(handle)) return err(c, 404, 'no such resident')
+    if (!HANDLE_RE.test(handle)) {
+      return err(c, 404, `resident handle ${handle} was not found; use GET /api/residents and send a current handle`)
+    }
     const rows = await dependencies.query(`
       /* world-market:resident */
       SELECT handle FROM residents WHERE handle = $1
     `, [handle])
     return rows[0]?.handle === handle
       ? c.json({ resident: { handle } })
-      : err(c, 404, 'no such resident')
+      : err(c, 404, `resident handle ${handle} was not found; use GET /api/residents and send a current handle`)
   })
 
   app.get('/api/world/offer/:offerId', async c => {
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const offerId = positiveId(c.req.param('offerId'))
-    if (!offerId) return err(c, 400, 'bad world offer id')
+    if (!offerId) return err(c, 400, WORLD_OFFER_ID_REFUSAL)
     const offer = await readOffer(dependencies, offerId)
-    if (!offer) return err(c, 404, 'no such world offer')
+    if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (await publicOfferIsHidden(dependencies, offer.asset_id)) {
       return publicJson(c, { offer: { id: offer.id, status: 'maintainer_hidden' } })
     }
@@ -640,7 +643,7 @@ export function mountWorldMarketRoutes(
 
   app.post('/api/world/listing', async c => {
     const seller = await dependencies.authenticate(c)
-    if (!seller) return err(c, 401, 'bad or missing bearer secret')
+    if (!seller) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['thing_id', 'market_draft_id'])) {
       return err(c, 400, 'need exactly thing_id and market_draft_id')
@@ -653,12 +656,12 @@ export function mountWorldMarketRoutes(
     if (isResponse(marketPayload)) return marketPayload
     const draft = draftRecord(marketPayload, draftId)
     const now = dependencies.now()
-    if (!draft) return err(c, 502, 'the market returned an invalid public draft')
-    if (draft.assetId !== thingId) return err(c, 409, 'market draft names a different city thing')
+    if (!draft) return err(c, 502, 'the market returned an invalid public draft; retry after 1F3EA returns the current draft')
+    if (draft.assetId !== thingId) return err(c, 409, 'market draft names a different city thing; create a fresh draft for this exact thing_id before listing it')
     if (
       draft.status !== 'pending' || draft.listingId !== null || draft.listingState !== null ||
       draft.expiresAt <= now || draft.createdAt > new Date(now.getTime() + 60_000)
-    ) return err(c, 409, 'market draft must be pending, unexpired, and not yet listed')
+    ) return err(c, 409, 'market draft must be pending, unexpired, and not yet listed; open a fresh draft before listing this thing')
 
     const thingRows = await dependencies.query(`
       /* world-market:thing */
@@ -666,10 +669,10 @@ export function mountWorldMarketRoutes(
       FROM things WHERE id = $1
     `, [thingId])
     const thing = thingRows[0]
-    if (!thing) return err(c, 404, 'no such thing')
+    if (!thing) return err(c, 404, `thing_id ${thingId} was not found; use GET /api/things and send a current active thing_id`)
     if (integerValue(thing.owner_id) !== seller.id) return err(c, 403, 'only the thing owner may list it')
-    if (thing.withdrawn_at != null) return err(c, 409, 'a withdrawn thing cannot be listed')
-    if (thing.active_offer_id != null) return err(c, 409, 'this thing is already locked by an offer')
+    if (thing.withdrawn_at != null) return err(c, 409, 'a withdrawn thing cannot be listed; choose another active thing because withdrawal is permanent')
+    if (thing.active_offer_id != null) return err(c, 409, 'this thing is already locked by an offer; close its current offer before listing it again')
 
     try {
       const rows = await dependencies.query(`
@@ -716,11 +719,11 @@ export function mountWorldMarketRoutes(
       const offerId = integerValue(rows[0]?.id)
       if (!offerId) return err(c, 409, 'ownership or lock state changed; re-read the thing')
       const offer = await readOffer(dependencies, offerId)
-      if (!offer) return err(c, 500, 'world offer result is unavailable')
+      if (!offer) return err(c, 500, `world offer result is unavailable after listing; re-read GET /api/world/offer/${offerId} before deciding whether to retry`)
       return c.json({ offer: publicOffer(offer, dependencies.now()) }, 201)
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
-        return err(c, 409, 'this draft or thing already has a world offer')
+        return err(c, 409, 'this draft or thing already has a world offer; use that existing offer or close it before listing again')
       }
       throw error
     }
@@ -728,11 +731,11 @@ export function mountWorldMarketRoutes(
 
   app.post('/api/world/offer/:offerId/claim', async c => {
     const buyer = await dependencies.authenticate(c)
-    if (!buyer) return err(c, 401, 'bad or missing bearer secret; move into the city before paying')
+    if (!buyer) return err(c, 401, `${RESIDENT_AUTH_REFUSAL}, then move into the city before paying`)
     const unavailable = paymentReadinessResponse(c)
     if (unavailable) return unavailable
     const offerId = positiveId(c.req.param('offerId'))
-    if (!offerId) return err(c, 400, 'bad world offer id')
+    if (!offerId) return err(c, 400, WORLD_OFFER_ID_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, ['market_checkout_id', 'buyer_wallet'])) {
       return err(c, 400, 'body may contain market_checkout_id and buyer_wallet only; paid claims use X-PAYMENT')
@@ -747,16 +750,16 @@ export function mountWorldMarketRoutes(
     const hasPayment = Boolean(paymentHeader)
 
     let offer = await readOffer(dependencies, offerId)
-    if (!offer) return err(c, 404, 'no such world offer')
+    if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (offer.status === 'claimed') {
       if (offer.buyer_id !== buyer.id) {
-        return err(c, 403, 'this world offer was claimed by another resident')
+        return err(c, 403, 'this world offer was claimed by another resident; choose another active offer because this claim cannot change buyers')
       }
       if (checkoutId != null && checkoutId !== offer.market_checkout_id) {
-        return err(c, 409, 'market_checkout_id does not match the settled payment')
+        return err(c, 409, 'market_checkout_id does not match the settled payment; re-read the offer and resend its settled checkout id')
       }
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
-        return err(c, 409, 'buyer_wallet does not match the settled payment')
+        return err(c, 409, 'buyer_wallet does not match the settled payment; re-read the offer and resend its settled buyer wallet')
       }
       try {
         const completedAttempt = await findReplayableTargetPaymentAttempt({ query: dependencies.query }, {
@@ -793,9 +796,9 @@ export function mountWorldMarketRoutes(
       }
       return c.json({ offer: publicOffer(offer, dependencies.now()) })
     }
-    if (offer.status === 'canceled') return err(c, 409, 'world offer is canceled')
-    if (!offer.locked) return err(c, 409, 'the thing is not locked by this world offer')
-    if (offer.seller_id === buyer.id) return err(c, 400, 'you cannot buy your own thing')
+    if (offer.status === 'canceled') return err(c, 409, 'world offer is canceled; choose an active market listing instead')
+    if (!offer.locked) return err(c, 409, 'the thing is not locked by this world offer; the seller must list it again from its matching market draft')
+    if (offer.seller_id === buyer.id) return err(c, 400, 'you cannot buy your own thing; choose an active offer from another seller')
 
     const now = dependencies.now()
     const pendingAtStart = paymentPending(offer)
@@ -809,16 +812,16 @@ export function mountWorldMarketRoutes(
       : null
     if (pendingAtStart) {
       if (offer.buyer_id !== buyer.id) {
-        return err(c, 409, 'this world offer has a settled payment pending for another resident')
+        return err(c, 409, 'this world offer has a settled payment pending for another resident; choose another offer and do not pay this one')
       }
       if (checkoutId != null && checkoutId !== offer.market_checkout_id) {
-        return err(c, 409, 'market_checkout_id does not match the settled payment')
+        return err(c, 409, 'market_checkout_id does not match the settled payment; re-read the offer and resend its settled checkout id')
       }
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
-        return err(c, 409, 'buyer_wallet does not match the settled payment')
+        return err(c, 409, 'buyer_wallet does not match the settled payment; re-read the offer and resend its settled buyer wallet')
       }
       if (!existingAttempt || existingAttempt.publicId !== offer.pending_payment_attempt_id) {
-        return err(c, 503, 'the pending payment custody record is unavailable')
+        return err(c, 503, 'the pending payment custody record is unavailable; retry this same offer later and do not pay again')
       }
     } else if (!active && !existingAttempt) {
       if (hasPayment) return err(c, 409, 'open a five-minute reservation before sending payment')
@@ -829,12 +832,12 @@ export function mountWorldMarketRoutes(
       const checkoutPayload = await getMarket(c, dependencies, `/api/world/checkout/${checkoutId}`)
       if (isResponse(checkoutPayload)) return checkoutPayload
       const checkout = checkoutRecord(checkoutPayload, checkoutId)
-      if (!checkout) return err(c, 502, 'the market returned an invalid public checkout')
+      if (!checkout) return err(c, 502, 'the market returned an invalid public checkout; do not pay and retry after 1F3EA returns a current checkout')
       if (
         checkout.status !== 'active' || checkout.expiresAt <= now ||
         checkout.createdAt > new Date(now.getTime() + 60_000)
       ) {
-        return err(c, 409, 'market checkout is expired or not active')
+        return err(c, 409, 'market checkout is expired or not active; open a fresh checkout on the current listing, then retry')
       }
       if (
         checkout.offerId !== offer.id || checkout.draftId !== offer.market_draft_id ||
@@ -845,12 +848,12 @@ export function mountWorldMarketRoutes(
       const draftPayload = await getMarket(c, dependencies, `/api/world/draft/${offer.market_draft_id}`)
       if (isResponse(draftPayload)) return draftPayload
       const draft = draftRecord(draftPayload, offer.market_draft_id)
-      if (!draft) return err(c, 502, 'the market returned an invalid public listing record')
+      if (!draft) return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
       if (
         draft.status !== 'active' || draft.expiresAt <= now ||
         draft.listingId !== checkout.listingId || draft.listingState !== 'active' ||
         !draftMatchesOffer(draft, offer)
-      ) return err(c, 409, 'market listing is not active or does not match this world offer')
+      ) return err(c, 409, 'market listing is not active or does not match this world offer; re-read 1F3EA and use its current active listing')
 
       try {
         const rows = await dependencies.query(`
@@ -905,24 +908,25 @@ export function mountWorldMarketRoutes(
         }
       } catch (error) {
         if (postgresErrorCode(error) === '23505') {
-          return err(c, 409, 'this market checkout is already bound to another world offer')
+          return err(c, 409, 'this market checkout is already bound to another world offer; use its bound offer or open a fresh checkout')
         }
         throw error
       }
-      offer = await readOffer(dependencies, offer.id)
+      const reservingOfferId = offer.id
+      offer = await readOffer(dependencies, reservingOfferId)
       if (!offer || !reservationActive(offer, dependencies.now())) {
-        return err(c, 409, 'the five-minute reservation could not be opened')
+        return err(c, 409, `the five-minute reservation could not be opened; re-read GET /api/world/offer/${reservingOfferId} before retrying`)
       }
       return challenge(c, offer)
     }
 
     if (!pendingAtStart) {
-      if (offer.buyer_id !== buyer.id) return err(c, 409, 'another resident has the active reservation')
+      if (offer.buyer_id !== buyer.id) return err(c, 409, 'another resident has the active reservation; wait for its five-minute window to end or choose another offer')
       if (checkoutId != null && checkoutId !== offer.market_checkout_id) {
-        return err(c, 409, 'market_checkout_id does not match the active reservation')
+        return err(c, 409, 'market_checkout_id does not match the active reservation; re-read the offer and resend its reserved checkout id')
       }
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
-        return err(c, 409, 'buyer_wallet does not match the active reservation')
+        return err(c, 409, 'buyer_wallet does not match the active reservation; re-read the offer and resend its reserved buyer wallet')
       }
       if (!hasPayment && !existingAttempt) return challenge(c, offer)
     }
@@ -1041,7 +1045,7 @@ export function mountWorldMarketRoutes(
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return c.json({
-          error: 'that payment transaction is already reserved',
+          error: `that payment transaction is already reserved; inspect GET /api/world/offer/${offer.id} and do not pay again`,
           do_not_pay_again: true,
         }, 409)
       }
@@ -1051,13 +1055,13 @@ export function mountWorldMarketRoutes(
 
   app.post('/api/world/offer/:offerId/reconcile', async c => {
     const actor = await dependencies.authenticate(c)
-    if (!actor) return err(c, 401, 'bad or missing bearer secret')
+    if (!actor) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const offerId = positiveId(c.req.param('offerId'))
-    if (!offerId) return err(c, 400, 'bad world offer id')
+    if (!offerId) return err(c, 400, WORLD_OFFER_ID_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, [])) return err(c, 400, 'reconcile body must be empty')
     let offer = await readOffer(dependencies, offerId)
-    if (!offer) return err(c, 404, 'no such world offer')
+    if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (actor.id !== offer.seller_id && actor.id !== offer.buyer_id) {
       return err(c, 403, 'only this offer seller or buyer may reconcile its payment')
     }
@@ -1069,7 +1073,7 @@ export function mountWorldMarketRoutes(
     if (
       !paymentPending(offer) || offer.buyer_id == null
       || offer.pending_payment_attempt_id == null
-    ) return err(c, 409, 'this world offer has no durable payment to reconcile')
+    ) return err(c, 409, `this world offer has no durable payment to reconcile; re-read GET /api/world/offer/${offer.id} and reconcile only payment_pending offers`)
 
     const attempt = await dependencies.findPayment({ query: dependencies.query }, {
       actorId: offer.buyer_id,
@@ -1077,7 +1081,7 @@ export function mountWorldMarketRoutes(
       offerId: offer.id,
     })
     if (!attempt || attempt.publicId !== offer.pending_payment_attempt_id) {
-      return err(c, 503, 'the pending payment custody record is unavailable')
+      return err(c, 503, 'the pending payment custody record is unavailable; retry this same reconciliation later and do not pay again')
     }
     const payment = await dependencies.resumePayment({
       database: { query: dependencies.query },
@@ -1102,7 +1106,7 @@ export function mountWorldMarketRoutes(
       if (!synchronized.evidenceSynchronized) return c.json(payment.body, payment.status)
       offer = await readOffer(dependencies, offer.id)
       if (!offer || !paymentInvalid(offer)) {
-        return err(c, 500, 'invalid payment audit record is unavailable')
+        return err(c, 500, 'invalid payment audit record is unavailable; do not pay again and ask the city owner to inspect this offer before retrying')
       }
       return c.json({ offer: publicOffer(offer, dependencies.now()) })
     }
@@ -1140,7 +1144,7 @@ export function mountWorldMarketRoutes(
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return c.json({
-          error: 'that payment transaction is already reserved',
+          error: `that payment transaction is already reserved; inspect GET /api/world/offer/${offer.id} and do not pay again`,
           do_not_pay_again: true,
         }, 409)
       }
@@ -1150,31 +1154,33 @@ export function mountWorldMarketRoutes(
 
   app.post('/api/world/offer/:offerId/cancel', async c => {
     const seller = await dependencies.authenticate(c)
-    if (!seller) return err(c, 401, 'bad or missing bearer secret')
+    if (!seller) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const offerId = positiveId(c.req.param('offerId'))
-    if (!offerId) return err(c, 400, 'bad world offer id')
+    if (!offerId) return err(c, 400, WORLD_OFFER_ID_REFUSAL)
     const body = await jsonObject(c)
     if (!body || !hasOnly(body, [])) return err(c, 400, 'cancel body must be empty')
     let offer = await readOffer(dependencies, offerId)
-    if (!offer) return err(c, 404, 'no such world offer')
+    if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (offer.seller_id !== seller.id) return err(c, 403, 'only the seller may cancel this world offer')
     if (offer.status === 'canceled') return c.json({ offer: publicOffer(offer, dependencies.now()) })
-    if (offer.status === 'claimed') return err(c, 409, 'claimed world offer cannot be canceled')
+    if (offer.status === 'claimed') {
+      return err(c, 409, 'claimed world offer cannot be canceled; the completed sale is permanent, so list another owned thing instead')
+    }
     if (paymentPending(offer)) {
-      return err(c, 409, 'a settled payment is pending; the thing stays locked for its buyer')
+      return err(c, 409, `a settled payment is pending; the thing stays locked for its buyer, who can retry claim or POST /api/world/offer/${offer.id}/reconcile without paying again`)
     }
     if (!paymentInvalid(offer) && !paymentTerminal(offer) && reservationActive(offer, dependencies.now())) {
-      return err(c, 409, 'the buyer has an active five-minute payment window')
+      return err(c, 409, 'the buyer has an active five-minute payment window; let the buyer finish or retry cancellation after the window ends')
     }
 
     const draftPayload = await getMarket(c, dependencies, `/api/world/draft/${offer.market_draft_id}`)
     if (isResponse(draftPayload)) return draftPayload
     const draft = draftRecord(draftPayload, offer.market_draft_id)
     if (!draft || !draftMatchesOffer(draft, offer)) {
-      return err(c, 502, 'the market returned an invalid public listing record')
+      return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
     }
     if (offer.market_listing_id != null && draft.listingId !== offer.market_listing_id) {
-      return err(c, 409, 'market listing does not match this world offer')
+      return err(c, 409, 'market listing does not match this world offer; re-read the 1F3EA listing and use the matching city offer_id')
     }
     const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled'])
     const listingEndedStates = paymentInvalid(offer) || paymentTerminal(offer)
@@ -1236,9 +1242,9 @@ export function mountWorldMarketRoutes(
       SELECT offer.id FROM canceled_offer offer
       CROSS JOIN released_thing thing CROSS JOIN release_guard guard WHERE guard.ok = 1
     `, [offer.id, seller.id, seller.handle, offer.market_draft_id])
-    if (!rows[0]) return err(c, 409, 'offer, reservation, or ownership changed before cancellation')
+    if (!rows[0]) return err(c, 409, 'offer, reservation, or ownership changed before cancellation; re-read the offer before retrying')
     offer = await readOffer(dependencies, offer.id)
-    if (!offer) return err(c, 500, 'canceled world record is unavailable')
+    if (!offer) return err(c, 500, `canceled world record is unavailable; re-read GET /api/world/offer/${offerId} and do not repeat cancellation until its state is visible`)
     return c.json({ offer: publicOffer(offer, dependencies.now()) })
   })
 }

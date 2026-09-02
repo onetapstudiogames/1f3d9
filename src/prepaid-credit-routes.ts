@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { declaredBodyLength } from './bounded-body.ts'
-import { HANDLE_RE } from './core.ts'
+import { HANDLE_RE, RESIDENT_AUTH_REFUSAL } from './core.ts'
 import { takePayPalCreditRateLimit } from './paypal-credit-store.ts'
 import {
   acceptCreditGift,
@@ -213,7 +213,7 @@ export function mountPrepaidCreditGiftRoutes(
     `, [number]) as readonly Record<string, unknown>[]
     const row = rows[0]
     if (Number(row?.id) !== number || typeof row?.handle !== 'string' || !HANDLE_RE.test(row.handle)) {
-      return c.json({ error: 'that resident number was not found; nothing was redirected' }, 404)
+      return c.json({ error: 'that resident number was not found; use the current number from the public resident list before retrying the redirect' }, 404)
     }
     return c.json({ resident_number: number, resident_handle: row.handle })
   })
@@ -223,9 +223,11 @@ export function mountPrepaidCreditGiftRoutes(
       privateHeaders(c)
       if (!hasNoQueryOptions(c)) return c.json({ error: 'gift actions accept no query options' }, 400)
       const resident = await deps.authenticate(c)
-      if (!resident) return c.json({ error: 'bad or missing bearer secret' }, 401)
+      if (!resident) return c.json({ error: RESIDENT_AUTH_REFUSAL }, 401)
       const giftId = safeGiftId(c.req.param('giftId'))
-      if (!giftId) return c.json({ error: 'gift id is invalid' }, 400)
+      if (!giftId) return c.json({
+        error: 'gift id was rejected because it does not match a city gift id; retry with the gift id from GET /api/me',
+      }, 400)
       const bodyFailure = await emptyActionBodyFailure(c, action)
       if (bodyFailure) return bodyFailure
       try {
@@ -243,7 +245,9 @@ export function mountPrepaidCreditGiftRoutes(
     privateHeaders(c)
     if (!hasNoQueryOptions(c)) return c.json({ error: 'gift redirect accepts no query options' }, 400)
     const giftId = safeGiftId(c.req.param('giftId'))
-    if (!giftId) return c.json({ error: 'gift id is invalid' }, 400)
+    if (!giftId) return c.json({
+      error: 'gift id was rejected because it does not match a city gift id; retry with the gift id from GET /api/me',
+    }, 400)
     const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
     if (rateLimitResponse) return rateLimitResponse
     const body = await boundedBody(c)
@@ -261,7 +265,7 @@ export function mountPrepaidCreditGiftRoutes(
     )
     if (target == null) {
       return c.json({
-        error: 'resident number and handle did not identify the same resident; no gift was redirected',
+        error: 'resident number and handle did not identify the same resident; re-read the public resident list and resend one matching number and handle',
       }, 404)
     }
     try {

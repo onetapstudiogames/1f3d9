@@ -106,7 +106,7 @@ function integer(value: unknown): number | null {
 }
 function rowId(value: unknown, field: string): number {
   const parsed = integer(value)
-  if (parsed === null || parsed <= 0) throw new EngineError(500, `database returned an invalid ${field}`)
+  if (parsed === null || parsed <= 0) throw new EngineError(500, `database returned an invalid ${field}; retry once, then contact the city operator`)
   return parsed
 }
 function nullableRowId(value: unknown, field: string): number | null {
@@ -120,13 +120,13 @@ function json(value: unknown): string {
     throw new EngineError(400, 'payload must be valid JSON')
   }
   if (Buffer.byteLength(encoded, 'utf8') > MAX_JSON_BYTES) {
-    throw new EngineError(400, 'payload is too large')
+    throw new EngineError(400, `payload exceeds ${MAX_JSON_BYTES} UTF-8 bytes; send a smaller payload`)
   }
   return encoded
 }
 async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
   const value = await promise
-  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
+  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result; retry once, then contact the city operator')
   return value as T[]
 }
 
@@ -155,8 +155,8 @@ async function targetExists(target: RuntimeTarget, db: TaggedSql): Promise<boole
 }
 
 async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promise<RuntimeTarget> {
-  if (!target) throw new EngineError(400, 'effect target is unavailable')
-  if (!await targetExists(target, db)) throw new EngineError(404, `${target.type} target not found`)
+  if (!target) throw new EngineError(400, 'effect target is unavailable because its type or id is missing; send one documented target_type and target_id')
+  if (!await targetExists(target, db)) throw new EngineError(404, `${target.type} target was not found; choose a current public target before retrying`)
   return target
 }
 
@@ -328,7 +328,7 @@ async function executeEffectWithOutcome(
   if (effect.effect === 'destroy') {
     const target = resolveSymbolicTarget(effect.target, context)
     if (!target || target.type !== 'thing') {
-      throw new EngineError(403, 'agents and non-thing targets cannot be destroyed')
+      throw new EngineError(403, 'agents and non-thing targets cannot be destroyed; choose an active thing target instead')
     }
     if (target.id === context.sharedSourceThingId) {
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
@@ -352,7 +352,7 @@ async function executeEffectWithOutcome(
     }
     const target = await requireTarget(resolved, db)
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
-    if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient')
+    if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient; send one current resident in to_handle')
     const emittedTypedPublicEvent = await transferAsset(target, context.actorId, recipientId, db)
     return effectExecutionOutcome(1, emittedTypedPublicEvent)
   }
@@ -381,9 +381,9 @@ async function destroyThing(
   db: TaggedSql,
 ): Promise<void> {
   const thing = await thingState(thingId, db)
-  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
+  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
-    throw new EngineError(409, 'thing has an open sale offer')
+    throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
   const ownedByActor = thing.ownerId === context.actorId
   let rows: unknown[]
@@ -448,11 +448,11 @@ async function destroyThing(
     `)
   }
   if (rows[0]) return
-  if (ownedByActor) throw new EngineError(409, 'thing changed before it could be destroyed')
+  if (ownedByActor) throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
   const current = await thingState(thing.id, db)
   if (!current || current.withdrawnAt !== null || current.placeId !== context.placeId
     || current.activeOfferId !== null || current.hasOpenOffer) {
-    throw new EngineError(409, 'thing changed before it could be destroyed')
+    throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
   }
   const authority = context.lawAuthority
   const stillEffective = authority !== null && context.placeId !== null
@@ -462,7 +462,7 @@ async function destroyThing(
   if (!stillEffective) {
     throw new EngineError(403, 'damage to another resident property requires an effective local law')
   }
-  throw new EngineError(409, 'thing changed before it could be destroyed')
+  throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
 }
 
 export async function withdrawOwnedThing(
@@ -491,7 +491,7 @@ export async function withdrawOwnedThing(
       FROM changed
     ) SELECT id FROM changed
   `)
-  if (!rows[0]) throw new EngineError(409, 'thing cannot be consumed')
+  if (!rows[0]) throw new EngineError(409, 'thing cannot be consumed because its state changed; re-read the thing before retrying')
 }
 
 async function moveEffectTarget(
@@ -514,7 +514,7 @@ async function moveEffectTarget(
   const destinationId = destination === 'home'
     ? (await ensurePresence(context.actorId, db)).homePlaceId
     : context.destinationPlaceId
-  if (destinationId === null) throw new EngineError(409, 'move destination is unavailable')
+  if (destinationId === null) throw new EngineError(409, 'move destination is unavailable because the effect has no resolved destination; send to_place_id for move and retry')
   return moveThing(target.id, destinationId, context.actorId, db)
 }
 
@@ -525,10 +525,10 @@ async function moveThing(
   db: TaggedSql,
 ): Promise<boolean> {
   const thing = await thingState(thingId, db)
-  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
+  if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   if (thing.ownerId !== actorId) throw new EngineError(403, 'only the owner can move a thing')
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
-    throw new EngineError(409, 'thing has an open sale offer')
+    throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
   if (thing.placeId === destinationId) return false
   const places = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
@@ -538,10 +538,10 @@ async function moveThing(
   `)
   const oldPlace = places.find(row => integer(row.id) === thing.placeId)
   const destination = places.find(row => integer(row.id) === destinationId)
-  if (!destination) throw new EngineError(404, 'destination place not found')
+  if (!destination) throw new EngineError(404, 'destination place was not found; choose a current place_id from the public map outline')
   integer(destination.owner_id)
   if (destination.place_permits_things !== true) {
-    throw new EngineError(403, 'destination does not allow visitor things')
+    throw new EngineError(403, 'destination does not allow visitor things; its owner can enable open_to_things, or choose another open place')
   }
   const adjacent = nullableRowId(destination.parent_id, 'destination parent id') === thing.placeId
     || (oldPlace !== undefined && nullableRowId(oldPlace.parent_id, 'current parent id') === destinationId)
@@ -573,7 +573,7 @@ async function moveThing(
     )
     SELECT id FROM moved
   `)
-  if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move')
+  if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move; re-read both and retry')
   return true
 }
 
@@ -583,7 +583,7 @@ async function transferAsset(
   recipientId: number,
   db: TaggedSql,
 ): Promise<boolean> {
-  if (target.type === 'resident') throw new EngineError(403, 'an agent is never property')
+  if (target.type === 'resident') throw new EngineError(403, 'an agent is never property; transfer only a place, thing, or kind you own')
   if (actorId === recipientId) return false
   const conditions = target.type === 'thing'
     ? db`
@@ -667,12 +667,12 @@ async function transferAsset(
 async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: TaggedSql): Promise<never> {
   if (target.type === 'thing') {
     const thing = await thingState(target.id, db)
-    if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target not found')
-    if (thing.ownerId !== actorId) throw new EngineError(403, 'you cannot transfer this asset')
+    if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
+    if (thing.ownerId !== actorId) throw new EngineError(403, 'you cannot transfer this asset because you do not own it; choose an asset you own')
     if (thing.activeOfferId !== null || thing.hasOpenOffer) {
-      throw new EngineError(409, 'asset has an open transfer offer')
+      throw new EngineError(409, 'asset has an open transfer offer; cancel the offer or choose another owned asset')
     }
-    throw new EngineError(409, 'asset changed before it could transfer')
+    throw new EngineError(409, 'asset changed before it could transfer; re-read its owner and offer state before retrying')
   }
   const rows = target.type === 'place'
     ? await queryRows<Record<string, unknown>>(db`
@@ -694,12 +694,12 @@ async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: 
       FROM kinds asset WHERE asset.id = ${target.id}
     `)
   const asset = rows[0]
-  if (!asset) throw new EngineError(404, `${target.type} target not found`)
-  if (integer(asset.owner_id) !== actorId) throw new EngineError(403, 'you cannot transfer this asset')
+  if (!asset) throw new EngineError(404, `${target.type} target was not found; choose a current public target before retrying`)
+  if (integer(asset.owner_id) !== actorId) throw new EngineError(403, 'you cannot transfer this asset because you do not own it; choose an asset you own')
   if (asset.active_offer_id != null || asset.has_open_offer === true) {
-    throw new EngineError(409, 'asset has an open transfer offer')
+    throw new EngineError(409, 'asset has an open transfer offer; cancel the offer or choose another owned asset')
   }
-  throw new EngineError(409, 'asset changed before it could transfer')
+  throw new EngineError(409, 'asset changed before it could transfer; re-read its owner and offer state before retrying')
 }
 
 async function scheduleEffect(
@@ -709,7 +709,7 @@ async function scheduleEffect(
 ): Promise<boolean> {
   if (!Number.isSafeInteger(effect.seconds)
     || effect.seconds < MIN_TIMER_SECONDS || effect.seconds > MAX_TIMER_SECONDS) {
-    throw new EngineError(400, 'wait duration is invalid')
+    throw new EngineError(400, `wait duration must be ${MIN_TIMER_SECONDS}-${MAX_TIMER_SECONDS} seconds`)
   }
   const generation = context.parentEffectId === null ? 0 : context.generation + 1
   if (generation > MAX_EFFECT_GENERATIONS) return false

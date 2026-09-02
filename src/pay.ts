@@ -212,7 +212,7 @@ export function parseX402Payment(
   if (
     typeof paymentHeader !== 'string' || paymentHeader.length === 0 ||
     paymentHeader.length > MAX_PAYMENT_HEADER_BYTES
-  ) return { error: 'X-PAYMENT header is too large' }
+  ) return { error: `X-PAYMENT header exceeds ${MAX_PAYMENT_HEADER_BYTES} bytes; resend a header no larger than ${MAX_PAYMENT_HEADER_BYTES} bytes` }
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(paymentHeader) || paymentHeader.length % 4 !== 0) {
     return { error: 'X-PAYMENT header is not base64 JSON' }
   }
@@ -247,16 +247,16 @@ export function parseX402Payment(
     paymentPayload.x402Version !== 1 || paymentPayload.scheme !== 'exact' ||
     paymentPayload.network !== NETWORK || !payload || typeof payload.signature !== 'string'
   ) return { error: 'X-PAYMENT does not use the required exact Base authorization' }
-  if (!payer) return { error: 'X-PAYMENT contains an invalid payer' }
+  if (!payer) return { error: 'X-PAYMENT contains an invalid payer; resend a 20-byte Base wallet address' }
   if (!payee || payee !== accepted.payTo.toLowerCase()) {
     return { error: 'X-PAYMENT recipient does not match this request' }
   }
   if (amount == null || amount.toString() !== accepted.maxAmountRequired) {
     return { error: 'X-PAYMENT amount does not match this request' }
   }
-  if (!nonce) return { error: 'X-PAYMENT contains an invalid nonce' }
+  if (!nonce) return { error: 'X-PAYMENT contains an invalid nonce; resend a 32-byte hexadecimal nonce' }
   if (validAfter == null || validBefore == null || validBefore <= validAfter + 1) {
-    return { error: 'X-PAYMENT contains an invalid authorization window' }
+    return { error: 'X-PAYMENT contains an invalid authorization window; resend integer validAfter and validBefore timestamps with validBefore later than validAfter' }
   }
 
   const identity = sha256Hex(`${NETWORK}:${accepted.asset.toLowerCase()}:${payer}:${nonce}`)
@@ -292,12 +292,12 @@ async function boundedJson(
       size += next.value.byteLength
       if (size > MAX_FACILITATOR_RESPONSE_BYTES) {
         await reader.cancel().catch(() => undefined)
-        return { value: null, error: `${label} response was too large` }
+        return { value: null, error: `${label} response exceeded ${MAX_FACILITATOR_RESPONSE_BYTES} bytes; retry this same request later and do not pay again` }
       }
       chunks.push(next.value)
     }
   } catch {
-    return { value: null, error: `${label} response could not be read` }
+    return { value: null, error: `${label} response could not be read; retry this same request later and do not pay again` }
   }
   const bytes = new Uint8Array(size)
   let offset = 0
@@ -343,10 +343,10 @@ export async function verifyX402Payment(
     if (
       !response.ok || decoded.value?.isValid !== true ||
       (decoded.value?.payer != null && payer !== parsed.authorization.payer)
-    ) return { state: 'invalid', error: 'facilitator rejected the payment' }
+    ) return { state: 'invalid', error: 'facilitator rejected the payment; re-read the current 402 terms and send a matching authorization' }
     return { ...parsed, state: 'verified', verificationPayer: payer }
   } catch {
-    return { state: 'unavailable', error: 'facilitator verification is unavailable' }
+    return { state: 'unavailable', error: 'facilitator verification is unavailable; retry this same request later' }
   }
 }
 
@@ -376,12 +376,12 @@ export async function settleVerifiedX402(
       payer: verified.authorization.payer,
       error: typeof decoded.value?.errorReason === 'string'
         ? decoded.value.errorReason.slice(0, 240)
-        : 'settlement outcome is unknown',
+        : 'settlement outcome is unknown; do not pay again; recheck the original payment attempt',
     }
   } catch {
     return {
       state: 'ambiguous', transaction: null, payer: verified.authorization.payer,
-      error: 'settlement outcome is unknown',
+      error: 'settlement outcome is unknown; do not pay again; recheck the original payment attempt',
     }
   }
 }

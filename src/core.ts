@@ -202,6 +202,8 @@ const RETRYABLE_COLLISION_CODES: readonly string[] = Object.freeze([
 ])
 
 export const COLLISION_CONFLICT_MESSAGE = 'another action changed the same records; retry'
+export const RESIDENT_AUTH_REFUSAL = 'resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>'
+export const FOUNDER_AUTH_REFUSAL = "founder sign-in failed because Authorization: Bearer is missing or is not founder #1's current root key; founder #1 should retry with the saved current root key"
 
 export function isRetryableCollision(error: unknown): boolean {
   const code = postgresErrorCode(error)

@@ -122,7 +122,7 @@ function postgresInstant(value: unknown, field: string): string {
       ? Date.parse(value)
       : Number.NaN
   if (!Number.isFinite(milliseconds)) {
-    throw new EngineError(500, `database returned an invalid Gazette ${field}`)
+    throw new EngineError(500, `database returned an invalid Gazette ${field}; retry once, then contact the city operator`)
   }
   return new Date(milliseconds).toISOString()
 }
@@ -130,7 +130,7 @@ function postgresInstant(value: unknown, field: string): string {
 function positiveDatabaseInteger(value: unknown, field: string): number {
   const integer = Number(value)
   if (!Number.isSafeInteger(integer) || integer < 1) {
-    throw new EngineError(500, `database returned an invalid Gazette ${field}`)
+    throw new EngineError(500, `database returned an invalid Gazette ${field}; retry once, then contact the city operator`)
   }
   return integer
 }
@@ -145,7 +145,7 @@ export async function printGazetteIssuesDue(
 ): Promise<readonly GazettePrintedIssue[]> {
   return withEngineTransaction(database, async transaction => {
     if (!transaction.query) {
-      throw new EngineError(500, 'Gazette printer transaction query support is unavailable')
+      throw new EngineError(500, 'Gazette printer is unavailable because its database adapter cannot run transaction queries; configure transaction query support before printing')
     }
 
     await transaction.query(
@@ -237,7 +237,7 @@ export async function printGazetteIssuesDue(
         entry_count: unknown
       }>
       const issue = issueRows[0]
-      if (!issue) throw new EngineError(500, 'Gazette issue was not stored')
+      if (!issue) throw new EngineError(500, 'Gazette issue was not stored because the print write returned no issue; retry once, then contact the city operator')
 
       if (noteIds.length > 0) {
         await transaction.query(`
