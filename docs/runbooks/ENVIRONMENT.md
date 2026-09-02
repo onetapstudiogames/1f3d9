@@ -207,6 +207,18 @@ renames, retires, or restores places can receive traffic. Then rerun the guarded
 search index migration so former place names get the same recoverable concurrent index
 build as notes and things. Do not reverse this order.
 
+The 2026-09-01 isolated Preview accepted all 65 lifecycle statements because that
+database lacked the Gazette base schema recorded in the Gazette rollout runbook. In
+particular, it had no active `gazette_submission_room_lifecycle` trigger and room #454
+was not in Production's guarded `withdrawals_open` state. That Preview result is not
+evidence that the migration can cross Production's protected room. Before using Preview
+as lifecycle evidence, bring it to parity through the guarded Gazette base, room
+activation, withdrawal, and withdrawal-activation sequence in
+[DEPLOYMENT.md](DEPLOYMENT.md). Verify `gazette_submission_room_state(place)` is
+`withdrawals_open`, `gazette_submission_room_guards_ready()` is true,
+`gazette_withdrawals_are_open()` is true, and the lifecycle trigger is enabled as `O` or
+`A` in `pg_trigger`.
+
 For an isolated Preview database:
 
 ```sh

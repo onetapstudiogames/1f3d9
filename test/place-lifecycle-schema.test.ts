@@ -20,6 +20,13 @@ test('place lifecycle migration preserves founding names and append-only name sp
   assert.match(migration, /ADD COLUMN IF NOT EXISTS founding_name TEXT/iu)
   assert.match(migration, /ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ/iu)
   assert.match(migration, /UPDATE places[\s\S]*SET founding_name = name[\s\S]*WHERE founding_name IS NULL/iu)
+  assert.match(
+    migration,
+    /DISABLE TRIGGER gazette_submission_room_lifecycle[\s\S]*UPDATE places SET founding_name = name[\s\S]*ENABLE (?:ALWAYS )?TRIGGER gazette_submission_room_lifecycle/iu,
+  )
+  assert.match(migration, /gazette_submission_room_has_no_forbidden_contents\(\)/u)
+  assert.match(migration, /gazette_submission_room_guards_ready\(\)/u)
+  assert.match(migration, /room_state = 'withdrawals_open'[\s\S]*withdrawal_events = 1/u)
   assert.match(migration, /ALTER COLUMN founding_name SET NOT NULL/iu)
   assert.match(migration, /founding name is immutable/iu)
 

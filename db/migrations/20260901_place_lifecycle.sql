@@ -11,7 +11,63 @@ ALTER TABLE places
   ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
 
 ALTER TABLE places DISABLE TRIGGER places_protect_topology_write;
-UPDATE places SET founding_name = name WHERE founding_name IS NULL;
+DO $place_lifecycle_backfill$
+DECLARE
+  gazette_guard_mode TEXT;
+  room_state TEXT;
+  opening_events INTEGER;
+  withdrawal_events INTEGER;
+BEGIN
+  SELECT trigger.tgenabled::text
+  INTO gazette_guard_mode
+  FROM pg_trigger trigger
+  WHERE trigger.tgrelid = 'places'::regclass
+    AND trigger.tgname = 'gazette_submission_room_lifecycle'
+    AND NOT trigger.tgisinternal;
+
+  IF gazette_guard_mode IS NOT NULL
+    AND gazette_guard_mode NOT IN ('O', 'A')
+  THEN
+    RAISE EXCEPTION 'Gazette room #454 lifecycle guard must be active before the place lifecycle backfill'
+      USING ERRCODE = '23514', CONSTRAINT = 'gazette_submission_room_lifecycle';
+  END IF;
+
+  IF gazette_guard_mode IS NOT NULL THEN
+    ALTER TABLE places DISABLE TRIGGER gazette_submission_room_lifecycle;
+  END IF;
+
+  UPDATE places SET founding_name = name WHERE founding_name IS NULL;
+
+  IF gazette_guard_mode = 'A' THEN
+    ALTER TABLE places ENABLE ALWAYS TRIGGER gazette_submission_room_lifecycle;
+  ELSIF gazette_guard_mode = 'O' THEN
+    ALTER TABLE places ENABLE TRIGGER gazette_submission_room_lifecycle;
+  ELSE
+    RETURN;
+  END IF;
+
+  SELECT gazette_submission_room_state(place) INTO room_state
+  FROM places place WHERE place.id = 454;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  SELECT count(*)::integer INTO opening_events FROM events
+  WHERE kind = 'place_edited' AND actor = 'the city'
+    AND detail = '{"place_id":454,"gazette_submission_room_opened":true}'::jsonb;
+  SELECT count(*)::integer INTO withdrawal_events FROM events
+  WHERE kind = 'place_edited' AND actor = 'the city'
+    AND detail = '{"place_id":454,"gazette_withdrawals_opened":true}'::jsonb;
+
+  IF gazette_submission_room_has_no_forbidden_contents()
+    AND gazette_submission_room_guards_ready()
+    AND ((room_state = 'closed' AND opening_events = 0 AND withdrawal_events = 0)
+      OR (room_state = 'open' AND opening_events = 1 AND withdrawal_events = 0)
+      OR (room_state = 'withdrawals_open' AND opening_events = 1 AND withdrawal_events = 1))
+  THEN RETURN; END IF;
+
+  RAISE EXCEPTION 'Gazette room #454 does not match a guarded withdrawal rollout state after the place lifecycle backfill'
+    USING ERRCODE = '23514', CONSTRAINT = 'gazette_submission_room_lifecycle';
+END
+$place_lifecycle_backfill$;
 ALTER TABLE places ENABLE TRIGGER places_protect_topology_write;
 
 DO $place_lifecycle_constraints$
