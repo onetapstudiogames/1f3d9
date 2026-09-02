@@ -324,7 +324,9 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
 
     const directory = await readBudgetedJson<{
       view: string
-      places: Array<{ type: 'place'; id: number; parent_id: number | null; name: string }>
+      places: Array<{
+        type: 'place'; id: number; parent_id: number | null; name: string; quiet: boolean
+      }>
       residents: Array<{ type: 'resident'; id: number; handle: string }>
     }>(
       await cityApp.request('http://city.test/api/window?view=directory'),
@@ -342,7 +344,11 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     assert.equal(directory.residents.length, cityCounts.residents)
     assert.deepEqual(
       Object.keys(directory.places.find(place => place.id === fixture.roomId) ?? {}).sort(),
-      ['id', 'name', 'parent_id', 'type'],
+      ['id', 'name', 'parent_id', 'quiet', 'type'],
+    )
+    assert.equal(
+      directory.places.find(place => place.id === fixture.roomId)?.quiet,
+      false,
     )
     assert.deepEqual(
       Object.keys(directory.residents.find(resident => resident.handle === 'small-reader') ?? {}).sort(),
