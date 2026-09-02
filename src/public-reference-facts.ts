@@ -1,3 +1,4 @@
+import { SKILL_VERSION_RECOMMENDED } from '../config/skill-versions.ts'
 import { NETWORK, USDC } from './chain.ts'
 import {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -101,6 +102,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
     }),
     market: marketOrigin,
     city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
+    skill_version_recommended: SKILL_VERSION_RECOMMENDED,
     public_snapshots: Object.freeze({
       format_version: PUBLIC_SNAPSHOT_FORMAT_VERSION,
       releases: PUBLIC_SNAPSHOT_RELEASES,
