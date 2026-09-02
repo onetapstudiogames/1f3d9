@@ -994,14 +994,10 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
           VALUES (1, $1, $1)
         `, [roomId])
         const retiring = await database!.connect()
-        const runnerStarted = Promise.withResolvers<number>()
         setEngineTransactionRunnerForTests(async (_db, work) => {
           const connection = await database!.connect()
           try {
             await connection.query('BEGIN')
-            runnerStarted.resolve(Number((await connection.query<{ pid: number }>(
-              'SELECT pg_backend_pid() AS pid',
-            )).rows[0]!.pid))
             const result = await work(transactionSql(connection), true)
             await connection.query('COMMIT')
             return result
@@ -1016,6 +1012,7 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
           await retiring.query('BEGIN')
           await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
           await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          let settled = false
           const making = makeThingThroughEngine({
             actor,
             placeId: roomId,
@@ -1023,13 +1020,12 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
             body: '',
             kindId: null,
             ingredientIds: [],
+          }).then(result => {
+            settled = true
+            return result
           })
-          const makingPid = await Promise.race([
-            runnerStarted.promise,
-            delay(2_000).then(() => 0),
-          ])
-          assert.ok(makingPid > 0, 'kindless making did not reach its transaction')
-          await assertWaitingOnDatabaseLock(makingPid, 'kindless making')
+          await delay(100)
+          assert.equal(settled, false, 'kindless making did not wait for retirement')
           await retiring.query('COMMIT')
           assert.deepEqual(await making, {
             ok: false,

@@ -328,14 +328,11 @@ function publicSearchSql(mode: PublicSearchMode): string {
       FROM places place
       WHERE $2::text IN ('all', 'place')
         AND $9::text IS NULL
-        AND (
-          ${indexedMatchExpression(mode, 'place.name')}
-          OR EXISTS (
-            SELECT 1
-            FROM place_name_history indexed_history
-            WHERE indexed_history.place_id = place.id
-              AND ${indexedMatchExpression(mode, 'indexed_history.name')}
-          )
+        AND EXISTS (
+          SELECT 1
+          FROM place_name_history indexed_history
+          WHERE indexed_history.place_id = place.id
+            AND ${indexedMatchExpression(mode, 'indexed_history.name')}
         )
         AND coalesce((
           SELECT moderation.action
@@ -345,24 +342,27 @@ function publicSearchSql(mode: PublicSearchMode): string {
           LIMIT 1
         ), 'restore') <> 'remove'
     ), place_history_spans AS MATERIALIZED (
-      SELECT span.place_id,
-        jsonb_agg(jsonb_build_object(
-          'name', span.name,
-          'started_at', to_char(span.started_at AT TIME ZONE 'UTC',
-            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-          'ended_at', CASE WHEN span.ended_at IS NULL THEN NULL ELSE to_char(
-            span.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END
-        ) ORDER BY span.started_at, span.id) AS name_history,
-        string_agg(span.name, ' ' ORDER BY span.started_at, span.id) AS search_names
-      FROM (
-        SELECT history.id, history.place_id, history.name, history.started_at,
-          lead(history.started_at) OVER (
-            PARTITION BY history.place_id ORDER BY history.started_at, history.id
-          ) AS ended_at
-        FROM place_name_history history
-        JOIN matching_places matched ON matched.id = history.place_id
-      ) span
-      GROUP BY span.place_id
+      SELECT matched.id AS place_id,
+        aggregated_history.name_history, aggregated_history.search_names
+      FROM matching_places matched
+      CROSS JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object(
+            'name', span.name,
+            'started_at', to_char(span.started_at AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+            'ended_at', CASE WHEN span.ended_at IS NULL THEN NULL ELSE to_char(
+              span.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END
+          ) ORDER BY span.started_at, span.id) AS name_history,
+          string_agg(span.name, ' ' ORDER BY span.started_at, span.id) AS search_names
+        FROM (
+          SELECT history.id, history.name, history.started_at,
+            lead(history.started_at) OVER (
+              ORDER BY history.started_at, history.id
+            ) AS ended_at
+          FROM place_name_history history
+          WHERE history.place_id = matched.id
+        ) span
+      ) aggregated_history
     ), place_candidates AS MATERIALIZED (
       SELECT 'place'::text AS result_type,
         place.id, place.id AS place_id,
@@ -381,7 +381,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         concat_ws(' ', place.name, history.search_names) AS search_text,
         place.created_at
       FROM matching_places place
-      LEFT JOIN place_history_spans history ON history.place_id = place.id
+      JOIN place_history_spans history ON history.place_id = place.id
     ), candidate AS MATERIALIZED (
       SELECT * FROM note_candidates
       UNION ALL
