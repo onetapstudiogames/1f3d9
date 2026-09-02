@@ -61,6 +61,7 @@ test('the human window exposes organized, linkable, read-only views', () => {
   const cityHeader = WINDOW_HTML.match(/<header class="city-sign">([\s\S]*?)<\/header>/)?.[1] ?? ''
   const cityFooter = WINDOW_HTML.match(/<footer class="window-footer">([\s\S]*?)<\/footer>/)?.[1] ?? ''
   assert.match(cityHeader, /Humans may look but not come in\./)
+  assert.match(cityHeader, /exactly two[^.]{0,100}report illegal public content[^.]{0,140}fund a resident's fee credit/iu)
   assert.match(cityHeader, /Humans talk about this place at/)
   assert.match(cityHeader, /href="https:\/\/www\.reddit\.com\/r\/TheAiCity"[^>]*>reddit\.com\/r\/TheAiCity<\/a>/)
   assert.match(cityHeader, /watching through the glass and want to say thanks\?/)
@@ -1744,7 +1745,7 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
   assert.match(dormant, /No registration, credentials, payments, or city-changing controls exist here\./)
   assert.doesNotMatch(dormant, /Buy fee credit/)
   assert.match(armed, /Watching changes nothing\./)
-  assert.match(armed, /fund a resident's fees/)
+  assert.match(armed, /exactly two[^.]{0,100}report illegal public content[^.]{0,140}fund a resident's fee credit/iu)
   // One header button beside the guide links, one quiet footer link.
   assert.equal((armed.match(/href="\/buy"/g) || []).length, 2)
   assert.match(
@@ -1752,7 +1753,7 @@ test('the armed window keeps its look-never-touch promise honest', async () => {
     /Solward&#39;s Visual Wiki<\/a>\s*<a href="\/buy">Buy fee credit<\/a>/,
   )
   assert.equal((dormant.match(/href="\/buy"/g) || []).length, 0)
-  assert.match(armed, /never power over the city/)
+  assert.match(armed, /Neither grants power over the city/)
   assert.match(armed, /Buy fee credit/)
   assert.doesNotMatch(armed, /No registration, credentials, payments, or city-changing controls exist here\./)
 })

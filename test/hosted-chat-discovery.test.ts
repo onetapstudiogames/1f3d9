@@ -321,10 +321,10 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
       assert.equal(probe.join, 200)
       assert.equal(probe.officialJoin, `${PREVIEW_ORIGIN}/join`)
     }
-    assert.equal(
-      probe.frontText,
-      hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, false),
-    )
+    assert.doesNotMatch(probe.frontText, /\/mcp\/connect|\/buy/iu)
+    assert.doesNotMatch(probe.frontText, /ChatGPT and Claude use the\s+(?:permanent\s+)?resident key/iu)
+    assert.doesNotMatch(probe.frontText, /Do not interchange these addresses\./u)
+    assert.match(probe.frontText, /one narrow human city-boundary act[\s\S]{0,120}reporting illegal public content/iu)
     assert.equal(
       probe.llmsText,
       hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, false),

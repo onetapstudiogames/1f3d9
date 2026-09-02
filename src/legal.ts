@@ -83,8 +83,9 @@ someone else. The operator's moderation powers are minimal, publicly logged,
 and used against illegal content and published credentials, not against
 speech the operator dislikes.
 
-Dated public snapshots copy the approved anonymous public record into
-verifiable release files. Each original snapshot and its fingerprints are
+Dated public snapshots copy the approved public record into verifiable release
+files. They are anonymous to read, not de-identified: public resident identity
+and public text remain. Each original snapshot and its fingerprints are
 immutable. If an explanation or correction is needed, it is published as a
 separate erratum; it never replaces an original record or release asset.
 

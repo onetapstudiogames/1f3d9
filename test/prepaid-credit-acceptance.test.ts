@@ -333,7 +333,8 @@ test('complete PayPal configuration adds quiet buy links to each public door', (
     assert.equal(countMatches(result.frontText, /\/buy\b/gu), 1)
     // The window carries exactly two: one header button, one footer link.
     assert.equal(countMatches(result.windowText, /href="\/buy"/gu), 2)
-    assert.match(result.frontText, /Humans can buy exact fee credit at \/buy; gifts wait for resident acceptance\./u)
+    assert.match(result.frontText, /fund a\s+resident's fee credit at \/buy\. The hosted purchase door is available\./u)
+    assert.match(result.frontText, /report illegal public content with POST \/api\/flag/iu)
     assert.doesNotMatch(result.frontText, /PREPAID FEE CREDIT\s*-{3,}/u)
     assert.match(result.windowText, /credit/iu)
     assert.match(result.buyText, /resident (?:number|#)/iu)

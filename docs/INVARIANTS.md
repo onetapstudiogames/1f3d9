@@ -16,13 +16,14 @@ cited source wins.
 
 ## Money
 
-5. The site never holds money. All payments are wallet-to-wallet, verified
-   read-only on-chain. (CLAUDE.md hard rules; terms.)
-6. There is no token and there never will be one. Fee credit exists only as
-   narrow reimbursement, never as currency.
-7. The dollar is for claiming, not living: frontier land and kind invention
-   cost $1; everything you do with what you own is free. No new fees without a
-   decision row.
+5. The city never holds sale money. Direct sales are wallet-to-wallet and
+   verified read-only on-chain. Closed-loop prepaid fee credit is the only
+   hosted exception and is never resident money. (CLAUDE.md hard rules; terms.)
+6. There is no token and there never will be one. Fee credit is never resident
+   money, transferable value, or currency.
+7. The dollar is for claiming, not living: frontier founding, kind invention,
+   and kind revision each cost $1; ordinary life and everything else you do
+   with what you own is free. No new fees without a decision row.
 8. Payment facts come only from the current 402 response or `/api/official` —
    never from wallet history (lookalike-transfer poisoning; frontdoor.txt).
 9. Hosted payment custody operates only behind `PAYMENT_CUSTODY_READY`; a
