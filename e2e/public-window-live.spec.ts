@@ -393,9 +393,11 @@ function replayResidentRows(now: number, placeId: number) {
   }))]
 }
 
-function replayThingRows(now: number, placeId: number) {
+function replayThingRows(now: number, placeId: number, carriedPlaceId?: number) {
   return replayThings.map(thing => ({
-    ...thing, place_id: thing.id === 9 ? 4 : placeId, body: 'a steady mark',
+    ...thing, place_id: thing.id === 9 ? 4 : thing.id === 20 && carriedPlaceId
+      ? carriedPlaceId
+      : placeId, body: 'a steady mark',
     maker_id: 5, made_by: 'map-walker', current_owner_id: 5,
     current_owner: 'map-walker', owner: 'map-walker', open_to_use: true,
     kind: 'lantern', traits: [], created_at: new Date(now - 120_000).toISOString(),
@@ -404,11 +406,11 @@ function replayThingRows(now: number, placeId: number) {
   }))
 }
 
-function replaySnapshot(now: number, published: boolean, marker: string) {
+function replaySnapshot(now: number, published: boolean, marker: string, carryMove = false) {
   const residentPlaceId = published ? 4 : 2
   const thingPlaceId = published ? 3 : 2
   const residents = replayResidentRows(now, residentPlaceId)
-  const things = replayThingRows(now, thingPlaceId)
+  const things = replayThingRows(now, thingPlaceId, published && carryMove ? 4 : undefined)
   return {
     view: 'outline', change_marker: marker,
     places: [{
@@ -460,6 +462,7 @@ async function installReplayRoutes(
     openingMarker?: string
     secondArrival?: boolean
     movementOnly?: boolean
+    carryMove?: boolean
     drawingDelayMs?: number
     drawingPlaceCount?: number
     drawingParentId?: number
@@ -650,7 +653,11 @@ async function installReplayRoutes(
       }
       const placeId = marker === '10' ? 2 : 3
       const scope = replayPlaceScopeIds(Number(withinPlaceId))
-      const things = replayThingRows(now, placeId)
+      const things = replayThingRows(
+        now,
+        placeId,
+        published && controls.carryMove ? 4 : undefined,
+      )
         .filter(thing => scope.has(thing.place_id))
       await route.fulfill({ json: {
         change_marker: marker,
@@ -661,7 +668,12 @@ async function installReplayRoutes(
       } })
       return
     }
-    const ordinarySnapshot = replaySnapshot(now, marker !== '10', marker)
+    const ordinarySnapshot = replaySnapshot(
+      now,
+      controls.carryMove ? published : marker !== '10',
+      marker,
+      controls.carryMove,
+    )
     const drawingRows = drawingPlaces.map(extra => ({
       ...extra,
       owner: 'drawing-owner',
@@ -811,6 +823,7 @@ async function installReplayRoutes(
             )).toISOString(), kind: 'action',
             actor: 'map-walker', detail: {
               action: 'move', status: 'applied', from_place_id: 2, to_place_id: 4,
+              ...(controls.carryMove ? { mode: 'carry', thing_id: 20 } : {}),
             },
           }, ...(controls.movementOnly ? [] : [{
             change_id: '12', created_at: new Date(now).toISOString(), kind: 'note',
@@ -2343,6 +2356,26 @@ test('Live catches up after a hidden tab without replaying the hidden backlog', 
   await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeCatchUp)
   await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+})
+
+test('Live moves a carried thing with its owner and names the carry', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    carryMove: true,
+    movementOnly: true,
+  })
+  await page.goto('/window#view=live')
+  const carriedThing = page.locator('[data-live-thing-id="20"]')
+  await expect(page.locator('[data-place-id="2"] [data-live-thing-id="20"]')).toHaveCount(1)
+
+  await publishReplayChanges(page, fixture)
+
+  await expect(page.locator('[data-place-id="2"] [data-live-thing-id="20"]')).toHaveCount(0)
+  await expect(carriedThing).toHaveCount(1)
+  await expect(page.locator('#live-ledger')).toContainText(
+    'map-walker moved carrying Thing #20: Cinder lane → Lantern nook',
+  )
+  await page.locator('.live-plot[data-place-id="3"] > .live-plot-open').click()
+  await expect(page.locator('[data-place-id="4"] [data-live-thing-id="20"]')).toHaveCount(1)
 })
 
 test('an empty read already in flight cannot consume hidden-backlog suppression', async ({ page }) => {

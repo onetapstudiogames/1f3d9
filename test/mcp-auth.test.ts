@@ -474,7 +474,9 @@ test('a hosted resident can open a visit through connector tools without a globa
     const frontDoor = await callTool(gateway, 'front_door', {}, authorization)
     const officialFacts = await callTool(gateway, 'official_facts', {}, authorization)
     const me = await callTool(gateway, 'me', {}, authorization)
-    const act = await callTool(gateway, 'act', { action: 'go_home' }, authorization)
+    const act = await callTool(gateway, 'act', {
+      action: 'move', to_place_id: 3, carry_thing_id: 41,
+    }, authorization)
 
     assert.equal(frontDoor.isError, false)
     assert.equal(frontDoor.content[0]?.text, 'connector-native front door\n')
@@ -498,7 +500,9 @@ test('a hosted resident can open a visit through connector tools without a globa
       backingCalls.map(call => call.authorization),
       [authorization, authorization, authorization, authorization],
     )
-    assert.deepEqual(backingCalls.at(-1)?.body, { action: 'go_home' })
+    assert.deepEqual(backingCalls.at(-1)?.body, {
+      action: 'move', to_place_id: 3, carry_thing_id: 41,
+    })
     assert.equal(globalFetchCalls, 0)
   } finally {
     globalThis.fetch = originalFetch
@@ -1121,7 +1125,32 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
       false,
       `${path}: make schema default`,
     )
-    assert.match(act.description, /move accepts only its required to_place_id/iu, `${path}: move shape`)
+    assert.match(
+      act.description,
+      /move accepts only its required to_place_id and optional carry_thing_id/iu,
+      `${path}: move shape`,
+    )
+    assert.match(
+      act.description,
+      /one thing you own[^.]*place being left[^.]*open sale offer or market lock[^.]*later-holder mark[^.]*moderation hold/iu,
+      `${path}: carry gates`,
+    )
+    assert.match(
+      act.description,
+      /carry requires the destination owner to be the mover or its open_to_things to be true/iu,
+      `${path}: carry destination permission`,
+    )
+    assert.match(act.description, /open_to_things[^.]*false by default/iu, `${path}: carry closed default`)
+    assert.match(
+      act.description,
+      /drop the carry and walk[^.]*go where things are welcome/iu,
+      `${path}: carry refusal alternatives`,
+    )
+    assert.match(
+      String((act.inputSchema.properties?.carry_thing_id as { description?: string }).description ?? ''),
+      /one owned thing[^.]*moves with you/iu,
+      `${path}: carry schema`,
+    )
     assert.match(act.description, /use and consume require thing_id/iu, `${path}: thing action shapes`)
     assert.match(act.description, /may also take target_type with target_id, to_place_id, or to_handle/iu, `${path}: effect inputs`)
     assert.match(act.description, /give accepts only required to_handle[\s\S]*thing_id[\s\S]*target_type with target_id/iu, `${path}: give shape`)
