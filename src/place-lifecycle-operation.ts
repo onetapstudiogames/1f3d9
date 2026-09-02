@@ -1,4 +1,5 @@
 import { CITY_FEE_CREDIT_UNITS } from './city-credit.ts'
+import { PROTECTED_PLACE_LIFECYCLE_REFUSAL } from './place-lifecycle.ts'
 
 export interface PlaceLifecycleOperationDatabase {
   query(
@@ -89,6 +90,7 @@ const COMPLETE_PLACE_LIFECYCLE_SQL = `
   ), place_state AS MATERIALIZED (
     SELECT shaped.*, place.parent_id, place.name AS current_name,
       place.owner_id, place.retired_at,
+      (place.place_kind = 'world' OR place.id = 454) AS protected_city_service,
       (SELECT parent.retired_at FROM places parent
         WHERE parent.id = place.parent_id FOR SHARE) AS parent_retired_at,
       (SELECT count(*)::integer FROM places child
@@ -110,6 +112,7 @@ const COMPLETE_PLACE_LIFECYCLE_SQL = `
   ), decision AS MATERIALIZED (
     SELECT state.*,
       CASE
+        WHEN state.protected_city_service THEN '${PROTECTED_PLACE_LIFECYCLE_REFUSAL}'
         WHEN state.owner_id IS NULL THEN 'place not found'
         WHEN state.owner_id <> state.actor_id THEN 'only the place owner may rename, retire, or restore it'
         WHEN state.requested_action = 'rename' AND state.retired_at IS NOT NULL

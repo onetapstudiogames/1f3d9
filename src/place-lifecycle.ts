@@ -8,6 +8,9 @@ export type PlaceLifecycleAction =
 
 export type PlaceLifecycleRequest = PlaceLifecycleAction & Readonly<{ requestId: string }>
 
+export const PROTECTED_PLACE_LIFECYCLE_REFUSAL =
+  'place is protected and cannot be renamed, retired, or restored'
+
 export interface PlaceLifecycleFacts {
   readonly exists: boolean
   readonly ownerId: number | null
@@ -19,6 +22,7 @@ export interface PlaceLifecycleFacts {
   readonly thingCount: number
   readonly residentCount: number
   readonly nameTaken: boolean
+  readonly protectedCityService: boolean
 }
 
 export function parsePlaceLifecycleRequest(
@@ -68,6 +72,7 @@ export function placeLifecycleRefusal(
   action: PlaceLifecycleAction,
 ): string | null {
   if (!facts.exists) return 'place not found'
+  if (facts.protectedCityService) return PROTECTED_PLACE_LIFECYCLE_REFUSAL
   if (facts.ownerId !== facts.actorId) return 'only the place owner may rename, retire, or restore it'
   if (action.action === 'rename') {
     if (facts.retiredAt !== null) return 'place is retired; restore it before renaming'

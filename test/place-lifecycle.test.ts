@@ -20,6 +20,7 @@ function facts(overrides: Partial<PlaceLifecycleFacts> = {}): PlaceLifecycleFact
     thingCount: 0,
     residentCount: 0,
     nameTaken: false,
+    protectedCityService: false,
     ...overrides,
   })
 }
@@ -37,6 +38,25 @@ test('paid place lifecycle requests accept rename, retire, and restore as separa
     parsePlaceLifecycleRequest({ retired: false }, CREDIT_REQUEST_ID, null),
     { action: 'restore', requestId: CREDIT_REQUEST_ID },
   )
+})
+
+test('protected city places refuse every lifecycle act before ordinary ownership or state checks', () => {
+  const refusal = 'place is protected and cannot be renamed, retired, or restored'
+  const protectedPlaces = [
+    facts({ ownerId: null, protectedCityService: true }),
+    facts({ ownerId: 1, actorId: 1, protectedCityService: true }),
+  ]
+  const actions = [
+    { action: 'rename', name: 'Forbidden rename' },
+    { action: 'retire' },
+    { action: 'restore' },
+  ] as const
+
+  for (const protectedPlace of protectedPlaces) {
+    for (const action of actions) {
+      assert.equal(placeLifecycleRefusal(protectedPlace, action), refusal)
+    }
+  }
 })
 
 test('paid place lifecycle requests state invalid shape and fee refusals in caller words', () => {

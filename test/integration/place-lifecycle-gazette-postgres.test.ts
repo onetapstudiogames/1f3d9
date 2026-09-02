@@ -33,6 +33,36 @@ function runDocker(args: readonly string[]): string {
   return result.stdout.trim()
 }
 
+function historicalPlaceLifecycleBackfill(): string {
+  const result = spawnSync(
+    'git',
+    ['show', '552c968:db/migrations/20260901_place_lifecycle.sql'],
+    { encoding: 'utf8', windowsHide: true },
+  )
+  assert.equal(result.status, 0, result.stderr || 'could not read historical place lifecycle migration')
+  const statements = result.stdout.match(
+    /UPDATE places SET founding_name = name WHERE founding_name IS NULL;/gu,
+  ) ?? []
+  assert.deepEqual(statements, [
+    'UPDATE places SET founding_name = name WHERE founding_name IS NULL;',
+  ])
+  return statements[0]!
+}
+
+async function assertGazetteLifecycleGuardRejects(database: Pool, statement: string): Promise<void> {
+  await assert.rejects(
+    database.query(statement),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, '23514')
+      assert.equal(
+        (error as { constraint?: string }).constraint,
+        'gazette_submission_room_lifecycle',
+      )
+      return true
+    },
+  )
+}
+
 async function startPostgres(): Promise<PostgresInstance> {
   const containerName = `1f3d9-place-lifecycle-gazette-${process.pid}-${randomBytes(4).toString('hex')}`
   const password = randomBytes(24).toString('hex')
@@ -183,22 +213,21 @@ test('place lifecycle and public search migrations preserve an activated Gazette
     FROM places place WHERE id = 454
   `)).rows[0]!.state, 'withdrawals_open')
 
-  await assert.rejects(
-    postgres.database.query(`
-      UPDATE places SET founding_name = name WHERE id = 454
-    `),
-    (error: unknown) => {
-      assert.equal((error as { code?: string }).code, '23514')
-      assert.equal(
-        (error as { constraint?: string }).constraint,
-        'gazette_submission_room_lifecycle',
-      )
-      return true
-    },
+  await assertGazetteLifecycleGuardRejects(
+    postgres.database,
+    `UPDATE places SET name = 'forbidden Gazette rename' WHERE id = 454`,
+  )
+  await assertGazetteLifecycleGuardRejects(
+    postgres.database,
+    historicalPlaceLifecycleBackfill(),
   )
 
   const before = await gazetteContractBytes(postgres.database)
   await postgres.database.query(placeLifecycleMigration)
+  await assertGazetteLifecycleGuardRejects(
+    postgres.database,
+    `UPDATE places SET name = 'forbidden Gazette rename' WHERE id = 454`,
+  )
   assert.deepEqual(await gazetteContractBytes(postgres.database), before)
   assert.deepEqual((await postgres.database.query(`
     SELECT place.founding_name,

@@ -822,6 +822,7 @@ export function mountWorldRoutes(app: Hono): void {
       }
       const factRows = await sql`
         SELECT place.id, place.name, place.owner_id, place.retired_at,
+          (place.place_kind = 'world' OR place.id = 454) AS protected_city_service,
           (SELECT parent.retired_at FROM places parent
             WHERE parent.id = place.parent_id) AS parent_retired_at,
           (SELECT count(*)::integer FROM places child
@@ -852,6 +853,7 @@ export function mountWorldRoutes(app: Hono): void {
         thing_count: number
         resident_count: number
         name_taken: boolean
+        protected_city_service: boolean
       }>
       const row = factRows[0]
       const facts: PlaceLifecycleFacts = row
@@ -866,6 +868,7 @@ export function mountWorldRoutes(app: Hono): void {
             thingCount: Number(row.thing_count),
             residentCount: Number(row.resident_count),
             nameTaken: row.name_taken === true,
+            protectedCityService: row.protected_city_service === true,
           }
         : {
             exists: false,
@@ -878,6 +881,7 @@ export function mountWorldRoutes(app: Hono): void {
             thingCount: 0,
             residentCount: 0,
             nameTaken: false,
+            protectedCityService: false,
           }
       const action: PlaceLifecycleAction = lifecycle.action === 'rename'
         ? { action: 'rename', name: lifecycle.name }

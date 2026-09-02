@@ -793,6 +793,24 @@ function roomPurposeIn(params: readonly unknown[]): string | null {
 
 function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (state.scenario === 'protected place lifecycle') {
+    if (q.includes("to_regclass('public.place_name_history')")) return [{ installed: true }]
+    if (q.includes('as protected_city_service') && q.includes('as name_taken')) {
+      const id = Number(params.at(-1))
+      return [{
+        id,
+        name: id === 454 ? 'the gazette submission room' : 'the world',
+        owner_id: id === 454 ? 1 : null,
+        retired_at: null,
+        parent_retired_at: null,
+        subplace_count: 0,
+        thing_count: 0,
+        resident_count: 0,
+        name_taken: false,
+        protected_city_service: true,
+      }]
+    }
+  }
   if (state.scenario === 'protected Gazette dependencies') {
     const constraint = q.includes('insert into place_law_changes')
       ? 'gazette_submission_room_laws'
@@ -7782,6 +7800,68 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
   assert.equal(invalid.status, 400)
   const denied = await app.request('/api/city-credit/preflight')
   assert.equal(denied.status, 401)
+})
+
+test('HTTP and MCP refuse protected place lifecycle acts before writing any fee credit', async () => {
+  const refusal = 'place is protected and cannot be renamed, retired, or restored'
+  const actions = [
+    { body: { name: 'Forbidden rename' }, tool: { name: 'Forbidden rename' } },
+    { body: { retired: true }, tool: { retired: true } },
+    { body: { retired: false }, tool: { retired: false } },
+  ] as const
+  reset({
+    scenario: 'protected place lifecycle',
+    actorId: 1,
+    actorHandle: 'founder',
+    placeOwnerId: 1,
+    cityCreditBalances: new Map([[1, 3_000_000n]]),
+  })
+
+  for (const placeId of [1, 454]) {
+    for (const [index, action] of actions.entries()) {
+      const response = await app.request(`/api/place/${placeId}`, {
+        method: 'PATCH',
+        headers: {
+          ...authHeaders(),
+          'X-1F3D9-FEE-CREDIT': `protected-http-${placeId}-${index}`,
+        },
+        body: JSON.stringify(action.body),
+      })
+      assert.equal(response.status, 409, await response.clone().text())
+      assert.deepEqual(await response.json(), { error: refusal })
+    }
+  }
+
+  for (const placeId of [1, 454]) {
+    for (const [index, action] of actions.entries()) {
+      const response = await app.request('/mcp', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: `${placeId}-${index}`, method: 'tools/call',
+          params: {
+            name: 'place_edit',
+            arguments: {
+              place_id: placeId,
+              ...action.tool,
+              city_credit_request_id: `protected-mcp-${placeId}-${index}`,
+            },
+          },
+        }),
+      })
+      assert.equal(response.status, 200)
+      const payload = await response.json() as {
+        result: { isError: boolean; content: Array<{ text: string }> }
+      }
+      assert.equal(payload.result.isError, true)
+      const toolError = JSON.parse(payload.result.content[0]!.text) as { error: string }
+      assert.equal(toolError.error, refusal)
+    }
+  }
+
+  assert.equal(state.cityCreditEntries.length, 0)
+  assert.equal(state.paymentAttempts.size, 0)
+  assert.equal(state.cityCreditBalances.get(1), 3_000_000n)
 })
 
 test('/api/help is anonymous, queryless, and leaves auth, timers, quota, and SQL untouched', async () => {

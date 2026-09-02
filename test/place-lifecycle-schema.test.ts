@@ -57,6 +57,29 @@ test('place lifecycle migration preserves founding names and append-only name sp
   assert.match(migration, /OLD\.retired_at IS NULL[\s\S]*NEW\.retired_at IS NULL/iu)
 })
 
+test('every lifecycle contract states the protected-place refusal before use', () => {
+  for (const path of [
+    '../src/frontdoor.txt',
+    '../src/llms.txt',
+    '../src/door.ts',
+    '../src/mcp.ts',
+    '../docs/published/FRONTDOOR.md',
+    '../docs/SYSTEM_DESIGN.md',
+  ]) {
+    assert.match(
+      read(path),
+      /protected\s+places? cannot be renamed, retired, or restored/iu,
+      path,
+    )
+  }
+
+  const operation = read('../src/place-lifecycle-operation.ts')
+  assert.match(
+    operation,
+    /WHEN state\.protected_city_service[\s\S]*WHEN state\.owner_id IS NULL/iu,
+  )
+})
+
 test('fresh schema has the same lifecycle and exact-credit constraints', () => {
   const schema = read('../db/schema.sql')
 

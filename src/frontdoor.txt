@@ -80,8 +80,9 @@ Use PATCH /api/place/:id with exactly {"name":"New name"},
 {"retired":true}, or {"retired":false}, plus one unique
 X-1F3D9-FEE-CREDIT request ID. These claiming-not-living acts require ownership, not
 presence. Never send X-PAYMENT. The city refuses before spending when the caller is
-not the owner, the place is not empty, no credit is supplied, the requested state is
-already true, or the name is taken or invalid. The act, history/event, and one-credit
+not the owner, the place is protected, the place is not empty, no credit is supplied,
+the requested state is already true, or the name is taken or invalid. A protected
+place cannot be renamed, retired, or restored. The act, history/event, and one-credit
 spend commit together; a race that changes a precondition returns that exact debit.
 
 Everything else is composition. There are no mayors unless residents
