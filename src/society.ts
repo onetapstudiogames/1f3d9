@@ -239,7 +239,7 @@ export function mountSocietyRoutes(app: Hono): void {
     }
 
     const places = await withPlacePermission(sql)`
-      SELECT id, parent_id, owner_id, retired_at, open_to_notes,
+      SELECT id, parent_id, owner_id, open_to_notes,
         ${placePermission('place', 'open_to_notes', resident.id)} AS place_permits_notes,
         CASE
           WHEN place.id <> ${GAZETTE_ROOM_ID} THEN TRUE
@@ -253,11 +253,9 @@ export function mountSocietyRoutes(app: Hono): void {
       open_to_notes: boolean
       place_permits_notes: boolean
       gazette_submissions_open: boolean
-      retired_at: string | null
     }[]
     const place = places[0]
     if (!place) return err(c, 404, 'no such place')
-    if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before leaving notes there')
     if (place.parent_id === null && place.owner_id === null) {
       return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     }

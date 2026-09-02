@@ -32,7 +32,6 @@ const INDEX_NAMES = Object.freeze({
   notePhrase: 'notes_public_search_phrase',
   thingWords: 'things_public_search_words_active',
   thingPhrase: 'things_public_search_phrase_active',
-  placeName: 'place_name_history_name_search',
 })
 
 interface PostgresInstance {
@@ -150,7 +149,7 @@ async function explain(client: Pool, search: SearchRun): Promise<PlanNode[]> {
 
 function assertUsesIndexWithoutSourceWalk(
   nodes: readonly PlanNode[],
-  table: 'notes' | 'things' | 'place_name_history',
+  table: 'notes' | 'things',
   indexName: string,
 ): void {
   assert.ok(
@@ -190,14 +189,13 @@ async function leaveInterruptedIndex(
   client: Pool,
   indexName: string,
   createStatement: string,
-  table: 'notes' | 'place_name_history' = 'notes',
 ): Promise<void> {
   await client.query(`DROP INDEX IF EXISTS public.${indexName}`)
   const blocker = await client.connect()
   const builder = await client.connect()
   try {
     await blocker.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-    await blocker.query(`SELECT count(*) FROM ${table}`)
+    await blocker.query('SELECT count(*) FROM notes')
     const pid = Number((await builder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid)
     const build = builder.query(createStatement).then(
       () => Object.freeze({ ok: true as const, error: null }),
@@ -350,8 +348,7 @@ test('large public searches use maintained indexes without changing archive trut
         DROP INDEX public.notes_public_search_words,
           public.notes_public_search_phrase,
           public.things_public_search_words_active,
-          public.things_public_search_phrase_active,
-          public.place_name_history_name_search;
+          public.things_public_search_phrase_active;
         DROP EXTENSION pg_trgm;
       `)
       const absent = await postgres.client.query<{ indexes: string; extensions: string }>(`
@@ -386,31 +383,9 @@ test('large public searches use maintained indexes without changing archive trut
       const recoveredOid = recovered.oid
       await applyMigration(postgres.databaseUrl, MIGRATION_FILE, migration)
       assert.equal((await indexState(postgres.client, INDEX_NAMES.noteWords)).oid, recoveredOid)
-
-      const createPlaceNames = splitSqlStatements(migration).find(statement => (
-        new RegExp(`CREATE\\s+INDEX\\s+CONCURRENTLY[\\s\\S]*\\b${INDEX_NAMES.placeName}\\b`, 'iu')
-          .test(statement)
-      ))
-      assert.ok(createPlaceNames, `${INDEX_NAMES.placeName} concurrent statement is missing`)
-      await leaveInterruptedIndex(
-        postgres.client,
-        INDEX_NAMES.placeName,
-        createPlaceNames,
-        'place_name_history',
-      )
-      await applyMigration(postgres.databaseUrl, MIGRATION_FILE, migration)
-      const recoveredPlaceNames = await indexState(postgres.client, INDEX_NAMES.placeName)
-      assert.equal(recoveredPlaceNames.valid, true)
-      assert.equal(recoveredPlaceNames.ready, true)
-      const recoveredPlaceOid = recoveredPlaceNames.oid
-      await applyMigration(postgres.databaseUrl, MIGRATION_FILE, migration)
-      assert.equal(
-        (await indexState(postgres.client, INDEX_NAMES.placeName)).oid,
-        recoveredPlaceOid,
-      )
     })
 
-    await t.test('selective word and literal-phrase searches use all maintained indexes', async () => {
+    await t.test('selective word and literal-phrase searches use all four indexes', async () => {
       for (const [query, table, indexName] of [
         [searchQuery('rareindexproof', 'words', 'note'), 'notes', INDEX_NAMES.noteWords],
         [searchQuery('rareindexproof', 'words', 'thing'), 'things', INDEX_NAMES.thingWords],
@@ -420,42 +395,6 @@ test('large public searches use maintained indexes without changing archive trut
         const run = await runSearch(postgres.client, query)
         assertUsesIndexWithoutSourceWalk(await explain(postgres.client, run), table, indexName)
       }
-
-      await postgres.client.query(`
-        SELECT setval(
-          pg_get_serial_sequence('places', 'id')::regclass,
-          GREATEST((SELECT max(id) FROM places), 454),
-          true
-        )
-      `)
-      await postgres.client.query(`
-        INSERT INTO places (parent_id, place_kind, name, owner_id, created_at)
-        SELECT $1, 'place', 'ordinary former place ' || item_number, 1,
-          '2026-01-03T00:00:00Z'::timestamptz + item_number * interval '1 millisecond'
-        FROM generate_series(1, 30000) AS item_number
-      `, [continent])
-      const renameEvent = Number((await postgres.client.query<{ id: number }>(`
-        INSERT INTO events (kind, actor, detail, at)
-        VALUES ('place_renamed', 'maintainer', jsonb_build_object(
-          'place_id', $1::integer, 'name', 'Search Index Archive',
-          'former_name', 'rareformerplaceproof'
-        ), '2026-02-08T00:00:00Z')
-        RETURNING id
-      `, [place])).rows[0]!.id)
-      await postgres.client.query(`
-        INSERT INTO place_name_history (place_id, name, started_at, event_id)
-        VALUES ($1, 'rareformerplaceproof', '2026-02-08T00:00:00Z', $2)
-      `, [place, renameEvent])
-      await postgres.client.query('ANALYZE place_name_history')
-      const formerPlace = await runSearch(
-        postgres.client,
-        searchQuery('rareformerplaceproof', 'phrase', 'place'),
-      )
-      assertUsesIndexWithoutSourceWalk(
-        await explain(postgres.client, formerPlace),
-        'place_name_history',
-        INDEX_NAMES.placeName,
-      )
 
       const literal = (await runSearch(
         postgres.client,

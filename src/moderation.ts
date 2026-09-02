@@ -53,7 +53,7 @@ const INPUT_FIELDS: ReadonlySet<string> = new Set([
 
 const DISPLAY_FIELDS = Object.freeze({
   resident: Object.freeze([] as const),
-  place: Object.freeze(['name', 'founding_name', 'description', 'purpose'] as const),
+  place: Object.freeze(['name', 'description', 'purpose'] as const),
   thing: Object.freeze(['name', 'body'] as const),
   kind: Object.freeze(['name', 'description'] as const),
   trait: Object.freeze(['name', 'description'] as const),
@@ -168,16 +168,7 @@ function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {
 }
 
 export function redactPlace<T extends PublicRecord>(record: T): ModeratedRecord<T> {
-  const redacted = redactFields(record, DISPLAY_FIELDS.place, CONTENT_TOMBSTONES.place)
-  if (!Array.isArray((record as UnknownRecord).name_history)) return redacted
-  return deepFreeze({
-    ...redacted,
-    name_history: ((record as UnknownRecord).name_history as unknown[]).map(span => (
-      span !== null && typeof span === 'object' && !Array.isArray(span)
-        ? { ...(span as UnknownRecord), name: MODERATED_TEXT }
-        : span
-    )),
-  }) as ModeratedRecord<T>
+  return redactFields(record, DISPLAY_FIELDS.place, CONTENT_TOMBSTONES.place)
 }
 
 export function redactThing<T extends PublicRecord>(record: T): ModeratedRecord<T> {
@@ -204,7 +195,6 @@ export function redactModeratedTarget<T extends PublicRecord>(
   targetType: ModerationTargetType,
   record: T,
 ): ModeratedRecord<T> {
-  if (targetType === 'place') return redactPlace(record)
   return redactFields(record, DISPLAY_FIELDS[targetType], CONTENT_TOMBSTONES[targetType])
 }
 

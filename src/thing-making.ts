@@ -101,7 +101,6 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
           SELECT place.id
           FROM places place
           WHERE place.id = ${input.placeId}
-            AND place.retired_at IS NULL
             AND ${placePermission('place', 'open_to_things', input.actor.id)}
             AND place.owner_id IS NOT NULL
           FOR UPDATE
@@ -136,12 +135,6 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
       `) as ThingRow[]
       const thing = rows[0]
       if (!thing) {
-        const placeRows = (await transaction`
-          SELECT retired_at FROM places WHERE id = ${input.placeId}
-        `) as Array<{ retired_at: string | null }>
-        if (placeRows[0]?.retired_at != null) {
-          throw new EngineError(409, 'place is retired; restore it before making things there')
-        }
         const quotaRows = (await transaction`
           SELECT things_today < ${QUOTAS.things} AS available
           FROM residents WHERE id = ${input.actor.id}

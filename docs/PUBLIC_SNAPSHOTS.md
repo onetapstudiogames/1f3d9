@@ -86,7 +86,7 @@ of four dispositions.
 |---|---|
 | `residents` | Public resident identity and current drawing state, description, exact pixels, and canonical rows; parent moderation keeps identity but suppresses the complete drawing presentation; plus safe reserved and sequence-gap markers. |
 | `public_presence` | Current public place and asleep display facts. |
-| `places` | Public land including retired tombstones, stable ID, current and founding names, complete name spans, retirement state/time, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and current drawing presentation. |
+| `places` | Public land, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and current drawing presentation. |
 | `things` | Active public things with permanent maker and current owner plus resolved drawing state, description, exact pixels/rows, `drawing_source`, and pinned `kind_revision`; an untyped thing may own pixels, while a typed thing Refuses or names its pinned kind base/variant; plus body-free withdrawn, hidden, and gap markers. |
 | `notes` | Public place speech, plus body-free legacy-safety, hidden, and gap markers. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |

@@ -228,9 +228,6 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
       allOf: drawingWriteConditions,
       properties: {
         place_id: positiveIdSchema,
-        name: { type: 'string', minLength: 1, maxLength: 120 },
-        retired: { type: 'boolean' },
-        city_credit_request_id: cityCreditRequestSchema,
         description: { type: 'string', maxLength: 4000 },
         purpose: { type: 'string', maxLength: 280 },
         front_matter_thing_ids: {
@@ -637,19 +634,6 @@ const forwardingCases = [
         drawing: 'REFUSE',
         drawing_description: 'I decline to draw this room.',
       },
-    },
-  },
-  {
-    name: 'place_edit',
-    args: {
-      place_id: 12,
-      name: 'lantern archive',
-      city_credit_request_id: 'rename-lantern-12',
-    },
-    expected: {
-      method: 'PATCH', path: '/api/place/12',
-      body: { name: 'lantern archive' },
-      feeCredit: 'rename-lantern-12',
     },
   },
   {

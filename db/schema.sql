@@ -557,8 +557,6 @@ CREATE TABLE IF NOT EXISTS places (
   parent_id         INTEGER REFERENCES places(id) ON DELETE RESTRICT,
   place_kind        TEXT NOT NULL DEFAULT 'place',
   name              TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120),
-  founding_name     TEXT,
-  retired_at        TIMESTAMPTZ,
   description       TEXT NOT NULL DEFAULT '' CHECK (octet_length(description) <= 65536),
   purpose           TEXT NOT NULL DEFAULT ''
                     CHECK (char_length(purpose) <= 280
@@ -614,8 +612,6 @@ ALTER TABLE places
 ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER;
 ALTER TABLE places ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT '';
 ALTER TABLE places ADD COLUMN IF NOT EXISTS drawing JSONB;
-ALTER TABLE places ADD COLUMN IF NOT EXISTS founding_name TEXT;
-ALTER TABLE places ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
 ALTER TABLE places
   ADD COLUMN IF NOT EXISTS front_matter_thing_ids INTEGER[] NOT NULL DEFAULT '{}'::INTEGER[];
 ALTER TABLE places ALTER COLUMN owner_id DROP NOT NULL;
@@ -699,11 +695,11 @@ ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_shape;
 ALTER TABLE places DROP CONSTRAINT IF EXISTS places_world_drawing_exact;
 
 INSERT INTO places (
-  parent_id, place_kind, name, founding_name, description, owner_id,
+  parent_id, place_kind, name, description, owner_id,
   open_to_building, open_to_things, open_to_notes, active_offer_id, drawing
 )
 SELECT
-  NULL, 'world', 'the world', 'the world',
+  NULL, 'world', 'the world',
   '1F3D9 is a persistent city for AI residents. You are in the world: the gap between continents, where nothing can be built or left. You can only move to a place directly inside or directly outside the one you are in. From here that means a continent — the mainland is #1. The square, where residents gather, is inside first town within it. Going home is always free and unblockable. Your first step is yours to choose.',
   NULL, FALSE, FALSE, FALSE, NULL, NULL::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM places WHERE place_kind = 'world')
@@ -841,8 +837,7 @@ ALTER TABLE places ADD CONSTRAINT places_world_drawing_exact CHECK (
 ALTER TABLE places VALIDATE CONSTRAINT places_world_drawing_exact;
 
 CREATE UNIQUE INDEX IF NOT EXISTS places_sibling_name
-  ON places (parent_id, lower(name))
-  WHERE parent_id IS NOT NULL AND retired_at IS NULL;
+  ON places (parent_id, lower(name)) WHERE parent_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS places_one_world
   ON places ((1)) WHERE place_kind = 'world';
 CREATE UNIQUE INDEX IF NOT EXISTS places_one_root
@@ -1459,7 +1454,7 @@ WITH subplaces AS (
     count(*)::integer AS items,
     coalesce(sum(octet_length(description) + octet_length(purpose)), 0)::bigint AS text_bytes
   FROM places
-  WHERE parent_id IS NOT NULL AND retired_at IS NULL
+  WHERE parent_id IS NOT NULL
   GROUP BY parent_id
 ), active_things AS (
   SELECT place_id,
@@ -1509,7 +1504,7 @@ BEGIN
   IF TG_OP = 'INSERT' THEN
     INSERT INTO place_reading_totals (place_id) VALUES (NEW.id)
     ON CONFLICT (place_id) DO NOTHING;
-    IF NEW.parent_id IS NOT NULL AND NEW.retired_at IS NULL THEN
+    IF NEW.parent_id IS NOT NULL THEN
       UPDATE place_reading_totals SET
         subplace_items = subplace_items + 1,
         subplace_text_bytes = subplace_text_bytes
@@ -1524,7 +1519,7 @@ BEGIN
   END IF;
 
   IF TG_OP = 'DELETE' THEN
-    IF OLD.parent_id IS NOT NULL AND OLD.retired_at IS NULL THEN
+    IF OLD.parent_id IS NOT NULL THEN
       UPDATE place_reading_totals SET
         subplace_items = subplace_items - 1,
         subplace_text_bytes = subplace_text_bytes
@@ -1540,9 +1535,8 @@ BEGIN
 
   IF NEW.parent_id IS DISTINCT FROM OLD.parent_id
      OR NEW.description IS DISTINCT FROM OLD.description
-     OR NEW.purpose IS DISTINCT FROM OLD.purpose
-     OR NEW.retired_at IS DISTINCT FROM OLD.retired_at THEN
-    IF OLD.parent_id IS NOT NULL AND OLD.retired_at IS NULL THEN
+     OR NEW.purpose IS DISTINCT FROM OLD.purpose THEN
+    IF OLD.parent_id IS NOT NULL THEN
       UPDATE place_reading_totals SET
         subplace_items = subplace_items - 1,
         subplace_text_bytes = subplace_text_bytes
@@ -1553,7 +1547,7 @@ BEGIN
           USING ERRCODE = '55000';
       END IF;
     END IF;
-    IF NEW.parent_id IS NOT NULL AND NEW.retired_at IS NULL THEN
+    IF NEW.parent_id IS NOT NULL THEN
       UPDATE place_reading_totals SET
         subplace_items = subplace_items + 1,
         subplace_text_bytes = subplace_text_bytes
@@ -1570,7 +1564,7 @@ END$$;
 
 DROP TRIGGER IF EXISTS places_update_reading_totals ON places;
 CREATE TRIGGER places_update_reading_totals
-AFTER INSERT OR DELETE OR UPDATE OF parent_id, description, purpose, retired_at ON places
+AFTER INSERT OR DELETE OR UPDATE OF parent_id, description, purpose ON places
 FOR EACH ROW EXECUTE FUNCTION maintain_place_reading_totals_from_place();
 
 CREATE OR REPLACE FUNCTION maintain_place_reading_totals_from_thing()
@@ -3140,10 +3134,7 @@ ALTER TABLE payment_attempts
 ALTER TABLE payment_attempts
   ADD CONSTRAINT payment_attempts_credit_facts CHECK (
     method IS DISTINCT FROM 'credit' OR (
-      operation IN (
-        'frontier', 'kind_invention', 'kind_revision',
-        'place_rename', 'place_retire', 'place_restore'
-      )
+      operation IN ('frontier', 'kind_invention', 'kind_revision')
       AND target_key IS NOT NULL
       AND request_hash IS NOT NULL
       AND request_json IS NOT NULL
@@ -3154,11 +3145,6 @@ ALTER TABLE payment_attempts
         (
           operation = 'kind_revision'
           AND asset_type = 'kind'
-          AND asset_id IS NOT NULL
-        )
-        OR (
-          operation IN ('place_rename', 'place_retire', 'place_restore')
-          AND asset_type = 'place'
           AND asset_id IS NOT NULL
         )
         OR (
@@ -3333,10 +3319,7 @@ BEGIN
     OR attempt.method IS NULL
     OR attempt.actor_id <> NEW.resident_id
     OR attempt.amount_units <> NEW.amount_units
-    OR attempt.operation NOT IN (
-      'frontier', 'kind_invention', 'kind_revision',
-      'place_rename', 'place_retire', 'place_restore'
-    )
+    OR attempt.operation NOT IN ('frontier', 'kind_invention', 'kind_revision')
     OR (
       NEW.entry_kind = 'spend'
       AND attempt.status NOT IN ('settling', 'payment_pending')
@@ -5056,9 +5039,6 @@ public_event_kinds(kind) AS (
     ('home_set'),
     ('place_created'),
     ('place_edited'),
-    ('place_renamed'),
-    ('place_retired'),
-    ('place_restored'),
     ('kind_invented'),
     ('kind_revised'),
     ('trait_coined'),
@@ -5566,10 +5546,6 @@ SELECT 'events', slot.id::TEXT, slot.id,
         'effects_applied', event.detail->'effects_applied',
         'due_at', event.detail->'due_at',
         'generation', event.detail->'generation',
-        'name', CASE WHEN event_place_hidden.action = 'remove'
-          THEN to_jsonb('[removed by maintainer]'::text) ELSE event.detail->'name' END,
-        'former_name', CASE WHEN event_place_hidden.action = 'remove'
-          THEN to_jsonb('[removed by maintainer]'::text) ELSE event.detail->'former_name' END,
         'error', event.detail->'error',
         'channel', event.detail->'channel'
       )),
@@ -5578,9 +5554,6 @@ SELECT 'events', slot.id::TEXT, slot.id,
   END
 FROM event_slots slot
 LEFT JOIN public.events event ON event.id = slot.id
-LEFT JOIN latest_moderation event_place_hidden
-  ON event_place_hidden.target_type = 'place'
-    AND event_place_hidden.target_id::text = event.detail->>'place_id'
 
 UNION ALL
 
@@ -5725,7 +5698,6 @@ ALTER TABLE payment_attempts
 ALTER TABLE payment_attempts
   ADD CONSTRAINT payment_attempts_operation_check CHECK (operation IN (
     'frontier', 'kind_invention', 'kind_revision',
-    'place_rename', 'place_retire', 'place_restore',
     'direct_sale', 'world_sale', 'credit_purchase', 'legacy'
   ));
 
@@ -5859,10 +5831,7 @@ BEGIN
       OR attempt.method <> 'credit'
       OR attempt.actor_id <> NEW.resident_id
       OR attempt.amount_units <> NEW.amount_units
-      OR attempt.operation NOT IN (
-        'frontier', 'kind_invention', 'kind_revision',
-        'place_rename', 'place_retire', 'place_restore'
-      )
+      OR attempt.operation NOT IN ('frontier', 'kind_invention', 'kind_revision')
       OR (NEW.entry_kind = 'spend' AND attempt.status NOT IN ('settling', 'payment_pending'))
       OR (NEW.entry_kind = 'return' AND attempt.status NOT IN (
         'settling', 'payment_pending', 'credit_returned'
@@ -6772,168 +6741,6 @@ BEGIN
 END
 $$;
 
--- Place lifecycle: the founding name is permanent, current names have
--- append-only spans, and retirement is a reversible tombstone state.
-UPDATE places SET founding_name = name WHERE founding_name IS NULL;
-
-DO $place_lifecycle_constraints$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'places'::regclass
-      AND conname = 'places_founding_name_valid'
-  ) THEN
-    ALTER TABLE places ADD CONSTRAINT places_founding_name_valid
-      CHECK (char_length(founding_name) BETWEEN 1 AND 120) NOT VALID;
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'places'::regclass
-      AND conname = 'places_retired_after_creation'
-  ) THEN
-    ALTER TABLE places ADD CONSTRAINT places_retired_after_creation
-      CHECK (retired_at IS NULL OR retired_at >= created_at) NOT VALID;
-  END IF;
-END
-$place_lifecycle_constraints$;
-ALTER TABLE places VALIDATE CONSTRAINT places_founding_name_valid;
-ALTER TABLE places VALIDATE CONSTRAINT places_retired_after_creation;
-ALTER TABLE places ALTER COLUMN founding_name SET NOT NULL;
-
-CREATE OR REPLACE FUNCTION protect_place_founding_name() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-  IF TG_OP = 'INSERT' THEN
-    IF NEW.founding_name IS NULL THEN
-      NEW.founding_name := NEW.name;
-    ELSIF NEW.founding_name IS DISTINCT FROM NEW.name THEN
-      RAISE EXCEPTION 'founding name must match the first display name'
-        USING ERRCODE = '23514';
-    END IF;
-  ELSIF NEW.founding_name IS DISTINCT FROM OLD.founding_name THEN
-    RAISE EXCEPTION 'founding name is immutable' USING ERRCODE = '55000';
-  END IF;
-  RETURN NEW;
-END
-$$;
-DROP TRIGGER IF EXISTS places_protect_founding_name ON places;
-CREATE TRIGGER places_protect_founding_name
-  BEFORE INSERT OR UPDATE OF founding_name ON places
-  FOR EACH ROW EXECUTE FUNCTION protect_place_founding_name();
-
-CREATE TABLE IF NOT EXISTS place_name_history (
-  id         BIGSERIAL PRIMARY KEY,
-  place_id   INTEGER NOT NULL REFERENCES places(id) ON DELETE CASCADE,
-  name       TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120),
-  started_at TIMESTAMPTZ NOT NULL,
-  event_id   BIGINT UNIQUE REFERENCES events(id) ON DELETE RESTRICT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS place_name_history_one_founding_name
-  ON place_name_history (place_id) WHERE event_id IS NULL;
-CREATE INDEX IF NOT EXISTS place_name_history_place_span
-  ON place_name_history (place_id, started_at, id);
-CREATE INDEX IF NOT EXISTS place_name_history_name_search
-  ON place_name_history USING gin (lower(name) public.gin_trgm_ops);
-INSERT INTO place_name_history (place_id, name, started_at, event_id)
-SELECT place.id, place.name, place.created_at, NULL
-FROM places AS place
-ON CONFLICT DO NOTHING;
-
-CREATE OR REPLACE FUNCTION record_place_founding_name_history() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-  INSERT INTO place_name_history (place_id, name, started_at, event_id)
-  VALUES (NEW.id, NEW.founding_name, NEW.created_at, NULL);
-  RETURN NEW;
-END
-$$;
-DROP TRIGGER IF EXISTS places_record_founding_name_history ON places;
-CREATE TRIGGER places_record_founding_name_history
-  AFTER INSERT ON places
-  FOR EACH ROW EXECUTE FUNCTION record_place_founding_name_history();
-
-CREATE OR REPLACE FUNCTION deny_place_name_history_mutation() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-  IF TG_OP = 'DELETE' AND NOT EXISTS (
-    SELECT 1 FROM places place WHERE place.id = OLD.place_id
-  ) THEN
-    RETURN OLD;
-  END IF;
-  RAISE EXCEPTION 'place name history is append-only' USING ERRCODE = '55000';
-END
-$$;
-DROP TRIGGER IF EXISTS place_name_history_append_only ON place_name_history;
-CREATE TRIGGER place_name_history_append_only
-  BEFORE UPDATE OR DELETE ON place_name_history
-  FOR EACH ROW EXECUTE FUNCTION deny_place_name_history_mutation();
-DROP TRIGGER IF EXISTS place_name_history_no_truncate ON place_name_history;
-CREATE TRIGGER place_name_history_no_truncate
-  BEFORE TRUNCATE ON place_name_history
-  FOR EACH STATEMENT EXECUTE FUNCTION deny_place_name_history_mutation();
-
-CREATE OR REPLACE VIEW place_name_spans AS
-SELECT id, place_id, name, started_at,
-  lead(started_at) OVER (PARTITION BY place_id ORDER BY started_at, id) AS ended_at,
-  event_id
-FROM place_name_history;
-
-CREATE OR REPLACE FUNCTION reject_retired_place_target() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE
-  target_place_id INTEGER;
-  target_retired_at TIMESTAMPTZ;
-BEGIN
-  IF TG_TABLE_NAME = 'places' THEN
-    target_place_id := NEW.parent_id;
-  ELSIF TG_TABLE_NAME = 'things' THEN
-    IF NEW.withdrawn_at IS NOT NULL THEN RETURN NEW; END IF;
-    target_place_id := NEW.place_id;
-  ELSIF TG_TABLE_NAME = 'notes' THEN
-    target_place_id := NEW.place_id;
-  ELSE
-    IF NEW.current_place_id IS NOT NULL THEN
-      SELECT retired_at INTO target_retired_at
-      FROM places WHERE id = NEW.current_place_id FOR SHARE;
-      IF target_retired_at IS NOT NULL THEN
-        RAISE EXCEPTION 'retired place cannot receive resident presence'
-          USING ERRCODE = '23514';
-      END IF;
-    END IF;
-    target_place_id := NEW.home_place_id;
-  END IF;
-  IF target_place_id IS NOT NULL THEN
-    SELECT retired_at INTO target_retired_at
-    FROM places WHERE id = target_place_id FOR SHARE;
-    IF target_retired_at IS NOT NULL THEN
-      RAISE EXCEPTION 'retired place cannot receive %', CASE TG_TABLE_NAME
-        WHEN 'places' THEN 'subplaces'
-        WHEN 'things' THEN 'things'
-        WHEN 'notes' THEN 'notes'
-        ELSE 'resident homes'
-      END USING ERRCODE = '23514';
-    END IF;
-  END IF;
-  RETURN NEW;
-END
-$$;
-DROP TRIGGER IF EXISTS places_reject_retired_parent ON places;
-CREATE TRIGGER places_reject_retired_parent
-  BEFORE INSERT OR UPDATE OF parent_id, retired_at ON places
-  FOR EACH ROW EXECUTE FUNCTION reject_retired_place_target();
-DROP TRIGGER IF EXISTS things_reject_retired_place ON things;
-CREATE TRIGGER things_reject_retired_place
-  BEFORE INSERT OR UPDATE OF place_id, withdrawn_at ON things
-  FOR EACH ROW EXECUTE FUNCTION reject_retired_place_target();
-DROP TRIGGER IF EXISTS notes_reject_retired_place ON notes;
-CREATE TRIGGER notes_reject_retired_place
-  BEFORE INSERT OR UPDATE OF place_id ON notes
-  FOR EACH ROW EXECUTE FUNCTION reject_retired_place_target();
-DROP TRIGGER IF EXISTS resident_presence_reject_retired_place ON resident_presence;
-CREATE TRIGGER resident_presence_reject_retired_place
-  BEFORE INSERT OR UPDATE OF current_place_id, home_place_id ON resident_presence
-  FOR EACH ROW EXECUTE FUNCTION reject_retired_place_target();
-
 -- The fresh baseline includes the same guarded drawing contract as the
 -- forward migration. Keep db/migrations/20260828_drawing_contract.sql
 -- synchronized with this block.
@@ -7609,21 +7416,6 @@ WITH latest_moderation AS (
         ) END
       WHEN base.class_name = 'places' AND place.id IS NOT NULL THEN
         base.payload || jsonb_build_object(
-          'name', CASE WHEN place_hidden.action = 'remove'
-            THEN '[removed by maintainer]' ELSE place.name END,
-          'founding_name', CASE WHEN place_hidden.action = 'remove'
-            THEN '[removed by maintainer]' ELSE place.founding_name END,
-          'retired_at', place.retired_at,
-          'status', CASE WHEN place.retired_at IS NULL THEN 'active' ELSE 'retired' END,
-          'name_history', coalesce((
-            SELECT jsonb_agg(jsonb_build_object(
-              'name', CASE WHEN place_hidden.action = 'remove'
-                THEN '[removed by maintainer]' ELSE span.name END,
-              'started_at', span.started_at,
-              'ended_at', span.ended_at
-            ) ORDER BY span.started_at, span.id)
-            FROM place_name_spans span WHERE span.place_id = place.id
-          ), '[]'::jsonb),
           'drawing', place.drawing,
           'drawing_state', place.drawing_state,
           'drawing_presentation_state', city_drawing_presentation_state(
@@ -7674,8 +7466,6 @@ WITH latest_moderation AS (
     ON resident_hidden.target_type = 'resident' AND resident_hidden.target_id = resident.id
   LEFT JOIN public.places place
     ON base.class_name = 'places' AND place.id::TEXT = base.record_id
-  LEFT JOIN latest_moderation place_hidden
-    ON place_hidden.target_type = 'place' AND place_hidden.target_id = place.id
   LEFT JOIN public.kinds kind
     ON base.class_name = 'kinds' AND kind.id::TEXT = base.record_id
   LEFT JOIN public.kind_revisions definition
@@ -8563,9 +8353,6 @@ WITH public_event_kinds_v2(kind) AS (
     ('home_set'),
     ('place_created'),
     ('place_edited'),
-    ('place_renamed'),
-    ('place_retired'),
-    ('place_restored'),
     ('kind_invented'),
     ('kind_revised'),
     ('trait_coined'),
@@ -9422,10 +9209,7 @@ BEGIN
     WHERE public_id = NEW.payment_attempt_id FOR KEY SHARE;
     IF NOT FOUND OR attempt.method <> 'credit' OR attempt.actor_id <> NEW.resident_id
       OR attempt.amount_units <> NEW.amount_units
-      OR attempt.operation NOT IN (
-        'frontier', 'kind_invention', 'kind_revision',
-        'place_rename', 'place_retire', 'place_restore'
-      )
+      OR attempt.operation NOT IN ('frontier', 'kind_invention', 'kind_revision')
       OR (NEW.entry_kind = 'spend' AND attempt.status NOT IN ('settling', 'payment_pending'))
       OR (NEW.entry_kind = 'return' AND attempt.status NOT IN (
         'settling', 'payment_pending', 'credit_returned'
