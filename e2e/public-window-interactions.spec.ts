@@ -1257,6 +1257,9 @@ test('complete directory selection loads one focused place and its inside conten
   await expect(page.getByRole('tab', { name: 'Live' })).toBeFocused()
   await expect(page.getByRole('tab', { name: 'Live' })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('tab', { name: 'Live' }).press('ArrowRight')
+  await expect(page.getByRole('tab', { name: 'Things' })).toBeFocused()
+  await expect(page.getByRole('tab', { name: 'Things' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'Things' }).press('ArrowRight')
   await expect(page.getByRole('tab', { name: 'Place' })).toBeFocused()
   await expect(page.getByRole('tab', { name: 'Place' })).toHaveAttribute('aria-selected', 'true')
 })
@@ -1847,7 +1850,7 @@ test('focused name source keeps fresh card and path wording together', async ({ 
   })).toBeVisible()
   await search.fill('quiet_annex')
   await expect(page.locator('#directory-search-results')).toHaveText(
-    'No places or residents match this search.',
+    'No places, residents, or things match this search.',
   )
 })
 

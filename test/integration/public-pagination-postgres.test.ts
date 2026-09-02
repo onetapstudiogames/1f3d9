@@ -2750,6 +2750,11 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
           VALUES ($1, 'abababab public marker', 'ordinary fixture', 1, 1)
           RETURNING id
         `, [city.targetPlaceId])).rows[0]!.id
+        const bodyOnlyThingId = (await client.query<{ id: number }>(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'quiet fixture', 'abababab appears only in this body', 1, 1)
+          RETURNING id
+        `, [city.targetPlaceId])).rows[0]!.id
         const windowModule: WindowModule = await import('../../src/window.ts')
         const statement = () => windowModule.windowCollectionStatement({
           collection: 'things', beforeId: null, limit: 20, placeId: null,
@@ -2765,6 +2770,8 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         assert.ok(!(await selectedIds()).includes(thingId),
           'a raw credential-like name must never act as a substring oracle')
         assert.ok((await selectedIds()).includes(ordinaryThingId))
+        assert.ok(!(await selectedIds()).includes(bodyOnlyThingId),
+          'thing heading search must not match body-only text')
         await client.query(`
           INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
           VALUES ('thing', $1, 'remove', 1, 'integration removal')

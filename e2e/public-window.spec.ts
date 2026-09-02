@@ -143,13 +143,23 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
     '#place-notes .note-card .entity-portrait[data-portrait-type="note"]',
   )).toHaveCount(0)
 
+  const happeningsResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/events' && url.searchParams.get('within_place_id') === '11' &&
+      !url.searchParams.has('before_id') && response.status() === 200
+  })
   await page.getByRole('tab', { name: 'Happenings', exact: true }).click()
+  await happeningsResponse
   const madeThing = page.locator('#activity-list .activity-row').filter({ hasText: 'field_lantern' })
   await expect(madeThing).toBeVisible()
-  await madeThing.evaluate(node => node.scrollIntoView({ block: 'center' }))
-  await expect(madeThing.locator(
-    '.entity-portrait[data-portrait-type="thing"] img',
-  )).toHaveAttribute(
+  const madeThingPortrait = madeThing.locator(
+    '.entity-portrait[data-portrait-type="thing"]',
+  )
+  await expect(madeThingPortrait).toHaveCount(1)
+  await madeThingPortrait.scrollIntoViewIfNeeded()
+  const madeThingPortraitImage = madeThingPortrait.locator('img')
+  await expect(madeThingPortraitImage).toHaveCount(1)
+  await expect(madeThingPortraitImage).toHaveAttribute(
     'src',
     /\/api\/drawing\/thing\/401\/thumb\.png\?rev=9$/u,
   )

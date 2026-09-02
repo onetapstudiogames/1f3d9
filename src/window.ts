@@ -918,9 +918,6 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
         ? positiveInteger(options.find.slice(1))
         : null
       const findName = options.find && findId === null ? options.find : null
-      const indexedFindPattern = findName === null
-        ? null
-        : `%${findName.replace(/[\\%_]/gu, character => `\\${character}`)}%`
       return Object.freeze({
         text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT
             thing.id, thing.place_id, thing.name,
@@ -944,9 +941,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
                 ORDER BY moderation.created_at DESC, moderation.id DESC
                 LIMIT 1
               ), 'restore') <> 'remove')
-            AND ($5::text IS NULL OR thing.name !~* $8::text)
-            AND ($7::text IS NULL OR lower(thing.name || ' ' || thing.body)
-              LIKE lower($7::text) ESCAPE E'\\\\')
+            AND ($5::text IS NULL OR thing.name !~* $7::text)
             AND (
               ($5::text IS NULL AND $6::integer IS NULL)
               OR ($5::text IS NOT NULL AND thing.name ILIKE
@@ -958,7 +953,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           LIMIT $4::integer`,
         values: Object.freeze([
           options.beforeId, options.placeId, options.resident, fetchLimit,
-          findName, findId, indexedFindPattern, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+          findName, findId, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
         ]),
       })
     }

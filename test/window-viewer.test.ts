@@ -1018,11 +1018,10 @@ test('window collection statements enforce limit plus one without client SQL ide
   assert.match(thingHeadings.text, /coalesce\([\s\S]*?'restore'\) <> 'remove'/iu)
   assert.match(thingHeadings.text,
     /\(\$5::text IS NULL AND \$6::integer IS NULL\) OR coalesce/iu)
-  assert.match(thingHeadings.text, /lower\(thing\.name \|\| ' ' \|\| thing\.body\)[\s\S]*?LIKE lower\(\$7::text\)/iu)
+  assert.doesNotMatch(thingHeadings.text, /thing\.name\s*\|\|[\s\S]*?thing\.body/iu)
   assert.match(thingHeadings.text, /ORDER BY thing\.id DESC/i)
   assert.deepEqual(thingHeadings.values, [
-    null, 7, null, 26, 'Signal Lamp', null, '%Signal Lamp%',
-    PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+    null, 7, null, 26, 'Signal Lamp', null, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
   ])
 
   const thingById = statement({
@@ -1031,7 +1030,7 @@ test('window collection statements enforce limit plus one without client SQL ide
   })
   assert.match(thingById.text, /thing\.id = \$6::integer/iu)
   assert.deepEqual(thingById.values, [
-    null, null, null, 21, null, 401, null, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+    null, null, null, 21, null, 401, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
   ])
 
   const agreements = statement({
