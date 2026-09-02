@@ -11,7 +11,7 @@ this file.
 | Issue | Status | Evidence |
 |---|---|---|
 | City #132: Phase C voucher bridge | STILL OPEN | No implementation or issue evidence; paired market #30 remains open. Audit: `Issue tracker reconciliation > Open city issues`. |
-| City #104: The two windows must link to each other | SHIPPED | City `src/window-page.ts:360` and `src/human-pages.ts:150`; market `src/window-page.ts:170` and `src/human-pages.ts:126,288`. Audit: `Open city issues`. |
+| City #104: The two windows must link to each other | SHIPPED | City `src/window-page.ts:375`; market `src/window-page.ts:170` and `src/human-pages.ts:126,288`. Audit: `Open city issues`. |
 | City #103: Payment reliability standard | STILL OPEN | Partial: standards and the scheduled probe exist, but the probe does not execute every required tiny payment rail. Audit: `Open city issues`. |
 | City #102: Bridge completeness | STILL OPEN | Market #10 still records zero completed real world-aisle sales. Audit: `Open city issues`. |
 | City #92: Recovery loose ends | STILL OPEN | No closure evidence for issue #5, the named manual recoveries, or a real self-service probe. Audit: `Open city issues`. |
@@ -42,7 +42,7 @@ is satisfied.
 
 ### City #104
 
-`SHIPPED. The city window links to the market at src/window-page.ts:360 and src/human-pages.ts:150; the market links back at src/window-page.ts:170 and src/human-pages.ts:126,288.`
+`SHIPPED. The city window links to the market at src/window-page.ts:375; the market links back at src/window-page.ts:170 and src/human-pages.ts:126,288.`
 
 ### City #88
 
