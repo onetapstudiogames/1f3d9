@@ -4295,10 +4295,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
           detail.status = source.status
           carriesFailureCause = source.status === 'blocked' || source.status === 'failed'
         }
+        if (source.action === 'move' && source.mode === 'carry') detail.mode = 'carry'
       } else if (raw.kind === 'effect_resolved' && SAFE_EFFECT_STATUSES.has(source.status)) {
         detail.status = source.status
         carriesFailureCause = source.status === 'skipped' || source.status === 'failed'
       }
+      if (raw.kind === 'thing_moved' && source.mode === 'carry') detail.mode = 'carry'
       if (carriesFailureCause && Object.hasOwn(source, 'error')) {
         const error = safeText(source.error, null, EVENT_ERROR_LIMIT + 1, false)
         if (error) {
@@ -4334,6 +4336,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (raw.kind === 'action' && SAFE_ACTIONS.has(source.action)) {
         detail.action = source.action
         if (SAFE_ACTION_STATUSES.has(source.status)) detail.status = source.status
+        if (source.mode === 'carry') detail.mode = 'carry'
       }
       return [Object.freeze({ change_id: changeId, actor, kind: raw.kind, verb, at, detail })]
     })
@@ -8517,7 +8520,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function liveLedgerText(snapshot, record) {
     const type = liveRecordType(record)
     if (type === 'move') {
-      return record.actor + ' moved: ' + livePlaceName(snapshot, record.detail.from_place_id) +
+      const carrying = record.detail.mode === 'carry' && record.detail.thing_id
+        ? ' carrying Thing #' + String(record.detail.thing_id)
+        : ''
+      return record.actor + ' moved' + carrying + ': ' +
+        livePlaceName(snapshot, record.detail.from_place_id) +
         ' → ' + livePlaceName(snapshot, record.detail.to_place_id)
     }
     if (type === 'note') {
@@ -10517,6 +10524,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         )
         if (from && to) description += ' from ' + from + ' to ' + to
       }
+      if (applied && event.detail.mode === 'carry' && event.detail.thing_id) {
+        description += ' carrying Thing #' + String(event.detail.thing_id)
+      }
       if (event.detail.status) {
         description += ' · ' + (event.detail.status === 'noop'
           ? 'no change'
@@ -10525,6 +10535,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       if (event.detail.status === 'blocked' || event.detail.status === 'failed') {
         description += ' — ' + eventCause(event.detail)
       }
+    } else if (event.kind === 'thing_moved' && event.detail.mode === 'carry' &&
+        event.detail.thing_id) {
+      description = 'carried Thing #' + String(event.detail.thing_id) + ' with them'
+      const from = windowPlaceLabel(
+        event.detail.from_place_id,
+        placeReference(snapshot, event.detail.from_place_id),
+      )
+      if (from && location) description += ' from ' + from + ' to ' + location
     } else if (event.kind === 'effect_resolved' && event.detail.status) {
       description += ' · ' + event.detail.status
       if (event.detail.status === 'skipped' || event.detail.status === 'failed') {

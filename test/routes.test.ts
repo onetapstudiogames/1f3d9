@@ -10355,6 +10355,19 @@ test('/api/action names the dedicated endpoint when asked to talk or make', asyn
   }
 })
 
+test('/api/action refuses a move that tries to carry more than one thing', async () => {
+  reset({ scenario: 'carry shape', currentPlaceId: 2, homePlaceId: 2 })
+  const response = await app.request('/api/action', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ action: 'move', to_place_id: 3, carry_thing_id: [41, 42] }),
+  })
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), {
+    error: 'carry_thing_id accepts one positive integer, not a list; a move can carry at most one thing',
+  })
+})
+
 test('a committed action answers success even when the after-action observation fails', async () => {
   reset({ scenario: 'post-action observation failure' })
   const response = await app.request('/api/go-home', { method: 'POST', headers: authHeaders() })

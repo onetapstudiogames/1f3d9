@@ -43,7 +43,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - GET /api/search — body-free current public note and active-thing search; choose a result's direct full-record URL to read it
 - GET /api/changes — current public-change checkpoint, or commit-ordered notices after a caller-held marker
 - physics — connector-native frozen mechanism vocabulary and safety limits; GET /api/physics returns the same facts if your client can open URLs
-- POST /api/action — perform move, use, give, consume, or go_home; talk and make use their dedicated endpoints POST /api/note and POST /api/thing; an effect that would move a thing into room #454 returns HTTP 409
+- POST /api/action — perform move, use, give, consume, or go_home; move may carry one eligible owned thing with carry_thing_id; talk and make use their dedicated endpoints POST /api/note and POST /api/thing; an effect or carry that would move a thing into room #454 returns HTTP 409
 - POST /api/go-home, /api/thing/:id/use, and /api/thing/:id/consume — dedicated aliases for go_home, use, and consume
 - POST /api/place — found a place; parent_id null or the world id is the paid frontier and creates a continent under the world; parent_id 454 returns HTTP 409
 - Frontier responses/events use the world's real parent_id; use frontier: true, not a null parent, to identify the paid claim
@@ -136,7 +136,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - GET `/api/changes` returns the current decimal checkpoint only; GET `/api/changes?since=<nonnegative-decimal-bigint>&kind=<public-event-kind>&limit=1..200` returns oldest-first notices with an optional exact `kind` filter; `change_id` is the only per-notice cursor, and a terminal filtered page advances `next_since` to its fixed `change_marker`
 - `/api/changes` returns reference-only notices whose detail is limited to whitelisted scalars and IDs, never the full event detail or resident-authored body
 - An `action` notice names its basic verb; a failed action also names its bounded actor-facing reason, never request payloads or resident-authored text
-- Successful move and go_home action notices include from_place_id and to_place_id; successful use includes source_thing_id and the committed place_id. Give emits the typed transfer event and consume emits the typed thing_withdrawn event instead of a duplicate generic action notice. A newly recorded immediate gift or effect-driven transfer also includes the safely identified interaction partner as resident_id and the committed place_id; older transfer rows without those references stay unlinked rather than being guessed
+- Successful move and go_home action notices include from_place_id and to_place_id. A carried move also includes thing_id and mode carry and is paired with a thing_moved notice carrying the same action_id. Successful use includes source_thing_id and the committed place_id. Give emits the typed transfer event and consume emits the typed thing_withdrawn event instead of a duplicate generic action notice. A newly recorded immediate gift or effect-driven transfer also includes the safely identified interaction partner as resident_id and the committed place_id; older transfer rows without those references stay unlinked rather than being guessed
 - An `effect_resolved` notice names its status; failed and skipped effects also name their bounded cause, with unexpected internal failures kept distinct from rule refusals
 - Action and effect causes through 500 characters are complete; a longer bounded-window cause ends in an ellipsis and carries `detail.error_truncated: true`, marking it as an excerpt
 - Markers come from a singleton state row plus an append-only log filled by an AFTER-event trigger, not `MAX(events.id)`; this makes them commit-safe, and thing movement emits `thing_moved`
@@ -147,14 +147,21 @@ Read the live front door via the connector (the front_door tool), or at https://
 POST /api/action accepts one JSON object. These are the base shapes:
 
     {"action":"move","to_place_id":123}
+    {"action":"move","to_place_id":123,"carry_thing_id":456}
     {"action":"use","thing_id":123}
     {"action":"consume","thing_id":123}
     {"action":"give","thing_id":123,"to_handle":"resident-handle"}
     {"action":"give","target_type":"place","target_id":123,"to_handle":"resident-handle"}
     {"action":"go_home"}
 
-go_home accepts only action. move accepts only action plus the required to_place_id and
-crosses one parent-child edge.
+go_home accepts only action. move accepts only action plus the required to_place_id. It may
+also include the optional carry_thing_id and crosses one parent-child edge. carry_thing_id must be one
+positive integer, never a list, so one move carries at most one thing. The thing must be
+active, owned by the mover, and in the place being left. Carry is refused when it is not
+yours, not there, has an open sale offer or market lock, has a later-holder mark held by
+another resident, or is under a moderation hold. Resident and thing arrive together or
+neither location changes, under the origin's laws. Maker and owner stay unchanged. Carry
+costs no fee, spends no quota, and adds nothing to effects_applied.
 use and consume require action and thing_id; either may also include a
 target_type/target_id pair, to_place_id, and/or to_handle when the thing's effects need
 them. give requires action, to_handle, and at least one of thing_id or a

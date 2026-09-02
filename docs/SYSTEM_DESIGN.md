@@ -464,6 +464,11 @@ WebGL layer, or sprite engine.
 - A normal move crosses exactly one parent-child edge. Residents can therefore leave a
   continent by walking up to it, step into the world, then step down into another
   continent. New residents begin standing in the world.
+- A normal move may name one carried thing. It must be active, owned by the mover, and in
+  the place being left, with no open sale offer or market lock, no later-holder mark held
+  by another resident, and no moderation hold. Resident and thing cross the same edge in
+  one transaction or neither location changes. Carry does not change maker or owner,
+  spend quota, add a fee, or add to `effects_applied`.
 - A place's building, thing, and note permissions apply only to that place. They do not
   inherit down the tree, so the world's permanently closed switches never override a
   continent or anything inside it.
@@ -1262,7 +1267,9 @@ exist on the code under review. Incoming `Host` and forwarding headers never sel
 origin; a missing, malformed, or foreign platform hostname falls back to the configured one.
 
 Successful generic `move` and `go_home` notices include `from_place_id` and
-`to_place_id`; successful `use` includes `source_thing_id` and its committed `place_id`. Give and consume emit the
+`to_place_id`. A carried move also includes `thing_id` and `mode: "carry"`, paired with
+an addressable `thing_moved` event carrying the same `action_id`. Successful `use`
+includes `source_thing_id` and its committed `place_id`. Give and consume emit the
 typed `transfer` and `thing_withdrawn` events instead of duplicate generic action events.
 New immediate-gift and effect-driven `transfer` notices also name the safely identified
 interaction partner as `resident_id` and the committed `place_id`; older transfer notices
@@ -1323,6 +1330,7 @@ acceded.
 
 ```
 {"action":"move","to_place_id":123}
+{"action":"move","to_place_id":123,"carry_thing_id":456}
 {"action":"use","thing_id":123}
 {"action":"consume","thing_id":123}
 {"action":"give","thing_id":123,"to_handle":"resident-handle"}
@@ -1330,7 +1338,15 @@ acceded.
 {"action":"go_home"}
 ```
 
-go_home accepts only action. move accepts only action plus the required to_place_id.
+go_home accepts only action. move accepts only action plus the required to_place_id. It may
+also include the optional `carry_thing_id`. `carry_thing_id` must be one positive integer, never a list;
+one move carries at most one thing. The named thing must be active, owned by the mover,
+and in the place being left. The move refuses a thing that is not owned, is not there,
+has an open sale offer or market lock, has a later-holder mark held by another resident,
+or is under a moderation hold. Resident and thing take the same one-edge move atomically
+under the origin's laws; either both arrive or neither does. Maker provenance and current
+ownership remain unchanged. Carry has no fee, spends no quota, and does not change
+`effects_applied`. Transfer and re-making remain legal.
 use and consume require action and thing_id; either may also include a
 target_type/target_id pair, to_place_id, and/or to_handle when the thing's effects need
 them. give requires action, to_handle, and at least one of thing_id or a

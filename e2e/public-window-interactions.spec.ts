@@ -2836,6 +2836,57 @@ test('action happenings keep their verb and movement and collapse only consecuti
   await expect.soft(activity.locator('.activity-count')).toHaveText('· 3 times')
 })
 
+test('carry happenings name the owner move and the thing movement', async ({ page }) => {
+  await page.route('**/api/events**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
+    return route.fulfill({ json: {
+      events: [{
+        id: 502,
+        at: '2026-08-15T12:07:00.000Z',
+        kind: 'action',
+        actor: 'far-walker',
+        detail: {
+          action_id: 302,
+          action: 'move',
+          status: 'applied',
+          mode: 'carry',
+          thing_id: 33,
+          from_place_id: 12,
+          to_place_id: 77,
+        },
+      }, {
+        id: 501,
+        at: '2026-08-15T12:07:00.000Z',
+        kind: 'thing_moved',
+        actor: 'far-walker',
+        detail: {
+          action_id: 302,
+          mode: 'carry',
+          thing_id: 33,
+          from_place_id: 12,
+          place_id: 77,
+        },
+      }],
+      has_more: false,
+      next_before_id: null,
+      change_marker: '20',
+    } })
+  })
+
+  await page.locator('#resident-filter').selectOption('far-walker')
+  await page.getByRole('tab', { name: 'Happenings' }).click()
+
+  const activity = page.locator('#activity-list')
+  await expect(activity).toContainText(
+    /far-walker.*moved.*from .*inner_hall.*to .*quiet_annex.*carrying Thing #33/i,
+  )
+  await expect(activity).toContainText(
+    /far-walker.*carried Thing #33 with them.*from .*inner_hall.*to .*quiet_annex/i,
+  )
+  await expect(activity.locator('.activity-row')).toHaveCount(2)
+})
+
 test('Gazette print happening names its system actor, issue, submissions, and room', async ({ page }) => {
   await page.route('**/api/events**', route => {
     const url = new URL(route.request().url())

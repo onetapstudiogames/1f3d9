@@ -46,6 +46,7 @@ const ACTION_FIELDS = Object.freeze([
   'target_type',
   'target_id',
   'to_place_id',
+  'carry_thing_id',
   'to_handle',
 ] as const)
 
@@ -89,7 +90,9 @@ async function recipientId(handle: unknown): Promise<number | null | undefined> 
 function actionFieldsAllowed(action: BasicAction, body: JsonObject): boolean {
   const present = Object.keys(body)
   if (action === 'go_home') return present.every(key => key === 'action')
-  if (action === 'move') return present.every(key => key === 'action' || key === 'to_place_id')
+  if (action === 'move') return present.every(key => (
+    key === 'action' || key === 'to_place_id' || key === 'carry_thing_id'
+  ))
   if (action === 'give') return present.every(key => (
     key === 'action' || key === 'thing_id' || key === 'target_type'
       || key === 'target_id' || key === 'to_handle'
@@ -157,6 +160,17 @@ async function runResidentAction(
   if (body.to_place_id != null && !destinationPlaceId) {
     return err(c, 400, 'to_place_id must be a positive integer')
   }
+  if (Array.isArray(body.carry_thing_id)) {
+    return err(
+      c,
+      400,
+      'carry_thing_id accepts one positive integer, not a list; a move can carry at most one thing',
+    )
+  }
+  const carryThingId = body.carry_thing_id == null ? null : positiveId(body.carry_thing_id)
+  if (body.carry_thing_id != null && !carryThingId) {
+    return err(c, 400, 'carry_thing_id must be one positive integer')
+  }
   const toResidentId = await recipientId(body.to_handle)
   if (toResidentId === undefined) return err(c, 404, 'recipient handle not found')
 
@@ -184,6 +198,7 @@ async function runResidentAction(
       sourceThingId: thingId,
       target: transferTarget,
       destinationPlaceId,
+      carryThingId,
       recipientId: toResidentId,
       payload: {},
     })
@@ -196,6 +211,7 @@ async function runResidentAction(
       status: result.status,
       place_id: placeId,
       effects_applied: result.effectsApplied,
+      ...(carryThingId === null ? {} : { carried_thing_id: carryThingId }),
       ...(result.error === null ? {} : { error: result.error }),
     }
     if (result.error) {

@@ -630,7 +630,9 @@ An effect_resolved notice names its status; failed and skipped effects also name
 bounded cause, with unexpected internal failures kept distinct from rule refusals.
 /api/changes returns reference-only notices: detail is limited to whitelisted scalars and
 IDs, never the full event detail or resident-authored body.
-Successful move and go_home notices name from_place_id and to_place_id. Successful use
+Successful move and go_home notices name from_place_id and to_place_id. A carried move
+also names thing_id and mode carry, paired with a thing_moved notice carrying the same
+action_id. Successful use
 names source_thing_id and the committed place_id. Give emits the typed transfer event and
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
 A newly recorded immediate gift or effect-driven transfer also names the interaction
@@ -914,6 +916,7 @@ ACTION REQUESTS
 POST /api/action accepts one JSON object. These are the base shapes:
 
   {"action":"move","to_place_id":123}
+  {"action":"move","to_place_id":123,"carry_thing_id":456}
   {"action":"use","thing_id":123}
   {"action":"consume","thing_id":123}
   {"action":"give","thing_id":123,"to_handle":"resident-handle"}
@@ -930,7 +933,15 @@ These aliases force their named action and, where present, the path's
 thing_id, then apply the same accepted-field rules to any JSON body.
 
 go_home accepts only action. move accepts only action plus the required
-to_place_id and crosses one parent-child edge. use and consume require
+to_place_id. It may also include the optional carry_thing_id and crosses one parent-child edge. carry_thing_id
+must be one positive integer, never a list: one move carries at most one thing. The thing
+must be active, owned by the mover, and standing in the place being left. Carry is refused
+when it is not yours, not there, has an open sale offer or market lock, has a later-holder
+mark held by another resident, or is under a moderation hold. The thing arrives only where
+the resident arrives, in the same atomic one-edge move under the origin's laws; either both
+locations change or neither does. Maker provenance and current ownership stay unchanged.
+Carry costs no fee, spends no quota, and adds nothing to effects_applied. Transfer and
+re-making remain available. use and consume require
 action and thing_id; either may
 also include a target_type/target_id pair, to_place_id, and/or to_handle
 when the thing's effects need them. give requires action, to_handle,
