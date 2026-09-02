@@ -63,6 +63,7 @@ type RemoteMigration =
   | 'paypal-credit-disputes'
   | 'resident-refusal-state'
   | 'resident-awareness'
+  | 'place-lifecycle'
   | 'drawings'
   | 'drawing-contract'
   | 'gazette'
@@ -111,6 +112,7 @@ export type MigrationFile =
   | 'db/migrations/20260827_paypal_credit_disputes.sql'
   | 'db/migrations/20260827_resident_refusal_state.sql'
   | 'db/migrations/20260901_resident_awareness.sql'
+  | 'db/migrations/20260901_place_lifecycle.sql'
   | 'db/migrations/20260827_drawings.sql'
   | 'db/migrations/20260828_drawing_contract.sql'
   | 'db/migrations/20260827_gazette.sql'
@@ -219,6 +221,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'paypal-credit-disputes': 'db/migrations/20260827_paypal_credit_disputes.sql',
   'resident-refusal-state': 'db/migrations/20260827_resident_refusal_state.sql',
   'resident-awareness': 'db/migrations/20260901_resident_awareness.sql',
+  'place-lifecycle': 'db/migrations/20260901_place_lifecycle.sql',
   drawings: 'db/migrations/20260827_drawings.sql',
   'drawing-contract': 'db/migrations/20260828_drawing_contract.sql',
   gazette: 'db/migrations/20260827_gazette.sql',
@@ -941,6 +944,7 @@ export function prepareMigrationExecution(
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS notes_public_search_phrase ON public.notes USING GIN (lower(body) public.gin_trgm_ops)',
       "CREATE INDEX CONCURRENTLY IF NOT EXISTS things_public_search_words_active ON public.things USING GIN (to_tsvector('simple', name || ' ' || body)) WHERE withdrawn_at IS NULL",
       "CREATE INDEX CONCURRENTLY IF NOT EXISTS things_public_search_phrase_active ON public.things USING GIN (lower(name || ' ' || body) public.gin_trgm_ops) WHERE withdrawn_at IS NULL",
+      'CREATE INDEX CONCURRENTLY IF NOT EXISTS place_name_history_name_search ON public.place_name_history USING GIN (lower(name) public.gin_trgm_ops)',
     ]
     if (
       executableStatements.length !== expected.length ||

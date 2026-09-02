@@ -25,7 +25,13 @@ const SAFE_REASON_RE = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u
 const MAX_BIGINT_ID = 9_223_372_036_854_775_807n
 const LEASE_MILLISECONDS = 30_000
 
-export type CityFeeCreditOperation = 'frontier' | 'kind_invention' | 'kind_revision'
+export type CityFeeCreditOperation =
+  | 'frontier'
+  | 'kind_invention'
+  | 'kind_revision'
+  | 'place_rename'
+  | 'place_retire'
+  | 'place_restore'
 export type CityCreditEntryKind =
   | 'founder_issue'
   | 'purchase'
@@ -173,7 +179,10 @@ function safeTargetKey(value: unknown): string {
 }
 
 function eligibleOperation(value: unknown): CityFeeCreditOperation {
-  if (!['frontier', 'kind_invention', 'kind_revision'].includes(String(value))) {
+  if (![
+    'frontier', 'kind_invention', 'kind_revision',
+    'place_rename', 'place_retire', 'place_restore',
+  ].includes(String(value))) {
     throw new TypeError('operation is not eligible for city fee credit')
   }
   return value as CityFeeCreditOperation
@@ -327,7 +336,7 @@ function normalizeCreditAsset(
   operation: CityFeeCreditOperation,
   assetType: BeginCityCreditSpendInput['assetType'],
   assetId: BeginCityCreditSpendInput['assetId'],
-): { assetType: 'kind' | null; assetId: number | null } {
+): { assetType: 'place' | 'kind' | null; assetId: number | null } {
   if (operation === 'kind_revision') {
     if (
       assetType !== 'kind'
@@ -336,6 +345,15 @@ function normalizeCreditAsset(
       || assetId < 1
     ) throw new TypeError('kind revision city credit must bind one positive kind asset id')
     return { assetType: 'kind', assetId }
+  }
+  if (operation === 'place_rename' || operation === 'place_retire' || operation === 'place_restore') {
+    if (
+      assetType !== 'place'
+      || typeof assetId !== 'number'
+      || !Number.isSafeInteger(assetId)
+      || assetId < 1
+    ) throw new TypeError('place lifecycle city credit must bind one positive place asset id')
+    return { assetType: 'place', assetId }
   }
   if (assetType != null || assetId != null) {
     throw new TypeError('this city credit operation cannot bind an asset')
@@ -920,7 +938,10 @@ export async function readCityCreditPreflight(
     pending_gifts_count: pendingGiftsCount,
     can_confirm: canConfirm,
     observed_at: observed.toISOString(),
-    applies_to: Object.freeze(['frontier', 'kind_invention', 'kind_revision'] as const),
+    applies_to: Object.freeze([
+      'frontier', 'kind_invention', 'kind_revision',
+      'place_rename', 'place_retire', 'place_restore',
+    ] as const),
     freshness: 'read_only_snapshot' as const,
   })
 }

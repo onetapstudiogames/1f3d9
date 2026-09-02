@@ -260,6 +260,7 @@ interface FakeState {
   pendingResolved: boolean
   noteRemoved: boolean
   notePinned: boolean
+  moderatedPlaceIds: number[]
   moderatedKindIds: number[]
   moderatedKindNames: string[]
   moderatedTraitIds: number[]
@@ -361,6 +362,7 @@ const initialState = (): FakeState => ({
   pendingResolved: false,
   noteRemoved: false,
   notePinned: false,
+  moderatedPlaceIds: [],
   moderatedKindIds: [],
   moderatedKindNames: [],
   moderatedTraitIds: [],
@@ -2091,6 +2093,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       updated_at: '2026-08-11T00:00:00.000Z',
     }]
   }
+  if (q.includes('with usable_home as materialized')) {
+    state = { ...state, currentPlaceId: state.homePlaceId }
+    return [{
+      resident_id: state.actorId,
+      current_place_id: state.currentPlaceId,
+      home_place_id: state.homePlaceId,
+      updated_at: '2026-08-11T00:05:00.000Z',
+    }]
+  }
   if (q.includes('from resident_presence')) return [{
     resident_id: state.actorId,
     current_place_id: state.currentPlaceId,
@@ -2204,8 +2215,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       selectedPlacePermission(placeRow(3, 2), q),
     ]
   }
-  if (q.includes('select id, parent_id from places') && q.includes('any')) {
-    return [placeRow(2, 1), placeRow(3, 2)]
+  if (q.includes('select id, parent_id, retired_at from places') && q.includes('any')) {
+    return [
+      { ...placeRow(2, 1), retired_at: null },
+      { ...placeRow(3, 2), retired_at: null },
+    ]
   }
   if (q.includes('from labels')) {
     const targetType = String(params[0] ?? '')
@@ -2354,8 +2368,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'
         || value === 'note' || value === 'agreement'
     )) ?? '')
-    const removedIds = targetType === 'kind'
-      ? state.moderatedKindIds
+    const removedIds = targetType === 'place'
+      ? state.moderatedPlaceIds
+      : targetType === 'kind' ? state.moderatedKindIds
       : targetType === 'trait' ? state.moderatedTraitIds : []
     const removedNames = targetType === 'kind'
       ? state.moderatedKindNames
@@ -3233,6 +3248,12 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       {
         id: 80, at: '2026-08-11T00:06:00.000Z', kind: 'laws_changed',
         actor: 'tiny-lantern', detail: { place_id: 2, traits: ['quiet-hours', 'safe-trait'] },
+      },
+      {
+        id: 83, at: '2026-08-11T00:09:00.000Z', kind: 'place_renamed',
+        actor: 'tiny-lantern', detail: {
+          place_id: 2, name: 'new unsafe name', former_name: 'old unsafe name',
+        },
       },
       {
         id: 81, at: '2026-08-11T00:07:00.000Z', kind: 'kind_invented',
@@ -5175,6 +5196,7 @@ test('single-record APIs expose the shared loaders\' exact moderated public trut
   reset({
     scenario: 'public details',
     moderatedKindIds: [3],
+    moderatedPlaceIds: [2],
     noteRemoved: true,
   })
 
@@ -7744,7 +7766,10 @@ test('/api/city-credit/preflight privately shows exact cost and balance without 
     pending_gifts_count: 0,
     can_confirm: true,
     observed_at: '2026-08-26T23:30:00.000Z',
-    applies_to: ['frontier', 'kind_invention', 'kind_revision'],
+    applies_to: [
+      'frontier', 'kind_invention', 'kind_revision',
+      'place_rename', 'place_retire', 'place_restore',
+    ],
     freshness: 'read_only_snapshot',
     next_action: 'Show fee_cost, balance_before, and balance_after before confirming one eligible fee action. The later debit is atomic and may refuse if another spend wins first.',
   })
@@ -11307,6 +11332,7 @@ test('event history narrows by actor and by observed place', async () => {
 test('removed authored names are tombstoned inside append-only event details', async () => {
   reset({
     scenario: 'nested moderation events',
+    moderatedPlaceIds: [2],
     moderatedKindIds: [3],
     moderatedKindNames: ['banned-material'],
     moderatedTraitNames: ['glowing', 'quiet-hours'],
@@ -11314,22 +11340,28 @@ test('removed authored names are tombstoned inside append-only event details', a
   const response = await app.request('/api/events')
   assert.equal(response.status, 200)
   const body = await response.json() as { events: Array<Record<string, unknown>> }
-  assert.deepEqual(body.events.map(event => event.id), [80, 81, 82])
+  assert.deepEqual(body.events.map(event => event.id), [80, 83, 81, 82])
   assert.deepEqual(body.events.map(event => event.at), [
-    '2026-08-11T00:06:00.000Z', '2026-08-11T00:07:00.000Z', '2026-08-11T00:08:00.000Z',
+    '2026-08-11T00:06:00.000Z', '2026-08-11T00:09:00.000Z',
+    '2026-08-11T00:07:00.000Z', '2026-08-11T00:08:00.000Z',
   ])
   const details = body.events.map(event => event.detail) as Array<Record<string, unknown>>
   assert.deepEqual(details[0]?.traits, ['[removed by maintainer]', 'safe-trait'])
   assert.equal(details[1]?.name, '[removed by maintainer]')
-  assert.deepEqual(details[1]?.traits, [])
-  assert.equal(details[1]?.recipe, null)
-  assert.deepEqual(details[2]?.traits, ['[removed by maintainer]', 'safe-trait'])
-  assert.deepEqual(details[2]?.recipe, [
+  assert.equal(details[1]?.former_name, '[removed by maintainer]')
+  assert.equal(details[2]?.name, '[removed by maintainer]')
+  assert.deepEqual(details[2]?.traits, [])
+  assert.equal(details[2]?.recipe, null)
+  assert.deepEqual(details[3]?.traits, ['[removed by maintainer]', 'safe-trait'])
+  assert.deepEqual(details[3]?.recipe, [
     { kind: '[removed by maintainer]', quantity: 1 },
     { kind: 'safe-material', quantity: 2 },
   ])
   const encodedDetails = JSON.stringify(details)
-  for (const removed of ['lantern', 'quiet-hours', 'glowing', 'banned-material']) {
+  for (const removed of [
+    'lantern', 'quiet-hours', 'glowing', 'banned-material',
+    'new unsafe name', 'old unsafe name',
+  ]) {
     assert.equal(encodedDetails.includes(removed), false, `${removed} leaked through event detail`)
   }
   assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
@@ -11344,13 +11376,14 @@ test('anonymous window batches event moderation without advancing timers', async
       scenario: 'nested moderation events',
       scheduledLabelAt: realNow - 1,
       moderatedKindIds: [3],
+      moderatedPlaceIds: [2],
       moderatedKindNames: ['banned-material'],
       moderatedTraitNames: ['glowing', 'quiet-hours'],
     })
     const response = await app.request('/api/window')
     assert.equal(response.status, 200)
     const body = await response.json() as { events: Array<Record<string, unknown>> }
-    assert.deepEqual(body.events.map(event => event.id), [80, 81, 82])
+    assert.deepEqual(body.events.map(event => event.id), [80, 83, 81, 82])
     const queries = sqlCalls().map(call => call.query ?? '')
     assert.ok(queries.some(query => /from moderation_actions[\s\S]*join traits named/i.test(query)))
     assert.ok(queries.some(query => /from moderation_actions[\s\S]*join kinds named/i.test(query)))

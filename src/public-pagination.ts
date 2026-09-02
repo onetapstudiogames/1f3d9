@@ -437,6 +437,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
        FROM places p
        LEFT JOIN residents owner ON owner.id = p.owner_id
        WHERE p.parent_id = $1::integer
+         AND p.retired_at IS NULL
          AND ($2::integer IS NULL OR p.id < $2::integer)
        ORDER BY p.id DESC
        LIMIT $3::integer
@@ -636,6 +637,7 @@ export async function loadPublicPlaceCollectionRows(
        FROM places p
        LEFT JOIN residents owner ON owner.id = p.owner_id
        WHERE p.parent_id = $1::integer
+         AND p.retired_at IS NULL
          AND ($2::integer IS NULL OR p.id < $2::integer)
        ORDER BY p.id DESC
        LIMIT $3::integer

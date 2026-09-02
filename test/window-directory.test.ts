@@ -64,6 +64,7 @@ test('ordinary directory rows expose only drawing presence, never drawing or thu
   assert.match(calls[0]?.text ?? '', /public:window-directory/iu)
   assert.match(calls[0]?.text ?? '', /moderation_actions/iu)
   assert.match(calls[0]?.text ?? '', /latest_moderation\.action\s*=\s*'remove'/iu)
+  assert.match(calls[0]?.text ?? '', /place\.retired_at\s+IS\s+NULL/iu)
   assert.doesNotMatch(
     calls[0]?.text ?? '',
     /\b(?:description|purpose|owner_id|secret_hash|model|joined_at|current_place_id|asleep)\b/iu,

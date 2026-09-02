@@ -876,7 +876,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Send place_id plus at least one changed field: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends an immutable public revision; an exact no-op appends nothing. A place with an open sale offer cannot be edited. Repeating the same non-drawing edit is safe and creates no duplicate change event.`,
+      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -884,6 +884,9 @@ const TOOLS: readonly ToolDefinition[] = [
       allOf: DRAWING_WRITE_CONDITIONS,
       properties: {
         place_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
+        name: { type: 'string', minLength: 1, maxLength: 120 },
+        retired: { type: 'boolean' },
+        city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
         description: { type: 'string', maxLength: 4000 },
         purpose: { type: 'string', maxLength: 280 },
         front_matter_thing_ids: {
@@ -904,10 +907,13 @@ const TOOLS: readonly ToolDefinition[] = [
       method: 'PATCH',
       path: `/api/place/${Number(args.place_id)}`,
       body: picked(args, [
-        'description', 'purpose', 'front_matter_thing_ids',
+        'name', 'retired', 'description', 'purpose', 'front_matter_thing_ids',
         'open_to_building', 'open_to_things', 'open_to_notes',
         'drawing', 'drawing_state', 'drawing_description',
       ]),
+      ...(own(args, 'city_credit_request_id')
+        ? { headers: { 'x-1f3d9-fee-credit': String(args.city_credit_request_id) } }
+        : {}),
     }),
   },
   {
@@ -1007,7 +1013,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'make',
     title: 'Make a thing',
-    description: `Make a text thing while standing in place_id, which must be yours or open to things (20 free makes per UTC day). Its name is 1 to 120 safe characters. Omitted open_to_use defaults false. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. Crafted makes return consumed_ingredient_ids; kindless makes omit it. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} The response includes a neutral UTF-8 reading-cost meter.`,
+    description: `Make a text thing while standing in place_id, which must be active and yours or open to things (20 free makes per UTC day). Kindless and typed/crafted making refuse a retired place before quota or ingredients change; restore it first or choose an active place. Its name is 1 to 120 safe characters. The response includes a neutral UTF-8 reading-cost meter. Omitted open_to_use defaults false. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. Crafted makes return consumed_ingredient_ids; kindless makes omit it. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1117,7 +1123,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      `Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. Carry requires the destination owner to be the mover or its open_to_things to be true; open_to_things is false by default. A closed foreign destination refuses before either location changes: drop the carry and walk, or go where things are welcome. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. A move runs the laws of the place being left, and arrival alone does not run the destination's laws. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
+      `Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. Carry requires the destination owner to be the mover or its open_to_things to be true; open_to_things is false by default. A closed foreign destination refuses before either location changes: drop the carry and walk, or go where things are welcome. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. go_home is always unblockable; other actions can run local laws and thing traits. A move runs the laws of the place being left, and arrival alone does not run the destination's laws. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1942,7 +1948,7 @@ function invalidPublicReadArgument(
       return 'Payment attempt attempt_id is invalid.'
     }
   }
-  if (['found', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
+  if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     try {
       parseCityCreditRequestId(args.city_credit_request_id)
     } catch {
@@ -2153,7 +2159,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
     ? rawArguments as Record<string, unknown>
     : {}
-  if (['found', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
+  if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     c.header('Cache-Control', 'no-store')
     c.header('Pragma', 'no-cache')
     c.header('Vary', 'Authorization')

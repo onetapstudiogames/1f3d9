@@ -16,3 +16,6 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS things_public_search_words_active
 CREATE INDEX CONCURRENTLY IF NOT EXISTS things_public_search_phrase_active
   ON public.things USING GIN (lower(name || ' ' || body) public.gin_trgm_ops)
   WHERE withdrawn_at IS NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS place_name_history_name_search
+  ON public.place_name_history USING GIN (lower(name) public.gin_trgm_ops);

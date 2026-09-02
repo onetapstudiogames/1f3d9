@@ -275,6 +275,13 @@ export async function moderatePublicEvents<T extends object>(rows: readonly T[])
       for (const textField of ['name', 'description', 'body']) {
         if (Object.hasOwn(redacted, textField)) redacted[textField] = MODERATED_TEXT
       }
+      if (type === 'place') {
+        for (const historicalNameField of ['former_name', 'founding_name']) {
+          if (Object.hasOwn(redacted, historicalNameField)) {
+            redacted[historicalNameField] = MODERATED_TEXT
+          }
+        }
+      }
       if (type === 'kind') {
         if (Object.hasOwn(redacted, 'kind')) redacted.kind = MODERATED_TEXT
         if (Object.hasOwn(redacted, 'traits')) redacted.traits = Object.freeze([])
