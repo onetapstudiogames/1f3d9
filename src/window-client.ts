@@ -5877,15 +5877,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  // Fourth review pass on row 75: the always-visible directory search box
+  // resolves a matching thing's place through the same snapshot every other
+  // thing surface uses, and drops a thing whose place is quiet before it
+  // ever becomes a result — never after, and never just for display, since
+  // a suppressed row would still leak the thing's name and full room path
+  // through its option markup.
   function thingLookupSearchResults(snapshot) {
-    return state.thingLookup.rows.map(thing => Object.freeze({
-      kind: 'thing',
-      id: thing.id,
-      value: String(thing.id),
-      label: thing.name + ' · Thing #' + String(thing.id),
-      detail: thingHeadingPath(snapshot, thing),
-      hasDrawing: thing.has_drawing === true,
-    }))
+    return state.thingLookup.rows
+      .filter(thing => !isQuietPlace(placeReference(snapshot, thing.place_id)))
+      .map(thing => Object.freeze({
+        kind: 'thing',
+        id: thing.id,
+        value: String(thing.id),
+        label: thing.name + ' · Thing #' + String(thing.id),
+        detail: thingHeadingPath(snapshot, thing),
+        hasDrawing: thing.has_drawing === true,
+      }))
   }
 
   function directorySearchPage(snapshot) {
@@ -6634,20 +6642,28 @@ ${WINDOW_CLIENT_SAFETY_JS}
           (occupants.length === 1 ? ' resident shown inside · ' : ' residents shown inside · ') +
           String(place.things) + ' things · ' + String(place.notes) + ' notes'),
       )
+      // Fourth review pass on row 75: owner-chosen front matter names things
+      // exactly like the occupant and thing lists do, so a quiet place's own
+      // front matter must collapse behind the same honest notice instead of
+      // naming those things unconditionally.
       if (place.front_matter.length) {
-        const headings = element('ul', 'place-card-things')
-        headings.setAttribute('aria-label', 'Owner-chosen thing headings')
-        headings.append(...place.front_matter.map(thing => {
-          const item = element('li', 'place-card-thing')
-          item.append(
-            portraitNode('thing', thing.id, thing.name, thing.has_drawing),
-            openDetailLink(
-              'thing', thing.id, thing.name, 'detail-link place-card-thing-link',
-            ),
-          )
-          return item
-        }))
-        card.append(headings)
+        if (isQuietPlace(place)) {
+          card.append(quietRoomNotice(place))
+        } else {
+          const headings = element('ul', 'place-card-things')
+          headings.setAttribute('aria-label', 'Owner-chosen thing headings')
+          headings.append(...place.front_matter.map(thing => {
+            const item = element('li', 'place-card-thing')
+            item.append(
+              portraitNode('thing', thing.id, thing.name, thing.has_drawing),
+              openDetailLink(
+                'thing', thing.id, thing.name, 'detail-link place-card-thing-link',
+              ),
+            )
+            return item
+          }))
+          card.append(headings)
+        }
       }
       if (place.status === 'retired' && place.retiredAt) {
         card.append(element(
@@ -6865,6 +6881,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.residentPage.replaceChildren(...parts)
   }
 
+  // Fourth review pass on row 75: unlike renderPeople, renderThings, and
+  // occupantLine — every one of which already resolves quiet at each row's
+  // own place before naming it — this Map-tab roster read every loaded
+  // resident's handle and full place path with no quiet check at all. Each
+  // resident's own current_place_id (never the scope this roster happens to
+  // be filtered to) decides whether their row renders; a quiet place
+  // collapses every resident standing there behind one shared notice, the
+  // same shape occupantLine already uses for the Map tab's place cards.
   function renderRoster(snapshot) {
     if (!nodes.roster) return
     renderResidentPage()
@@ -6875,10 +6899,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     const selectedPlaceIds = state.placeId ? placeScopeSet(state.placeId, snapshot) : null
     const availableResidents = displayedResidents(snapshot)
-    const visible = availableResidents.filter(resident =>
+    const matching = availableResidents.filter(resident =>
       (!state.resident || resident.handle === state.resident) &&
       (!selectedPlaceIds || selectedPlaceIds.has(resident.current_place_id)))
-    if (!visible.length) {
+    const quietPlaces = new Map()
+    const visible = matching.filter(resident => {
+      const residentPlace = placeReference(snapshot, resident.current_place_id)
+      if (!isQuietPlace(residentPlace)) return true
+      quietPlaces.set(residentPlace.id, residentPlace)
+      return false
+    })
+    if (!visible.length && !quietPlaces.size) {
       const empty = element('p', 'empty-row', snapshot.residents.length
         ? 'Watching. No currently loaded resident matches this view.'
         : 'Watching. No residents are loaded in this view.')
@@ -6912,6 +6943,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
         row.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
         group.append(row)
       }
+      fragment.append(group)
+    }
+    for (const quietPlace of quietPlaces.values()) {
+      const group = element('section', 'roster-group roster-group-quiet')
+      group.append(quietRoomNotice(quietPlace))
       fragment.append(group)
     }
     nodes.roster.replaceChildren(fragment)
@@ -8410,17 +8446,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
     for (const resident of [...residents.filter(row => !row.asleep),
       ...residents.filter(row => row.asleep)]) {
       const row = element('div', resident.asleep ? 'resident-row asleep' : 'resident-row')
-      if (state.live.focusResident === resident.handle) {
-        row.dataset.liveFocusResident = resident.handle
-      } else if (pinned.has(resident.id)) {
-        row.dataset.liveFocusPartner = resident.handle
-      }
       const place = placeReference(snapshot, resident.current_place_id)
       if (isQuietPlace(place)) {
         row.classList.add('resident-row-quiet')
         row.append(quietRoomNotice(place))
         list.append(row)
         continue
+      }
+      // Fourth review pass on row 75: the dataset markers below must be set
+      // only after the quiet check above returns, never before — a quiet
+      // resident's row is replaced with quietRoomNotice(place) and the loop
+      // continues before reaching here, so their handle never lands in
+      // data-live-focus-resident/-partner on a suppressed row's own element.
+      if (state.live.focusResident === resident.handle) {
+        row.dataset.liveFocusResident = resident.handle
+      } else if (pinned.has(resident.id)) {
+        row.dataset.liveFocusPartner = resident.handle
       }
       const follow = element('button', 'resident-follow', resident.handle)
       follow.type = 'button'
@@ -8849,6 +8890,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const resident = residentIndex.residentByHandle(actor)
       if (!resident) continue
       const held = state.live.replayActive[actor]
+      // Fourth review pass on row 75: a replaying portrait names its actor
+      // in dataset/title/aria-label and animates them across the plate —
+      // skip it whenever their tracked position, or the destination of an
+      // in-progress move, is quiet, the same way liveVisibleResidentsAt
+      // withholds a quiet resident from every other Live surface.
+      if (isQuietPlace(placeReference(snapshot, placeId))) continue
+      if (held?.type === 'move' &&
+        isQuietPlace(placeReference(snapshot, held.record.detail.to_place_id))) continue
       let point = liveResidentReplayPoint(
         snapshot, placeId, actor, focus, children, renderContext)
       let destination = null
@@ -9026,6 +9075,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const type = liveRecordType(record)
       const key = liveTraceKey(record)
       if (!liveReplayRecordIsRevealed(record)) continue
+      // Fourth review pass on row 75: a trail arrow, note mark, or make/use
+      // pulse names its actor in an aria-label and plots at a place the
+      // record touches — the same two-place (move) or one-place (everything
+      // else) resolution liveLedgerQuietPlace already uses for the ledger
+      // must gate this layer too, or a quiet place's exact plate position
+      // and its visitor's handle leak through the trace SVG instead.
+      if (liveLedgerQuietPlace(snapshot, record)) continue
       const recordOpacity = windowLiveTraceOpacity(
         record.at.getTime(), Date.now(), liveRecordLifetime(record))
       if (type === 'move') {
@@ -10947,6 +11003,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       ))
     }
     if (!nodes.placeFrontMatter) return
+    // Fourth review pass on row 75: the Place tab renders front matter
+    // before the occupants/things/conversation panels below apply their own
+    // quiet checks — this block must resolve quiet for itself instead of
+    // assuming an earlier check in renderPlace already covered it, or a
+    // quiet place's own owner-chosen thing names and maker/owner handles
+    // would still print here.
+    if (isQuietPlace(place)) {
+      renderQuietRoom(nodes.placeFrontMatter, place)
+      return
+    }
     if (!place.front_matter.length) {
       renderEmpty(
         nodes.placeFrontMatter,
