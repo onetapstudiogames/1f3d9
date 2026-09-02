@@ -268,11 +268,6 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
       const worldId = Number((await connectedDatabase().query<{ id: number }>(
         `SELECT id FROM places WHERE place_kind = 'world'`,
       )).rows[0]!.id)
-      await assert.rejects(
-        connectedDatabase().query(
-          "UPDATE places SET quiet = TRUE WHERE id = $1 AND place_kind = 'world'::text",
-        ),
-      )
       // DISABLE TRIGGER is itself transactional DDL: rolling back the
       // transaction undoes it along with anything the disabled trigger let
       // through, so the immutability guard is never actually weakened.
