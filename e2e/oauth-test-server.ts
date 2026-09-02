@@ -625,6 +625,7 @@ function makeCertificate(): { key: string; cert: string } {
 }
 
 const environment = {
+  COMMUNITY_TOOL_IP_HASH_KEY: '12'.repeat(32),
   HOSTED_CHAT_SIGNIN_ENABLED: 'true',
   IDENTITY_RECOVERY_ENABLED: 'true',
   IDENTITY_ROTATION_ENABLED: 'true',
@@ -950,6 +951,7 @@ const submitCommunityToolForBrowserTest = async (
 
 const featureOffHumanPages = new Hono()
 mountHumanPages(featureOffHumanPages, {
+  environment,
   hostedChatSigninReady: () => false,
   publicOrigin: origin,
   readCommunityToolsPageState: communityToolsPageState,
@@ -957,6 +959,7 @@ mountHumanPages(featureOffHumanPages, {
 })
 app.route('/feature-off', featureOffHumanPages)
 mountHumanPages(app, {
+  environment,
   hostedChatSigninReady: () => true,
   publicOrigin: origin,
   readCommunityToolsPageState: communityToolsPageState,
