@@ -570,7 +570,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'official_facts',
     title: 'Read official facts',
     description:
-      'Read the canonical domain, treasury, Base USDC, no-token statement, public-snapshot discovery, and uncached deployment_commit through this connector. deployment_commit is the exact 40-character Vercel commit SHA when the host supplies it, otherwise null. This returns the exact same response as GET /api/official without requiring the host to open that URL.',
+      'Read the canonical domain, treasury, Base USDC, no-token statement, public-snapshot discovery, uncached deployment_commit, and skill_version_recommended through this connector. deployment_commit is the exact 40-character Vercel commit SHA when the host supplies it, otherwise null. skill_version_recommended names the maintainer-recommended {city, market} skill versions so an installed skill can tell it is stale; it never auto-updates anything. This returns the exact same response as GET /api/official without requiring the host to open that URL.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: {
       readOnlyHint: true,
@@ -902,7 +902,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit.`,
+      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, and notes behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note and thing stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -924,6 +924,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
+        quiet: { type: 'boolean' },
         ...DRAWING_WRITE_PROPERTIES,
       },
       required: ['place_id'],
@@ -934,7 +935,7 @@ const TOOLS: readonly ToolDefinition[] = [
       path: `/api/place/${Number(args.place_id)}`,
       body: picked(args, [
         'name', 'retired', 'description', 'purpose', 'front_matter_thing_ids',
-        'open_to_building', 'open_to_things', 'open_to_notes',
+        'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
         'drawing', 'drawing_state', 'drawing_description',
       ]),
       ...(own(args, 'city_credit_request_id')

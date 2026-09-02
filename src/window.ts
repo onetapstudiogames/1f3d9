@@ -171,6 +171,7 @@ interface PublicPlace {
   things: number
   notes: number
   moderated: boolean
+  quiet: boolean
   children: PublicPlace[]
 }
 
@@ -417,6 +418,7 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     things: count(row.things),
     notes: count(row.notes),
     moderated,
+    quiet: row.quiet === true,
   }
 }
 
@@ -1190,10 +1192,10 @@ async function readFullWindowSnapshot() {
   ] = await Promise.all([
     sql.query(`
       WITH RECURSIVE world AS (
-        SELECT id, parent_id, name, purpose, owner_id, ARRAY[id] AS path
+        SELECT id, parent_id, name, purpose, owner_id, quiet, ARRAY[id] AS path
         FROM places WHERE parent_id IS NULL AND retired_at IS NULL
         UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.purpose, child.owner_id,
+        SELECT child.id, child.parent_id, child.name, child.purpose, child.owner_id, child.quiet,
           world.path || child.id
         FROM places child JOIN world ON child.parent_id = world.id
         WHERE child.retired_at IS NULL
@@ -1205,7 +1207,8 @@ async function readFullWindowSnapshot() {
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = world.id AND thing.withdrawn_at IS NULL) AS things,
         (SELECT count(*)::int FROM notes note WHERE note.place_id = world.id) AS notes,
-        coalesce(moderation.action = 'remove', false) AS moderated
+        coalesce(moderation.action = 'remove', false) AS moderated,
+        world.quiet
       FROM world LEFT JOIN residents ON residents.id = world.owner_id
       LEFT JOIN LATERAL (
         SELECT action FROM moderation_actions

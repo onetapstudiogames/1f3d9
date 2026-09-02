@@ -3167,6 +3167,32 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(element('p', className, message))
   }
 
+  // Decision #75: a quiet place still shows its name, owner, and counts, but
+  // every window tab that would otherwise render its residents, things, or
+  // notes prints this one honest line instead. Expanding it (hover or the
+  // details toggle) states that the public record is unchanged.
+  function quietRoomNotice(place) {
+    const owner = (place && place.owner) || 'The owner'
+    const notice = element('details', 'quiet-room-notice')
+    const summary = element(
+      'summary',
+      'quiet-room-line',
+      owner + ' prefers to keep this room private.',
+    )
+    summary.title = 'Quiet is a request the window honours, not a privacy guarantee.'
+    notice.append(summary, element(
+      'p',
+      'quiet-room-expansion',
+      'The public record stays public: notes and things here remain readable at their own address.',
+    ))
+    return notice
+  }
+
+  function renderQuietRoom(target, place) {
+    if (!target) return
+    target.replaceChildren(quietRoomNotice(place))
+  }
+
   function safeArchiveChoice(value, choices, fallback) {
     return typeof value === 'string' && choices.includes(value) ? value : fallback
   }
@@ -4163,6 +4189,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         things: safeCount(rawPlace.things),
         notes: safeCount(rawPlace.notes),
         moderated,
+        quiet: rawPlace.quiet === true,
         children: normalizePlaces(rawPlace.children, depth + 1, nextSeen),
       }]
     })
@@ -6909,6 +6936,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderThingIndex(snapshot) {
     if (!nodes.thingsList || !nodes.thingsSummary) return
+    const scopedPlace = state.placeId ? placeReference(snapshot, state.placeId) : null
+    if (scopedPlace && scopedPlace.quiet) {
+      nodes.thingsSummary.textContent = scopedPlace.name + ' asked the window to stay quiet.'
+      renderQuietRoom(nodes.thingsList, scopedPlace)
+      if (nodes.thingsPage) nodes.thingsPage.hidden = true
+      return
+    }
     const expectedScopeKey = thingIndexScopeKey()
     const index = state.thingIndex.scopeKey === expectedScopeKey
       ? state.thingIndex
@@ -8244,6 +8278,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
 
   function renderLiveRoster(snapshot, focus, records, interactionThings) {
     if (!nodes.liveRoster) return
+    if (focus && focus.quiet) {
+      renderQuietRoom(nodes.liveRoster, focus)
+      return
+    }
     renderLiveResidentPage()
     const scope = placeScopeSet(focus.id, snapshot)
     const residents = displayedResidents(snapshot).filter(resident =>
@@ -10819,6 +10857,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     }
     renderPlaceOrientation(place)
+    if (place.quiet) {
+      renderQuietRoom(nodes.occupants, place)
+      renderQuietRoom(nodes.placeThings, place)
+      renderQuietRoom(nodes.placeConversation, place)
+      hideHistoryControl(nodes.placeThingsPage)
+      hideHistoryControl(nodes.placeNotesPage)
+      return
+    }
     renderOccupants(snapshot, place)
     const filters = Object.freeze({ placeId: place.id, resident: state.resident })
     autoLoadFilteredHistory('things', filters, historyEntry('things', filters))
@@ -10893,6 +10939,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const place = state.placeId
       ? placeReference(snapshot, state.placeId)
       : null
+    if (place && place.quiet && !state.resident) {
+      renderQuietRoom(nodes.conversations, place)
+      hideHistoryControl(nodes.conversationPage)
+      return
+    }
     autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
     const entry = historyEntry('notes', filters)
     const notes = entry.rows

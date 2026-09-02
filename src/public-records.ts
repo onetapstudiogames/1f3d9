@@ -43,7 +43,7 @@ export async function loadPublicPlaceRecord(
       CASE WHEN p.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
       p.description, p.purpose,
       p.owner_id, owner.handle AS owner,
-      p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
+      p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at
     FROM places p
     LEFT JOIN residents owner ON owner.id = p.owner_id
     LEFT JOIN LATERAL (

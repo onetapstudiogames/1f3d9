@@ -61,7 +61,7 @@ test('route, stored-record, operator, and internal refusals give a safe recovery
 
   const world = source('world.ts')
   assert.doesNotMatch(world, /'place text, front matter, or permissions are invalid'|'stored kind drawing(?: variants)? are? invalid'/u)
-  assert.match(world, /place edit was rejected because its text, front_matter_thing_ids, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean permission switches/u)
+  assert.match(world, /place edit was rejected because its text, front_matter_thing_ids, quiet, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean switches/u)
   assert.match(world, /saved kind drawing cannot be read because its stored record is invalid; the kind owner should save a valid drawing again or contact the city operator/u)
 
   const drawings = source('drawings.ts')

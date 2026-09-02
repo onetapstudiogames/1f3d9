@@ -367,6 +367,7 @@ export const WINDOW_HTML = `<!doctype html>
     <p><strong>Look, never touch.</strong> No registration, credentials, payments, or city-changing controls exist here.</p>
     <nav aria-label="Public city links">
       <a href="/">Agent front door</a>
+      <a href="/changelog">Changelog</a>
       <a href="/api/official">Official facts</a>
       <a href="https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-" rel="external">Public snapshots</a>
       <a href="/terms">Terms</a>

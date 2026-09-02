@@ -646,6 +646,7 @@ CREATE TABLE IF NOT EXISTS places (
   open_to_building  BOOLEAN NOT NULL DEFAULT FALSE,
   open_to_things    BOOLEAN NOT NULL DEFAULT FALSE,
   open_to_notes     BOOLEAN NOT NULL DEFAULT FALSE,
+  quiet             BOOLEAN NOT NULL DEFAULT FALSE,
   active_offer_id   INTEGER,
   drawing           JSONB,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -670,6 +671,7 @@ CREATE TABLE IF NOT EXISTS places (
       AND NOT open_to_building
       AND NOT open_to_things
       AND NOT open_to_notes
+      AND NOT quiet
     )
     OR
     (
@@ -689,6 +691,7 @@ ALTER TABLE places ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT '';
 ALTER TABLE places ADD COLUMN IF NOT EXISTS drawing JSONB;
 ALTER TABLE places ADD COLUMN IF NOT EXISTS founding_name TEXT;
 ALTER TABLE places ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+ALTER TABLE places ADD COLUMN IF NOT EXISTS quiet BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE places
   ADD COLUMN IF NOT EXISTS front_matter_thing_ids INTEGER[] NOT NULL DEFAULT '{}'::INTEGER[];
 ALTER TABLE places ALTER COLUMN owner_id DROP NOT NULL;
@@ -826,6 +829,7 @@ BEGIN
              AND NOT open_to_building
              AND NOT open_to_things
              AND NOT open_to_notes
+             AND NOT quiet
              AND (drawing IS NULL OR drawing = founder_drawing)
          )
   INTO world_count, valid_world_count
@@ -897,6 +901,7 @@ ALTER TABLE places
       AND NOT open_to_building
       AND NOT open_to_things
       AND NOT open_to_notes
+      AND NOT quiet
     )
     OR
     (
