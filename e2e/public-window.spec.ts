@@ -51,6 +51,14 @@ async function copiedShareLinks(page: Page): Promise<readonly string[]> {
   ])
 }
 
+function boxesIntersect(
+  left: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  right: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): boolean {
+  return left.x < right.x + right.width && left.x + left.width > right.x &&
+    left.y < right.y + right.height && left.y + left.height > right.y
+}
+
 test('public window links to the dated public snapshot archive', async ({ page }) => {
   await page.goto('/window')
   const link = page.getByRole('link', { name: 'Public snapshots' })
@@ -134,6 +142,95 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
   expect(thumbnailPaths).toContain('/api/drawing/resident/49/thumb.png?rev=9')
   expect(thumbnailPaths).toContain('/api/drawing/thing/401/thumb.png?rev=9')
   expect(thumbnailPaths).toContain('/api/drawing/kind/77/thumb.png?rev=9')
+})
+
+test('phone roster rows keep wrapping location text below names', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.route('**/api/window*', async route => {
+    const response = await route.fetch()
+    const body = await response.json() as {
+      readonly places?: ReadonlyArray<Record<string, unknown>>
+      readonly [key: string]: unknown
+    }
+    if (!body.places) {
+      await route.fulfill({ response })
+      return
+    }
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        places: body.places.map(place => place.id === 11 ? {
+          ...place,
+          name: 'frontier valley / the corrigenda room / the long lantern gallery',
+        } : place),
+      },
+    })
+  })
+
+  await page.goto('/window/place/11')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const placeRow = page.locator('#place-occupants .person-card')
+    .filter({ hasText: 'browser-resident' })
+  const placeHandle = placeRow.locator('.resident-follow')
+  const placeMeta = placeRow.locator('.resident-number')
+  await expect(placeRow).toBeVisible()
+  const [placeHandleBox, placeMetaBox] = await Promise.all([
+    placeHandle.boundingBox(),
+    placeMeta.boundingBox(),
+  ])
+  expect(placeHandleBox).not.toBeNull()
+  expect(placeMetaBox).not.toBeNull()
+  expect(boxesIntersect(placeHandleBox!, placeMetaBox!)).toBe(false)
+  expect(placeMetaBox!.y).toBeGreaterThanOrEqual(
+    placeHandleBox!.y + placeHandleBox!.height - 0.5,
+  )
+  expect(await placeMeta.evaluate(element => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return range.getClientRects().length
+  })).toBeGreaterThanOrEqual(2)
+
+  const placePortraitBox = await placeRow.locator('.entity-portrait').boundingBox()
+  expect(placePortraitBox).not.toBeNull()
+  expect(placePortraitBox!.y).toBeLessThan(placeHandleBox!.y + placeHandleBox!.height)
+  expect(placePortraitBox!.y + placePortraitBox!.height).toBeGreaterThan(placeHandleBox!.y)
+
+  const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
+  const [thingNameBox, thingMetaBox] = await Promise.all([
+    thing.locator('h4').boundingBox(),
+    thing.locator('.thing-meta').boundingBox(),
+  ])
+  expect(thingNameBox).not.toBeNull()
+  expect(thingMetaBox).not.toBeNull()
+  expect(boxesIntersect(thingNameBox!, thingMetaBox!)).toBe(false)
+  expect(thingMetaBox!.y).toBeGreaterThanOrEqual(thingNameBox!.y + thingNameBox!.height - 0.5)
+
+  await page.getByRole('tab', { name: 'Map', exact: true }).click()
+  const rosterRow = page.locator('#resident-roster .resident-row')
+    .filter({ hasText: 'browser-resident' })
+  await expect(rosterRow).toBeVisible()
+  const rosterMeta = rosterRow.locator('.resident-number')
+  await rosterMeta.evaluate(element => {
+    element.textContent =
+      'resident #49 · at frontier valley / the corrigenda room / the long lantern gallery'
+  })
+  const [rosterHandleBox, rosterMetaBox] = await Promise.all([
+    rosterRow.locator('.resident-follow').boundingBox(),
+    rosterMeta.boundingBox(),
+  ])
+  expect(rosterHandleBox).not.toBeNull()
+  expect(rosterMetaBox).not.toBeNull()
+  expect(boxesIntersect(rosterHandleBox!, rosterMetaBox!)).toBe(false)
+  expect(rosterMetaBox!.y).toBeGreaterThanOrEqual(
+    rosterHandleBox!.y + rosterHandleBox!.height - 0.5,
+  )
+  expect(await rosterMeta.evaluate(element => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return range.getClientRects().length
+  })).toBeGreaterThanOrEqual(2)
 })
 
 test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {

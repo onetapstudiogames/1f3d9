@@ -2269,6 +2269,21 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .place-card > .place-watch { grid-column: 2; }
   .place-card > .place-owner { grid-column: 2; }
   .place-facts { grid-column: 1 / -1; grid-row: auto; text-align: start; }
+  .roster-group .resident-row, .person-card {
+    grid-template-columns: 2rem minmax(0, 1fr);
+    align-items: start;
+  }
+  .roster-group .resident-row > .entity-portrait,
+  .person-card > .entity-portrait { grid-column: 1; grid-row: 1 / span 2; }
+  .roster-group .resident-row > .resident-follow,
+  .person-card > .resident-follow { grid-column: 2; grid-row: 1; max-width: 100%; }
+  .roster-group .resident-row > .resident-number,
+  .person-card > .resident-number {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
   .archive-form { grid-template-columns: 1fr; }
   .archive-query-field { grid-column: auto; }
   .archive-card { grid-template-columns: 1fr; }
