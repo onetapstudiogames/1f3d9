@@ -252,6 +252,105 @@ function isConstDeclaration(node: ts.VariableDeclaration): boolean {
 
 type StaticFunctionDeclaration = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration
 
+function staticFunctionDeclaration(
+  declaration: ts.Declaration | undefined,
+): StaticFunctionDeclaration | null {
+  if (
+    declaration
+    && ts.isVariableDeclaration(declaration)
+    && declaration.initializer
+    && isConstDeclaration(declaration)
+    && (ts.isFunctionExpression(declaration.initializer) || ts.isArrowFunction(declaration.initializer))
+  ) return declaration.initializer
+  if (
+    declaration
+    && (
+      ts.isFunctionDeclaration(declaration)
+      || ts.isFunctionExpression(declaration)
+      || ts.isArrowFunction(declaration)
+      || ts.isMethodDeclaration(declaration)
+    )
+  ) return declaration
+  return null
+}
+
+function callableDeclaration(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+): StaticFunctionDeclaration | null {
+  return staticFunctionDeclaration(symbolDeclaration(node, checker))
+}
+
+function collectThrownValueBuilders(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  builders: Set<StaticFunctionDeclaration>,
+  seen: Set<ts.Node>,
+): void {
+  if (seen.has(node)) return
+  seen.add(node)
+  if (
+    ts.isParenthesizedExpression(node)
+    || ts.isAsExpression(node)
+    || ts.isSatisfiesExpression(node)
+    || ts.isNonNullExpression(node)
+  ) {
+    collectThrownValueBuilders(node.expression, checker, builders, seen)
+    return
+  }
+  if (ts.isIdentifier(node)) {
+    const declaration = symbolDeclaration(node, checker)
+    if (
+      declaration
+      && ts.isVariableDeclaration(declaration)
+      && declaration.initializer
+      && isConstDeclaration(declaration)
+    ) collectThrownValueBuilders(declaration.initializer, checker, builders, seen)
+    return
+  }
+  if (ts.isConditionalExpression(node)) {
+    collectThrownValueBuilders(node.whenTrue, checker, builders, seen)
+    collectThrownValueBuilders(node.whenFalse, checker, builders, seen)
+    return
+  }
+  if (
+    ts.isBinaryExpression(node)
+    && (
+      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+      || node.operatorToken.kind === ts.SyntaxKind.BarBarToken
+      || node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+    )
+  ) {
+    collectThrownValueBuilders(node.left, checker, builders, seen)
+    collectThrownValueBuilders(node.right, checker, builders, seen)
+    return
+  }
+  if (ts.isCallExpression(node)) {
+    const declaration = callableDeclaration(node.expression, checker)
+    if (declaration) builders.add(declaration)
+  }
+}
+
+function functionsCalledFromThrowExpressions(
+  files: readonly string[],
+  program: ts.Program,
+  checker: ts.TypeChecker,
+): ReadonlySet<StaticFunctionDeclaration> {
+  const builders = new Set<StaticFunctionDeclaration>()
+  for (const file of files) {
+    const source = program.getSourceFile(file)
+    if (!source) continue
+    const visit = (node: ts.Node): void => {
+      if (ts.isThrowStatement(node) && node.expression) {
+        collectThrownValueBuilders(node.expression, checker, builders, new Set())
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+  }
+  return builders
+}
+
 function returnExpressions(node: StaticFunctionDeclaration): ts.Expression[] {
   if (!node.body) return []
   if (!ts.isBlock(node.body)) return [node.body]
@@ -263,6 +362,60 @@ function returnExpressions(node: StaticFunctionDeclaration): ts.Expression[] {
   }
   visit(node.body)
   return expressions
+}
+
+function returnedTypedErrorCreations(
+  node: StaticFunctionDeclaration,
+  checker: ts.TypeChecker,
+): ts.NewExpression[] {
+  const creations: ts.NewExpression[] = []
+  const seen = new Set<ts.Node>()
+  const visit = (expression: ts.Expression): void => {
+    if (seen.has(expression)) return
+    seen.add(expression)
+    if (ts.isNewExpression(expression)) {
+      const className = expression.expression.getText(expression.getSourceFile())
+      if (className === 'EngineError' || className === 'RouteFailure') creations.push(expression)
+      return
+    }
+    if (
+      ts.isParenthesizedExpression(expression)
+      || ts.isAsExpression(expression)
+      || ts.isSatisfiesExpression(expression)
+      || ts.isNonNullExpression(expression)
+    ) {
+      visit(expression.expression)
+      return
+    }
+    if (ts.isIdentifier(expression)) {
+      const declaration = symbolDeclaration(expression, checker)
+      if (
+        declaration
+        && ts.isVariableDeclaration(declaration)
+        && declaration.initializer
+        && isConstDeclaration(declaration)
+      ) visit(declaration.initializer)
+      return
+    }
+    if (ts.isConditionalExpression(expression)) {
+      visit(expression.whenTrue)
+      visit(expression.whenFalse)
+      return
+    }
+    if (
+      ts.isBinaryExpression(expression)
+      && (
+        expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+        || expression.operatorToken.kind === ts.SyntaxKind.BarBarToken
+        || expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+      )
+    ) {
+      visit(expression.left)
+      visit(expression.right)
+    }
+  }
+  for (const expression of returnExpressions(node)) visit(expression)
+  return creations
 }
 
 function resolveStaticTexts(
@@ -368,19 +521,7 @@ function resolveStaticTexts(
           .map(value => value.replace(pattern, replaceValue.text))
       }
     }
-    const declaration = symbolDeclaration(node.expression, checker)
-    const callable = declaration && ts.isVariableDeclaration(declaration)
-      && declaration.initializer && isConstDeclaration(declaration)
-      && (ts.isFunctionExpression(declaration.initializer) || ts.isArrowFunction(declaration.initializer))
-      ? declaration.initializer
-      : declaration && (
-          ts.isFunctionDeclaration(declaration)
-          || ts.isFunctionExpression(declaration)
-          || ts.isArrowFunction(declaration)
-          || ts.isMethodDeclaration(declaration)
-        )
-        ? declaration
-        : null
+    const callable = callableDeclaration(node.expression, checker)
     if (callable) {
       const callSubstitutions = new Map(substitutions)
       callable.parameters.forEach((parameter, index) => {
@@ -535,6 +676,7 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
     },
   })
   const checker = program.getTypeChecker()
+  const thrownBuilders = functionsCalledFromThrowExpressions(files, program, checker)
   for (const file of files) {
     const source = program.getSourceFile(file)
     if (!source) throw new Error(`refusal census could not parse ${file}`)
@@ -567,6 +709,21 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
           disposition: callerOverride ? 'included' : internalReason ? 'excluded' : disposition,
           exclusionReason: callerOverride ? '' : internalReason ?? exclusionReason,
         })
+      }
+    }
+
+    for (const builder of thrownBuilders) {
+      if (builder.getSourceFile() !== source) continue
+      for (const creation of returnedTypedErrorCreations(builder, checker)) {
+        const className = creation.expression.getText(source)
+        const message = creation.arguments?.[1]
+        if (message) {
+          add(
+            message,
+            `${className} returned builder adapter`,
+            exactStatus(creation.arguments?.[0], source),
+          )
+        }
       }
     }
 

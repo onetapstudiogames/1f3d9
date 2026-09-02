@@ -159,8 +159,8 @@ function gazetteConstraintEngineError(error: unknown): EngineError | null {
     return new EngineError(
       404,
       target
-        ? `Gazette submission note #${target} was not found in room #454`
-        : 'Gazette submission was not found in room #454',
+        ? `Gazette submission note #${target} was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454`
+        : 'Gazette submission was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454',
     )
   }
   if (constraint === 'gazette_withdrawal_author_mismatch') {
@@ -193,8 +193,8 @@ function gazetteConstraintEngineError(error: unknown): EngineError | null {
     return new EngineError(
       409,
       target
-        ? `Gazette submission note #${target} was already withdrawn by its author`
-        : 'Gazette submission was already withdrawn by its author',
+        ? `Gazette submission note #${target} was already withdrawn by its author; choose another active submission because withdrawal is permanent`
+        : 'Gazette submission was already withdrawn by its author; choose another active submission because withdrawal is permanent',
     )
   }
   return null

@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   auditRefusalCensus,
   discoverCandidates,
@@ -67,6 +70,89 @@ test('the source scan resolves constants, imported messages, templates, and loca
   assert.ok(candidates.some(row => row.finalText.includes(
     'Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients.',
   )))
+})
+
+test('the source scan follows typed error builders whose result is thrown', () => {
+  const candidates = discoverCandidates(projectRoot)
+  const rows = candidates.filter(row => row.producer === 'src/note-action.ts')
+
+  for (const expected of [
+    {
+      status: '404',
+      finalText: 'Gazette submission note #${target} was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454',
+    },
+    {
+      status: '409',
+      finalText: 'Gazette submission note #${target} was already withdrawn by its author; choose another active submission because withdrawal is permanent',
+    },
+  ]) {
+    assert.ok(rows.some(row => (
+      row.adapter === 'EngineError returned builder adapter'
+      && row.status === expected.status
+      && row.finalText === expected.finalText
+    )), expected.finalText)
+  }
+})
+
+test('the source scan covers every branch of function and arrow typed error builders', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'refusal-builder-census-'))
+  mkdirSync(join(fixtureRoot, 'src'))
+  writeFileSync(join(fixtureRoot, 'src', 'fixture.ts'), `
+    class EngineError extends Error {
+      constructor(readonly status: number, message: string) { super(message) }
+    }
+    class RouteFailure extends Error {
+      constructor(readonly status: number, message: string) { super(message) }
+    }
+    function engineBuilder(kind: string): EngineError | null {
+      if (kind === 'missing') return new EngineError(404, 'fixture engine missing')
+      if (kind === 'busy') return new EngineError(409, \`fixture engine \${kind}\`)
+      if (kind === 'runtime') return new EngineError(400, String(kind))
+      return null
+    }
+    const routeBuilder = () => new RouteFailure(503, 'fixture route unavailable')
+    function aliasedBuilder(): EngineError {
+      const refusal = new EngineError(409, 'fixture aliased builder refusal')
+      return refusal
+    }
+    function sideValueBuilder(): EngineError {
+      return new EngineError(418, 'fixture side value is not thrown')
+    }
+    export function throwEngine(kind: string): never {
+      throw engineBuilder(kind) ?? new Error('fallback')
+    }
+    export function throwRoute(): never {
+      throw routeBuilder()
+    }
+    export function throwAlias(): never {
+      const refusal = aliasedBuilder()
+      throw refusal
+    }
+    export function throwDifferentError(): never {
+      throw new EngineError(sideValueBuilder().status, 'fixture different thrown refusal')
+    }
+  `)
+
+  try {
+    const fixtureUrl = new URL(`${pathToFileURL(fixtureRoot).href}/`)
+    const candidates = discoverCandidates(fixtureUrl)
+    assert.deepEqual(
+      candidates.map(row => ({ adapter: row.adapter, status: row.status, text: row.finalText })),
+      [
+        { adapter: 'EngineError returned builder adapter', status: '404', text: 'fixture engine missing' },
+        { adapter: 'EngineError returned builder adapter', status: '409', text: 'fixture engine ${kind}' },
+        { adapter: 'RouteFailure returned builder adapter', status: '503', text: 'fixture route unavailable' },
+        { adapter: 'EngineError returned builder adapter', status: '409', text: 'fixture aliased builder refusal' },
+        { adapter: 'EngineError typed adapter', status: 'expression:sideValueBuilder().status', text: 'fixture different thrown refusal' },
+      ],
+    )
+    assert.deepEqual(
+      discoverUnresolvedProducers(fixtureUrl),
+      ['src/fixture.ts::String(kind)::1'],
+    )
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true })
+  }
 })
 
 test('the source scan includes place lifecycle helper refusals added on main', () => {

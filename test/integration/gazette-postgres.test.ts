@@ -1586,7 +1586,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', selfTargetBody), {
     ok: false,
     status: 404,
-    error: `Gazette submission note #${selfTargetId} was not found in room #454`,
+    error: `Gazette submission note #${selfTargetId} was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454`,
   })
   assert.deepEqual((await database.query(`
     SELECT
@@ -1608,7 +1608,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(await submit(2, 'gazette-author', 'WITHDRAW #2147483647'), {
     ok: false,
     status: 404,
-    error: 'Gazette submission note #2147483647 was not found in room #454',
+    error: 'Gazette submission note #2147483647 was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454',
   })
   assert.deepEqual(await submit(1, 'gazette-founder', `WITHDRAW #${targetId}`), {
     ok: false,
@@ -1636,6 +1636,14 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
   assert.deepEqual(
     await submit(2, 'gazette-author', `WITHDRAW #${targetId}`),
     { ...withdrawn, replayed: true },
+  )
+  assert.deepEqual(
+    await submit(2, 'gazette-author', `WITHDRAW  #${targetId}`),
+    {
+      ok: false,
+      status: 409,
+      error: `Gazette submission note #${targetId} was already withdrawn by its author; choose another active submission because withdrawal is permanent`,
+    },
   )
   await assert.rejects(
     database.query(`
