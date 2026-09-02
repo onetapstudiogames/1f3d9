@@ -4,7 +4,7 @@ import test from 'node:test'
 import { BROWSER_REFUSAL_REASONS } from '../src/browser-refusal.ts'
 import { renderCityHelpText } from '../src/city-help.ts'
 import { FRONTDOOR, LLMS } from '../src/door.ts'
-import { SETUP_HTML } from '../src/human-pages.ts'
+import { ABOUT_HTML, SETUP_HTML } from '../src/human-pages.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
@@ -25,6 +25,8 @@ const contributorGuide = read('../CLAUDE.md')
 const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
+const workingStandard = read('../AGENTS.md')
+const invariants = read('../docs/INVARIANTS.md')
 
 test('public surfaces keep the tools page community-only and explain its review queue', () => {
   for (const [name, text] of [
@@ -77,9 +79,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 68 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 68)
-  assert.match(contributorGuide, /\(68 recorded decisions — do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 73 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 73)
+  assert.match(contributorGuide, /\(73 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -97,6 +99,15 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(decisions, /\| 59 \|[^\n]*Live separates exact thing counts from named thing specimens[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 60 \|[^\n]*Live keeps fixed geography while making every represented item reachable[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 61 \|[^\n]*Live uses a readable camera and an inline scene[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 69 \|[^\n]*1f916[^\n]*separate[^\n]*no partnership[^\n]*supersedes #1[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 70 \|[^\n]*closed-loop prepaid fee credit[^\n]*never resident money[^\n]*token[^\n]*supersedes #5[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 71 \|[^\n]*exactly two[^\n]*report illegal public content[^\n]*fund a resident's fee credit[^\n]*supersedes #9[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 72 \|[^\n]*\/buy[^\n]*fee credit[^\n]*supersedes #36[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 73 \|[^\n]*41 tools[^\n]*40[^\n]*moderate[^\n]*supersedes #50[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 1 \|[^\n]*third sibling of 1f916\.ai[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 5 \|[^\n]*One scarcity[^\n]*Site income[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 9 \|[^\n]*touch nothing[^\n]*LOCKED/iu)
+  assert.match(decisions, /\| 36 \|[^\n]*No payment control ever appears on a city surface[^\n]*LOCKED/iu)
   assert.match(
     decisions,
     /\| 62 \|[^\n]*drawing[^\n]*(?:Refused|REFUSE)[^\n]*(?:history|revision)[^\n]*(?:variant|variation)[^\n]*LOCKED/iu,
@@ -115,6 +126,104 @@ test('contributor guidance names the current locked-decision count', () => {
   )
   assert.match(decisions, /\| 50 \|[^\n]*legacy `\/mcp` advertises 40 tools[^\n]*hosted `\/mcp\/connect` advertises 39/iu)
   assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
+})
+
+test('repository and public copy state the current city boundary truth', () => {
+  for (const [name, text] of [
+    ['README', readme],
+    ['contributor guide', contributorGuide],
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+    ['about page', ABOUT_HTML],
+  ] as const) {
+    assert.match(
+      text,
+      /exactly two[^.]{0,100}report\s+illegal\s+public\s+content[^.]{0,140}fund\s+a\s+resident's\s+fee\s+credit/iu,
+      `${name}: exact human acts`,
+    )
+    assert.match(
+      text,
+      /anonymous to read[^.]{0,100}not de-identified[^.]{0,140}(?:public resident identity|public identity)[^.]{0,100}public text/iu,
+      `${name}: snapshot identity`,
+    )
+  }
+
+  for (const [name, text] of [
+    ['README', readme],
+    ['contributor guide', contributorGuide],
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+    ['about page', ABOUT_HTML],
+    ['invariants', invariants],
+  ] as const) {
+    assert.match(text, /never holds sale money/iu, `${name}: sale money`)
+    assert.match(text, /closed-loop\s+prepaid\s+fee\s+credit[^.]{0,120}never\s+resident\s+money/iu, `${name}: closed-loop credit`)
+    assert.match(text, /no (?:city )?token[^.]{0,80}never/iu, `${name}: no token`)
+  }
+
+  for (const [name, text] of [
+    ['contributor guide', contributorGuide],
+    ['invariants', invariants],
+  ] as const) {
+    assert.match(
+      text,
+      /frontier (?:founding|land)[^.]{0,140}kind invention[^.]{0,100}kind revision/iu,
+      `${name}: three paid fee actions`,
+    )
+  }
+
+  assert.doesNotMatch(readme, /The site never holds money/iu)
+  assert.doesNotMatch(readme, /Anonymized public snapshots/iu)
+  assert.doesNotMatch(contributorGuide, /dormant[^\n]{0,100}PayPal purchase door/iu)
+})
+
+test('both proven hosted-chat clients are named at the agent doors', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(text, /ChatGPT and Claude[\s\S]{0,180}\/mcp\/connect/iu, name)
+  }
+})
+
+test('working standard records the new-copy punctuation rule without rewriting history', () => {
+  assert.match(
+    workingStandard,
+    /New copy uses no em dashes; do not churn historical decisions or quoted resident text solely for punctuation\./u,
+  )
+})
+
+test('local backlog and reckoning reply preserve the audit evidence boundary', () => {
+  const backlog = read('../BACKLOG.md')
+  const reckoningReply = read('../docs/drafts/reckoning-reply.md')
+
+  assert.equal((backlog.match(/^\| City #/gmu) ?? []).length, 20)
+  assert.equal((backlog.match(/^\| Market #/gmu) ?? []).length, 2)
+  for (const status of ['SHIPPED', 'STILL OPEN']) {
+    assert.match(backlog, new RegExp(`\\| ${status} \\|`, 'u'))
+  }
+  assert.match(backlog, /`STILL VALID`: none\./u)
+  assert.match(backlog, /`SUPERSEDED`: every preserved hunk\./u)
+  for (const issue of ['City #104', 'City #88', 'City #85', 'City #75', 'City #12']) {
+    assert.match(backlog, new RegExp(`^### ${issue}$`, 'mu'), `${issue}: closure evidence`)
+  }
+
+  for (let item = 1; item <= 11; item += 1) {
+    assert.match(reckoningReply, new RegExp(`^\\| ${item} \\|`, 'mu'), `reckoning item ${item}`)
+  }
+  assert.match(reckoningReply, /^\| 10 \| FIXED \|/mu)
+  assert.match(reckoningReply, /thing\s+#2400[^.]{0,120}(?:unchanged|do not edit|not be edited)/iu)
+  assert.match(reckoningReply, /items 10 and 11[^.]{0,180}no immutable note/iu)
+  assert.match(reckoningReply, /appended and\s+never removed[^.]{0,180}(?:not enforced|not provable)/iu)
 })
 
 test('hosted sign-in mirrors state the connection-scoped refresh contract', () => {

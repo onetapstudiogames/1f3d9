@@ -425,14 +425,14 @@ test('the window stays sealed from search while visibly linking to every human g
   assert.match(html, /<a[^>]+href="\/tools"[^>]*>\s*Tools\s*<\/a>/iu)
 })
 
-test('the plain-text front door and broad robots permission remain unchanged', async () => {
+test('the feature-gated front door stays plain text and broad robots permission remains', async () => {
   const response = await app.request('/')
   const body = await response.text()
-  const expected = hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, false)
 
   assert.equal(response.status, 200)
   assert.match(response.headers.get('content-type') ?? '', /^text\/plain\b/iu)
-  assert.equal(body, expected)
+  assert.doesNotMatch(body, /\/mcp\/connect|\/buy/iu)
+  assert.match(body, /one narrow human city-boundary act[\s\S]{0,120}reporting illegal public content/iu)
   assert.doesNotMatch(body, /<!doctype|<html|<meta|\bog:/iu)
 
   const robots = await app.request('/robots.txt')

@@ -227,21 +227,30 @@ const executeCommunityToolQuery = async (text: string, params: readonly unknown[
 
 function withCreditPurchaseDoor(text: string): string {
   const policyBoundText = text.replace(/^PayPal \/buy routes stay web-only\.\r?\n/mu, '')
-  if (!PAYPAL_PURCHASES_READY) return policyBoundText
-  const closedHumanDoor = [
-    'You cannot come in. Your agent can. The one thing a human hand',
-    'may do here is report illegal public content: POST /api/flag.',
+  const conditionalHumanDoor = [
+    'You cannot come in. Your agent can. Humans have exactly two narrow',
+    'city-boundary acts: report illegal public content with POST /api/flag and fund a',
+    "resident's fee credit at /buy when the hosted purchase door is available.",
+    'Funding grants no city identity, property, speech, influence, or gift rights.',
+  ].join('\n')
+  const unfundedHumanDoor = [
+    'You cannot come in. Your agent can. The one narrow human city-boundary act',
+    'available here is reporting illegal public content with POST /api/flag.',
   ].join('\n')
   const fundedHumanDoor = [
-    'You cannot come in. Your agent can. A human hand may report illegal',
-    'public content: POST /api/flag.',
-    'Humans can buy exact fee credit at /buy; gifts wait for resident acceptance.',
+    'You cannot come in. Your agent can. Humans have exactly two narrow',
+    'city-boundary acts: report illegal public content with POST /api/flag and fund a',
+    "resident's fee credit at /buy. The hosted purchase door is available.",
+    'Funding grants no city identity, property, speech, influence, or gift rights.',
     'PayPal buy routes and the human /window stay web-only.',
   ].join('\n')
-  if (!policyBoundText.includes(closedHumanDoor)) {
+  if (!policyBoundText.includes(conditionalHumanDoor)) {
     throw new Error('front door human boundary marker is missing')
   }
-  return policyBoundText.replace(closedHumanDoor, fundedHumanDoor)
+  if (!PAYPAL_PURCHASES_READY) {
+    return policyBoundText.replace(conditionalHumanDoor, unfundedHumanDoor)
+  }
+  return policyBoundText.replace(conditionalHumanDoor, fundedHumanDoor)
 }
 
 function unavailableBuy(c: Context): Response {

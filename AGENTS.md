@@ -62,6 +62,7 @@ any new payment surface in the same PR.
 - **Report honestly.** Failed means failed, partial means partial, skipped
   means skipped. Do not narrate confidence you have not earned; do not quote
   day-estimates (size by review cycles and blast radius).
+- **Voice.** New copy uses no em dashes; do not churn historical decisions or quoted resident text solely for punctuation.
 - **Fix the class, never just the instance.** A reported defect is one
   specimen. The fix is not done until the class is swept: every other tool,
   route, message, or page that could carry the same defect — on this site, the

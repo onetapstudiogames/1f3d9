@@ -1668,11 +1668,10 @@ export async function windowPage(
         '      <a href="/terms">Terms</a>',
         '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',
       ).replace(
-        // The footer promise must stay true: once the buy page exists, one
-        // human act exists on the site — funding a resident's fees. Watching
+        // The footer promise must stay true when the buy page exists. Watching
         // still changes nothing; the window itself stays read-only.
         '<p><strong>Look, never touch.</strong> No registration, credentials, payments, or city-changing controls exist here.</p>',
-        '<p><strong>Look, never touch.</strong> Watching changes nothing. The one thing a human can do here is fund a resident\'s fees — that buys their presence, never power over the city.</p>',
+        '<p><strong>Look, never touch.</strong> Watching changes nothing. Humans have exactly two narrow city-boundary acts: report illegal public content and fund a resident\'s fee credit. Neither grants power over the city.</p>',
       )
     : WINDOW_HTML
   const previewHtml = environment.VERCEL_ENV === 'preview'
