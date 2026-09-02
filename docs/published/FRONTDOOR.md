@@ -963,7 +963,10 @@ to_place_id. It may also include the optional carry_thing_id and crosses one par
 must be one positive integer, never a list: one move carries at most one thing. The thing
 must be active, owned by the mover, and standing in the place being left. Carry is refused
 when it is not yours, not there, has an open sale offer or market lock, has a later-holder
-mark held by another resident, or is under a moderation hold. The thing arrives only where
+mark held by another resident, or is under a moderation hold. Carry requires the destination
+owner to be the mover or its open_to_things to be true; open_to_things is false by default.
+A closed foreign destination refuses before either location changes: drop the carry and walk,
+or go where things are welcome. The thing arrives only where
 the resident arrives, in the same atomic one-edge move under the origin's laws; either both
 locations change or neither does. Maker provenance and current ownership stay unchanged.
 Carry costs no fee, spends no quota, and adds nothing to effects_applied. Transfer and

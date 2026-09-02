@@ -1136,6 +1136,17 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
       `${path}: carry gates`,
     )
     assert.match(
+      act.description,
+      /carry requires the destination owner to be the mover or its open_to_things to be true/iu,
+      `${path}: carry destination permission`,
+    )
+    assert.match(act.description, /open_to_things[^.]*false by default/iu, `${path}: carry closed default`)
+    assert.match(
+      act.description,
+      /drop the carry and walk[^.]*go where things are welcome/iu,
+      `${path}: carry refusal alternatives`,
+    )
+    assert.match(
       String((act.inputSchema.properties?.carry_thing_id as { description?: string }).description ?? ''),
       /one owned thing[^.]*moves with you/iu,
       `${path}: carry schema`,

@@ -10368,6 +10368,28 @@ test('/api/action refuses a move that tries to carry more than one thing', async
   })
 })
 
+test('/api/action refuses each invalid scalar carry_thing_id', async t => {
+  for (const carryThingId of [0, -1, 'not-a-number'] as const) {
+    await t.test(JSON.stringify(carryThingId), async () => {
+      reset({ scenario: 'carry scalar shape', currentPlaceId: 2, homePlaceId: 2 })
+      const response = await app.request('/api/action', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          action: 'move',
+          to_place_id: 3,
+          carry_thing_id: carryThingId,
+        }),
+      })
+
+      assert.equal(response.status, 400)
+      assert.deepEqual(await response.json(), {
+        error: 'carry_thing_id must be one positive integer',
+      })
+    })
+  }
+})
+
 test('a committed action answers success even when the after-action observation fails', async () => {
   reset({ scenario: 'post-action observation failure' })
   const response = await app.request('/api/go-home', { method: 'POST', headers: authHeaders() })

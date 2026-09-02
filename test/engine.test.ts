@@ -1770,6 +1770,8 @@ interface CarryThingFixture {
   readonly has_open_offer?: boolean
   readonly marked_by_other?: boolean
   readonly moderation_action?: 'remove' | 'restore' | null
+  readonly destination_owner_id?: number
+  readonly destination_open_to_things?: boolean
   readonly update_succeeds?: boolean
   readonly law_emits_typed_event?: boolean
 }
@@ -1784,6 +1786,8 @@ function carryActionDb(fixture: CarryThingFixture = {}) {
     has_open_offer: false,
     marked_by_other: false,
     moderation_action: null,
+    destination_owner_id: 7,
+    destination_open_to_things: false,
     update_succeeds: true,
     ...fixture,
   }
@@ -1794,6 +1798,13 @@ function carryActionDb(fixture: CarryThingFixture = {}) {
     if (/INSERT INTO action_runs/.test(text)) return [{ id: 301 }]
     if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
     if (/AS marked_by_other/.test(text)) return [thing]
+    if (/FROM places destination/.test(text)) return [{
+      id: 3,
+      owner_id: thing.destination_owner_id,
+      open_to_things: thing.destination_open_to_things,
+      destination_permits_things:
+        thing.destination_owner_id === 7 || thing.destination_open_to_things,
+    }]
     if (/WITH RECURSIVE ancestry/.test(text)) {
       return fixture.law_emits_typed_event ? [{
         trait_id: 12,
@@ -1851,6 +1862,42 @@ test('a move carries one owned colocated thing and records both movements', asyn
   assert.match(carry?.text ?? '', /'resident_id'/)
   const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
   assert.match(String(resolution?.values[2] ?? ''), /"thing_id":41/)
+})
+
+test('a carry refuses a closed foreign destination before either location changes', async () => {
+  const { result, calls } = await carryAction({
+    destination_owner_id: 8,
+    destination_open_to_things: false,
+  })
+
+  assert.equal(result.httpStatus, 403)
+  assert.equal(
+    result.error,
+    'destination place does not accept visitor things; drop the carry and walk, or go where things are welcome',
+  )
+  assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
+  assert.equal(calls.some(call => /UPDATE things carrying SET place_id/.test(call.text)), false)
+})
+
+test('a carry may enter the mover\'s own closed destination', async () => {
+  const { result, calls } = await carryAction({
+    destination_owner_id: 7,
+    destination_open_to_things: false,
+  })
+
+  assert.equal(result.status, 'applied')
+  const permission = calls.find(call => /FROM places destination/.test(call.text))
+  assert.match(permission?.text ?? '', /\(destination\.owner_id = \$ OR destination\.open_to_things\)/u)
+  assert.equal(permission?.values[0], 7)
+})
+
+test('a carry may enter a foreign destination open to visitor things', async () => {
+  const { result } = await carryAction({
+    destination_owner_id: 8,
+    destination_open_to_things: true,
+  })
+
+  assert.equal(result.status, 'applied')
 })
 
 test('a carried move keeps its resident movement record when an origin law emits an event', async () => {
@@ -1915,6 +1962,18 @@ test('a move refuses to carry a thing under a moderation hold', async () => {
   assert.equal(result.httpStatus, 409)
   assert.equal(result.error, 'carry_thing_id is under a moderation hold')
   assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
+})
+
+test('a carry reports when its final guarded update loses the race', async () => {
+  const { result, calls } = await carryAction({ update_succeeds: false })
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 409)
+  assert.equal(
+    result.error,
+    'carry_thing_id, ownership, place, sale/lock, later-holder mark, or moderation hold changed before the move; re-read it',
+  )
+  assert.equal(calls.some(call => /UPDATE things carrying SET place_id/.test(call.text)), true)
 })
 
 test('caller-handled primitives still record and run physics without duplicating the primitive', async () => {

@@ -17,6 +17,7 @@ import {
 } from './engine-effects.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
+import { placePermission, withPlacePermission } from './place-permission.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -1066,6 +1067,20 @@ async function moveResidentWithCarry(
   }
   if (thing.moderation_action === 'remove') {
     throw new EngineError(409, 'carry_thing_id is under a moderation hold')
+  }
+
+  const destinations = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
+    SELECT destination.id,
+      ${placePermission('destination', 'open_to_things', input.actorId)} AS destination_permits_things
+    FROM places destination
+    WHERE destination.id = ${input.destinationPlaceId}
+    FOR UPDATE OF destination
+  `)
+  if (destinations[0] && destinations[0].destination_permits_things !== true) {
+    throw new EngineError(
+      403,
+      'destination place does not accept visitor things; drop the carry and walk, or go where things are welcome',
+    )
   }
 
   await moveResident(input.actorId, input.destinationPlaceId, db)

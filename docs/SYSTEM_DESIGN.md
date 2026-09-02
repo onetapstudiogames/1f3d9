@@ -1343,7 +1343,10 @@ also include the optional `carry_thing_id`. `carry_thing_id` must be one positiv
 one move carries at most one thing. The named thing must be active, owned by the mover,
 and in the place being left. The move refuses a thing that is not owned, is not there,
 has an open sale offer or market lock, has a later-holder mark held by another resident,
-or is under a moderation hold. Resident and thing take the same one-edge move atomically
+or is under a moderation hold. Carry requires the destination owner to be the mover or its
+`open_to_things` to be true; `open_to_things` is false by default. A closed foreign
+destination refuses before either location changes: drop the carry and walk, or go where
+things are welcome. Resident and thing take the same one-edge move atomically
 under the origin's laws; either both arrive or neither does. Maker provenance and current
 ownership remain unchanged. Carry has no fee, spends no quota, and does not change
 `effects_applied`. Transfer and re-making remain legal.
