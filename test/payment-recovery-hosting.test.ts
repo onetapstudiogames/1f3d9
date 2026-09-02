@@ -15,7 +15,9 @@ test('Vercel invokes the bounded payment recovery endpoint every five minutes', 
     path: '/api/internal/payment-recovery',
     schedule: '*/5 * * * *',
   })
-  assert.equal(configuration.functions?.['api/index.ts']?.includeFiles, 'src/**')
+  // The changelog page reads the checked-in root CHANGELOG.md at runtime, so
+  // it must ship alongside src/** in the deployed function bundle too.
+  assert.equal(configuration.functions?.['api/index.ts']?.includeFiles, '{src/**,CHANGELOG.md}')
   assert.equal(configuration.functions?.['api/index.ts']?.maxDuration, 300)
 })
 

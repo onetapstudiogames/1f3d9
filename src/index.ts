@@ -75,6 +75,7 @@ import {
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
+import { mountChangelogRoutes } from './changelog.ts'
 import {
   readCommunityToolQueue,
   readCommunityToolWaitingCount,
@@ -522,6 +523,7 @@ mountHumanPages(app, {
     await submitCommunityTool(executeCommunityToolQuery, submission, ipHash),
 })
 mountCityHelpRoute(app)
+mountChangelogRoutes(app)
 mountLegalRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)

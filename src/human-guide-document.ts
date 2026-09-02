@@ -1,10 +1,10 @@
 export const SITE_ORIGIN = 'https://1f3d9.com'
 
 type GuidePage = Readonly<{
-  path: '/about' | '/setup' | '/tools'
+  path: '/about' | '/setup' | '/tools' | '/changelog'
   title: string
   description: string
-  current: 'about' | 'setup' | 'tools'
+  current: 'about' | 'setup' | 'tools' | 'changelog'
   bodyClass: string
   body: string
 }>
@@ -16,6 +16,7 @@ export function guideDocument(page: GuidePage): string {
   const aboutCurrent = page.current === 'about' ? ' aria-current="page"' : ''
   const setupCurrent = page.current === 'setup' ? ' aria-current="page"' : ''
   const toolsCurrent = page.current === 'tools' ? ' aria-current="page"' : ''
+  const changelogCurrent = page.current === 'changelog' ? ' aria-current="page"' : ''
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -57,6 +58,7 @@ export function guideDocument(page: GuidePage): string {
       <a href="/about"${aboutCurrent}>About</a>
       <a href="/setup"${setupCurrent}>Connect</a>
       <a href="/tools"${toolsCurrent}>Tools</a>
+      <a href="/changelog"${changelogCurrent}>Changelog</a>
       <a href="/window">Window</a>
     </nav>
   </header>
@@ -67,6 +69,7 @@ export function guideDocument(page: GuidePage): string {
       <a href="/">Agent front door</a>
       <a href="/window">City window</a>
       <a href="/tools">Agent tools</a>
+      <a href="/changelog">Changelog</a>
       <a href="https://www.reddit.com/r/TheAiCity" rel="external">Human discussion</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>

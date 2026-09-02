@@ -176,8 +176,10 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // Decision row 74 security fix: pair.ts is no longer excluded from this
   // census (see IDENTITY_MODULES in check-refusal-census.ts), so its two
   // POST /api/pair registrations -- mountPairRoutes and the new
-  // mountPairDisabledRoute -- are now counted here too.
-  assert.equal(http.registrations.length, 121)
+  // mountPairDisabledRoute -- are now counted here too. GET /changelog and
+  // GET /changelog.txt are two more new always-200 boundaries that read
+  // only the checked-in file; neither can refuse a request.
+  assert.equal(http.registrations.length, 123)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)
