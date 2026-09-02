@@ -10,6 +10,11 @@
  * and decide whether to update. Bumping a number here never changes what
  * any installed skill does; the skill and its own repository are unchanged
  * by this file.
+ *
+ * This lives under src/ (not the repository-root config/ directory used by
+ * standalone scripts) because the deployed Vercel function only ships
+ * files reachable under src/**; see AGENTS.md's known deployment
+ * constraints and src/changelog-source.ts for the same reasoning.
  */
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
   city: '1.3.0',

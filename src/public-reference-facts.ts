@@ -1,4 +1,3 @@
-import { SKILL_VERSION_RECOMMENDED } from '../config/skill-versions.ts'
 import { NETWORK, USDC } from './chain.ts'
 import {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -25,6 +24,7 @@ import {
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
 } from './physics.ts'
+import { SKILL_VERSION_RECOMMENDED } from './skill-versions.ts'
 
 const DEFAULT_DOMAIN = 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'

@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { publicPlaceTree } from '../src/window.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
-import { SKILL_VERSION_RECOMMENDED } from '../config/skill-versions.ts'
+import { SKILL_VERSION_RECOMMENDED } from '../src/skill-versions.ts'
 
 function source(path: string): string {
   return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
