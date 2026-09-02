@@ -136,6 +136,12 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
       `) as ThingRow[]
       const thing = rows[0]
       if (!thing) {
+        const placeRows = (await transaction`
+          SELECT retired_at FROM places WHERE id = ${input.placeId}
+        `) as Array<{ retired_at: string | null }>
+        if (placeRows[0]?.retired_at != null) {
+          throw new EngineError(409, 'place is retired; restore it before making things there')
+        }
         const quotaRows = (await transaction`
           SELECT things_today < ${QUOTAS.things} AS available
           FROM residents WHERE id = ${input.actor.id}

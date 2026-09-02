@@ -151,6 +151,26 @@ test('ordinary resident movement only crosses one parent-child edge', async () =
     return []
   })
   assert.equal((await moveResident(7, 9, allowed.db)).currentPlaceId, 9)
+  const destinationRead = allowed.calls.find(call => /FROM places/.test(call.text))
+  assert.match(destinationRead?.text ?? '', /FOR SHARE/iu)
+})
+
+test('ordinary movement refuses a retired destination in caller words before moving', async () => {
+  const retired = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) return [{ current_place_id: 2, home_place_id: 3 }]
+    if (/FROM places/.test(text)) return [
+      { id: 2, parent_id: 1, retired_at: null },
+      { id: 9, parent_id: 2, retired_at: '2026-09-01T00:00:00Z' },
+    ]
+    return []
+  })
+
+  await assert.rejects(moveResident(7, 9, retired.db), (error: unknown) => (
+    error instanceof EngineError
+    && error.status === 409
+    && error.message === 'destination place is retired; restore it before moving there'
+  ))
+  assert.equal(retired.calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 })
 
 test('symbolic targets never accept recipe-authored database ids', () => {
@@ -1641,6 +1661,43 @@ test('a move brick moves only an owned thing across one place edge', async () =>
   assert.deepEqual(guardedMove?.values.slice(0, 3), [41, 7, 2])
 })
 
+test('a move brick refuses a retired destination in caller words', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 315 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) {
+      return [{ id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null }]
+    }
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 11,
+      recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
+    }]
+    if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
+    if (/FROM places place WHERE place\.id = ANY/.test(text)) return [
+      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false, retired_at: null, place_permits_things: true },
+      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false, retired_at: '2026-09-01T00:00:00Z', place_permits_things: true },
+    ]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 415 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+    destinationPlaceId: 3,
+  }, db)
+
+  assert.equal(result.httpStatus, 409)
+  assert.equal(result.error, 'destination place is retired; restore it before moving a thing there')
+  assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), false)
+})
+
 test('a thing move that loses its original-place race returns the existing collision', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {
@@ -1740,7 +1797,7 @@ test('a resident move effect cannot bypass the one-edge movement rule', async ()
       position: 0,
     }]
     if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
-    if (/SELECT id, parent_id FROM places/.test(text)) return [
+    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
       { id: 2, parent_id: 1 },
       { id: 9, parent_id: 8 },
     ]
@@ -1772,6 +1829,7 @@ interface CarryThingFixture {
   readonly moderation_action?: 'remove' | 'restore' | null
   readonly destination_owner_id?: number
   readonly destination_open_to_things?: boolean
+  readonly destination_retired_at?: string | null
   readonly update_succeeds?: boolean
   readonly law_emits_typed_event?: boolean
 }
@@ -1788,6 +1846,7 @@ function carryActionDb(fixture: CarryThingFixture = {}) {
     moderation_action: null,
     destination_owner_id: 7,
     destination_open_to_things: false,
+    destination_retired_at: null,
     update_succeeds: true,
     ...fixture,
   }
@@ -1802,6 +1861,7 @@ function carryActionDb(fixture: CarryThingFixture = {}) {
       id: 3,
       owner_id: thing.destination_owner_id,
       open_to_things: thing.destination_open_to_things,
+      retired_at: thing.destination_retired_at,
       destination_permits_things:
         thing.destination_owner_id === 7 || thing.destination_open_to_things,
     }]
@@ -1821,7 +1881,7 @@ function carryActionDb(fixture: CarryThingFixture = {}) {
     if (/pg_advisory_xact_lock/.test(text)) return []
     if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
     if (/INSERT INTO pending_effects/.test(text)) return [{ id: 501 }]
-    if (/SELECT id, parent_id FROM places/.test(text)) return [
+    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
       { id: 2, parent_id: 1 },
       { id: 3, parent_id: 2 },
     ]
@@ -1875,6 +1935,17 @@ test('a carry refuses a closed foreign destination before either location change
     result.error,
     'destination place does not accept visitor things; drop the carry and walk, or go where things are welcome',
   )
+  assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
+  assert.equal(calls.some(call => /UPDATE things carrying SET place_id/.test(call.text)), false)
+})
+
+test('a carry refuses a retired destination before either location changes', async () => {
+  const { result, calls } = await carryAction({
+    destination_retired_at: '2026-09-01T00:00:00Z',
+  })
+
+  assert.equal(result.httpStatus, 409)
+  assert.equal(result.error, 'destination place is retired; restore it before moving there')
   assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
   assert.equal(calls.some(call => /UPDATE things carrying SET place_id/.test(call.text)), false)
 })

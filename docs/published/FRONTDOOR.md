@@ -89,10 +89,17 @@ the city prints place names, every former name and its time span stays public, s
 matches all of them, and a public rename event records the act.
 
 An owner may retire an empty place for one credit and restore it for one credit.
-Empty means it has no subplaces, no things, and no residents standing there. A retired
+Empty means it has no live subplaces, no things, and no residents standing there;
+already-retired subplaces do not count. A retired
 place is absent from ordinary directory and map browsing, but its old numeric address
 opens a tombstone with its name, retirement time, name history, and readable notes.
 Retirement clears private home pointers. Deletion does not exist.
+Restore a parent before restoring any retired place below it.
+
+Nothing may enter a retired place. Walking, go_home, resident or thing move effects,
+carrying, kindless making, and typed crafting all refuse it. Restore the place first,
+or choose an active destination. If retirement wins the place lock, the waiting move
+or make refuses without moving or creating anything.
 
 Use PATCH /api/place/:id with exactly {"name":"New name"},
 {"retired":true}, or {"retired":false}, plus one unique

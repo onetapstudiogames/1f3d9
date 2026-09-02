@@ -24,11 +24,16 @@ test('place lifecycle migration preserves founding names and append-only name sp
   assert.match(migration, /founding name is immutable/iu)
 
   assert.match(migration, /CREATE TABLE IF NOT EXISTS place_name_history/iu)
+  assert.match(migration, /place_id\s+INTEGER NOT NULL REFERENCES places\(id\) ON DELETE CASCADE/iu)
   assert.match(migration, /event_id\s+BIGINT(?:\s+UNIQUE)?\s+REFERENCES events\(id\) ON DELETE RESTRICT/iu)
   assert.match(migration, /INSERT INTO place_name_history\s*\(place_id, name, started_at, event_id\)[\s\S]*SELECT place\.id, place\.name, place\.created_at, NULL/iu)
   assert.match(migration, /CREATE (?:OR REPLACE )?VIEW place_name_spans[\s\S]*lead\(started_at\)[\s\S]*PARTITION BY place_id/iu)
   assert.match(migration, /place_name_history_append_only[\s\S]*BEFORE UPDATE OR DELETE/iu)
   assert.match(migration, /place_name_history_no_truncate[\s\S]*BEFORE TRUNCATE/iu)
+  assert.match(migration, /IF TG_OP = 'DELETE'[\s\S]*NOT EXISTS \([\s\S]*FROM places[\s\S]*OLD\.place_id/iu)
+  assert.doesNotMatch(migration, /CREATE INDEX IF NOT EXISTS place_name_history_name_search/iu)
+  assert.match(migration, /CREATE OR REPLACE VIEW city_snapshot\.public_records_without_drawing_contract/iu)
+  assert.match(migration, /place_renamed[\s\S]*place_retired[\s\S]*place_restored/iu)
   assert.match(migration, /public_records_v2_without_place_lifecycle/iu)
   assert.match(migration, /'founding_name', CASE WHEN place_hidden\.action = 'remove'[\s\S]*place\.founding_name END/iu)
   assert.match(migration, /'status', CASE WHEN place\.retired_at IS NULL THEN 'active' ELSE 'retired' END/iu)
@@ -41,6 +46,7 @@ test('place lifecycle migration preserves founding names and append-only name sp
   ]) assert.match(migration, new RegExp(`CREATE TRIGGER ${trigger}`, 'u'))
   assert.match(migration, /FROM places\s+WHERE parent_id IS NOT NULL AND retired_at IS NULL/iu)
   assert.match(migration, /UPDATE OF parent_id, description, purpose, retired_at ON places/iu)
+  assert.match(migration, /places_reject_retired_parent[\s\S]*UPDATE OF parent_id, retired_at ON places/iu)
   assert.match(migration, /OLD\.retired_at IS NULL[\s\S]*NEW\.retired_at IS NULL/iu)
 })
 
@@ -96,4 +102,15 @@ test('place lifecycle migration is explicitly selectable for preview and product
   const packageJson = JSON.parse(read('../package.json')) as { scripts: Record<string, string> }
   assert.match(packageJson.scripts['migrate:preview:place-lifecycle'] ?? '', /--migration place-lifecycle$/u)
   assert.match(packageJson.scripts['migrate:production:place-lifecycle'] ?? '', /--migration place-lifecycle$/u)
+
+  const runbook = read('../docs/runbooks/ENVIRONMENT.md')
+  assert.match(runbook, /place lifecycle migration is a pre-deploy prerequisite/iu)
+  assert.match(
+    runbook,
+    /migrate:preview:place-lifecycle[\s\S]*migrate:preview:public-search-indexes/iu,
+  )
+  assert.match(
+    runbook,
+    /migrate:production:place-lifecycle[\s\S]*migrate:production:public-search-indexes/iu,
+  )
 })

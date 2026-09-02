@@ -814,10 +814,18 @@ export function mountWorldRoutes(app: Hono): void {
       if (!hasOnly(body, lifecycle.action === 'rename' ? ['name'] : ['retired'])) {
         return err(c, 400, 'rename, retire, or restore one place at a time; do not mix paid acts')
       }
+      const lifecycleSchema = await sql`
+        SELECT to_regclass('public.place_name_history') IS NOT NULL AS installed
+      ` as Array<{ installed: boolean }>
+      if (lifecycleSchema[0]?.installed !== true) {
+        return err(c, 503, 'place rename, retire, and restore are unavailable until the place lifecycle migration has run')
+      }
       const factRows = await sql`
         SELECT place.id, place.name, place.owner_id, place.retired_at,
+          (SELECT parent.retired_at FROM places parent
+            WHERE parent.id = place.parent_id) AS parent_retired_at,
           (SELECT count(*)::integer FROM places child
-            WHERE child.parent_id = place.id) AS subplace_count,
+            WHERE child.parent_id = place.id AND child.retired_at IS NULL) AS subplace_count,
           (SELECT count(*)::integer FROM things thing
             WHERE thing.place_id = place.id AND thing.withdrawn_at IS NULL) AS thing_count,
           (SELECT count(*)::integer FROM resident_presence presence
@@ -839,6 +847,7 @@ export function mountWorldRoutes(app: Hono): void {
         name: string
         owner_id: number | null
         retired_at: string | null
+        parent_retired_at: string | null
         subplace_count: number
         thing_count: number
         resident_count: number
@@ -852,6 +861,7 @@ export function mountWorldRoutes(app: Hono): void {
             actorId: resident.id,
             currentName: row.name,
             retiredAt: row.retired_at,
+            parentRetiredAt: row.parent_retired_at,
             subplaceCount: Number(row.subplace_count),
             thingCount: Number(row.thing_count),
             residentCount: Number(row.resident_count),
@@ -863,6 +873,7 @@ export function mountWorldRoutes(app: Hono): void {
             actorId: resident.id,
             currentName: null,
             retiredAt: null,
+            parentRetiredAt: null,
             subplaceCount: 0,
             thingCount: 0,
             residentCount: 0,

@@ -15,6 +15,7 @@ function facts(overrides: Partial<PlaceLifecycleFacts> = {}): PlaceLifecycleFact
     actorId: 7,
     currentName: 'Old name',
     retiredAt: null,
+    parentRetiredAt: null,
     subplaceCount: 0,
     thingCount: 0,
     residentCount: 0,
@@ -84,11 +85,15 @@ test('retire refuses a missing place, non-owner, already retired place, or any l
   assert.equal(placeLifecycleRefusal(facts(), { action: 'retire' }), null)
 })
 
-test('restore refuses a missing place, non-owner, active place, or newly taken name', () => {
+test('restore refuses a missing place, non-owner, active place, retired parent, or newly taken name', () => {
   const retired = facts({ retiredAt: '2026-09-01T00:00:00.000Z' })
   assert.equal(placeLifecycleRefusal(facts({ exists: false }), { action: 'restore' }), 'place not found')
   assert.equal(placeLifecycleRefusal({ ...retired, ownerId: 9 }, { action: 'restore' }), 'only the place owner may rename, retire, or restore it')
   assert.equal(placeLifecycleRefusal(facts(), { action: 'restore' }), 'place is already active')
+  assert.equal(
+    placeLifecycleRefusal({ ...retired, parentRetiredAt: '2026-09-01T00:00:01.000Z' }, { action: 'restore' }),
+    'parent place is retired; restore it before restoring this place',
+  )
   assert.equal(placeLifecycleRefusal({ ...retired, nameTaken: true }, { action: 'restore' }), 'that place name is already taken inside its parent')
   assert.equal(placeLifecycleRefusal(retired, { action: 'restore' }), null)
 })

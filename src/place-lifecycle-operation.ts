@@ -89,8 +89,10 @@ const COMPLETE_PLACE_LIFECYCLE_SQL = `
   ), place_state AS MATERIALIZED (
     SELECT shaped.*, place.parent_id, place.name AS current_name,
       place.owner_id, place.retired_at,
+      (SELECT parent.retired_at FROM places parent
+        WHERE parent.id = place.parent_id FOR SHARE) AS parent_retired_at,
       (SELECT count(*)::integer FROM places child
-        WHERE child.parent_id = place.id) AS subplace_count,
+        WHERE child.parent_id = place.id AND child.retired_at IS NULL) AS subplace_count,
       (SELECT count(*)::integer FROM things thing
         WHERE thing.place_id = place.id AND thing.withdrawn_at IS NULL) AS thing_count,
       (SELECT count(*)::integer FROM resident_presence presence
@@ -130,6 +132,8 @@ const COMPLETE_PLACE_LIFECYCLE_SQL = `
               THEN ' resident is standing there' ELSE ' residents are standing there' END
         WHEN state.requested_action = 'restore' AND state.retired_at IS NULL
           THEN 'place is already active'
+        WHEN state.requested_action = 'restore' AND state.parent_retired_at IS NOT NULL
+          THEN 'parent place is retired; restore it before restoring this place'
         WHEN state.requested_action = 'restore' AND state.name_taken
           THEN 'that place name is already taken inside its parent'
         ELSE NULL

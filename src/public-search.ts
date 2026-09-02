@@ -323,6 +323,27 @@ function publicSearchSql(mode: PublicSearchMode): string {
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
+    ), matching_places AS MATERIALIZED (
+      SELECT place.*
+      FROM places place
+      WHERE $2::text IN ('all', 'place')
+        AND $9::text IS NULL
+        AND (
+          ${indexedMatchExpression(mode, 'place.name')}
+          OR EXISTS (
+            SELECT 1
+            FROM place_name_history indexed_history
+            WHERE indexed_history.place_id = place.id
+              AND ${indexedMatchExpression(mode, 'indexed_history.name')}
+          )
+        )
+        AND coalesce((
+          SELECT moderation.action
+          FROM moderation_actions moderation
+          WHERE moderation.target_type = 'place' AND moderation.target_id = place.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC
+          LIMIT 1
+        ), 'restore') <> 'remove'
     ), place_history_spans AS MATERIALIZED (
       SELECT span.place_id,
         jsonb_agg(jsonb_build_object(
@@ -339,6 +360,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
             PARTITION BY history.place_id ORDER BY history.started_at, history.id
           ) AS ended_at
         FROM place_name_history history
+        JOIN matching_places matched ON matched.id = history.place_id
       ) span
       GROUP BY span.place_id
     ), place_candidates AS MATERIALIZED (
@@ -349,6 +371,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         NULL::integer AS current_owner_id, NULL::text AS current_owner,
         NULL::integer AS owner_id, NULL::text AS owner,
         NULL::boolean AS open_to_use,
+        NULL::boolean AS has_drawing,
         NULL::integer AS author_id, NULL::text AS author,
         place.founding_name,
         coalesce(history.name_history, '[]'::jsonb) AS name_history,
@@ -357,18 +380,8 @@ function publicSearchSql(mode: PublicSearchMode): string {
         ''::text AS body,
         concat_ws(' ', place.name, history.search_names) AS search_text,
         place.created_at
-      FROM places place
+      FROM matching_places place
       LEFT JOIN place_history_spans history ON history.place_id = place.id
-      WHERE $2::text IN ('all', 'place')
-        AND $9::text IS NULL
-        AND ${indexedMatchExpression(mode, "place.name || ' ' || coalesce(history.search_names, '')")}
-        AND coalesce((
-          SELECT moderation.action
-          FROM moderation_actions moderation
-          WHERE moderation.target_type = 'place' AND moderation.target_id = place.id
-          ORDER BY moderation.created_at DESC, moderation.id DESC
-          LIMIT 1
-        ), 'restore') <> 'remove'
     ), candidate AS MATERIALIZED (
       SELECT * FROM note_candidates
       UNION ALL

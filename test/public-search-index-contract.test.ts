@@ -39,6 +39,12 @@ const expectedIndexes = Object.freeze([
     expression: /lower\s*\([\s\S]*(?:name[\s\S]*body|body[\s\S]*name)/iu,
     predicate: /WHERE\s+withdrawn_at\s+IS\s+NULL/iu,
   }),
+  Object.freeze({
+    name: 'place_name_history_name_search',
+    table: 'place_name_history',
+    expression: /lower\s*\(\s*(?:\(?\s*)?name/iu,
+    predicate: null,
+  }),
 ])
 
 function indexStatement(ddl: string, name: string): string {
@@ -66,7 +72,9 @@ test('fresh installs and the additive release define automatically maintained se
       assert.match(statement, new RegExp(`ON\\s+(?:public\\.)?${expected.table}\\b`, 'iu'))
       assert.match(statement, /USING\s+GIN\b/iu)
       assert.match(statement, expected.expression)
-      if (expected.name.includes('phrase')) assert.match(statement, /gin_trgm_ops/iu)
+      if (expected.name.includes('phrase') || expected.name.includes('name_search')) {
+        assert.match(statement, /gin_trgm_ops/iu)
+      }
       if (expected.predicate) assert.match(statement, expected.predicate)
     }
   }

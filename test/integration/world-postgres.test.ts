@@ -8,6 +8,7 @@ import { Pool, type PoolClient } from 'pg'
 
 import { issueCityFeeCredit, type CityCreditDatabase } from '../../src/city-credit.ts'
 import type { Resident } from '../../src/core.ts'
+import type { CraftSql } from '../../src/crafting.ts'
 import type { TaggedSql } from '../../src/engine.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
@@ -15,6 +16,10 @@ const POSTGRES_DATABASE = 'world_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 const placeLifecycleMigrationDdl = await readFile(
   new URL('../../db/migrations/20260901_place_lifecycle.sql', import.meta.url),
+  'utf8',
+)
+const preLifecycleSnapshotMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260901_public_snapshot_event_details.sql', import.meta.url),
   'utf8',
 )
 
@@ -192,6 +197,17 @@ function twoRequestBarrier(): () => Promise<void> {
   }
 }
 
+async function assertWaitingOnDatabaseLock(pid: number, label: string): Promise<void> {
+  for (let check = 0; check < 100; check += 1) {
+    const activity = await database!.query<{ wait_event_type: string | null }>(`
+      SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1
+    `, [pid])
+    if (activity.rows[0]?.wait_event_type === 'Lock') return
+    await delay(10)
+  }
+  assert.fail(`${label} did not wait on the retirement place lock`)
+}
+
 async function resetDatabase(): Promise<number> {
   assert.ok(database)
   await database.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
@@ -255,6 +271,7 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
   const postgres = await startPostgres()
   database = postgres.client
   try {
+    const { craftKindThing } = await import('../../src/crafting.ts')
     const { replacePlaceLaws } = await import('../../src/laws.ts')
     const { withdrawThing } = await import('../../src/withdrawal.ts')
 
@@ -292,6 +309,85 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
         public_records_v2: 'city_snapshot.public_records_v2',
         export_can_read_v2: true,
       }])
+
+      const candidate = await database!.connect()
+      try {
+        await candidate.query('BEGIN')
+        const inserted = (await candidate.query<{ id: number }>(`
+          INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+          SELECT parent_id, 'place', 'discarded-candidate', '', owner_id
+          FROM places WHERE id = $1
+          RETURNING id
+        `, [roomId])).rows[0]!
+        assert.equal((await candidate.query(
+          'SELECT 1 FROM place_name_history WHERE place_id = $1',
+          [inserted.id],
+        )).rowCount, 1)
+        await candidate.query('DELETE FROM places WHERE id = $1', [inserted.id])
+        await candidate.query('COMMIT')
+        assert.equal((await database!.query(
+          'SELECT 1 FROM place_name_history WHERE place_id = $1',
+          [inserted.id],
+        )).rowCount, 0)
+      } catch (error) {
+        await candidate.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        candidate.release()
+      }
+      await assert.rejects(
+        database!.query('DELETE FROM place_name_history WHERE place_id = $1', [roomId]),
+        error => postgresCode(error) === '55000',
+      )
+      assert.equal((await database!.query(
+        'SELECT 1 FROM place_name_history WHERE place_id = $1',
+        [roomId],
+      )).rowCount, 1)
+    })
+
+    await t.test('fresh and incrementally migrated databases expose the same deep snapshot', async () => {
+      const roomId = await resetDatabase()
+      const eventId = Number((await database!.query<{ id: number }>(`
+        INSERT INTO events (kind, actor, detail, at)
+        VALUES ('place_renamed', 'founder', jsonb_build_object(
+          'place_id', $1::integer,
+          'name', 'current-room-name',
+          'former_name', 'former-room-name'
+        ), clock_timestamp())
+        RETURNING id
+      `, [roomId])).rows[0]!.id)
+      const snapshotState = async () => ({
+        definition: (await database!.query<{ definition: string }>(`
+          SELECT pg_get_viewdef(
+            'city_snapshot.public_records_without_drawing_contract'::regclass,
+            true
+          ) AS definition
+        `)).rows[0]!.definition,
+        rows: (await database!.query(`
+          SELECT class_name, record_id, payload
+          FROM city_snapshot.public_records_without_drawing_contract
+          WHERE (class_name = 'events' AND record_id = $1::text)
+            OR (class_name = 'public_presence' AND record_id = '1')
+          ORDER BY class_name
+        `, [eventId])).rows,
+      })
+
+      const fresh = await snapshotState()
+      await database!.query(preLifecycleSnapshotMigrationDdl)
+      const stale = await snapshotState()
+      assert.notDeepEqual(stale, fresh, 'the fixture must represent the pre-lifecycle snapshot')
+
+      await database!.query(placeLifecycleMigrationDdl)
+      await database!.query(placeLifecycleMigrationDdl)
+      assert.deepEqual(await snapshotState(), fresh)
+      const presence = fresh.rows.find(row => row.class_name === 'public_presence')
+      const event = fresh.rows.find(row => row.class_name === 'events')
+      assert.equal(presence?.payload.asleep, false)
+      assert.deepEqual(event?.payload.detail, {
+        place_id: roomId,
+        name: 'current-room-name',
+        former_name: 'former-room-name',
+      })
     })
 
     await t.test('law replacement keeps typed actor IDs and append-only history', async () => {
@@ -346,7 +442,7 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     })
 
     const { Hono } = await import('hono')
-    const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+    const { moveResident, setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
     const { executeEffects } = await import('../../src/engine-effects.ts')
     const { mountDrawingRoutes } = await import('../../src/drawings.ts')
     const { mountSocietyRoutes } = await import('../../src/society.ts')
@@ -480,7 +576,15 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
       })
       assert.equal(restore.status, 200, await restore.clone().text())
 
+      const retiredChild = (await database!.query<{ id: number }>(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+        VALUES ($1, 'place', 'retired-child', '', 1)
+        RETURNING id
+      `, [roomId])).rows[0]!
+      await database!.query('UPDATE places SET retired_at = now() WHERE id = $1', [retiredChild.id])
+
       const repeatRetire = await app.request(`/api/place/${roomId}`, {
+        // A retired child is a tombstone, not live occupancy.
         method: 'PATCH',
         headers: {
           ...bearer(founderSecret),
@@ -490,6 +594,26 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
         body: JSON.stringify({ retired: true }),
       })
       assert.equal(repeatRetire.status, 200, await repeatRetire.clone().text())
+      assert.equal((await database!.query<{ retired: boolean }>(`
+        SELECT retired_at IS NOT NULL AS retired FROM places WHERE id = $1
+      `, [retiredChild.id])).rows[0]?.retired, true)
+      await assert.rejects(
+        database!.query('UPDATE places SET retired_at = NULL WHERE id = $1', [retiredChild.id]),
+        error => postgresCode(error) === '23514',
+      )
+      const refusedChildRestore = await app.request(`/api/place/${retiredChild.id}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-child-restore-refused-0001',
+        },
+        body: JSON.stringify({ retired: false }),
+      })
+      assert.equal(refusedChildRestore.status, 409, await refusedChildRestore.clone().text())
+      assert.deepEqual(await refusedChildRestore.json(), {
+        error: 'parent place is retired; restore it before restoring this place',
+      })
       const repeatRestore = await app.request(`/api/place/${roomId}`, {
         method: 'PATCH',
         headers: {
@@ -678,6 +802,297 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
       } finally {
         setEngineTransactionRunnerForTests(null)
       }
+    })
+
+    await t.test('a move waits for retirement and then refuses the retired destination', async () => {
+      const roomId = await resetDatabase()
+      const originId = Number((await database!.query<{ parent_id: number }>(
+        'SELECT parent_id FROM places WHERE id = $1',
+        [roomId],
+      )).rows[0]!.parent_id)
+      await database!.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id)
+        VALUES (2, $1)
+      `, [originId])
+
+      const retiring = await database!.connect()
+      const moving = await database!.connect()
+      try {
+        await retiring.query('BEGIN')
+        await retiring.query(`
+          /* place-lifecycle:lock-before-recheck */
+          SELECT id FROM places WHERE id = $1 FOR UPDATE
+        `, [roomId])
+        await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+
+        await moving.query('BEGIN')
+        const movingPid = Number((await moving.query<{ pid: number }>(
+          'SELECT pg_backend_pid() AS pid',
+        )).rows[0]!.pid)
+        const move = moveResident(2, roomId, transactionSql(moving)).then(
+          value => Object.freeze({ ok: true as const, value, error: null }),
+          error => Object.freeze({ ok: false as const, value: null, error }),
+        )
+
+        await assertWaitingOnDatabaseLock(movingPid, 'resident movement')
+
+        await retiring.query('COMMIT')
+        const outcome = await move
+        assert.equal(outcome.ok, false)
+        assert.deepEqual(
+          outcome.error && typeof outcome.error === 'object'
+            ? {
+                status: 'status' in outcome.error ? outcome.error.status : null,
+                message: 'message' in outcome.error ? outcome.error.message : null,
+              }
+            : null,
+          {
+            status: 409,
+            message: 'destination place is retired; restore it before moving there',
+          },
+        )
+        await moving.query('ROLLBACK')
+      } catch (error) {
+        await retiring.query('ROLLBACK').catch(() => undefined)
+        await moving.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        retiring.release()
+        moving.release()
+      }
+
+      const presence = await database!.query<{ current_place_id: number }>(`
+        SELECT current_place_id FROM resident_presence WHERE resident_id = 2
+      `)
+      assert.equal(presence.rows[0]?.current_place_id, originId)
+    })
+
+    await t.test('thing movement and making wait for retirement and leave no partial writes', async t => {
+      await t.test('an effect-driven thing move waits and refuses', async () => {
+        const roomId = await resetDatabase()
+        const originId = Number((await database!.query<{ parent_id: number }>(
+          'SELECT parent_id FROM places WHERE id = $1',
+          [roomId],
+        )).rows[0]!.parent_id)
+        await database!.query('UPDATE things SET place_id = $1 WHERE id = 1', [originId])
+
+        const retiring = await database!.connect()
+        const moving = await database!.connect()
+        try {
+          await retiring.query('BEGIN')
+          await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
+          await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          await moving.query('BEGIN')
+          const movingPid = Number((await moving.query<{ pid: number }>(
+            'SELECT pg_backend_pid() AS pid',
+          )).rows[0]!.pid)
+          const move = executeEffects([{
+            effect: 'move', target: 'source', to: 'destination',
+          }], {
+            actionId: null,
+            actorId: 1,
+            actorHandle: 'founder',
+            placeId: originId,
+            sourceThingId: 1,
+            sharedSourceThingId: null,
+            target: null,
+            destinationPlaceId: roomId,
+            recipientId: null,
+            sourceTraitId: null,
+            lawAuthority: null,
+            parentEffectId: null,
+            generation: 0,
+            logicalAt: new Date(),
+          }, transactionSql(moving)).then(
+            value => Object.freeze({ ok: true as const, value, error: null }),
+            error => Object.freeze({ ok: false as const, value: null, error }),
+          )
+          await assertWaitingOnDatabaseLock(movingPid, 'effect-driven thing movement')
+          await retiring.query('COMMIT')
+          const outcome = await move
+          assert.equal(outcome.ok, false)
+          assert.match(String(outcome.error), /destination place is retired; restore it before moving a thing there/iu)
+          await moving.query('ROLLBACK')
+        } catch (error) {
+          await retiring.query('ROLLBACK').catch(() => undefined)
+          await moving.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          retiring.release()
+          moving.release()
+        }
+
+        const unchanged = await database!.query(`
+          SELECT thing.place_id,
+            (SELECT count(*)::integer FROM events WHERE kind = 'thing_moved') AS move_events
+          FROM things thing WHERE thing.id = 1
+        `)
+        assert.deepEqual(unchanged.rows, [{ place_id: originId, move_events: 0 }])
+      })
+
+      await t.test('typed crafting waits and refuses before quota or output changes', async () => {
+        const roomId = await resetDatabase()
+        const kindId = Number((await database!.query<{ id: number }>(`
+          INSERT INTO kinds (name, owner_id, current_revision)
+          VALUES ('retirement-race-kind', 1, 1)
+          RETURNING id
+        `)).rows[0]!.id)
+        await database!.query(`
+          INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
+          VALUES ($1, 1, '', '{}', '[]')
+        `, [kindId])
+
+        const retiring = await database!.connect()
+        const making = await database!.connect()
+        try {
+          await retiring.query('BEGIN')
+          await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
+          await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          await making.query('BEGIN')
+          const makingPid = Number((await making.query<{ pid: number }>(
+            'SELECT pg_backend_pid() AS pid',
+          )).rows[0]!.pid)
+          const crafted = craftKindThing(transactionSql(making) as unknown as CraftSql, {
+            actor,
+            kindId,
+            placeId: roomId,
+            name: 'must-not-be-crafted',
+            body: '',
+            openToUse: false,
+            ingredientIds: [],
+          })
+          await assertWaitingOnDatabaseLock(makingPid, 'typed crafting')
+          await retiring.query('COMMIT')
+          assert.deepEqual(await crafted, {
+            ok: false,
+            status: 409,
+            error: 'place is retired; restore it before making things there',
+          })
+          await making.query('ROLLBACK')
+        } catch (error) {
+          await retiring.query('ROLLBACK').catch(() => undefined)
+          await making.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          retiring.release()
+          making.release()
+        }
+
+        const unchanged = await database!.query(`
+          SELECT resident.things_today,
+            (SELECT count(*)::integer FROM things WHERE name = 'must-not-be-crafted') AS outputs
+          FROM residents resident WHERE resident.id = 1
+        `)
+        assert.deepEqual(unchanged.rows, [{ things_today: 0, outputs: 0 }])
+      })
+
+      await t.test('kindless making waits and refuses before quota or output changes', async () => {
+        const roomId = await resetDatabase()
+        await database!.query(`
+          INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+          VALUES (1, $1, $1)
+        `, [roomId])
+        const retiring = await database!.connect()
+        const runnerStarted = Promise.withResolvers<number>()
+        setEngineTransactionRunnerForTests(async (_db, work) => {
+          const connection = await database!.connect()
+          try {
+            await connection.query('BEGIN')
+            runnerStarted.resolve(Number((await connection.query<{ pid: number }>(
+              'SELECT pg_backend_pid() AS pid',
+            )).rows[0]!.pid))
+            const result = await work(transactionSql(connection), true)
+            await connection.query('COMMIT')
+            return result
+          } catch (error) {
+            await connection.query('ROLLBACK').catch(() => undefined)
+            throw error
+          } finally {
+            connection.release()
+          }
+        })
+        try {
+          await retiring.query('BEGIN')
+          await retiring.query('SELECT id FROM places WHERE id = $1 FOR UPDATE', [roomId])
+          await retiring.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [roomId])
+          const request = app.request('/api/thing', {
+            method: 'POST',
+            headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+            body: JSON.stringify({
+              place_id: roomId,
+              name: 'must-not-be-made',
+              body: '',
+            }),
+          })
+          const makingPid = await Promise.race([
+            runnerStarted.promise,
+            delay(2_000).then(() => 0),
+          ])
+          assert.ok(makingPid > 0, 'kindless making did not reach its transaction')
+          await assertWaitingOnDatabaseLock(makingPid, 'kindless making')
+          await retiring.query('COMMIT')
+          const response = await request
+          assert.equal(response.status, 409, await response.clone().text())
+          assert.deepEqual(await response.json(), {
+            error: 'place is retired; restore it before making things there',
+          })
+        } catch (error) {
+          await retiring.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          setEngineTransactionRunnerForTests(null)
+          retiring.release()
+        }
+
+        const unchanged = await database!.query(`
+          SELECT resident.things_today,
+            (SELECT count(*)::integer FROM things WHERE name = 'must-not-be-made') AS outputs
+          FROM residents resident WHERE resident.id = 1
+        `)
+        assert.deepEqual(unchanged.rows, [{ things_today: 0, outputs: 0 }])
+      })
+    })
+
+    await t.test('place lifecycle fails closed before spending when its migration is absent', async () => {
+      const roomId = await resetDatabase()
+      await issueCityFeeCredit({
+        query: async (text, params = []) => (
+          await database!.query(text, [...params])
+        ).rows,
+      }, {
+        founderId: 1,
+        residentId: 1,
+        sourceKey: 'place-lifecycle-missing-schema-credit',
+        reason: 'prove lifecycle rollout fails before spending',
+      })
+      await database!.query('DROP TABLE place_name_history CASCADE')
+
+      const response = await app.request(`/api/place/${roomId}`, {
+        method: 'PATCH',
+        headers: {
+          ...bearer(founderSecret),
+          'content-type': 'application/json',
+          'X-1F3D9-FEE-CREDIT': 'place-lifecycle-missing-schema-0001',
+        },
+        body: JSON.stringify({ name: 'must-not-change' }),
+      })
+      assert.equal(response.status, 503, await response.clone().text())
+      assert.deepEqual(await response.json(), {
+        error: 'place rename, retire, and restore are unavailable until the place lifecycle migration has run',
+      })
+      const unchanged = await database!.query<{
+        name: string
+        balance_units: string
+        spends: number
+      }>(`
+        SELECT place.name, account.balance_units::text,
+          (SELECT count(*)::integer FROM city_credit_entries
+            WHERE resident_id = 1 AND entry_kind = 'spend') AS spends
+        FROM places place
+        JOIN city_credit_accounts account ON account.resident_id = place.owner_id
+        WHERE place.id = $1
+      `, [roomId])
+      assert.deepEqual(unchanged.rows, [{ name: 'test-room', balance_units: '1000000', spends: 0 }])
     })
 
     await t.test('fresh schema attributes the exact world drawing to the founder once', async () => {

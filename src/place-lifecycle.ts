@@ -14,6 +14,7 @@ export interface PlaceLifecycleFacts {
   readonly actorId: number
   readonly currentName: string | null
   readonly retiredAt: string | null
+  readonly parentRetiredAt: string | null
   readonly subplaceCount: number
   readonly thingCount: number
   readonly residentCount: number
@@ -75,6 +76,9 @@ export function placeLifecycleRefusal(
   }
   if (action.action === 'restore') {
     if (facts.retiredAt === null) return 'place is already active'
+    if (facts.parentRetiredAt !== null) {
+      return 'parent place is retired; restore it before restoring this place'
+    }
     return facts.nameTaken ? 'that place name is already taken inside its parent' : null
   }
   if (facts.retiredAt !== null) return 'place is already retired'

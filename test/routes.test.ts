@@ -2093,6 +2093,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       updated_at: '2026-08-11T00:00:00.000Z',
     }]
   }
+  if (q.includes('with usable_home as materialized')) {
+    state = { ...state, currentPlaceId: state.homePlaceId }
+    return [{
+      resident_id: state.actorId,
+      current_place_id: state.currentPlaceId,
+      home_place_id: state.homePlaceId,
+      updated_at: '2026-08-11T00:05:00.000Z',
+    }]
+  }
   if (q.includes('from resident_presence')) return [{
     resident_id: state.actorId,
     current_place_id: state.currentPlaceId,
@@ -2206,8 +2215,11 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       selectedPlacePermission(placeRow(3, 2), q),
     ]
   }
-  if (q.includes('select id, parent_id from places') && q.includes('any')) {
-    return [placeRow(2, 1), placeRow(3, 2)]
+  if (q.includes('select id, parent_id, retired_at from places') && q.includes('any')) {
+    return [
+      { ...placeRow(2, 1), retired_at: null },
+      { ...placeRow(3, 2), retired_at: null },
+    ]
   }
   if (q.includes('from labels')) {
     const targetType = String(params[0] ?? '')

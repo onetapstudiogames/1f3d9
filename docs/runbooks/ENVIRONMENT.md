@@ -200,6 +200,34 @@ Provider references: [REST authentication](https://developer.paypal.com/api/rest
 [webhook registration and Webhook ID](https://developer.paypal.com/api/rest/webhooks/rest/),
 and [event names](https://developer.paypal.com/api/rest/webhooks/event-names/).
 
+## Place lifecycle rollout
+
+The place lifecycle migration is a pre-deploy prerequisite. Apply it before code that
+renames, retires, or restores places can receive traffic. Then rerun the guarded public
+search index migration so former place names get the same recoverable concurrent index
+build as notes and things. Do not reverse this order.
+
+For an isolated Preview database:
+
+```sh
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:place-lifecycle
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:public-search-indexes
+```
+
+For Production, create and name the required Neon snapshot first, then run:
+
+```sh
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+npm run migrate:production:place-lifecycle
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+npm run migrate:production:public-search-indexes
+```
+
+Both pairs also require the matching direct database URL and Neon identity variables
+listed below. Deploy only after both commands succeed.
+
 ## Community tool review queue
 
 The queue is additive database state. Do not run its migrations from an ordinary

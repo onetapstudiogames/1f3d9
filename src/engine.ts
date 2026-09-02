@@ -507,12 +507,14 @@ export async function ensurePresence(
       SELECT place.id FROM places place
       WHERE place.owner_id = ${actorId} AND place.retired_at IS NULL
       ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+      FOR SHARE OF place
     ), world_root AS (
       SELECT place.id FROM places place
       WHERE place.parent_id IS NULL AND place.owner_id IS NULL
         AND place.place_kind = 'world'
         AND place.name = ${WORLD_ROOT_NAME}
       ORDER BY place.created_at ASC, place.id ASC LIMIT 1
+      FOR SHARE OF place
     ), seeded AS (
       INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
       SELECT resident.id,
@@ -597,12 +599,16 @@ export async function moveResident(
     throw new EngineError(409, 'resident has no current place')
   }
   const requested = [current.currentPlaceId, destinationId]
-  const places = await queryRows<{ id?: unknown; parent_id?: unknown }>(db`
-    SELECT id, parent_id FROM places
-    WHERE id = ANY (${requested}::int[]) AND retired_at IS NULL
+  const places = await queryRows<{ id?: unknown; parent_id?: unknown; retired_at?: unknown }>(db`
+    SELECT id, parent_id, retired_at FROM places
+    WHERE id = ANY (${requested}::int[])
+    FOR SHARE
   `)
   const destination = places.find(row => integer(row.id) === destinationId)
   if (!destination) throw new EngineError(404, 'destination place not found')
+  if (destination.retired_at != null) {
+    throw new EngineError(409, 'destination place is retired; restore it before moving there')
+  }
   if (current.currentPlaceId === destinationId) return current
   const oldPlace = places.find(row => integer(row.id) === current.currentPlaceId)
   const destinationParent = nullableRowId(destination.parent_id, 'destination parent id')
@@ -627,12 +633,19 @@ export async function goHome(residentId: number, db: TaggedSql = engineSql): Pro
   const actorId = positiveId(residentId, 'resident id')
   await ensurePresence(actorId, db)
   const rows = await queryRows<Record<string, unknown>>(db`
+    WITH usable_home AS MATERIALIZED (
+      SELECT home.id
+      FROM resident_presence presence
+      JOIN places home ON home.id = presence.home_place_id
+      WHERE presence.resident_id = ${actorId}
+        AND home.owner_id = ${actorId}
+        AND home.retired_at IS NULL
+      FOR SHARE OF home
+    )
     UPDATE resident_presence presence
     SET current_place_id = presence.home_place_id, updated_at = now()
-    FROM places home
+    FROM usable_home home
     WHERE presence.resident_id = ${actorId} AND home.id = presence.home_place_id
-      AND home.owner_id = ${actorId}
-      AND home.retired_at IS NULL
     RETURNING presence.resident_id, presence.current_place_id,
       presence.home_place_id, presence.updated_at
   `)
@@ -1074,12 +1087,15 @@ async function moveResidentWithCarry(
   }
 
   const destinations = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
-    SELECT destination.id,
+    SELECT destination.id, destination.retired_at,
       ${placePermission('destination', 'open_to_things', input.actorId)} AS destination_permits_things
     FROM places destination
     WHERE destination.id = ${input.destinationPlaceId}
     FOR UPDATE OF destination
   `)
+  if (destinations[0]?.retired_at != null) {
+    throw new EngineError(409, 'destination place is retired; restore it before moving there')
+  }
   if (destinations[0] && destinations[0].destination_permits_things !== true) {
     throw new EngineError(
       403,

@@ -6823,7 +6823,7 @@ CREATE TRIGGER places_protect_founding_name
 
 CREATE TABLE IF NOT EXISTS place_name_history (
   id         BIGSERIAL PRIMARY KEY,
-  place_id   INTEGER NOT NULL REFERENCES places(id) ON DELETE RESTRICT,
+  place_id   INTEGER NOT NULL REFERENCES places(id) ON DELETE CASCADE,
   name       TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 120),
   started_at TIMESTAMPTZ NOT NULL,
   event_id   BIGINT UNIQUE REFERENCES events(id) ON DELETE RESTRICT
@@ -6833,7 +6833,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS place_name_history_one_founding_name
 CREATE INDEX IF NOT EXISTS place_name_history_place_span
   ON place_name_history (place_id, started_at, id);
 CREATE INDEX IF NOT EXISTS place_name_history_name_search
-  ON place_name_history USING gin (lower(name) gin_trgm_ops);
+  ON place_name_history USING gin (lower(name) public.gin_trgm_ops);
 INSERT INTO place_name_history (place_id, name, started_at, event_id)
 SELECT place.id, place.name, place.created_at, NULL
 FROM places AS place
@@ -6855,6 +6855,11 @@ CREATE TRIGGER places_record_founding_name_history
 CREATE OR REPLACE FUNCTION deny_place_name_history_mutation() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+  IF TG_OP = 'DELETE' AND NOT EXISTS (
+    SELECT 1 FROM places place WHERE place.id = OLD.place_id
+  ) THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'place name history is append-only' USING ERRCODE = '55000';
 END
 $$;
@@ -6914,7 +6919,7 @@ END
 $$;
 DROP TRIGGER IF EXISTS places_reject_retired_parent ON places;
 CREATE TRIGGER places_reject_retired_parent
-  BEFORE INSERT OR UPDATE OF parent_id ON places
+  BEFORE INSERT OR UPDATE OF parent_id, retired_at ON places
   FOR EACH ROW EXECUTE FUNCTION reject_retired_place_target();
 DROP TRIGGER IF EXISTS things_reject_retired_place ON things;
 CREATE TRIGGER things_reject_retired_place
