@@ -1184,6 +1184,97 @@ test('all-place conversations stay newest-first and name each room', async ({ pa
   await expect(cards.nth(1).locator('.note-meta')).toContainText('side_room')
 })
 
+test('the city-wide Things and Conversations feeds withhold a quiet place while naming the rest', async ({ page }) => {
+  // Second review pass on row 75: neither city-wide feed scopes to any one
+  // place, so a note or thing recorded in a quiet place must withhold by
+  // its own place_id even though nothing about the request names that
+  // place at all.
+  const quietThingHeading = Object.freeze({
+    id: 402,
+    place_id: 13,
+    name: 'hidden_lantern',
+    kind_id: null,
+    kind: null,
+    maker_id: 48,
+    made_by: 'oldwalker',
+    current_owner_id: 48,
+    current_owner: 'oldwalker',
+    body_text_bytes: 30,
+    created_at: '2026-08-13T19:06:30.000Z',
+    has_drawing: false,
+  })
+  const ordinaryThingHeading = Object.freeze({
+    id: 401,
+    place_id: 11,
+    name: 'field_lantern',
+    kind_id: 77,
+    kind: 'artifact',
+    maker_id: 49,
+    made_by: 'browser-resident',
+    current_owner_id: 49,
+    current_owner: 'browser-resident',
+    body_text_bytes: THING_EXCERPT.length,
+    created_at: '2026-08-13T19:02:00.000Z',
+    has_drawing: true,
+  })
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    const collection = url.searchParams.get('collection')
+    if (collection === 'things' && url.searchParams.get('presentation') === 'headings') {
+      return route.fulfill({
+        json: {
+          things: [quietThingHeading, ordinaryThingHeading],
+          has_more: false,
+          next_before_id: null,
+          change_marker: '9',
+        },
+      })
+    }
+    if (collection) return route.continue()
+    const response = await route.fetch()
+    const body = await response.json() as Record<string, unknown>
+    await route.fulfill({ response, json: {
+      ...body,
+      places: [...(body.places as unknown[]), {
+        id: 13, parent_id: null, name: 'back_room',
+        description: 'A quiet room kept out of the ordinary rooms.',
+        owner: 'oldwalker', places: 0, things: 1, notes: 1,
+        moderated: false, quiet: true, children: [],
+      }],
+      notes: [{
+        id: 304, place_id: 13, author: 'oldwalker',
+        body: 'Said quietly in the back room', created_at: '2026-08-13T19:06:00.000Z',
+        moderated: false,
+      }, ...(body.notes as unknown[])],
+      totals: { ...(body.totals as Record<string, unknown>), conversations: 4, things: 2 },
+    } })
+  })
+
+  await page.goto('/window#view=conversations')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const conversationStream = page.locator('#conversation-stream')
+  const conversationCards = conversationStream.locator('.note-card')
+  await expect(conversationCards).toHaveCount(4)
+  await expect(conversationCards.first().locator('.quiet-room-notice')).toContainText(
+    'oldwalker prefers to keep this room private.',
+  )
+  await expect(conversationStream).not.toContainText('Said quietly in the back room')
+  // The unrelated, non-quiet room keeps naming its own author normally on
+  // the very same feed.
+  await expect(conversationStream).toContainText('side_room')
+
+  await page.getByRole('tab', { name: 'Things' }).click()
+  await expect(page).toHaveURL(/\/window\/things$/u)
+  const thingsList = page.locator('#things-list')
+  const thingRows = thingsList.locator('.thing-index-row')
+  await expect(thingRows).toHaveCount(2)
+  await expect(thingRows.first().locator('.quiet-room-notice')).toContainText(
+    'oldwalker prefers to keep this room private.',
+  )
+  await expect(thingsList).not.toContainText('hidden_lantern')
+  await expect(thingsList).toContainText('field_lantern')
+})
+
 test('a followed resident defaults to their words and keeps room context as a second question', async ({ page }) => {
   await page.route('**/api/window**', route => {
     const url = new URL(route.request().url())

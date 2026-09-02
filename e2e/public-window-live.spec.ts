@@ -4963,3 +4963,42 @@ test('drilling into a quiet room in Live withholds its residents and things ever
   )
   expect(fixture.thingPageRequests()).toBe(0)
 })
+
+test('the world-root Live view withholds a quiet child place without drilling into it', async ({ page }) => {
+  // Second review pass on row 75: a quiet room leaks through an ancestor's
+  // view, not only when a viewer drills directly into it. Harbor room
+  // (place #3) holds seven named residents; marking it quiet while the
+  // viewer stays at the world root must withhold its plot contents exactly
+  // like drilling in does, while Cinder lane (place #2, not quiet) keeps
+  // showing its own resident normally on the very same plate.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    quietPlaceId: 3,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const harborPlot = page.locator('.live-plot[data-place-id="3"]')
+  await expect(harborPlot).toContainText('Harbor room')
+  await expect(harborPlot.locator('.quiet-room-notice')).toContainText(
+    'harbor-owner prefers to keep this room private.',
+  )
+  await expect(harborPlot.locator('.live-walker')).toHaveCount(0)
+  await expect(harborPlot.locator('.live-thing-specimen')).toHaveCount(0)
+  await expect(
+    harborPlot.locator('.entity-portrait[data-portrait-type="resident"]'),
+  ).toHaveCount(0)
+
+  // Cinder lane (place #2) is not quiet and keeps its own resident visible
+  // on the same plate.
+  await expect(
+    page.locator('.live-plot[data-place-id="2"] [data-live-resident-handle="map-walker"]'),
+  ).toHaveCount(1)
+
+  // The roster (recursive across every descendant of the focused root) must
+  // match: Harbor room's seven residents collapse to the same sentence,
+  // while Cinder lane's resident stays named.
+  const roster = page.locator('#live-roster')
+  await expect(roster).toContainText('harbor-owner prefers to keep this room private.')
+  await expect(roster).toContainText('map-walker')
+  await expect(roster).not.toContainText('harbor-1')
+})

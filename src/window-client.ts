@@ -984,6 +984,10 @@ export type WindowDirectoryPlace = Readonly<{
   id: number
   parent_id: number | null
   name: string
+  // Optional so every existing directory-shaped fixture in tests keeps
+  // compiling; normalizeDirectory always sets a definite boolean from the
+  // live API, so this is only ever missing on synthetic/test place rows.
+  quiet?: boolean
 }>
 
 export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{
@@ -4240,7 +4244,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const parentId = raw.parent_id === null ? null : safeId(raw.parent_id)
       const name = safeText(raw.name, '', 120, false)
       return id && name && (raw.parent_id === null || parentId)
-        ? [{ id, parent_id: parentId, name }]
+        ? [{ id, parent_id: parentId, name, quiet: raw.quiet === true }]
         : []
     }))
     const residentsByHandle = new Map()
@@ -6223,6 +6227,29 @@ ${WINDOW_CLIENT_SAFETY_JS}
       snapshot.flatPlaces.find(place => place.id === placeId) || directoryPlace(placeId)
   }
 
+  // Decision #75, the single answer every listing path must use: is the row
+  // at this place_id inside a quiet room? The complete names directory
+  // covers every place in the city, not only whatever a given render has
+  // separately loaded through map navigation, so resolving through
+  // placeReference — instead of each call site trusting whatever partial
+  // place data it happens to hold — is what keeps a quiet descendant from
+  // leaking through a path that never itself loaded that descendant's own
+  // place record. Every place source (a focused read, the current
+  // snapshot's loaded places, or the directory itself) reports quiet as a
+  // definite boolean once loaded; unresolved is read as not-quiet only for
+  // the brief window before the directory loads, matching every other
+  // directory-dependent view in this client.
+  //
+  // isQuietPlace is the one predicate every render below calls on a place
+  // resolved at that row's own place_id (never at whatever place a list
+  // happens to be scoped to). Never write place.quiet, or place &&
+  // place.quiet, directly at a call site — route it through here so there
+  // is exactly one place that answers "is this quiet" for the whole
+  // client to agree on.
+  function isQuietPlace(place) {
+    return Boolean(place && place.quiet === true)
+  }
+
   function focusedPlacePath(reference, place) {
     if (!reference) return place.name + ' · Place #' + String(place.id)
     const fallbackSuffix = ' · Place #' + String(place.id)
@@ -6366,10 +6393,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (state.snapshot) renderAll()
   }
 
-  function occupantLine(place, occupants) {
+  // Decision #75: this line recurses through every descendant of place
+  // (residentsAt includes the whole scope), so a resident's own place —
+  // never the place card this line belongs to — decides whether their
+  // chip renders. Hidden quiet residents collapse behind one shared
+  // notice per distinct quiet place instead of a chip per name.
+  function occupantLine(place, occupants, placeOf) {
     const line = element('div', 'occupant-line')
-    const awake = occupants.filter(resident => !resident.asleep)
-    const asleep = occupants.filter(resident => resident.asleep)
+    const quietPlaces = new Map()
+    const visible = occupants.filter(resident => {
+      const residentPlace = placeOf ? placeOf(resident.current_place_id) : null
+      if (!isQuietPlace(residentPlace)) return true
+      quietPlaces.set(residentPlace.id, residentPlace)
+      return false
+    })
+    const awake = visible.filter(resident => !resident.asleep)
+    const asleep = visible.filter(resident => resident.asleep)
     line.append(...awake.map(occupantChip))
     if (asleep.length) {
       const shown = state.sleeperPlaceIds.includes(place.id)
@@ -6384,6 +6423,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       line.append(toggle)
       if (shown) line.append(...asleep.map(occupantChip))
     }
+    for (const quietPlace of quietPlaces.values()) line.append(quietRoomNotice(quietPlace))
     return line
   }
 
@@ -6614,7 +6654,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
         disclosure.addEventListener('click', () => togglePlaceBranch(place.id))
         card.append(disclosure)
       }
-      if (occupants.length) card.append(occupantLine(place, occupants))
+      if (occupants.length) {
+        card.append(occupantLine(place, occupants, placeId => placeReference(snapshot, placeId)))
+      }
       node.append(card)
       if (hasChildren) {
         const children = placeList(branch.rows, snapshot, depth + 1)
@@ -6985,6 +7027,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     list.append(...index.rows.map(thing => {
       const row = element('li', 'thing-index-row')
       row.dataset.thingId = String(thing.id)
+      const resolvedPlace = placeReference(snapshot, thing.place_id)
+      if (isQuietPlace(resolvedPlace)) {
+        row.classList.add('thing-index-row-quiet')
+        row.append(quietRoomNotice(resolvedPlace))
+        return row
+      }
       const title = element('h3', 'thing-index-title')
       title.append(
         portraitNode('thing', thing.id, thing.name, thing.has_drawing),
@@ -8052,6 +8100,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     drawingDetail.style.width = String(LIVE_PLOT_DRAWING_DETAIL_RECT.width) + 'px'
     drawingDetail.style.height = String(LIVE_PLOT_DRAWING_DETAIL_RECT.height) + 'px'
     card.append(drawingDetail)
+    // Decision #75: a detailed child plot honours its own quiet mark exactly
+    // like the main plate does for the focused place — name, owner, and
+    // terrain stay visible above, but its residents and things do not,
+    // whether the viewer is standing at the world root, a continent, or a
+    // town looking down into this one quiet plot.
+    if (isQuietPlace(place)) {
+      card.append(quietRoomNotice(place))
+      card.dataset.liveDetailMounted = 'true'
+      return
+    }
     const residents = residentsAt(snapshot, place.id)
     if (residents.length) {
       card.append(livePortraitGrid(
@@ -8306,13 +8364,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
       } else if (pinned.has(resident.id)) {
         row.dataset.liveFocusPartner = resident.handle
       }
+      const place = placeReference(snapshot, resident.current_place_id)
+      if (isQuietPlace(place)) {
+        row.classList.add('resident-row-quiet')
+        row.append(quietRoomNotice(place))
+        list.append(row)
+        continue
+      }
       const follow = element('button', 'resident-follow', resident.handle)
       follow.type = 'button'
       follow.dataset.focusKey = 'live-roster:' + resident.handle
       follow.dataset.liveResidentHandle = resident.handle
       follow.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
       follow.addEventListener('click', () => toggleLiveFocusResident(resident.handle))
-      const place = placeReference(snapshot, resident.current_place_id)
       const location = place ? place.name : resident.current_place_id
         ? 'Place #' + String(resident.current_place_id)
         : 'Between places'
@@ -8988,6 +9052,21 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return place ? place.name : id ? 'Place #' + String(id) : 'between places'
   }
 
+  // Decision #75: a ledger row can point at up to two places (a move's from
+  // and to); if either is quiet the whole row collapses instead of naming
+  // the resident, the thing, or (for a note) printing its body. Returns the
+  // quiet place to notice, or null when nothing about this record is quiet.
+  function liveLedgerQuietPlace(snapshot, record) {
+    if (liveRecordType(record) === 'move') {
+      const to = placeReference(snapshot, record.detail.to_place_id)
+      if (isQuietPlace(to)) return to
+      const from = placeReference(snapshot, record.detail.from_place_id)
+      return isQuietPlace(from) ? from : null
+    }
+    const place = placeReference(snapshot, liveRecordPlaceId(record))
+    return isQuietPlace(place) ? place : null
+  }
+
   function liveLedgerText(snapshot, record) {
     const type = liveRecordType(record)
     if (type === 'move') {
@@ -9040,6 +9119,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     nodes.liveLedger.replaceChildren(...records.map((record, index) => {
       const row = element('li', 'live-ledger-row')
       const key = liveTraceKey(record)
+      const quietPlace = liveLedgerQuietPlace(snapshot, record)
+      if (quietPlace) {
+        row.classList.add('live-ledger-row-quiet')
+        row.append(quietRoomNotice(quietPlace))
+        return row
+      }
       const number = element('span', 'live-ledger-number', String(index + 1).padStart(2, '0'))
       const copy = element('p', 'live-ledger-copy', liveLedgerText(snapshot, record))
       const age = windowLiveTraceOpacity(record.at.getTime(), Date.now(), liveRecordLifetime(record))
@@ -9741,6 +9826,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  // Decision #75: a resident list can be scoped to a place and every place
+  // inside it (occupants recurse through descendants), so each row resolves
+  // quiet at that resident's own current_place_id — never at the place the
+  // list itself was scoped to — the same way noteCard and renderThings do.
   function renderPeople(target, residents, placeOf) {
     if (!target) return
     if (!residents.length) {
@@ -9750,6 +9839,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const list = element('ul', 'person-list')
     list.append(...[...residents.filter(r => !r.asleep), ...residents.filter(r => r.asleep)].map(resident => {
       const item = element('li', resident.asleep ? 'person-card asleep' : 'person-card')
+      const residentPlace = placeOf ? placeOf(resident.current_place_id) : null
+      if (isQuietPlace(residentPlace)) {
+        item.classList.add('person-card-quiet')
+        item.append(quietRoomNotice(residentPlace))
+        return item
+      }
       const follow = element('button', 'resident-follow', resident.handle)
       follow.type = 'button'
       follow.dataset.focusKey = 'person:' + resident.handle
@@ -10599,6 +10694,9 @@ ${WINDOW_CLIENT_SAFETY_JS}
     })
   }
 
+  // Decision #75: quiet resolves at the thing's own place_id, the same
+  // pattern noteCard uses, so every caller — the Rooms tab and the
+  // place-scoped or city-wide Things list — inherits it uniformly.
   function renderThings(target, things, placeOf) {
     if (!target) return
     if (!things.length) {
@@ -10608,6 +10706,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const list = element('ul', 'thing-list')
     list.append(...things.map(thing => {
       const item = element('li', 'thing-card')
+      const resolvedPlace = placeOf ? placeOf(thing.place_id) : null
+      if (isQuietPlace(resolvedPlace)) {
+        item.classList.add('thing-card-quiet')
+        item.append(quietRoomNotice(resolvedPlace))
+        return item
+      }
       const thingMeta = element('p', 'thing-meta')
       thingMeta.append(document.createTextNode('made by '))
       thingMeta.append(thing.made_by
@@ -10664,7 +10768,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     target.replaceChildren(list)
   }
 
+  // Decision #75: every note card resolves quiet at its own place_id, never
+  // at whatever place happens to be selected. This is the one place that
+  // check runs, so every list that renders notes through noteCard — the
+  // Rooms tab, the Conversations tab (with or without a resident filter),
+  // and any place-scoped or city-wide feed — inherits it for free.
   function noteCard(note, place) {
+    if (isQuietPlace(place)) {
+      const card = element('article', 'note-card note-card-quiet')
+      card.append(quietRoomNotice(place))
+      return card
+    }
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
     meta.append(

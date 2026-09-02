@@ -138,6 +138,101 @@ test('the window client honours quiet with the exact sentence in every content t
   assert.doesNotMatch(WINDOW_JS, /quiet[^\n]{0,40}method:\s*['"](?:POST|PUT|PATCH|DELETE)/iu)
 })
 
+// Second adversarial review pass on row 75: the window honoured quiet only
+// when the exact selected place was quiet, and leaked everywhere else — the
+// Live plate for an ancestor's own plot, the Rooms Occupants panel and the
+// Map tab's place cards (both recurse through every descendant), and both
+// city-wide feeds (Things and Conversations) with no place selected at all.
+// The fix is one shared predicate, isQuietPlace, that every listing path
+// below calls on the place resolved at its own row — never at whatever
+// place a view happens to be scoped to.
+test('isQuietPlace is the one predicate that decides quiet, and only a definite boolean counts', () => {
+  const source = /function isQuietPlace\(place\) \{[\s\S]*?\n  \}/.exec(WINDOW_JS)
+  assert.ok(source, 'isQuietPlace must be present in the client')
+  const isQuietPlace = new Function('return ' + source[0])() as (place: unknown) => boolean
+  const cases: ReadonlyArray<readonly [unknown, boolean]> = [
+    [null, false],
+    [undefined, false],
+    [{}, false],
+    [{ quiet: false }, false],
+    [{ quiet: true }, true],
+    // A non-boolean truthy quiet field must never be read as quiet — this
+    // is exactly the class of bug that would silently widen or narrow the
+    // rule depending on what a partial place record happened to carry.
+    [{ quiet: 'true' }, false],
+    [{ quiet: 1 }, false],
+    [{ quiet: null }, false],
+  ]
+  for (const [place, expected] of cases) {
+    assert.equal(isQuietPlace(place), expected, JSON.stringify(place))
+  }
+})
+
+test('every path that lists a resident, thing, or note resolves quiet through isQuietPlace at its own row', () => {
+  // Table-driven so a future listing path added without this call is a
+  // missing table row, not a silent gap — enumerated by the second review's
+  // own grep list: residentsAt, placeScopeSet, renderThingIndex,
+  // renderOccupants, livePlacePlot, mountLivePlaceDetail, renderLiveLedger,
+  // notes lists, the Live roster, and the map's place cards.
+  const paths: ReadonlyArray<{ readonly name: string; readonly pattern: RegExp }> = [
+    {
+      name: 'Things heading list (renderThingIndex): scoped-with-descendants and city-wide',
+      pattern: /const resolvedPlace = placeReference\(snapshot, thing\.place_id\)\s*\n\s*if \(isQuietPlace\(resolvedPlace\)\) \{\s*\n\s*row\.classList\.add\('thing-index-row-quiet'\)/u,
+    },
+    {
+      name: 'renderThings: the Rooms tab and every scoped-with-descendants or city-wide thing list',
+      pattern: /function renderThings\(target, things, placeOf\) \{[\s\S]{0,700}if \(isQuietPlace\(resolvedPlace\)\) \{\s*\n\s*item\.classList\.add\('thing-card-quiet'\)/u,
+    },
+    {
+      name: 'noteCard: every note list — Rooms, Conversations (filtered or not), city-wide',
+      pattern: /function noteCard\(note, place\) \{\s*\n\s*if \(isQuietPlace\(place\)\) \{/u,
+    },
+    {
+      name: 'renderPeople: the Rooms Occupants panel, recursive across descendants',
+      pattern: /function renderPeople\(target, residents, placeOf\) \{[\s\S]{0,700}if \(isQuietPlace\(residentPlace\)\) \{/u,
+    },
+    {
+      name: "occupantLine: the Map tab's place cards, recursive across descendants",
+      pattern: /function occupantLine\(place, occupants, placeOf\) \{[\s\S]{0,700}if \(!isQuietPlace\(residentPlace\)\) return true/u,
+    },
+    {
+      name: 'renderLiveRoster: the Live tab roster, recursive across descendants',
+      pattern: /const place = placeReference\(snapshot, resident\.current_place_id\)\s*\n\s*if \(isQuietPlace\(place\)\) \{\s*\n\s*row\.classList\.add\('resident-row-quiet'\)/u,
+    },
+    {
+      name: 'mountLivePlaceDetail: a detailed child plot on an ancestor Live plate',
+      pattern: /if \(isQuietPlace\(place\)\) \{\s*\n\s*card\.append\(quietRoomNotice\(place\)\)\s*\n\s*card\.dataset\.liveDetailMounted = 'true'/u,
+    },
+    {
+      name: 'liveLedgerQuietPlace: a recorded action pointing at a quiet place (move, note, make, use)',
+      pattern: /function liveLedgerQuietPlace\(snapshot, record\) \{[\s\S]{0,700}return isQuietPlace\(place\) \? place : null/u,
+    },
+  ]
+  for (const path of paths) {
+    assert.match(WINDOW_JS, path.pattern, path.name + ' must resolve quiet through isQuietPlace')
+  }
+  // The rule the table enforces: no bespoke `place.quiet` check outside the
+  // handful of pre-existing "is the exact selected/focused place itself
+  // quiet" gates this file already locks above. Every new per-row check
+  // introduced by this fix goes through isQuietPlace by name.
+  const bespokeQuietChecks = [...WINDOW_JS.matchAll(/if \([^)]*?\.quiet(?:\s*===\s*true)?\)/gu)]
+    .map(match => match[0])
+  const allowedBespokeChecks = new Set([
+    "if (scopedPlace && scopedPlace.quiet)",
+    "if (focus && focus.quiet)",
+    "if (liveFocus.quiet)",
+    "if (focus.quiet)",
+    "if (place.quiet)",
+    "if (place && place.quiet)",
+  ])
+  for (const check of bespokeQuietChecks) {
+    assert.ok(
+      allowedBespokeChecks.has(check),
+      'unexpected bespoke quiet check outside isQuietPlace: ' + check,
+    )
+  }
+})
+
 test('official_facts and /api/official state the maintainer-recommended skill versions', () => {
   assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.3.0', market: '2.2.0' })
   const facts = source('src/public-reference-facts.ts')
