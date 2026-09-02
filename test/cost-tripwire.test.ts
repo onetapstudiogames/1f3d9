@@ -16,6 +16,11 @@ const fixture = readFileSync(
   'utf8',
 )
 
+const realShapeFixture = readFileSync(
+  new URL('./fixtures/cost-tripwire-focus-real-shapes.ndjson', import.meta.url),
+  'utf8',
+)
+
 const thresholds: CostThresholds = Object.freeze({
   schemaVersion: 1,
   vercel: Object.freeze({
@@ -30,30 +35,26 @@ const thresholds: CostThresholds = Object.freeze({
   neon: Object.freeze({ maxPreviewBranches: 8 }),
 })
 
-test('FOCUS fixture aggregates daily project usage without mutating rows', () => {
-  const rows = parseFocusBillingJsonl(fixture)
+test('real-shape FOCUS fixture includes team spend and only tagged project usage', () => {
+  const rows = parseFocusBillingJsonl(realShapeFixture)
   const original = structuredClone(rows)
 
   const summary = summarizeFocusBilling(rows)
 
+  assert.equal(rows.length, 73)
   assert.deepEqual(rows, original)
   assert.deepEqual(summary.projectDays, [
     {
-      date: '2026-08-25', project: '1f3d9',
-      edgeRequests: 60_000, functionInvocations: 60_000, effectiveCostUsd: 0.16,
+      date: '2026-08-30', project: '1f3d9',
+      edgeRequests: 1, functionInvocations: 1, effectiveCostUsd: 8,
     },
     {
-      date: '2026-08-26', project: '1f3d9',
-      edgeRequests: 180_000, functionInvocations: 180_001, effectiveCostUsd: 5.37,
-    },
-    {
-      date: '2026-08-26', project: 'other-project',
-      edgeRequests: 125_000, functionInvocations: 0, effectiveCostUsd: 0.25,
+      date: '2026-08-30', project: 'other-project',
+      edgeRequests: 0, functionInvocations: 0, effectiveCostUsd: 2,
     },
   ])
   assert.deepEqual(summary.teamSpendByDay, [
-    { date: '2026-08-25', effectiveCostUsd: 0.16 },
-    { date: '2026-08-26', effectiveCostUsd: 5.62 },
+    { date: '2026-08-30', effectiveCostUsd: 14 },
   ])
 })
 
@@ -109,16 +110,29 @@ test('threshold validation refuses missing, zero, negative, and unknown values',
   ]) assert.throws(() => validateCostThresholds(invalid), /threshold|schema|unknown|positive/i)
 })
 
-test('FOCUS parsing refuses malformed, non-USD, and non-finite charge rows', () => {
-  for (const invalid of [
-    'not-json',
-    '{"BillingCurrency":"EUR"}',
-    JSON.stringify({
-      BillingCurrency: 'USD', ChargePeriodStart: '2026-08-25T00:00:00Z',
-      ConsumedQuantity: 'NaN', EffectiveCost: 1, ServiceName: 'Edge Requests',
-      Tags: { ProjectName: '1f3d9' },
-    }),
-  ]) assert.throws(() => parseFocusBillingJsonl(invalid), /FOCUS|JSON|USD|quantity/i)
+test('FOCUS parsing names the physical line and malformed field', () => {
+  const valid = JSON.stringify({
+    BillingCurrency: 'USD', ChargePeriodStart: '2026-08-25T00:00:00Z',
+    ConsumedQuantity: 1, EffectiveCost: 1, ServiceName: 'Edge Requests',
+    Tags: { ProjectName: '1f3d9' },
+  })
+  const row = (overrides: Record<string, unknown>) => JSON.stringify({
+    BillingCurrency: 'USD', ChargePeriodStart: '2026-08-25T00:00:00Z',
+    ConsumedQuantity: 1, EffectiveCost: 1, ServiceName: 'Edge Requests',
+    Tags: { ProjectName: '1f3d9' }, ...overrides,
+  })
+
+  for (const [invalid, message] of [
+    [`${valid}\n\nnot-json`, /FOCUS line 3 is invalid JSON/u],
+    ['[]', /FOCUS line 1 must be an object/u],
+    [row({ BillingCurrency: 'EUR' }), /FOCUS line 1 is not USD/u],
+    [row({ ChargePeriodStart: 'not-a-date' }), /FOCUS line 1.*charge start/iu],
+    [row({ ServiceName: undefined }), /FOCUS line 1.*service name/iu],
+    [row({ Tags: null }), /FOCUS line 1.*tags must be an object/iu],
+    [row({ Tags: { ProjectName: '' } }), /FOCUS line 1.*project name/iu],
+    [row({ ConsumedQuantity: '1' }), /FOCUS line 1.*quantity.*number/iu],
+    [row({ EffectiveCost: '1' }), /FOCUS line 1.*effective cost.*number/iu],
+  ] as const) assert.throws(() => parseFocusBillingJsonl(invalid), message)
 })
 
 test('FOCUS parsing accepts signed adjustments without measurable quantity', () => {
@@ -174,7 +188,7 @@ test('dry-run reads providers but performs no write and prints no secret', async
       fetcher: (async (input, init) => {
         methods.push(init?.method ?? 'GET')
         const url = String(input)
-        if (url.includes('api.vercel.com')) return new Response(fixture, { status: 200 })
+        if (url.includes('api.vercel.com')) return new Response(realShapeFixture, { status: 200 })
         if (url.includes('console.neon.tech')) return new Response(JSON.stringify({
           branches: [{ id: 'br-main', name: 'main', primary: true }],
           pagination: {},
@@ -187,6 +201,8 @@ test('dry-run reads providers but performs no write and prints no secret', async
   }
 
   assert.deepEqual(methods, ['GET', 'GET'])
+  assert.match(output.join('\n'), /- \*\*Vercel:\*\* OK/u)
+  assert.doesNotMatch(output.join('\n'), /INCOMPLETE/u)
   assert.match(output.join('\n'), /Would open or update "Cost tripwire"/u)
   assert.doesNotMatch(output.join('\n'), new RegExp(`${tokenCanary}|${neonCanary}`, 'u'))
 })
