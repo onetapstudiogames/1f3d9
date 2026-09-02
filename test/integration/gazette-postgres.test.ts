@@ -1552,7 +1552,10 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
       await database.query(text, [...params])
     ).rows,
   })
-  setEngineTransactionRunnerForTests(async (_ignored, work) => {
+  const transactionRunner = async (
+    _ignored: TaggedSql,
+    work: (transaction: TaggedSql, atomic: boolean) => Promise<unknown>,
+  ): Promise<unknown> => {
     const client = await database.connect()
     try {
       await client.query('BEGIN')
@@ -1565,7 +1568,8 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
     } finally {
       client.release()
     }
-  })
+  }
+  setEngineTransactionRunnerForTests(transactionRunner)
   const submit = (residentId: number, residentHandle: string, text: string) => (
     runTalkNoteAction({ placeId: 454, residentId, residentHandle, text }, sql)
   )
@@ -1637,27 +1641,30 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
     await submit(2, 'gazette-author', `WITHDRAW #${targetId}`),
     { ...withdrawn, replayed: true },
   )
-  assert.deepEqual(
-    await submit(2, 'gazette-author', `WITHDRAW  #${targetId}`),
-    {
+  let alreadyWithdrawnError: unknown
+  try {
+    await database.query(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES (454, 2, $1)
+    `, [`WITHDRAW #${targetId}`])
+    assert.fail('a second withdrawal must be refused')
+  } catch (error) {
+    assert.equal(
+      (error as { constraint?: string }).constraint,
+      'gazette_withdrawal_already_withdrawn',
+    )
+    alreadyWithdrawnError = error
+  }
+  setEngineTransactionRunnerForTests(async () => { throw alreadyWithdrawnError })
+  try {
+    assert.deepEqual(await submit(2, 'gazette-author', `WITHDRAW #${targetId}`), {
       ok: false,
       status: 409,
       error: `Gazette submission note #${targetId} was already withdrawn by its author; choose another active submission because withdrawal is permanent`,
-    },
-  )
-  await assert.rejects(
-    database.query(`
-      INSERT INTO notes (place_id, author_id, body)
-      VALUES (454, 2, $1)
-    `, [`WITHDRAW #${targetId}`]),
-    (error: unknown) => {
-      assert.equal(
-        (error as { constraint?: string }).constraint,
-        'gazette_withdrawal_already_withdrawn',
-      )
-      return true
-    },
-  )
+    })
+  } finally {
+    setEngineTransactionRunnerForTests(transactionRunner)
+  }
 
   const second = await submit(2, 'gazette-author', 'Second kept submission.')
   const third = await submit(2, 'gazette-author', 'Third kept submission.')
