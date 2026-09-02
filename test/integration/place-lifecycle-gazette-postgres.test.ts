@@ -34,19 +34,22 @@ function runDocker(args: readonly string[]): string {
 }
 
 function historicalPlaceLifecycleBackfill(): string {
+  // Exact statement from: git show 552c968:db/migrations/20260901_place_lifecycle.sql
+  // Shallow CI checkouts may not contain that commit, so the reviewed literal is the fallback.
+  const literalBackfill = 'UPDATE places SET founding_name = name WHERE founding_name IS NULL;'
   const result = spawnSync(
     'git',
     ['show', '552c968:db/migrations/20260901_place_lifecycle.sql'],
     { encoding: 'utf8', windowsHide: true },
   )
-  assert.equal(result.status, 0, result.stderr || 'could not read historical place lifecycle migration')
+  if (result.status !== 0) return literalBackfill
   const statements = result.stdout.match(
     /UPDATE places SET founding_name = name WHERE founding_name IS NULL;/gu,
   ) ?? []
   assert.deepEqual(statements, [
-    'UPDATE places SET founding_name = name WHERE founding_name IS NULL;',
+    literalBackfill,
   ])
-  return statements[0]!
+  return literalBackfill
 }
 
 async function assertGazetteLifecycleGuardRejects(database: Pool, statement: string): Promise<void> {

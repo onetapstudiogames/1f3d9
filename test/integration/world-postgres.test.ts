@@ -12,7 +12,6 @@ import {
   returnCityCreditSpend,
   type CityCreditDatabase,
 } from '../../src/city-credit.ts'
-import { completePlaceLifecycleOperation } from '../../src/place-lifecycle-operation.ts'
 import type { Resident } from '../../src/core.ts'
 import type { CraftSql } from '../../src/crafting.ts'
 import type { TaggedSql } from '../../src/engine.ts'
@@ -537,6 +536,7 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
     })
 
     await t.test('locked lifecycle completion refuses a protected Gazette debit without an effect', async () => {
+      const { completePlaceLifecycleOperation } = await import('../../src/place-lifecycle-operation.ts')
       const roomId = await resetDatabase()
       const parent = await database!.query<{ parent_id: number }>(
         'SELECT parent_id FROM places WHERE id = $1',
