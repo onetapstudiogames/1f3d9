@@ -6030,6 +6030,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function liveNoteRow(note, extraClass = '') {
     const row = element('li', ['live-note-row', extraClass].filter(Boolean).join(' '))
     row.dataset.liveNoteId = String(note.id)
+    row.dataset.focusKey = 'live-note:' + String(note.place_id) + ':' + String(note.id)
     row.tabIndex = -1
     const meta = element('p', 'live-note-meta')
     meta.append(
@@ -6049,6 +6050,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
   function renderLiveNotesPanel(snapshot) {
     const panel = nodes.liveNotesPanel
     if (!panel) return
+    const noteRowFocusKey = panel.contains(document.activeElement) &&
+      document.activeElement?.matches('[data-live-note-id]')
+      ? document.activeElement.dataset.focusKey || null
+      : null
     const notesPageFocusKey = nodes.liveNotesPage?.contains(document.activeElement)
       ? document.activeElement?.dataset?.focusKey || null
       : null
@@ -6135,20 +6140,23 @@ ${WINDOW_CLIENT_SAFETY_JS}
         restoreFocus(notesPageFocusKey, null, 'live-notes-close')
       }
     }
-    if (entry.pendingNoteId && nodes.liveNotesPanel) {
-      const target = nodes.liveNotesPanel.querySelector(
-        '[data-live-note-id="' + String(entry.pendingNoteId) + '"]')
-      if (target) {
-        if (entry.initialized && !entry.loading) {
-          state = { ...state, live: { ...state.live, notesPanel: {
-            ...entry, pendingNoteId: null,
-          } } }
-        }
-        window.queueMicrotask(() => {
-          target.scrollIntoView({ block: 'nearest' })
-          target.focus({ preventScroll: true })
-        })
-      }
+    if (noteRowFocusKey) restoreFocus(noteRowFocusKey, null, 'live-notes-close')
+    const pendingNoteId = entry.pendingNoteId
+    if (pendingNoteId && nodes.liveNotesPanel) {
+      window.queueMicrotask(() => {
+        const current = state.live.notesPanel
+        if (state.view !== 'live' || !state.liveNotesOpen ||
+            current.placeId !== place.id || current.pendingNoteId !== pendingNoteId) return
+        const target = nodes.liveNotesPanel?.querySelector(
+          '[data-live-note-id="' + String(pendingNoteId) + '"]')
+        if (!target?.isConnected) return
+        target.scrollIntoView({ block: 'nearest' })
+        target.focus({ preventScroll: true })
+        if (document.activeElement !== target) return
+        state = { ...state, live: { ...state.live, notesPanel: {
+          ...current, pendingNoteId: null,
+        } } }
+      })
     }
     if (!entry.initialized && !entry.loading && !entry.error && !document.hidden) {
       window.queueMicrotask(() => void loadLiveNotes(place.id, false))

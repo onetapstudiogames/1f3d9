@@ -432,8 +432,10 @@ step.
   about a recorded street route. The visual
   budget never truncates, reorders, or removes verified history.
 - A note observed while the watcher is present may show one brief speech bubble
-  beside its speaker, only while that resident has detail budget. The newest
-  eligible note wins per resident and shows its first line capped at 60 characters.
+  beside its speaker, only while that resident has detail budget. The bubble is
+  outlined text directly on the plate, with a transparent background and no
+  border, backing box, box shadow, or paper tail. The newest eligible note wins
+  per resident and shows its first line capped at 60 characters.
   It fades after a few seconds and never appears for opening or hidden-tab
   history. Clicking the bubble opens that place's notes panel and scrolls to the
   exact note, where the complete body remains available through the bounded room

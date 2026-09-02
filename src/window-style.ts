@@ -1003,10 +1003,15 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   padding: 0.38rem 0.45rem;
   transform: translateX(-50%);
   color: var(--ink);
-  background: var(--paper-light);
-  border: 2px solid var(--line);
-  border-radius: 0;
-  box-shadow: 3px 3px 0 rgba(32, 56, 47, 0.22);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-shadow:
+    -1px -1px 0 var(--paper-light),
+    1px -1px 0 var(--paper-light),
+    -1px 1px 0 var(--paper-light),
+    1px 1px 0 var(--paper-light),
+    0 2px 2px rgba(255, 249, 232, 0.72);
   pointer-events: none;
   font: 750 0.58rem/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
   overflow-wrap: anywhere;
@@ -1497,14 +1502,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-trail-inking, .live-trail[data-replaying="true"] {
   animation: live-trail-ink var(--live-trail-duration, 3.2s) linear both;
 }
-.live-speech-bubble::after {
-  content: "";
-  position: absolute;
-  inset: 100% auto auto 0.7rem;
-  border: 0.32rem solid transparent;
-  border-top-color: var(--line);
-}
-
 /* Live round 2: drawings are the objects. Sprite hit areas stay generous,
    while every transparent pixel reveals the surveyed ground beneath it. */
 #live-panel .drawing-grid,
@@ -2642,6 +2639,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-footstep { fill: LinkText; }
   .live-resident-more, .live-thing-more,
   .live-control-button { color: ButtonText; background: ButtonFace; }
-  .live-speech-bubble { color: CanvasText; background: Canvas; }
+  .live-speech-bubble { color: CanvasText; background: transparent; }
 }
 `

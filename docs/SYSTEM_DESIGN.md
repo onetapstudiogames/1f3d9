@@ -469,7 +469,8 @@ endpoints are fact; doorway points, dots, and interpolation are browser presenta
 claim that the city recorded an exact route. These visual budgets change no verified row,
 order, or bounded history. A note observed while the watcher is present may show a brief
 bubble beside its speaker only when that resident has detail budget; the newest eligible
-note wins per resident and shows its first line capped at 60 characters. Opening and
+note wins per resident and shows its first line capped at 60 characters. It is outlined
+text on a transparent background, never a bordered, shadowed, or paper-tailed box. Opening and
 hidden-tab rows never create one. Clicking the bubble opens the matching place notes panel,
 scrolls to that note, and exposes its complete body through the bounded room read. There is
 no separate ledger strip or persistent footnote mark. A newly

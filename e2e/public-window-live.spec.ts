@@ -3713,6 +3713,21 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
     await page.clock.runFor(100)
   }
   await expect(bubble).toBeVisible()
+  expect(await bubble.evaluate(node => {
+    const style = getComputedStyle(node)
+    return {
+      background: style.backgroundColor,
+      border: [style.borderTopWidth, style.borderRightWidth,
+        style.borderBottomWidth, style.borderLeftWidth],
+      boxShadow: style.boxShadow,
+      textShadow: style.textShadow,
+    }
+  })).toEqual({
+    background: 'rgba(0, 0, 0, 0)',
+    border: ['0px', '0px', '0px', '0px'],
+    boxShadow: 'none',
+    textShadow: expect.not.stringMatching(/^none$/u),
+  })
 
   const viewport = page.locator('#live-viewport')
   await viewport.focus()
@@ -3724,22 +3739,33 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await expect(bubble).toBeVisible()
   await expect(bubble).toHaveAttribute('data-live-offscreen', 'false')
 
+  await page.evaluate(() => {
+    const panel = document.querySelector('#live-notes-panel')!
+    const observer = new MutationObserver(() => {
+      const target = panel.querySelector('[data-live-note-id="9301"]')
+      const status = panel.querySelector('#live-notes-status')?.textContent || ''
+      const continueButton = panel.querySelector<HTMLButtonElement>('.live-notes-continue')
+      if (!target || !status.includes('Showing 50 of 52') || !continueButton) return
+      observer.disconnect()
+      ;(panel as HTMLElement).dataset.liveFocusRaceTriggered = 'true'
+      continueButton.click()
+    })
+    observer.observe(panel, { childList: true, subtree: true, characterData: true })
+  })
   await bubble.evaluate(node => (node as HTMLButtonElement).click())
   await page.clock.runFor(32)
   await expect(notesPanel).toBeVisible()
   await expect(page).toHaveURL(/\/window\/live\?place=9103&notes=open$/u)
   const spokenNote = notesPanel.locator('[data-live-note-id="9301"]')
+  await expect(notesPanel).toHaveAttribute('data-live-focus-race-triggered', 'true')
+  await expect(notesPanel).toContainText('Showing 52 of 52 direct room notes, newest first.')
+  await expect(spokenNote).toBeFocused()
   await expect(spokenNote.locator('.live-note-body')).toHaveText(
     'spoke: sixty-four residents move together while this message appears.',
   )
-  await expect(notesPanel.locator('#live-notes-selected')).toContainText(
-    'Selected live note · outside the loaded history page',
-  )
-  await expect(notesPanel.locator('#live-notes-list [data-live-note-id]')).toHaveCount(50)
-  await expect(notesPanel.locator('[data-live-note-id]')).toHaveCount(51)
-  await expect(notesPanel).toContainText('Showing 50 of 52 direct room notes, newest first.')
-  await expect(notesPanel.getByRole('button', { name: 'Continue' })).toBeVisible()
-  await expect(spokenNote).toBeFocused()
+  await expect(notesPanel.locator('#live-notes-list [data-live-note-id]')).toHaveCount(52)
+  await expect(notesPanel.locator('[data-live-note-id]')).toHaveCount(52)
+  await expect(notesPanel.getByRole('button', { name: 'Continue' })).toHaveCount(0)
   await notesPanel.getByRole('button', { name: 'Close notes' }).click()
 
   const useReplay = proofPanel.locator('.live-use-replay').first()
@@ -4635,6 +4661,58 @@ test('new observed records animate once in order and settle to positions plus fa
   await expect(page.locator('.live-footstep')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
   await expect(trail).toHaveCount(0)
+})
+
+test('linked-note focus does not return after the watcher chooses another notes control', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await publishReplayChanges(page, fixture)
+  await settleLiveFakeClockAfterPublish(page)
+
+  const replay = page.locator('.live-replay-portrait')
+  await expect(replay).toHaveCount(1)
+  const duration = Number(await replay.getAttribute('data-replay-duration'))
+  const finalPoint = {
+    x: Number(await replay.getAttribute('data-live-final-x')),
+    y: Number(await replay.getAttribute('data-live-final-y')),
+  }
+  await replay.locator('.live-portrait').evaluate(node => (node as HTMLButtonElement).click())
+  await page.clock.runFor(Math.ceil(duration / 2))
+  await replay.locator('.live-portrait').evaluate(node => (node as HTMLButtonElement).click())
+  await panLiveStagePointIntoView(page, finalPoint)
+  await page.clock.fastForward(Math.floor(duration / 2) + 50)
+
+  const bubble = page.locator('.live-speech-bubble')
+  const latestLine = 'L'.repeat(59) + '…'
+  await advanceLiveFakeClockUntil(
+    page,
+    async () => await bubble.count() === 1 && await bubble.textContent() === latestLine,
+    10_000,
+  )
+  await expect(bubble).toHaveAttribute('data-live-note-id', '78')
+  let releaseRoomNotes = () => {}
+  const heldRoomNotes = new Promise<void>(resolve => {
+    releaseRoomNotes = resolve
+  })
+  await page.route('**/api/place/3**', async route => {
+    await heldRoomNotes
+    await route.fallback()
+  })
+  await bubble.evaluate(node => (node as HTMLButtonElement).click())
+
+  const notesPanel = page.locator('#live-notes-panel')
+  const linkedNote = notesPanel.locator('[data-live-note-id="78"]')
+  const closeNotes = notesPanel.getByRole('button', { name: 'Close notes' })
+  await expect(linkedNote).toBeFocused()
+  await closeNotes.focus()
+  await expect(closeNotes).toBeFocused()
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+  await page.clock.runFor(32)
+  await expect(closeNotes).toBeFocused()
+  releaseRoomNotes()
 })
 
 test('two arrivals always glide and settle on their own detailed route endpoints', async ({ page }) => {
@@ -5916,6 +5994,7 @@ test('a 150-resident plate reports honest frame work while 64 residents move', a
   expect(result.replayStarts).toBe(64)
   expect(result.cameraMoves).toBe(60)
   expect(result.sampledFrames).toBeGreaterThan(120)
+  expect(result.p95FrameMs).toBeLessThanOrEqual(100)
   expect(result.renderWork.renders).toBeLessThanOrEqual(18)
   expect(result.renderWork.motionLayerRefreshes).toBeLessThanOrEqual(64)
   expect(result.addedNodes).toBeLessThanOrEqual(400)

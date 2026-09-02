@@ -373,7 +373,12 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_CSS, /\.live-replay-portrait[\s\S]*?live-recorded-glide/u)
   assert.match(
     WINDOW_CSS,
-    /\.live-speech-bubble\s*\{[\s\S]*?background:\s*var\(--paper-light\)[\s\S]*?border:\s*2px solid var\(--line\)[\s\S]*?border-radius:\s*0/u,
+    /\.live-speech-bubble\s*\{[^}]*?background:\s*transparent;[^}]*?border:\s*0;[^}]*?box-shadow:\s*none;[^}]*?text-shadow:\s*(?!none)[^;}]+;/u,
+  )
+  assert.doesNotMatch(WINDOW_CSS, /\.live-speech-bubble::after\s*\{/u)
+  assert.doesNotMatch(
+    WINDOW_CSS,
+    /\.live-speech-bubble\s*\{[^}]*?background:\s*Canvas;/u,
   )
   assert.doesNotMatch(WINDOW_CSS, /live-speech-arrive/u)
   assert.match(WINDOW_JS, /liveMovement = movement\.detailed \? 'detail' : 'simple'/u)
