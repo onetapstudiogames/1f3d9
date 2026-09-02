@@ -9024,6 +9024,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
       nodes.liveLedger.replaceChildren(element('li', 'empty-row', 'No public plate is available.'))
       return
     }
+    if (liveFocus.quiet) {
+      const row = element('li', 'quiet-room-notice-row')
+      row.append(quietRoomNotice(liveFocus))
+      nodes.liveLedger.replaceChildren(row)
+      return
+    }
     const liveChildrenRows = children || liveChildren(snapshot, liveFocus)
     const records = suppliedRecords || visibleLiveRecords(snapshot, liveFocus, liveChildrenRows)
     if (!records.length) {
@@ -9437,6 +9443,44 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
   }
 
+  // Decision #75: the Live tab's main plate must honour quiet exactly like
+  // every other tab — name, owner, and counts stay visible, but walker
+  // portraits, thing specimens, the trace layer, and the ledger (which would
+  // otherwise name residents and things through recorded actions) are all
+  // replaced by the one honest sentence. Nothing else renders.
+  function renderLiveQuietPlate(snapshot, focus) {
+    if (nodes.liveWorldGround) nodes.liveWorldGround.replaceChildren()
+    if (nodes.liveStage) {
+      nodes.liveStage.style.setProperty('--live-stage-width', '1100px')
+      nodes.liveStage.style.setProperty('--live-stage-height', '680px')
+      nodes.liveStage.dataset.liveStageWidth = '1100'
+      nodes.liveStage.dataset.liveStageHeight = '680'
+      nodes.liveStage.setAttribute('aria-label', 'Live surveyed plate for ' + focus.name)
+    }
+    renderLiveBreadcrumbs(snapshot, focus)
+    const residentCount = displayedResidents(snapshot).filter(resident =>
+      resident.current_place_id === focus.id).length
+    const thingCount = liveSurveyThingTotal(snapshot, focus.id, false)
+    const summary = element('div', 'quiet-plate-summary')
+    summary.append(
+      element('h3', 'live-plate-title', focus.name),
+      element('p', 'quiet-plate-facts', (focus.owner ? 'Kept by ' + focus.owner : 'Nobody owns it') +
+        ' · ' + String(residentCount) + (residentCount === 1 ? ' resident' : ' residents') +
+        ' · ' + (thingCount === null
+          ? 'thing count unavailable'
+          : String(thingCount) + (thingCount === 1 ? ' thing' : ' things'))),
+      quietRoomNotice(focus),
+    )
+    if (nodes.livePlates) nodes.livePlates.replaceChildren(summary)
+    if (nodes.liveMapCaption) nodes.liveMapCaption.hidden = true
+    renderLiveLedger(snapshot, focus, null, null)
+    renderLiveRoster(snapshot, focus, [], [])
+    if (nodes.liveResidentPage) {
+      nodes.liveResidentPage.hidden = true
+      nodes.liveResidentPage.replaceChildren()
+    }
+  }
+
   function renderLive(snapshot) {
     resetPortraitImages()
     if (!nodes.livePlates || !nodes.liveStage) return
@@ -9522,6 +9566,13 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!focus) {
       clearLiveScopeSurfaces('No public plate is available.')
       renderEmpty(nodes.livePlates, 'empty-row', 'No public plate is available.')
+      renderLiveHistoryStatus()
+      scheduleLiveClock()
+      restoreFocus(focusKey, null, null)
+      return
+    }
+    if (focus.quiet) {
+      renderLiveQuietPlate(snapshot, focus)
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
@@ -10939,7 +10990,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const place = state.placeId
       ? placeReference(snapshot, state.placeId)
       : null
-    if (place && place.quiet && !state.resident) {
+    if (place && place.quiet) {
       renderQuietRoom(nodes.conversations, place)
       hideHistoryControl(nodes.conversationPage)
       return

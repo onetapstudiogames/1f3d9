@@ -113,8 +113,25 @@ test('the window client honours quiet with the exact sentence in every content t
   // Things tab: a scoped quiet place withholds its heading list.
   assert.match(WINDOW_JS, /if \(scopedPlace && scopedPlace\.quiet\) \{/u)
 
-  // Conversations tab: a scoped quiet place withholds its note list.
-  assert.match(WINDOW_JS, /if \(place && place\.quiet && !state\.resident\) \{/u)
+  // Conversations tab: a scoped quiet place withholds its note list, in
+  // every combination of filters (a resident filter must never bypass it).
+  assert.match(
+    WINDOW_JS,
+    /if \(place && place\.quiet\) \{\s*renderQuietRoom\(nodes\.conversations, place\)/mu,
+  )
+  assert.doesNotMatch(WINDOW_JS, /if \(place && place\.quiet && !state\.resident\) \{/u)
+
+  // Live: the main plate (walker portraits and thing specimens) withholds
+  // just like the roster, and never leaks names through the ledger either.
+  assert.match(
+    WINDOW_JS,
+    /if \(focus\.quiet\) \{\s*renderLiveQuietPlate\(snapshot, focus\)/mu,
+  )
+  assert.match(WINDOW_JS, /function renderLiveQuietPlate\(snapshot, focus\) \{/u)
+  assert.match(
+    WINDOW_JS,
+    /if \(liveFocus\.quiet\) \{\s*const row = element\('li', 'quiet-room-notice-row'\)/mu,
+  )
 
   // The client never gates the underlying HTTP reads on `quiet`; only
   // rendering changes, exactly matching the unchanged-API contract.

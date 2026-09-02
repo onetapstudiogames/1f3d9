@@ -406,7 +406,9 @@ function replayThingRows(now: number, placeId: number, carriedPlaceId?: number) 
   }))
 }
 
-function replaySnapshot(now: number, published: boolean, marker: string, carryMove = false) {
+function replaySnapshot(
+  now: number, published: boolean, marker: string, carryMove = false, quietPlaceId?: number,
+) {
   const residentPlaceId = published ? 4 : 2
   const thingPlaceId = published ? 3 : 2
   const residents = replayResidentRows(now, residentPlaceId)
@@ -416,15 +418,16 @@ function replaySnapshot(now: number, published: boolean, marker: string, carryMo
     places: [{
       id: 1, parent_id: null, name: 'the world', owner: null,
       purpose: '', front_matter: [], places: 3, things: 0, notes: 0,
-      moderated: false, children: replayPlaces.filter(place => place.parent_id === 1).map(place => ({
+      moderated: false, quiet: false,
+      children: replayPlaces.filter(place => place.parent_id === 1).map(place => ({
         ...place, owner: place.id === 2 ? 'cinder-owner' : 'harbor-owner',
         purpose: '', front_matter: [], places: place.id === 3 ? 1 : 0,
         things: things.filter(thing => thing.place_id === place.id).length, notes: 0,
-        moderated: false, children: place.id === 3 ? [{
+        moderated: false, quiet: place.id === quietPlaceId, children: place.id === 3 ? [{
           id: 4, parent_id: 3, name: 'Lantern nook', owner: 'harbor-owner',
           purpose: '', front_matter: [], places: 0,
           things: things.filter(thing => thing.place_id === 4).length, notes: 0,
-          moderated: false, children: [],
+          moderated: false, quiet: quietPlaceId === 4, children: [],
         }] : [],
       })),
     }],
@@ -489,6 +492,7 @@ async function installReplayRoutes(
     initialResidentPlaceId?: number
     crowdPlaceId?: number
     residentCrowdSize?: number
+    quietPlaceId?: number
   }> = {},
 ) {
   let published = false
@@ -673,6 +677,7 @@ async function installReplayRoutes(
       controls.carryMove ? published : marker !== '10',
       marker,
       controls.carryMove,
+      controls.quietPlaceId,
     )
     const drawingRows = drawingPlaces.map(extra => ({
       ...extra,
@@ -4905,4 +4910,56 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await page.setViewportSize({ width: 701, height: 900 })
   await expect(thingSpecimen).toBeFocused()
   expect(writes).toEqual([])
+})
+
+test('drilling into a quiet room in Live withholds its residents and things everywhere on the plate', async ({ page }) => {
+  // Decision #75: a quiet place still shows its name, owner, and counts, but
+  // every tab that renders room contents replaces those contents with one
+  // honest sentence. This covers the Live tab's own main plate (walker
+  // portraits and thing specimens), not only its roster panel — Cinder lane
+  // (place #2) holds one named resident and seven named things pre-publish.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    quietPlaceId: 2,
+  })
+  await page.goto('/window/live?place=2')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const livePanel = page.locator('#live-panel')
+  await expect(livePanel).toContainText('cinder-owner prefers to keep this room private.')
+  await expect(page.locator('#live-plates .quiet-room-notice')).toContainText(
+    'cinder-owner prefers to keep this room private.',
+  )
+  await expect(page.locator('#live-plates')).toContainText('Cinder lane')
+  await expect(page.locator('#live-plates')).toContainText('Kept by cinder-owner')
+  await expect(page.locator('#live-plates')).toContainText('1 resident')
+  await expect(page.locator('#live-plates')).toContainText('7 things')
+
+  // Nothing else renders: no walker portrait, no thing specimen, no plot.
+  await expect(page.locator('#live-plates .live-walker')).toHaveCount(0)
+  await expect(page.locator('#live-plates .live-thing-specimen')).toHaveCount(0)
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(0)
+  await expect(
+    page.locator('#live-plates .entity-portrait[data-portrait-type="resident"]'),
+  ).toHaveCount(0)
+  await expect(
+    page.locator('#live-plates .entity-portrait[data-portrait-type="thing"]'),
+  ).toHaveCount(0)
+
+  // The roster panel already honoured quiet; the main plate must match it.
+  await expect(page.locator('#live-roster')).toContainText(
+    'cinder-owner prefers to keep this room private.',
+  )
+  // The ledger must never leak a resident or thing name through recorded
+  // actions either — it is part of the same plate.
+  await expect(page.locator('#live-ledger')).toContainText(
+    'cinder-owner prefers to keep this room private.',
+  )
+
+  await expect(livePanel).not.toContainText('map-walker')
+  await expect(livePanel).not.toContainText('harbor keepsake')
+  await expect(livePanel).not.toContainText('field lantern')
+  expect(await livePanel.evaluate(node => node.textContent ?? '')).not.toMatch(
+    /harbor-[1-7]\b/,
+  )
+  expect(fixture.thingPageRequests()).toBe(0)
 })

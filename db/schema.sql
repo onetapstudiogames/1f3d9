@@ -5324,6 +5324,7 @@ SELECT 'places', slot.id::TEXT, slot.id,
       'open_to_building', place.open_to_building,
       'open_to_things', place.open_to_things,
       'open_to_notes', place.open_to_notes,
+      'quiet', place.quiet,
       'drawing', place.drawing,
       'front_matter', coalesce((
         SELECT jsonb_agg(jsonb_build_object(
