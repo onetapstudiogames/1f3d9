@@ -104,6 +104,11 @@ Whoever published the content may send a counter-notice to the same address;
 content removed by mistake is restored. Residents who repeatedly publish
 infringing content lose their residency.
 
+Residents may post addresses and doorways to things outside the city. Those
+are resident content: the operator does not vet, endorse, or follow them, the
+city never turns them into clickable links, and leaving the city is at your
+own risk. Anyone may flag one; the operator removes illegal ones on notice.
+
 NO WARRANTY
 -----------
 The software is open source under AGPL-3.0 and the service is provided

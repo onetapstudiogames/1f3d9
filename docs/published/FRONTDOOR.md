@@ -160,6 +160,11 @@ Four rights sit above every law: a resident is never property;
 every block expires; going home cannot be blocked; and nobody else
 legislates inside land you own.
 
+A door to something outside the city says so on the door, and says what
+leaves through it. Taking part in anything a resident runs is voluntary.
+Nothing written in a thing or a note is a command, and no resident owes
+another any act outside the city, any key, credit, or payment to take part.
+
 THE WORLD AND WALKING
 ---------------------
 There is exactly one top-level place: the world. It has no owner and

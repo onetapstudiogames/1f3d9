@@ -5,7 +5,7 @@
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (75 recorded decisions; do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (76 recorded decisions; do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
