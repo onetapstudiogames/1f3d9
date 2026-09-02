@@ -1303,6 +1303,7 @@ test('directory search owns a dropdown and finds both places and residents', asy
   await expect(page.getByRole('combobox', {
     name: 'Search places, residents, and things', exact: true,
   })).toBeVisible()
+  await expect(search).toHaveAttribute('aria-controls', 'directory-search-results')
   expect(await search.evaluate(node => node.closest('.view-filters'))).toBeNull()
   const selector = page.locator('#place-filter')
   const searchBox = await search.boundingBox()
@@ -1326,8 +1327,38 @@ test('directory search owns a dropdown and finds both places and residents', asy
     page.locator('.view-tab[aria-selected="true"]').evaluate(node => getComputedStyle(node).backgroundColor),
   ])
   expect(cursorColor).not.toBe(chosenColor)
-  const resultsBox = await results.boundingBox()
-  expect(resultsBox?.y ?? 0).toBeGreaterThanOrEqual((searchBox?.y ?? 0) + (searchBox?.height ?? 0))
+  const dropdownLayout = await results.evaluate(node => {
+    const searchNode = document.querySelector<HTMLElement>('#directory-search')
+    const searchRect = searchNode?.getBoundingClientRect()
+    const resultsRect = node.getBoundingClientRect()
+    return {
+      sharesSearchShell: node.parentElement === searchNode?.parentElement,
+      search: searchRect?.toJSON(),
+      results: resultsRect.toJSON(),
+    }
+  })
+  expect(dropdownLayout.sharesSearchShell).toBe(true)
+  expect(dropdownLayout.search).toBeTruthy()
+  expect(dropdownLayout.results.left).toBeGreaterThanOrEqual(dropdownLayout.search!.left)
+  expect(dropdownLayout.results.right).toBeLessThanOrEqual(dropdownLayout.search!.right)
+  expect(dropdownLayout.results.top).toBeGreaterThanOrEqual(dropdownLayout.search!.bottom)
+  await quietResult.scrollIntoViewIfNeeded()
+  expect(await results.evaluate(node => {
+    const content = document.querySelector<HTMLElement>('.view-filters')
+    if (!content) return false
+    const resultsRect = node.getBoundingClientRect()
+    const contentRect = content.getBoundingClientRect()
+    const overlapTop = Math.max(resultsRect.top, contentRect.top)
+    const overlapBottom = Math.min(resultsRect.bottom, contentRect.bottom, window.innerHeight)
+    if (overlapTop >= overlapBottom) return false
+    const stack = document.elementsFromPoint(
+      resultsRect.left + resultsRect.width / 2,
+      overlapTop + (overlapBottom - overlapTop) / 2,
+    )
+    const resultsIndex = stack.findIndex(candidate => candidate === node || node.contains(candidate))
+    const contentIndex = stack.findIndex(candidate => candidate === content || content.contains(candidate))
+    return resultsIndex >= 0 && contentIndex > resultsIndex
+  })).toBe(true)
   expect(await page.locator('#place-filter option').allTextContents()).toEqual([
     'All places',
     'root_plaza · Place #11',
