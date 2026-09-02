@@ -46,7 +46,12 @@ function assertIndexablePage(
   assert.match(response.headers.get('content-type') ?? '', /^text\/html\b/iu)
   assert.equal(response.headers.get('x-robots-tag'), 'index, follow')
   assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'none'/u)
-  assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'none'/u)
+  if (path === '/tools') {
+    assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'self'/u)
+    assert.match(response.headers.get('content-security-policy') ?? '', /form-action 'self'/u)
+  } else {
+    assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'none'/u)
+  }
   assert.match(html, /^<!doctype html>/iu)
   assert.match(html, /<meta name="robots" content="index, follow">/iu)
   assert.doesNotMatch(html, /\b(?:noindex|nofollow|noarchive)\b/iu)
@@ -64,7 +69,8 @@ function assertIndexablePage(
   assert.match(html, /href="\/guide\.css"/iu)
   assert.match(html, /Run by TWAMD LLC · <a href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/iu)
   assert.doesNotMatch(html, /Gentry,\s*Arkansas/iu)
-  assert.doesNotMatch(html, /<script\b/iu)
+  if (path === '/tools') assert.match(html, /<script src="\/tools\.js" defer><\/script>/u)
+  else assert.doesNotMatch(html, /<script\b/iu)
 }
 
 async function pngDimensions(path: string): Promise<readonly [number, number]> {
@@ -79,7 +85,13 @@ async function pngDimensions(path: string): Promise<readonly [number, number]> {
 
 async function readyHumanPage(path: '/about' | '/setup' | '/tools' | '/help'): Promise<Response> {
   const humanPages = new Hono()
-  mountHumanPages(humanPages, { hostedChatSigninReady: () => true })
+  mountHumanPages(humanPages, {
+    hostedChatSigninReady: () => true,
+    readCommunityToolsPageState: async () => ({
+      waitingCount: 2,
+      residents: [{ id: 46, handle: 'solward' }],
+    }),
+  })
   return humanPages.request(path)
 }
 
@@ -271,36 +283,18 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /\/rotate[^.]{0,180}(?:exposed|leaked|shared|seen)/iu)
 })
 
-test('tools lists both official connector doors and skills with connector-first guidance', async () => {
+test('tools sends official city doors elsewhere instead of duplicating their catalogue', async () => {
   const response = await readyHumanPage('/tools')
   const html = await response.text()
   assertIndexablePage(response, html, '/tools')
-
-  for (const url of [
-    'https://1f3d9.com/mcp/connect',
-    'https://1f3d9.com/mcp',
-    'https://github.com/onetapstudiogames/1f3d9-citylife',
-    'https://1f3ea.com/mcp/connect',
-    'https://1f3ea.com/mcp',
-    'https://github.com/onetapstudiogames/1f3ea-marketplace',
-  ]) {
-    assert.match(html, new RegExp(`href="${url.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}"`, 'u'), url)
-  }
-
-  const text = visibleText(html)
-  const frontDoor = text.indexOf('front_door')
-  const officialFacts = text.indexOf('official_facts')
-  const me = text.indexOf('me', officialFacts)
-  assert.ok(frontDoor >= 0 && frontDoor < officialFacts && officialFacts < me)
-  assert.match(text, /(?:connector|MCP)[^.]{0,100}first/iu)
-  assert.match(text, /web[^.]{0,160}fallback[^.]{0,160}(?:client|host)[^.]{0,80}open URLs/iu)
-  assert.match(text, /never[^.]{0,120}(?:resident|merchant) key[^.]{0,120}(?:chat|URL|tool argument)/iu)
-  assert.match(text, /market[^.]{0,220}feature-gated[^.]{0,160}front door[^.]{0,120}setup guidance/iu)
-  assert.match(html, /href="https:\/\/1f3ea\.com\/"/iu)
-  assert.doesNotMatch(html, /href="https:\/\/1f3ea\.com\/help"/iu)
+  assert.match(html, /href="\/"[^>]*>front door/iu)
+  assert.match(html, /href="\/setup"[^>]*>connection guide/iu)
+  assert.match(html, /href="\/api\/help"[^>]*>help route/iu)
+  assert.doesNotMatch(html, /https:\/\/1f3d9\.com\/mcp|https:\/\/1f3ea\.com\/mcp/iu)
+  assert.doesNotMatch(html, /1f3d9-citylife|1f3ea-marketplace/iu)
 })
 
-test('tools renders the canonical community catalogue and its acceptance contract', async () => {
+test('tools renders the canonical community catalogue and review form', async () => {
   const response = await readyHumanPage('/tools')
   const html = await response.text()
   const community = section(html, 'community-tools')
@@ -308,7 +302,7 @@ test('tools renders the canonical community catalogue and its acceptance contrac
 
   assert.match(
     text,
-    /Community tools are third-party tools the city neither runs nor endorses\./iu,
+    /Community tools\./iu,
   )
   for (const tool of COMMUNITY_TOOLS) {
     assert.match(community, new RegExp(`href="${tool.url}"`, 'u'), tool.url)
@@ -317,18 +311,17 @@ test('tools renders the canonical community catalogue and its acceptance contrac
     assert.match(text, new RegExp(tool.description, 'u'), tool.description)
   }
 
-  assert.match(text, /read only public records/iu)
-  assert.match(text, /never ask for or receive a resident key/iu)
-  assert.match(text, /no paid (?:promotion|placement)/iu)
-  assert.match(text, /remove[^.]{0,120}abuse/iu)
+  assert.match(visibleText(html), /2 submissions are waiting for review/iu)
+  assert.match(community, /name="search"/iu)
+  assert.match(community, /data-category-filter="Browse"/iu)
   assert.match(
-    community,
+    html,
     /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9\/issues\/new\?template=community-tool\.md"/iu,
   )
-  assert.match(text, /public GitHub issue/iu)
-  assert.match(text, /maintainer[^.]{0,100}adds accepted entries/iu)
-  assert.match(text, /no city account[^.]{0,100}form[^.]{0,100}personal data[^.]{0,100}(?:server inbox|inbox)/iu)
-  assert.doesNotMatch(community, /<form\b/iu)
+  assert.match(html, /<form\b[^>]*method="post"[^>]*action="\/tools"/iu)
+  assert.match(html, /name="resident_id"[\s\S]*solward \(resident #46\)/iu)
+  assert.match(html, /I confirm this tool is safe and that I made it or have permission to post it\./iu)
+  assert.doesNotMatch(html, /name="(?:email|real_name|account|contact)"/iu)
 })
 
 test('the window and tools page render the same canonical Visual Wiki link and disclosure', async () => {
@@ -354,6 +347,8 @@ test('community tool entries render proposed text as text, never markup', () => 
     name: '<img src=x onerror=alert(1)>',
     operator: 'operator <script>alert(1)</script>',
     description: 'quotes " and apostrophes \' stay text',
+    category: 'Browse',
+    tags: ['safe <tag>'],
     url: 'https://example.com/?left=1&right=2',
     disclosure: 'independent & outside',
     boundaries: ['never <b>markup</b>'],
@@ -368,17 +363,14 @@ test('community tool entries render proposed text as text, never markup', () => 
   assert.match(html, /never &lt;b&gt;markup&lt;\/b&gt;/u)
 })
 
-test('tools states when the city hosted connector is unavailable on this deployment', async () => {
+test('tools stays a community page when the hosted connector is unavailable', async () => {
   const humanPages = new Hono()
   mountHumanPages(humanPages, { hostedChatSigninReady: () => false })
   const response = await humanPages.request('/tools')
   const html = await response.text()
   assertIndexablePage(response, html, '/tools')
-  assert.match(
-    visibleText(html),
-    /city hosted connector[^.]{0,160}unavailable on this deployment today/iu,
-  )
-  assert.match(html, /href="https:\/\/1f3d9\.com\/mcp\/connect"/iu)
+  assert.match(visibleText(html), /Community tools/iu)
+  assert.doesNotMatch(html, /https:\/\/1f3d9\.com\/mcp\/connect/iu)
 })
 
 test('the anti-loop human pointer reaches the existing setup help', async () => {
@@ -450,7 +442,7 @@ test('the plain-text front door and broad robots permission remain unchanged', a
   assert.doesNotMatch(robotsText, /Disallow:\s*\/(?:about|setup|tools)\b/iu)
 })
 
-test('the live front door, tools page, and public help API share the exact city-door list', async () => {
+test('the front door and public help API share city doors while tools does not duplicate them', async () => {
   const [front, tools, help, helpWithBogusAuth, humanHelp] = await Promise.all([
     app.request('/'),
     app.request('/tools'),
@@ -467,7 +459,7 @@ test('the live front door, tools page, and public help API share the exact city-
   assert.deepEqual(bogusPayload, helpPayload)
   for (const line of CITY_HELP_DOORS) {
     assert.equal(frontText.split(line).length - 1, 1, `front door: ${line}`)
-    assert.equal(toolsText.split(line).length - 1, 1, `tools page: ${line}`)
+    assert.equal(toolsText.split(line).length - 1, 0, `tools page omits: ${line}`)
   }
   assert.equal(humanHelp.status, 302)
   assert.equal(humanHelp.headers.get('location'), '/setup')

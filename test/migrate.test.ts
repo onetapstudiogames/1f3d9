@@ -42,6 +42,8 @@ const gazetteWithdrawalMigrationFile =
   'db/migrations/20260901_gazette_withdrawal.sql' as const
 const gazetteWithdrawalActivationMigrationFile =
   'db/migrations/20260901_gazette_withdrawal_activation.sql' as const
+const communityToolSubmissionsMigrationFile =
+  'db/migrations/20260901_community_tool_submissions.sql' as const
 
 function migrationDdl(file: string): string {
   return readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -54,6 +56,35 @@ function schemaStatement(table: string): string {
   assert.ok(statement, `missing idempotent ${table} table`)
   return statement
 }
+
+test('community tool queue migration is additive and uses the guarded remote ceremony', () => {
+  const run = resolveMigrationRun(
+    ['--target', 'preview', '--migration', 'community-tool-submissions'],
+    {
+      CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+      NEON_API_KEY: 'secret-neon-key',
+      NEON_PROJECT_ID: 'project-one',
+      NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+      NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+      PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+    },
+  )
+  assert.equal(run.migrationFile, communityToolSubmissionsMigrationFile)
+  assert.equal(run.executionMode, 'transactional')
+  const ddl = migrationDdl(communityToolSubmissionsMigrationFile)
+  assert.match(ddl, /CREATE TABLE IF NOT EXISTS community_tool_submissions/iu)
+  assert.match(ddl, /CREATE TABLE IF NOT EXISTS community_tool_submission_limits/iu)
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { scripts?: Record<string, string> }
+  for (const target of ['preview', 'production'] as const) {
+    assert.match(
+      packageJson.scripts?.[`migrate:${target}:community-tool-submissions`] ?? '',
+      new RegExp(`--target ${target} --migration community-tool-submissions$`, 'u'),
+    )
+  }
+})
 
 test('PL/pgSQL dollar-quoted bodies stay inside one migration statement', () => {
   const ddl = `

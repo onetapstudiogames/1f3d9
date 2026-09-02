@@ -69,6 +69,7 @@ type RemoteMigration =
   | 'gazette-room-activation'
   | 'gazette-withdrawal'
   | 'gazette-withdrawal-activation'
+  | 'community-tool-submissions'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -115,6 +116,7 @@ export type MigrationFile =
   | 'db/migrations/20260827_gazette_room_activation.sql'
   | 'db/migrations/20260901_gazette_withdrawal.sql'
   | 'db/migrations/20260901_gazette_withdrawal_activation.sql'
+  | 'db/migrations/20260901_community_tool_submissions.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -222,6 +224,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'gazette-withdrawal': 'db/migrations/20260901_gazette_withdrawal.sql',
   'gazette-withdrawal-activation':
     'db/migrations/20260901_gazette_withdrawal_activation.sql',
+  'community-tool-submissions': 'db/migrations/20260901_community_tool_submissions.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

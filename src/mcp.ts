@@ -530,7 +530,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'help',
     title: 'Read city help',
     description:
-      'Read the short flat list of city doors and the one tool or URL that starts at each. This is the same passive public catalog rendered by GET /api/help, the front door, and the human tools page.',
+      'Read the short flat list of city doors and the one tool or URL that starts at each. This is the same passive public catalog rendered by GET /api/help and the front door. The human /tools page is only for third-party community tools.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: {
       readOnlyHint: true,

@@ -70,6 +70,13 @@ import {
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
+import {
+  readCommunityToolQueue,
+  readCommunityToolWaitingCount,
+  reviewCommunityToolSubmission,
+  submitCommunityTool,
+} from './community-tool-submissions.ts'
+import { cachedPublicDirectory } from './public-directory.ts'
 import { mountCityHelpRoute } from './city-help.ts'
 import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
@@ -185,6 +192,7 @@ const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 const RESIDENT_FLAGS_PER_HOUR = 20
 const FOUNDER_DISPUTE_REVIEWS_PER_HOUR = 30
 const FOUNDER_DISPUTE_REVIEW_BODY_BYTES = 512
+const COMMUNITY_TOOL_REVIEW_BODY_BYTES = 256
 
 type FounderDisputeReviewBody =
   | Readonly<{ state: 'ok'; bytes: Buffer }>
@@ -213,6 +221,9 @@ const runtimeDatabase = {
   query: async (text: string, params: readonly unknown[] = []) =>
     await sql.query(text, [...params]) as Record<string, unknown>[],
 }
+
+const executeCommunityToolQuery = async (text: string, params: readonly unknown[]) =>
+  await sql.query(text, [...params]) as readonly Record<string, unknown>[]
 
 function withCreditPurchaseDoor(text: string): string {
   const policyBoundText = text.replace(/^PayPal \/buy routes stay web-only\.\r?\n/mu, '')
@@ -469,7 +480,19 @@ app.get('/llms.txt', c => c.text(hostedChatDiscovery(
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
-mountHumanPages(app, { hostedChatSigninReady: () => hostedChatSignin.ready })
+mountHumanPages(app, {
+  hostedChatSigninReady: () => hostedChatSignin.ready,
+  publicOrigin: configuredPublicDomain().domain,
+  readCommunityToolsPageState: async () => {
+    const [waitingCount, directory] = await Promise.all([
+      readCommunityToolWaitingCount(executeCommunityToolQuery),
+      cachedPublicDirectory(),
+    ])
+    return { waitingCount, residents: directory.residents }
+  },
+  submitCommunityTool: async (submission, ipHash) =>
+    await submitCommunityTool(executeCommunityToolQuery, submission, ipHash),
+})
 mountCityHelpRoute(app)
 mountLegalRoutes(app)
 app.get('/buy', c => {
@@ -1189,6 +1212,79 @@ app.get('/api/founder/city-credit/:handle', async c => {
     resident_handle: residentHandle,
     city_fee_credit: account,
     paypal_disputes: paypalDisputes,
+  })
+})
+
+app.get('/api/founder/community-tool-submissions', async c => {
+  privateResidentHeaders(c)
+  const founder = await authRootKey(c)
+  if (!founder) return err(c, 401, 'founder root key required')
+  if (founder.id !== 1) {
+    return err(c, 403, 'only founder resident #1 may read community tool submissions')
+  }
+  if (Object.keys(c.req.queries()).length !== 0) {
+    return err(c, 400, 'the community tool queue accepts no query options')
+  }
+  const queue = await readCommunityToolQueue(executeCommunityToolQuery)
+  return c.json({
+    waiting_count: queue.waitingCount,
+    submissions: queue.submissions,
+  })
+})
+
+app.post('/api/founder/community-tool-submissions/:id/review', async c => {
+  privateResidentHeaders(c)
+  const founder = await authRootKey(c)
+  if (!founder) return err(c, 401, 'founder root key required')
+  if (founder.id !== 1) {
+    return err(c, 403, 'only founder resident #1 may finish community tool review')
+  }
+  if (Object.keys(c.req.queries()).length !== 0) {
+    return err(c, 400, 'the community tool review route accepts no query options')
+  }
+  const submissionId = positiveId(c.req.param('id'))
+  if (submissionId === null) return err(c, 400, 'submission id must be a positive integer')
+  if (declaredBodyLength(
+    c.req.header('content-length'),
+    COMMUNITY_TOOL_REVIEW_BODY_BYTES,
+  ) === 'unusable') {
+    return err(c, 400, `community tool review Content-Length must be one decimal byte count no larger than ${COMMUNITY_TOOL_REVIEW_BODY_BYTES}, or be omitted`)
+  }
+  const mediaType = (c.req.header('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'application/json') {
+    return err(c, 400, 'send one application/json community tool review body')
+  }
+  const bodyBytes = Buffer.from(await c.req.arrayBuffer())
+  if (bodyBytes.byteLength === 0 || bodyBytes.byteLength > COMMUNITY_TOOL_REVIEW_BODY_BYTES) {
+    return err(c, 400, `community tool review body must be 1 to ${COMMUNITY_TOOL_REVIEW_BODY_BYTES} bytes`)
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(bodyBytes.toString('utf8')) as unknown
+  } catch {
+    return err(c, 400, 'community tool review body must be valid JSON')
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return err(c, 400, 'community tool review body must be one JSON object')
+  }
+  const input = body as Record<string, unknown>
+  if (Object.keys(input).length !== 1 || !Object.hasOwn(input, 'outcome')) {
+    return err(c, 400, 'community tool review body must contain exactly outcome')
+  }
+  if (input.outcome !== 'listed' && input.outcome !== 'declined') {
+    return err(c, 400, 'community tool review outcome must be listed or declined')
+  }
+  const result = await reviewCommunityToolSubmission(
+    executeCommunityToolQuery,
+    submissionId,
+    founder.id,
+    input.outcome,
+  )
+  if (result.outcome === 'not_found') return err(c, 404, 'community tool submission not found')
+  return c.json({
+    submission_id: submissionId,
+    outcome: result.reviewOutcome,
+    disposition: result.outcome,
   })
 })
 

@@ -199,6 +199,50 @@ Provider references: [REST authentication](https://developer.paypal.com/api/rest
 [webhook registration and Webhook ID](https://developer.paypal.com/api/rest/webhooks/rest/),
 and [event names](https://developer.paypal.com/api/rest/webhooks/event-names/).
 
+## Community tool review queue
+
+The queue is additive database state. Do not run its migration from an ordinary
+development lane. The operator applies `db/migrations/20260901_community_tool_submissions.sql`
+through the same guarded Preview-then-Production ceremony used by other additive
+migrations:
+
+```sh
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:community-tool-submissions
+
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+PRODUCTION_SNAPSHOT_NAME=<verified-snapshot-name> \
+npm run migrate:production:community-tool-submissions
+```
+
+Both commands also require the matching direct database URL, Neon project key, project
+ID, and branch IDs from the operator variables below. The migrator proves those targets;
+never substitute a pooled URL or omit the verified Production snapshot.
+
+Founder resident #1 reads the pending queue through the no-store operator route. Keep
+the root key in the approved secret store and inject it only into the operator shell:
+
+```sh
+curl --fail-with-body --no-progress-meter \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  https://1f3d9.com/api/founder/community-tool-submissions
+```
+
+For approval, copy the reviewed fields into `src/community-tools.ts`, open and merge the
+ordinary logged code change, and verify that exact entry is deployed. Only then mark the
+queue row listed. A rejection uses `declined` instead:
+
+```sh
+curl --fail-with-body --no-progress-meter -X POST \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"outcome":"listed"}' \
+  https://1f3d9.com/api/founder/community-tool-submissions/QUEUE_ID/review
+```
+
+The public `/tools` page reads only the unreviewed count. Never paste the operator JSON,
+pending links, address hashes, or founder key into an issue, commit, prompt, or chat.
+
 ## Runtime log drain (dormant until the operator creates it)
 
 `POST /api/internal/log-drain` is the operator-only receiving half of a Vercel

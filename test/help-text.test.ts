@@ -26,7 +26,7 @@ const openQuestions = read('../docs/archive/2026-08/RESOLVED_QUESTIONS.md')
 const mcpSource = read('../src/mcp.ts')
 const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 
-test('public surfaces explain the community-tools catalogue and proposal contract', () => {
+test('public surfaces keep the tools page community-only and explain its review queue', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],
     ['generated front door', FRONTDOOR],
@@ -39,18 +39,24 @@ test('public surfaces explain the community-tools catalogue and proposal contrac
   ] as const) {
     assert.match(text, /\/tools/iu, `${name}: tools page`)
     assert.match(text, /(?:community|third-party)/iu, `${name}: third-party catalogue`)
-    assert.match(text, /public GitHub issue/iu, `${name}: public proposal route`)
-    assert.match(text, /public\s+records/iu, `${name}: public-read-only acceptance`)
-    assert.match(text, /resident\s+key/iu, `${name}: no-key acceptance`)
-    assert.match(text, /no\s+paid\s+(?:promotion|placement)/iu, `${name}: no paid promotion`)
-    assert.match(text, /remov(?:e|al)[\s\S]{0,100}abuse/iu, `${name}: abuse removal`)
+    assert.match(text, /(?:GitHub issue|issue template)[^\n]{0,100}fallback|fallback[^\n]{0,100}(?:GitHub issue|issue template)/iu, `${name}: fallback proposal route`)
+    assert.match(text, /(?:private|review)[-\s]+(?:maintainer[-\s]+)?queue|queue[^\n]{0,80}(?:private|review)/iu, `${name}: private review queue`)
+    assert.match(text, /(?:official city doors|city doors)[^\n]{0,160}(?:front door|\/setup|\/api\/help)/iu, `${name}: official doors live elsewhere`)
   }
 
-  for (const heading of ['Tool link', 'Who runs it', 'One-line description', 'Safety confirmation']) {
-    assert.match(communityToolTemplate, new RegExp(`## ${heading}`, 'u'), heading)
+  for (const [heading, pattern] of [
+    ['Tool link', /## Tool link/u],
+    ['Who runs it', /## Who runs it/u],
+    ['One-line description', /## One-line description/u],
+    ['Category and tags', /## Category and tags/u],
+    ['Resident attribution (optional)', /## Resident attribution \(optional\)/u],
+    ['Safety confirmation', /## Safety confirmation/u],
+  ] as const) {
+    assert.match(communityToolTemplate, pattern, heading)
   }
-  assert.match(communityToolTemplate, /- \[ \][^\n]*reads only public[^\n]*never asks for or receives a resident key/iu)
-  assert.match(communityToolTemplate, /Do not add private contact details/iu)
+  assert.match(communityToolTemplate, /I confirm this tool is safe and that I made it or have permission to post it\./u)
+  assert.match(communityToolTemplate, /Do not add an email, account, real name, contact detail, or other personal data/iu)
+  assert.match(communityToolTemplate, /Never type a handle here/iu)
 })
 
 test('Live is labeled alpha across its public help mirrors', () => {
@@ -1039,7 +1045,7 @@ test('public help states the complete resident census contract', () => {
   ] as const) {
     const censusStart = text.indexOf('/api/residents')
     assert.ok(censusStart >= 0, `${name}: resident census route`)
-    const censusContract = text.slice(censusStart, censusStart + 2_400)
+    const censusContract = text.slice(censusStart, censusStart + 2_800)
     assert.match(
       censusContract,
       /(?:default(?:s| page(?: size)?)?[^\n]{0,100}200|200[^\n]{0,100}(?:default|page size))/iu,

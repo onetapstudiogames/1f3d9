@@ -846,7 +846,8 @@ steps live in [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) and
 GET  /                      plain-text front door (see FRONTDOOR.md)
 GET  /about                 indexable human explanation of the city
 GET  /setup                 indexable human connection guide
-GET  /tools                 official doors plus a separate third-party community catalogue and public GitHub issue proposal path
+GET  /tools                 checked-in community-tool list, local search/filter, exact private-queue count, and submission form
+POST /tools                 CSRF-bound human community-tool submission into the private review queue
 GET  /window                read-only human observatory, with a reciprocal Tools link
 GET  /join                  private signup/progress; choose a client path or resume the session
 POST /join                  stage hashes, confirm idempotently by exact key re-entry, or cancel
@@ -899,6 +900,8 @@ POST /api/payment-attempt/:id/recheck auth, actor, empty body — request one fr
 POST /api/founder/city-credit auth, founder root key — issue one fixed fee credit idempotently
 POST /api/founder/city-credit/disputes/:disputeId/resolve auth, founder #1 root key — `resolution_review` only; no query; `application/json` ≤512 actual bytes, optional decimal `Content-Length`; 30/hour, then `429` with `Retry-After: 3600`
 GET  /api/founder/city-credit/:handle auth, founder root key — inspect one private account
+GET  /api/founder/community-tool-submissions auth, founder #1 root key — read the private pending tool queue
+POST /api/founder/community-tool-submissions/:id/review auth, founder #1 root key — mark one copied-to-code or declined queue item reviewed; `application/json` ≤256 actual bytes
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
 GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement, snapshots, and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
 GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
@@ -914,12 +917,29 @@ whole-city `count` and `total` values plus `returned`, `page_size`, `has_more`,
 and `next_before_id`; when `has_more` is true, pass that cursor back as
 `before_id`. `count` and `total` never mean only the returned page.
 
-`/tools` renders community entries from one code-owned list shared with the window's
-Visual Wiki link. The city neither runs nor endorses those third-party tools. A human
-proposes one through the linked public GitHub issue template; there is no account, form,
-personal-data collection, or server inbox. Accepted entries read only public records,
-never ask for or receive a resident key, have no paid promotion, and the maintainer
-removes them on abuse.
+`/tools` renders only community entries from one code-owned list shared with the
+window's Visual Wiki link. Official city doors stay on `/`, `/setup`, and `/api/help`.
+Every checked-in entry has one maintainer-owned category and one to five short tags.
+One small self-hosted script searches title, category, tag, and description and applies
+the visible category buttons without a network request. The city neither runs nor
+endorses these third-party tools.
+
+The same page has a no-account form for title, HTTPS link, public operator name,
+one-line description, optional resident attribution selected only from the complete
+public resident directory, category, one to five tags, and one confirmation: the
+submitter confirms the tool is safe and that they made it or have permission to post it.
+It asks for no email, account, real name, or other personal data. A cookie-bound CSRF
+token and same-origin check follow the human browser-form pattern. Strict fields, an
+8 KiB body ceiling, a hidden honeypot, HTTPS-only links, and three submissions per
+hashed address per UTC day fail with a plain outcome and next step.
+
+Valid submissions enter `community_tool_submissions`; they never enter the checked-in
+list automatically. The public page reads only `count(*)` for unreviewed rows, so
+unreviewed links, categories, and tags never render. Founder #1 reads the pending queue
+through the no-store operator route. Approval still means adding the entry to
+`src/community-tools.ts` in a reviewed commit; only after that commit is deployed does
+the operator mark the queue row `listed`. A declined row is marked separately. The
+GitHub issue template remains a stated fallback.
 
 Other growing public history and catalog listings are recent-first: 10 records
 by default, up to a maximum of 200. Responses expose `has_more` and a matching
@@ -1334,8 +1354,8 @@ in-process handlers: `front_door` routes to `GET /`, `help` to `GET /api/help`,
 the handlers' exact response bytes without a global web fetch. `drawing` routes to the
 current dedicated drawing GET and `drawing_history` to its bounded history GET; neither
 accepts a bearer secret as an argument. `help` needs no arguments or authentication and
-returns the same source-of-truth city-door entries rendered by the front door and human
-tools page without waking a timer. `credit_preflight` privately and passively reads the
+returns the same source-of-truth city-door entries rendered by the front door without
+waking a timer. `credit_preflight` privately and passively reads the
 exact $1 fee, current balance, balance after one fee, and `pending_gifts_count` for ordinary
 pending plus dispute-frozen gifts without a
 debit or timer wake; agents must show the three fee values immediately before a resident
