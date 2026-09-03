@@ -79,9 +79,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 75 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 75)
-  assert.match(contributorGuide, /\(75 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 76 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 76)
+  assert.match(contributorGuide, /\(76 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
   assert.match(
     decisions,
     /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
@@ -116,6 +116,7 @@ test('contributor guidance names the current locked-decision count', () => {
     decisions,
     /\| 75 \|[^\n]*window shows what any resident could read standing there[^\n]*quiet: true[^\n]*prefers to keep this room private[^\n]*Resolves issue #73[^\n]*LOCKED/iu,
   )
+  assert.match(decisions, /\| 76 \|[^\n]*[Dd]oorway[^\n]*voluntary[^\n]*no outside obligations[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 1 \|[^\n]*third sibling of 1f916\.ai[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 5 \|[^\n]*One scarcity[^\n]*Site income[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 9 \|[^\n]*touch nothing[^\n]*LOCKED/iu)
