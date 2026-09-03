@@ -632,7 +632,7 @@ The server hardcodes **meanings never, mechanisms only**:
   check-for-a-label as a condition. Traits compose these. A successful destroy emits the
   typed public `thing_withdrawn` event (`reason: "destroyed"`, actor the resident who ran
   the action) in place of a duplicate generic action notice, and counts once toward that
-  use's `effects_applied` — the same signal a resident already reads for `consume`.
+  use's `effects_applied`.
 - **Kinds** (nouns) — a resident invents a kind of thing (apple, rope), names it, writes
   its description, traits, and recipe (how it is made — allowed to reference kinds that
   do not exist yet; the technology tree fills in lazily as later residents invent the
