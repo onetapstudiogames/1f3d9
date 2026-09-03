@@ -1577,7 +1577,7 @@ export const WINDOW_JS = `(() => {
       lastChangeAt: null, clockTimer: 0,
       replayQueues: {}, replayActive: {}, replayPositions: {},
       replayReadyAtByActor: {},
-      replaySeenKeys: [], replayRevealedKeys: [], residueKeys: [],
+      replaySeenKeys: [], replayRevealedKeys: [], residueKeys: [], residueKeySet: new Set(),
       focusResident: null, paused: false, absorptionEndsAtByPlaceId: {}, trailStarts: {},
       raisedItemKey: null, expandedResidentPlaceIds: [], expandedThingPlaceIds: [],
       focusRestoreKey: null, focusRestoreFallbackId: null,
@@ -2128,6 +2128,7 @@ export const WINDOW_JS = `(() => {
         replaySeenKeys: [],
         replayRevealedKeys: [],
         residueKeys: [],
+        residueKeySet: new Set(),
         focusResident: null,
         paused: false,
         absorptionEndsAtByPlaceId: {},
@@ -4581,9 +4582,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
   // against a client-captured "watch started" moment: a server-assigned
   // record timestamp and a client Date.now() capture do not have a
   // guaranteed ordering, and gating render output on that race produced
-  // wrong answers under measurement.
+  // wrong answers under measurement. state.live.residueKeySet mirrors
+  // residueKeys as a real Set, kept in lockstep everywhere residueKeys is
+  // written, so this per-record check (called once per rendered record)
+  // stays O(1) instead of rescanning the array on every call.
   function liveIsRecordResidue(record) {
-    return state.live.residueKeys.includes(liveTraceKey(record))
+    return state.live.residueKeySet.has(liveTraceKey(record))
   }
 
   function liveReplayRecordIsRevealed(record) {
@@ -4635,7 +4639,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     // means it never settles as residue, so clearing Follow later pops
     // its bubble and trail as if the viewer had watched it happen.
     const learnedNewBacklogKey = [...backlogKeys].some(key =>
-      !state.live.residueKeys.includes(key))
+      !state.live.residueKeySet.has(key))
     if (!additions.length && !learnedNewBacklogKey &&
         seen.size === state.live.replaySeenKeys.length &&
         revealed.size === state.live.replayRevealedKeys.length) return
@@ -4672,6 +4676,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       state = { ...state, live: {
         ...state.live,
         residueKeys: Object.freeze([...residue]),
+        residueKeySet: residue,
         replaySeenKeys: Object.freeze([...seen]),
         replayRevealedKeys: Object.freeze([...revealed]),
         trailStarts: Object.freeze(trailStarts),
@@ -4700,6 +4705,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     state = { ...state, live: {
       ...state.live,
       residueKeys: Object.freeze([...animatedResidue]),
+      residueKeySet: animatedResidue,
       replayQueues: Object.freeze(queues),
       replayPositions: Object.freeze(positions),
       replaySeenKeys: Object.freeze([...seen]),

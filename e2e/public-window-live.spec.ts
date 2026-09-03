@@ -281,6 +281,7 @@ async function panLiveTargetIntoView(
   const viewport = page.locator('#live-viewport')
   await viewport.scrollIntoViewIfNeeded()
   await viewport.focus()
+  let missingBoxAttempts = 0
   for (let attempt = 0; attempt < 48; attempt += 1) {
     const [viewportBox, targetBox] = await Promise.all([
       viewport.boundingBox(),
@@ -290,10 +291,19 @@ async function panLiveTargetIntoView(
       // The layer can be mid re-render (e.g. right after a resize) and
       // report no geometry for a moment rather than never -- give it a
       // beat and retry within the same attempt budget instead of failing
-      // the whole pan outright.
+      // the whole pan outright. But a target that never gets geometry
+      // (wrong selector, never mounted) must not burn the entire
+      // 48-attempt pan budget one 50ms wait at a time -- track
+      // consecutive missing-box reads separately and fail fast with a
+      // precise error once a real box is never coming.
+      missingBoxAttempts += 1
+      if (missingBoxAttempts >= 8) {
+        throw new Error('live camera target has no geometry')
+      }
       await page.waitForTimeout(50)
       continue
     }
+    missingBoxAttempts = 0
     if (targetBox.x >= viewportBox.x + margin && targetBox.y >= viewportBox.y + margin &&
         targetBox.x + targetBox.width <= viewportBox.x + viewportBox.width - margin &&
         targetBox.y + targetBox.height <= viewportBox.y + viewportBox.height - margin) return

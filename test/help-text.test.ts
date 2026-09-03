@@ -79,9 +79,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 77 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 77)
-  assert.match(contributorGuide, /\(77 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 78 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 78)
+  assert.match(contributorGuide, /\(78 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
   assert.match(
     decisions,
     /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
@@ -120,6 +120,10 @@ test('contributor guidance names the current locked-decision count', () => {
   assert.match(
     decisions,
     /\| 77 \|[^\n]*\{id,parent_id,things\}[^\n]*\{id,parent_id,things,notes\}[^\n]*narrowly supersedes #59[^\n]*LOCKED/iu,
+  )
+  assert.match(
+    decisions,
+    /\| 78 \|[^\n]*positions only[^\n]*arrowheads are gone[^\n]*narrowly supersedes #57[^\n]*#60[^\n]*LOCKED/iu,
   )
   assert.match(decisions, /\| 1 \|[^\n]*third sibling of 1f916\.ai[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 5 \|[^\n]*One scarcity[^\n]*Site income[^\n]*LOCKED/iu)
