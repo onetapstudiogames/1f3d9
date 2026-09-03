@@ -7,6 +7,7 @@ import {
   normalizeWindowDrawing,
   windowLiveClampZoomScale,
   windowLiveExpandedGroundLayout,
+  windowLiveFloorAccessibleLabel,
   windowLiveFloorTiling,
   windowLivePlateChildren,
   windowLivePollDelay,
@@ -1229,6 +1230,51 @@ test('floor tiling derives exact, stable column and row counts from a plot\'s re
   assert.match(
     windowClientModule.WINDOW_JS,
     /const windowLiveFloorTiling = function windowLiveFloorTiling/u,
+  )
+})
+
+test('a place floor keeps an accessible name carrying its name, drawn state, and source', () => {
+  // Round-1 review finding 1: the JSON drawing node's role="img" name
+  // (name, state, maker/source) went away with the JSON fetch it was
+  // built from. The non-proof path never re-adds that fetch -- state 3's
+  // whole point -- so it only ever knows the drawn/undrawn binary the
+  // thumb probe resolves; a place's own floor is always its own drawing.
+  assert.equal(
+    windowLiveFloorAccessibleLabel('Cinder lane', false),
+    'Cinder lane · Complete · Own drawing',
+  )
+  assert.equal(
+    windowLiveFloorAccessibleLabel('Harbor room', true),
+    'Harbor room · Undrawn',
+  )
+  // The proof path already holds the full synthetic drawing entry, so it
+  // reuses the exact state/source vocabulary the deleted drawingNode did,
+  // including a case the binary non-proof path cannot distinguish (Blank).
+  assert.equal(
+    windowLiveFloorAccessibleLabel('workshop', false, Object.freeze({
+      state: 'complete',
+      drawing: Object.freeze({
+        palette: Object.freeze(['#102030']),
+        indices: Object.freeze(Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null)),
+      }),
+      source: 'place',
+    })),
+    'workshop · Complete · Own drawing',
+  )
+  assert.equal(
+    windowLiveFloorAccessibleLabel('garden', true, Object.freeze({
+      state: 'complete',
+      drawing: Object.freeze({
+        palette: Object.freeze([]),
+        indices: Object.freeze(Array(64).fill(null) as null[]),
+      }),
+      source: 'place',
+    })),
+    'garden · Blank · Own drawing',
+  )
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveFloorAccessibleLabel = function windowLiveFloorAccessibleLabel/u,
   )
 })
 

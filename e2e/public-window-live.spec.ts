@@ -5541,6 +5541,58 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   expect(writes).toEqual([])
 })
 
+test('an unresolved floor leans paper until the thumbnail actually loads, and a 404 settles there too', async ({ page }) => {
+  // Round-1 review finding 2: setUndrawn(false) used to run synchronously
+  // before the probe even had a src, so a moderated place, a slow
+  // connection, or a cold cache painted the dark plot card for one round
+  // trip. drawingDelayMs holds every ordinary thumbnail response so this
+  // test can observe that pending window directly, and Cinder lane's own
+  // route is overridden to 404 outright (the moderated/missing/withdrawn
+  // case) so both settle-on-paper paths are proven together.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    drawingDelayMs: 1_500,
+  })
+  await page.route('**/api/drawing/place/2/thumb.png', route => route.fulfill({
+    status: 404,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'drawing not found' }),
+  }))
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+
+  const paperBackground = 'rgb(233, 224, 197)'
+  const darkCardBackground = 'rgb(32, 66, 58)'
+  const cinderPlot = page.locator('.live-plot[data-place-id="2"]')
+  const harborPlot = page.locator('.live-plot[data-place-id="3"]')
+
+  // Harbor room's own thumbnail is still in flight -- check this before it
+  // resolves so the assertion actually exercises the pending window, not
+  // just its eventual settled state.
+  await expect.poll(fixture.activeThumbnailRequests).toBeGreaterThan(0)
+  await expect(harborPlot).toHaveAttribute('data-undrawn', 'true')
+  expect(await harborPlot.evaluate(node => getComputedStyle(node).backgroundColor))
+    .toBe(paperBackground)
+
+  // Cinder lane's 404 is not held by drawingDelayMs and resolves quickly,
+  // settling on the same paper ground -- never the dark card, even briefly.
+  await expect(cinderPlot).toHaveAttribute('data-undrawn', 'true')
+  const cinderBackground = await cinderPlot.evaluate(node => getComputedStyle(node).backgroundColor)
+  expect(cinderBackground).toBe(paperBackground)
+  expect(cinderBackground).not.toBe(darkCardBackground)
+  await expect(cinderPlot.locator('.live-plot-terrain')).toHaveAttribute(
+    'aria-label', 'Cinder lane · Undrawn',
+  )
+
+  // Once Harbor room's own thumbnail actually loads, the floor tiles and
+  // the accessible name updates to say so -- the same name/state/source
+  // shape the deleted JSON drawing node gave.
+  await expect.poll(fixture.activeThumbnailRequests, { timeout: 15_000 }).toBe(0)
+  await expect(harborPlot).toHaveAttribute('data-undrawn', 'false')
+  await expect(harborPlot.locator('.live-plot-terrain')).toHaveAttribute(
+    'aria-label', 'Harbor room · Complete · Own drawing',
+  )
+})
+
 test('drilling into a quiet room in Live withholds its residents and things everywhere on the plate', async ({ page }) => {
   // Decision #75: a quiet place still shows its name, owner, and counts, but
   // every tab that renders room contents replaces those contents with one
