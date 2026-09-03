@@ -1667,3 +1667,75 @@ test('resident law timing, effect counts, and label privacy are stated before us
   assert.match(mcpSource, /name: 'browse'[\s\S]{0,2500}resident label holdings/iu)
   assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}labels are private to the authenticated bearer/iu)
 })
+
+test('events place matching names a move\'s from_place_id and to_place_id, and a failed action matches nowhere', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+  ] as const) {
+    assert.match(
+      text,
+      /from_place_id[\s\S]{0,60}to_place_id[\s\S]{0,80}move matches at both/iu,
+      `${name}: a move matches at both endpoints`,
+    )
+    assert.match(
+      text,
+      /failed action stores no place and matches\s+nowhere/iu,
+      `${name}: a failed action matches nowhere`,
+    )
+  }
+})
+
+test('the laws help line says laws sets a place\'s law traits and names the PUT route, not that it reads them', () => {
+  const helpSource = read('../src/city-help.ts')
+  const renderedFrontdoor = renderCityHelpText(frontdoor)
+  for (const [name, text] of [
+    ['city-help.ts source', helpSource],
+    ['rendered front door', renderedFrontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+  ] as const) {
+    assert.match(text, /`laws`[^\n]{0,40}(?:replaces|sets)[^\n]{0,80}law traits/iu, `${name}: laws sets, not reads`)
+    assert.match(text, /PUT \/api\/place\/:id\/laws/u, `${name}: names the PUT route`)
+  }
+  assert.doesNotMatch(
+    helpSource,
+    /`laws` reads the laws/iu,
+    'the stale "laws reads the laws where you stand" line must be gone',
+  )
+})
+
+test('a kind\'s trait recipe only fires for use, consume, and give with thing_id, never move, talk, make, or go_home', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['compact machine map source', llms],
+    ['generated compact machine map', LLMS],
+    ['specification', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /kind('?s)? traits? (?:is|are) consulted only for[\s\S]{0,60}use[\s\S]{0,20}consume[\s\S]{0,20}give/iu,
+      `${name}: kind traits fire only for use, consume, give`,
+    )
+    assert.match(
+      text,
+      /move[\s\S]{0,20}talk[\s\S]{0,20}make[\s\S]{0,20}go_home[\s\S]{0,80}never/iu,
+      `${name}: move, talk, make, go_home never name a source thing`,
+    )
+  }
+  assert.doesNotMatch(
+    mcpSource,
+    /other actions can run local laws and thing traits/iu,
+    'the misleading "other actions can run ... thing traits" clause must be gone from the act tool',
+  )
+  assert.match(
+    mcpSource,
+    /use, consume, and give also run the named thing's kind traits/iu,
+    'the act tool must state which actions run kind traits',
+  )
+})

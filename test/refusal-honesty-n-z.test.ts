@@ -64,17 +64,18 @@ test('gift, pagination, and transfer refusals name accepted state', () => {
   ])
 })
 
-test('world body refusals name the rejected condition and accepted fields', () => {
+test('world body refusals name the rejected field(s) by name and the accepted fields', () => {
   expects('world.ts', [
-    'place body contains an unsupported field; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes',
-    'place edit body is empty or contains an unsupported field; edit description, purpose, front matter, drawing, quiet, or a permission switch',
-    'kind body contains an unsupported field; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
+    'place body does not accept ${describeUnsupportedFields(rejected)}; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes',
+    'place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Set a place\'s laws with PUT /api/place/:id/laws {"traits":[names]} or the laws tool.',
+    'place edit body is empty; edit description, purpose, front matter, drawing, quiet, or a permission switch',
+    'kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
     'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait',
-    'kind revision contains an unsupported field; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
+    'kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
     'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait',
-    'trait body contains an unsupported field; send only name, description, and an optional inert recipe',
-    'thing body contains an unsupported field; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids',
-    'thing upgrade body contains an unsupported field; send only optional drawing_variant_name',
+    'trait body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, and an optional inert recipe',
+    'thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids',
+    'thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name',
   ])
   assert.doesNotMatch(source('world.ts'), /`kind(?: revision)? \$\{unknownTrait\}`/u)
 })

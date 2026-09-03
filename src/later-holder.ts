@@ -2,6 +2,26 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { redactResidentCredentialText } from './credential-safety.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 
+const UNSUPPORTED_FIELD_ECHO_LIMIT = 5
+const UNSUPPORTED_FIELD_NAME_MAX_CHARS = 64
+
+/**
+ * Formats rejected field names for a refusal message, bounded so a caller
+ * cannot inflate a response by sending huge or numerous key names. Kept local
+ * rather than imported from world-support.ts: that module transitively pulls
+ * in chain.ts, and later-holder.ts is imported before test harnesses that set
+ * BASE_RPC_URL, which would freeze chain.ts's RPC constant at the wrong value.
+ */
+function describeUnsupportedFields(rejected: readonly string[]): string {
+  const shown = rejected.slice(0, UNSUPPORTED_FIELD_ECHO_LIMIT).map(key =>
+    key.length > UNSUPPORTED_FIELD_NAME_MAX_CHARS
+      ? `${key.slice(0, UNSUPPORTED_FIELD_NAME_MAX_CHARS)}…`
+      : key
+  )
+  const remaining = rejected.length - shown.length
+  return remaining > 0 ? `${shown.join(', ')}, and ${remaining} more` : shown.join(', ')
+}
+
 export const LATER_HOLDER_PAGE_DEFAULT = 10
 export const LATER_HOLDER_PAGE_MAX = 200
 export const LATER_HOLDER_CURSOR_PATTERN = '^lh1_[A-Za-z0-9_-]{48}$'
@@ -144,6 +164,11 @@ function hasOnly(value: Record<string, unknown>, allowed: readonly string[]): bo
   return Object.keys(value).every(key => names.has(key))
 }
 
+function rejectedFields(value: Record<string, unknown>, allowed: readonly string[]): string[] {
+  const names = new Set(allowed)
+  return Object.keys(value).filter(key => !names.has(key))
+}
+
 function pageLimit(value: unknown): number | null {
   if (value === undefined) return LATER_HOLDER_PAGE_DEFAULT
   return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= LATER_HOLDER_PAGE_MAX
@@ -162,18 +187,26 @@ export function parseLaterHolderReadInput(value: unknown): LaterHolderReadParseR
     return Object.freeze({ ok: false, error: 'body must name a later-holder mode' })
   }
   if (input.mode === 'later_holder_notice') {
-    return hasOnly(input, ['mode'])
+    const rejectedNoticeFields = rejectedFields(input, ['mode'])
+    return rejectedNoticeFields.length === 0
       ? Object.freeze({
         ok: true,
         request: Object.freeze({ mode: 'later_holder_notice' as const }),
       })
-      : Object.freeze({ ok: false, error: 'notice body contains an unsupported field; send only mode' })
+      : Object.freeze({
+        ok: false,
+        error: `notice body does not accept ${describeUnsupportedFields(rejectedNoticeFields)}; send only mode`,
+      })
   }
   if (input.mode !== 'later_holder_index') {
     return Object.freeze({ ok: false, error: 'mode must be later_holder_notice or later_holder_index' })
   }
-  if (!hasOnly(input, ['mode', 'before', 'limit'])) {
-    return Object.freeze({ ok: false, error: 'index body contains an unsupported field; send only mode, before, and limit' })
+  const rejectedIndexFields = rejectedFields(input, ['mode', 'before', 'limit'])
+  if (rejectedIndexFields.length > 0) {
+    return Object.freeze({
+      ok: false,
+      error: `index body does not accept ${describeUnsupportedFields(rejectedIndexFields)}; send only mode, before, and limit`,
+    })
   }
   const before = beforeCursor(input.before)
   if (before === undefined) {

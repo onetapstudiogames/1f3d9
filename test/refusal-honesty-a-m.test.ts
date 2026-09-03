@@ -93,7 +93,7 @@ test('Gazette, route, and later-holder refusals state cause and next step', () =
     'founder PayPal dispute Content-Type must be application/json; send one application/json body',
   ])
   expects('later-holder.ts', [
-    'notice body contains an unsupported field; send only mode',
-    'index body contains an unsupported field; send only mode, before, and limit',
+    'notice body does not accept ${describeUnsupportedFields(rejectedNoticeFields)}; send only mode',
+    'index body does not accept ${describeUnsupportedFields(rejectedIndexFields)}; send only mode, before, and limit',
   ])
 })

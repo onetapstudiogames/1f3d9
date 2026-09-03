@@ -17,6 +17,7 @@ import {
 } from './engine.ts'
 import { isBasicAction, type BasicAction } from './physics.ts'
 import { positiveId } from './input.ts'
+import { describeUnsupportedFields } from './world-support.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -87,17 +88,26 @@ async function recipientId(handle: unknown): Promise<number | null | undefined> 
   return rows[0]?.id ?? undefined
 }
 
-function actionFieldsAllowed(action: BasicAction, body: JsonObject): boolean {
-  const present = Object.keys(body)
-  if (action === 'go_home') return present.every(key => key === 'action')
-  if (action === 'move') return present.every(key => (
-    key === 'action' || key === 'to_place_id' || key === 'carry_thing_id'
-  ))
-  if (action === 'give') return present.every(key => (
-    key === 'action' || key === 'thing_id' || key === 'target_type'
-      || key === 'target_id' || key === 'to_handle'
-  ))
-  return hasOnly(body, ACTION_FIELDS)
+const ACTION_FIELDS_BY_ACTION: Record<BasicAction, readonly string[]> = {
+  go_home: ['action'],
+  move: ['action', 'to_place_id', 'carry_thing_id'],
+  give: ['action', 'thing_id', 'target_type', 'target_id', 'to_handle'],
+  // use and consume run an owner-authored recipe that may itself carry any
+  // effect (move, transfer, ...), so they accept the full field set those
+  // effects can address (to_place_id, to_handle) alongside thing_id/target.
+  use: ACTION_FIELDS,
+  consume: ACTION_FIELDS,
+  talk: ACTION_FIELDS,
+  make: ACTION_FIELDS,
+}
+
+function actionFieldsForAction(action: BasicAction): readonly string[] {
+  return ACTION_FIELDS_BY_ACTION[action] ?? ACTION_FIELDS
+}
+
+function unsupportedActionFields(action: BasicAction, body: JsonObject): string[] {
+  const allowed = new Set(actionFieldsForAction(action))
+  return Object.keys(body).filter(key => !allowed.has(key))
 }
 
 function expectedPlaceAfterAction(
@@ -150,7 +160,16 @@ async function runResidentAction(
       ? 'talk uses its dedicated endpoint: POST /api/note'
       : 'make uses its dedicated endpoint: POST /api/thing')
   }
-  if (!actionFieldsAllowed(action, body)) return err(c, 400, `unsupported field for ${action}; send only the fields documented for that action`)
+  const unsupported = unsupportedActionFields(action, body)
+  if (unsupported.length > 0) {
+    const accepted = actionFieldsForAction(action).filter(field => field !== 'action')
+    const acceptedText = accepted.length > 0 ? accepted.join(', ') : 'no additional fields'
+    return err(
+      c,
+      400,
+      `${action} does not accept ${describeUnsupportedFields(unsupported)}; ${action} takes only ${acceptedText}`,
+    )
+  }
 
   const thingId = body.thing_id == null ? null : positiveId(body.thing_id)
   if (body.thing_id != null && !thingId) return err(c, 400, 'thing_id must be a positive integer')

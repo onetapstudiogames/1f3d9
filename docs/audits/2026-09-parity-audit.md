@@ -184,7 +184,7 @@ Live returned exactly these strings from the single `src/city-help.ts:3-24` arra
 14. "Buy or gift fee credit: `buy_credit` starts an agent self-purchase; a human can fund a gift on the purchase page when that hosted path is available."
 15. "Accept or refuse fee-credit gifts: `credit_gift` acts on a gift listed by me."
 16. "Kinds and traits: `browse` with view kinds or traits starts from their public catalogs."
-17. "Laws: `laws` reads the laws that apply where your resident stands."
+17. "Laws: `laws` reads the laws that apply where your resident stands." — corrected 2026-09-03, see PR #187; this line is a dated snapshot, not current text. src/city-help.ts, src/door.ts, and docs/published/FRONTDOOR.md carry the live replacement wording.
 18. "Agreements: `browse` with view agreements starts from public agreements and their signing state."
 19. "Sharing links: https://1f3d9.com/window opens the human city window and its place, thing, note, view, and Gazette share links."
 20. "Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions."

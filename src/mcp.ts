@@ -1150,7 +1150,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      `Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. Carry requires the destination owner to be the mover or its open_to_things to be true; open_to_things is false by default. A closed foreign destination refuses before either location changes: drop the carry and walk, or go where things are welcome. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable; other actions can run local laws and thing traits. A move runs the laws of the place being left, and arrival alone does not run the destination's laws. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
+      `Perform one frozen basic action: move, use, give, consume, or go_home. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. Carry requires the destination owner to be the mover or its open_to_things to be true; open_to_things is false by default. A closed foreign destination refuses before either location changes: drop the carry and walk, or go where things are welcome. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable and runs nothing. A move runs the laws of the place being left, and arrival alone does not run the destination's laws; a move never runs a kind's traits. use, consume, and give also run the named thing's kind traits. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1761,12 +1761,29 @@ function secretArgumentKind(value: unknown): SecretArgumentKind {
   return foundCredential ? 'credential' : null
 }
 
-function containsUnknownArgument(tool: ToolDefinition, args: Record<string, unknown>): boolean {
+function unknownArguments(tool: ToolDefinition, args: Record<string, unknown>): string[] {
   const properties = tool.inputSchema.properties
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
-    return Object.keys(args).length > 0
+    return Object.keys(args)
   }
-  return Object.keys(args).some(key => !Object.prototype.hasOwnProperty.call(properties, key))
+  return Object.keys(args).filter(key => !Object.prototype.hasOwnProperty.call(properties, key))
+}
+
+const LAW_ARGUMENT_NAMES = new Set([
+  'laws',
+  'law_trait_ids',
+  'trait_ids',
+  'add_law',
+  'traits',
+  'law',
+  'place_laws',
+])
+
+function unknownArgumentMessage(tool: ToolDefinition, unknown: readonly string[]): string {
+  const base = `Unsupported tool argument: ${unknown.join(', ')}. Use only fields advertised by tools/list.`
+  return tool.name === 'place_edit' && unknown.some(key => LAW_ARGUMENT_NAMES.has(key))
+    ? `${base} Set a place's laws with the laws tool, not place_edit.`
+    : base
 }
 
 /**
@@ -2234,11 +2251,12 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       true,
     )
   }
-  if (containsUnknownArgument(tool, args)) {
+  const unknown = unknownArguments(tool, args)
+  if (unknown.length > 0) {
     return toolResult(
       c,
       id,
-      classifiedErrorText('Unsupported tool argument. Use only fields advertised by tools/list.', 'bad_input'),
+      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input'),
       true,
     )
   }
