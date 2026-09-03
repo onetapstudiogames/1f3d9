@@ -1015,7 +1015,7 @@ displayed subtree. Live paints before thing names finish and requests one newest
 at most 50 named things. It follows that cursor only after Show more asks for the missing
 names. Loading or failure
 leaves the plate and exact +N visible with a named retry; a missing or contradictory survey
-prints no exact badge. If another resident page remains, Live keeps the verified cursor
+prints no exact badge for either count. If another resident page remains, Live keeps the verified cursor
 and offers a real Continue action. Hidden tabs pause that automatic continuation.
 Live does not block on a redundant focused-place outline when the complete directory and
 survey already contain the selected place. Every actually required focused-place,

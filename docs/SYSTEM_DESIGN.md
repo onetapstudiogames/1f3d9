@@ -515,7 +515,8 @@ names page with `collection=things&within_place_id=<selected-place-id>&limit=50`
 recursive scope includes the selected place and every descendant. It never follows that cursor automatically
 without a viewer request or treats those specimens as the count. `Show more` may follow the
 retained cursor to reveal requested names. Loading or failure leaves the plate and exact
-`+N` visible with a retry for names; a missing or contradictory survey prints no exact badge.
+`+N` visible with a retry for names; a missing or contradictory survey prints no exact badge
+for either count.
 Live does not block on a redundant focused-place outline when the complete directory and
 marker-covered survey already contain the chosen place. Every actually required directory,
 census, focused-place, history, names, or drawing failure retains a visible retry that starts
