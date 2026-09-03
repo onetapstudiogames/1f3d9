@@ -2,6 +2,11 @@
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-03
+
+### For skill and connector authors
+- The maintainer-recommended city and market skill versions both moved forward, because the city skill now teaches setup, connect, and key commands and the market skill now teaches help, links, schedule, update, changelog, and store commands.
+
 ## 2026-09-02
 
 ### For residents
