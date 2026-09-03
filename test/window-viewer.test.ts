@@ -394,15 +394,6 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   assert.match(WINDOW_CSS, /\.live-trail/u)
   assert.match(WINDOW_CSS, /\.live-footnote-mark/u)
   assert.match(WINDOW_CSS, /\.drawing-undrawn/u)
-  assert.match(
-    WINDOW_CSS,
-    /\.live-plot-terrain\s*>\s*\.drawing-grid\s+\.drawing-undrawn-label\s*\{[^}]*display:\s*(?:block|inline|inline-block)/u,
-  )
-  assert.match(
-    WINDOW_CSS,
-    /\.live-plot-owner\s*\{[^}]*pointer-events:\s*none/u,
-    'noninteractive plot chrome must not block the place opener',
-  )
   assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
   assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
   assert.match(WINDOW_JS, /resident_edited[\s\S]{0,180}resident:/u)
@@ -423,6 +414,61 @@ test('the live plate states its honest timing and drawing rules in shipped code'
     WINDOW_CSS,
     /@media \(max-width: 54rem\)[\s\S]*?\.live-layout\s*\{[^}]*display:\s*block[^}]*\}[\s\S]*?\.live-viewport/u,
   )
+})
+
+test('Live sprites carry the drawing alone, with a neutral marker and a shadowed name in place of chips', () => {
+  // Step 2 ruling: no state chip, no provenance chip, no owner line, no
+  // hatched square, no card backing behind a sprite or its name.
+  assert.doesNotMatch(WINDOW_JS, /function appendLiveDrawingLabels/u)
+  assert.doesNotMatch(WINDOW_JS, /drawing-live-label/u)
+  assert.doesNotMatch(WINDOW_JS, /drawing-undrawn-label/u)
+  assert.doesNotMatch(WINDOW_JS, /live-plot-owner/u)
+  assert.doesNotMatch(WINDOW_CSS, /\.drawing-undrawn-label/u)
+  assert.doesNotMatch(WINDOW_CSS, /\.drawing-blank/u)
+  assert.doesNotMatch(WINDOW_CSS, /\.live-plot-owner/u)
+
+  // Every resident/thing sprite on the ground is the drawing alone, or a
+  // small neutral marker when there is none -- never nothing, never a chip.
+  assert.match(WINDOW_JS, /function liveSpriteNode\(type, id, label, hasDrawing\)/u)
+  assert.match(WINDOW_JS, /live-neutral-marker/u)
+  assert.match(WINDOW_JS, /liveSpriteNode\(\s*'resident'/u)
+  assert.match(WINDOW_JS, /liveSpriteNode\(\s*'thing'/u)
+
+  // Genuinely transparent pixels show the floor through: no CSS paints an
+  // opaque backing behind a sprite or the ground it fetches from.
+  assert.match(
+    WINDOW_CSS,
+    /\.live-portrait\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/u,
+  )
+  assert.match(
+    WINDOW_CSS,
+    /\.live-thing-specimen\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/u,
+  )
+  assert.match(
+    WINDOW_CSS,
+    /\.live-plot \.live-thing-specimen\s*\{[^}]*background:\s*transparent;/u,
+  )
+  assert.doesNotMatch(
+    WINDOW_CSS,
+    /\.live-resident-tag\s*\{[^}]*background:\s*var\(--paper-light\)/u,
+  )
+
+  // Names sit under the sprite with one shared, tunable text shadow --
+  // never a box -- so the owner can judge and adjust legibility from one
+  // CSS variable on the preview.
+  assert.match(WINDOW_CSS, /--live-name-shadow-strength:\s*[\d.]+px;/u)
+  assert.match(
+    WINDOW_CSS,
+    /\.live-item-name\s*\{[^}]*text-shadow:[^}]*var\(--live-name-shadow-strength\)/u,
+  )
+  assert.match(WINDOW_JS, /'live-resident-tag live-item-name'/u)
+  assert.match(WINDOW_JS, /'live-thing-name live-item-name'/u)
+
+  // State and provenance stay a public fact -- reachable via the accessible
+  // name / title and the unchanged drawing-detail click-through -- they are
+  // only no longer painted as a visible chip on the plate.
+  assert.match(WINDOW_JS, /drawingAccessibleLabel\(label, entry\)/u)
+  assert.match(WINDOW_JS, /function openDrawingDetailButton/u)
 })
 
 test('drawing presentation and details expose the complete authored contract without eager history', () => {

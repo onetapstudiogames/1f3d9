@@ -1710,6 +1710,23 @@ export const WINDOW_JS = `(() => {
     return shell
   }
 
+  // Decision #62 / step 2 ruling: the sprite on the ground is the drawing
+  // alone -- an authored thumbnail when one exists, or a small neutral
+  // marker when it does not. No state or provenance chip renders here;
+  // that stays reachable through the title attribute and the unchanged
+  // drawing-detail button (see mountLivePlaceDetail, openDrawingDetailButton).
+  function liveSpriteNode(type, id, label, hasDrawing) {
+    if (hasDrawing) {
+      return portraitNode(type, id, label, true, 'live-entity-portrait')
+    }
+    const marker = element('span',
+      'drawing-grid drawing-undrawn live-neutral-marker live-entity-portrait')
+    marker.setAttribute('role', 'img')
+    marker.title = label + ' has no drawing'
+    marker.setAttribute('aria-label', marker.title)
+    return marker
+  }
+
   function drawingRowsFor(drawing) {
     return Object.freeze(Array.from({ length: 8 }, (_, row) => drawing.indices
       .slice(row * 8, row * 8 + 8)
@@ -1845,7 +1862,12 @@ export const WINDOW_JS = `(() => {
       current_place_id: workshopId,
       joined_at: new Date(now - 86_400_000 - index * 1_000).toISOString(),
       asleep: false,
-      has_drawing: index === 0,
+      // Step 2 proof: alex (0) carries a genuinely transparent portrait over
+      // the workshop's own strongly patterned floor; cato (2) is a Blank
+      // (all-transparent Complete) portrait; every other proof resident,
+      // including bea (1, refused), stays undrawn -- the small neutral
+      // marker path this step adds.
+      has_drawing: index === 0 || index === 2,
     }))
     const things = Array.from({ length: 7 }, (_, index) => ({
       id: 9401 + index,
@@ -1959,6 +1981,16 @@ export const WINDOW_JS = `(() => {
       palette: Object.freeze([]),
       indices: Object.freeze(Array.from({ length: 64 }, () => null)),
     })
+    // Step 2 proof: a real drawing with genuinely transparent cells (every
+    // fourth square is null), so the owner can compare it against the
+    // fully-opaque alternate pattern side by side on the workshop's own
+    // strongly patterned floor.
+    const holed = Object.freeze({
+      palette: Object.freeze(['#d95c46', '#174d3c']),
+      indices: Object.freeze(Array.from(
+        { length: 64 }, (_, index) => index % 4 === 0 ? null : index % 2,
+      )),
+    })
     const held = (state, drawing, description, source, kind = {}) => Object.freeze({
       loading: false,
       loaded: true,
@@ -1985,10 +2017,12 @@ export const WINDOW_JS = `(() => {
       ['place:' + String(LIVE_PROOF_RETRY_ROOM_ID),
         held('complete', blank, 'An intentionally transparent room.', 'place')],
       ['resident:' + String(proof.residents[0].id),
-        held('complete', alternate, 'Proof Alex drew this portrait.', 'resident')],
+        held('complete', holed, 'Proof Alex drew this see-through portrait.', 'resident')],
       ['resident:' + String(proof.residents[1].id),
         held('refused', null, 'Proof Bea chose not to draw.', 'resident')],
-      ...proof.residents.slice(2).map(resident => ['resident:' + String(resident.id), undrawn()]),
+      ['resident:' + String(proof.residents[2].id),
+        held('complete', blank, 'Proof Cato left this portrait deliberately blank.', 'resident')],
+      ...proof.residents.slice(3).map(resident => ['resident:' + String(resident.id), undrawn()]),
       ['thing:' + String(proof.things[0].id),
         held('complete', pixels, 'An untyped owner drawing.', 'thing')],
       ['thing:' + String(proof.things[1].id),
@@ -2442,7 +2476,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         const visible = portraitRect.width > 0 && portraitRect.height > 0 &&
           portraitRect.right > layerRect.left && portraitRect.left < layerRect.right &&
           portraitRect.bottom > layerRect.top && portraitRect.top < layerRect.bottom
-        const tag = existingTag || element('span', 'live-resident-tag', handle)
+        const tag = existingTag || element('span', 'live-resident-tag live-item-name', handle)
         return [{
           existingTag: tag,
           focused,
@@ -4915,10 +4949,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     for (const card of nodes.livePlates?.querySelectorAll(
       '.live-plot[data-place-id="' + String(id) + '"]') || []) {
       card.dataset.undrawn = String(undrawn)
-      const owner = card.querySelector('.live-plot-owner')
-      if (!owner) continue
-      const plain = String(owner.textContent || '').replace(/^undrawn · /u, '')
-      owner.textContent = undrawn ? 'undrawn · ' + plain : plain
     }
   }
 
@@ -4963,18 +4993,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return label + ' · ' + stateLabel + (sourceLabel ? ' · ' + sourceLabel : '')
   }
 
-  function appendLiveDrawingLabels(node, entry) {
-    const stateLabel = windowDrawingStateLabel(entry.state, entry.drawing)
-    const stateNode = element('span', 'drawing-live-label drawing-state-label', stateLabel)
-    node.append(stateNode)
-    const sourceLabel = windowDrawingSourceLabel(entry)
-    if (sourceLabel) {
-      const sourceNode = element('span', 'drawing-live-label drawing-provenance', sourceLabel)
-      sourceNode.title = sourceLabel
-      node.append(sourceNode)
-    }
-  }
-
   function drawingNode(type, id, label, columns = 1, rows = 1) {
     const key = liveDrawingKey(type, id)
     const entry = state.live.drawings[key]
@@ -4994,36 +5012,33 @@ ${WINDOW_CLIENT_SAFETY_JS}
       node.dataset.liveDrawingRows = String(safeRows)
       return node
     }
+    // Step 2 ruling: the Live surface shows the drawing alone, never a
+    // COMPLETE / IN PROGRESS / "Own drawing" state chip or provenance chip.
+    // State and source stay attached as data attributes and the accessible
+    // name (role="img" + aria-label / title) -- reachable to assistive tech
+    // and to the unchanged drawing-detail button -- just never painted as a
+    // visible label over the art.
     if (entry?.error) {
       const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
       unavailable.setAttribute('role', 'img')
-      unavailable.setAttribute('aria-label', label + ' drawing could not be read')
-      unavailable.append(element('span', 'drawing-undrawn-label', 'drawing unavailable'))
+      unavailable.title = label + ' drawing could not be read'
+      unavailable.setAttribute('aria-label', unavailable.title)
       return identify(unavailable)
     }
     if (!entry?.loaded) {
       const loading = element('span', 'drawing-grid drawing-undrawn drawing-loading')
       loading.setAttribute('role', 'img')
-      loading.setAttribute('aria-label', 'Reading ' + label + ' drawing')
-      loading.append(element('span', 'drawing-undrawn-label', 'reading drawing'))
+      loading.title = 'Reading ' + label + ' drawing'
+      loading.setAttribute('aria-label', loading.title)
       return identify(loading)
     }
     if (entry.drawing === null) {
       const standIn = element('span',
         'drawing-grid drawing-undrawn drawing-' + entry.presentation_state)
       standIn.setAttribute('role', 'img')
-      standIn.setAttribute('aria-label', drawingAccessibleLabel(label, entry))
+      standIn.title = drawingAccessibleLabel(label, entry)
+      standIn.setAttribute('aria-label', standIn.title)
       applyDrawingData(standIn, entry)
-      const visibleState = element('span',
-        'drawing-undrawn-label drawing-state-label',
-        windowDrawingStateLabel(entry.state, entry.drawing))
-      standIn.append(visibleState)
-      const sourceLabel = windowDrawingSourceLabel(entry)
-      if (sourceLabel) {
-        const sourceNode = element('span', 'drawing-live-label drawing-provenance', sourceLabel)
-        sourceNode.title = sourceLabel
-        standIn.append(sourceNode)
-      }
       return identify(standIn)
     }
     const drawing = entry.drawing
@@ -5031,19 +5046,19 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (!sprite) {
       const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
       unavailable.setAttribute('role', 'img')
-      unavailable.setAttribute('aria-label', label + ' drawing could not be painted')
-      unavailable.append(element('span', 'drawing-undrawn-label', 'drawing unavailable'))
+      unavailable.title = label + ' drawing could not be painted'
+      unavailable.setAttribute('aria-label', unavailable.title)
       return identify(unavailable)
     }
     const shell = element('span',
       'drawing-grid drawing-authored-shell drawing-' + entry.presentation_state)
     shell.setAttribute('role', 'img')
-    shell.setAttribute('aria-label', drawingAccessibleLabel(label, entry))
+    shell.title = drawingAccessibleLabel(label, entry)
+    shell.setAttribute('aria-label', shell.title)
     applyDrawingData(shell, entry)
     applyDrawingData(sprite, entry)
     sprite.setAttribute('aria-hidden', 'true')
     shell.append(sprite)
-    appendLiveDrawingLabels(shell, entry)
     return identify(shell)
   }
 
@@ -7854,8 +7869,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         : 'Focus on ' + resident.handle
       portrait.setAttribute('aria-label', portrait.title)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
-      portrait.append(portraitNode(
-        'resident', resident.id, resident.handle, resident.has_drawing, 'live-entity-portrait',
+      portrait.append(liveSpriteNode(
+        'resident', resident.id, resident.handle, resident.has_drawing,
       ))
       const shell = livePortraitShell(
         portrait,
@@ -8174,8 +8189,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
         bindLiveHighlight(specimen, pulse.key, 'pulse')
       }
       specimen.append(
-        portraitNode('thing', thing.id, thing.name, thing.has_drawing, 'live-entity-portrait'),
-        element('span', 'live-thing-name', thing.name),
+        liveSpriteNode('thing', thing.id, thing.name, thing.has_drawing),
+        element('span', 'live-thing-name live-item-name', thing.name),
       )
       bindLiveActivation(specimen, specimen, itemKey, null)
       shelf.append(specimen)
@@ -8247,12 +8262,8 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const drawing = state.live.drawings[liveDrawingKey('place', place.id)]
     const undrawn = drawing?.loaded && drawing.drawing === null
     card.dataset.undrawn = String(Boolean(undrawn))
-    const owner = Object.hasOwn(place, 'owner')
-      ? place.owner ? (undrawn ? 'undrawn · ' : '') + 'kept by ' + place.owner : 'ownerless world ground'
-      : 'Place #' + String(place.id)
     const terrain = liveTiledDrawing(place, 'live-plot-terrain', 8, 5)
     card.prepend(terrain)
-    card.append(element('p', 'live-plot-owner', owner))
     const drawingDetail = openDrawingDetailButton(
       'place',
       place.id,
