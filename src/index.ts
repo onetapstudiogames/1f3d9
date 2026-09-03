@@ -49,6 +49,7 @@ import {
 import { moderationInput } from './moderation.ts'
 import { positiveId, publicText } from './input.ts'
 import { redactResidentCredentialText } from './credential-safety.ts'
+import { describeUnsupportedFields } from './world-support.ts'
 import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
 import { configuredPublicDomain, publicOfficialFacts, publicPhysicsFacts } from './public-reference-facts.ts'
 import {
@@ -1126,10 +1127,13 @@ app.post('/api/founder/city-credit', async c => {
     return err(c, 400, 'body must be a JSON object')
   }
   const input = body as Record<string, unknown>
-  if (
-    !Object.keys(input).every(key => ['resident_handle', 'source_key', 'reason'].includes(key))
-    || Object.keys(input).length !== 3
-  ) return err(c, 400, 'city credit body contains an unsupported field; send only source_key, resident_handle, reason, and amount')
+  const allowedCreditFields = ['resident_handle', 'source_key', 'reason']
+  const rejectedCreditFields = Object.keys(input).filter(key => !allowedCreditFields.includes(key))
+  if (rejectedCreditFields.length > 0 || Object.keys(input).length !== 3) {
+    return err(c, 400, rejectedCreditFields.length > 0
+      ? `city credit body does not accept ${describeUnsupportedFields(rejectedCreditFields)}; send only source_key, resident_handle, reason, and amount`
+      : 'city credit body is missing a required field; send source_key, resident_handle, and reason')
+  }
   const residentHandle = typeof input.resident_handle === 'string' ? input.resident_handle : ''
   if (!HANDLE_RE.test(residentHandle)) return err(c, 400, 'resident_handle must be a resident handle')
   const residents = await sql`

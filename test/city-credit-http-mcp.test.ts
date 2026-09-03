@@ -148,7 +148,7 @@ test('founder issuance is root-key-only, fixed at one fee unit, and idempotent b
   assert.match(route, /resident_handle/iu)
   assert.match(route, /source_key/iu)
   assert.match(route, /reason/iu)
-  assert.match(route, /hasOnly|unsupported field/iu)
+  assert.match(route, /hasOnly|unsupported field|does not accept/iu)
   assert.match(implementation, /1_000_000|1000000|CLAIM_FEE/iu)
   assert.doesNotMatch(route, /body\.(?:amount|value)|amount_usdc\s*=/iu)
   assert.match(implementation, /(?:23505|conflict|idempot)/iu)

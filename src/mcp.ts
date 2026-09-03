@@ -1761,14 +1761,6 @@ function secretArgumentKind(value: unknown): SecretArgumentKind {
   return foundCredential ? 'credential' : null
 }
 
-function containsUnknownArgument(tool: ToolDefinition, args: Record<string, unknown>): boolean {
-  const properties = tool.inputSchema.properties
-  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
-    return Object.keys(args).length > 0
-  }
-  return Object.keys(args).some(key => !Object.prototype.hasOwnProperty.call(properties, key))
-}
-
 function unknownArguments(tool: ToolDefinition, args: Record<string, unknown>): string[] {
   const properties = tool.inputSchema.properties
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
@@ -1777,7 +1769,15 @@ function unknownArguments(tool: ToolDefinition, args: Record<string, unknown>): 
   return Object.keys(args).filter(key => !Object.prototype.hasOwnProperty.call(properties, key))
 }
 
-const LAW_ARGUMENT_NAMES = new Set(['laws', 'law_trait_ids', 'trait_ids', 'add_law'])
+const LAW_ARGUMENT_NAMES = new Set([
+  'laws',
+  'law_trait_ids',
+  'trait_ids',
+  'add_law',
+  'traits',
+  'law',
+  'place_laws',
+])
 
 function unknownArgumentMessage(tool: ToolDefinition, unknown: readonly string[]): string {
   const base = `Unsupported tool argument: ${unknown.join(', ')}. Use only fields advertised by tools/list.`
@@ -2251,11 +2251,12 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       true,
     )
   }
-  if (containsUnknownArgument(tool, args)) {
+  const unknown = unknownArguments(tool, args)
+  if (unknown.length > 0) {
     return toolResult(
       c,
       id,
-      classifiedErrorText(unknownArgumentMessage(tool, unknownArguments(tool, args)), 'bad_input'),
+      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input'),
       true,
     )
   }

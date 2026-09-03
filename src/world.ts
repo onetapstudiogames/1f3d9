@@ -47,6 +47,7 @@ import {
   openOffer,
   reconcileTreasuryCompletionNoEffect,
   reportTreasuryCompletionFailure,
+  describeUnsupportedFields,
   returnFailedTreasuryFee,
   requireResident,
   THING_BODY_MAX_BYTES,
@@ -639,7 +640,7 @@ export function mountWorldRoutes(app: Hono): void {
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `place body does not accept ${rejected.join(', ')}; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes`)
+        return err(c, 400, `place body does not accept ${describeUnsupportedFields(rejected)}; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes`)
       }
     }
 
@@ -974,7 +975,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
       return err(c, 400, rejected.length > 0
-        ? `place edit does not accept ${rejected.join(', ')}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Set a place's laws with PUT /api/place/:id/laws {"traits":[names]} or the laws tool.`
+        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Set a place's laws with PUT /api/place/:id/laws {"traits":[names]} or the laws tool.`
         : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, or a permission switch')
     }
 
@@ -1272,7 +1273,7 @@ export function mountWorldRoutes(app: Hono): void {
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `kind body does not accept ${rejected.join(', ')}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
+        return err(c, 400, `kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
       }
     }
     const requestedDrawing = drawingWriteField(body)
@@ -1401,7 +1402,7 @@ export function mountWorldRoutes(app: Hono): void {
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `kind revision does not accept ${rejected.join(', ')}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
+        return err(c, 400, `kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
       }
     }
     const requestedDrawing = drawingWriteField(body)
@@ -1603,7 +1604,7 @@ export function mountWorldRoutes(app: Hono): void {
       const fields = ['name', 'description', 'recipe'] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `trait body does not accept ${rejected.join(', ')}; send only name, description, and an optional inert recipe`)
+        return err(c, 400, `trait body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, and an optional inert recipe`)
       }
     }
     const name = worldName(body.name)
@@ -1653,7 +1654,7 @@ export function mountWorldRoutes(app: Hono): void {
       const fields = ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids'] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${rejected.join(', ')}; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids`)
       }
     }
     const placeId = positiveId(body.place_id)
@@ -2010,7 +2011,7 @@ export function mountWorldRoutes(app: Hono): void {
       const fields = ['drawing_variant_name'] as const
       if (!hasOnly(decoded.body, fields)) {
         const rejected = unsupportedFields(decoded.body, fields)
-        return err(c, 400, `thing upgrade body does not accept ${rejected.join(', ')}; send only optional drawing_variant_name`)
+        return err(c, 400, `thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name`)
       }
     }
     const requestedVariant = Object.hasOwn(decoded.body, 'drawing_variant_name')

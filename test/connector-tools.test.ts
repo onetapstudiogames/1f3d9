@@ -1083,6 +1083,7 @@ test('place_edit refuses a laws argument by name and points at the laws tool', a
   for (const args of [
     { place_id: 12, laws: [247] },
     { place_id: 12, law_trait_ids: [247] },
+    { place_id: 12, traits: ['quiet-hours'] },
   ] as const) {
     const { app, calls } = connectorHarness()
     const result = await callToolResult(app, '/mcp', 'place_edit', args, { authorization: AUTHORIZATION })

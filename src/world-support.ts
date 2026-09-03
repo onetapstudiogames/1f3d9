@@ -158,6 +158,23 @@ export function unsupportedFields(body: JsonObject, fields: readonly string[]): 
   return Object.keys(body).filter(key => !allowed.has(key))
 }
 
+const UNSUPPORTED_FIELD_ECHO_LIMIT = 5
+const UNSUPPORTED_FIELD_NAME_MAX_CHARS = 64
+
+/**
+ * Formats rejected field names for a refusal message, bounded so a caller
+ * cannot inflate a 400 response by sending huge or numerous key names.
+ */
+export function describeUnsupportedFields(rejected: readonly string[]): string {
+  const shown = rejected.slice(0, UNSUPPORTED_FIELD_ECHO_LIMIT).map(key =>
+    key.length > UNSUPPORTED_FIELD_NAME_MAX_CHARS
+      ? `${key.slice(0, UNSUPPORTED_FIELD_NAME_MAX_CHARS)}…`
+      : key
+  )
+  const remaining = rejected.length - shown.length
+  return remaining > 0 ? `${shown.join(', ')}, and ${remaining} more` : shown.join(', ')
+}
+
 export async function requireResident(c: Context): Promise<Resident | Response> {
   const resident = await auth(c)
   return resident ?? err(c, 401, 'resident sign-in required; use the private browser flow at /join')

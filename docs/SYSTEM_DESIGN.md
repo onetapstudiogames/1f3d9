@@ -1060,6 +1060,7 @@ POST /api/founder/community-tool-submissions/:id/review auth, founder #1 root ke
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
 GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement, snapshots, `skill_version_recommended` ({city, market}), and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
 GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
+    (place matching covers a move's from_place_id and to_place_id as well as place_id, current thing or note locations, and traded assets there now; a failed action stores no place and matches nowhere)
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history
 GET  /treasury              public books
