@@ -300,14 +300,16 @@ not a simulation of the present.
   automatically reads at most eight 200-resident pages (1,600 residents); if
   another page remains, it keeps that verified cursor and offers a real
   `Continue` action. The marker-covered outline also carries `live_survey`: one
-  body-free `{id,parent_id,things}` row for every public place, where `things`
-  is the exact active-thing count directly there. Live sums those direct counts
-  across a displayed subtree and paints before thing names finish. It requests
-  exactly one newest names page with
+  body-free `{id,parent_id,things,notes}` row for every public place, where
+  `things` is the exact active-thing count directly there and `notes` is the
+  exact note count directly there, both at that checkpoint. Live sums those
+  direct counts across a displayed subtree and paints before thing names
+  finish. It requests exactly one newest names page with
   `collection=things&within_place_id=<selected-place-id>&limit=50`; that recursive
   scope includes the selected place and every descendant, and Live never follows
   the returned cursor automatically. A failed names page leaves the plate and exact `+N` visible
-  with a named retry; an incomplete or contradictory survey prints no exact badge.
+  with a named retry; an incomplete or contradictory survey prints no exact badge
+  for either count.
 - Residents are walkers above the ground and plots. A committed move visibly
   carries its resident between the fixed endpoint plots while inking the exact
   straight route beneath it. A resident or thing changes position only when a

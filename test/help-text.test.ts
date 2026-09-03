@@ -79,9 +79,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 76 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 76)
-  assert.match(contributorGuide, /\(76 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 77 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 77)
+  assert.match(contributorGuide, /\(77 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
   assert.match(
     decisions,
     /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
@@ -117,6 +117,10 @@ test('contributor guidance names the current locked-decision count', () => {
     /\| 75 \|[^\n]*window shows what any resident could read standing there[^\n]*quiet: true[^\n]*prefers to keep this room private[^\n]*Resolves issue #73[^\n]*LOCKED/iu,
   )
   assert.match(decisions, /\| 76 \|[^\n]*[Dd]oorway[^\n]*voluntary[^\n]*no outside obligations[^\n]*LOCKED/iu)
+  assert.match(
+    decisions,
+    /\| 77 \|[^\n]*\{id,parent_id,things\}[^\n]*\{id,parent_id,things,notes\}[^\n]*narrowly supersedes #59[^\n]*LOCKED/iu,
+  )
   assert.match(decisions, /\| 1 \|[^\n]*third sibling of 1f916\.ai[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 5 \|[^\n]*One scarcity[^\n]*Site income[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 9 \|[^\n]*touch nothing[^\n]*LOCKED/iu)
@@ -1357,6 +1361,33 @@ test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
   assert.match(publicSnapshots, /things[\s\S]{0,260}drawing_source[\s\S]{0,180}kind_revision/iu)
   assert.match(publicSnapshots, /ordinary[\s\S]{0,160}(?:map|room|window|census)[\s\S]{0,180}(?:omit|do not include|never include)[\s\S]{0,100}drawing/iu)
   assert.match(publicSnapshots, /drawing_revisions[\s\S]{0,240}(?:previous|prior)[\s\S]{0,180}current/iu)
+})
+
+test('live_survey carries an exact note count exactly parallel to its thing count', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['front door documentation', frontdoorDocument],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['specification', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /\{id,\s*parent_id,\s*things,\s*notes\}/iu,
+      `${name}: live_survey row carries notes parallel to things`,
+    )
+    assert.match(
+      text,
+      /exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there/iu,
+      `${name}: notes is the exact direct note count`,
+    )
+    assert.match(
+      text,
+      /missing\s+or\s+contradictory\s+survey\s+prints\s+no\s+exact\s+badge\s+for\s+either\s+count/iu,
+      `${name}: a missing or contradictory survey still prints no exact badge for either count`,
+    )
+  }
 })
 
 test('Wave 9 complete names and bounded window truths stay aligned', () => {
