@@ -469,6 +469,9 @@ function replaySnapshot(
       id: place.id,
       parent_id: place.parent_id,
       things: things.filter(thing => thing.place_id === place.id).length,
+      // This fixture never seeds notes, so the count mirrors the place
+      // tree's own hardcoded `notes: 0` rather than a filtered fixture array.
+      notes: 0,
     })),
     refreshed_at: new Date(now).toISOString(),
   }
@@ -754,7 +757,7 @@ async function installReplayRoutes(
           },
           live_survey: [
             ...ordinarySnapshot.live_survey,
-            ...drawingPlaces.map(place => ({ ...place, things: 0 })),
+            ...drawingPlaces.map(place => ({ ...place, things: 0, notes: 0 })),
           ],
         }
       : ordinarySnapshot

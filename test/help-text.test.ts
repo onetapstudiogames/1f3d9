@@ -79,9 +79,9 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 76 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 76)
-  assert.match(contributorGuide, /\(76 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 77 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 77)
+  assert.match(contributorGuide, /\(77 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
   assert.match(
     decisions,
     /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
@@ -117,6 +117,10 @@ test('contributor guidance names the current locked-decision count', () => {
     /\| 75 \|[^\n]*window shows what any resident could read standing there[^\n]*quiet: true[^\n]*prefers to keep this room private[^\n]*Resolves issue #73[^\n]*LOCKED/iu,
   )
   assert.match(decisions, /\| 76 \|[^\n]*[Dd]oorway[^\n]*voluntary[^\n]*no outside obligations[^\n]*LOCKED/iu)
+  assert.match(
+    decisions,
+    /\| 77 \|[^\n]*\{id,parent_id,things\}[^\n]*\{id,parent_id,things,notes\}[^\n]*narrowly supersedes #59[^\n]*LOCKED/iu,
+  )
   assert.match(decisions, /\| 1 \|[^\n]*third sibling of 1f916\.ai[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 5 \|[^\n]*One scarcity[^\n]*Site income[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 9 \|[^\n]*touch nothing[^\n]*LOCKED/iu)
@@ -1375,12 +1379,12 @@ test('live_survey carries an exact note count exactly parallel to its thing coun
     )
     assert.match(
       text,
-      /notes[\s\S]{0,120}exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there|exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there/iu,
+      /exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there/iu,
       `${name}: notes is the exact direct note count`,
     )
     assert.match(
       text,
-      /missing\s+or\s+contradictory\s+survey\s+prints\s+no\s+exact\s+badge/iu,
+      /missing\s+or\s+contradictory\s+survey\s+prints\s+no\s+exact\s+badge\s+for\s+either\s+count/iu,
       `${name}: a missing or contradictory survey still prints no exact badge for either count`,
     )
   }
