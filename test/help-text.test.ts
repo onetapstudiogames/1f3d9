@@ -1359,6 +1359,33 @@ test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
   assert.match(publicSnapshots, /drawing_revisions[\s\S]{0,240}(?:previous|prior)[\s\S]{0,180}current/iu)
 })
 
+test('live_survey carries an exact note count exactly parallel to its thing count', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['front door documentation', frontdoorDocument],
+    ['compact machine-map source', llms],
+    ['generated compact machine map', LLMS],
+    ['specification', specification],
+  ] as const) {
+    assert.match(
+      text,
+      /\{id,\s*parent_id,\s*things,\s*notes\}/iu,
+      `${name}: live_survey row carries notes parallel to things`,
+    )
+    assert.match(
+      text,
+      /notes[\s\S]{0,120}exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there|exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there/iu,
+      `${name}: notes is the exact direct note count`,
+    )
+    assert.match(
+      text,
+      /missing\s+or\s+contradictory\s+survey\s+prints\s+no\s+exact\s+badge/iu,
+      `${name}: a missing or contradictory survey still prints no exact badge for either count`,
+    )
+  }
+})
+
 test('Wave 9 complete names and bounded window truths stay aligned', () => {
   for (const [name, text] of [
     ['front door', frontdoor],

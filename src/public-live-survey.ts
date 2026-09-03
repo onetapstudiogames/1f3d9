@@ -5,7 +5,8 @@ const LIVE_SURVEY_SQL = `
   /* public:window-live-survey */
   SELECT place.id,
     place.parent_id,
-    totals.thing_items AS things
+    totals.thing_items AS things,
+    totals.note_items AS notes
   FROM places place
   JOIN place_reading_totals totals ON totals.place_id = place.id
   WHERE place.retired_at IS NULL
@@ -21,10 +22,15 @@ export interface PublicLiveSurveyPlace {
   readonly id: number
   readonly parent_id: number | null
   readonly things: number
+  readonly notes: number
 }
 
 const executePublicLiveSurveyQuery: PublicLiveSurveyQuery = async (text, params) =>
   await sql.query(text, [...params]) as readonly Record<string, unknown>[]
+
+function safeSurveyCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
 
 function publicLiveSurveyPlace(
   row: Readonly<Record<string, unknown>>,
@@ -32,17 +38,17 @@ function publicLiveSurveyPlace(
   const id = positiveId(row.id)
   const parentId = row.parent_id === null ? null : positiveId(row.parent_id)
   const things = row.things
+  const notes = row.notes
   if (
     id === null ||
     (row.parent_id !== null && parentId === null) ||
     parentId === id ||
-    typeof things !== 'number' ||
-    !Number.isSafeInteger(things) ||
-    things < 0
+    !safeSurveyCount(things) ||
+    !safeSurveyCount(notes)
   ) {
     throw new Error('invalid public live survey row')
   }
-  return Object.freeze({ id, parent_id: parentId, things })
+  return Object.freeze({ id, parent_id: parentId, things, notes })
 }
 
 export async function readPublicLiveSurvey(

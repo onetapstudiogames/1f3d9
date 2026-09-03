@@ -2226,7 +2226,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
         things: Array<{ id: number }>
         agreements: Array<{ id: number }>
         events: Array<{ id: number }>
-        live_survey?: Array<{ id: number; parent_id: number | null; things: number }>
+        live_survey?: Array<{ id: number; parent_id: number | null; things: number; notes: number }>
         pages: {
           places?: { has_more: boolean; next_before_subplace_id: number | null }
           residents?: { has_more: boolean; next_before_id: number | null }
@@ -2264,8 +2264,10 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       const snapshot = await outlineResponse.json() as WindowSnapshotBody
       assert.equal(snapshot.view, 'outline')
       const expectedLiveSurvey = (
-        await postgres.client.query<{ id: number; parent_id: number | null; things: number }>(`
-          SELECT place.id, place.parent_id, totals.thing_items AS things
+        await postgres.client.query<
+          { id: number; parent_id: number | null; things: number; notes: number }
+        >(`
+          SELECT place.id, place.parent_id, totals.thing_items AS things, totals.note_items AS notes
           FROM places place
           JOIN place_reading_totals totals ON totals.place_id = place.id
           ORDER BY place.id
@@ -2273,7 +2275,7 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
       ).rows
       assert.deepEqual(snapshot.live_survey, expectedLiveSurvey)
       assert.equal(snapshot.live_survey?.every(place =>
-        Object.keys(place).sort().join(',') === 'id,parent_id,things'), true)
+        Object.keys(place).sort().join(',') === 'id,notes,parent_id,things'), true)
       assert.equal(snapshot.places.length, 1)
       assert.equal(snapshot.places[0]?.id, city.worldPlaceId)
       assert.deepEqual(
@@ -2474,6 +2476,40 @@ test('public listing pages use bounded keyset reads against PostgreSQL', async t
           assert.equal(Number(totals[field]), Number(recomputed[field]), `${placeId}:${field}`)
         }
       }
+    })
+
+    await t.test('the live survey note count is exact and parallel to the thing count', async () => {
+      const { readPublicLiveSurvey } = await import('../../src/public-live-survey.ts')
+      const placeId = city.expected.subplaces[0]!
+
+      const before = (await readPublicLiveSurvey())
+        .find(place => place.id === placeId)
+      assert.ok(before, 'the seeded child place is present in the live survey')
+
+      const authorId = (
+        await postgres.client.query<{ id: number }>('SELECT id FROM residents ORDER BY id LIMIT 1')
+      ).rows[0]?.id
+      assert.ok(authorId, 'a seeded resident exists to author the exact-count notes')
+      await postgres.client.query(
+        `INSERT INTO notes (place_id, author_id, body) VALUES
+           ($1, $2, 'live survey exact-count note one 🏙'),
+           ($1, $2, 'live survey exact-count note two 🏙')`,
+        [placeId, authorId],
+      )
+
+      const after = (await readPublicLiveSurvey())
+        .find(place => place.id === placeId)
+      assert.ok(after, 'the seeded child place remains in the live survey')
+      assert.equal(after?.notes, (before?.notes ?? 0) + 2, 'two new notes raise the exact survey count by exactly two')
+      assert.equal(after?.things, before?.things, 'adding notes leaves the parallel exact thing count untouched')
+
+      const recomputedNotes = (
+        await postgres.client.query<{ count: string }>(
+          'SELECT count(*) FROM notes WHERE place_id = $1',
+          [placeId],
+        )
+      ).rows[0]?.count
+      assert.equal(after?.notes, Number(recomputedNotes), 'the survey note count matches a direct recount')
     })
 
     await t.test('catalog pages report exact authored-text totals from real PostgreSQL', async () => {

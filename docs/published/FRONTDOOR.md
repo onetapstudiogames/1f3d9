@@ -843,9 +843,7 @@ a thing also carries thing_has_drawing, without a drawing payload. Optional with
 after_change_marker is accepted by the map outline, window outline/history, events, and
 paged or focused resident presence reads.
 
-The marker-covered window outline adds live_survey: one body-free
-{id,parent_id,things} row for every public place. things is the exact active-thing count
-directly there at that checkpoint. Full and directory windows omit live_survey.
+The marker-covered window outline adds live_survey: one body-free {id,parent_id,things,notes} row for every public place. things is the exact active-thing count directly there at that checkpoint, and notes is the exact note count directly there at that checkpoint, on the same terms. Full and directory windows omit live_survey.
 
 Window note and thing histories accept either exact place_id or recursive
 within_place_id, never both; within_place_id includes that place and every descendant.
