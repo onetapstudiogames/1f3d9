@@ -402,7 +402,7 @@ async function destroyThing(
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_withdrawn', resident.handle,
-          jsonb_build_object('thing_id', id, 'reason', 'destroyed')
+          jsonb_build_object('thing_id', changed.id, 'reason', 'destroyed')
         FROM changed JOIN residents resident ON resident.id = ${context.actorId}
       ) SELECT id FROM changed
     `)
@@ -442,7 +442,7 @@ async function destroyThing(
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_withdrawn', resident.handle,
-          jsonb_build_object('thing_id', id, 'reason', 'destroyed')
+          jsonb_build_object('thing_id', changed.id, 'reason', 'destroyed')
         FROM changed JOIN residents resident ON resident.id = ${context.actorId}
       ) SELECT id FROM changed
     `)

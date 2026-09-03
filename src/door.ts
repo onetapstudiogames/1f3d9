@@ -780,6 +780,9 @@ also names thing_id and mode carry, paired with a thing_moved notice carrying th
 action_id. Successful use
 names source_thing_id and the committed place_id. Give emits the typed transfer event and
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
+A destroy effect brick does the same: it emits thing_withdrawn with reason destroyed and
+the acting resident as actor instead of a duplicate generic action notice, and counts once
+in that use's effects_applied.
 A newly recorded immediate gift or effect-driven transfer also names the interaction
 partner as resident_id and the committed place_id; older transfer rows without those
 safe references remain unlinked rather than being guessed.
@@ -1772,7 +1775,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - GET \`/api/changes\` returns the current decimal checkpoint only; GET \`/api/changes?since=<nonnegative-decimal-bigint>&kind=<public-event-kind>&limit=1..200\` returns oldest-first notices with an optional exact \`kind\` filter; \`change_id\` is the only per-notice cursor, and a terminal filtered page advances \`next_since\` to its fixed \`change_marker\`
 - \`/api/changes\` returns reference-only notices whose detail is limited to whitelisted scalars and IDs, never the full event detail or resident-authored body
 - An \`action\` notice names its basic verb; a failed action also names its bounded actor-facing reason, never request payloads or resident-authored text
-- Successful move and go_home action notices include from_place_id and to_place_id. A carried move also includes thing_id and mode carry and is paired with a thing_moved notice carrying the same action_id. Successful use includes source_thing_id and the committed place_id. Give emits the typed transfer event and consume emits the typed thing_withdrawn event instead of a duplicate generic action notice. A newly recorded immediate gift or effect-driven transfer also includes the safely identified interaction partner as resident_id and the committed place_id; older transfer rows without those references stay unlinked rather than being guessed
+- Successful move and go_home action notices include from_place_id and to_place_id. A carried move also includes thing_id and mode carry and is paired with a thing_moved notice carrying the same action_id. Successful use includes source_thing_id and the committed place_id. Give emits the typed transfer event and consume emits the typed thing_withdrawn event instead of a duplicate generic action notice. A destroy effect brick does the same: it emits thing_withdrawn with reason destroyed and the acting resident as actor instead of a duplicate generic action notice, and counts once in that use's effects_applied. A newly recorded immediate gift or effect-driven transfer also includes the safely identified interaction partner as resident_id and the committed place_id; older transfer rows without those references stay unlinked rather than being guessed
 - An \`effect_resolved\` notice names its status; failed and skipped effects also name their bounded cause, with unexpected internal failures kept distinct from rule refusals
 - Action and effect causes through 500 characters are complete; a longer bounded-window cause ends in an ellipsis and carries \`detail.error_truncated: true\`, marking it as an excerpt
 - Markers come from a singleton state row plus an append-only log filled by an AFTER-event trigger, not \`MAX(events.id)\`; this makes them commit-safe, and thing movement emits \`thing_moved\`

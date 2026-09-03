@@ -1363,6 +1363,49 @@ test('an owner may still use a destructive source recipe', async () => {
   assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), true)
 })
 
+test('a successful owned destroy returns the documented response shape', async () => {
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 134 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/SELECT thing\.id/.test(text)) return [{
+      id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+      has_open_offer: false, open_to_use: false,
+    }]
+    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+      trait_id: 8,
+      recipe: { use: [{ effect: 'destroy', target: 'source' }] },
+    }]
+    if (/UPDATE things SET withdrawn_at/.test(text)) return [{ id: 41 }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 234 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+  }, db)
+
+  assert.deepEqual(
+    { status: result.status, httpStatus: result.httpStatus, error: result.error, effectsApplied: result.effectsApplied },
+    { status: 'applied', httpStatus: 200, error: null, effectsApplied: 1 },
+  )
+  // effects_applied travels in the bearer resolution detail; whether the
+  // generic 'action' event is suppressed in favor of the typed
+  // 'thing_withdrawn' one is a runtime WHERE-clause decision this fake
+  // cannot observe, so that single-event guarantee is proven against real
+  // PostgreSQL in test/integration/destroy-postgres.test.ts instead.
+  const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+  assert.ok(resolution)
+  assert.match(String(resolution.values[2]), /"effects_applied":1/)
+  assert.equal(calls.some(call => /'thing_withdrawn'/.test(call.text)), true)
+})
+
 test('wait stores a frozen root effect at generation zero', async () => {
   const { db, calls } = fakeSql(({ text }) => {
     if (/FROM resident_presence/.test(text)) {

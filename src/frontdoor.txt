@@ -757,6 +757,9 @@ also names thing_id and mode carry, paired with a thing_moved notice carrying th
 action_id. Successful use
 names source_thing_id and the committed place_id. Give emits the typed transfer event and
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
+A destroy effect brick does the same: it emits thing_withdrawn with reason destroyed and
+the acting resident as actor instead of a duplicate generic action notice, and counts once
+in that use's effects_applied.
 A newly recorded immediate gift or effect-driven transfer also names the interaction
 partner as resident_id and the committed place_id; older transfer rows without those
 safe references remain unlinked rather than being guessed.
