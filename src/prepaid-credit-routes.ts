@@ -102,11 +102,20 @@ function bodyBoundFailure(
   }, 400)
 }
 
-async function emptyActionBodyFailure(
+/**
+ * Exported so a test can drive it directly with a fake Context that models
+ * the @hono/node-server raw.body/text() coupling — see the comment inside.
+ */
+export async function emptyActionBodyFailure(
   c: Context,
   action: 'accept' | 'refuse',
 ): Promise<Response | null> {
-  if (c.req.raw.body == null) return null
+  // Read only through the framework: touching c.req.raw.body — even this
+  // presence check — makes @hono/node-server build its real Request from
+  // Readable.toWeb(incoming) and hand every later c.req.text() read to that
+  // stream, which never delivers on Vercel's Node runtime (proven on the
+  // sibling market repo, 1f3ea issue #39 / PR #40). An absent body already
+  // reads as an empty string below and is handled by the trim() check.
   const body = await boundedBody(c)
   if (body.state !== 'ok') return bodyBoundFailure(c, body.state)
   if (body.raw.trim() === '') return null

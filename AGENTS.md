@@ -28,6 +28,13 @@ A change is done when ALL of these are true, and not before:
 6. **Nothing new is dead or duplicated.** No unused exports, no logic remade
    that existed elsewhere, no abstraction with one caller, no option nothing
    varies. The simplest shape that fully works is the deliverable.
+7. **On the request path, read the body only through `c.req.text()`/
+   `json()`/`arrayBuffer()`, never touch `c.req.raw.body`, `.clone()`,
+   `.formData()`, or `c.req.parseBody()`** — even a presence check (`c.req.raw.body
+   == null`) makes @hono/node-server build a real Request whose body is
+   `Readable.toWeb(incoming)`, which never delivers on Vercel's Node runtime
+   and cannot be reproduced against a local Node server (the gift
+   accept/refuse hang; same root cause as market repo 1f3ea issue #39 / PR #40).
 
 ## Payment reliability
 
