@@ -73,6 +73,8 @@ type RemoteMigration =
   | 'community-tool-submissions'
   | 'community-tool-submission-privacy'
   | 'identity-json-doors'
+  | 'place-quiet'
+  | 'public-snapshot-quiet'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -123,6 +125,8 @@ export type MigrationFile =
   | 'db/migrations/20260901_community_tool_submissions.sql'
   | 'db/migrations/20260901_community_tool_submission_privacy.sql'
   | 'db/migrations/20260902_identity_json_doors.sql'
+  | 'db/migrations/20260902_place_quiet.sql'
+  | 'db/migrations/20260902_public_snapshot_quiet.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -235,6 +239,8 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'community-tool-submission-privacy':
     'db/migrations/20260901_community_tool_submission_privacy.sql',
   'identity-json-doors': 'db/migrations/20260902_identity_json_doors.sql',
+  'place-quiet': 'db/migrations/20260902_place_quiet.sql',
+  'public-snapshot-quiet': 'db/migrations/20260902_public_snapshot_quiet.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

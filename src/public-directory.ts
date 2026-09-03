@@ -13,7 +13,8 @@ const DIRECTORY_SQL = `
     place.parent_id,
     CASE WHEN latest_moderation.action = 'remove' THEN $1::text ELSE place.name END AS name,
     NULL::text AS handle,
-    NULL::boolean AS has_drawing
+    NULL::boolean AS has_drawing,
+    place.quiet
   FROM places place
   LEFT JOIN LATERAL (
     SELECT moderation.action
@@ -30,7 +31,8 @@ const DIRECTORY_SQL = `
     NULL::integer AS parent_id,
     NULL::text AS name,
     resident.handle,
-    ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
+    ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing,
+    NULL::boolean AS quiet
   FROM residents resident
   ORDER BY entry_type, id
 `
@@ -45,6 +47,7 @@ export interface PublicDirectoryPlace {
   readonly id: number
   readonly parent_id: number | null
   readonly name: string
+  readonly quiet: boolean
 }
 
 export interface PublicDirectoryResident {
@@ -69,7 +72,9 @@ function publicDirectoryPlace(row: Readonly<Record<string, unknown>>): PublicDir
   if (id === null || name === null || (row.parent_id != null && parentId === null)) {
     throw new Error('invalid public directory place row')
   }
-  return Object.freeze({ type: 'place' as const, id, parent_id: parentId, name })
+  return Object.freeze({
+    type: 'place' as const, id, parent_id: parentId, name, quiet: row.quiet === true,
+  })
 }
 
 function publicDirectoryResident(row: Readonly<Record<string, unknown>>): PublicDirectoryResident {

@@ -587,11 +587,32 @@ test.beforeEach(async ({ page }, testInfo) => {
       if (testInfo.title.includes('directory failure') && directoryAttempts === 1) {
         return route.fulfill({ status: 503, json: { error: 'test directory failure' } })
       }
+      if (testInfo.title.includes('Rooms view withholds a quiet descendant')) {
+        return route.fulfill({
+          json: {
+            ...DIRECTORY,
+            places: [...DIRECTORY.places, { id: 79, parent_id: 11, name: 'hidden_nook', quiet: true }],
+          },
+        })
+      }
       return route.fulfill({ json: DIRECTORY })
     }
     const collection = url.searchParams.get('collection')
     if (!collection) {
-      const snapshot = testInfo.title.includes('fallback search as incomplete')
+      const snapshot = testInfo.title.includes('Rooms view withholds a quiet descendant')
+        ? {
+            ...SNAPSHOT,
+            residents: [...SNAPSHOT.residents, {
+              id: 50,
+              handle: 'nook-keeper',
+              current_place_id: 79,
+              asleep: false,
+              has_drawing: false,
+              joined_at: '2026-08-14T12:00:30.000Z',
+            }],
+            shown: { ...SNAPSHOT.shown, residents: 2 },
+          }
+        : testInfo.title.includes('fallback search as incomplete')
         ? {
             ...SNAPSHOT,
             residents: FALLBACK_SEARCH_RESIDENTS,
@@ -2019,6 +2040,24 @@ test('a focused resident completes presence without a false bounded warning', as
   const occupants = page.locator('#place-occupants')
   await expect(occupants).toContainText('far-walker')
   await expect(occupants).not.toContainText('Other occupants may be omitted')
+})
+
+test('the town Rooms view withholds a quiet descendant place instead of naming its resident', async ({ page }) => {
+  // Second review pass on row 75: root_plaza (place #11, not quiet) recurses
+  // through every descendant when it lists occupants, including hidden_nook
+  // (place #79, quiet), where nook-keeper stands. The Occupants panel must
+  // withhold nook-keeper behind the honest sentence while still naming
+  // leafwalker, whose place (inner_hall, #12) is not quiet.
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
+
+  const occupants = page.locator('#place-occupants')
+  await expect(occupants).toContainText('leafwalker')
+  await expect(occupants.locator('.quiet-room-notice')).toContainText(
+    'The owner prefers to keep this room private.',
+  )
+  await expect(occupants).not.toContainText('nook-keeper')
+  await expect(occupants.locator('.person-card').filter({ hasText: 'nook-keeper' })).toHaveCount(0)
 })
 
 test('missing directory selection stays selected under a confirmed-absence label', async ({ page }) => {

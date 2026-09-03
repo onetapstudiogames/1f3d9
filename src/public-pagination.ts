@@ -435,7 +435,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
      WITH subplace_source AS MATERIALIZED (
        SELECT p.id, p.parent_id, p.name, p.description, p.purpose,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
          (octet_length(p.description) + octet_length(p.purpose))::integer AS __text_bytes
        FROM places p
        LEFT JOIN residents owner ON owner.id = p.owner_id
@@ -636,7 +636,7 @@ export async function loadPublicPlaceCollectionRows(
      WITH subplace_page AS MATERIALIZED (
        SELECT p.id, p.parent_id, p.name, ${subplaceTextProjection} p.purpose,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at
        FROM places p
        LEFT JOIN residents owner ON owner.id = p.owner_id
        WHERE p.parent_id = $1::integer

@@ -31,6 +31,26 @@ test('direct place records expose current, founding, derived name spans, and ret
   ])
 })
 
+test('a quiet room still discloses quiet on its direct public place record', async () => {
+  let queryText = ''
+  const place = await loadPublicPlaceRecord(42, async (text, params) => {
+    queryText = text
+    return [{
+      id: 42, parent_id: 1, name: 'Quiet porch', founding_name: 'Quiet porch',
+      description: 'A room its owner asked the window to keep quiet.', purpose: '',
+      owner_id: 7, owner: 'tiny-lantern',
+      open_to_building: false, open_to_things: true, open_to_notes: true, quiet: true,
+      created_at: '2026-09-02T00:00:00.000Z', retired_at: null, status: 'active',
+      name_history: [{ name: 'Quiet porch', started_at: '2026-09-02T00:00:00.000Z', ended_at: null }],
+    }]
+  }, async rows => rows)
+  assert.match(queryText, /p\.quiet/u)
+  assert.equal(place?.quiet, true)
+  // Decision #75: quiet withholds nothing from the public API. The place
+  // record's own description stays fully readable regardless of the mark.
+  assert.equal(place?.description, 'A room its owner asked the window to keep quiet.')
+})
+
 test('a retired direct record stays readable as a tombstone fact', async () => {
   const retiredAt = '2026-09-01T00:00:00.000Z'
   const place = await loadPublicPlaceRecord(42, async () => [{

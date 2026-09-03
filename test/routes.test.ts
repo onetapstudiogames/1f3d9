@@ -221,6 +221,7 @@ interface FakeState {
   openToBuilding: boolean
   openToThings: boolean
   openToNotes: boolean
+  quiet: boolean
   gazetteActivated: boolean
   gazetteWithdrawalsOpen: boolean
   quota: { things: boolean; notes: boolean; agreements: boolean }
@@ -323,6 +324,7 @@ const initialState = (): FakeState => ({
   openToBuilding: false,
   openToThings: false,
   openToNotes: false,
+  quiet: false,
   gazetteActivated: false,
   gazetteWithdrawalsOpen: false,
   quota: { things: true, notes: true, agreements: true },
@@ -457,6 +459,7 @@ const placeRow = (id = 2, parentId: number | null = 1) => ({
   open_to_building: state.openToBuilding,
   open_to_things: state.openToThings,
   open_to_notes: state.openToNotes,
+  quiet: state.quiet,
   places: id === 1 ? 1 : 0,
   things: id === 2 && !state.thingWithdrawn ? (state.targetThingWithdrawn ? 1 : 2) : 0,
   notes: state.noteRemoved ? 0 : 1,
@@ -5000,13 +5003,16 @@ test('the directory window is one cached, moderated, body-free statement with ex
     assert.deepEqual(Object.keys(directory).sort(), ['places', 'residents', 'view'])
     assert.equal(Object.hasOwn(directory, 'live_survey'), false)
     assert.equal(directory.view, 'directory')
-    assert.deepEqual(Object.keys(directory.places[0] ?? {}).sort(), ['id', 'name', 'parent_id', 'type'])
+    assert.deepEqual(
+      Object.keys(directory.places[0] ?? {}).sort(),
+      ['id', 'name', 'parent_id', 'quiet', 'type'],
+    )
     assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), [
       'handle', 'has_drawing', 'id', 'type',
     ])
     assert.deepEqual(directory.places, [
-      { type: 'place', id: 1, parent_id: null, name: 'the world' },
-      { type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]' },
+      { type: 'place', id: 1, parent_id: null, name: 'the world', quiet: false },
+      { type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]', quiet: false },
     ])
     assert.deepEqual(directory.residents, [{
       type: 'resident', id: 7, handle: 'tiny-lantern', has_drawing: false,
@@ -9842,6 +9848,11 @@ test('official facts, events, residents, and treasury are public and anti-token'
     corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
     recovery: 'public snapshots exclude private recovery data and are not recovery backups',
   })
+  assert.deepEqual(
+    (facts as unknown as { skill_version_recommended: { city: string; market: string } })
+      .skill_version_recommended,
+    { city: '1.3.0', market: '2.2.0' },
+  )
 
   const [events, residents, treasury] = await Promise.all([
     app.request('/api/events'), app.request('/api/residents'), app.request('/treasury'),

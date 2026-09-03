@@ -27,6 +27,10 @@ const preLifecycleSnapshotMigrationDdl = await readFile(
   new URL('../../db/migrations/20260901_public_snapshot_event_details.sql', import.meta.url),
   'utf8',
 )
+const quietSnapshotMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260902_public_snapshot_quiet.sql', import.meta.url),
+  'utf8',
+)
 
 let database: Pool | null = null
 let afterAgreementSignPreflight: (() => Promise<void>) | null = null
@@ -398,6 +402,8 @@ test('world mutations plan and commit atomically in PostgreSQL', async t => {
 
       await database!.query(placeLifecycleMigrationDdl)
       await database!.query(placeLifecycleMigrationDdl)
+      await database!.query(quietSnapshotMigrationDdl)
+      await database!.query(quietSnapshotMigrationDdl)
       assert.deepEqual(await snapshotState(), fresh)
       const presence = fresh.rows.find(row => row.class_name === 'public_presence')
       const event = fresh.rows.find(row => row.class_name === 'events')

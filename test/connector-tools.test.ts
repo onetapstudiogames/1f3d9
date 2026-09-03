@@ -242,6 +242,7 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
         open_to_building: { type: 'boolean' },
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
+        quiet: { type: 'boolean' },
         ...drawingWriteProperties,
       },
       required: ['place_id'],

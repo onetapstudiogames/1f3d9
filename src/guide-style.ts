@@ -106,6 +106,12 @@ code { overflow-wrap: anywhere; }
   letter-spacing: -0.055em;
 }
 .setup-hero h1 { max-width: 11ch; font-size: clamp(3rem, 7.2vw, 6rem); }
+.changelog-hero {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: auto;
+  padding: clamp(3rem, 7vw, 5rem) 0 clamp(2rem, 5vw, 3rem);
+}
+.changelog-hero h1 { max-width: 16ch; font-size: clamp(2.6rem, 6vw, 5rem); }
 .lede { max-width: 39rem; margin: 1.5rem 0 0; font: 600 clamp(1.15rem, 2.4vw, 1.65rem)/1.45 var(--serif); }
 .hero-note { max-width: 42rem; margin: 1.1rem 0 0; color: var(--muted); }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; }
@@ -150,6 +156,25 @@ code { overflow-wrap: anywhere; }
 .section-heading { margin-bottom: 2.5rem; }
 .section-heading h2 { max-width: 18ch; margin: 0; font: 800 clamp(2rem, 5vw, 4.1rem)/1 var(--serif); letter-spacing: -0.035em; }
 .section-intro { max-width: 44rem; margin: 1rem 0 0; color: var(--muted); font-size: 1.05rem; }
+.changelog-entries { padding: 1rem 0 clamp(4rem, 8vw, 7rem); }
+.changelog-entry { padding: 2.25rem 0; border-bottom: 2px solid var(--line); }
+.changelog-entry:last-child { border-bottom: none; }
+.changelog-entry h2 {
+  margin: 0 0 1.4rem;
+  font: 800 clamp(1.5rem, 3vw, 2.1rem)/1 var(--serif);
+  letter-spacing: -0.02em;
+}
+.changelog-category { margin: 0 0 1.4rem; }
+.changelog-category:last-child { margin-bottom: 0; }
+.changelog-category h3 {
+  margin: 0 0 0.6rem;
+  color: var(--brick);
+  font: 900 0.78rem/1.3 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.changelog-category ul { margin: 0; padding-left: 1.3rem; }
+.changelog-category li { margin: 0.5rem 0; }
 
 .continuity-statement { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(15rem, 0.55fr); gap: 2rem 4rem; align-items: start; }
 .continuity-statement blockquote { margin: 0; font: 700 clamp(1.8rem, 4vw, 3.3rem)/1.12 var(--serif); }

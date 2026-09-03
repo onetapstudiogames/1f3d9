@@ -307,6 +307,13 @@ const replayPlaces = [{ id: 1, parent_id: null, name: 'the world' },
   { id: 2, parent_id: 1, name: 'Cinder lane' },
   { id: 3, parent_id: 1, name: 'Harbor room' },
   { id: 4, parent_id: 3, name: 'Lantern nook' }]
+// Third review pass on row 75: nested two levels below Harbor room (three
+// below the world root). Kept out of replayPlaces itself — several tests'
+// work-counter assertions (placeAnchorMapRowsVisited and friends) iterate
+// every row in that array, so adding a permanent fifth place there would
+// shift those unrelated counts. This row is threaded in explicitly, and
+// only where controls.quietPlaceId is exactly 5.
+const deepQuietPlace = { id: 5, parent_id: 4, name: 'Cellar nook' }
 const maximumReplayHandle = 'a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-aa'
 const replayCrowd = Array.from({ length: 7 }, (_, index) => ({
   id: 20 + index,
@@ -369,13 +376,17 @@ async function expectProofDrawingContract(page: Page): Promise<void> {
   await expect(proof.locator('.drawing-canonical-rows, .drawing-history')).toHaveCount(0)
   await expect(proof).not.toContainText(/Palette indices|Drawing history/u)
 }
-function replayPlaceScopeIds(rootId: number) {
-  return new Set(replayPlaces.filter(place => {
+function replayPlaceScopeIds(
+  rootId: number,
+  extraPlaces: readonly { id: number, parent_id: number | null }[] = [],
+) {
+  const places = [...replayPlaces, ...extraPlaces]
+  return new Set(places.filter(place => {
     if (place.id === rootId) return true
     let parentId: number | null = place.parent_id
     while (parentId !== null) {
       if (parentId === rootId) return true
-      parentId = replayPlaces.find(candidate => candidate.id === parentId)?.parent_id ?? null
+      parentId = places.find(candidate => candidate.id === parentId)?.parent_id ?? null
     }
     return false
   }).map(place => place.id))
@@ -406,7 +417,9 @@ function replayThingRows(now: number, placeId: number, carriedPlaceId?: number) 
   }))
 }
 
-function replaySnapshot(now: number, published: boolean, marker: string, carryMove = false) {
+function replaySnapshot(
+  now: number, published: boolean, marker: string, carryMove = false, quietPlaceId?: number,
+) {
   const residentPlaceId = published ? 4 : 2
   const thingPlaceId = published ? 3 : 2
   const residents = replayResidentRows(now, residentPlaceId)
@@ -416,15 +429,25 @@ function replaySnapshot(now: number, published: boolean, marker: string, carryMo
     places: [{
       id: 1, parent_id: null, name: 'the world', owner: null,
       purpose: '', front_matter: [], places: 3, things: 0, notes: 0,
-      moderated: false, children: replayPlaces.filter(place => place.parent_id === 1).map(place => ({
+      moderated: false, quiet: false,
+      children: replayPlaces.filter(place => place.parent_id === 1).map(place => ({
         ...place, owner: place.id === 2 ? 'cinder-owner' : 'harbor-owner',
         purpose: '', front_matter: [], places: place.id === 3 ? 1 : 0,
         things: things.filter(thing => thing.place_id === place.id).length, notes: 0,
-        moderated: false, children: place.id === 3 ? [{
+        moderated: false, quiet: place.id === quietPlaceId, children: place.id === 3 ? [{
           id: 4, parent_id: 3, name: 'Lantern nook', owner: 'harbor-owner',
-          purpose: '', front_matter: [], places: 0,
+          purpose: '', front_matter: [], places: quietPlaceId === 5 ? 1 : 0,
           things: things.filter(thing => thing.place_id === 4).length, notes: 0,
-          moderated: false, children: [],
+          moderated: false, quiet: quietPlaceId === 4,
+          // Third review pass: only populated when the test asks for a
+          // quiet place nested two levels below Harbor room (three below
+          // the world root) — every other test's Lantern nook stays a leaf.
+          children: quietPlaceId === 5 ? [{
+            id: 5, parent_id: 4, name: 'Cellar nook', owner: 'harbor-owner',
+            purpose: '', front_matter: [], places: 0,
+            things: things.filter(thing => thing.place_id === 5).length, notes: 0,
+            moderated: false, quiet: true, children: [],
+          }] : [],
         }] : [],
       })),
     }],
@@ -434,15 +457,15 @@ function replaySnapshot(now: number, published: boolean, marker: string, carryMo
     notes: [],
     things: things.slice(0, 2),
     agreements: [], events: [],
-    totals: { places: 4, residents: residents.length, conversations: 0, things: 8,
-      agreements: 0, events: published ? 6 : 0 },
+    totals: { places: quietPlaceId === 5 ? 5 : 4, residents: residents.length, conversations: 0,
+      things: 8, agreements: 0, events: published ? 6 : 0 },
     pages: {
       places: { has_more: false },
       residents: { has_more: true, next_before_id: residents[2]!.id },
       notes: { has_more: false }, things: { has_more: true, next_before_id: things[1]!.id },
       agreements: { has_more: false }, events: { has_more: false },
     },
-    live_survey: replayPlaces.map(place => ({
+    live_survey: [...replayPlaces, ...(quietPlaceId === 5 ? [deepQuietPlace] : [])].map(place => ({
       id: place.id,
       parent_id: place.parent_id,
       things: things.filter(thing => thing.place_id === place.id).length,
@@ -489,6 +512,7 @@ async function installReplayRoutes(
     initialResidentPlaceId?: number
     crowdPlaceId?: number
     residentCrowdSize?: number
+    quietPlaceId?: number
   }> = {},
 ) {
   let published = false
@@ -569,6 +593,17 @@ async function installReplayRoutes(
         asleep: false,
         has_drawing: true,
       })),
+      // Third review pass: the one resident standing in Cellar nook (place
+      // #5), nested two levels below Harbor room — only present when a test
+      // asks for that exact quiet place.
+      ...(controls.quietPlaceId === 5 ? [{
+        id: 40,
+        handle: 'cellar-keeper',
+        current_place_id: 5,
+        joined_at: new Date(now - 86_400_000 - 40).toISOString(),
+        asleep: false,
+        has_drawing: true,
+      }] : []),
     ]
   }
   const drawingPlaces = Array.from({ length: controls.drawingPlaceCount ?? 0 }, (_, index) => ({
@@ -576,7 +611,8 @@ async function installReplayRoutes(
     parent_id: controls.drawingParentId ?? 1,
     name: `Drawing plot ${index + 1}`,
   }))
-  const directoryPlaces = [...replayPlaces, ...drawingPlaces]
+  const deepPlaceRows = controls.quietPlaceId === 5 ? [deepQuietPlace] : []
+  const directoryPlaces = [...replayPlaces, ...drawingPlaces, ...deepPlaceRows]
   await page.route('**/api/map**', async route => {
     focusedPlaceRequests += 1
     const url = new URL(route.request().url())
@@ -652,12 +688,24 @@ async function installReplayRoutes(
         return
       }
       const placeId = marker === '10' ? 2 : 3
-      const scope = replayPlaceScopeIds(Number(withinPlaceId))
-      const things = replayThingRows(
-        now,
-        placeId,
-        published && controls.carryMove ? 4 : undefined,
-      )
+      const scope = replayPlaceScopeIds(Number(withinPlaceId), deepPlaceRows)
+      const things = [
+        ...replayThingRows(
+          now,
+          placeId,
+          published && controls.carryMove ? 4 : undefined,
+        ),
+        // Third review pass: the one thing sitting in Cellar nook (place
+        // #5), nested two levels below Harbor room — only present when a
+        // test asks for that exact quiet place.
+        ...(controls.quietPlaceId === 5 ? [{
+          id: 95, name: 'buried ledger', place_id: 5, body: 'a steady mark',
+          maker_id: 5, made_by: 'map-walker', current_owner_id: 5,
+          current_owner: 'map-walker', owner: 'map-walker', open_to_use: true,
+          kind: 'lantern', traits: [], created_at: new Date(now - 60_000).toISOString(),
+          moderated: false, kind_moderated: false, has_drawing: true,
+        }] : []),
+      ]
         .filter(thing => scope.has(thing.place_id))
       await route.fulfill({ json: {
         change_marker: marker,
@@ -673,6 +721,7 @@ async function installReplayRoutes(
       controls.carryMove ? published : marker !== '10',
       marker,
       controls.carryMove,
+      controls.quietPlaceId,
     )
     const drawingRows = drawingPlaces.map(extra => ({
       ...extra,
@@ -1317,6 +1366,72 @@ test('Live paints exact surveyed counts and Focus ids while named thing cards lo
     .toContainText('Thing #90 · recorded in Harbor room')
   await expect(page.locator('#live-focus-interactions [data-live-focus-thing="91"]'))
     .toContainText('Thing #91 · recorded in Harbor room')
+})
+
+test('Focus / Interactions withholds a thing whose place is quiet, current or recorded', async ({ page }) => {
+  // Third review pass on row 75: liveFocusInteractionsPanel's thing list
+  // printed placeReference(...).name for both the thing's current and
+  // recorded place with no quiet check at all — every interaction thing
+  // recorded in Harbor room (place #3) leaked its exact name and "recorded
+  // in Harbor room" once Harbor room turned quiet.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    manyFocusInteractions: true,
+    quietPlaceId: 3,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const mapWalker = page.locator('#live-roster [data-live-resident-handle="map-walker"]').first()
+  await mapWalker.click()
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+
+  const interactions = page.locator('#live-focus-interactions')
+  await expect(interactions.locator('.live-focus-thing-card-quiet').first()).toBeVisible()
+  await expect(interactions.locator('.quiet-room-notice').first()).toContainText(
+    'harbor-owner prefers to keep this room private.',
+  )
+  await expect(interactions).not.toContainText('recorded in Harbor room')
+  await expect(interactions).not.toContainText('harbor keepsake')
+  await expect(interactions).not.toContainText('Thing #23')
+  await expect(interactions).not.toContainText('Thing #90')
+  await expect(interactions).not.toContainText('Thing #91')
+  expect(fixture.thingPageRequests()).toBeGreaterThanOrEqual(1)
+})
+
+test('Focus / Interactions withholds a quiet room name for a resident standing outside the plate', async ({ page }) => {
+  // Third review pass on row 75: the "outside this plate" resident card
+  // printed placeReference(...).name for the resident's current place with
+  // no quiet check — map-walker's own handle is already known to the
+  // viewer (they chose to focus this resident), but the private room's
+  // name must not be disclosed just because this card resolves location
+  // directly instead of going through a roster row.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    quietPlaceId: 4,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const mapWalker = page.locator('#live-roster [data-live-resident-handle="map-walker"]').first()
+  await mapWalker.click()
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+
+  fixture.publish()
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  const cinderOpen = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
+  await panLiveTargetIntoView(page, cinderOpen)
+  await cinderOpen.click()
+  await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
+
+  const outsideFocus = page.locator(
+    '#live-focus-interactions [data-live-focus-resident="map-walker"]' +
+    '[data-live-resident-scope="outside"]',
+  )
+  await expect(outsideFocus).toContainText('map-walker')
+  await expect(outsideFocus).toContainText('Outside this plate')
+  await expect(outsideFocus).not.toContainText('Lantern nook')
+  await expect(outsideFocus.locator('.quiet-room-notice')).toContainText(
+    'harbor-owner prefers to keep this room private.',
+  )
 })
 
 test('Live uses the complete survey when an unnecessary focused-place detail read fails', async ({ page }) => {
@@ -4905,4 +5020,173 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await page.setViewportSize({ width: 701, height: 900 })
   await expect(thingSpecimen).toBeFocused()
   expect(writes).toEqual([])
+})
+
+test('drilling into a quiet room in Live withholds its residents and things everywhere on the plate', async ({ page }) => {
+  // Decision #75: a quiet place still shows its name, owner, and counts, but
+  // every tab that renders room contents replaces those contents with one
+  // honest sentence. This covers the Live tab's own main plate (walker
+  // portraits and thing specimens), not only its roster panel — Cinder lane
+  // (place #2) holds one named resident and seven named things pre-publish.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    quietPlaceId: 2,
+  })
+  await page.goto('/window/live?place=2')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const livePanel = page.locator('#live-panel')
+  await expect(livePanel).toContainText('cinder-owner prefers to keep this room private.')
+  await expect(page.locator('#live-plates .quiet-room-notice')).toContainText(
+    'cinder-owner prefers to keep this room private.',
+  )
+  await expect(page.locator('#live-plates')).toContainText('Cinder lane')
+  await expect(page.locator('#live-plates')).toContainText('Kept by cinder-owner')
+  await expect(page.locator('#live-plates')).toContainText('1 resident')
+  await expect(page.locator('#live-plates')).toContainText('7 things')
+
+  // Nothing else renders: no walker portrait, no thing specimen, no plot.
+  await expect(page.locator('#live-plates .live-walker')).toHaveCount(0)
+  await expect(page.locator('#live-plates .live-thing-specimen')).toHaveCount(0)
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(0)
+  await expect(
+    page.locator('#live-plates .entity-portrait[data-portrait-type="resident"]'),
+  ).toHaveCount(0)
+  await expect(
+    page.locator('#live-plates .entity-portrait[data-portrait-type="thing"]'),
+  ).toHaveCount(0)
+
+  // The roster panel already honoured quiet; the main plate must match it.
+  await expect(page.locator('#live-roster')).toContainText(
+    'cinder-owner prefers to keep this room private.',
+  )
+  // The ledger must never leak a resident or thing name through recorded
+  // actions either — it is part of the same plate.
+  await expect(page.locator('#live-ledger')).toContainText(
+    'cinder-owner prefers to keep this room private.',
+  )
+
+  await expect(livePanel).not.toContainText('map-walker')
+  await expect(livePanel).not.toContainText('harbor keepsake')
+  await expect(livePanel).not.toContainText('field lantern')
+  expect(await livePanel.evaluate(node => node.textContent ?? '')).not.toMatch(
+    /harbor-[1-7]\b/,
+  )
+  expect(fixture.thingPageRequests()).toBe(0)
+})
+
+test('the world-root Live view withholds a quiet child place without drilling into it', async ({ page }) => {
+  // Second review pass on row 75: a quiet room leaks through an ancestor's
+  // view, not only when a viewer drills directly into it. Harbor room
+  // (place #3) holds seven named residents; marking it quiet while the
+  // viewer stays at the world root must withhold its plot contents exactly
+  // like drilling in does, while Cinder lane (place #2, not quiet) keeps
+  // showing its own resident normally on the very same plate.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    quietPlaceId: 3,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+
+  const harborPlot = page.locator('.live-plot[data-place-id="3"]')
+  await expect(harborPlot).toContainText('Harbor room')
+  await expect(harborPlot.locator('.quiet-room-notice')).toContainText(
+    'harbor-owner prefers to keep this room private.',
+  )
+  await expect(harborPlot.locator('.live-walker')).toHaveCount(0)
+  await expect(harborPlot.locator('.live-thing-specimen')).toHaveCount(0)
+  await expect(
+    harborPlot.locator('.entity-portrait[data-portrait-type="resident"]'),
+  ).toHaveCount(0)
+
+  // Cinder lane (place #2) is not quiet and keeps its own resident visible
+  // on the same plate.
+  await expect(
+    page.locator('.live-plot[data-place-id="2"] [data-live-resident-handle="map-walker"]'),
+  ).toHaveCount(1)
+
+  // The roster (recursive across every descendant of the focused root) must
+  // match: Harbor room's seven residents collapse to the same sentence,
+  // while Cinder lane's resident stays named.
+  const roster = page.locator('#live-roster')
+  await expect(roster).toContainText('harbor-owner prefers to keep this room private.')
+  await expect(roster).toContainText('map-walker')
+  await expect(roster).not.toContainText('harbor-1')
+})
+
+test('a quiet place nested two levels below the plotted place never leaks its resident or thing', async ({ page }) => {
+  // Third review pass on row 75: the second review fixed a quiet place
+  // leaking when it was itself directly plotted (quietPlaceId: 3 above) or
+  // one level below a plotted place. It missed that mountLivePlaceDetail's
+  // residentsAt/liveThingShelf calls recurse through EVERY descendant of
+  // the plotted place with no per-row quiet check — so a quiet place two or
+  // more levels below the plotted place still leaked. Cellar nook (place
+  // #5) sits three levels below the world root: world -> Harbor room (a
+  // continent) -> Lantern nook (a town) -> Cellar nook (the quiet plot).
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    quietPlaceId: 5,
+  })
+
+  // 1) The world root: Harbor room (#3, the plotted place, not itself
+  // quiet) recurses through Lantern nook (#4, not quiet) into Cellar nook
+  // (#5, quiet, two levels below the plotted place).
+  await page.goto('/window#view=live')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const harborPlot = page.locator('.live-plot[data-place-id="3"]')
+  await expect(harborPlot).toContainText('Harbor room')
+  await expect(harborPlot.locator('[data-live-resident-handle^="harbor-"]').first())
+    .toHaveCount(1)
+  await expect(harborPlot).toContainText('field lantern')
+  await expect(harborPlot).not.toContainText('cellar-keeper')
+  await expect(harborPlot).not.toContainText('buried ledger')
+  await expect(
+    harborPlot.locator('[data-live-resident-handle="cellar-keeper"]'),
+  ).toHaveCount(0)
+  await expect(harborPlot.locator('.live-thing-specimen', { hasText: 'buried ledger' })).toHaveCount(0)
+  expect(await harborPlot.evaluate(node => node.textContent ?? '')).not.toMatch(/cellar-keeper/u)
+
+  // The recursive roster (every descendant of the world root) must match.
+  const roster = page.locator('#live-roster')
+  await expect(roster.locator('[data-live-resident-handle^="harbor-"]').first()).toHaveCount(1)
+  await expect(roster).not.toContainText('cellar-keeper')
+  await expect(roster).toContainText('harbor-owner prefers to keep this room private.')
+
+  // 2) Drilled into Harbor room itself (the continent): Lantern nook (#4,
+  // the plotted place here, not quiet) recurses one level further into
+  // Cellar nook — a quiet place directly below the plotted place this time,
+  // the case the second review pass already covered for a plotted place
+  // itself but never for a plotted place's own recursive descendants.
+  await page.goto('/window/live?place=3')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const lanternPlot = page.locator('.live-plot[data-place-id="4"]')
+  await expect(lanternPlot).toContainText('Lantern nook')
+  await expect(lanternPlot).toContainText('field lantern')
+  await expect(lanternPlot).not.toContainText('cellar-keeper')
+  await expect(lanternPlot).not.toContainText('buried ledger')
+  await expect(
+    lanternPlot.locator('[data-live-resident-handle="cellar-keeper"]'),
+  ).toHaveCount(0)
+
+  // 3) Drilled all the way into Lantern nook (the town): its own Live plate
+  // must withhold Cellar nook's contents the same way the roster already
+  // does, since Cellar nook is still a descendant of the focused place.
+  await page.goto('/window/live?place=4')
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  const livePanel = page.locator('#live-panel')
+  await expect(livePanel).not.toContainText('cellar-keeper')
+  await expect(livePanel).not.toContainText('buried ledger')
+  await expect(page.locator('#live-roster')).toContainText(
+    'harbor-owner prefers to keep this room private.',
+  )
+
+  // 4) The Rooms tab (Place view) at the town level (Lantern nook, #4,
+  // still selected from step 3): renderPeople already resolved quiet per
+  // row at arbitrary depth before this fix, so this is a regression guard,
+  // not a new fix — but it must keep working for the same fixture.
+  await page.getByRole('tab', { name: 'Place' }).click()
+  await expect(page).toHaveURL(/\/window\/place\/4$/u)
+  const occupants = page.locator('#place-occupants')
+  await expect(occupants).not.toContainText('cellar-keeper')
+  await expect(occupants.locator('.quiet-room-notice')).toContainText(
+    'harbor-owner prefers to keep this room private.',
+  )
 })

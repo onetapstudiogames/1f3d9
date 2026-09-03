@@ -278,6 +278,7 @@ test('the window vocabulary covers round-two history and a removed place becomes
     things: 2,
     notes: 3,
     moderated: true,
+    quiet: false,
     children: [],
   }])
 })

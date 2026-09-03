@@ -241,13 +241,13 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
   const rows = (await sql`
     WITH RECURSIVE place_tree AS (
       SELECT p.id, p.parent_id, p.name, p.description, p.purpose, p.owner_id,
-        p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
+        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
         ARRAY[p.id] AS path
       FROM places p
       WHERE p.parent_id IS NULL AND p.retired_at IS NULL
       UNION ALL
       SELECT child.id, child.parent_id, child.name, child.description, child.purpose, child.owner_id,
-        child.open_to_building, child.open_to_things, child.open_to_notes, child.created_at,
+        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.created_at,
         parent.path || child.id
       FROM places child
       JOIN place_tree parent ON parent.id = child.parent_id
@@ -255,7 +255,7 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
     )
     SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.purpose, tree.owner_id,
       owner.handle AS owner, tree.open_to_building, tree.open_to_things,
-      tree.open_to_notes, tree.created_at,
+      tree.open_to_notes, tree.quiet, tree.created_at,
       (SELECT count(*)::int FROM places child
         WHERE child.parent_id = tree.id AND child.retired_at IS NULL) AS places,
       (SELECT count(*)::int FROM things thing
@@ -963,11 +963,11 @@ export function mountWorldRoutes(app: Hono): void {
     }
     const fields = [
       'description', 'purpose', 'front_matter_thing_ids',
-      'open_to_building', 'open_to_things', 'open_to_notes',
+      'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
       'drawing', 'drawing_state', 'drawing_description',
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
-      return err(c, 400, 'place edit body is empty or contains an unsupported field; edit description, purpose, front matter, drawing, or a permission switch')
+      return err(c, 400, 'place edit body is empty or contains an unsupported field; edit description, purpose, front matter, drawing, quiet, or a permission switch')
     }
 
     const description = body.description === undefined
@@ -978,11 +978,13 @@ export function mountWorldRoutes(app: Hono): void {
     const openToBuilding = optionalBoolean(body.open_to_building)
     const openToThings = optionalBoolean(body.open_to_things)
     const openToNotes = optionalBoolean(body.open_to_notes)
+    const quiet = optionalBoolean(body.quiet)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     if (description === null || purpose === null || frontMatterThingIds === null
-        || openToBuilding === null || openToThings === null || openToNotes === null) {
-      return err(c, 400, 'place edit was rejected because its text, front_matter_thing_ids, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean permission switches')
+        || openToBuilding === null || openToThings === null || openToNotes === null
+        || quiet === null) {
+      return err(c, 400, 'place edit was rejected because its text, front_matter_thing_ids, quiet, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean switches')
     }
 
     const existingRows = (await sql`
@@ -1084,6 +1086,7 @@ export function mountWorldRoutes(app: Hono): void {
             open_to_building = coalesce(${openToBuilding ?? null}::boolean, open_to_building),
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
             open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
+            quiet = coalesce(${quiet ?? null}::boolean, quiet),
             drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
               THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
               ELSE drawing END,
@@ -1108,6 +1111,8 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_things IS DISTINCT FROM ${openToThings ?? false}::boolean)
               OR (${openToNotes !== undefined}::boolean
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
+              OR (${quiet !== undefined}::boolean
+                AND quiet IS DISTINCT FROM ${quiet ?? false}::boolean)
               OR (${requestedDrawing.supplied}::boolean
                 AND drawing IS DISTINCT FROM
                   ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)

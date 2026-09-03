@@ -24,6 +24,7 @@ export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>>
   readonly open_to_building: boolean
   readonly open_to_things: boolean
   readonly open_to_notes: boolean
+  readonly quiet: boolean
   readonly created_at: string
   readonly places: number
   readonly things: number
@@ -124,7 +125,8 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
   if (
     typeof row.open_to_building !== 'boolean' ||
     typeof row.open_to_things !== 'boolean' ||
-    typeof row.open_to_notes !== 'boolean'
+    typeof row.open_to_notes !== 'boolean' ||
+    typeof row.quiet !== 'boolean'
   ) {
     throw new Error('public map place permissions are invalid')
   }
@@ -148,6 +150,7 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     open_to_building: row.open_to_building,
     open_to_things: row.open_to_things,
     open_to_notes: row.open_to_notes,
+    quiet: row.quiet,
     created_at: publicTimestamp(row.created_at),
     places: safeCount(row.places, 'subplace count'),
     things: safeCount(row.things, 'thing count'),
@@ -170,7 +173,7 @@ export async function readPublicMapOutline(
          p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
          totals.subplace_items AS places,
          totals.thing_items AS things,
          totals.note_items AS notes,
@@ -209,7 +212,7 @@ export async function readPublicMapOutline(
          history.name_history, p.retired_at, 'active'::text AS status, p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.created_at,
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
          child_totals.subplace_items AS places,
          child_totals.thing_items AS things,
          child_totals.note_items AS notes

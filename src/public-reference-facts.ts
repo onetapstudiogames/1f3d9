@@ -24,6 +24,7 @@ import {
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
 } from './physics.ts'
+import { SKILL_VERSION_RECOMMENDED } from './skill-versions.ts'
 
 const DEFAULT_DOMAIN = 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -101,6 +102,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
     }),
     market: marketOrigin,
     city_skill: 'https://github.com/onetapstudiogames/1f3d9-citylife',
+    skill_version_recommended: SKILL_VERSION_RECOMMENDED,
     public_snapshots: Object.freeze({
       format_version: PUBLIC_SNAPSHOT_FORMAT_VERSION,
       releases: PUBLIC_SNAPSHOT_RELEASES,

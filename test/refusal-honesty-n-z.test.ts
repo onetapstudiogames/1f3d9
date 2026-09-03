@@ -67,7 +67,7 @@ test('gift, pagination, and transfer refusals name accepted state', () => {
 test('world body refusals name the rejected condition and accepted fields', () => {
   expects('world.ts', [
     'place body contains an unsupported field; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes',
-    'place edit body is empty or contains an unsupported field; edit description, purpose, front matter, drawing, or a permission switch',
+    'place edit body is empty or contains an unsupported field; edit description, purpose, front matter, drawing, quiet, or a permission switch',
     'kind body contains an unsupported field; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
     'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait',
     'kind revision contains an unsupported field; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
