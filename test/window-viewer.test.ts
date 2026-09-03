@@ -368,7 +368,7 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
     /\.live-speech-bubble\s*\{[\s\S]*?background:\s*var\(--paper-light\)[\s\S]*?border:\s*2px solid var\(--line\)[\s\S]*?border-radius:\s*0/u,
   )
   assert.doesNotMatch(WINDOW_CSS, /live-speech-arrive/u)
-  assert.match(WINDOW_JS, /recorded endpoints[^\n]*drawn-in glide/u)
+  assert.match(WINDOW_JS, /a move you watched happen[^\n]*drawn-in and fading/u)
   assert.match(WINDOW_JS, /pulse on a thing[^\n]*recorded use/u)
   assert.match(WINDOW_JS, /record\.detail\.status !== 'applied'/u)
   assert.match(WINDOW_JS, /safeExactText\(payload\?\.note\?\.body/u)

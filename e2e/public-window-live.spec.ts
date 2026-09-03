@@ -275,17 +275,35 @@ async function readLiveChildFraming(page: Page): Promise<LiveChildFraming> {
   })
 }
 
-async function panLiveTargetIntoView(page: Page, target: Locator): Promise<void> {
+async function panLiveTargetIntoView(
+  page: Page, target: Locator, margin = 6,
+): Promise<void> {
   const viewport = page.locator('#live-viewport')
   await viewport.scrollIntoViewIfNeeded()
   await viewport.focus()
+  let missingBoxAttempts = 0
   for (let attempt = 0; attempt < 48; attempt += 1) {
     const [viewportBox, targetBox] = await Promise.all([
       viewport.boundingBox(),
       target.boundingBox(),
     ])
-    if (!viewportBox || !targetBox) throw new Error('live camera target has no geometry')
-    const margin = 6
+    if (!viewportBox || !targetBox) {
+      // The layer can be mid re-render (e.g. right after a resize) and
+      // report no geometry for a moment rather than never -- give it a
+      // beat and retry within the same attempt budget instead of failing
+      // the whole pan outright. But a target that never gets geometry
+      // (wrong selector, never mounted) must not burn the entire
+      // 48-attempt pan budget one 50ms wait at a time -- track
+      // consecutive missing-box reads separately and fail fast with a
+      // precise error once a real box is never coming.
+      missingBoxAttempts += 1
+      if (missingBoxAttempts >= 8) {
+        throw new Error('live camera target has no geometry')
+      }
+      await page.waitForTimeout(50)
+      continue
+    }
+    missingBoxAttempts = 0
     if (targetBox.x >= viewportBox.x + margin && targetBox.y >= viewportBox.y + margin &&
         targetBox.x + targetBox.width <= viewportBox.x + viewportBox.width - margin &&
         targetBox.y + targetBox.height <= viewportBox.y + viewportBox.height - margin) return
@@ -502,6 +520,14 @@ async function installReplayRoutes(
     useThingId?: number
     manyFocusInteractions?: boolean
     openingMovement?: boolean
+    // A single opening-backlog note (change:1), then -- after that note
+    // ages out of recentKeys -- a single later backlog note (change:11),
+    // both actored by map-walker and both excluded from `additions` by a
+    // Follow on a different resident. Sized so the aged-out key and the
+    // newly-learned key swap one-for-one, reproducing the exact
+    // seen.size/revealed.size coincidence that let queueLiveReplays'
+    // early return discard a freshly learned backlogKey.
+    residueSizeCoincidence?: boolean
     maximumHandle?: string
     staggeredArrivalDeadlines?: boolean
     holdThingPage?: boolean
@@ -869,6 +895,17 @@ async function installReplayRoutes(
     }
     if (since === '10' && published) {
       const publishedMarker = currentMarker()
+      if (controls.residueSizeCoincidence) {
+        await route.fulfill({ json: {
+          change_marker: publishedMarker, unchanged: false, has_more: false,
+          next_since: publishedMarker,
+          changes: [{
+            change_id: '11', created_at: new Date(now + 600_001).toISOString(),
+            kind: 'note', actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
+          }],
+        } })
+        return
+      }
       const publishedChanges = [{
             change_id: '11', created_at: new Date(now - (
               controls.staggeredArrivalDeadlines ? 1_792_300 : 0
@@ -1014,6 +1051,9 @@ async function installReplayRoutes(
         actor: 'map-walker', detail: {
           action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
         },
+      }] : controls.residueSizeCoincidence ? [{
+        id: 501, change_id: '1', at: new Date(now).toISOString(), kind: 'note',
+        actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
       }] : [{
         id: 99, change_id: '9', at: new Date(now - 30_000).toISOString(), kind: 'transfer',
         actor: 'map-walker', detail: {
@@ -1731,44 +1771,52 @@ test('Live expands 167 residents with one bounded layout pass and no new public 
     focusedPlace: fixture.focusedPlaceRequests(),
     things: fixture.thingPageRequests(),
   })
+  // Quiet opening: this fixture's 24-move opening backlog (moveBurst) now
+  // settles with no trail at all, so renderLiveTraceLayer never computes
+  // move geometry or walks the place-anchor / resident-anchor-membership
+  // chain for those records -- the work budget below is smaller than
+  // before the fix, not a regression.
   const childExpansionWork = Object.freeze({
-    renders: 1,
-    stageSurveys: 1,
-    residentLayouts: 10,
-    largeResidentLayouts: 1,
-    residentRowsVisited: 188,
-    residentAnchorMembershipChecks: 8,
-    residentAnchorMembershipRowsVisited: 168,
-    placeAnchorCalls: 38,
-    placeAnchorLookupBuilds: 1,
-    placeAnchorPlaceRowsVisited: 4,
-    placeAnchorMapRowsVisited: 4,
-    placeAnchorChildRowsVisited: 2,
-    placeAnchorResolutionSteps: 2,
-    replayCatchUpRecords: 0,
-    residentReplayPoints: 28,
-    moveGeometries: 20,
-    thingPresentations: 3,
-    plotBuilds: 2,
-    rosterRenders: 1,
-  })
-  const focusedExpansionWork = Object.freeze({
     renders: 1,
     stageSurveys: 1,
     residentLayouts: 2,
     largeResidentLayouts: 1,
-    residentRowsVisited: 173,
-    residentAnchorMembershipChecks: 1,
-    residentAnchorMembershipRowsVisited: 167,
-    placeAnchorCalls: 31,
+    residentRowsVisited: 168,
+    residentAnchorMembershipChecks: 0,
+    residentAnchorMembershipRowsVisited: 0,
+    placeAnchorCalls: 10,
     placeAnchorLookupBuilds: 1,
     placeAnchorPlaceRowsVisited: 4,
     placeAnchorMapRowsVisited: 4,
-    placeAnchorChildRowsVisited: 0,
-    placeAnchorResolutionSteps: 2,
+    placeAnchorChildRowsVisited: 2,
+    placeAnchorResolutionSteps: 1,
     replayCatchUpRecords: 0,
-    residentReplayPoints: 21,
-    moveGeometries: 20,
+    residentReplayPoints: 0,
+    moveGeometries: 0,
+    thingPresentations: 3,
+    plotBuilds: 2,
+    rosterRenders: 1,
+  })
+  // Quiet opening: this fixture's opening backlog no longer needs move
+  // geometry or place/resident-anchor membership work once it settles as
+  // residue -- see the childExpansionWork comment above.
+  const focusedExpansionWork = Object.freeze({
+    renders: 1,
+    stageSurveys: 1,
+    residentLayouts: 1,
+    largeResidentLayouts: 1,
+    residentRowsVisited: 167,
+    residentAnchorMembershipChecks: 0,
+    residentAnchorMembershipRowsVisited: 0,
+    placeAnchorCalls: 10,
+    placeAnchorLookupBuilds: 0,
+    placeAnchorPlaceRowsVisited: 0,
+    placeAnchorMapRowsVisited: 0,
+    placeAnchorChildRowsVisited: 0,
+    placeAnchorResolutionSteps: 0,
+    replayCatchUpRecords: 0,
+    residentReplayPoints: 0,
+    moveGeometries: 0,
     thingPresentations: 1,
     plotBuilds: 0,
     rosterRenders: 1,
@@ -2401,7 +2449,11 @@ test('Live paints opening history as residue without replaying stale backlog', a
   await page.goto('/window#view=live')
 
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
-  await expect(page.locator('.live-trail')).toHaveCount(1)
+  // Quiet opening: a record the viewer was not present for settles at its
+  // recorded endpoint only -- no dashed trail, no arrowhead, immediately
+  // after first paint.
+  await expect(page.locator('.live-trail')).toHaveCount(0)
+  await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
 })
 
@@ -2474,6 +2526,10 @@ test('Live catches up after a hidden tab without replaying the hidden backlog', 
   await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeCatchUp)
   await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  // Quiet opening: the first catch-up read after a hidden tab settles the
+  // same way opening history does -- no trail, no arrowhead.
+  await expect(page.locator('.live-trail')).toHaveCount(0)
+  await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
 })
 
 test('Live moves a carried thing with its owner and names the carry', async ({ page }) => {
@@ -2902,6 +2958,43 @@ test('preview proof scene has a static reduced-motion alternative', async ({ pag
   await expect(proofPanel.locator('.live-thing-specimen')).not.toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
   await expect(proofPanel.locator('#live-ledger')).toContainText(/moved|spoke|used/u)
+})
+
+test('proof: quiet opening, no arrows', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await page.getByRole('button', { name: 'Run preview proof scene' }).click()
+  const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
+  await expect(proofPanel).toBeVisible()
+
+  // On entry, proof-fia already stands at its settled position: its move
+  // is queued as opening backlog and draws nothing -- no trail keyed to
+  // it, exactly the positions-only opening a real Live tab shows for a
+  // record the viewer was not present for. (The scene's other demo moves,
+  // separately, deliberately simulate motion learned while watching --
+  // that is what "discoverable preview proof scene visibly demonstrates
+  // every Live behavior" already covers.) No arrowhead exists anywhere on
+  // the plate, for any record. (This suite disables Playwright's own
+  // screenshot/trace/video capture project-wide for credential safety --
+  // see playwright.config.ts -- so this proof is the DOM-state equivalent
+  // of a screenshot: it asserts the exact absence any pixel comparison
+  // would show.)
+  await expect(proofPanel.locator('.live-trail[data-live-key="change:9500"]'))
+    .toHaveCount(0)
+  await expect(proofPanel.locator('#live-trace-arrow')).toHaveCount(0)
+  await expect(proofPanel.locator(
+    '.live-trail[data-live-key="change:9506"]',
+  )).toHaveCount(0)
+
+  // A scripted move fires shortly after entry and animates and draws a
+  // trail exactly like a move actually watched happen.
+  await page.clock.fastForward(5_001)
+  await expect(proofPanel.locator(
+    '.live-trail[data-live-key="change:9506"]',
+  )).toHaveCount(1)
+  await expect(proofPanel.locator('#live-trace-arrow')).toHaveCount(0)
 })
 
 test('drawing details reveal exact authored readback and fetch bounded history only on request', async ({ page }) => {
@@ -3548,6 +3641,132 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(trail).toHaveCount(0)
 })
 
+test('clearing Follow after opening on a different resident does not pop a stale backlog bubble', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now, 'complete', 0, {
+    manyFocusInteractions: true,
+    maximumHandle: maximumReplayHandle,
+  })
+  // This fixture's opening-backlog note (change:1) is actored by
+  // maximumReplayHandle. A shareable Follow link on a DIFFERENT resident
+  // sets state.resident from the URL at bootstrap, before the first read,
+  // so queueLiveReplays' additions filter excludes that note's key from
+  // `additions` for the whole opening batch. Residue must still be
+  // recorded for it there -- otherwise clearing Follow later replays a
+  // stale bubble for a record the viewer was never present to watch, the
+  // exact behaviour the owner rejected.
+  await page.goto('/window/live?resident=map-walker')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  // While following map-walker, the backlog note's own actor is filtered
+  // out of the plate entirely, so neither its mark nor a bubble show yet.
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+
+  await page.locator('#resident-filter').selectOption('')
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+  // Clearing Follow reveals the backlog note's actor. Its footnote mark
+  // is settled residue and correctly appears; the bug under test popped a
+  // bubble alongside it for a record the viewer was never present to
+  // watch, because that record's key had never been recorded as residue.
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+})
+
+test(
+  'a backlog note learned exactly as an older one ages out still settles as residue',
+  async ({ page }) => {
+    const now = Date.now()
+    await page.clock.install({ time: new Date(now) })
+    const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+      residueSizeCoincidence: true,
+    })
+    // Follow a resident other than map-walker, so both backlog notes
+    // below (change:1 at opening, change:11 later) are excluded from
+    // `additions` by queueLiveReplays' Follow filter the whole time --
+    // neither is ever a record the viewer was actually present to watch.
+    await page.goto('/window/live?resident=harbor-1')
+    await expect(page.locator('#live-history-status')).toContainText('history is complete')
+    await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
+    await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+
+    // Age change:1 out of recentKeys (a note's lifetime is 600_000ms):
+    // seen/revealed/residue each hold exactly its one key. The fixture's
+    // change:11 is timed to land exactly as fresh as change:1 was, so
+    // when it arrives below, one key aging out of `seen`/`revealed` and
+    // one key arriving swap one-for-one -- seen.size and revealed.size
+    // both land back on the same counts they held before, even though
+    // the actual keys they hold are now completely different.
+    await page.clock.fastForward(600_001)
+
+    // Deliver change:11 as backlog, the same way a hidden-tab catch-up
+    // does: still excluded from `additions` by the same Follow, so this
+    // exercises queueLiveReplays' `!animate` branch a second time, with
+    // the coincidence above in place.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    const readsBeforeCatchUp = fixture.changeRequests()
+    fixture.publish()
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeCatchUp)
+
+    await page.locator('#resident-filter').selectOption('')
+    await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+    // Clearing Follow reveals both notes. If queueLiveReplays' early
+    // return discarded change:11's backlogKey (the bug under test),
+    // change:11 was never recorded as residue, so it pops a full bubble
+    // here instead of settling quietly like change:1 does.
+    await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+    await expect(page.locator('.live-footnote-mark').last()).toHaveAccessibleName(
+      "Show map-walker's note in the plate ledger",
+    )
+  },
+)
+
+test('an expired trail moves keyboard focus to its paired ledger row, then to the viewport', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  // A record learned while watching still draws a trail immediately, so
+  // this keyboard-accessibility interaction (expiring the trail moves
+  // focus to its ledger row, expiring that moves focus to the viewport)
+  // is exercised against motion the viewer actually observed.
+  await publishReplayChanges(page, fixture)
+  const trail = page.locator('.live-trail')
+  await expect(trail).toHaveCount(1)
+  const trailCoordinates = await trail.evaluate(line => ({
+    x1: Number(line.getAttribute('x1')),
+    x2: Number(line.getAttribute('x2')),
+  }))
+  expect(trailCoordinates.x1).not.toBe(trailCoordinates.x2)
+
+  await trail.focus()
+  await expect(trail).toBeFocused()
+  await trail.evaluate(node => {
+    const lifetime = Number((node as HTMLElement).dataset.liveLifetime)
+    ;(node as HTMLElement).dataset.liveAt = String(Date.now() - lifetime - 1)
+  })
+  await page.clock.runFor(1_001)
+  await expect(trail).toHaveCount(0)
+  const pairedLedgerRow = page.locator('#live-ledger [data-live-key="change:11"]')
+  await expect(pairedLedgerRow).toBeFocused()
+
+  await pairedLedgerRow.evaluate(node => {
+    const lifetime = Number((node as HTMLElement).dataset.liveLifetime)
+    ;(node as HTMLElement).dataset.liveAt = String(Date.now() - lifetime - 1)
+  })
+  await page.clock.runFor(1_001)
+  await expect(page.locator('#live-viewport')).toBeFocused()
+})
+
 test('two arrivals into one crowded plot settle on their own trail endpoints', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
@@ -3735,16 +3954,11 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
     `[data-live-resident-handle="${handle}"]`,
   )!.closest('.live-walker')!.getBoundingClientRect().height), [maximumReplayHandle, 'harbor-5'])
   expect(Math.abs(maximumHandleShellHeight - shortHandleShellHeight)).toBeLessThanOrEqual(1)
-  const rootBubbleBounds = await page.locator('.live-root-walkers .live-speech-bubble')
-    .first().evaluate(node => {
-      const bubble = node.getBoundingClientRect()
-      const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
-      return {
-        top: bubble.top >= viewport.top - 1,
-        bottom: bubble.bottom <= viewport.bottom + 1,
-      }
-    })
-  expect(rootBubbleBounds).toEqual({ top: true, bottom: true })
+  // This fixture's note (change:1) is opening backlog, so quiet opening
+  // now prints its footnote mark with no speech bubble (see step 1's
+  // residue rule) -- there is no bubble here to bounds-check any more.
+  // The viewport-bounds check moved to the dedicated test below, against
+  // a bubble for a note record the viewer actually watched appear.
 
   await page.locator('#resident-filter').selectOption('harbor-7')
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
@@ -3754,6 +3968,56 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
   await filteredResident.click()
   await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-7')
   await expect(page).toHaveURL(/\/window\/live\?place=3$/u)
+})
+
+test('a speech bubble the viewer watched appear stays within the live viewport', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  // A note record actually learned while watching draws a real speech
+  // bubble once its replay settles -- unlike opening backlog or a
+  // hidden-tab catch-up, which print only the footnote mark (step 1's
+  // residue rule, see 'focus keeps every exact interaction visible...'
+  // above). Publish it the way 'an expired trail...' does, so the bounds
+  // check below runs against a bubble the viewer actually watched appear.
+  await publishReplayChanges(page, fixture)
+  const replay = page.locator('.live-replay-portrait')
+  await expect(replay).toHaveAttribute('data-live-replay-key', 'change:11')
+  const duration = Number(await replay.getAttribute('data-replay-duration'))
+  await page.clock.fastForward(duration + 1)
+  await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+
+  // Bring the replay actor well clear of every edge, with generous room
+  // above it for the bubble that floats over its head, so the
+  // containment check below runs against a bubble that is actually
+  // painted inside #live-viewport. #live-viewport clips its overflow,
+  // so a bubble left parked off-plate would make every bound below
+  // trivially (and vacuously) true.
+  const bubbleWithinViewport = () => page.locator('.live-speech-bubble').first().evaluate(node => {
+    const bubble = node.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    return {
+      top: bubble.top >= viewport.top - 1,
+      bottom: bubble.bottom <= viewport.bottom + 1,
+      left: bubble.left >= viewport.left - 1,
+      right: bubble.right <= viewport.right + 1,
+    }
+  })
+  const allBoundsHold = { top: true, bottom: true, left: true, right: true }
+
+  await panLiveTargetIntoView(page, replay, 64)
+  // The layer can still be mid re-render right after the camera pans or
+  // the viewport resizes -- poll the live measurement instead of
+  // asserting once against a momentary 0,0,0,0 rect.
+  await expect.poll(bubbleWithinViewport).toEqual(allBoundsHold)
+
+  await page.setViewportSize({ width: 375, height: 812 })
+  await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+  await panLiveTargetIntoView(page, replay, 64)
+  await expect.poll(bubbleWithinViewport).toEqual(allBoundsHold)
 })
 
 test('resident tags follow zoom and intent while terrain and camera writes stay bounded', async ({ page }) => {
@@ -4134,7 +4398,7 @@ test('reduced motion shows new records statically without replay animation', asy
   expect(await liveResidentLocalPositions(harbor)).toEqual(stableResidentsBefore)
 })
 
-test('the plate hard-caps trail ink and removes it at the fade edge without trimming the ledger', async ({ page }) => {
+test('a large opening backlog settles as quiet residue without trimming the ledger', async ({ page }) => {
   const now = Date.now()
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.clock.install({ time: new Date(now) })
@@ -4145,8 +4409,11 @@ test('the plate hard-caps trail ink and removes it at the fade edge without trim
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
-  await expect.poll(() => page.locator('.live-trail').count()).toBeGreaterThan(0)
-  expect(await page.locator('.live-trail').count()).toBe(96)
+  // Quiet opening: even a large opening backlog paints settled positions
+  // only -- no trail ink to hard-cap or fade -- while the separate recent
+  // ledger still carries every one of the 120 verified rows.
+  await expect(page.locator('.live-trail')).toHaveCount(0)
+  await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
   await expect(page.locator('.live-ledger-row')).toHaveCount(120)
   await page.clock.fastForward(4_501)
   await expect(page.locator('.live-trail')).toHaveCount(0)
@@ -4791,12 +5058,15 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   })
   expect(captionClearOfViewport).toBe(true)
   await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
-  await expect(page.locator('.live-trail')).toHaveCount(1)
+  // Quiet opening: this backlog was recorded before the tab was ever
+  // watched, so it settles at rest -- no trail, no arrowhead, no bubble --
+  // while the separate recent ledger keeps every exact row.
+  await expect(page.locator('.live-trail')).toHaveCount(0)
+  await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
-  await expect(page.locator('.live-speech-bubble')).toHaveCount(1)
-  await expect(page.locator('.live-speech-bubble')).toHaveText('A bell answers')
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
   await expect(page.locator('#live-ledger')).toContainText('A bell answers')
   await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Harbor room')
   await expect(page.locator('#live-ledger')).toContainText('used thing #9 in Harbor room')
@@ -4854,28 +5124,12 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     left: (node as HTMLElement).style.left,
     top: (node as HTMLElement).style.top,
   })).sort((left, right) => String(left.key).localeCompare(String(right.key))))
-  const trailCoordinates = await page.locator('.live-trail').evaluate(line => ({
-    x1: Number(line.getAttribute('x1')),
-    x2: Number(line.getAttribute('x2')),
-  }))
-  expect(trailCoordinates.x1).not.toBe(trailCoordinates.x2)
-
-  await page.locator('.live-trail').focus()
-  await expect(page.locator('.live-trail')).toBeFocused()
-  await page.locator('.live-trail').evaluate(node => {
-    const lifetime = Number((node as HTMLElement).dataset.liveLifetime)
-    ;(node as HTMLElement).dataset.liveAt = String(Date.now() - lifetime - 1)
-  })
-  await page.clock.runFor(1_001)
-  await expect(page.locator('.live-trail')).toHaveCount(0)
-  const pairedLedgerRow = page.locator('#live-ledger [data-live-key="change:11"]')
-  await expect(pairedLedgerRow).toBeFocused()
-  await pairedLedgerRow.evaluate(node => {
-    const lifetime = Number((node as HTMLElement).dataset.liveLifetime)
-    ;(node as HTMLElement).dataset.liveAt = String(Date.now() - lifetime - 1)
-  })
-  await page.clock.runFor(1_001)
-  await expect(page.locator('#live-viewport')).toBeFocused()
+  // Quiet opening leaves no backlog trail on this plate to keyboard-focus;
+  // that expiry-moves-focus-to-the-ledger-row interaction now has its own
+  // dedicated test (below) against a record actually learned while
+  // watching. This test keeps the same elapsed clock budget so the note
+  // expiry checked below still lands where it always did.
+  await page.clock.runFor(2_002)
   await page.clock.fastForward(6_000)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
   await expect(page.locator('#live-ledger')).not.toContainText('An older mark')
