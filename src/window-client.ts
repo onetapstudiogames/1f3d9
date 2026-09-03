@@ -689,6 +689,39 @@ export function windowLiveFloorTiling(
   })
 }
 
+export type WindowLiveFloorDrawingEntry = WindowDrawingSource & Readonly<{
+  state: WindowDrawingState
+  drawing: WindowDrawing | null
+}>
+
+// Round-1 review finding 1: deleting the JSON drawing node (step 3) took its
+// role="img" accessible name with it, leaving only the generic "Drawing
+// tiled inside <name>" on the outer terrain div. This rebuilds the same
+// name/state/source shape the old drawingNode gave (see the deleted
+// drawingAccessibleLabel) from data that is already in hand on each path --
+// never a new fetch, which would undo step 3's whole point. The non-proof
+// path only ever knows the drawn/undrawn binary the thumb probe resolves
+// (the same collapse '.live-plot[data-undrawn]' already applies across
+// Refused, missing, withdrawn, and moderated presentations); a place's own
+// floor is always its own drawing -- places have no kind to inherit a
+// drawing from -- so 'Own drawing' there is a structural fact, not a guess.
+// The proof path already holds the full synthetic drawing entry, so it
+// reuses windowDrawingStateLabel/windowDrawingSourceLabel directly, exactly
+// as the deleted drawingNode did.
+export function windowLiveFloorAccessibleLabel(
+  placeName: string,
+  undrawn: boolean,
+  proofEntry: WindowLiveFloorDrawingEntry | null = null,
+): string {
+  if (proofEntry) {
+    const stateLabel = windowDrawingStateLabel(proofEntry.state, proofEntry.drawing)
+    const sourceLabel = windowDrawingSourceLabel(proofEntry)
+    return placeName + ' · ' + stateLabel + (sourceLabel ? ' · ' + sourceLabel : '')
+  }
+  return placeName + ' · ' + (undrawn ? 'Undrawn' : 'Complete') +
+    (undrawn ? '' : ' · Own drawing')
+}
+
 export function windowLiveDirectGroundWidth(
   stageWidth: number,
   readableWidth: number,
@@ -1292,6 +1325,7 @@ const WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS =
 const WINDOW_LIVE_VISIBLE_PLOTS_JS = windowLiveVisiblePlots.toString()
 const WINDOW_LIVE_VISIBLE_PLOT_IDS_JS = windowLiveVisiblePlotIds.toString()
 const WINDOW_LIVE_FLOOR_TILING_JS = windowLiveFloorTiling.toString()
+const WINDOW_LIVE_FLOOR_ACCESSIBLE_LABEL_JS = windowLiveFloorAccessibleLabel.toString()
 const WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS = windowLiveDirectGroundWidth.toString()
 const WINDOW_LIVE_CAPACITY_SELECTION_JS = windowLiveCapacitySelection.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
@@ -1410,6 +1444,7 @@ export const WINDOW_JS = `(() => {
   const windowLiveVisiblePlots = ${WINDOW_LIVE_VISIBLE_PLOTS_JS}
   const windowLiveVisiblePlotIds = ${WINDOW_LIVE_VISIBLE_PLOT_IDS_JS}
   const windowLiveFloorTiling = ${WINDOW_LIVE_FLOOR_TILING_JS}
+  const windowLiveFloorAccessibleLabel = ${WINDOW_LIVE_FLOOR_ACCESSIBLE_LABEL_JS}
   const windowLiveDirectGroundWidth = ${WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS}
   const windowLiveCapacitySelection = ${WINDOW_LIVE_CAPACITY_SELECTION_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
@@ -7761,14 +7796,35 @@ ${WINDOW_CLIENT_SAFETY_JS}
   // place ids have no real backend record for the thumb route to serve, so
   // it paints the same fixture pixels it always has via the existing
   // canvas path instead of probing the network.
+  //
+  // Round-1 review finding 2: an unresolved floor must lean paper, never
+  // the dark plot card, until the probe's own 'load' event actually fires
+  // -- a moderated place, a slow connection, or a cold cache must never
+  // paint the dark card for even one round trip while a real thumbnail is
+  // still in flight. setUndrawn(true) runs before the probe's src is even
+  // set, and only 'load' flips it to false; 'error' (including a 404)
+  // leaves it exactly where it already leaned.
   function liveTiledDrawing(
     place, className, pixelBox = null, undrawnTarget = null, tileSize = LIVE_FLOOR_TILE_SIZE,
   ) {
     const terrain = element('div', className)
-    terrain.setAttribute('aria-label', 'Drawing tiled inside ' + place.name)
+    terrain.setAttribute('role', 'img')
+    const proofKey = liveDrawingKey('place', place.id)
+    const proofEntry = state.live.proofScene ? state.live.drawings[proofKey] : undefined
+    // Round-1 review finding 1: the JSON drawing node's role="img" +
+    // name/state/source accessible name went away with the JSON fetch it
+    // was built from. Rebuild the same shape from data already in hand on
+    // each path -- never a new fetch -- so a screen-reader user still
+    // hears the place name, its drawn/undrawn state, and its drawing
+    // source; the click-through drawing-detail button remains the exact
+    // reachable path for everything else the deleted node carried.
     const setUndrawn = value => {
       terrain.dataset.undrawn = String(value)
       if (undrawnTarget) undrawnTarget.dataset.undrawn = String(value)
+      terrain.setAttribute(
+        'aria-label',
+        windowLiveFloorAccessibleLabel(place.name, value, proofEntry ?? null),
+      )
     }
     const sizeToBox = () => {
       if (!pixelBox) return
@@ -7776,8 +7832,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
       terrain.style.width = String(columns * tileSize) + 'px'
       terrain.style.height = String(rows * tileSize) + 'px'
     }
-    const proofKey = liveDrawingKey('place', place.id)
-    const proofEntry = state.live.proofScene ? state.live.drawings[proofKey] : undefined
     if (proofEntry !== undefined) {
       const undrawn = !proofEntry?.loaded || !proofEntry.drawing
       setUndrawn(undrawn)
@@ -7786,13 +7840,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
         // here (unlike the world ground's pixelBox), so the proof canvas
         // uses the same fixed density the shipped view always painted --
         // enough repeats to read as tiled once CSS stretches it to fill
-        // the plot.
+        // the plot. The terrain's own role="img" + aria-label above already
+        // carries the accessible name, so this painted canvas is purely
+        // decorative to assistive tech.
         const { columns, rows } = pixelBox
           ? windowLiveFloorTiling(pixelBox.width, pixelBox.height, tileSize)
           : Object.freeze({ columns: 8, rows: 5 })
         const tile = paintedDrawingNode(proofEntry.drawing, columns, rows)
         if (tile) {
           tile.classList.add('live-tiled-drawing')
+          tile.setAttribute('aria-hidden', 'true')
           tile.style.width = '100%'
           tile.style.height = '100%'
           terrain.append(tile)
@@ -7801,7 +7858,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       return terrain
     }
-    setUndrawn(false)
+    setUndrawn(true)
     const url = portraitUrl('place', place.id)
     terrain.style.backgroundImage = 'url(' + url + ')'
     terrain.style.backgroundRepeat = 'repeat'
@@ -7809,6 +7866,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     sizeToBox()
     const probe = new Image()
     probe.decoding = 'async'
+    probe.addEventListener('load', () => setUndrawn(false))
     probe.addEventListener('error', () => setUndrawn(true))
     probe.src = url
     return terrain

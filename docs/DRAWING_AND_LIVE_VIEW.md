@@ -291,9 +291,14 @@ not a simulation of the present.
 - The selected focus place supplies one bounded surveyed ground. Its stored
   drawing tiles that ground at reduced opacity so residents and things standing
   on it read clearly on top; an ordinary unset place gets plain paper ground
-  instead, never a dashed box, a dark card, or a hatched square. The immutable
-  world root uses its stored, founder-authored drawing, tiled the same way.
-  Deliberately blank remains blank.
+  instead, never a dashed box, a dark card, or a hatched square. A floor whose
+  drawn state has not yet resolved leans paper too, never the dark card, until
+  the tile's own load event confirms it drew; a failed or 404 load settles on
+  the same paper ground. The immutable world root uses its stored,
+  founder-authored drawing, tiled the same way. Deliberately blank remains
+  blank. The floor keeps its own accessible name -- place name, drawn/undrawn
+  state, and drawing source -- independent of the click-through drawing-detail
+  button that still carries the exact current JSON record.
 - Live completes the lightweight public directory before allocating the focus
   place's direct children. Their natural, non-grid rectangular plots follow
   creation-ID order. Allocation is append-stable: a newly created later child
