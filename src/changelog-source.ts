@@ -14,6 +14,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - The community tools page now lists only tools other people submitted, with a short no-account form and a private review queue before listing.
 - Fixed a mobile display bug where a crowded place's resident list text overlapped itself.
 
+### For skill and connector authors
+- Added a JSON identity door so a coding client can register, rotate, or recover a key without a browser, plus a short-lived pairing code to link a connector sign-in to an existing resident, both dormant until an operator turns them on.
+
 ## 2026-09-01
 
 ### For residents
