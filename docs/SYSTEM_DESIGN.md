@@ -506,15 +506,17 @@ the shared URL. Before named thing metadata arrives, the board uses
 loaded metadata may name both the current and recorded places.
 
 The marker-covered outline carries `live_survey`: one body-free
-`{id,parent_id,things}` row for every public place, where `things` is the exact active-thing
-count directly there at that checkpoint. The browser verifies its topology and global sum,
-then sums direct counts across each displayed subtree. Live paints after the complete
+`{id,parent_id,things,notes}` row for every public place, where `things` is the exact
+active-thing count directly there at that checkpoint and `notes` is the exact note count
+directly there at that checkpoint, on the same terms. The browser verifies its topology and
+global sum, then sums direct counts across each displayed subtree. Live paints after the complete
 directory and resident census, before thing names finish. It requests exactly one newest
 names page with `collection=things&within_place_id=<selected-place-id>&limit=50`; that
 recursive scope includes the selected place and every descendant. It never follows that cursor automatically
 without a viewer request or treats those specimens as the count. `Show more` may follow the
 retained cursor to reveal requested names. Loading or failure leaves the plate and exact
-`+N` visible with a retry for names; a missing or contradictory survey prints no exact badge.
+`+N` visible with a retry for names; a missing or contradictory survey prints no exact badge
+for either count.
 Live does not block on a redundant focused-place outline when the complete directory and
 marker-covered survey already contain the chosen place. Every actually required directory,
 census, focused-place, history, names, or drawing failure retains a visible retry that starts
@@ -1204,7 +1206,7 @@ notes, things, agreements, and events stay at 10 per collection; their existing 
 older controls page backward without changing what is public. Watching one
 place fetches that place plus every nested place as its real bounded server-side slice.
 Only this marker-covered outline response adds `live_survey`, the complete body-free
-direct active-thing counts described above. Legacy/full and directory responses omit it.
+direct active-thing and note counts described above. Legacy/full and directory responses omit it.
 The complete picker is searchable, groups each continent under `Inside <name>`, and lists
 the continent itself first as `<name> — the whole continent`. Following one resident
 fetches that resident's slice and bounded same-place context notes so

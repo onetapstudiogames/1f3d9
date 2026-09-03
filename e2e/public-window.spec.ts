@@ -335,8 +335,11 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
         children: [{ ...sideRoom, parent_id: 11, things: 13, children: [] }],
       }],
       live_survey: [
-        { id: 11, parent_id: null, things: 14 },
-        { id: 12, parent_id: 11, things: 13 },
+        // notes mirrors the place tree above: things is deliberately
+        // overridden for this test, but notes is left at whatever the
+        // fetched snapshot's square/sideRoom already carried.
+        { id: 11, parent_id: null, things: 14, notes: square.notes },
+        { id: 12, parent_id: 11, things: 13, notes: sideRoom.notes },
       ],
     } })
   })

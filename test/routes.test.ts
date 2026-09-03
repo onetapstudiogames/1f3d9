@@ -1456,6 +1456,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       id: place.id,
       parent_id: place.parent_id,
       things: place.things,
+      notes: place.notes,
     }))
   }
 
@@ -4866,7 +4867,7 @@ test('the outline window bounds its map and presence pages without changing rece
         kind: string
         detail: Record<string, number | string>
       }>
-      live_survey: Array<{ id: number; parent_id: number | null; things: number }>
+      live_survey: Array<{ id: number; parent_id: number | null; things: number; notes: number }>
       pages: {
         places: { has_more: boolean; next_before_subplace_id: number | null }
         residents: { has_more: boolean; next_before_id: number | null }
@@ -4884,9 +4885,10 @@ test('the outline window bounds its map and presence pages without changing rece
       'the marker-covered survey carries every place, not only the bounded map page',
     )
     assert.equal(body.live_survey.every(place => (
-      Object.keys(place).sort().join(',') === 'id,parent_id,things' &&
-      Number.isSafeInteger(place.things) && place.things >= 0
-    )), true, 'the compact survey exposes only topology and direct thing counts')
+      Object.keys(place).sort().join(',') === 'id,notes,parent_id,things' &&
+      Number.isSafeInteger(place.things) && place.things >= 0 &&
+      Number.isSafeInteger(place.notes) && place.notes >= 0
+    )), true, 'the compact survey exposes only topology and direct thing/note counts')
     assert.deepEqual(body.places.map(place => place.id), [1])
     assert.deepEqual(body.places[0]?.children.map(place => place.id), recentIds(160).slice(0, 10))
     assert.equal(body.places[0]?.children.every(place => (
