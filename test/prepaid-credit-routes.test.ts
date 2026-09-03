@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { Hono, type Context } from 'hono'
-import { mountPrepaidCreditGiftRoutes } from '../src/prepaid-credit-routes.ts'
+import { emptyActionBodyFailure, mountPrepaidCreditGiftRoutes } from '../src/prepaid-credit-routes.ts'
 
 const GIFT_ID = `city_gift_${'ab'.repeat(16)}`
 const CLAIM_TOKEN = `gift_claim_${'cd'.repeat(32)}`
@@ -348,4 +348,94 @@ test('gift body-bound refusals name their real causes, never a field rule', asyn
     String((await oversized.json() as { error: string }).error),
     /limited to 1024 bytes/u,
   )
+})
+
+// Regression guard for the production hang: on Vercel, @hono/node-server's
+// fast path reads c.req.text()/json()/arrayBuffer() in well under 1ms, but
+// touching c.req.raw.body even once (a `== null` presence check included)
+// makes it build a real Request whose body is Readable.toWeb(incoming); every
+// later body read then defers to that stream, which never delivers on
+// Vercel's Node runtime (proven on the sibling market repo: 1f3ea issue #39,
+// PR #40, same @hono/node-server 2.1.0, same Vercel Node 24 runtime). A
+// fetch-backed test (`app.request(...)`, used above) cannot reproduce this —
+// undici's Request has no such coupling — so this test models the coupling
+// directly against a fake Context standing in for node-server's real one.
+function nodeServerLikeContext(
+  bodyText: string,
+  headers: Readonly<Record<string, string>> = {},
+): { context: Context; rawBodyWasTouched(): boolean } {
+  let rawBodyTouched = false
+  const raw = {
+    get body(): unknown {
+      rawBodyTouched = true
+      // The real getter returns a live ReadableStream (or null for a
+      // genuinely bodyless request); any truthy stand-in proves the touch.
+      return bodyText.length > 0 ? {} : null
+    },
+  }
+  // Mirrors node-server's actual behavior once raw.body has been read: the
+  // fast-path text()/arrayBuffer() defer to the now-cached real Request's
+  // stream reader, which on Vercel never settles.
+  const settle = (): Promise<string> => rawBodyTouched
+    ? new Promise<string>(() => { /* never settles — this is the hang */ })
+    : Promise.resolve(bodyText)
+  const req = {
+    header: (name: string) => headers[name.toLowerCase()],
+    text: () => settle(),
+    raw,
+  }
+  const context = {
+    req,
+    json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
+  } as unknown as Context
+  return { context, rawBodyWasTouched: () => rawBodyTouched }
+}
+
+async function withPromptDeadline<T>(promise: Promise<T>, label: string): Promise<T> {
+  const DEADLINE_MS = 200
+  let timer: ReturnType<typeof setTimeout>
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(
+      `${label} did not settle within ${DEADLINE_MS}ms — something touched c.req.raw.body`,
+    )), DEADLINE_MS)
+  })
+  try {
+    return await Promise.race([promise, deadline])
+  } finally {
+    clearTimeout(timer!)
+  }
+}
+
+test('gift action empty-body check never touches c.req.raw.body and always answers promptly', async () => {
+  const contentLengthFor = (text: string) => String(Buffer.byteLength(text, 'utf8'))
+
+  const empty = nodeServerLikeContext('')
+  const emptyResult = await withPromptDeadline(
+    emptyActionBodyFailure(empty.context, 'accept'),
+    'an empty body',
+  )
+  assert.equal(emptyResult, null)
+  assert.equal(empty.rawBodyWasTouched(), false)
+
+  const emptyObject = nodeServerLikeContext('{}', { 'content-length': contentLengthFor('{}') })
+  const emptyObjectResult = await withPromptDeadline(
+    emptyActionBodyFailure(emptyObject.context, 'accept'),
+    'a {} body',
+  )
+  assert.equal(emptyObjectResult, null)
+  assert.equal(emptyObject.rawBodyWasTouched(), false)
+
+  const nonEmptyText = '{"note":"hi"}'
+  const nonEmpty = nodeServerLikeContext(nonEmptyText, { 'content-length': contentLengthFor(nonEmptyText) })
+  const nonEmptyResult = await withPromptDeadline(
+    emptyActionBodyFailure(nonEmpty.context, 'refuse'),
+    'a non-empty body',
+  )
+  assert.ok(nonEmptyResult)
+  assert.equal(nonEmptyResult?.status, 400)
+  assert.match(
+    String((await nonEmptyResult?.json() as { error: string }).error),
+    /gift refuse accepts an empty body only/u,
+  )
+  assert.equal(nonEmpty.rawBodyWasTouched(), false)
 })
