@@ -139,7 +139,7 @@ test('the window client honours quiet with the exact sentence in every content t
   // Rooms (Place view): occupants, things, and conversation all withhold.
   assert.match(
     WINDOW_JS,
-    /if \(place\.quiet\) \{\s*renderQuietRoom\(nodes\.occupants, place\)\s*renderQuietRoom\(nodes\.placeThings, place\)\s*renderQuietRoom\(nodes\.placeConversation, place\)/mu,
+    /if \(isQuietPlace\(place\)\) \{\s*renderQuietRoom\(nodes\.occupants, place\)\s*renderQuietRoom\(nodes\.placeThings, place\)\s*renderQuietRoom\(nodes\.placeConversation, place\)/mu,
   )
 
   // Live: the focused place's resident roster withholds.
@@ -155,7 +155,7 @@ test('the window client honours quiet with the exact sentence in every content t
   // every combination of filters (a resident filter must never bypass it).
   assert.match(
     WINDOW_JS,
-    /if \(place && place\.quiet\) \{\s*renderQuietRoom\(nodes\.conversations, place\)/mu,
+    /if \(isQuietPlace\(place\)\) \{\s*renderQuietRoom\(nodes\.conversations, place\)/mu,
   )
   assert.doesNotMatch(WINDOW_JS, /if \(place && place\.quiet && !state\.resident\) \{/u)
 
