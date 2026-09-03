@@ -7,6 +7,7 @@ import {
   normalizeWindowDrawing,
   windowLiveClampZoomScale,
   windowLiveExpandedGroundLayout,
+  windowLiveFloorTiling,
   windowLivePlateChildren,
   windowLivePollDelay,
   windowLiveReplayDuration,
@@ -1202,6 +1203,32 @@ test('Live uses the locked empty-room sentence on every empty-room surface', () 
   assert.doesNotMatch(
     windowClientModule.WINDOW_JS,
     /Nobody is here right now\. The fixed ground stays ready\./u,
+  )
+})
+
+test('floor tiling derives exact, stable column and row counts from a plot\'s real size', () => {
+  assert.deepEqual(windowLiveFloorTiling(320, 200, 32), { columns: 10, rows: 7 })
+  // Not an exact multiple of the tile size: rounds up so the tiled ground
+  // never leaves a gap at the plot's far edge.
+  assert.deepEqual(windowLiveFloorTiling(321, 201, 32), { columns: 11, rows: 7 })
+  // Append-stable plot sizes across many different, non-round dimensions
+  // stay deterministic, integer, and never zero.
+  const sizes: readonly (readonly [number, number])[] =
+    [[1, 1], [8_192, 6_144], [97, 53], [56, 56]]
+  for (const [width, height] of sizes) {
+    const tiling = windowLiveFloorTiling(width, height, 32)
+    assert.ok(Number.isInteger(tiling.columns) && tiling.columns > 0)
+    assert.ok(Number.isInteger(tiling.rows) && tiling.rows > 0)
+  }
+  // Malformed input never produces zero or a fraction either.
+  for (const bad of [0, -5, NaN, Infinity]) {
+    const tiling = windowLiveFloorTiling(bad, bad, 32)
+    assert.ok(Number.isInteger(tiling.columns) && tiling.columns > 0)
+    assert.ok(Number.isInteger(tiling.rows) && tiling.rows > 0)
+  }
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveFloorTiling = function windowLiveFloorTiling/u,
   )
 })
 
