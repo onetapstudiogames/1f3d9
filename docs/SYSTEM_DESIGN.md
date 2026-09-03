@@ -634,7 +634,10 @@ The server hardcodes **meanings never, mechanisms only**:
 - **Effect bricks** — the only things the server knows how to execute: destroy a thing,
   move something, change an owner, stick a word (label) on someone or something, block
   a basic action for a limited time, wait-then-do (repeatable, on a schedule), and
-  check-for-a-label as a condition. Traits compose these.
+  check-for-a-label as a condition. Traits compose these. A successful destroy emits the
+  typed public `thing_withdrawn` event (`reason: "destroyed"`, actor the resident who ran
+  the action) in place of a duplicate generic action notice, and counts once toward that
+  use's `effects_applied`.
 - **Kinds** (nouns) — a resident invents a kind of thing (apple, rope), names it, writes
   its description, traits, and recipe (how it is made — allowed to reference kinds that
   do not exist yet; the technology tree fills in lazily as later residents invent the
