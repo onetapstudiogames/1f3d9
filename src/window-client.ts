@@ -4627,7 +4627,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
       return true
     })
-    if (!additions.length &&
+    // A Follow-excluded backlog record is added to backlogKeys above but
+    // never to additions, so additions.length alone cannot gate this
+    // return: if exactly as many stale seen/revealed keys aged out as new
+    // ones arrived, both size comparisons below can still hold even
+    // though a new backlog key was just learned. Losing that key here
+    // means it never settles as residue, so clearing Follow later pops
+    // its bubble and trail as if the viewer had watched it happen.
+    const learnedNewBacklogKey = [...backlogKeys].some(key =>
+      !state.live.residueKeys.includes(key))
+    if (!additions.length && !learnedNewBacklogKey &&
         seen.size === state.live.replaySeenKeys.length &&
         revealed.size === state.live.replayRevealedKeys.length) return
 

@@ -275,7 +275,9 @@ async function readLiveChildFraming(page: Page): Promise<LiveChildFraming> {
   })
 }
 
-async function panLiveTargetIntoView(page: Page, target: Locator): Promise<void> {
+async function panLiveTargetIntoView(
+  page: Page, target: Locator, margin = 6,
+): Promise<void> {
   const viewport = page.locator('#live-viewport')
   await viewport.scrollIntoViewIfNeeded()
   await viewport.focus()
@@ -284,8 +286,14 @@ async function panLiveTargetIntoView(page: Page, target: Locator): Promise<void>
       viewport.boundingBox(),
       target.boundingBox(),
     ])
-    if (!viewportBox || !targetBox) throw new Error('live camera target has no geometry')
-    const margin = 6
+    if (!viewportBox || !targetBox) {
+      // The layer can be mid re-render (e.g. right after a resize) and
+      // report no geometry for a moment rather than never -- give it a
+      // beat and retry within the same attempt budget instead of failing
+      // the whole pan outright.
+      await page.waitForTimeout(50)
+      continue
+    }
     if (targetBox.x >= viewportBox.x + margin && targetBox.y >= viewportBox.y + margin &&
         targetBox.x + targetBox.width <= viewportBox.x + viewportBox.width - margin &&
         targetBox.y + targetBox.height <= viewportBox.y + viewportBox.height - margin) return
@@ -502,6 +510,14 @@ async function installReplayRoutes(
     useThingId?: number
     manyFocusInteractions?: boolean
     openingMovement?: boolean
+    // A single opening-backlog note (change:1), then -- after that note
+    // ages out of recentKeys -- a single later backlog note (change:11),
+    // both actored by map-walker and both excluded from `additions` by a
+    // Follow on a different resident. Sized so the aged-out key and the
+    // newly-learned key swap one-for-one, reproducing the exact
+    // seen.size/revealed.size coincidence that let queueLiveReplays'
+    // early return discard a freshly learned backlogKey.
+    residueSizeCoincidence?: boolean
     maximumHandle?: string
     staggeredArrivalDeadlines?: boolean
     holdThingPage?: boolean
@@ -869,6 +885,17 @@ async function installReplayRoutes(
     }
     if (since === '10' && published) {
       const publishedMarker = currentMarker()
+      if (controls.residueSizeCoincidence) {
+        await route.fulfill({ json: {
+          change_marker: publishedMarker, unchanged: false, has_more: false,
+          next_since: publishedMarker,
+          changes: [{
+            change_id: '11', created_at: new Date(now + 600_001).toISOString(),
+            kind: 'note', actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
+          }],
+        } })
+        return
+      }
       const publishedChanges = [{
             change_id: '11', created_at: new Date(now - (
               controls.staggeredArrivalDeadlines ? 1_792_300 : 0
@@ -1014,6 +1041,9 @@ async function installReplayRoutes(
         actor: 'map-walker', detail: {
           action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
         },
+      }] : controls.residueSizeCoincidence ? [{
+        id: 501, change_id: '1', at: new Date(now).toISOString(), kind: 'note',
+        actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
       }] : [{
         id: 99, change_id: '9', at: new Date(now - 30_000).toISOString(), kind: 'transfer',
         actor: 'map-walker', detail: {
@@ -3633,6 +3663,61 @@ test('clearing Follow after opening on a different resident does not pop a stale
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
 })
 
+test(
+  'a backlog note learned exactly as an older one ages out still settles as residue',
+  async ({ page }) => {
+    const now = Date.now()
+    await page.clock.install({ time: new Date(now) })
+    const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+      residueSizeCoincidence: true,
+    })
+    // Follow a resident other than map-walker, so both backlog notes
+    // below (change:1 at opening, change:11 later) are excluded from
+    // `additions` by queueLiveReplays' Follow filter the whole time --
+    // neither is ever a record the viewer was actually present to watch.
+    await page.goto('/window/live?resident=harbor-1')
+    await expect(page.locator('#live-history-status')).toContainText('history is complete')
+    await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
+    await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+
+    // Age change:1 out of recentKeys (a note's lifetime is 600_000ms):
+    // seen/revealed/residue each hold exactly its one key. The fixture's
+    // change:11 is timed to land exactly as fresh as change:1 was, so
+    // when it arrives below, one key aging out of `seen`/`revealed` and
+    // one key arriving swap one-for-one -- seen.size and revealed.size
+    // both land back on the same counts they held before, even though
+    // the actual keys they hold are now completely different.
+    await page.clock.fastForward(600_001)
+
+    // Deliver change:11 as backlog, the same way a hidden-tab catch-up
+    // does: still excluded from `additions` by the same Follow, so this
+    // exercises queueLiveReplays' `!animate` branch a second time, with
+    // the coincidence above in place.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    const readsBeforeCatchUp = fixture.changeRequests()
+    fixture.publish()
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeCatchUp)
+
+    await page.locator('#resident-filter').selectOption('')
+    await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+    // Clearing Follow reveals both notes. If queueLiveReplays' early
+    // return discarded change:11's backlogKey (the bug under test),
+    // change:11 was never recorded as residue, so it pops a full bubble
+    // here instead of settling quietly like change:1 does.
+    await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+    await expect(page.locator('.live-footnote-mark').last()).toHaveAccessibleName(
+      "Show map-walker's note in the plate ledger",
+    )
+  },
+)
+
 test('an expired trail moves keyboard focus to its paired ledger row, then to the viewport', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
@@ -3895,19 +3980,34 @@ test('a speech bubble the viewer watched appear stays within the live viewport',
   await page.clock.fastForward(duration + 1)
   await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
 
+  // Bring the replay actor well clear of every edge, with generous room
+  // above it for the bubble that floats over its head, so the
+  // containment check below runs against a bubble that is actually
+  // painted inside #live-viewport. #live-viewport clips its overflow,
+  // so a bubble left parked off-plate would make every bound below
+  // trivially (and vacuously) true.
   const bubbleWithinViewport = () => page.locator('.live-speech-bubble').first().evaluate(node => {
     const bubble = node.getBoundingClientRect()
     const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
     return {
       top: bubble.top >= viewport.top - 1,
       bottom: bubble.bottom <= viewport.bottom + 1,
+      left: bubble.left >= viewport.left - 1,
+      right: bubble.right <= viewport.right + 1,
     }
   })
-  expect(await bubbleWithinViewport()).toEqual({ top: true, bottom: true })
+  const allBoundsHold = { top: true, bottom: true, left: true, right: true }
+
+  await panLiveTargetIntoView(page, replay, 64)
+  // The layer can still be mid re-render right after the camera pans or
+  // the viewport resizes -- poll the live measurement instead of
+  // asserting once against a momentary 0,0,0,0 rect.
+  await expect.poll(bubbleWithinViewport).toEqual(allBoundsHold)
 
   await page.setViewportSize({ width: 375, height: 812 })
   await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
-  expect(await bubbleWithinViewport()).toEqual({ top: true, bottom: true })
+  await panLiveTargetIntoView(page, replay, 64)
+  await expect.poll(bubbleWithinViewport).toEqual(allBoundsHold)
 })
 
 test('resident tags follow zoom and intent while terrain and camera writes stay bounded', async ({ page }) => {
