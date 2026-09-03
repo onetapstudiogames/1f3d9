@@ -18,5 +18,5 @@
  */
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
   city: '1.5.0',
-  market: '2.3.0',
+  market: '2.4.0',
 })
