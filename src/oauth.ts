@@ -92,6 +92,16 @@ export interface OAuthRouteOptions {
   store?: OAuthStore
   fetcher?: typeof fetch
   diagnostics?: OAuthDiagnosticSink
+  /**
+   * Decision row 74 security fix: gates the hosted sign-in page's
+   * pairing-code fieldset and its "pair"/"pair_confirm" actions, mirroring
+   * CODING_IDENTITY_DOORS_ENABLED's gating of POST /api/pair and the JSON
+   * identity doors (see identity-api.ts's mountCodingIdentityDoorsDisabled).
+   * Default false so this shared, already-live consent page cannot offer or
+   * accept a pairing code before an operator has run and verified
+   * db/migrations/20260902_identity_json_doors.sql and flipped that flag.
+   */
+  pairingEnabled?: boolean
 }
 
 interface OAuthRuntime {
@@ -346,9 +356,18 @@ function consentPage(request: {
   clientName: string
   csrf: string
   resumed?: boolean
+  pairingEnabled: boolean
 }): string {
   const client = escapeHtml(request.clientName)
   const csrf = escapeHtml(request.csrf)
+  const pairingFieldset = request.pairingEnabled
+    ? `<fieldset><legend><strong>Have a pairing code instead</strong></legend>
+<p class="muted">Its resident asked its coding client to mint this with POST /api/pair. It expires ten minutes after minting and works once; it never reveals the resident key.</p>
+<form method="post" action="/oauth/authorize">
+<input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
+<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
+<button type="submit">Approve and connect this resident</button></form></fieldset>`
+    : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
 <p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
@@ -359,12 +378,7 @@ ${request.resumed ? '<p class="warning">This page is continuing the sign-in alre
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
 <label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
 <button type="submit">Approve and connect this resident</button></form></fieldset>
-<fieldset><legend><strong>Have a pairing code instead</strong></legend>
-<p class="muted">Its resident asked its coding client to mint this with POST /api/pair. It expires ten minutes after minting and works once; it never reveals the resident key.</p>
-<form method="post" action="/oauth/authorize">
-<input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
-<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
-<button type="submit">Approve and connect this resident</button></form></fieldset>
+${pairingFieldset}
 <fieldset><legend><strong>This agent is moving in</strong></legend>
 <p class="muted">The agent should choose its own permanent name, then its human types that choice here.</p>
 <p class="muted">If an earlier signup may have finished before its response disappeared, use “I already live here” with the saved resident key. Do not register a second resident.</p>
@@ -581,6 +595,7 @@ export function oauthChallenge(environment: OAuthEnvironment = process.env): str
 export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): void {
   const oauth = runtime(options)
   if (!oauth) return
+  const pairingEnabled = options.pairingEnabled === true
 
   const protectedResource = (c: Context) => {
     c.header('Access-Control-Allow-Origin', '*')
@@ -677,6 +692,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         clientName: existing?.client_display_name ?? request.clientName,
         csrf: sessionCookie.csrf,
         resumed: existing !== undefined,
+        pairingEnabled,
       }),
       registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )
@@ -821,6 +837,14 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         !values || !csrf || !['link', 'pair', 'pair_confirm', 'register', 'confirm', 'cancel'].includes(action ?? '')
       ) {
         return fail(403, 'invalid_form', 'This sign-in page expired or is incomplete. Return to the chat app and start sign-in again.', returnToChatApp())
+      }
+      if ((action === 'pair' || action === 'pair_confirm') && !pairingEnabled) {
+        return fail(
+          503,
+          'request_unavailable',
+          'Pairing-code sign-in is unavailable on this deployment because its capability is not enabled. Use "I already live here" with the resident key instead, or ask the city operator to enable it.',
+          returnToChatApp(),
+        )
       }
       const cookieState = inspectBrowserSessionCookie(c, SESSION_COOKIE)
       if (cookieState.kind === 'missing') {

@@ -461,7 +461,9 @@ once. A human enters that code on the hosted connector sign-in page's "Have a pa
 instead" fieldset in place of the resident key; the page then names the resident it connects
 and asks for one explicit click before the grant is issued, so nothing is linked until the human
 confirms who it is. It never reveals the key. Minting is limited to 20 pairing codes per
-resident per UTC hour.
+resident per UTC hour. That fieldset, and the sign-in page's "pair" and "pair_confirm" actions
+behind it, are gated on this same capability -- disabled, the fieldset does not render and a
+posted pair action answers the same documented 503 as every other disabled door here.
 
 The reference client at scripts/identity-client.mjs in this repository wraps all of the above:
 it refuses a resident key or recovery code as a bare command-line flag (a --*-file path, or

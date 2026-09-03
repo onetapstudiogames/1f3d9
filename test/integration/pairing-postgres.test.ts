@@ -214,6 +214,7 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
           sessionHash: rotationStage.sessionHash,
           csrfHash: rotationStage.csrfHash,
           replacementSecretHash: rotationStage.replacementSecretHash,
+          invalidatePairingCodes: true,
         })).status,
         'rotated',
       )
@@ -259,6 +260,7 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
           sessionHash: rotationStage.sessionHash,
           csrfHash: rotationStage.csrfHash,
           replacementSecretHash: rotationStage.replacementSecretHash,
+          invalidatePairingCodes: true,
         })).status,
         'rotated',
       )
@@ -309,6 +311,7 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
         sessionHash: recoveryStage.sessionHash,
         csrfHash: recoveryStage.csrfHash,
         replacementSecretHash: recoveryStage.replacementSecretHash,
+        invalidatePairingCodes: true,
       }), { status: 'recovered', residentId: 1, handle: 'existing-agent' })
 
       assert.ok((await pairingCodeRow(codeHash))?.invalidated_at, 'recovery must invalidate the unused code')
@@ -381,6 +384,7 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
           sessionHash: rotationStage.sessionHash,
           csrfHash: rotationStage.csrfHash,
           replacementSecretHash: rotationStage.replacementSecretHash,
+          invalidatePairingCodes: true,
         })).status,
         'rotated',
       )
@@ -420,6 +424,7 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
           sessionHash: rotationStage.sessionHash,
           csrfHash: rotationStage.csrfHash,
           replacementSecretHash: rotationStage.replacementSecretHash,
+          invalidatePairingCodes: true,
         })).status,
         'rotated',
       )

@@ -621,7 +621,7 @@ app.get('/api/changes', async c => {
 
 if (requestedHostedChatSignin.ready) {
   try {
-    mountOAuthRoutes(app)
+    mountOAuthRoutes(app, { pairingEnabled: CODING_IDENTITY_DOORS_ENABLED })
     configureOAuthResidentResolver()
     hostedChatSignin = requestedHostedChatSignin
   } catch {

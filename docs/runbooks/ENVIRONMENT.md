@@ -326,7 +326,14 @@ new `pairing_codes` table (bound at mint to the resident's secret hash, invalida
 later rotation or recovery) and a one-value widening of the closed
 `oauth_rate_limits.attempt_kind` check constraint to add `pair_mint`. It adds no column to
 `pending_resident_registrations`; the JSON doors' `human_approved` declaration is enforced
-in-process and never stored.
+in-process and never stored, only recorded in the confirmed registration's `register` event
+detail. Because `pairing_codes` does not exist until this migration runs,
+`confirmRootRotation` and `confirmRootRecovery` (identity-store.ts) take an
+`invalidatePairingCodes` flag from their caller instead of referencing that table
+unconditionally: the already-live `/rotate` and `/recovery` browser pages pass
+`CODING_IDENTITY_DOORS_ENABLED`'s own value, so they invalidate pairing codes only once the
+flag is on (and therefore the migration has run), and behave exactly as they do today while
+it is off.
 
 Apply it through the same guarded Preview-then-Production ceremony used by other additive
 migrations:
@@ -351,7 +358,9 @@ Applying the migration does not open the doors: they stay behind
 operator sets it in both Preview and Production after the migration is verified there.
 Before that flag is set, `POST /api/register`, `POST /api/rotate`, `POST /api/recovery`,
 and `POST /api/pair` all answer a documented `503 request_unavailable` on a deployment that
-already has this application code, never a generic 500. Set the flag only after confirming
+already has this application code, never a generic 500; the hosted sign-in page's
+pairing-code fieldset does not render, and a posted `pair` or `pair_confirm` action there
+answers that same 503 instead of reaching the database. Set the flag only after confirming
 the migration's postconditions in that same database.
 
 Two other not-ready states answer this same documented shape rather than a bare `{error}`

@@ -203,14 +203,15 @@ ALTER TABLE pending_resident_registrations
 
 -- Decision row 74: the JSON identity doors' human_approved declaration is
 -- enforced in-process at identity-api.ts before a registration is ever
--- staged. The declaration itself is captured for audit in this dedicated
--- column, set only by that JSON door -- client_class is NOT proof of it: the
--- browser join page can also stage client_class coding_persistent or
--- coding_ephemeral, and never asks for or records human approval when it
--- does. The confirmed registration's `register` event detail carries
--- human_approved explicitly alongside client_class.
-ALTER TABLE pending_resident_registrations
-  ADD COLUMN IF NOT EXISTS human_approved BOOLEAN NOT NULL DEFAULT false;
+-- staged, and is never persisted on the pending row -- deliberately, so the
+-- already-live browser /join path never needs this migration to keep
+-- working. It is recorded only in the confirmed registration's `register`
+-- event jsonb detail, supplied at confirm time by whichever caller is
+-- confirming: identity-api.ts (the JSON door) passes true,
+-- identity-browser.ts (the browser /join page) always passes false, even
+-- though it can also stage client_class coding_persistent or
+-- coding_ephemeral -- so client_class alone is NOT proof of human approval,
+-- this event detail is.
 
 CREATE TABLE IF NOT EXISTS pending_resident_registration_recovery_codes (
   registration_session_hash TEXT NOT NULL

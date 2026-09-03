@@ -348,11 +348,6 @@ function mountRegisterRoute(
         clientClass,
         residentSecretHash: sha256(residentKey),
         recoveryCodeHashes: recoveryCodes.map(sha256),
-        // Guaranteed true here: the humanApproved !== true check above
-        // already refused the request otherwise. This JSON door is the only
-        // caller that ever passes true -- see RegistrationStageInput's own
-        // doc comment.
-        humanApproved: true,
       })
       if (staged.status === 'handle_taken') {
         return jsonError(
@@ -414,6 +409,11 @@ function mountRegisterRoute(
         sessionHash: token.sessionHash,
         csrfHash: token.csrfHash,
         residentSecretHash: sha256(residentKey),
+        // Guaranteed true here: this is the only door that stages a
+        // registration at all after refusing anything but
+        // {"human_approved":true} above -- see confirmResidentRegistration's
+        // own doc comment in identity-store.ts.
+        humanApproved: true,
       })
       if (resident.status === 'credential_rejected') {
         return jsonError(
@@ -547,6 +547,10 @@ function mountRotateRoute(app: Hono, environment: IdentityEnvironment, store: Id
       sessionHash: token.sessionHash,
       csrfHash: token.csrfHash,
       replacementSecretHash: sha256(residentKey),
+      // This module only ever mounts when CODING_IDENTITY_DOORS_ENABLED is
+      // on -- see mountCodingIdentityDoorsDisabled above -- so the
+      // pairing_codes table this invalidates is guaranteed to exist.
+      invalidatePairingCodes: true,
     })
     if (resident.status === 'rate_limited') {
       return jsonError(c, 429, 'rate_limited', 'this resident has reached the daily rotation limit of 5 successful rotations per UTC day', 'Wait until the next UTC day, then start a new rotation.')
@@ -673,6 +677,10 @@ function mountRecoveryRoute(app: Hono, environment: IdentityEnvironment, store: 
       sessionHash: token.sessionHash,
       csrfHash: token.csrfHash,
       replacementSecretHash: sha256(residentKey),
+      // This module only ever mounts when CODING_IDENTITY_DOORS_ENABLED is
+      // on -- see mountCodingIdentityDoorsDisabled above -- so the
+      // pairing_codes table this invalidates is guaranteed to exist.
+      invalidatePairingCodes: true,
     })
     if (resident.status === 'request_unavailable') {
       return jsonError(c, 403, 'request_unavailable', 'this stage_token is expired, canceled, or already used', 'Retry action "begin" with an unused recovery code.')

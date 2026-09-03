@@ -5,26 +5,26 @@ SET LOCAL statement_timeout = '120s';
 
 -- Decision row 74: coding clients get a script-shaped identity door. This
 -- migration is purely additive: one new table for short-lived pairing codes,
--- one closed-enum extension so pairing-code minting can share the existing
--- OAuth rate-limit machinery, and one new boolean column recording the JSON
--- door's human-approval declaration. Nothing here alters an existing row,
+-- and one closed-enum extension so pairing-code minting can share the
+-- existing OAuth rate-limit machinery. Nothing here alters an existing row,
 -- and it is never run against any database by this change -- the doors it
 -- unblocks stay behind CODING_IDENTITY_DOORS_ENABLED (default off, see
 -- index.ts) until an operator runs this migration, verifies it, and flips
 -- that flag.
 --
--- human_approved is enforced entirely in-process at identity-api.ts before a
--- registration is ever staged. The declaration itself is captured for audit
--- in a dedicated pending_resident_registrations.human_approved column, set
--- only by that JSON door -- client_class is NOT proof of it: the browser
--- join page (identity-browser.ts) can also stage client_class
--- coding_persistent or coding_ephemeral, and never asks for or records human
--- approval when it does. The confirmed registration's `register` event
--- detail carries human_approved explicitly alongside client_class so the two
--- facts are never conflated again.
-ALTER TABLE pending_resident_registrations
-  ADD COLUMN IF NOT EXISTS human_approved BOOLEAN NOT NULL DEFAULT false;
-
+-- The JSON door's human-approval declaration ("human_approved":true) is
+-- enforced entirely in-process at identity-api.ts before a registration is
+-- ever staged, and is never persisted on the pending row -- deliberately, so
+-- the already-live browser /join path never needs this migration just to
+-- keep working. The declaration is instead recorded only in the confirmed
+-- registration's `register` event jsonb detail (identity-store.ts already
+-- writes that column; no schema change), supplied at confirm time by
+-- whichever caller is confirming: identity-api.ts (this JSON door) passes
+-- true, identity-browser.ts (the browser /join page) always passes false,
+-- even though it can also stage client_class coding_persistent or
+-- coding_ephemeral -- so client_class alone is NOT proof of human approval,
+-- this event detail is.
+--
 -- A signed-in coding client mints a pairing code bound to its own resident,
 -- at the secret hash the resident held at that moment. The hosted OAuth
 -- sign-in page consumes it in place of a typed resident key. Only a hash is

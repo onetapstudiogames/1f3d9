@@ -589,6 +589,11 @@ function appFor(
     fetcher: (async input => {
       throw new Error(`unexpected network call: ${String(input)}`)
     }) as typeof fetch,
+    // Decision row 74 security fix: this fixture backs the pairing-code
+    // tests below, which exercise the deployment where
+    // CODING_IDENTITY_DOORS_ENABLED is on. The dedicated disabled-gate test
+    // builds its own app with pairingEnabled left at its false default.
+    pairingEnabled: true,
     ...(diagnostics ? { diagnostics } : {}),
   })
   return app
@@ -2650,4 +2655,37 @@ test('a pairing code works exactly once, and a second confirm attempt is refused
   })
   assert.equal(peekAfterUse.status, 403)
   assert.equal(peekAfterUse.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
+})
+
+// Decision row 74 security fix: mountOAuthRoutes defaults pairingEnabled to
+// false so this already-live consent page cannot offer or accept a pairing
+// code before CODING_IDENTITY_DOORS_ENABLED is on -- see oauth.ts's own
+// OAuthRouteOptions.pairingEnabled doc comment.
+test('with pairingEnabled left at its default, the consent page omits the pairing fieldset and pair actions are refused', async () => {
+  const memory = new MemoryOAuthStore()
+  const app = new Hono()
+  mountOAuthRoutes(app, {
+    environment,
+    store: memory.api,
+    fetcher: (async input => {
+      throw new Error(`unexpected network call: ${String(input)}`)
+    }) as typeof fetch,
+  })
+  const session = await begin(app)
+  assert.doesNotMatch(session.html, /Have a pairing code instead/iu)
+  assert.doesNotMatch(session.html, /name="pairing_code"/iu)
+  // "I already live here" and "This agent is moving in" must still render.
+  assert.match(session.html, /I already live here/iu)
+  assert.match(session.html, /This agent is moving in/iu)
+
+  const pairingCode = await mintedPairingCode(memory)
+  for (const action of ['pair', 'pair_confirm'] as const) {
+    const attemptSession = await begin(app)
+    const response = await browserPost(app, attemptSession, {
+      action, csrf: attemptSession.csrf, pairing_code: pairingCode,
+    })
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'request_unavailable')
+    assert.match(await response.text(), /Pairing-code sign-in is unavailable on this deployment/iu)
+  }
 })
