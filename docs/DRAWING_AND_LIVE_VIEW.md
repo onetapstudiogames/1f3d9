@@ -379,30 +379,38 @@ cursor and offers `Continue recent history`; it does not call opening history
 complete or replay while an older page remains. Hidden tabs pause this automatic
 continuation. The bounded rows carry their commit-safe `change_id`, so opening
 history and every later `/api/changes` page share one deduplicated recorded
-order. Opening rows draw settled residue without replay. Each resident's newly learned rows
-replay once in ascending `change_id` order while the tab remains visible. The
-first successful catch-up after a hidden tab also settles directly,
-so hidden activity never returns as stale replay. If opening history cannot be
-completed, the plate names the incomplete edge and draws its verified rows
-statically rather than replaying a sequence that may be missing an earlier step.
+order. Opening rows paint their settled positions only: no dashed trail, no
+arrowhead, no footstep, and no speech bubble is drawn for a record the viewer
+was not present to watch. Each resident's newly learned rows replay once in
+ascending `change_id` order, trail and all, while the tab remains visible. The
+first successful catch-up after a hidden tab settles the same quiet way opening
+history does, so hidden activity never returns as stale replay or a converging
+web of trails. If opening history cannot be completed, the plate names the
+incomplete edge and draws its verified rows statically rather than replaying a
+sequence that may be missing an earlier step.
 
-- Applied `move` and `go_home` records draw dashed brick trails with arrowheads
-  from their stated old place to their stated new place. A newly learned move
-  walks once along that exact straight trail for a distance-scaled 3.2 to 8
-  seconds. Its presentation ink then fades for 4.5 seconds beginning when the
-  walk completes. If reduced motion, a hidden tab, or a replay-scope change
-  settles an active walk, the final trail receives a fresh 4.5-second fade from
-  that settlement. The plate keeps only a capped live set of this fading ink and
-  removes each trail when its fade ends. That visual cap never truncates,
-  reorders, or removes the verified history. The
+- Applied `move` and `go_home` records draw a dashed brick trail (no
+  arrowhead) from their stated old place to their stated new place, but only
+  once, for a record the viewer actually watched happen: opening backlog and
+  the first catch-up after a hidden tab settle at their recorded endpoint with
+  no trail at all. A newly learned move walks once along that exact straight
+  trail for a distance-scaled 3.2 to 8 seconds. Its presentation ink then
+  fades for 4.5 seconds beginning when the walk completes. If reduced motion,
+  a hidden tab, or a replay-scope change settles an active walk, the final
+  trail receives a fresh 4.5-second fade from that settlement. The plate
+  keeps only a capped live set of this fading ink and removes each trail when
+  its fade ends. That visual cap never truncates, reorders, or removes the
+  verified history. The
   verified record remains in the separate recent ledger for the full 30-minute
   history horizon.
 - Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
   note's replay step, a square 2px-ink speech bubble appears beside the speaker
-  with the first line capped at 60 characters, including an honest ellipsis.
-  Only the newest revealed note supplies one bubble per resident. Bubble and mark
-  fade on the same 10-minute record clock. The synchronized ledger separately
-  fetches and keeps the exact full note body; highlighting still links both sides.
+  with the first line capped at 60 characters, including an honest ellipsis --
+  but only for a note the viewer watched happen; opening backlog and the first
+  catch-up after a hidden tab print no bubble. Only the newest revealed note
+  supplies one bubble per resident. Bubble and mark fade on the same 10-minute
+  record clock. The synchronized ledger separately fetches and keeps the exact
+  full note body; highlighting still links both sides.
 - A newly observed `make` receives one 600 ms place mark. A newly observed `use`
   pulses only the displayed `source_thing_id` specimen at the record's committed
   `place_id`; if that exact specimen is unavailable, the page skips the visual

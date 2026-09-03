@@ -1052,7 +1052,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .live-thing-name { overflow-wrap: anywhere; }
 .live-thing-specimen > .entity-portrait { width: 2.5rem; height: 2.5rem; }
-.live-trace-arrowhead { fill: var(--brick); }
 .live-footnote-mark, .live-action-mark {
   position: absolute;
   z-index: 3;

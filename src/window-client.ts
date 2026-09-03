@@ -720,6 +720,26 @@ export function windowLiveTraceOpacity(at: number, now: number, lifetime: number
   return Math.max(0, Math.min(1, 1 - Math.max(0, now - at) / lifetime))
 }
 
+// A record settles as quiet opening residue -- final position only, no
+// trail, no arrowhead, and no bubble -- when it happened strictly before the
+// moment the viewer actually started watching this Live tab: either the
+// first paint (`firstVisibleAt`), or, when the tab went away and came back,
+// the most recent moment it became visible again (`wasHiddenAt` names the
+// resume, not the hide, because everything that happened during the hidden
+// gap is unobserved and must settle as residue too, not only what happened
+// before the gap started). A record timestamped at or after that moment was
+// learned while the viewer was present and animates normally.
+export function windowLiveOpeningIsResidue(
+  record: { at: Date },
+  firstVisibleAt: number,
+  wasHiddenAt: number | null,
+): boolean {
+  const watchStartedAt = typeof wasHiddenAt === 'number' && wasHiddenAt > firstVisibleAt
+    ? wasHiddenAt
+    : firstVisibleAt
+  return record.at.getTime() < watchStartedAt
+}
+
 export function windowLiveCenterCamera(
   viewportWidth: number,
   viewportHeight: number,
@@ -1276,6 +1296,7 @@ const WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS = windowLiveDirectGroundWidth.toString(
 const WINDOW_LIVE_CAPACITY_SELECTION_JS = windowLiveCapacitySelection.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
 const WINDOW_LIVE_TRACE_OPACITY_JS = windowLiveTraceOpacity.toString()
+const WINDOW_LIVE_OPENING_IS_RESIDUE_JS = windowLiveOpeningIsResidue.toString()
 const WINDOW_LIVE_CENTER_CAMERA_JS = windowLiveCenterCamera.toString()
 const WINDOW_LIVE_REVEAL_CAMERA_JS = windowLiveRevealCamera.toString()
 const WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS = windowLiveClampZoomScale.toString()
@@ -1390,6 +1411,7 @@ export const WINDOW_JS = `(() => {
   const windowLiveCapacitySelection = ${WINDOW_LIVE_CAPACITY_SELECTION_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
   const windowLiveTraceOpacity = ${WINDOW_LIVE_TRACE_OPACITY_JS}
+  const windowLiveOpeningIsResidue = ${WINDOW_LIVE_OPENING_IS_RESIDUE_JS}
   const windowLiveCenterCamera = ${WINDOW_LIVE_CENTER_CAMERA_JS}
   const windowLiveRevealCamera = ${WINDOW_LIVE_REVEAL_CAMERA_JS}
   const windowLiveClampZoomScale = ${WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS}
@@ -1577,7 +1599,7 @@ export const WINDOW_JS = `(() => {
       lastChangeAt: null, clockTimer: 0,
       replayQueues: {}, replayActive: {}, replayPositions: {},
       replayReadyAtByActor: {},
-      replaySeenKeys: [], replayRevealedKeys: [],
+      replaySeenKeys: [], replayRevealedKeys: [], residueKeys: [],
       focusResident: null, paused: false, absorptionEndsAtByPlaceId: {}, trailStarts: {},
       raisedItemKey: null, expandedResidentPlaceIds: [], expandedThingPlaceIds: [],
       focusRestoreKey: null, focusRestoreFallbackId: null,
@@ -1591,6 +1613,7 @@ export const WINDOW_JS = `(() => {
   })
   let liveFullscreenHistoryEntry = false
   let liveProofRestore = null
+  let liveProofScriptedMoveTimer = 0
   let liveCameraFrame = 0
   let liveLabelFrame = 0
   let liveLabelNeedsFullRefresh = true
@@ -1619,6 +1642,7 @@ export const WINDOW_JS = `(() => {
   const LIVE_PROOF_GARDEN_ID = 9102
   const LIVE_PROOF_WORKSHOP_ID = 9103
   const LIVE_PROOF_RETRY_ROOM_ID = 9104
+  const LIVE_PROOF_SCRIPTED_MOVE_DELAY_MS = 5000
 
   function element(tagName, className, text) {
     const node = document.createElement(tagName)
@@ -2025,11 +2049,32 @@ export const WINDOW_JS = `(() => {
         liveThingPointsByPlaceId,
       })
     }
+    window.clearTimeout(liveProofScriptedMoveTimer)
+    liveProofScriptedMoveTimer = 0
     const now = Date.now()
     const proof = liveProofPayload(now)
     const normalized = normalizeSnapshot(proof.snapshot)
     const navigation = freshSnapshotNavigation(normalized)
-    const changes = Object.freeze(normalizeLiveChanges(proof.changes))
+    // Quiet opening proof: proof-fia's move is queued as opening backlog
+    // (below, queueLiveReplays([residueChange], false)), so it settles at
+    // rest with zero SVG lines -- the owner's evidence that entry is quiet.
+    // proof-gus's move is scripted to fire LIVE_PROOF_SCRIPTED_MOVE_DELAY_MS
+    // after entry instead, queued the way a record actually learned while
+    // watching is, so it draws and animates normally.
+    const residueChange = normalizeLiveChanges([{
+      change_id: '9500',
+      created_at: new Date(now - 1_000).toISOString(),
+      kind: 'action',
+      actor: 'proof-fia',
+      detail: {
+        action: 'move', status: 'applied',
+        from_place_id: LIVE_PROOF_GARDEN_ID, to_place_id: LIVE_PROOF_WORKSHOP_ID,
+      },
+    }])[0]
+    const changes = Object.freeze([
+      ...normalizeLiveChanges(proof.changes),
+      residueChange,
+    ])
     const directory = Object.freeze({
       places: Object.freeze(normalized.flatPlaces.map(place => Object.freeze({
         id: place.id, parent_id: place.parent_id, name: place.name, path: place.path,
@@ -2104,6 +2149,7 @@ export const WINDOW_JS = `(() => {
         replayReadyAtByActor: {},
         replaySeenKeys: [],
         replayRevealedKeys: [],
+        residueKeys: [],
         focusResident: null,
         paused: false,
         absorptionEndsAtByPlaceId: {},
@@ -2122,13 +2168,36 @@ export const WINDOW_JS = `(() => {
     const panel = document.getElementById('live-panel')
     if (panel) panel.dataset.liveProof = 'true'
     populateFilters(state.snapshot)
-    queueLiveReplays(changes)
+    queueLiveReplays(changes.filter(change => change !== residueChange))
+    queueLiveReplays([residueChange], false)
     renderAll()
     setStatus('Running the repeatable preview proof scene', 'live')
+    liveProofScriptedMoveTimer = window.setTimeout(() => {
+      liveProofScriptedMoveTimer = 0
+      if (!state.live.proofScene) return
+      const scriptedChange = normalizeLiveChanges([{
+        change_id: '9506',
+        created_at: new Date().toISOString(),
+        kind: 'action',
+        actor: 'proof-gus',
+        detail: {
+          action: 'move', status: 'applied',
+          from_place_id: LIVE_PROOF_GARDEN_ID, to_place_id: LIVE_PROOF_WORKSHOP_ID,
+        },
+      }])[0]
+      state = { ...state, live: {
+        ...state.live,
+        changes: Object.freeze([...state.live.changes, scriptedChange]),
+      } }
+      queueLiveReplays([scriptedChange], true)
+      if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+    }, LIVE_PROOF_SCRIPTED_MOVE_DELAY_MS)
   }
 
   function exitLiveProofScene() {
     if (!liveProofRestore) return
+    window.clearTimeout(liveProofScriptedMoveTimer)
+    liveProofScriptedMoveTimer = 0
     if (liveReplayHeldKeys().size) settleLiveReplays()
     window.clearTimeout(state.pollTimer)
     window.clearTimeout(state.live.clockTimer)
@@ -4524,6 +4593,20 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return LIVE_MOTION_PREFERENCE.matches
   }
 
+  // Quiet opening: state.live.residueKeys names every record the viewer
+  // was not present to watch (opening backlog, or a hidden-tab catch-up the
+  // visibility gates suppressed) -- set in queueLiveReplays from the
+  // caller's own 'animate' argument, which already knows which case this
+  // is. That call-site signal is used here rather than comparing the
+  // record's own timestamp against a client-captured "watch started"
+  // moment (see windowLiveOpeningIsResidue above the template string):
+  // a server-assigned record timestamp and a client Date.now() capture
+  // do not have a guaranteed ordering, and gating render output on that
+  // race produced wrong answers under measurement.
+  function liveIsRecordResidue(record) {
+    return state.live.residueKeys.includes(liveTraceKey(record))
+  }
+
   function liveReplayRecordIsRevealed(record) {
     if (record.change_id && !state.live.openingLoaded) return false
     const key = liveTraceKey(record)
@@ -4571,12 +4654,27 @@ ${WINDOW_CLIENT_SAFETY_JS}
       : []
     if (!animates) {
       const trailStarts = { ...state.live.trailStarts }
+      const residue = new Set(state.live.residueKeys.filter(key =>
+        recentKeys.has(key) || heldKeys.has(key)))
       for (const record of additions) {
-        if (liveRecordType(record) === 'move') trailStarts[liveTraceKey(record)] = now
+        const key = liveTraceKey(record)
+        // The caller's own 'animate' argument already says whether this
+        // batch is backlog (opening history, or a hidden-tab catch-up the
+        // visibility gates suppressed) or a record actually learned while
+        // watching that only skipped its glide because motion is reduced.
+        // Backlog settles at rest with no trail: minting a fresh trailStart
+        // here would draw brick ink the viewer never watched happen.
+        if (animate) {
+          if (liveRecordType(record) === 'move') trailStarts[key] = now
+          residue.delete(key)
+        } else {
+          residue.add(key)
+        }
       }
       for (const record of additions) revealed.add(liveTraceKey(record))
       state = { ...state, live: {
         ...state.live,
+        residueKeys: Object.freeze([...residue]),
         replaySeenKeys: Object.freeze([...seen]),
         replayRevealedKeys: Object.freeze([...revealed]),
         trailStarts: Object.freeze(trailStarts),
@@ -4599,8 +4697,12 @@ ${WINDOW_CLIENT_SAFETY_JS}
         positions[record.actor] = record.detail.from_place_id
       }
     }
+    const animatedResidue = new Set(state.live.residueKeys.filter(key =>
+      recentKeys.has(key) || heldKeys.has(key)))
+    for (const record of additions) animatedResidue.delete(liveTraceKey(record))
     state = { ...state, live: {
       ...state.live,
+      residueKeys: Object.freeze([...animatedResidue]),
       replayQueues: Object.freeze(queues),
       replayPositions: Object.freeze(positions),
       replaySeenKeys: Object.freeze([...seen]),
@@ -7234,7 +7336,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const claimedActors = new Set()
     for (const record of records) {
       if (liveRecordType(record) !== 'note' || !liveReplayRecordIsRevealed(record) ||
-          claimedActors.has(record.actor)) continue
+          liveIsRecordResidue(record) || claimedActors.has(record.actor)) continue
       claimedActors.add(record.actor)
       const noteId = record.detail.note_id
       const entry = state.live.noteBodies[String(noteId)]
@@ -9049,25 +9151,11 @@ ${WINDOW_CLIENT_SAFETY_JS}
     svg.setAttribute('viewBox', '0 0 ' + String(survey.width) + ' ' + String(survey.height))
     svg.setAttribute('preserveAspectRatio', 'none')
     svg.setAttribute('aria-label', 'Recent movement trails')
-    const definitions = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
-    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
-    marker.setAttribute('id', 'live-trace-arrow')
-    marker.setAttribute('markerWidth', '6')
-    marker.setAttribute('markerHeight', '6')
-    marker.setAttribute('refX', '5')
-    marker.setAttribute('refY', '3')
-    marker.setAttribute('orient', 'auto')
-    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-    arrow.setAttribute('d', 'M0,0 L6,3 L0,6 Z')
-    arrow.classList.add('live-trace-arrowhead')
-    marker.append(arrow)
-    definitions.append(marker)
-    svg.append(definitions)
 
     const noteNumbers = new Map(records.map((record, index) => [liveTraceKey(record), index + 1]))
     const trailKeys = new Set(windowLiveSelectTrailKeys(
       records.filter(record => liveRecordType(record) === 'move' &&
-        liveReplayRecordIsRevealed(record)).map(liveTraceKey),
+        liveReplayRecordIsRevealed(record) && !liveIsRecordResidue(record)).map(liveTraceKey),
       LIVE_TRAIL_DOM_LIMIT,
       [...liveReplayHeldKeys()],
     ))
@@ -9085,6 +9173,10 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const recordOpacity = windowLiveTraceOpacity(
         record.at.getTime(), Date.now(), liveRecordLifetime(record))
       if (type === 'move') {
+        // Quiet opening: trailKeys already excludes any record the viewer
+        // was not present for (opening backlog, or the first catch-up
+        // after a hidden tab), so it settles at its recorded endpoint with
+        // no trail at all.
         if (!trailKeys.has(key)) continue
         const geometry = liveReplayMoveGeometry(
           record, snapshot, focus, children, renderContext)
@@ -9101,7 +9193,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
         trail.setAttribute('y1', String(from.y))
         trail.setAttribute('x2', String(to.x))
         trail.setAttribute('y2', String(to.y))
-        trail.setAttribute('marker-end', 'url(#live-trace-arrow)')
         trail.setAttribute('tabindex', '0')
         trail.setAttribute('role', 'button')
         trail.setAttribute('aria-label', record.actor + ' moved from ' +
@@ -9821,7 +9912,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
         element('p', 'block-number', 'LIVE PLATE / PLACE #' + String(focus.id)),
         element('h3', 'live-plate-title', focus.name),
         element('p', 'live-plate-legend',
-          'brick dash = recorded endpoints + drawn-in glide · brick pulse on a thing = recorded use · walkers move above fixed plots · +N more = an exact hidden crowd · click a resident to focus'),
+          'brick dash = a move you watched happen, drawn-in and fading · brick pulse on a thing = recorded use · walkers move above fixed plots · +N more = an exact hidden crowd · click a resident to focus'),
         openDrawingDetailButton(
           'place',
           focus.id,

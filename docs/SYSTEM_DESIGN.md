@@ -528,24 +528,29 @@ remain; opening events stay static instead of replaying. Hidden tabs pause both 
 continuations.
 
 Every returned opening event carries its commit-safe `change_id`, so opening rows and
-later `/api/changes` rows share one deduplicated recorded order. Opening rows paint their
-settled residue without replay. After that baseline, each resident's newly learned rows
-replay once in ascending `change_id` order while the tab stays visible; the first
-successful catch-up after a hidden tab also settles directly without stale replay. An
-incomplete opening read stays static because an earlier step may be missing. Different
-residents may replay concurrently. Normal activity is distributed across the
-time before the next read; when a batch is too busy to finish in that budget, repeated small
-actions are shortened or grouped while each resident's recorded order remains intact.
-An applied `move` or `go_home` draws a dashed brick trail only when its record supplies
-`from_place_id` and `to_place_id`; its portrait walks along that exact straight trail for
-a distance-scaled 3.2 to 8 seconds, once. Presentation ink then fades for 4.5 seconds
-beginning when the walk completes; if reduced motion, a hidden tab, or a replay-scope
-change settles an active walk, its final trail receives a fresh 4.5-second fade. The plate
-keeps a capped live set of fading trails and removes each at fade end; that presentation
-cap changes no verified row, order, or 30-minute history. The separate recent ledger retains
-the verified record for its full 30-minute horizon. A note becomes a numbered yellow
-footnote mark and a square speech bubble whose first line is capped at 60 characters with
-an ellipsis; only the newest revealed note wins one bubble per resident for 10 minutes.
+later `/api/changes` rows share one deduplicated recorded order. Opening rows paint
+their settled positions only: no dashed trail, no arrowhead, and no speech bubble for a
+record the viewer was not present to watch. After that baseline, each resident's newly learned rows replay once
+in ascending `change_id` order, trail and all, while the tab stays visible; the first
+successful catch-up after a hidden tab settles the same quiet way opening history does,
+so hidden activity never returns as a converging web of stale trails. An incomplete
+opening read stays static because an earlier step may be missing. Different residents
+may replay concurrently. Normal activity is distributed across the time before the next
+read; when a batch is too busy to finish in that budget, repeated small actions are
+shortened or grouped while each resident's recorded order remains intact.
+An applied `move` or `go_home` draws a dashed brick trail (no arrowhead) only when its
+record supplies `from_place_id` and `to_place_id` and the viewer watched it happen; its
+portrait walks along that exact straight trail for a distance-scaled 3.2 to 8 seconds,
+once. Presentation ink then fades for 4.5 seconds beginning when the walk completes; if
+reduced motion, a hidden tab, or a replay-scope change settles an active walk, its final
+trail receives a fresh 4.5-second fade. The plate keeps a capped live set of fading trails
+and removes each at fade end; that presentation cap changes no verified row, order, or
+30-minute history. The separate recent ledger retains the verified record for its full
+30-minute horizon. A note becomes a numbered yellow footnote mark; one learned while
+watching also gets a square speech bubble beside the speaker whose first line is capped
+at 60 characters with an ellipsis, only the newest revealed note winning one bubble per resident for 10 minutes;
+a note from opening backlog or the first catch-up after a hidden
+tab prints its mark with no bubble.
 The linked ledger's separate `GET /api/note/:id` read keeps the exact full note body. A newly
 observed `make` gets one 600 ms place pulse. A newly observed `use` pulses only the exact
 displayed `source_thing_id` at its committed `place_id`; absent specimens receive no
