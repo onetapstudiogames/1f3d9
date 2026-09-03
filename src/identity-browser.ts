@@ -595,10 +595,11 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       }
       const resident = await store.confirmResidentRegistration({
         sessionHash, csrfHash, residentSecretHash: sha256(residentKey),
-        // The browser join page never asks for or records human approval of
-        // the handle the way the coding-client JSON door does -- see
+        // The browser join page never asks for or declares human approval
+        // of the handle the way the coding-client JSON door does, so its
+        // confirmed register event stays byte-identical to main's -- see
         // confirmResidentRegistration's own doc comment in identity-store.ts.
-        humanApproved: false,
+        jsonDoorHumanApprovalDeclared: null,
       })
       if (resident.status === 'request_unavailable') {
         const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })

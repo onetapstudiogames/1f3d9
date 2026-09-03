@@ -480,7 +480,7 @@ app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
   const frontDoor = hostedChatDiscovery(
     FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
-    IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY,
+    IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
   )
   const purchaseDoor = withCreditPurchaseDoor(frontDoor)
   try {
@@ -504,7 +504,7 @@ app.get('/', async c => {
 })
 app.get('/llms.txt', c => c.text(hostedChatDiscovery(
   LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
-  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY,
+  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))

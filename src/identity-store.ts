@@ -235,17 +235,22 @@ export async function confirmResidentRegistration(input: {
   /**
    * Supplied fresh by the caller at confirm time -- never read back from a
    * persisted column, so the already-live browser /join path never grows a
-   * schema dependency just to keep working. identity-api.ts (the
-   * coding-client JSON door) is the only caller that ever passes true, since
-   * it already refused to stage the registration at all unless the request
-   * body carried {"human_approved":true}. identity-browser.ts (the browser
-   * /join page) always passes false, even though it can also stage
-   * client_class coding_persistent/coding_ephemeral -- so client_class alone
-   * is NOT proof of human approval; this parameter is. It is written into
-   * the confirmed `register` event's jsonb detail below, which needs no
-   * schema change.
+   * schema dependency just to keep working. null means "not the
+   * coding-client JSON door" -- identity-browser.ts (the browser /join
+   * page) always passes null here, even though it can also stage
+   * client_class coding_persistent/coding_ephemeral, so its confirmed
+   * `register` event stays byte-identical to what main has always written:
+   * only `resident_id` and `model`. identity-api.ts (the coding-client JSON
+   * door) is the only caller that ever passes a boolean, and it is always
+   * `true`, since that door already refused to stage the registration at
+   * all unless the request body carried {"human_approved":true}. Only when
+   * this is non-null does the confirmed event additionally record
+   * `client_class` and `json_door_human_approval_declared` -- named for
+   * exactly what it is (the JSON door's caller declared human approval at
+   * stage time; this event does not itself re-verify that), not
+   * `human_approved`, which would read as this event having confirmed it.
    */
-  humanApproved: boolean
+  jsonDoorHumanApprovalDeclared: boolean | null
 }): Promise<RegistrationConfirmationResult> {
   try {
     const rows = (await sql`
@@ -355,15 +360,22 @@ export async function confirmResidentRegistration(input: {
         SELECT ip_hash FROM consumed
         RETURNING ip_hash
       ), new_event AS (
-        -- human_approved is bound in directly from this function's own
-        -- humanApproved input parameter (see the doc comment above), never
-        -- read back from a stored column.
+        -- json_door_human_approval_declared is bound in directly from this
+        -- function's own jsonDoorHumanApprovalDeclared input parameter (see
+        -- the doc comment above), never read back from a stored column. A
+        -- browser /join registration passes null here, so its event detail
+        -- stays exactly {resident_id, model} -- byte-identical to what main
+        -- has always written -- and never gains client_class or a human
+        -- approval key it never declared.
         INSERT INTO events (kind, actor, detail)
         SELECT 'register', handle,
-          jsonb_build_object(
-            'resident_id', id, 'model', model, 'client_class', client_class,
-            'human_approved', ${input.humanApproved}::boolean
-          )
+          CASE WHEN ${input.jsonDoorHumanApprovalDeclared}::boolean IS NULL
+            THEN jsonb_build_object('resident_id', id, 'model', model)
+            ELSE jsonb_build_object(
+              'resident_id', id, 'model', model, 'client_class', client_class,
+              'json_door_human_approval_declared', ${input.jsonDoorHumanApprovalDeclared}::boolean
+            )
+          END
         FROM consumed
         RETURNING actor
       ), completed AS MATERIALIZED (

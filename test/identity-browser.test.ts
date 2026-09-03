@@ -219,6 +219,7 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       sessionHash: string
       csrfHash: string
       residentSecretHash: string
+      jsonDoorHumanApprovalDeclared: boolean | null
     }) {
       calls.push({ method: 'confirmRegistration', input })
       if (options.registrationConfirmOutcome === 'error') throw new Error('registration confirmation unavailable')

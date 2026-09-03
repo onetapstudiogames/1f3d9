@@ -46,7 +46,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync, statSync, unlinkSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -314,13 +314,43 @@ function storeSecret(origin, label, payload, deps = {}) {
   }
   const filePath = credentialsFilePath(origin, label, deps.homeDir)
   mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
+  // writeFileSync's `mode` option is ignored when the file already exists
+  // (it only applies to a newly created file), so an existing world/group
+  // readable file would silently keep its old permissions. chmodSync after
+  // the write is what actually narrows an existing file, and it can fail
+  // silently on filesystems without POSIX permission bits (e.g. FAT/exFAT)
+  // -- so verify the mode actually landed instead of trusting either call.
   writeFileSync(filePath, `${serialized}\n`, { mode: 0o600 })
+  if (os === 'win32') {
+    // POSIX mode bits do not apply on Windows; the file already went
+    // through the win32 branch above, so this path is unreachable in
+    // practice, but keep the message accurate if it is ever reached.
+    return `local file ${filePath} (POSIX mode bits do not apply on this platform)`
+  }
   try {
     chmodSync(filePath, 0o600)
   } catch {
-    // Best effort on filesystems that do not support POSIX permissions.
+    // Best effort on filesystems that do not support POSIX permissions;
+    // fall through to the stat check below, which will catch the case
+    // where the file ended up group/world readable.
   }
-  return `local file ${filePath} (mode 0600)`
+  let observedMode
+  try {
+    observedMode = statSync(filePath).mode & 0o777
+  } catch {
+    throw secretFreeStorageError('local credentials file', filePath)
+  }
+  if ((observedMode & 0o077) !== 0) {
+    try {
+      unlinkSync(filePath)
+    } catch {
+      // Best effort: the file could not be removed either, but we still
+      // must not report success or leave the caller believing the secret
+      // is safely stored.
+    }
+    throw secretFreeStorageError('local credentials file', filePath)
+  }
+  return `local file ${filePath} (mode ${observedMode.toString(8).padStart(3, '0')})`
 }
 
 /**

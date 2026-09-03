@@ -1053,10 +1053,17 @@ test('public help sends voluntary root-key replacement only through the private 
     // positive check for decision 74's exact wording, including proximity to
     // its client_class gate, lives in test/family-truth.test.ts's
     // "every identity surface..." test.
-    if (/POST\s+(?:https:\/\/1f3d9\.com)?\/api\/rotate/iu.test(text)) {
-      assert.match(text, /coding_persistent/iu, `${name}: /api/rotate mention stays tied to the coding-client gate`)
-      assert.match(text, /coding_ephemeral/iu, `${name}: /api/rotate mention stays tied to the coding-client gate`)
-    }
+    // The exhaustive positive check for decision 74's exact wording lives in
+    // test/family-truth.test.ts's "every identity surface..." test. A prior
+    // version of this file had a conditional check here
+    // (`if (/POST .../\api\/rotate/.test(text)) assert coding_persistent...`)
+    // that could never fail: coding_persistent/coding_ephemeral appear
+    // elsewhere on every page that also mentions /api/rotate, regardless of
+    // whether they are anywhere near the rotate mention, so it always
+    // passed. Removed rather than replaced with a proximity assertion,
+    // since the current wording deliberately says "works the same way as
+    // its browser page" at the rotate/recovery mentions instead of
+    // repeating the client_class gate verbatim next to each one.
   }
 })
 

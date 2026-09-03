@@ -127,7 +127,7 @@ test('the browser join, rotate, and recovery flows run unchanged with the flag o
 
   const store = await import('../../src/identity-store.ts')
 
-  await t.test('registration succeeds and records the browser page\'s human_approved:false, with no pairing_codes or human_approved column ever referenced', async () => {
+  await t.test('registration succeeds and records an event detail byte-identical to main\'s shape, with no pairing_codes, human_approved, or json_door_human_approval_declared column ever referenced', async () => {
     const sessionHash = sha256('flag-off-join:session')
     const csrfHash = sha256('flag-off-join:csrf')
     const recoveryCodeHashes = Array.from(
@@ -151,16 +151,22 @@ test('the browser join, rotate, and recovery flows run unchanged with the flag o
       csrfHash,
       residentSecretHash: sha256('flag-off-join:root-key'),
       // Exactly what identity-browser.ts's /join page always passes.
-      humanApproved: false,
+      jsonDoorHumanApprovalDeclared: null,
     })
     assert.deepEqual(confirmed, { status: 'confirmed', residentId: 2, handle: 'flag-off-resident' })
 
-    const event = await database!.query<{ detail: { human_approved: boolean; client_class: string } }>(
+    const event = await database!.query<{ detail: Record<string, unknown> }>(
       `SELECT detail FROM events WHERE kind = 'register' AND actor = 'flag-off-resident'`,
     )
     assert.equal(event.rows.length, 1)
-    assert.deepEqual(event.rows[0]!.detail.human_approved, false)
-    assert.deepEqual(event.rows[0]!.detail.client_class, 'hosted_browser')
+    // main's confirmResidentRegistration has only ever written
+    // {resident_id, model} into this event's jsonb detail; the browser
+    // /join path must keep writing exactly that shape, with no
+    // client_class, human_approved, or json_door_human_approval_declared
+    // key added just because decision row 74's JSON door now exists.
+    const detail = event.rows[0]!.detail
+    assert.deepEqual(Object.keys(detail).sort(), ['model', 'resident_id'])
+    assert.equal(detail.model, 'flag-off-test')
   })
 
   await t.test('voluntary rotation succeeds with invalidatePairingCodes false and never references pairing_codes', async () => {

@@ -226,7 +226,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: legacy.sessionHash,
           csrfHash: legacy.csrfHash,
           residentSecretHash: legacy.residentSecretHash,
-          humanApproved: true,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         /registration confirmation produced no outcome/i,
       )
@@ -334,7 +334,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: legacy.sessionHash,
         csrfHash: legacy.csrfHash,
         residentSecretHash: legacy.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       }), {
         status: 'confirmed', residentId: 2, handle: legacy.handle,
       })
@@ -487,7 +487,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: sha256('wrong-key'),
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'credential_rejected' })
       const afterWrongKey = await database!.query(
         `SELECT confirmed_at, canceled_at, secret_hash,
@@ -506,13 +506,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
       assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
       assert.deepEqual(await store.getResidentRegistrationProgress({
         sessionHash: pending.sessionHash,
@@ -547,24 +547,29 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       }])
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE kind = 'register' AND actor = 'new-resident'")).rows[0]!.count, '1')
       assert.equal((await database!.query('SELECT last_id FROM resident_id_allocator WHERE singleton')).rows[0]!.last_id, 2)
-      // Decision row 74 security fix: human_approved has no column of its
-      // own on pending_resident_registrations -- it is bound in directly
-      // from confirmResidentRegistration's own humanApproved input
-      // parameter, supplied here exactly like identity-api.ts (the JSON
-      // door) always supplies it: true.
-      const registerEvent = await database!.query<{ detail: { human_approved: boolean; client_class: string } }>(
+      // Decision row 74 security fix: json_door_human_approval_declared has
+      // no column of its own on pending_resident_registrations -- it is
+      // bound in directly from confirmResidentRegistration's own
+      // jsonDoorHumanApprovalDeclared input parameter, supplied here
+      // exactly like identity-api.ts (the JSON door) always supplies it:
+      // true.
+      const registerEvent = await database!.query<{
+        detail: { json_door_human_approval_declared: boolean; client_class: string }
+      }>(
         "SELECT detail FROM events WHERE kind = 'register' AND actor = 'new-resident'",
       )
-      assert.deepEqual(registerEvent.rows[0]!.detail.human_approved, true)
+      assert.deepEqual(registerEvent.rows[0]!.detail.json_door_human_approval_declared, true)
       assert.deepEqual(registerEvent.rows[0]!.detail.client_class, 'coding_ephemeral')
     })
 
-    await t.test('a browser-shaped registration records human_approved:false in the register event, never a stored column', async () => {
+    await t.test('a browser-shaped registration keeps its register event byte-identical to main, never client_class or a human-approval key', async () => {
       // Complements the JSON-shaped assertion above: identity-browser.ts's
       // /join page always calls confirmResidentRegistration with
-      // humanApproved: false, even when it stages client_class
-      // coding_persistent/coding_ephemeral, so client_class alone is never
-      // proof of human approval.
+      // jsonDoorHumanApprovalDeclared: null, even when it stages
+      // client_class coding_persistent/coding_ephemeral, so the browser
+      // path's event detail stays exactly what main has always written --
+      // {resident_id, model} -- and never gains client_class or any
+      // human-approval key it never declared.
       await resetDatabase()
       const pending = registration('browser-shape', 'browser-shape-resident')
       assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
@@ -572,21 +577,23 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-        humanApproved: false,
+        jsonDoorHumanApprovalDeclared: null,
       }), { status: 'confirmed', residentId: 2, handle: 'browser-shape-resident' })
-      const registerEvent = await database!.query<{ detail: { human_approved: boolean; client_class: string } }>(
+      const registerEvent = await database!.query<{ detail: Record<string, unknown> }>(
         "SELECT detail FROM events WHERE kind = 'register' AND actor = 'browser-shape-resident'",
       )
       assert.equal(registerEvent.rows.length, 1)
-      assert.deepEqual(registerEvent.rows[0]!.detail.human_approved, false)
-      assert.deepEqual(registerEvent.rows[0]!.detail.client_class, 'coding_ephemeral')
-      // human_approved is never persisted anywhere but this event's jsonb
-      // detail -- confirm the column genuinely does not exist.
+      const detail = registerEvent.rows[0]!.detail
+      assert.deepEqual(Object.keys(detail).sort(), ['model', 'resident_id'])
+      assert.equal(detail.model, 'postgres-test')
+      // Neither human_approved nor json_door_human_approval_declared is
+      // ever persisted anywhere but the JSON door's confirmed register
+      // event's jsonb detail -- confirm no such column exists.
       assert.equal(
         (await database!.query(
           `SELECT count(*) FROM information_schema.columns
            WHERE table_schema = 'public' AND table_name = 'pending_resident_registrations'
-             AND column_name = 'human_approved'`,
+             AND column_name IN ('human_approved', 'json_door_human_approval_declared')`,
         )).rows[0]!.count,
         '0',
       )
@@ -604,7 +611,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: pending.sessionHash,
           csrfHash: pending.csrfHash,
           residentSecretHash: pending.residentSecretHash,
-          humanApproved: true,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         /registration confirmation produced no outcome/i,
       )
@@ -721,13 +728,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: canceled.sessionHash,
         csrfHash: canceled.csrfHash,
         residentSecretHash: canceled.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'request_unavailable' })
       assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: expired.sessionHash,
         csrfHash: expired.csrfHash,
         residentSecretHash: expired.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'request_unavailable' })
     })
 
@@ -754,14 +761,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       })
       await new Promise(resolve => setTimeout(resolve, 50))
       const wrong = store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: sha256('wrong-racing-key'),
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       })
       assert.deepEqual(await Promise.all([correct, wrong]), [
         { status: 'confirmed', residentId: 2, handle: 'race-exact-key' },
@@ -794,7 +801,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: pending.sessionHash,
           csrfHash: pending.csrfHash,
           residentSecretHash: pending.residentSecretHash,
-          humanApproved: true,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         { code: '23505', constraint: 'resident_recovery_codes_code_hash_key' },
       )
@@ -845,7 +852,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: pending.sessionHash,
           csrfHash: pending.csrfHash,
           residentSecretHash: pending.residentSecretHash,
-          humanApproved: true,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         /injected registration event failure/i,
       )
@@ -876,12 +883,12 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         store.confirmResidentRegistration({
           sessionHash: first.sessionHash, csrfHash: first.csrfHash,
           residentSecretHash: first.residentSecretHash,
-          humanApproved: true,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         store.confirmResidentRegistration({
           sessionHash: second.sessionHash, csrfHash: second.csrfHash,
           residentSecretHash: second.residentSecretHash,
-          humanApproved: true,
+          jsonDoorHumanApprovalDeclared: true,
         }),
       ])
       assert.equal(results.filter(result => result.status === 'confirmed').length, 1)
@@ -935,7 +942,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       })
       await new Promise(resolve => setTimeout(resolve, 25))
       const cancellation = store.cancelResidentRegistration({

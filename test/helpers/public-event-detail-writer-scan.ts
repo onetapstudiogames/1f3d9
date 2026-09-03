@@ -438,9 +438,20 @@ function jsonObjectFields(
     cursor = call.end
   }
   normalized = (normalized + expression.slice(cursor)).trim()
+  // A bare (non-composed) detail expression may also be a two-way
+  // CASE WHEN <cond> THEN <jsonb_build_object> ELSE <jsonb_build_object> END
+  // -- e.g. identity-store.ts's register event, which writes a smaller
+  // detail object for a browser /join registration and a larger one (with
+  // extra keys) only when the caller declares a coding-client JSON-door
+  // registration. Both branches' literal keys are already collected above
+  // in `calls`, regardless of which branch they came from, so this only
+  // needs to recognize the shape and let the flatMap below report the
+  // union of every key either branch can write.
+  const caseWhenBothBranchesAreJsonObjects = calls.length > 1
+    && /^CASE\s+WHEN[\s\S]+?\s+THEN\s+JSON_OBJECT\s+ELSE\s+JSON_OBJECT\s+END$/iu.test(normalized)
   const supported = composed
     ? /^JSON_OBJECT\s*\|\|\s*CASE\s+WHEN[\s\S]+\s+THEN\s+JSON_OBJECT\s+ELSE\s+'\{\}'::jsonb\s+END$/iu.test(normalized)
-    : normalized === 'JSON_OBJECT'
+    : normalized === 'JSON_OBJECT' || caseWhenBothBranchesAreJsonObjects
   if (!supported) failure(context, sql, expressionOffset, normalized)
   return calls.flatMap(call => call.fields)
 }

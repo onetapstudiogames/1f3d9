@@ -122,6 +122,7 @@ function memoryIdentityStore(options: MemoryOptions = {}) {
       sessionHash: string
       csrfHash: string
       residentSecretHash: string
+      jsonDoorHumanApprovalDeclared: boolean | null
     }): Promise<RegistrationConfirmationResult> {
       const pending = registrations.get(key(input.sessionHash, input.csrfHash))
       if (!pending) return { status: 'request_unavailable' }

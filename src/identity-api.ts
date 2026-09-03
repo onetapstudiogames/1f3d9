@@ -413,7 +413,7 @@ function mountRegisterRoute(
         // registration at all after refusing anything but
         // {"human_approved":true} above -- see confirmResidentRegistration's
         // own doc comment in identity-store.ts.
-        humanApproved: true,
+        jsonDoorHumanApprovalDeclared: true,
       })
       if (resident.status === 'credential_rejected') {
         return jsonError(

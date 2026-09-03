@@ -196,6 +196,37 @@ function rotationAwareSource(
   return withoutJsonDoorParagraph.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
 }
 
+function codingIdentityDoorsAwareSource(
+  source: string,
+  document: 'frontdoor' | 'llms',
+  doorsEnabled: boolean,
+): string {
+  if (doorsEnabled) return source
+
+  if (document === 'llms') {
+    // Four bullet lines, each its own line, document decision row 74's
+    // coding-client JSON doors (register/rotate/recovery/pair). Removed by
+    // distinct line-start text rather than a blanket "mentions /api/" strip,
+    // so an unrelated bullet naming one of these paths for another reason
+    // is not silently deleted too.
+    return source
+      .replace(/^- Decision row 74, when the coding-client identity doors capability is enabled.*\r?\n/mu, '')
+      .replace(/^- Decision row 74, when both rotation and the coding-client identity doors capability are enabled.*\r?\n/mu, '')
+      .replace(/^- Decision row 74, when both recovery and the coding-client identity doors capability are enabled.*\r?\n/mu, '')
+      .replace(/^- When the coding-client identity doors capability is enabled.*\r?\n/mu, '')
+  }
+
+  // Same removeMarkedParagraph approach used for rotation and recovery
+  // above: the section is deleted whole, from its heading through its
+  // closing sentence, rather than line-by-line, so no dangling intro or
+  // closing text is left behind around the hole.
+  return removeMarkedParagraph(
+    source,
+    'CODING-CLIENT IDENTITY DOORS\n----------------------------',
+    'Skill repositories call this script instead of reimplementing the ceremony.',
+  )
+}
+
 function purchaseAwareSource(source: string, purchasesReady: boolean): string {
   if (purchasesReady) return source
   return source.replace(/^-? ?PayPal \/buy routes stay web-only\.?\r?\n/gmu, '')
@@ -262,6 +293,7 @@ export function hostedChatDiscovery(
   recoveryEnabled: boolean,
   rotationEnabled = false,
   purchasesReady = false,
+  codingIdentityDoorsEnabled = false,
 ): string {
   const recoveryBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
   const featureBoundSource = rotationAwareSource(
@@ -269,7 +301,12 @@ export function hostedChatDiscovery(
     document,
     rotationEnabled,
   )
-  const purchaseBoundSource = purchaseAwareSource(featureBoundSource, purchasesReady)
+  const doorsBoundSource = codingIdentityDoorsAwareSource(
+    featureBoundSource,
+    document,
+    codingIdentityDoorsEnabled,
+  )
+  const purchaseBoundSource = purchaseAwareSource(doorsBoundSource, purchasesReady)
   if (!readiness.ready) return hostedSigninUnavailableSource(purchaseBoundSource, document)
 
   const originBoundSource = purchaseBoundSource.replaceAll('https://1f3d9.com', readiness.origin)
