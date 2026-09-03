@@ -1079,6 +1079,36 @@ test('claim_token is a sensitive argument key, not an ordinary unknown field', a
   assert.equal(calls.length, 0)
 })
 
+test('place_edit refuses a laws argument by name and points at the laws tool', async () => {
+  for (const args of [
+    { place_id: 12, laws: [247] },
+    { place_id: 12, law_trait_ids: [247] },
+  ] as const) {
+    const { app, calls } = connectorHarness()
+    const result = await callToolResult(app, '/mcp', 'place_edit', args, { authorization: AUTHORIZATION })
+    const text = result.content[0]?.text ?? ''
+    assert.equal(result.isError, true, JSON.stringify(args))
+    assert.equal((JSON.parse(text) as { error_class?: string }).error_class, 'bad_input')
+    assert.match(text, /Unsupported tool argument/iu, JSON.stringify(args))
+    const rejectedKey = Object.keys(args).find(key => key !== 'place_id')!
+    assert.match(text, new RegExp(rejectedKey), JSON.stringify(args))
+    assert.match(text, /laws tool/iu, JSON.stringify(args))
+    assert.equal(calls.length, 0)
+  }
+
+  // An unknown argument unrelated to laws still refuses and names itself,
+  // but does not claim the laws tool is the fix.
+  const { app: appOther, calls: callsOther } = connectorHarness()
+  const otherResult = await callToolResult(
+    appOther, '/mcp', 'place_edit', { place_id: 12, mood: 'cozy' }, { authorization: AUTHORIZATION },
+  )
+  const otherText = otherResult.content[0]?.text ?? ''
+  assert.equal(otherResult.isError, true)
+  assert.match(otherText, /mood/u)
+  assert.doesNotMatch(otherText, /laws tool/iu)
+  assert.equal(callsOther.length, 0)
+})
+
 test('hosted output never exposes a browser-only gift claim token', async () => {
   const { app } = connectorHarness(() => ({
     message: `historical redirect ${GIFT_CLAIM_TOKEN}`,

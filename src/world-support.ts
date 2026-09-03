@@ -153,6 +153,11 @@ export function hasOnly(body: JsonObject, fields: readonly string[]): boolean {
   return Object.keys(body).every(key => allowed.has(key))
 }
 
+export function unsupportedFields(body: JsonObject, fields: readonly string[]): string[] {
+  const allowed = new Set(fields)
+  return Object.keys(body).filter(key => !allowed.has(key))
+}
+
 export async function requireResident(c: Context): Promise<Resident | Response> {
   const resident = await auth(c)
   return resident ?? err(c, 401, 'resident sign-in required; use the private browser flow at /join')

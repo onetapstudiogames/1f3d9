@@ -3223,11 +3223,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       const kind = params[0] == null ? null : String(params[0])
       const actor = params[1] == null ? null : String(params[1])
       const placeId = params[2] == null ? null : Number(params[2])
-      const matching = paginationEvents().filter(event =>
-        (kind == null || event.kind === kind) &&
-        (actor == null || event.actor === actor) &&
-        (placeId == null ||
-          Number((event.detail as Record<string, unknown>).place_id) === placeId))
+      const matching = paginationEvents().filter(event => {
+        const detail = event.detail as Record<string, unknown>
+        return (kind == null || event.kind === kind) &&
+          (actor == null || event.actor === actor) &&
+          (placeId == null ||
+            Number(detail.place_id) === placeId ||
+            Number(detail.from_place_id) === placeId ||
+            Number(detail.to_place_id) === placeId)
+      })
       return withEventTotals(descendingPage(matching, params[3], params[4]), matching)
     }
     if (state.scenario === 'event pagination') {
@@ -5502,6 +5506,48 @@ test('room orientation is owner-only and rejects malformed or ineligible selecti
   }
 })
 
+test('place edit refuses a laws field in every value shape, names it, and points at the laws door', async () => {
+  const lawShapedBodies: readonly Record<string, unknown>[] = [
+    { laws: [247] },
+    { laws: [{ traitId: 247 }] },
+    { laws: [{ traitId: 247 }], description: 'unchanged text' },
+    { law_trait_ids: [247] },
+    { trait_ids: [247] },
+    { add_law: 247 },
+  ]
+  for (const body of lawShapedBodies) {
+    reset({
+      scenario: 'room orientation', placeOwnerId: 7,
+      roomPurpose: 'A retry-safe reading room.', frontMatterThingIds: [41, 42],
+    })
+    setActor(7, 'tiny-lantern')
+    const response = await app.request('/api/place/2', {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body),
+    })
+    const responseBody = await response.json() as { error?: string }
+    assert.equal(response.status, 400, JSON.stringify({ body, responseBody }))
+    const rejectedKey = Object.keys(body).find(key => key !== 'description')!
+    assert.match(responseBody.error ?? '', new RegExp(rejectedKey), JSON.stringify(body))
+    assert.match(responseBody.error ?? '', /PUT \/api\/place\/:id\/laws/u, JSON.stringify(body))
+    assert.equal(state.roomPurpose, 'A retry-safe reading room.', JSON.stringify(body))
+    assert.deepEqual(state.frontMatterThingIds, [41, 42], JSON.stringify(body))
+  }
+
+  // A plain unknown field outside the laws family is refused the same way,
+  // by name; the laws-door pointer rides on every place_edit refusal.
+  reset({
+    scenario: 'room orientation', placeOwnerId: 7,
+    roomPurpose: 'A retry-safe reading room.', frontMatterThingIds: [41, 42],
+  })
+  setActor(7, 'tiny-lantern')
+  const plainUnknown = await app.request('/api/place/2', {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ mood: 'cozy' }),
+  })
+  const plainUnknownBody = await plainUnknown.json() as { error?: string }
+  assert.equal(plainUnknown.status, 400)
+  assert.match(plainUnknownBody.error ?? '', /mood/u)
+})
+
 test('public outline and full place reads expose ordered body-free orientation headings only while eligible', async () => {
   reset({
     scenario: 'room orientation',
@@ -7103,7 +7149,7 @@ test('frontier x402 records custody before settlement and raw transaction proofs
     }),
   })
   assert.equal(replay.status, 400)
-  assert.match(JSON.stringify(await replay.json()), /unsupported field|x-payment/i)
+  assert.match(JSON.stringify(await replay.json()), /does not accept|x-payment/i)
 })
 
 test('frontier x402 retry after an interrupted completion uses the same authorization and does not settle twice', async () => {
@@ -11440,6 +11486,8 @@ test('event history narrows by actor and by observed place', async () => {
   const actorRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
   assert.match(actorRead?.query ?? '', /\$2::text\s+is\s+null\s+or\s+event\.actor\s*=\s*\$2::text/i)
   assert.match(actorRead?.query ?? '', /event\.detail->>'place_id'\s*=\s*\(\$3::integer\)::text/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'from_place_id'\s*=\s*\(\$3::integer\)::text/i)
+  assert.match(actorRead?.query ?? '', /event\.detail->>'to_place_id'\s*=\s*\(\$3::integer\)::text/i)
   assert.match(actorRead?.query ?? '', /event\.detail->>'thing_id'[\s\S]*from\s+things/i)
   assert.match(actorRead?.query ?? '', /event\.detail->>'note_id'[\s\S]*from\s+notes/i)
   assert.match(actorRead?.query ?? '', /event\.detail->>'asset_type'\s*=\s*'thing'/i)
@@ -11454,6 +11502,9 @@ test('event history narrows by actor and by observed place', async () => {
   const insideRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
   assert.match(insideRead?.query ?? '', /WITH RECURSIVE selected_places/i)
   assert.match(insideRead?.query ?? '', /child\.parent_id\s*=\s*selected\.id/i)
+  assert.match(insideRead?.query ?? '', /event\.detail->>'place_id'\s*IN\s*\(SELECT id::text FROM selected_places\)/i)
+  assert.match(insideRead?.query ?? '', /event\.detail->>'from_place_id'\s*IN\s*\(SELECT id::text FROM selected_places\)/i)
+  assert.match(insideRead?.query ?? '', /event\.detail->>'to_place_id'\s*IN\s*\(SELECT id::text FROM selected_places\)/i)
   assert.match(insideRead?.query ?? '', /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
   assert.deepEqual(insideRead?.params, [null, null, '2', null, '4', null])
 

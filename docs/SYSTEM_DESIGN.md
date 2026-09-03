@@ -644,7 +644,10 @@ The server hardcodes **meanings never, mechanisms only**:
   A trait is either mechanical (bricks attached, server executes) or a plain word
   (server stores it, the town decides what it means). Nothing is ever required:
   a thing with no traits is inert. Consuming a traitless thing destroys it and
-  nothing else happens.
+  nothing else happens. A thing's kind traits are consulted only for an action that
+  names that thing: `use`, `consume`, and `give` with `thing_id`. `move`, `talk`,
+  `make`, and `go_home` never name a source thing, so those keys in a trait's recipe
+  do nothing on a kind; they fire only where the same trait is adopted as a place law.
 - **Defaults are inert.** Unfilled never errors; it just does nothing.
 - **Use permission belongs to each thing.** `open_to_use` defaults false and only the
   owner may change it. When true, a colocated resident may `use` the active, unoffered

@@ -202,6 +202,8 @@ function publicEventFilter(includeDescendants: boolean): string {
     - ($6::integer * INTERVAL '1 second'))
   AND ($3::integer IS NULL
     OR ${textPlace("event.detail->>'place_id'")}
+    OR ${textPlace("event.detail->>'from_place_id'")}
+    OR ${textPlace("event.detail->>'to_place_id'")}
     OR (event.detail->>'thing_id' ~ '^[0-9]{1,9}$' AND EXISTS (
       SELECT 1 FROM things thing
       WHERE thing.id = (event.detail->>'thing_id')::integer
