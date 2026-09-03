@@ -11139,7 +11139,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
       }
     }
     renderPlaceOrientation(place)
-    if (place.quiet) {
+    if (isQuietPlace(place)) {
       renderQuietRoom(nodes.occupants, place)
       renderQuietRoom(nodes.placeThings, place)
       renderQuietRoom(nodes.placeConversation, place)
@@ -11221,7 +11221,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const place = state.placeId
       ? placeReference(snapshot, state.placeId)
       : null
-    if (place && place.quiet) {
+    if (isQuietPlace(place)) {
       renderQuietRoom(nodes.conversations, place)
       hideHistoryControl(nodes.conversationPage)
       return
