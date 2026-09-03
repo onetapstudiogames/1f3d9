@@ -3601,6 +3601,38 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(trail).toHaveCount(0)
 })
 
+test('clearing Follow after opening on a different resident does not pop a stale backlog bubble', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now, 'complete', 0, {
+    manyFocusInteractions: true,
+    maximumHandle: maximumReplayHandle,
+  })
+  // This fixture's opening-backlog note (change:1) is actored by
+  // maximumReplayHandle. A shareable Follow link on a DIFFERENT resident
+  // sets state.resident from the URL at bootstrap, before the first read,
+  // so queueLiveReplays' additions filter excludes that note's key from
+  // `additions` for the whole opening batch. Residue must still be
+  // recorded for it there -- otherwise clearing Follow later replays a
+  // stale bubble for a record the viewer was never present to watch, the
+  // exact behaviour the owner rejected.
+  await page.goto('/window/live?resident=map-walker')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  // While following map-walker, the backlog note's own actor is filtered
+  // out of the plate entirely, so neither its mark nor a bubble show yet.
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+
+  await page.locator('#resident-filter').selectOption('')
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+  // Clearing Follow reveals the backlog note's actor. Its footnote mark
+  // is settled residue and correctly appears; the bug under test popped a
+  // bubble alongside it for a record the viewer was never present to
+  // watch, because that record's key had never been recorded as residue.
+  await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
+  await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
+})
+
 test('an expired trail moves keyboard focus to its paired ledger row, then to the viewport', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
@@ -3829,9 +3861,9 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
   expect(Math.abs(maximumHandleShellHeight - shortHandleShellHeight)).toBeLessThanOrEqual(1)
   // This fixture's note (change:1) is opening backlog, so quiet opening
   // now prints its footnote mark with no speech bubble (see step 1's
-  // residue rule) -- the bubble-bounds check that used to run here against
-  // that backlog note moved out; bubble viewport clamping is a plain CSS
-  // property this suite does not need a record to exercise.
+  // residue rule) -- there is no bubble here to bounds-check any more.
+  // The viewport-bounds check moved to the dedicated test below, against
+  // a bubble for a note record the viewer actually watched appear.
 
   await page.locator('#resident-filter').selectOption('harbor-7')
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
@@ -3841,6 +3873,41 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
   await filteredResident.click()
   await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-7')
   await expect(page).toHaveURL(/\/window\/live\?place=3$/u)
+})
+
+test('a speech bubble the viewer watched appear stays within the live viewport', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  // A note record actually learned while watching draws a real speech
+  // bubble once its replay settles -- unlike opening backlog or a
+  // hidden-tab catch-up, which print only the footnote mark (step 1's
+  // residue rule, see 'focus keeps every exact interaction visible...'
+  // above). Publish it the way 'an expired trail...' does, so the bounds
+  // check below runs against a bubble the viewer actually watched appear.
+  await publishReplayChanges(page, fixture)
+  const replay = page.locator('.live-replay-portrait')
+  await expect(replay).toHaveAttribute('data-live-replay-key', 'change:11')
+  const duration = Number(await replay.getAttribute('data-replay-duration'))
+  await page.clock.fastForward(duration + 1)
+  await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+
+  const bubbleWithinViewport = () => page.locator('.live-speech-bubble').first().evaluate(node => {
+    const bubble = node.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    return {
+      top: bubble.top >= viewport.top - 1,
+      bottom: bubble.bottom <= viewport.bottom + 1,
+    }
+  })
+  expect(await bubbleWithinViewport()).toEqual({ top: true, bottom: true })
+
+  await page.setViewportSize({ width: 375, height: 812 })
+  await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+  expect(await bubbleWithinViewport()).toEqual({ top: true, bottom: true })
 })
 
 test('resident tags follow zoom and intent while terrain and camera writes stay bounded', async ({ page }) => {

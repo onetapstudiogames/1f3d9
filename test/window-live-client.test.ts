@@ -22,7 +22,6 @@ import {
   windowLiveSpeechLine,
   windowLiveTouchActivation,
   windowLiveTraceOpacity,
-  windowLiveOpeningIsResidue,
 } from '../src/window-client.ts'
 
 type SurveyedPlace = Readonly<{
@@ -1220,36 +1219,6 @@ test('trace opacity ages honestly and expires at its stated lifetime', () => {
   assert.equal(windowLiveTraceOpacity(1_000, 6_000, 10_000), 0.5)
   assert.equal(windowLiveTraceOpacity(1_000, 11_000, 10_000), 0)
   assert.equal(windowLiveTraceOpacity(2_000, 1_000, 10_000), 1)
-})
-
-test('opening residue settles quietly for every backlog row and every row learned while hidden', () => {
-  const record = (atMs: number) => ({ at: new Date(atMs) })
-  const firstVisibleAt = 100_000
-
-  // Every opening-history row happened before the tab was ever watched --
-  // residue, regardless of how recent it is relative to "now".
-  assert.equal(windowLiveOpeningIsResidue(record(1_000), firstVisibleAt, null), true)
-  assert.equal(windowLiveOpeningIsResidue(record(99_999), firstVisibleAt, null), true)
-
-  // A row whose change_id first appears in a read taken while the tab was
-  // visible -- its recorded time is at or after the watch boundary -- is
-  // not residue, and animates normally.
-  assert.equal(windowLiveOpeningIsResidue(record(100_000), firstVisibleAt, null), false)
-  assert.equal(windowLiveOpeningIsResidue(record(150_000), firstVisibleAt, null), false)
-
-  // A row that happened during a hidden gap settles as residue too, once
-  // the tab resumes: the resume timestamp (wasHiddenAt names the resume,
-  // not the hide) becomes the new boundary, even though the row is after
-  // the original first paint.
-  const wasHiddenAt = 500_000
-  assert.equal(windowLiveOpeningIsResidue(record(150_000), firstVisibleAt, wasHiddenAt), true)
-  assert.equal(windowLiveOpeningIsResidue(record(499_999), firstVisibleAt, wasHiddenAt), true)
-  assert.equal(windowLiveOpeningIsResidue(record(500_000), firstVisibleAt, wasHiddenAt), false)
-  assert.equal(windowLiveOpeningIsResidue(record(600_000), firstVisibleAt, wasHiddenAt), false)
-
-  // A resume timestamp that is somehow earlier than first paint never
-  // moves the boundary backward.
-  assert.equal(windowLiveOpeningIsResidue(record(50_000), firstVisibleAt, 10_000), true)
 })
 
 test('Center keeps a readable scale around its target without fitting the whole survey', () => {

@@ -720,26 +720,6 @@ export function windowLiveTraceOpacity(at: number, now: number, lifetime: number
   return Math.max(0, Math.min(1, 1 - Math.max(0, now - at) / lifetime))
 }
 
-// A record settles as quiet opening residue -- final position only, no
-// trail, no arrowhead, and no bubble -- when it happened strictly before the
-// moment the viewer actually started watching this Live tab: either the
-// first paint (`firstVisibleAt`), or, when the tab went away and came back,
-// the most recent moment it became visible again (`wasHiddenAt` names the
-// resume, not the hide, because everything that happened during the hidden
-// gap is unobserved and must settle as residue too, not only what happened
-// before the gap started). A record timestamped at or after that moment was
-// learned while the viewer was present and animates normally.
-export function windowLiveOpeningIsResidue(
-  record: { at: Date },
-  firstVisibleAt: number,
-  wasHiddenAt: number | null,
-): boolean {
-  const watchStartedAt = typeof wasHiddenAt === 'number' && wasHiddenAt > firstVisibleAt
-    ? wasHiddenAt
-    : firstVisibleAt
-  return record.at.getTime() < watchStartedAt
-}
-
 export function windowLiveCenterCamera(
   viewportWidth: number,
   viewportHeight: number,
@@ -1296,7 +1276,6 @@ const WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS = windowLiveDirectGroundWidth.toString(
 const WINDOW_LIVE_CAPACITY_SELECTION_JS = windowLiveCapacitySelection.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
 const WINDOW_LIVE_TRACE_OPACITY_JS = windowLiveTraceOpacity.toString()
-const WINDOW_LIVE_OPENING_IS_RESIDUE_JS = windowLiveOpeningIsResidue.toString()
 const WINDOW_LIVE_CENTER_CAMERA_JS = windowLiveCenterCamera.toString()
 const WINDOW_LIVE_REVEAL_CAMERA_JS = windowLiveRevealCamera.toString()
 const WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS = windowLiveClampZoomScale.toString()
@@ -1411,7 +1390,6 @@ export const WINDOW_JS = `(() => {
   const windowLiveCapacitySelection = ${WINDOW_LIVE_CAPACITY_SELECTION_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
   const windowLiveTraceOpacity = ${WINDOW_LIVE_TRACE_OPACITY_JS}
-  const windowLiveOpeningIsResidue = ${WINDOW_LIVE_OPENING_IS_RESIDUE_JS}
   const windowLiveCenterCamera = ${WINDOW_LIVE_CENTER_CAMERA_JS}
   const windowLiveRevealCamera = ${WINDOW_LIVE_REVEAL_CAMERA_JS}
   const windowLiveClampZoomScale = ${WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS}
@@ -4593,16 +4571,17 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return LIVE_MOTION_PREFERENCE.matches
   }
 
-  // Quiet opening: state.live.residueKeys names every record the viewer
-  // was not present to watch (opening backlog, or a hidden-tab catch-up the
-  // visibility gates suppressed) -- set in queueLiveReplays from the
-  // caller's own 'animate' argument, which already knows which case this
-  // is. That call-site signal is used here rather than comparing the
-  // record's own timestamp against a client-captured "watch started"
-  // moment (see windowLiveOpeningIsResidue above the template string):
-  // a server-assigned record timestamp and a client Date.now() capture
-  // do not have a guaranteed ordering, and gating render output on that
-  // race produced wrong answers under measurement.
+  // Quiet opening: a record settles as residue -- final position only, no
+  // trail, no arrowhead, and no bubble -- when the viewer was not present
+  // to watch it happen: opening backlog, or a hidden-tab catch-up the
+  // visibility gates suppressed. state.live.residueKeys names those
+  // records, set in queueLiveReplays from the caller's own 'animate'
+  // argument, which already knows which case this is. That call-site
+  // signal is used here rather than comparing the record's own timestamp
+  // against a client-captured "watch started" moment: a server-assigned
+  // record timestamp and a client Date.now() capture do not have a
+  // guaranteed ordering, and gating render output on that race produced
+  // wrong answers under measurement.
   function liveIsRecordResidue(record) {
     return state.live.residueKeys.includes(liveTraceKey(record))
   }
@@ -4630,11 +4609,18 @@ ${WINDOW_CLIENT_SAFETY_JS}
       recentKeys.has(key) || heldKeys.has(key)))
     const revealed = new Set(state.live.replayRevealedKeys.filter(key =>
       recentKeys.has(key) || heldKeys.has(key)))
+    // Every record that clears change_id/type/recency/seen is a candidate
+    // for residue when this batch is backlog (animate === false), whether
+    // or not an active Follow then excludes it from 'additions' below --
+    // otherwise clearing Follow later pops a stale opening-backlog bubble
+    // for a record that never got its residue key recorded.
+    const backlogKeys = new Set()
     const additions = windowLiveReplayOrder(records, Number.NEGATIVE_INFINITY).filter(record => {
       const key = liveTraceKey(record)
       if (!record.change_id || !liveRecordType(record) || !liveRecordIsRecent(record, now) ||
           seen.has(key)) return false
       seen.add(key)
+      if (!animate) backlogKeys.add(key)
       if (state.resident && record.actor !== state.resident) {
         revealed.add(key)
         return false
@@ -4656,20 +4642,22 @@ ${WINDOW_CLIENT_SAFETY_JS}
       const trailStarts = { ...state.live.trailStarts }
       const residue = new Set(state.live.residueKeys.filter(key =>
         recentKeys.has(key) || heldKeys.has(key)))
-      for (const record of additions) {
-        const key = liveTraceKey(record)
-        // The caller's own 'animate' argument already says whether this
-        // batch is backlog (opening history, or a hidden-tab catch-up the
-        // visibility gates suppressed) or a record actually learned while
-        // watching that only skipped its glide because motion is reduced.
-        // Backlog settles at rest with no trail: minting a fresh trailStart
-        // here would draw brick ink the viewer never watched happen.
-        if (animate) {
+      // The caller's own 'animate' argument already says whether this
+      // batch is backlog (opening history, or a hidden-tab catch-up the
+      // visibility gates suppressed) or a record actually learned while
+      // watching that only skipped its glide because motion is reduced.
+      // Backlog settles at rest with no trail: minting a fresh trailStart
+      // here would draw brick ink the viewer never watched happen. Backlog
+      // residue is drawn from backlogKeys, not additions, so a record an
+      // active Follow excluded from additions still settles as residue.
+      if (animate) {
+        for (const record of additions) {
+          const key = liveTraceKey(record)
           if (liveRecordType(record) === 'move') trailStarts[key] = now
           residue.delete(key)
-        } else {
-          residue.add(key)
         }
+      } else {
+        for (const key of backlogKeys) residue.add(key)
       }
       for (const record of additions) revealed.add(liveTraceKey(record))
       state = { ...state, live: {

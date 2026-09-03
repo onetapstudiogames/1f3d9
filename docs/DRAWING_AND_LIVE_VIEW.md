@@ -381,9 +381,10 @@ cursor and offers `Continue recent history`; it does not call opening history
 complete or replay while an older page remains. Hidden tabs pause this automatic
 continuation. The bounded rows carry their commit-safe `change_id`, so opening
 history and every later `/api/changes` page share one deduplicated recorded
-order. Opening rows paint their settled positions only: no dashed trail, no
-arrowhead, no footstep, and no speech bubble is drawn for a record the viewer
-was not present to watch. Each resident's newly learned rows replay once in
+order. Opening rows paint their settled positions only: no dashed trail and no
+arrowhead for a move, and no speech bubble for a note, when the record is one
+the viewer was not present to watch. A backlog note still prints its numbered
+footnote mark; only the bubble is gated (see below). Each resident's newly learned rows replay once in
 ascending `change_id` order, trail and all, while the tab remains visible. The
 first successful catch-up after a hidden tab settles the same quiet way opening
 history does, so hidden activity never returns as stale replay or a converging
