@@ -542,6 +542,10 @@ async function installReplayRoutes(
     crowdPlaceId?: number
     residentCrowdSize?: number
     quietPlaceId?: number
+    // Step 2 proof/e2e: flip specific stock resident ids to has_drawing:
+    // false so a test can exercise the neutral-marker path deliberately,
+    // without inventing a second resident fixture.
+    undrawnResidentIds?: readonly number[]
   }> = {},
 ) {
   let published = false
@@ -610,9 +614,12 @@ async function installReplayRoutes(
         const crowded = controls.crowdPlaceId && resident.id !== 5
         ? { ...placed, current_place_id: controls.crowdPlaceId }
           : placed
-        return controls.maximumHandle && resident.id === replayCrowd[3]!.id
+        const named = controls.maximumHandle && resident.id === replayCrowd[3]!.id
           ? { ...crowded, handle: controls.maximumHandle }
           : crowded
+        return controls.undrawnResidentIds?.includes(resident.id)
+          ? { ...named, has_drawing: false }
+          : named
       }),
       ...Array.from({ length: controls.simultaneousMoves ?? 0 }, (_, index) => ({
         id: 1_000 + index,
@@ -2734,6 +2741,68 @@ test('Live stage portraits stay unboxed on the ground and when focused', async (
     outlineStyle: 'solid',
     outlineWidth: '4px',
   })
+
+  // Step 2: things on the ground carry the same promise -- no card backing
+  // behind the sprite or its name -- and the place plot never prints the
+  // removed owner chip anywhere on the plate.
+  const specimen = page.locator('.live-thing-specimen').first()
+  await specimen.scrollIntoViewIfNeeded()
+  expect(await specimen.evaluate(node => {
+    const style = getComputedStyle(node)
+    return { backgroundColor: style.backgroundColor, borderWidth: style.borderWidth,
+      boxShadow: style.boxShadow }
+  })).toEqual({ backgroundColor: 'rgba(0, 0, 0, 0)', borderWidth: '0px', boxShadow: 'none' })
+  await expect(page.locator('.live-plot-owner')).toHaveCount(0)
+})
+
+test('an undrawn resident renders exactly a neutral marker plus a shadowed name, no chip', async ({ page }) => {
+  // replayCrowd[0] (id 20, the lowest id in its room) sorts first under the
+  // documented stable-id crowding order, so it stays inside the 6-visible
+  // cap rather than folding behind "+N more". A wide viewport keeps the
+  // roster board beside, rather than over, the live plates.
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    crowdPlaceId: 2,
+    undrawnResidentIds: [replayCrowd[0]!.id],
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  const markers = page.locator('.live-walker .live-neutral-marker')
+  await expect(markers).toHaveCount(1)
+  const marker = markers.first()
+  await marker.scrollIntoViewIfNeeded()
+  await expect(marker).toHaveAttribute('role', 'img')
+  await expect(marker.locator('*')).toHaveCount(0)
+  expect(await marker.evaluate(node => {
+    const style = getComputedStyle(node)
+    return { backgroundColor: style.backgroundColor, borderWidth: style.borderWidth }
+  })).toEqual({ backgroundColor: 'rgba(0, 0, 0, 0)', borderWidth: '0px' })
+
+  const handle = await marker.evaluate(node =>
+    node.closest('.live-walker')?.getAttribute('data-live-item-key')?.replace('resident:', ''))
+  expect(handle).toBe(replayCrowd[0]!.handle)
+
+  // The name tag is hidden below the readable zoom threshold unless the
+  // sprite is focused (decision #60) -- activate the portrait's ordinary
+  // click handler directly; the floating roster board can sit over this
+  // small ground marker depending on where its plot lands, which is a
+  // z-order accident of this fixture's layout, not the behaviour under
+  // test.
+  const portrait = page.locator('.live-walker .live-portrait').filter({
+    has: page.locator('.live-neutral-marker'),
+  })
+  await portrait.evaluate(node => (node as HTMLElement).click())
+  await expect(page.locator('.live-walker[data-live-focus-resident]')).toHaveCount(1)
+  const tag = page.locator(`[data-live-resident-tag="${replayCrowd[0]!.handle}"]`)
+  await expect(tag).toHaveCount(1)
+  await expect(tag).toHaveText(replayCrowd[0]!.handle)
+  expect(await tag.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(
+    'rgba(0, 0, 0, 0)',
+  )
+  await expect(page.locator('.drawing-state-label, .drawing-provenance, .drawing-live-label'))
+    .toHaveCount(0)
+  await expect(page.locator('.live-plot-owner')).toHaveCount(0)
 })
 
 test('Live opens a 40-resident fixture with 3 full drawing reads and 10 thumbnails', async ({ page }) => {
@@ -2995,6 +3064,72 @@ test('proof: quiet opening, no arrows', async ({ page }) => {
     '.live-trail[data-live-key="change:9506"]',
   )).toHaveCount(1)
   await expect(proofPanel.locator('#live-trace-arrow')).toHaveCount(0)
+})
+
+test('proof: sprites on the ground, no chips', async ({ page }) => {
+  // Side-by-side comparison the owner asked for: proof-alex (9201) carries a
+  // genuinely transparent drawing standing on the workshop's own strongly
+  // patterned (in_progress) floor; proof-cato (9203) is a Blank (all-
+  // transparent Complete) portrait; proof-bea/dara/eli/fia/gus are undrawn
+  // and fall to the small neutral marker. (This suite disables Playwright's
+  // own screenshot/trace/video capture project-wide for credential safety --
+  // see playwright.config.ts -- so this proof is the DOM-state equivalent of
+  // a screenshot.)
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await page.getByRole('button', { name: 'Run preview proof scene' }).click()
+  const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
+  await expect(proofPanel).toBeVisible()
+
+  // Settle the scene's own retry-room load first -- exactly as the sibling
+  // "discoverable preview proof scene" test does -- before the residents
+  // badge is clicked, so the layout is stable and the roster board no
+  // longer intercepts the click.
+  const retry = page.getByRole('button', { name: 'Retry proof room' })
+  await expect(retry).toBeVisible()
+  await retry.click()
+  await expect(retry).toHaveCount(0)
+  await proofPanel.getByRole('button', { name: /Show .* more residents/u }).click()
+
+  // No chip of any kind renders on the plate -- state, provenance, or owner.
+  await expect(proofPanel.locator(
+    '.drawing-live-label, .drawing-undrawn-label, .drawing-state-label, ' +
+    '.drawing-provenance, .live-plot-owner',
+  )).toHaveCount(0)
+
+  // Alex's transparent portrait and Cato's Blank portrait share the same
+  // unboxed presentation as every other drawn sprite -- nothing paints a
+  // light rectangle behind either.
+  for (const id of [9201, 9203]) {
+    const shell = proofPanel.locator(
+      `.live-walker .entity-portrait[data-portrait-type="resident"][data-portrait-id="${id}"]`,
+    ).first()
+    await expect(shell).toHaveCount(1)
+    expect(await shell.evaluate(node => {
+      const style = getComputedStyle(node)
+      const placeholder = node.querySelector('.entity-portrait-placeholder')
+      return {
+        shellBackground: style.backgroundColor,
+        placeholderBackground: placeholder
+          ? getComputedStyle(placeholder).backgroundColor
+          : null,
+      }
+    })).toEqual({ shellBackground: 'rgba(0, 0, 0, 0)', placeholderBackground: 'rgba(0, 0, 0, 0)' })
+  }
+
+  // Every undrawn resident (bea, dara, eli, fia, gus -- 5 of the 7) renders
+  // exactly a neutral marker, never nothing and never a chip.
+  await expect(proofPanel.locator('.live-walker .live-neutral-marker')).toHaveCount(5)
+
+  // The floor those sprites stand on is the workshop's own in-progress
+  // drawing, tiled -- the "strongly patterned floor tile" the proof asks
+  // for -- and the walkers share that same plot.
+  const workshopPlot = proofPanel.locator('.live-plot').filter({
+    has: page.locator('canvas[data-drawing-presentation-state="in_progress"]'),
+  })
+  await expect(workshopPlot).toHaveCount(1)
+  await expect(workshopPlot.locator('.live-walker')).not.toHaveCount(0)
 })
 
 test('drawing details reveal exact authored readback and fetch bounded history only on request', async ({ page }) => {
@@ -5097,7 +5232,12 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   const harbor = page.locator('.live-plot[data-place-id="3"]')
   await expect(harbor).toHaveAttribute('data-undrawn', 'true')
   await expect(harbor).toHaveAttribute('data-place-kind', 'continent')
-  await expect(harbor.locator('.live-plot-owner')).toHaveText('undrawn · kept by harbor-owner')
+  // Step 2 ruling: no "kept by" owner line renders on the plate. The same
+  // fact stays reachable through the plot's unchanged drawing-detail button.
+  await expect(harbor.locator('.live-plot-owner')).toHaveCount(0)
+  await expect(harbor.getByRole('button', { name: 'Current drawing' })).toHaveAttribute(
+    'aria-label', 'Open current drawing for Harbor room',
+  )
   const cinderTerrain = page.locator('.live-plot[data-place-id="2"] .live-plot-terrain')
   await expect(cinderTerrain.locator('.drawing-authored').first()).toBeVisible()
   await expect(cinderTerrain.locator('canvas.drawing-authored')).toHaveAttribute('width', '64')
@@ -5250,8 +5390,9 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await expect(page.locator('.live-plot[data-live-detail="true"]')).not.toHaveCount(0)
   await expect(page.locator('.live-plot[data-live-detail="false"]')).not.toHaveCount(0)
 
-  const cinderOwner = page.locator('.live-plot[data-place-id="2"] .live-plot-owner')
-  await expect(cinderOwner).toHaveCSS('pointer-events', 'none')
+  // Step 2 ruling removed the owner-line chip entirely, so there is no
+  // longer any noninteractive overlay chrome here to check for a blocked
+  // pointer-events state.
   await narrowStage.evaluate((stage, naturalHeight) => {
     const liveStage = stage as HTMLElement
     if (naturalHeight.style) {

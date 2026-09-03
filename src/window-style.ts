@@ -17,6 +17,7 @@ export const WINDOW_CSS = `:root {
   --focus: #fff19b;
   --focus-dark: #092d22;
   --cursor-tint: #d7e5dc;
+  --live-name-shadow-strength: 3px;
   --content: 82rem;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -708,12 +709,12 @@ button { color: inherit; }
   z-index: 1;
   width: max-content;
   max-width: none;
-  padding: 0.2rem 0.3rem;
+  padding: 0.15rem 0.2rem;
   overflow: visible;
-  color: var(--ink);
-  background: var(--paper-light);
-  border: 2px solid var(--line);
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.38);
+  color: var(--paper-light);
+  background: none;
+  border: 0;
+  box-shadow: none;
   font: 800 0.72rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
   text-overflow: clip;
   white-space: nowrap;
@@ -721,14 +722,14 @@ button { color: inherit; }
 .live-resident-tag[data-live-packed="false"] { visibility: hidden; }
 .live-resident-tag[data-live-focus-resident] {
   z-index: 2;
-  background: var(--signal);
-  box-shadow: 0 0 0 2px var(--line), 3px 3px 0 rgba(0, 0, 0, 0.46);
+  color: var(--signal);
+  font-weight: 900;
 }
 .live-resident-tag[data-live-intent="true"] { z-index: 4; }
 .live-resident-tag[data-live-raised="true"] {
   z-index: 6;
-  background: var(--signal);
-  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 rgba(0, 0, 0, 0.5);
+  color: var(--signal);
+  font-weight: 900;
 }
 .live-world-ground {
   position: absolute;
@@ -934,46 +935,31 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   height: 100%;
   image-rendering: pixelated;
 }
-.drawing-grid > .drawing-live-label,
-.drawing-grid > .drawing-undrawn-label {
-  position: absolute;
-  z-index: 2;
-  inset-inline: 0.12rem auto;
-  max-width: calc(100% - 0.24rem);
-  padding: 0.1rem 0.18rem;
-  overflow: hidden;
-  color: var(--ink);
-  background: rgba(255, 249, 232, 0.92);
-  font: 900 0.42rem/1.15 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.drawing-grid > .drawing-state-label { inset-block: 0.12rem auto; }
-.drawing-grid > .drawing-provenance { inset-block: auto 0.12rem; }
 .drawing-refused { background: repeating-linear-gradient(45deg,
   rgba(217, 92, 70, 0.13) 0 6px, rgba(255, 249, 232, 0.84) 6px 12px); }
 .drawing-in_progress { box-shadow: inset 0 0 0 2px var(--signal); }
-.drawing-blank { background: var(--paper-light); }
+/* Step 2 ruling: the Live plate never paints a chip, a hatch, or an opaque
+   backing behind a sprite -- genuinely transparent pixels show the ground
+   through. Refused/in-progress texture and the small "no drawing" marker
+   glyph below stay for the separate drawing-detail page's own presentation
+   (drawingSnapshotNode), which never nests inside #live-panel. */
+#live-panel .drawing-refused,
+#live-panel .drawing-in_progress { background: none; box-shadow: none; }
 .drawing-undrawn {
   position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
-  background: repeating-linear-gradient(-45deg,
-    transparent 0 7px, rgba(157, 146, 118, 0.55) 7px 8px);
-  border: 1px dashed var(--paper-line);
+  background: transparent;
+  border: 0;
 }
-.drawing-undrawn-label {
-  max-width: 100%;
-  padding: 0.12rem;
-  overflow: hidden;
-  color: var(--muted);
-  background: rgba(255, 249, 232, 0.88);
-  font: 800 0.45rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  letter-spacing: 0.04em;
-  text-align: center;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
+.drawing-undrawn::before {
+  content: "";
+  width: 34%;
+  height: 34%;
+  background: var(--sky);
+  opacity: 0.55;
+  transform: rotate(45deg);
 }
 .drawing-loading { opacity: 0.72; }
 .drawing-unavailable { border-style: solid; }
@@ -1043,15 +1029,24 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   align-items: center;
   min-height: 3.5rem;
   padding: 0.3rem;
-  color: var(--ink);
-  background: var(--paper-light);
-  border: 2px solid var(--line);
+  color: var(--paper-light);
+  background: transparent;
+  border: 0;
   font-size: 0.6rem;
   font-weight: 800;
   text-decoration: none;
 }
 .live-thing-name { overflow-wrap: anywhere; }
-.live-thing-specimen > .entity-portrait { width: 2.5rem; height: 2.5rem; }
+/* Step 2 ruling: names sit under the sprite with a text shadow, never a
+   box. --live-name-shadow-strength is the one dial for judging legibility
+   against the floor art on the preview. */
+.live-item-name {
+  text-shadow:
+    0 1px 0 var(--night),
+    0 0 var(--live-name-shadow-strength) var(--night);
+}
+.live-thing-specimen > .entity-portrait,
+.live-thing-specimen > .drawing-grid { width: 2.5rem; height: 2.5rem; aspect-ratio: auto; }
 .live-footnote-mark, .live-action-mark {
   position: absolute;
   z-index: 3;
@@ -1230,8 +1225,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   aspect-ratio: auto;
 }
 .live-plot-terrain > canvas.drawing-grid { height: auto; }
-.live-plot-terrain .drawing-undrawn-label { display: none; }
-.live-plot-terrain > .drawing-grid .drawing-undrawn-label { display: block; }
 .drawing-detail-open {
   display: inline-flex;
   align-items: center;
@@ -1283,21 +1276,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.live-plot-owner {
-  position: absolute;
-  z-index: 7;
-  inset: 1.1rem auto auto 0.45rem;
-  max-width: calc(100% - 0.9rem);
-  margin: 0;
-  padding: 0.1rem 0.28rem;
-  overflow: hidden;
-  color: var(--ink);
-  background: rgba(255, 249, 232, 0.88);
-  font: 800 0.5rem/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace;
-  pointer-events: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .live-plot > .live-portrait-grid {
   position: absolute;
   z-index: 7;
@@ -1329,8 +1307,8 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   min-width: 0;
   padding: 0.12rem;
   transform: translate(-50%, -50%);
-  background: rgba(255, 249, 232, 0.94);
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  background: transparent;
+  box-shadow: none;
   pointer-events: auto;
 }
 .live-plot .live-thing-name {
